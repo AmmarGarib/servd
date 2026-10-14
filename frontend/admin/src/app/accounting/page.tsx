@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
 import { ActivityFeed } from '../../components/ui/ActivityFeed'
-import { fmtPkrShort } from '../../lib/money'
+import { fmtPkrShort, startOfMonthPktIso, todayPktIso } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
 
@@ -11,20 +11,26 @@ import { canOpenPath } from '../../lib/moduleCatalog'
 // lib/moduleAccess.ts ACCOUNTING_AUDIT_ROLES) — the module alone is not enough.
 const ACCOUNTING_AUDIT_ROLES = ['admin', 'management']
 
-interface FoodCostData {
-  period: { from: string; to: string }
-  revenue: { grossCents: number; netCents: number }
-  cost: {
-    theoreticalCents: number
-    actualPurchasesCents: number
-    theoreticalFoodCostPct: number
-    targetFoodCostPct: number
-    variance: number
-    status: 'good' | 'warning' | 'critical'
-  }
-  byItem: { menuItemId: string; name: string; qtySold: number; totalCost: number; revenue: number; foodCostPct: number; marginPct: number }[]
-  itemsWithoutRecipe: { menuItemId: string | null; name: string; qtySold: number }[]
+// GET /reports/food-cost/summary (THE food-cost engine, reports/foodCost.ts):
+// one block per company in view. Brand sales and every % only for the finance
+// tier (revenueHidden otherwise).
+type FcStatus = 'no_data' | 'incomplete' | 'good' | 'warning' | 'critical'
+interface FoodCostBlock {
+  tenantId: string
+  companyName: string
+  status: FcStatus
+  statusLabel: string
+  revenueCents?: number
+  targetPct?: number | null
+  theoreticalPct?: number | null
+  actualPct?: number | null
+  theoretical: { totalCents: number }
+  actual: { totalCents: number } | null
+  unexplainedCents: number
+  items: Array<{ menuItemId: string; name: string; qtySold: number; costCents: number; revenueCents?: number; costPct?: number | null; targetPct?: number | null }>
+  warnings: Array<{ code: string; count: number; names?: string[] }>
 }
+interface FoodCostData { revenueHidden: boolean; companies: FoodCostBlock[] }
 
 interface PurchaseOrder {
   id: string
@@ -70,16 +76,21 @@ const LEDGER_LINKS: Array<{ href: string; label: string }> = [
   { href: '/accounting/period-close',     label: 'Period Close' },
   { href: '/accounting/ap-aging',         label: 'AP Aging' },
   { href: '/accounting/sales-tax-return', label: 'Sales Tax Return' },
+  { href: '/accounting/statutory',        label: 'Statutory Payments' },
   { href: '/accounting/audit-log',        label: 'Audit Log' },
   { href: '/hr/payroll',                  label: 'Payroll' },
   { href: '/allocations',                 label: 'Cost Allocation' },
   { href: '/reconciliation',              label: 'Reconciliation' },
 ]
 
-const statusColor = {
-  good:     { bar: 'bg-accent', text: 'text-success', badge: 's-badge-green', label: 'On Target' },
-  warning:  { bar: 'bg-s-amber', text: 'text-s-amber', badge: 's-badge-amber', label: 'Watch' },
-  critical: { bar: 'bg-s-red', text: 'text-s-red', badge: 's-badge-red', label: 'Over Budget' },
+// Status colours (labels come from the API: 'On target', 'Watch', 'Over
+// target', 'Incomplete data', 'No sales').
+const statusColor: Record<FcStatus, { bar: string; text: string; badge: string }> = {
+  good:       { bar: 'var(--erp-accent)',  text: 'text-success',  badge: 's-badge-green' },
+  warning:    { bar: 'var(--erp-warning)', text: 'text-s-amber',  badge: 's-badge-amber' },
+  critical:   { bar: 'var(--erp-danger)',  text: 'text-s-red',    badge: 's-badge-red' },
+  incomplete: { bar: 'var(--erp-warning)', text: 'text-s-amber',  badge: 's-badge-amber' },
+  no_data:    { bar: 'var(--border)',      text: 'text-s-muted',  badge: 's-badge-muted' },
 }
 
 const poStatusColor: Record<string, string> = {
@@ -91,8 +102,9 @@ const poStatusColor: Record<string, string> = {
 }
 
 export default function AccountingHubPage() {
-  const today = new Date()
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString()
+  // Month to date, as PKT days (the API reads YYYY-MM-DD as whole PKT days).
+  const monthStart = startOfMonthPktIso()
+  const today = todayPktIso()
 
   // Every card, link and widget here is shown only when the signed-in user
   // can open the page behind it — the same module test as the sidebar and the
@@ -110,11 +122,13 @@ export default function AccountingHubPage() {
 
   // Summary widgets the user didn't ask for one by one: a read their role
   // can't make leaves the widget empty rather than toasting (`background`).
+  // The food-cost gauge reads THE food-cost report (Reports → Food cost
+  // variance); the API also answers the accounting module's reads for it.
   const { data: foodCost } = useQuery({
-    queryKey: ['food-cost', 'hub'],
-    queryFn: () => api.get<FoodCostData>(`/recipes/food-cost?dateFrom=${monthStart}`),
+    queryKey: ['food-cost', 'hub', monthStart, today],
+    queryFn: () => api.get<FoodCostData>(`/reports/food-cost/summary?from=${monthStart}&to=${today}`),
     refetchInterval: 300_000,
-    enabled: can('/accounting/food-cost'),
+    enabled: holds('food_cost') || holds('accounting'),
     meta: { background: true },
   })
 
@@ -141,8 +155,34 @@ export default function AccountingHubPage() {
     meta: { background: true },
   })
 
-  const fc = foodCost?.cost
+  // Across the companies in view: one gauge, each company's own figures summed
+  // (the report itself keeps them apart).
+  const blocks = foodCost?.companies ?? []
+  const fc = blocks.length === 0 ? null : (() => {
+    const sum = (f: (b: FoodCostBlock) => number) => blocks.reduce((s, b) => s + f(b), 0)
+    const revenue = sum((b) => b.revenueCents ?? 0)
+    const actual = sum((b) => b.actual?.totalCents ?? 0)
+    const theoretical = sum((b) => b.theoretical.totalCents)
+    const pct = (c: number) => (revenue > 0 ? Math.round((c / revenue) * 1000) / 10 : null)
+    const targets = blocks.filter((b) => b.targetPct != null && (b.revenueCents ?? 0) > 0)
+    const targetPct = targets.length === 0 ? null
+      : Math.round((targets.reduce((s, b) => s + (b.targetPct! * (b.revenueCents ?? 0)), 0) / Math.max(1, targets.reduce((s, b) => s + (b.revenueCents ?? 0), 0))) * 10) / 10
+    const rank: FcStatus[] = ['no_data', 'incomplete', 'critical', 'warning', 'good']
+    const worst = [...blocks].sort((a, b) => rank.indexOf(a.status) - rank.indexOf(b.status))[0]!
+    return {
+      revenueHidden: foodCost!.revenueHidden, revenue, actual, theoretical, actualPct: pct(actual), theoreticalPct: pct(theoretical), targetPct,
+      unexplained: sum((b) => b.unexplainedCents), status: worst.status, statusLabel: worst.statusLabel,
+      items: blocks.flatMap((b) => b.items).sort((a, b) => b.costCents - a.costCents),
+      noRecipe: blocks.flatMap((b) => b.warnings.filter((w) => w.code === 'no_recipe')),
+    }
+  })()
   const fcStatus = fc ? statusColor[fc.status] : null
+  const fcLink = can('/reports/food-cost')
+  const noRecipeCount = fc ? fc.noRecipe.reduce((s, w) => s + w.count, 0) : 0
+  const noRecipeNames = fc ? fc.noRecipe.flatMap((w) => w.names ?? []) : []
+  const pctText = (v: number | null) => (v == null ? '—' : `${v}%`)
+  // Gauge scale: never a hard-coded target — the bar runs to the larger of 50% and the figures + 10.
+  const scale = fc ? Math.max(50, (fc.actualPct ?? 0) + 10, (fc.targetPct ?? 0) + 10) : 50
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -157,20 +197,24 @@ export default function AccountingHubPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
             {
-              label: 'Food Cost % (MTD)',
-              value: fc ? `${fc.theoreticalFoodCostPct}%` : '—',
-              sub: fc ? `Target: ${fc.targetFoodCostPct}%` : undefined,
+              // Actual cost of sales (ledger) over brand sales — the food-cost
+              // report's definition; PKR at cost when sales are not shown.
+              label: 'Cost of sales (MTD)',
+              value: fc ? (fc.revenueHidden ? fmtPkrShort(fc.actual) : pctText(fc.actualPct)) : '—',
+              sub: fc ? (fc.revenueHidden ? fc.statusLabel : `Theoretical ${pctText(fc.theoreticalPct)} · target ${pctText(fc.targetPct)}`) : undefined,
               color: fcStatus?.text ?? 'text-s-text',
-              href: '/accounting/food-cost',
+              href: fcLink ? '/reports/food-cost' : '/accounting',
+              show: !!fc,
             },
             {
-              // Sales-register figure (what customers paid, incl. GST) — the
-              // books' revenue is the P&L.
-              label: 'Sales (MTD, register)',
-              value: foodCost ? fmtPkrShort(foodCost.revenue.grossCents) : '—',
-              sub: foodCost ? `incl. GST · register net ${fmtPkrShort(foodCost.revenue.netCents)}` : undefined,
-              color: 'text-gradient-brand',
-              href: '/reports',
+              // Brand sales from the ledger (40xx after discounts, ex-GST) —
+              // the food-cost denominator. Finance tier only.
+              label: 'Brand sales (MTD)',
+              value: fc && !fc.revenueHidden ? fmtPkrShort(fc.revenue) : '—',
+              sub: fc && !fc.revenueHidden ? 'ledger, after discounts, ex-GST' : undefined,
+              color: 'text-primary-ink',
+              href: '/accounting/pl-ledger',
+              show: !!fc && !fc.revenueHidden && can('/accounting/pl-ledger'),
             },
             {
               label: 'Active Vendors',
@@ -182,11 +226,11 @@ export default function AccountingHubPage() {
             {
               label: 'Recipes Built',
               value: recipes?.length ?? '—',
-              sub: foodCost ? `${foodCost.itemsWithoutRecipe.length} items unmapped` : undefined,
+              sub: fc ? `${noRecipeCount} sold item(s) with no recipe` : undefined,
               color: 'text-primary-ink',
               href: '/accounting/recipes',
             },
-          ].filter((kpi) => can(kpi.href)).map((kpi) => (
+          ].filter((kpi) => ('show' in kpi ? kpi.show : can(kpi.href))).map((kpi) => (
             <Link key={kpi.label} href={kpi.href}
               className="metric-card s-card-hover group">
               <p className="metric-label">{kpi.label}</p>
@@ -219,51 +263,47 @@ export default function AccountingHubPage() {
           </div>
         </section>
 
-        {/* ── Food cost gauge ───────────────────────────────────────────────── */}
+        {/* ── Food cost gauge (Reports → Food cost variance) ───────────────── */}
         {fc && (
           <section className="s-card p-5">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div>
-                <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Food Cost Analysis — Month to Date</p>
+                <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Food cost — month to date</p>
                 <p className="text-xs text-s-dim mt-0.5">
-                  Theoretical cost vs revenue · Target ≤{fc.targetFoodCostPct}%
+                  Actual cost of sales against the recipes at the price paid{fc.targetPct != null && !fc.revenueHidden ? ` · target ${fc.targetPct}%` : ''}
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <span className={`s-badge ${fcStatus?.badge}`}>{fcStatus?.label}</span>
-                <Link href="/accounting/food-cost" className="text-xs text-primary-ink hover:underline">Full report →</Link>
+                <span className={fcStatus?.badge}>{fc.statusLabel}</span>
+                {fcLink && <Link href="/reports/food-cost" className="text-xs text-primary-ink hover:underline">Full report →</Link>}
               </div>
             </div>
 
-            {/* Gauge bar */}
-            <div className="mb-4">
-              <div className="flex justify-between text-xs text-s-muted mb-1.5">
-                <span>0%</span>
-                <span className="text-success">Target 30%</span>
-                <span>50%+</span>
+            {!fc.revenueHidden && (
+              <div className="mb-4">
+                <div className="stat-bar-track h-3 relative">
+                  {fc.targetPct != null && (
+                    <div className="absolute top-0 bottom-0 w-px" style={{ left: `${Math.min(100, (fc.targetPct / scale) * 100)}%`, background: 'var(--erp-success)' }} title={`Target ${fc.targetPct}%`} />
+                  )}
+                  <div className="h-3 rounded-full" style={{ width: `${Math.min(100, ((fc.actualPct ?? 0) / scale) * 100)}%`, background: fcStatus?.bar }} />
+                </div>
+                <div className="flex flex-wrap justify-between items-center gap-2 mt-2">
+                  <span className={`text-2xl font-black ${fcStatus?.text}`}>Actual {pctText(fc.actualPct)}</span>
+                  <span className="text-sm text-s-muted">Theoretical {pctText(fc.theoreticalPct)}</span>
+                  {fc.actualPct != null && fc.theoreticalPct != null && (
+                    <span className="text-sm font-semibold" style={{ color: fc.actualPct > fc.theoreticalPct ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
+                      {fc.actualPct > fc.theoreticalPct ? '+' : ''}{Math.round((fc.actualPct - fc.theoreticalPct) * 10) / 10} pts vs theoretical
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="stat-bar-track h-3 relative">
-                {/* target line */}
-                <div className="absolute top-0 bottom-0 w-px bg-accent" style={{ left: '60%' }} />
-                <div
-                  className={`stat-bar-fill h-3 ${fcStatus?.bar}`}
-                  style={{ width: `${Math.min((fc.theoreticalFoodCostPct / 50) * 100, 100)}%` }}
-                />
-              </div>
-              <div className="flex justify-between items-center mt-2">
-                <span className={`text-2xl font-black ${fcStatus?.text}`}>{fc.theoreticalFoodCostPct}%</span>
-                <span className={`text-sm font-semibold ${fc.variance > 0 ? 'text-s-red' : 'text-success'}`}>
-                  {fc.variance > 0 ? '+' : ''}{fc.variance}% vs target
-                </span>
-              </div>
-            </div>
+            )}
 
-            {/* Cost breakdown */}
             <div className="grid grid-cols-3 gap-3 pt-3 border-t border-s-border">
               {[
-                { label: 'Theoretical Cost', value: fmtPkrShort(fc.theoreticalCents), color: 'text-s-text' },
-                { label: 'Actual Purchases', value: fmtPkrShort(fc.actualPurchasesCents), color: 'text-s-amber' },
-                { label: 'Gross Revenue', value: fmtPkrShort(foodCost!.revenue.grossCents), color: 'text-success' },
+                { label: 'Theoretical cost', value: fmtPkrShort(fc.theoretical), color: 'text-s-text' },
+                { label: 'Actual cost (ledger)', value: fmtPkrShort(fc.actual), color: fcStatus?.text ?? 'text-s-text' },
+                { label: 'Unexplained', value: fmtPkrShort(fc.unexplained), color: fc.unexplained > 0 ? 'text-s-red' : 'text-success' },
               ].map((s) => (
                 <div key={s.label} className="text-center rounded-lg bg-s-elevated border border-s-border p-3">
                   <p className={`text-base font-bold ${s.color}`}>{s.value}</p>
@@ -281,23 +321,25 @@ export default function AccountingHubPage() {
           <section className="s-card p-5">
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Top Cost Items (MTD)</p>
-              <Link href="/accounting/food-cost" className="text-xs text-primary-ink hover:underline">Detail →</Link>
+              {fcLink && <Link href="/reports/food-cost" className="text-xs text-primary-ink hover:underline">Detail →</Link>}
             </div>
-            {!foodCost?.byItem.length ? (
-              <p className="text-sm text-s-dim text-center py-6">No data for this period</p>
+            {!fc?.items.length ? (
+              <p className="text-sm text-s-dim text-center py-6">No sales</p>
             ) : (
               <div className="space-y-2">
-                {foodCost.byItem.slice(0, 6).map((item) => (
+                {fc.items.slice(0, 6).map((item) => (
                   <div key={item.menuItemId} className="flex items-center justify-between py-1">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-s-text truncate">{item.name}</p>
-                      <p className="text-[11px] text-s-dim">{item.qtySold} sold · {fmtPkrShort(item.revenue)} revenue</p>
+                      <p className="text-[11px] text-s-dim">{item.qtySold} sold{item.revenueCents != null ? ` · ${fmtPkrShort(item.revenueCents)} sales` : ''}</p>
                     </div>
                     <div className="ml-3 text-right shrink-0">
-                      <p className="text-sm font-bold text-s-text">{fmtPkrShort(item.totalCost)}</p>
-                      <p className={`text-[11px] font-semibold ${item.foodCostPct > 35 ? 'text-s-red' : item.foodCostPct > 30 ? 'text-s-amber' : 'text-success'}`}>
-                        {item.foodCostPct}% FC
-                      </p>
+                      <p className="text-sm font-bold text-s-text">{fmtPkrShort(item.costCents)}</p>
+                      {item.costPct != null && (
+                        <p className="text-[11px] font-semibold" style={{ color: item.targetPct != null && item.costPct > item.targetPct ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
+                          {item.costPct}% of sales
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -341,7 +383,7 @@ export default function AccountingHubPage() {
           <p className="text-xs font-semibold text-s-muted uppercase tracking-wider mb-3">Finance Modules</p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[
-              { href: '/accounting/food-cost', icon: '🍽', label: 'Food Cost', desc: 'Theoretical vs actual' },
+              { href: '/reports/food-cost',    icon: '🍽', label: 'Food cost variance', desc: 'Actual vs recipe' },
               { href: '/accounting/recipes',   icon: '📐', label: 'Recipes',   desc: 'Ingredient costing' },
               { href: '/procurement',   icon: '🏭', label: 'Vendors',   desc: 'Suppliers & POs' },
               { href: '/accounting/pl-ledger', icon: '💰', label: 'P&L',       desc: 'Profit & Loss (ledger)' },
@@ -358,30 +400,23 @@ export default function AccountingHubPage() {
           </div>
         </section>
 
-        {/* ── Unmapped items warning ────────────────────────────────────────── */}
-        {(foodCost?.itemsWithoutRecipe.length ?? 0) > 0 && (
-          <section className="rounded-xl border border-s-amber/20 bg-s-amber-dim/30 p-4">
-            <div className="flex items-start gap-3">
-              <span className="text-xl mt-0.5">⚠</span>
+        {/* ── Sold with no recipe ───────────────────────────────────────────── */}
+        {noRecipeCount > 0 && (
+          <section className="rounded-xl p-4" style={{ color: 'var(--erp-warning)', background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 25%, transparent)' }}>
+            <div className="flex flex-wrap items-start gap-3">
               <div className="flex-1">
-                <p className="font-semibold text-s-amber text-sm">
-                  {foodCost!.itemsWithoutRecipe.length} menu items sold without recipes
-                </p>
-                <p className="text-xs text-s-muted mt-0.5">
-                  Food cost analysis is incomplete. Build recipes for these items to get accurate cost data.
+                <p className="font-semibold text-sm">Incomplete data: {noRecipeCount} menu item(s) sold with no recipe</p>
+                <p className="text-xs mt-0.5 opacity-80">
+                  Nothing was taken from stock for them, so their cost is missing from the food-cost figures. Build their recipes.
                 </p>
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {foodCost!.itemsWithoutRecipe.slice(0, 8).map((item) => (
-                    <span key={item.menuItemId} className="text-[11px] bg-s-surface border border-s-amber/20 text-s-amber rounded px-2 py-0.5">
-                      {item.name}
-                    </span>
+                  {noRecipeNames.slice(0, 8).map((name) => (
+                    <span key={name} className="s-badge-amber">{name}</span>
                   ))}
-                  {foodCost!.itemsWithoutRecipe.length > 8 && (
-                    <span className="text-[11px] text-s-dim">+{foodCost!.itemsWithoutRecipe.length - 8} more</span>
-                  )}
+                  {noRecipeCount > 8 && <span className="text-[11px] opacity-80">+{noRecipeCount - 8} more</span>}
                 </div>
               </div>
-              {can('/accounting/recipes') && <Link href="/accounting/recipes" className="s-btn text-xs shrink-0">Add Recipes →</Link>}
+              {can('/accounting/recipes') && <Link href="/accounting/recipes" className="s-btn text-xs shrink-0">Add recipes →</Link>}
             </div>
           </section>
         )}

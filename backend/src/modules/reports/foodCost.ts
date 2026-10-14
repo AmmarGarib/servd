@@ -620,7 +620,7 @@ async function companyBlock(db: Db, tenantId: string, a: FoodCostQuery): Promise
 
   // ── 4. Warnings ──
   const counts = await openCounts(db, tenantId, { conceptId, locationId, to })
-  const warnings = await buildWarnings(db, tenantId, {
+  const { warnings, noRecipeBrands } = await buildWarnings(db, tenantId, {
     from, to, conceptId, locationId, cutoverAt, orders, recipeRows, ...counts,
   })
 
@@ -664,7 +664,11 @@ async function companyBlock(db: Db, tenantId: string, a: FoodCostQuery): Promise
     }
   }
 
+  // Missing stock data (cut-over, no-cost lots, foreign lines, sub-recipes
+  // without a yield) leaves every brand incomplete; a dish sold with no
+  // recipe only its own brand.
   const incomplete = warnings.some((w) => w.severity === 'incomplete')
+  const stockIncomplete = warnings.some((w) => w.severity === 'incomplete' && w.code !== 'no_recipe')
   const total = zAcc()
   for (const x of accs.values()) addAcc(total, x)
   // A ledger line the class split and the classification disagree on (never expected) is a warning, not a silent gap.
@@ -681,7 +685,7 @@ async function companyBlock(db: Db, tenantId: string, a: FoodCostQuery): Promise
     if (!q) return -1
     return (conceptById.get(p)?.name ?? p).localeCompare(conceptById.get(q)?.name ?? q)
   })
-  const brands = brandKeys.map((k) => brandBlock(k, accs.get(k)!, incomplete))
+  const brands = brandKeys.map((k) => brandBlock(k, accs.get(k)!, stockIncomplete || noRecipeBrands.has(k)))
   const itemRows: FoodCostItemRow[] = [...items.values()]
     .sort((p, q) => q.costCents - p.costCents)
     .slice(0, 500)
@@ -734,7 +738,7 @@ async function buildWarnings(db: Db, tenantId: string, c: {
   orders: Array<{ conceptId: string; items: Array<{ menuItemId: string | null; name: string; quantity: number; status: string; modifiers: Array<{ modifierId: string | null; name: string }> }> }>
   recipeRows: Array<{ id: string; menuItemId: string | null; status: string; menuItem: { name: string } | null }>
   openOrders: number; openShifts: number
-}): Promise<FoodCostWarning[]> {
+}): Promise<{ warnings: FoodCostWarning[]; noRecipeBrands: Set<string> }> {
   const w: FoodCostWarning[] = []
   if (!c.cutoverAt) {
     w.push({ code: 'pre_cutover', severity: 'incomplete', count: 1, message: 'This company\'s stock is not on FIFO lots yet — there is no lot data to cost sales at the price paid.' })
@@ -747,6 +751,7 @@ async function buildWarnings(db: Db, tenantId: string, c: {
   const sold = c.orders.flatMap((o) => o.items.filter((i) => i.status !== 'voided'))
   const withRecipe = new Set(c.recipeRows.map((r) => r.menuItemId))
   const noRecipe = sold.filter((i) => i.menuItemId && !withRecipe.has(i.menuItemId))
+  const noRecipeBrands = new Set(c.orders.filter((o) => o.items.some((i) => i.status !== 'voided' && i.menuItemId && !withRecipe.has(i.menuItemId))).map((o) => o.conceptId))
   if (noRecipe.length > 0) {
     w.push({ code: 'no_recipe', severity: 'incomplete', count: new Set(noRecipe.map((i) => i.menuItemId)).size, names: names(noRecipe.map((i) => i.name)), link: '/accounting/recipes',
       message: 'Menu items were sold with no recipe — nothing was taken from stock for them, so their cost is missing.' })
@@ -836,7 +841,7 @@ async function buildWarnings(db: Db, tenantId: string, c: {
     w.push({ code: 'open_shifts', severity: 'timing', count: c.openShifts, link: '/pos',
       message: `${c.openShifts} open till drawer(s): their sales reach cost of sales when the drawer is closed (timing).` })
   }
-  return w
+  return { warnings: w, noRecipeBrands }
 }
 
 // ─── Per ingredient ──────────────────────────────────────────────────────────

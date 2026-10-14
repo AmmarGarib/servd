@@ -539,7 +539,9 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // recipes use it) and names that appear more than once in one company.
   // Assign with PATCH /inventory/:id { tenantId }; merging duplicates needs a
   // reviewed script that repoints the foreign keys — nothing here deletes.
-  fastify.get('/unassigned', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  // Finance reads it too: an item that holds stock (currentStock > 0) is
+  // assigned by finance / the CEO / management, as an opening count.
+  fastify.get('/unassigned', { preHandler: requireAuth(...MANAGERS, 'finance') }, async (req) => {
     const scope = await resolveTenantScope(req)
     const orphans = await prisma.inventoryItem.findMany({
       where: { deletedAt: null, tenantId: null },

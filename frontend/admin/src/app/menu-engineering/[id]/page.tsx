@@ -4,9 +4,14 @@
 // The recipe owns the COST; this page owns the MONEY. It pulls the plate's
 // cost build-up + real opex (opex lines + workforce payroll share) from
 // GET /recipes/:id/costing, lets the operator set the target food-cost %
-// they want from this item (→ suggested price that hits it), tune packaging
-// and profit targets, and set the selling price. Everything recomputes live;
-// Save writes the pricing back (price syncs to the menu item).
+// they want from this item (→ suggested price that hits it) and the profit
+// target, and set the selling price. Everything recomputes live; Save writes
+// the pricing back (price syncs to the menu item).
+//
+// Packaging is the recipe's own Packaging section (real items at the price
+// paid), used by order type: takeaway and delivery always, dine-in only at a
+// brand that serves in packaging. The retired "packaging % of price" is gone.
+// The Q factor is a pricing allowance — in menu pricing, not stock.
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
@@ -16,16 +21,27 @@ import { recipeStatusMeta, type RecipeStatus } from '../../accounting/recipes/Re
 import { fmtPkrWhole } from '../../../lib/money'
 import { useKitchenRole } from '../../inventory/kitchenView'
 
-interface CostingReadout {
+// Material cost per portion (wave B, GET /recipes/:id/costing — read at the
+// top level or inside `cost`; absent on an older API).
+interface McFields {
+  stockByClass?: { food: number; beverage: number; packaging: number }
+  packagingCents?: number
+  standardCents?: number
+  qCents?: number
+  targetMcCents?: { dine_in: number; takeout: number; delivery: number }
+}
+
+interface CostingReadout extends McFields {
+  ingredients?: Array<{ id: string; name: string; quantity: number; unit: string; ingredientCostCents: number; section?: string | null }>
   recipe: {
-    servings: number; qFactorPct: number; packagingPct: number
+    servings: number; qFactorPct: number
     targetProfitPct: number; targetFoodCostPct: number
     actualSellingPriceCents: number | null
     menuItemName: string | null
     status: RecipeStatus
   }
   brand: { id: string; name: string; forecastPortionsPerMonth: number } | null
-  cost: {
+  cost: McFields & {
     totalIngredientCents: number
     qFactorCents: number
     totalRecipeCents: number
@@ -40,10 +56,11 @@ interface CostingReadout {
 }
 
 function fmtPct(n: number) { return `${n.toFixed(1)}%` }
-function fcColor(pct: number | null) {
+/** Plate cost % against the item's own target: green on/under, amber within 5 points, red over. */
+function fcColor(pct: number | null, target: number) {
   if (pct === null) return 'rgb(var(--fg-rgb) / 0.35)'
-  if (pct <= 28)    return 'var(--erp-success)'
-  if (pct <= 35)    return 'var(--erp-warning)'
+  if (pct <= target)     return 'var(--erp-success)'
+  if (pct <= target + 5) return 'var(--erp-warning)'
   return 'var(--erp-danger)'
 }
 
@@ -99,14 +116,12 @@ export default function PlatePricingPage() {
   // Editable pricing state, seeded from the readout once loaded.
   const [targetFc, setTargetFc]       = useState<number | null>(null)
   const [targetProfit, setTargetProfit] = useState<number | null>(null)
-  const [packaging, setPackaging]     = useState<number | null>(null)
   const [pricePkr, setPricePkr]       = useState<number | null>(null)
   const [seeded, setSeeded]           = useState(false)
   useEffect(() => {
     if (data && !seeded) {
       setTargetFc(data.recipe.targetFoodCostPct)
       setTargetProfit(data.recipe.targetProfitPct)
-      setPackaging(data.recipe.packagingPct)
       setPricePkr(data.pricing.actualSellingPriceCents ? Math.round(data.pricing.actualSellingPriceCents / 100) : null)
       setSeeded(true)
     }
@@ -116,7 +131,6 @@ export default function PlatePricingPage() {
     mutationFn: () => api.put(`/recipes/${id}`, {
       targetFoodCostPct: targetFc ?? 30,
       targetProfitPct:   targetProfit ?? 25,
-      packagingPct:      packaging ?? 8,
       ...(pricePkr != null ? { actualSellingPriceCents: Math.round(pricePkr * 100) } : {}),
     }),
     onSuccess: () => {
@@ -146,29 +160,46 @@ export default function PlatePricingPage() {
   }
 
   const { cost, recipe } = data
-  const plate = cost.plateCostCents
   const opex  = cost.opexPerPortionCents
+
+  // ── Material cost (MC) per portion ───────────────────────────────────────
+  // standard = food + drinks every sale uses; packaging = the Packaging
+  // section; target MC per order type = standard + packaging where it applies.
+  // The Q factor is priced in, never stock. An older API without these fields
+  // falls back to the plate cost (Q included, no packaging lines).
+  const mc: McFields = { ...cost, ...data }
+  const hasMc = mc.standardCents != null && mc.targetMcCents != null
+  const standard  = hasMc ? mc.standardCents! : cost.plateCostCents
+  const packCents = hasMc ? (mc.packagingCents ?? 0) : 0
+  const qCents    = hasMc ? (mc.qCents ?? 0) : 0
+  const target    = hasMc ? mc.targetMcCents! : { dine_in: standard, takeout: standard, delivery: standard }
+  const servesInPackaging = hasMc && packCents > 0 && target.dine_in > standard
+  const packagingLines = (data.ingredients ?? []).filter((l) => l.section === 'packaging')
+  // The brand's main order type prices the plate: dine-in at a plate brand,
+  // and the box always at a brand that serves in packaging.
+  const plate = target.dine_in + qCents
 
   // ── Live pricing math (client-side, matches the backend formulas) ────────
   const fcPct        = targetFc ?? 30
-  const packPct      = (packaging ?? 8) / 100
   const profitPct    = (targetProfit ?? 25) / 100
   const fcTargetCents   = Math.round(plate / Math.max(fcPct / 100, 0.01))
-  const breakEvenCents  = Math.round((plate + opex) / Math.max(0.01, 1 - packPct))
-  const profitTargetCents = Math.round((plate + opex) / Math.max(0.01, 1 - packPct - profitPct))
+  const breakEvenCents  = Math.round(plate + opex)
+  const profitTargetCents = Math.round((plate + opex) / Math.max(0.01, 1 - profitPct))
 
   const priceCents = pricePkr != null ? Math.round(pricePkr * 100) : 0
-  const packagingCost = Math.round(priceCents * packPct)
-  const cm      = priceCents - plate - packagingCost
+  const cm      = priceCents - plate
   const cmPct   = priceCents > 0 ? (cm / priceCents) * 100 : 0
   const net     = cm - opex
   const netPct  = priceCents > 0 ? (net / priceCents) * 100 : 0
-  const actualFc = priceCents > 0 ? (plate / priceCents) * 100 : null
+  const platePct = priceCents > 0 ? (plate / priceCents) * 100 : null
+  const byType: Array<{ label: string; mc: number }> = [
+    { label: 'Dine-in', mc: target.dine_in }, { label: 'Takeaway', mc: target.takeout }, { label: 'Delivery', mc: target.delivery },
+  ]
   const verdict = priceCents <= 0
     ? { label: 'Set a selling price', color: 'rgb(var(--fg-rgb) / 0.4)', bg: 'rgb(var(--fg-rgb) / 0.04)' }
-    : net > 0 ? { label: '✓ Profitable', color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.16)' }
-    : cm > 0  ? { label: '⚠ Covers food, loses opex', color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.10)' }
-    :           { label: '✗ Loses every plate', color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.10)' }
+    : net > 0 ? { label: 'Profitable', color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.16)' }
+    : cm > 0  ? { label: 'Covers food, loses opex', color: 'var(--erp-warning)', bg: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)' }
+    :           { label: 'Loses every plate', color: 'var(--erp-danger)', bg: 'color-mix(in srgb, var(--erp-danger) 10%, transparent)' }
 
   return (
     <div className="min-h-screen bg-s-bg text-s-text">
@@ -200,11 +231,27 @@ export default function PlatePricingPage() {
         <div className="space-y-4">
           <section className="rounded-xl border border-s-border bg-s-surface p-5">
             <h2 className="text-base font-black mb-2">Plate cost</h2>
-            <Line label="Ingredient subtotal" value={fmtPkrWhole(cost.totalIngredientCents)} />
-            <Line op="+" label={`Q factor (${recipe.qFactorPct}%)`} value={fmtPkrWhole(cost.qFactorCents)} dim />
-            <Line op="=" label="Total recipe cost" value={fmtPkrWhole(cost.totalRecipeCents)} bold />
-            <Line op="÷" label={`Portions (${recipe.servings})`} value="" dim />
-            <Line op="=" label="Plate cost" value={fmtPkrWhole(plate)} bold color="var(--erp-success)" />
+            <Line label="Food and drinks (every sale)" value={fmtPkrWhole(standard)} />
+            {packagingLines.length > 0
+              ? packagingLines.map((l) => (
+                <Line key={l.id} op="+" label={`Packaging: ${l.name} (${l.quantity} ${l.unit})`} value={fmtPkrWhole(l.ingredientCostCents)} dim />
+              ))
+              : hasMc && <Line op="+" label="Packaging section" value={packCents > 0 ? fmtPkrWhole(packCents) : 'none'} dim />}
+            {hasMc && (
+              <p className="text-[10px] text-s-dim pl-5 pb-1">
+                {servesInPackaging
+                  ? 'This brand serves in packaging — every order uses it.'
+                  : 'Used on takeaway and delivery, and on dine-in when staff tap Box given.'}
+              </p>
+            )}
+            {hasMc && <Line op="+" label={`Q factor (${recipe.qFactorPct}%) — in menu pricing, not stock`} value={fmtPkrWhole(qCents)} dim />}
+            <Line op="=" label={servesInPackaging ? 'Plate cost (with its packaging)' : 'Plate cost (dine-in)'} value={fmtPkrWhole(plate)} bold color="var(--erp-success)" />
+            {hasMc && (
+              <div className="mt-2 border-t border-s-border pt-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Material cost by order type (Q not included)</p>
+                {byType.map((t) => <Line key={t.label} label={t.label} value={fmtPkrWhole(t.mc)} dim />)}
+              </div>
+            )}
           </section>
 
           <section className="rounded-xl border border-s-border bg-s-surface p-5">
@@ -233,7 +280,7 @@ export default function PlatePricingPage() {
 
           {/* Break-even volume — where labor/rent stops costing and plates
               become pure margin. Overheads are fixed per month; each plate
-              contributes (price − plate cost − packaging); the crossover is
+              contributes (price − plate cost); the crossover is
               overheads ÷ contribution. */}
           <section className="rounded-xl border border-s-border bg-s-surface p-5">
             <h2 className="text-base font-black mb-1">Break-even volume</h2>
@@ -300,16 +347,12 @@ export default function PlatePricingPage() {
             </div>
             <div className="mt-3 pt-3 border-t border-s-border grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-s-muted block mb-1">Packaging % of price</span>
-                <Num value={packaging} onChange={setPackaging} placeholder="8" className={inputCls + ' text-right'} />
-              </label>
-              <label className="block">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-s-muted block mb-1">Target net profit %</span>
                 <Num value={targetProfit} onChange={setTargetProfit} placeholder="25" className={inputCls + ' text-right'} />
               </label>
             </div>
             <div className="mt-2">
-              <Line label="Break-even price (covers plate + opex + packaging)" value={fmtPkrWhole(breakEvenCents)} dim />
+              <Line label="Break-even price (covers plate + opex)" value={fmtPkrWhole(breakEvenCents)} dim />
               <Line label={`Price for ${targetProfit ?? 25}% net profit`} value={fmtPkrWhole(profitTargetCents)} dim />
             </div>
           </section>
@@ -321,20 +364,24 @@ export default function PlatePricingPage() {
                 <Num value={pricePkr} onChange={setPricePkr} placeholder="set price" className={inputCls + ' text-right text-lg font-black'} />
               </label>
               <div className="text-right">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Actual food cost</p>
-                <p className="text-xl font-black" style={{ color: fcColor(actualFc) }}>
-                  {actualFc !== null ? fmtPct(actualFc) : '—'}
+                <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Plate cost % of price</p>
+                <p className="text-xl font-black" style={{ color: fcColor(platePct, fcPct) }}>
+                  {platePct !== null ? fmtPct(platePct) : '—'}
                 </p>
               </div>
             </div>
             <Line label="Selling price" value={fmtPkrWhole(priceCents)} bold />
             <Line op="−" label="Plate cost" value={fmtPkrWhole(plate)} />
-            <Line op="−" label={`Packaging (${packaging ?? 8}%)`} value={fmtPkrWhole(packagingCost)} dim />
             <Line op="=" label="Contribution margin" bold
               value={`${fmtPkrWhole(cm)} · ${fmtPct(cmPct)}`} color={cm >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)'} />
             <Line op="−" label="OpEx / portion" value={fmtPkrWhole(opex)} dim />
             <Line op="=" label="Net profit / portion" bold
               value={`${fmtPkrWhole(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)'} />
+            {hasMc && priceCents > 0 && !servesInPackaging && packCents > 0 && (
+              <p className="text-[10px] text-s-dim mt-1">
+                Takeaway and delivery also use the packaging: contribution {fmtPkrWhole(priceCents - target.takeout - qCents)} a portion.
+              </p>
+            )}
 
             <button onClick={() => save.mutate()} disabled={save.isPending}
               className="mt-4 w-full rounded-lg bg-primary text-primary-on py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">

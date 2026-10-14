@@ -15,11 +15,17 @@
 // RLS_ENFORCE is read when lib/prisma.ts is first evaluated, and the shared
 // setup already loaded it — so the modules are reset and imported again here.
 // Requires a disposable database (DATABASE_URL must contain "test").
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import type { Prisma } from '@prisma/client'
 
+const before = process.env.RLS_ENFORCE
 process.env.RLS_ENFORCE = '1'
+// One fork runs every file in turn: give the next file the setting it expects.
+afterAll(() => {
+  if (before === undefined) delete process.env.RLS_ENFORCE
+  else process.env.RLS_ENFORCE = before
+})
 
 type Clients = typeof import('../src/lib/prisma.js')
 let prisma: Clients['prisma']
