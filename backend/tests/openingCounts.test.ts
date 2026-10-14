@@ -128,6 +128,12 @@ describe('an opening count', () => {
     expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: received.id } })).currentStock).toBe(2)
   })
 
+  it('the Count page reads what the operator may do from the server', async () => {
+    expect((await call(u.finA!, 'GET', '/crosschecks/physical-counts/capabilities')).json()).toEqual({ canSpotCount: false, canOpeningCount: true, costsHidden: false })
+    expect((await call(u.chefA!, 'GET', '/crosschecks/physical-counts/capabilities')).json()).toEqual({ canSpotCount: true, canOpeningCount: false, costsHidden: false })
+    expect((await call(u.ceoA!, 'GET', '/crosschecks/physical-counts/capabilities')).json()).toMatchObject({ canSpotCount: true, canOpeningCount: true })
+  })
+
   it('a floor manager cannot (403 OPENING_COUNT_ROLE); finance cannot spot-count', async () => {
     const it0 = await newItem(A.tenantId)
     const chef = await opening(u.chefA!, [{ inventoryItemId: it0.id, physicalQty: 1 }])

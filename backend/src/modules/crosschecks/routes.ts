@@ -376,6 +376,17 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // What the signed-in operator may do on the Count page (the admin shows the
+  // Opening picker only when canOpeningCount — no role list in the frontend).
+  fastify.get('/physical-counts/capabilities', { preHandler: requireAuth(...COUNT_POSTERS) }, async (req) => {
+    const role = req.staffUser!.role as string
+    return {
+      canSpotCount: (STOCK_COUNTERS as string[]).includes(role),
+      canOpeningCount: (OPENING_COUNT_ROLES as string[]).includes(role),
+      costsHidden: costsHiddenFor(req),
+    }
+  })
+
   // A weighted random sample of the active company's high-value items to
   // count today: weight = on-hand lot value × 30-day usage (value), so
   // expensive, fast-moving stock comes up most; items counted in the last 7
