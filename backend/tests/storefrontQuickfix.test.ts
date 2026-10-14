@@ -134,7 +134,7 @@ afterAll(async () => {
 const get = (url: string, u: U) => app.inject({ method: 'GET', url: `/api/v1/concepts${url}`, headers: auth(u) })
 // The Storefront editor's list (frontend/admin/src/lib/content.ts contentApi.brands).
 const sf = (path: string, u: U, extra = '') => get(`${path}?view=storefront${extra}`, u)
-const NARROW_KEYS = ['id', 'isActive', 'logoUrl', 'name', 'primaryColor', 'slug', 'tenantId']
+const NARROW_KEYS = ['id', 'isActive', 'logoUrl', 'mascotUrl', 'name', 'primaryColor', 'slug', 'tenantId', 'wordmarkUrl']
 
 describe('GET /concepts for Storefront editors', () => {
   it("marketing lists its own company's active brands, narrow fields only", async () => {
