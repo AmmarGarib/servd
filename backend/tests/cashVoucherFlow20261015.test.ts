@@ -97,7 +97,8 @@ async function paid(body: Record<string, unknown> = {}, boxKey = 'A'): Promise<R
   const v = await approved(body)
   const r = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box[boxKey] })
   expect(r.statusCode, r.body).toBe(200)
-  return r.json().voucher as Row
+  // The holder confirms "Cash received" (digital receipt, owner 2026-10-15).
+  return ok('cookA', 'POST', `${V}/${v.id}/confirm-received`)
 }
 async function upload(key: string, id: string, file = doc('bill.pdf', PDF, 'application/pdf')): Promise<string> {
   const r = await call(key, 'POST', `${V}/${id}/documents`, file)
@@ -223,6 +224,17 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     expect(await floatOf(box['A']!)).toBe(startFloat - 12_000)
     expect(await balanceOf('1357')).toBe(start1357 + 12_000)
     expect((await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })).json().error.code).toBe('ALREADY_PAID')
+
+    // Digital receipt: the voucher shows the payer; Received by is the holder until they confirm, and finance
+    // cannot verify before the holder confirms. Only the holder confirms, once.
+    expect(pb.voucher).toMatchObject({ paidByName: `${P} cashA`, receiverName: `${P} cookA`, cashReceivedAt: null, canConfirmReceived: false })
+    const unconfirmed = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
+    expect(unconfirmed.json().error.code).toBe('CASH_RECEIPT_NOT_CONFIRMED')
+    expect((await call('finA', 'POST', `${V}/${v.id}/confirm-received`)).json().error.code).toBe('NOT_HOLDER')
+    expect((await call('cookA', 'GET', `${V}/${v.id}`)).json()).toMatchObject({ canConfirmReceived: true })
+    const conf = await ok('cookA', 'POST', `${V}/${v.id}/confirm-received`)
+    expect(conf).toMatchObject({ cashReceivedById: U['cookA']!.id, cashReceivedByName: `${P} cookA`, receiverName: `${P} cookA`, canConfirmReceived: false })
+    expect((await call('cookA', 'POST', `${V}/${v.id}/confirm-received`)).json().error.code).toBe('ALREADY_CONFIRMED')
 
     // Verify without documents → 422.
     const early = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
@@ -388,6 +400,8 @@ describe('finance raises a voucher for an outside payee, with a discount', () =>
     await ok('ceoA', 'POST', `${V}/${v.id}/approve`)
     const pay = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(pay.statusCode, pay.body).toBe(200)
+    // An outside payee has no login: the pay records the hand-over; Received by is the payee.
+    expect(pay.json().voucher).toMatchObject({ receiverName: 'Ali Electric', paidByName: `${P} cashA`, cashReceivedById: U['cashA']!.id, canConfirmReceived: false })
     await upload('cashA', v.id, doc('quote.pdf', PDF, 'application/pdf'))
     // The preparer may not verify their own voucher; another finance person does.
     expect((await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})).json().error.code).toBe('SELF_APPROVE')

@@ -179,6 +179,8 @@ export interface CashRequestCaps {
   canRecordSpend: boolean
   /** Finance verifies the documents and books the expense (POST /:id/verify-docs). */
   canVerify: boolean
+  /** The holder confirms they received the cash (POST /:id/confirm-received). */
+  canConfirmReceived: boolean
   canExport: boolean
   // Legacy H3 rows (expenseOnVerify false), paid before 2026-10-15:
   canUploadReceipts: boolean
@@ -223,7 +225,9 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canPay: s === 'approved' && (viewer.keeper || custodian || (!v.boxId && viewer.payBoxTenants.has(v.tenantId))),
     canUpload: ((s === 'approved' || newPaid) && docsParty) || (s === 'posted' && viewer.keeper),
     canRecordSpend: newPaid && docsParty,
-    canVerify: newPaid && viewer.financeApprover && !own && supportingCountOf(v) > 0,
+    canVerify: newPaid && viewer.financeApprover && !own && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
+    canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt
+      && (s === 'disbursed' || s === 'posted' || s === 'settled' || s === 'converted'),
     canExport: ['approved', 'disbursed', 'settled', 'posted', 'converted'].includes(s),
     canUploadReceipts,
     canSettle: canUploadReceipts && remaining > 0,
@@ -267,6 +271,7 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
     for (const id of [
       v.preparedById, v.hodSignedById, v.directorSignedById, v.rejectedById, v.cancelledById, v.disbursedById, v.payeeUserId,
       v.box?.custodianId ?? null, v.submittedById, v.financeApprovedById, v.returnedById, v.docsVerifiedById, v.postedById,
+      v.cashReceivedById,
       ...v.attachments.map((a) => a.uploadedById),
     ]) {
       if (id) userIds.add(id)
@@ -332,6 +337,11 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       disbursedByName: nameOf(v.disbursedById),
       docsVerifiedByName: nameOf(v.docsVerifiedById),
       postedByName: nameOf(v.postedById),
+      cashReceivedByName: nameOf(v.cashReceivedById),
+      /** The digital voucher (no signatures, owner 2026-10-15): who paid, and who received — the holder (or the
+       *  outside payee) until confirmed, then the confirmer. */
+      paidByName: v.disbursedById ? nameOf(v.disbursedById) : null,
+      receiverName: v.kind === 'expense' ? v.payeeName : ((v.cashReceivedById ? nameOf(v.cashReceivedById) : nameOf(v.payeeUserId)) ?? v.payeeName),
       isMine: v.preparedById === viewer.id || v.payeeUserId === viewer.id,
       ...(await capsOf(viewer, v)),
     }
@@ -1056,6 +1066,29 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   // Cr 1011 for the amount — the expense is booked when finance verifies the
   // documents. 400 INSUFFICIENT_FLOAT and 422 PERIOD_LOCKED roll everything
   // back.
+  // POST /:id/confirm-received — the holder confirms "Cash received" (owner, 2026-10-15: the whole process is
+  // digital, no signatures). Only the holder of a paid request; once (409 ALREADY_CONFIRMED). Their name then
+  // shows in the voucher's Received by box; finance verifies only after it (422 CASH_RECEIPT_NOT_CONFIRMED).
+  fastify.post<{ Params: { id: string } }>('/:id/confirm-received', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (v.kind !== 'request' || v.payeeUserId !== viewer.id) {
+      throw new AppError('NOT_HOLDER', 'Only the person who took this cash confirms they received it', 403)
+    }
+    if (!['disbursed', 'posted', 'settled', 'converted'].includes(v.status)) {
+      throw wrongStatus('VOUCHER_NOT_PAID', v, 'cash is confirmed once the cashier has paid it')
+    }
+    if (v.cashReceivedAt) throw new AppError('ALREADY_CONFIRMED', `You already confirmed receiving the cash of ${v.number}`, 409)
+    const now = new Date()
+    const res = await prisma.cashVoucher.updateMany({
+      where: { id: v.id, payeeUserId: viewer.id, cashReceivedAt: null },
+      data: { cashReceivedById: viewer.id, cashReceivedAt: now },
+    })
+    if (res.count === 0) throw new AppError('ALREADY_CONFIRMED', `You already confirmed receiving the cash of ${v.number}`, 409)
+    await auditVoucher(req, 'confirm_received', v, { cashReceivedAt: now.toISOString() })
+    return detailOf(v.id, viewer)
+  })
+
   fastify.post<{ Params: { id: string } }>('/:id/pay', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const body = z.object({ boxId: z.string().min(1).max(64).optional() }).parse(req.body ?? {})
     const v = await loadVoucher(req, req.params.id)
@@ -1104,7 +1137,11 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const result = await prisma.$transaction(async (tx) => {
       const claimed = await tx.cashVoucher.updateMany({
         where: { id: v.id, tenantId: v.tenantId, status: 'approved' },
-        data: { status: 'disbursed', boxId: box.id, disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true },
+        data: {
+          status: 'disbursed', boxId: box.id, disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true,
+          // An outside payee has no login: the payer's record of the hand-over is the receipt (kind expense).
+          ...(v.kind === 'expense' && { cashReceivedById: me, cashReceivedAt: now }),
+        },
       })
       if (claimed.count === 0) {
         const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true } })

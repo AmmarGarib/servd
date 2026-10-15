@@ -546,6 +546,9 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
     if (v.preparedById === viewer.id || v.payeeUserId === viewer.id) {
       throw new AppError('SELF_APPROVE', 'You raised or hold this voucher — another finance person verifies its documents', 409)
     }
+    if (v.kind === 'request' && !v.cashReceivedAt) {
+      throw new AppError('CASH_RECEIPT_NOT_CONFIRMED', `${v.number}: the person who took the cash has not confirmed receiving it yet`, 422)
+    }
     if (!v.attachments.some((a) => a.kind === 'supporting')) {
       throw new AppError('DOCS_REQUIRED', `Cash voucher ${v.number} has no supporting document yet — they are uploaded first`, 422)
     }

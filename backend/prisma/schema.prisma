@@ -7726,6 +7726,10 @@ model CashVoucher {
   postedAt             DateTime?
   postedById           String?
   postedJournalEntryId String?         @unique // the Dr 6xxx / Cr 1357 entry (reference cashvoucher.post:<id>) — posts once
+  // Digital receipt (owner, 2026-10-15: "no physical signatures"): the holder confirms "Cash received" (a request), or
+  // the payer's pay records it for an outside payee (kind expense). Required before finance verifies a request.
+  cashReceivedById     String?
+  cashReceivedAt       DateTime?
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).

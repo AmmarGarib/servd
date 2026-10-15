@@ -30,7 +30,9 @@ ALTER TABLE "cash_vouchers"
   ADD COLUMN "docsVerifiedAt" TIMESTAMP(3),
   ADD COLUMN "postedAt" TIMESTAMP(3),
   ADD COLUMN "postedById" TEXT,
-  ADD COLUMN "postedJournalEntryId" TEXT;
+  ADD COLUMN "postedJournalEntryId" TEXT,
+  ADD COLUMN "cashReceivedById" TEXT,
+  ADD COLUMN "cashReceivedAt" TIMESTAMP(3);
 
 CREATE UNIQUE INDEX "cash_vouchers_postedJournalEntryId_key" ON "cash_vouchers"("postedJournalEntryId");
 CREATE INDEX "cash_vouchers_tenantId_kind_status_idx" ON "cash_vouchers"("tenantId", "kind", "status");
