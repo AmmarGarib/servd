@@ -74,7 +74,9 @@ export const DEFAULT_GRATUITY: GratuitySettings = {
 }
 
 export const DEFAULT_HR_SETTINGS: HrSettings = {
-  workingDaysPerMonth: 26,
+  // Pay basis (owner HR-1, 2026-10-15): gross ÷ 30, as in Danish's sheet — 26 is
+  // the company's trading days, not the pay basis.
+  workingDaysPerMonth: 30,
   hoursPerDay: 8,
   otMultiplier: 2,
   eobi: { enabled: false, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: null },

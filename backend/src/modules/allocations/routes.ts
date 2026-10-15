@@ -7,6 +7,7 @@ import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { requireActiveCompany, assertConceptAttachable } from '../financePlanning/companyRefs.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 
 const ruleSchema = z.object({
   name: z.string().min(1),
@@ -34,7 +35,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
 
   fastify.get('/rules', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     return prisma.costAllocationRule.findMany({
-      where: await scopeTenantWhere(req, 'read'),
+      where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       include: { weights: { include: { concept: { select: { name: true, slug: true } } } } },
       orderBy: { sourceAccountCode: 'asc' },
     })
@@ -58,34 +59,40 @@ export async function allocationRoutes(fastify: FastifyInstance) {
       await assertConceptAttachable(req, w.conceptId)
     }
 
-    // One rule per source account PER COMPANY — both companies can split
-    // their own 6010 rent without touching each other's rule.
-    const key = { tenantId_sourceAccountCode: { tenantId, sourceAccountCode: body.sourceAccountCode } }
-    const before = await prisma.costAllocationRule.findUnique({
-      where: key,
+    // One LIVE rule per source account PER COMPANY — both companies can split
+    // their own 6010 rent without touching each other's rule. A rule in the
+    // Trash does not count (partial unique cost_allocation_rules_tenant_source_live_key
+    // WHERE "deletedAt" IS NULL): saving makes a new rule, and restoring the
+    // old one later answers 409 while this one is live.
+    const before = await prisma.costAllocationRule.findFirst({
+      where: { tenantId, sourceAccountCode: body.sourceAccountCode, deletedAt: null },
       include: { weights: true },
     })
-    const rule = await prisma.costAllocationRule.upsert({
-      where: key,
-      create: {
-        tenantId,
-        name: body.name,
-        sourceAccountCode: body.sourceAccountCode,
-        driver: body.driver,
-        isActive: body.isActive,
-        weights: { create: body.weights },
-      },
-      update: {
-        name: body.name,
-        driver: body.driver,
-        isActive: body.isActive,
-        weights: {
-          deleteMany: {},
-          create: body.weights,
-        },
-      },
-      include: { weights: true },
-    })
+    const rule = before
+      ? await prisma.costAllocationRule.update({
+          where: { id: before.id },
+          data: {
+            name: body.name,
+            driver: body.driver,
+            isActive: body.isActive,
+            weights: {
+              deleteMany: {},
+              create: body.weights,
+            },
+          },
+          include: { weights: true },
+        })
+      : await prisma.costAllocationRule.create({
+          data: {
+            tenantId,
+            name: body.name,
+            sourceAccountCode: body.sourceAccountCode,
+            driver: body.driver,
+            isActive: body.isActive,
+            weights: { create: body.weights },
+          },
+          include: { weights: true },
+        })
     await audit({ category: 'accounting',
       action: before ? 'allocation.update' : 'allocation.create',
       entity: 'CostAllocationRule',
@@ -103,11 +110,28 @@ export async function allocationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
       const rule = await prisma.costAllocationRule.findFirst({
-        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-        select: { id: true },
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+        select: { id: true, tenantId: true, name: true, sourceAccountCode: true, isActive: true, _count: { select: { runs: true } } },
       })
       if (!rule) throw new NotFoundError('CostAllocationRule', req.params.id)
-      await prisma.costAllocationRule.delete({ where: { id: rule.id } })
+      // Soft delete into the Trash (modules/trash). A hard delete of a rule
+      // with runs used to 500 on the runs' FK; its runs posted to the ledger,
+      // so such a rule is never erased. isActive goes off too, so an older
+      // image (after a rollback) can never run it.
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'cost_allocation_rule', entityId: rule.id, tenantId: rule.tenantId,
+          title: rule.name, subtitle: `Splits ${rule.sourceAccountCode}`, reason: trashReasonOf(req),
+          meta: { previous: { isActive: rule.isActive }, hasRuns: rule._count.runs > 0 },
+        })
+        await tx.costAllocationRule.update({ where: { id: rule.id }, data: { deletedAt: new Date(), isActive: false } })
+      })
+      await audit({ category: 'accounting',
+        action: 'allocation.delete', entity: 'CostAllocationRule', entityId: rule.id,
+        userId: req.staffUser!.id, tenantId: rule.tenantId, userEmail: req.staffUser!.email,
+        before: { name: rule.name, sourceAccountCode: rule.sourceAccountCode }, after: null,
+        metadata: { ip: req.ip },
+      })
       return reply.status(204).send()
     },
   )
@@ -120,7 +144,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
       // Resolve the rule inside the operator's companies first; the run then
       // posts to THE RULE'S company's ledger, never the caller's active one.
       const rule = await prisma.costAllocationRule.findFirst({
-        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         select: { id: true, tenantId: true },
       })
       if (!rule) throw new NotFoundError('CostAllocationRule', req.params.id)

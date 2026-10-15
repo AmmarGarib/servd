@@ -105,7 +105,7 @@ export default function HrSettingsPage() {
         <EmptyCtx.Provider value={mark}>
         <div ref={rootRef} className="grid lg:grid-cols-2 gap-4 pb-24">
           <Panel title="Pay & overtime">
-            <Num label="Working days per month" max={31} help="Daily rate = gross ÷ this. Absences are deducted at the daily rate." v={s.workingDaysPerMonth} onSet={(v) => setS({ ...s, workingDaysPerMonth: v })} />
+            <Num label="Pay days per month" max={31} help="Daily rate = gross ÷ this (30, as in the HR payroll sheet). Absences, unpaid leave and lates are deducted at the daily rate." v={s.workingDaysPerMonth} onSet={(v) => setS({ ...s, workingDaysPerMonth: v })} />
             <Num label="Hours per day" max={24} help="Hourly rate = daily rate ÷ this." v={s.hoursPerDay} onSet={(v) => setS({ ...s, hoursPerDay: v })} />
             <Num label="Overtime multiplier" help="OT = hours × hourly rate × this. Factories Act default is 2." v={s.otMultiplier} step="0.25" onSet={(v) => setS({ ...s, otMultiplier: v })} />
             <Check label="Deduct absent days from pay" v={s.deductAbsences} onSet={(v) => setS({ ...s, deductAbsences: v })} />

@@ -42,16 +42,18 @@ import { WHT_SECTIONS } from '../../lib/withholding.js'
 import { getAssetClasses, classOf, SMALLWARE_TYPES, SMALLWARE_TYPE_LABELS } from '../fixedAssets/classes.js'
 import { FA_WRITER_ROLES, FA_APPROVER_ROLE, applyEvent, isFuturePktDay } from '../fixedAssets/events.js'
 import { lastCompletedPeriodPkt } from '../fixedAssets/schedule.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 
 // Capital (the CapEx tracker and the old capital ledger) is the Finance
 // workspace's: finance reads it as well as the manager tiers. Every /finance
 // route is narrowed by the 'capital' module (lib/moduleAccess.ts), so a
 // FOH/BOH manager without it is refused.
-const CAPITAL_READERS = FINANCE_TEAM
+export const CAPITAL_READERS = FINANCE_TEAM
 // Working the tracker — projects, lines, quotes, instalments, Quick buy,
 // deposit returns — is finance's normal job (wave 3, UI-07). An instalment
 // marked paid posts in the same transaction (capexPosting.ts).
-const CAPITAL_WRITERS = FINANCE_TEAM
+export const CAPITAL_WRITERS = FINANCE_TEAM
 // Preparing a capitalisation and running the prepaid release: the
 // fixed-asset writers (fixedAssets/events.ts FA_WRITER_ROLES — one list).
 // The CEO approves every capitalisation (FA_APPROVER_ROLE).
@@ -248,6 +250,25 @@ async function lineHasPostings(tenantId: string | null, lineId: string): Promise
     }
   }
   return false
+}
+
+/**
+ * True when an instalment of any of these lines EVER reached the books (a
+ * posting, live or reversed). Read before a line / project goes to the Trash:
+ * such a line is never erased from it (modules/trash/providers/masters/finance.ts).
+ */
+async function linesEverPosted(tenantId: string | null, lineIds: string[]): Promise<boolean> {
+  if (!tenantId || lineIds.length === 0) return false
+  const ids = (await prisma.capexPayment.findMany({ where: { lineId: { in: lineIds } }, select: { id: true } })).map((p) => p.id)
+  if (ids.length === 0) return false
+  const n = await prisma.journalEntry.count({
+    where: {
+      tenantId,
+      OR: [CAPEX_SOURCE, DEPOSIT_RETURN_SOURCE, DEPOSIT_RECLASS_SOURCE].flatMap((src) =>
+        ids.flatMap((id) => [{ reference: `${src}:${id}` }, { reference: { startsWith: `${src}:${id}@` } }])),
+    },
+  })
+  return n > 0
 }
 
 /** 409 LINE_CAPITALISED when the line is on the register or its capitalisation waits for the CEO. */
@@ -491,7 +512,17 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
           throw new AppError('PROJECT_HAS_POSTINGS', 'This project has instalments or assets on the books — reverse them (or void the assets) before deleting it', 409)
         }
       }
-      await prisma.capexProject.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
+      // To the Trash (modules/trash): anything of it that ever reached the
+      // books (a reversed instalment) keeps it for ever — never erasable.
+      const everPosted = await linesEverPosted(owned.tenantId, owned.lines.map((l) => l.id))
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'capex_project', entityId: owned.id, tenantId: owned.tenantId, conceptId: owned.conceptId,
+          title: owned.name, subtitle: `${owned.lines.length} line(s)`, reason: trashReasonOf(req),
+          meta: { everPosted },
+        })
+        await tx.capexProject.update({ where: { id: owned.id }, data: { deletedAt: new Date() } })
+      })
       return reply.status(204).send()
     },
   )
@@ -588,13 +619,28 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const owned = await prisma.capexLine.findFirst({
         where: { id: req.params.lineId, project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-        include: { project: { select: { tenantId: true } } },
+        include: { project: { select: { tenantId: true, conceptId: true, name: true } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
       if (await lineHasPostings(owned.project.tenantId, owned.id)) {
         throw new AppError('LINE_HAS_POSTINGS', 'This line has instalments or an asset on the books — reverse them (or void the asset) before deleting it', 409)
       }
-      await prisma.capexLine.delete({ where: { id: req.params.lineId } })
+      // To the Trash WITH its quotes and instalments (they go with the line).
+      const everPosted = await linesEverPosted(owned.project.tenantId, [owned.id])
+      await prisma.$transaction(async (tx) => {
+        const [quotes, payments] = await Promise.all([
+          tx.capexQuote.findMany({ where: { lineId: owned.id } }),
+          tx.capexPayment.findMany({ where: { lineId: owned.id } }),
+        ])
+        const { project: _p, ...line } = owned
+        await moveToTrash(tx, req, {
+          type: 'capex_line', entityId: owned.id, tenantId: owned.project.tenantId, conceptId: owned.project.conceptId,
+          title: owned.item, subtitle: owned.project.name, parent: { type: 'capex_project', id: owned.projectId },
+          reason: trashReasonOf(req), meta: { everPosted },
+          snapshot: takeSnapshot('CapexLine', line, { CapexQuote: quotes, CapexPayment: payments }),
+        })
+        await tx.capexLine.delete({ where: { id: owned.id } })
+      })
       return reply.status(204).send()
     },
   )
@@ -653,9 +699,18 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const owned = await prisma.capexQuote.findFirst({
         where: { id: req.params.quoteId, line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } },
+        include: { line: { select: { item: true, project: { select: { tenantId: true, conceptId: true } } } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Quote not found in your active company' } })
-      await prisma.capexQuote.delete({ where: { id: req.params.quoteId } })
+      const { line, ...quote } = owned
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'capex_quote', entityId: owned.id, tenantId: line.project.tenantId, conceptId: line.project.conceptId,
+          title: `${owned.vendor} quote`, subtitle: line.item, parent: { type: 'capex_line', id: owned.lineId },
+          reason: trashReasonOf(req), snapshot: takeSnapshot('CapexQuote', quote),
+        })
+        await tx.capexQuote.delete({ where: { id: owned.id } })
+      })
       return reply.status(204).send()
     },
   )
@@ -791,18 +846,33 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const p = await prisma.capexPayment.findFirst({
         where: { id: req.params.paymentId, line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } },
-        include: { line: { select: { project: { select: { tenantId: true } } } } },
+        include: { line: { select: { item: true, project: { select: { tenantId: true, conceptId: true } } } } },
       })
       if (!p) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
       const tenantId = p.line.project.tenantId
+      const reason = trashReasonOf(req)
+      const { line, ...payment } = p
       await prisma.$transaction(async (tx) => {
         await assertPaymentRemovable(p.id, tx)
         // A posted instalment is reversed before its row goes.
         if (tenantId) {
           await syncSourcePosting({ tenantId, sourceType: CAPEX_SOURCE, id: p.id, desired: null, postedBy: req.staffUser!.id, reason: 'Capex payment deleted', tx })
         }
+        // F3: the instalment is kept for ever in the Trash (never restored,
+        // never erased) — in the reversal's transaction, before the row goes.
+        await moveToTrash(tx, req, {
+          type: 'capex_payment', entityId: p.id, tenantId, conceptId: line.project.conceptId,
+          title: `${p.label} instalment — PKR ${(toCents(p.amountCents) / 100).toLocaleString('en-PK')}`, subtitle: line.item,
+          parent: { type: 'capex_line', id: p.lineId }, reason,
+          snapshot: takeSnapshot('CapexPayment', payment),
+        })
         await tx.capexPayment.delete({ where: { id: p.id } })
         await recalcLinePaid(p.lineId, tx)
+      })
+      await audit({
+        category: 'accounting', action: 'capex.payment.delete', entity: 'CapexPayment', entityId: p.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+        before: payment, after: null, metadata: { lineId: p.lineId, reason },
       })
       return reply.status(204).send()
     },

@@ -65,6 +65,8 @@ import { assertMoneyFits, sumCents, toCents } from '../../lib/money.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay, pktToday } from './dates.js'
 import { AUTHORITIES, isAuthorityKey, outputTaxCodeFor, type AuthorityKey } from './taxAuthorities.js'
+import { moveToTrash } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 // salesTaxReturn.ts may import from this file too (customerWithheldAvailable):
 // keep every use of these imports inside functions, never at module top level,
 // so the import cycle stays safe.
@@ -599,6 +601,19 @@ export async function voidTaxPayment(input: { scope: Prisma.SalesTaxPaymentWhere
   const row = await prisma.salesTaxPayment.findFirst({ where: { id: input.id, ...input.scope } })
   if (!row) throw new NotFoundError('SalesTaxPayment', input.id)
   await prisma.$transaction(async (tx) => {
+    // F1: the voided payment is kept for ever in the Trash (type
+    // 'sales_tax_payment' — never restored, never erased; "Recover as copy"
+    // prefills a new one without its CPR or posting), in the reversal's
+    // transaction, BEFORE the row goes.
+    const authority = isAuthorityKey(row.authority) ? AUTHORITIES[row.authority].label : row.authority.toUpperCase()
+    await moveToTrash(tx, { userId: input.userId }, {
+      type: 'sales_tax_payment', entityId: row.id, tenantId: row.tenantId,
+      title: `${authority} sales tax payment — ${fmtPktDate(row.periodFrom).slice(0, 7)}`,
+      subtitle: `PKR ${(toCents(row.paidCents) / 100).toLocaleString('en-PK')}${row.cprNumber ? ` · CPR ${row.cprNumber}` : ''}`,
+      reason: input.reason,
+      meta: { linked: row.linked, journalEntryId: row.journalEntryId },
+      snapshot: takeSnapshot('SalesTaxPayment', row),
+    })
     const gone = await tx.salesTaxPayment.deleteMany({ where: { id: row.id } })
     if (gone.count === 0) throw new NotFoundError('SalesTaxPayment', row.id)
     // A linked entry belongs to whoever posted it: unlinking leaves it as it

@@ -25,6 +25,8 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { liveLink } from '../../lib/headOffice.js'
 import { assertMonth } from '../intercompany/fleet.js'
 import { assertMoneyFits } from '../../lib/money.js'
+import { moveToTrash } from '../../lib/trash.js'
+import { restoreSnapshot, takeSnapshot, type Snapshot } from '../trash/snapshot.js'
 
 export type Tx = Prisma.TransactionClient
 export type Db = Tx | PrismaClient
@@ -243,9 +245,14 @@ export async function createSplitVersion(tx: Tx, input: CreateSplitInput): Promi
 /**
  * Delete a version — only while no recharge run (of any status) references it
  * (409 SPLIT_IN_USE). Draft runs from its month on are marked stale (the
- * months fall back to the previous version).
+ * months fall back to the previous version). The version goes to the Trash
+ * (modules/trash, type 'recharge_split', the CEO's) WITH its lines, in this
+ * transaction, when `actorId` is given.
  */
-export async function deleteSplitVersion(tx: Tx, input: { hoId: string; splitId: string }): Promise<{ split: SplitVersion; staleRuns: number }> {
+export async function deleteSplitVersion(
+  tx: Tx,
+  input: { hoId: string; splitId: string; actorId?: string | null; reason?: string | null },
+): Promise<{ split: SplitVersion; staleRuns: number }> {
   await lockSplits(tx, input.hoId)
   const row = await tx.rechargeSplit.findFirst({ where: { id: input.splitId, tenantId: input.hoId }, include: SPLIT_INCLUDE })
   if (!row) throw new NotFoundError('Split', input.splitId)
@@ -253,7 +260,55 @@ export async function deleteSplitVersion(tx: Tx, input: { hoId: string; splitId:
   if (runs > 0) {
     throw new AppError('SPLIT_IN_USE', `${runs} recharge run(s) use this % table — it can no longer be deleted (add a new version instead)`, 409)
   }
+  if (input.actorId !== undefined) {
+    const full = await tx.rechargeSplit.findUniqueOrThrow({ where: { id: row.id } })
+    const lines = await tx.rechargeSplitLine.findMany({ where: { splitId: row.id }, orderBy: { companyTenantId: 'asc' } })
+    const total = lines.reduce((t, l) => t + l.shareBps, 0)
+    await moveToTrash(tx, { userId: input.actorId }, {
+      type: 'recharge_split', entityId: row.id, tenantId: input.hoId,
+      title: `% table from ${row.effectiveFrom}`, subtitle: `${lines.length} compan${lines.length === 1 ? 'y' : 'ies'} · ${(total / 100).toFixed(2)}%`,
+      reason: input.reason ?? null,
+      snapshot: takeSnapshot('RechargeSplit', full, { RechargeSplitLine: lines }),
+    })
+  }
   await tx.rechargeSplit.delete({ where: { id: row.id } })
   const staleRuns = await markDraftRunsStale(tx, input.hoId, row.effectiveFrom)
   return { split: present(row), staleRuns }
+}
+
+/**
+ * Restore a version from the Trash (modules/trash, type 'recharge_split') with
+ * its id and lines, under the SAME rules as a new version: every company still
+ * linked (422 COMPANY_NOT_LINKED), no submitted / posted run from its month on
+ * (409 SPLIT_PERIOD_IN_USE), no other version starting that month (409
+ * SPLIT_EXISTS); draft runs from its month on are marked stale.
+ */
+export async function restoreSplitVersionTx(tx: Tx, input: { hoId: string; snapshot: Snapshot }): Promise<string> {
+  const row = input.snapshot.row as { effectiveFrom?: unknown }
+  const effectiveFrom = String(row.effectiveFrom ?? '')
+  const lines = (input.snapshot.children?.RechargeSplitLine ?? []).map((l) => ({
+    companyTenantId: String(l.companyTenantId ?? ''), shareBps: Number(l.shareBps),
+  }))
+  assertMonth(effectiveFrom, 'effectiveFrom')
+  assertSplitLines(lines)
+  await lockSplits(tx, input.hoId)
+  for (const l of lines) {
+    if (!(await liveLink(input.hoId, l.companyTenantId, tx))) {
+      throw new AppError('COMPANY_NOT_LINKED', 'A company in this % table is no longer linked to the head office — add a new version instead', 422)
+    }
+  }
+  const inUse = await tx.rechargeRun.count({
+    where: { tenantId: input.hoId, status: { in: ['submitted', 'posted'] }, period: { gte: effectiveFrom } },
+  })
+  if (inUse > 0) {
+    throw new AppError('SPLIT_PERIOD_IN_USE', `Recharge runs from ${effectiveFrom} on are already submitted or posted — withdraw or reverse those runs first`, 409)
+  }
+  const clash = await tx.rechargeSplit.findUnique({
+    where: { tenantId_effectiveFrom: { tenantId: input.hoId, effectiveFrom } },
+    select: { id: true },
+  })
+  if (clash) throw new AppError('SPLIT_EXISTS', `A % table already starts in ${effectiveFrom} — delete it first`, 409)
+  const id = await restoreSnapshot(tx, input.snapshot, { tenantId: input.hoId })
+  await markDraftRunsStale(tx, input.hoId, effectiveFrom)
+  return id
 }

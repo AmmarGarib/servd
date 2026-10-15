@@ -921,6 +921,12 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       where: { id: att.id, kind: 'receipt', movementId: null, settlementId: null, voucherId: null },
     })
     if (gone.count === 0) throw new AppError('RECEIPT_IN_USE', 'This receipt is on a recorded spend — it cannot be removed', 409)
+    // F10: audited like its cash-voucher sibling (receipt_remove).
+    await audit({
+      category: 'accounting', action: 'pettycash.receipt_remove', entity: 'CashVoucherAttachment', entityId: att.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: att.tenantId,
+      before: { boxId: att.boxId, uploadedById: att.uploadedById }, after: null,
+    })
     return reply.status(204).send()
   })
 

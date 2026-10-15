@@ -32,6 +32,11 @@ const RS = (r: number) => r * 100 // rupees → paisa
 
 // ─── pure logic ─────────────────────────────────────────────────────────────
 
+// These figures were written on a 26-day basis (Rs 52,000 / 26 = Rs 2,000 a day).
+// The default pay basis is 30 days now (owner HR-1); pin 26 here so the sums stay
+// readable, and check the default itself below.
+const S26 = { ...DEFAULT_HR_SETTINGS, workingDaysPerMonth: 26 }
+
 describe('payroll ledger', () => {
   it('books pay to the wages account of the department', () => {
     expect(wageAccountFor('Kitchen')).toBe('6030')
@@ -44,10 +49,10 @@ describe('payroll ledger', () => {
 
 describe('EOBI', () => {
   it('is off by default — companies under 10 employees run payroll without it', () => {
-    expect(eobiContribution(RS(60000), DEFAULT_HR_SETTINGS)).toEqual({ employeeCents: 0, employerCents: 0 })
+    expect(eobiContribution(RS(60000), S26)).toEqual({ employeeCents: 0, employerCents: 0 })
   })
   it('refuses to guess when switched on with no wage base', () => {
-    const r = eobiContribution(RS(60000), mergeSettings({ eobi: { ...DEFAULT_HR_SETTINGS.eobi, enabled: true } }))
+    const r = eobiContribution(RS(60000), mergeSettings({ eobi: { ...S26.eobi, enabled: true } }))
     expect(r.employeeCents).toBe(0)
     expect(r.problem).toMatch(/EOBI wage base/)
   })
@@ -64,22 +69,24 @@ describe('EOBI', () => {
 describe('overtime', () => {
   it('is hours × (gross ÷ working days ÷ hours per day) × multiplier', () => {
     // 52,000 / 26 / 8 = Rs 250/h; 3 h at 2× = Rs 1,500
-    expect(overtimeCents(3, RS(52000), DEFAULT_HR_SETTINGS)).toBe(RS(1500))
-    expect(overtimeCents(3, RS(52000), DEFAULT_HR_SETTINGS, 1.5)).toBe(RS(1125))
-    expect(overtimeCents(0, RS(52000), DEFAULT_HR_SETTINGS)).toBe(0)
+    expect(DEFAULT_HR_SETTINGS.workingDaysPerMonth).toBe(30) // owner HR-1: gross ÷ 30
+    expect(overtimeCents(3, RS(60000), DEFAULT_HR_SETTINGS)).toBe(RS(1500)) // 60,000 / 30 / 8 = Rs 250/h
+    expect(overtimeCents(3, RS(52000), S26)).toBe(RS(1500))
+    expect(overtimeCents(3, RS(52000), S26, 1.5)).toBe(RS(1125))
+    expect(overtimeCents(0, RS(52000), S26)).toBe(0)
   })
   it('pays at the HR setting unless HR set a multiplier, and never outside 1–5', () => {
-    expect(otMultiplierFor(undefined, DEFAULT_HR_SETTINGS)).toBe(2)
-    expect(otMultiplierFor(null, DEFAULT_HR_SETTINGS)).toBe(2)
-    expect(otMultiplierFor(0, DEFAULT_HR_SETTINGS)).toBe(2)
-    expect(otMultiplierFor(1.5, DEFAULT_HR_SETTINGS)).toBe(1.5)
-    expect(otMultiplierFor(50, DEFAULT_HR_SETTINGS)).toBe(5)
-    expect(otMultiplierFor(0.2, DEFAULT_HR_SETTINGS)).toBe(1)
+    expect(otMultiplierFor(undefined, S26)).toBe(2)
+    expect(otMultiplierFor(null, S26)).toBe(2)
+    expect(otMultiplierFor(0, S26)).toBe(2)
+    expect(otMultiplierFor(1.5, S26)).toBe(1.5)
+    expect(otMultiplierFor(50, S26)).toBe(5)
+    expect(otMultiplierFor(0.2, S26)).toBe(1)
   })
 })
 
 describe('payslip', () => {
-  const s = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3 })
+  const s = mergeSettings({ workingDaysPerMonth: 26, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3 })
   const emp = { grossSalaryCents: RS(52000), monthlyTaxCents: RS(1000), joiningDate: null, lastWorkingDay: null }
 
   it('adds and deducts every line, and nets to the paisa', () => {
@@ -105,7 +112,7 @@ describe('payslip', () => {
   })
 
   it('charges EOBI on a gross base, and SESSI, on what a joiner earned — not the full month', () => {
-    const g = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null }, sessi: { employerPct: 6, wageCeilingCents: null } })
+    const g = mergeSettings({ workingDaysPerMonth: 26, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null }, sessi: { employerPct: 6, wageCeilingCents: null } })
     // Rs 40,000, joins 16 Sep: earns Rs 20,000
     const r = computePayslip({ ...emp, grossSalaryCents: RS(40000), monthlyTaxCents: 0, joiningDate: new Date('2026-09-16') }, '2026-09', EMPTY_INPUTS, g)
     expect(r.grossCents).toBe(RS(20000))
@@ -198,11 +205,11 @@ describe('full & final', () => {
 
   it('pays salary only for the days after the last payroll, across months', () => {
     // Paid through July; leaves 10 Sep: all of August + 10 of 30 September days.
-    const r = finalSettlement(emp, D('2026-09-10'), { ...inp, salaryFrom: D('2026-08-01') }, DEFAULT_HR_SETTINGS)
+    const r = finalSettlement(emp, D('2026-09-10'), { ...inp, salaryFrom: D('2026-08-01') }, S26)
     expect(r.salaryPayable).toBe(RS(62000) + Math.round(RS(62000) * 10 / 30))
     // Paid through September already: nothing.
-    expect(finalSettlement(emp, D('2026-09-10'), { ...inp, salaryFrom: D('2026-10-01') }, DEFAULT_HR_SETTINGS).salaryPayable).toBe(0)
-    expect(finalSettlement(emp, D('2026-09-10'), inp, DEFAULT_HR_SETTINGS).salaryPayable).toBe(0)
+    expect(finalSettlement(emp, D('2026-09-10'), { ...inp, salaryFrom: D('2026-10-01') }, S26).salaryPayable).toBe(0)
+    expect(finalSettlement(emp, D('2026-09-10'), inp, S26).salaryPayable).toBe(0)
   })
   it('encashes the leave earned so far this leave year, less what was taken', () => {
     const b = { entitlement: 14, carriedForward: 0, adjustments: 0, taken: 0 }
@@ -274,7 +281,7 @@ describe('leave arithmetic', () => {
 
 describe('attendance into payroll', () => {
   const D = (x: string) => new Date(x)
-  const s = mergeSettings({ lateGraceMinutes: 15 })
+  const s = mergeSettings({ workingDaysPerMonth: 26, lateGraceMinutes: 15 })
   const from = D('2026-09-01')
   const to = D('2026-09-30T23:59:59.999Z')
   const at = (date: string, status: string, createdAt: string, lateMinutes: number | null = null) => ({ date: D(date), status, lateMinutes, createdAt: D(createdAt) })
@@ -622,7 +629,7 @@ describe('HR through the API', () => {
 
   it('runs a payroll month with OT and a loan, then recovers the loan on lock', async () => {
     await call('hr', 'PUT', '/settings', {
-      ...DEFAULT_HR_SETTINGS, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) },
+      ...S26, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) },
     })
     const ot = (await call('cook', 'POST', '/me/records/overtime', { data: { date: '2026-09-10', otHours: 3 } })).json()
     await call('boss', 'POST', `/records/overtime/${ot.id}/decide`, { decision: 'approved' })
@@ -817,7 +824,7 @@ describe('HR through the API', () => {
     const final = (await call('hr', 'POST', `/records/overtime/${ot.id}/decide`, { decision: 'approved' })).json()
     expect(final.data.approvedHours).toBe(4)
     expect(final.data.multiplier).toBe(2)
-    expect(final.amountCents).toBe(overtimeCents(4, RS(52000), DEFAULT_HR_SETTINGS)) // Rs 2,000, not 10 h or 50×
+    expect(final.amountCents).toBe(overtimeCents(4, RS(52000), S26)) // Rs 2,000, not 10 h or 50×
   })
 
   it('prices OT approved at creation when its format has no steps, and refuses it to self-service', async () => {
@@ -833,7 +840,7 @@ describe('HR through the API', () => {
       const rec = await call('hr', 'POST', '/records/overtime', { data: { employee: cookEmp, date: '2026-11-20', otHours: 2, otAmount: 5000000 } })
       expect(rec.statusCode).toBe(201)
       expect(rec.json().status).toBe('approved')
-      expect(rec.json().amountCents).toBe(overtimeCents(2, RS(52000), DEFAULT_HR_SETTINGS))
+      expect(rec.json().amountCents).toBe(overtimeCents(2, RS(52000), S26))
       const ess = await call('cook', 'POST', '/me/records/overtime', { data: { date: '2026-11-21', otHours: 1 } })
       expect(ess.statusCode).toBe(422)
       expect(ess.json().error.code).toBe('NO_WORKFLOW')
@@ -955,7 +962,7 @@ describe('HR through the API', () => {
 
   it('feeds payroll only standing attendance, once a day, net of leave and the late grace', async () => {
     await call('hr', 'PUT', '/settings', {
-      ...DEFAULT_HR_SETTINGS, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3, lateGraceMinutes: 15,
+      ...S26, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3, lateGraceMinutes: 15,
     })
     const w = (await call('hr', 'POST', '/employees', { data: { fullName: 'Dish Washer', grossSalaryCents: RS(52000), joiningDate: '2025-01-01', employmentType: 'permanent' } })).json().id
     const unpaidType = (await call('hr', 'POST', '/records/leave_type', { data: { name: 'Unpaid', entitlementDays: 0, pay: 'unpaid' } })).json().id
@@ -1053,7 +1060,7 @@ describe('HR through the API', () => {
 
     // New OT hours are paid at the OT rate, unless the amount is typed too.
     const hours = (await call('hr', 'PATCH', `/payroll/payslips/${juneSlip.id}`, { otHours: 4 })).json()
-    expect(hours.inputs.otCents).toBe(overtimeCents(4, RS(52000), DEFAULT_HR_SETTINGS))
+    expect(hours.inputs.otCents).toBe(overtimeCents(4, RS(52000), S26))
     expect(hours.lines.find((l: { code: string }) => l.code === 'overtime').amountCents).toBe(RS(2000))
     const both = (await call('hr', 'PATCH', `/payroll/payslips/${juneSlip.id}`, { otHours: 5, otCents: RS(100) })).json()
     expect(both.inputs.otCents).toBe(RS(100))
@@ -1096,7 +1103,7 @@ describe('HR through the API', () => {
   })
 
   it('will not approve or lock a payroll with EOBI uncalculated, and an edit does not hide the warning', async () => {
-    const good = { ...DEFAULT_HR_SETTINGS, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) } }
+    const good = { ...S26, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) } }
     await call('hr', 'PUT', '/settings', { ...good, eobi: { ...good.eobi, fixedWageCents: null } })
     try {
       const run = (await call('hr', 'POST', '/payroll/runs', { period: '2027-05' })).json()

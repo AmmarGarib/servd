@@ -30,6 +30,7 @@ import { postInventoryDocInSavepoint, COUNT_SOURCE_TYPE, PREP_DRAW_SOURCE_TYPE }
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
 import { parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import { costsHiddenFor, OPENING_COUNT_ROLES } from '../inventory/routes.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -583,11 +584,21 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       // Dismiss only a flag of one of the operator's companies. (The old
       // `conceptId: null` branch let anyone dismiss any brand-less flag —
       // most of them — of any company.)
-      const r = await prisma.exceptionFlag.updateMany({
+      const flag = await prisma.exceptionFlag.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-        data: { status: 'dismissed' },
+        select: { id: true, tenantId: true, conceptId: true, title: true, kind: true, status: true },
       })
-      if (r.count === 0) throw new NotFoundError('ExceptionFlag', req.params.id)
+      if (!flag) throw new NotFoundError('ExceptionFlag', req.params.id)
+      // A dismissed flag sits in the Trash (modules/trash); Restore reopens
+      // it to what it was (a flag dismissed before the Trash reopens as open).
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'exception_flag', entityId: flag.id, tenantId: flag.tenantId, conceptId: flag.conceptId,
+          title: flag.title, subtitle: flag.kind, reason: trashReasonOf(req),
+          meta: { previous: { status: flag.status === 'dismissed' ? 'open' : flag.status } },
+        })
+        await tx.exceptionFlag.update({ where: { id: flag.id }, data: { status: 'dismissed' } })
+      })
       return reply.status(204).send()
     },
   )

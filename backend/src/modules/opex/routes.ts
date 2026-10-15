@@ -30,6 +30,7 @@ import {
 } from '../../lib/withholding.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
 import { fmtPktDate } from '../accounting/dates.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 
 /** A date the API is given: 'YYYY-MM-DD' or a full ISO timestamp. */
 const zDateString = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'Not a date')
@@ -56,7 +57,7 @@ const cadenceEnum = z.enum(['monthly', 'quarterly', 'annual', 'per_use'])
 // /opex is not a central module-gated prefix, so finance (newly let in) must
 // also hold 'capital' — the CEO's Module Access untick closes every route here,
 // writes and ledger postings included (W3B-RV-1). Manager tiers unchanged.
-const OPEX_TEAM = FINANCE_TEAM
+export const OPEX_TEAM = FINANCE_TEAM
 const OPEX_GUARD = [requireAuth(...OPEX_TEAM), moduleGateForNewRoles(['capital'])]
 
 // Every id an opex line points at — its category, brand, capex project and
@@ -525,9 +526,19 @@ export async function opexRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
-    await prisma.opexCategory.update({
-      where: { id: req.params.id },
-      data: { deletedAt: new Date(), isActive: false },
+    // To the Trash (modules/trash). A category that ever held lines keeps
+    // their payments' history: never erased from the Trash.
+    const lineCount = await prisma.opexLine.count({ where: { categoryId: owned.id } })
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'opex_category', entityId: owned.id, tenantId: owned.tenantId, conceptId: owned.conceptId,
+        title: owned.name, subtitle: lineCount ? `${lineCount} line(s)` : null, reason: trashReasonOf(req),
+        meta: { previous: { isActive: owned.isActive }, hadLines: lineCount > 0 },
+      })
+      await tx.opexCategory.update({
+        where: { id: owned.id },
+        data: { deletedAt: new Date(), isActive: false },
+      })
     })
     return reply.status(204).send()
   })
@@ -609,9 +620,19 @@ export async function opexRoutes(fastify: FastifyInstance) {
         id: req.params.id,
         category: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       },
+      include: { category: { select: { tenantId: true } } },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Line not found in your active company' } })
-    await prisma.opexLine.update({ where: { id: req.params.id }, data: { isActive: false } })
+    // "Delete" switches the line off (its payments stay); the Trash keeps
+    // what it was so Restore can switch it back on (modules/trash).
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'opex_line', entityId: owned.id, tenantId: owned.category.tenantId, conceptId: owned.conceptId,
+        title: owned.name, subtitle: owned.vendor, parent: { type: 'opex_category', id: owned.categoryId },
+        reason: trashReasonOf(req), meta: { previous: { isActive: owned.isActive } },
+      })
+      await tx.opexLine.update({ where: { id: owned.id }, data: { isActive: false } })
+    })
     return reply.status(204).send()
   })
 

@@ -62,6 +62,8 @@ import { nearestAnchor } from '../timeclock/policy.js'
 import { attendanceKeys, isMissedClockOut, MISSING_PUNCH_AFTER_MS, type PunchEntry } from '../hr/attendance.js'
 import { getFormat } from '../hr/service.js'
 import { rotaFor, toMinutes, ymd } from '../hr/rota.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 
 // The rules are the company's, set in /configuration/operations
 // (OperationsConfig): whether pooling is on, how it is split, and the weight
@@ -75,7 +77,7 @@ import { rotaFor, toMinutes, ymd } from '../hr/rota.js'
 /** Who drafts and reviews pools. Narrowed by the 'payroll' module
  *  (lib/moduleAccess.ts gates /tip-pools): by default the CEO, owners,
  *  management, finance and HR. Posting and paying stay with APPROVERS. */
-const POOL_TEAM = Array.from(new Set([...MANAGERS, 'finance', 'hr'])) as UserRole[]
+export const POOL_TEAM = Array.from(new Set([...MANAGERS, 'finance', 'hr'])) as UserRole[]
 
 type Tx = Prisma.TransactionClient
 
@@ -830,8 +832,18 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...POOL_TEAM) },
     async (req, reply) => {
       const pool = await poolInScope(req, req.params.id, 'write')
-      const n = await prisma.tipPool.deleteMany({ where: { id: pool.id, status: 'draft' } })
-      if (n.count === 0) throw new AppError('ALREADY_POSTED', `Pool is ${pool.status} — only a draft can be deleted`, 409)
+      // To the Trash WITH its members (modules/trash), in the delete's
+      // transaction; the conditional delete keeps a posted pool where it is.
+      await prisma.$transaction(async (tx) => {
+        const members = await tx.tipPoolMember.findMany({ where: { poolId: pool.id } })
+        await moveToTrash(tx, req, {
+          type: 'tip_pool', entityId: pool.id, tenantId: pool.tenantId, conceptId: pool.conceptId,
+          title: pool.name, subtitle: `${members.length} member(s)`, reason: trashReasonOf(req),
+          snapshot: takeSnapshot('TipPool', pool, { TipPoolMember: members }),
+        })
+        const n = await tx.tipPool.deleteMany({ where: { id: pool.id, status: 'draft' } })
+        if (n.count === 0) throw new AppError('ALREADY_POSTED', `Pool is ${pool.status} — only a draft can be deleted`, 409)
+      })
       await audit({ category: 'accounting',
         action: 'tippool.delete_draft', entity: 'TipPool', entityId: pool.id,
         userId: req.staffUser?.id ?? null, tenantId: pool.tenantId, userEmail: req.staffUser?.email ?? null,

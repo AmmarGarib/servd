@@ -18,6 +18,8 @@ import type { Prisma, UserRole } from '@prisma/client'
 import { resolveTenantScope, scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
+import { moveToTrash } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import {
@@ -826,7 +828,18 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company — books are closed per company', 422)
     const latest = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
     if (!latest) throw new AppError('NOTHING_TO_REOPEN', 'This company has no closed period', 422)
-    await prisma.periodLock.delete({ where: { id: latest.id } })
+    // F4: the close record (overrides, acknowledgement reasons) is kept for
+    // ever in the Trash (type 'period_lock', the CEO's — never restored:
+    // close the month again through the checklist; never erased).
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'period_lock', entityId: latest.id, tenantId,
+        title: `Books closed through ${fmtPktDate(latest.lockedThrough)}`,
+        subtitle: latest.note ?? null, reason: body.reason,
+        snapshot: takeSnapshot('PeriodLock', latest),
+      })
+      await tx.periodLock.delete({ where: { id: latest.id } })
+    })
     const now = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
 
     await audit({ category: 'accounting',

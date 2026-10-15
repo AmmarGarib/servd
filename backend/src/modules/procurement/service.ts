@@ -38,6 +38,8 @@ import { assertExpenseCode } from '../accounting/expenseCategories.js'
 import { isAuthorityKey, type AuthorityKey } from '../accounting/taxAuthorities.js'
 import { whtSectionOrNull, type WhtSection } from '../../lib/withholding.js'
 import { fmtPktDate } from '../accounting/dates.js'
+import { moveToTrash } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 
 // ─── Amount ceilings (BOOKS-06) ──────────────────────────────────────────────
 //
@@ -1050,15 +1052,31 @@ export async function allocatePayment(
  * change — Dr 2010 already happened when the payment posted; this only moves
  * which bill it settles. Under the payment's then the bill's row lock.
  */
-export async function unapplyPayment(paymentId: string, billId: string) {
+export async function unapplyPayment(paymentId: string, billId: string, actor: { userId: string | null; reason?: string | null } = { userId: null }) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM supplier_payments WHERE id = ${paymentId} FOR UPDATE`
     await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${billId} FOR UPDATE`
     const application = await tx.supplierPaymentApplication.findUnique({
       where: { paymentId_billId: { paymentId, billId } },
+      include: {
+        bill: { select: { billNumber: true } },
+        payment: { select: { reference: true, supplier: { select: { name: true, tenantId: true } } } },
+      },
     })
     if (!application) throw new AppError('NOT_APPLIED', 'This payment is not applied to that bill', 422)
     const amount = toCents(application.amountAppliedCents)
+    // F5: the allocation is kept for ever in the Trash (type
+    // 'payment_application' — never restored, never erased; re-allocate on the
+    // payment), in this transaction, BEFORE the row goes.
+    const { bill: appBill, payment: appPayment, ...appRow } = application
+    await moveToTrash(tx, actor, {
+      type: 'payment_application', entityId: application.id, tenantId: appPayment.supplier.tenantId,
+      title: `Payment taken off bill ${appBill.billNumber ?? billId.slice(-8).toUpperCase()}`,
+      subtitle: `${appPayment.supplier.name} · PKR ${(amount / 100).toLocaleString('en-PK')}`,
+      reason: actor.reason ?? null,
+      meta: { kind: 'supplier_payment', paymentId, billId },
+      snapshot: takeSnapshot('SupplierPaymentApplication', appRow),
+    })
     await tx.supplierPaymentApplication.delete({ where: { id: application.id } })
     const bill = await tx.supplierBill.update({
       where: { id: billId },

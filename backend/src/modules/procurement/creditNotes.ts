@@ -43,6 +43,8 @@ import { assertMoneyFits, toCents } from '../../lib/money.js'
 import { billLotsForItem, postSupplierCreditNote, postSupplierCreditNoteVoid, type CreditNoteReason } from '../accounting/supplierPosting.js'
 import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { assertPayableBill, billDueCents, creditNoteAvailableCents, lockBills, settledStatus } from './service.js'
+import { moveToTrash } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 
 type Tx = Prisma.TransactionClient
 type Db = Tx | typeof prisma
@@ -439,15 +441,31 @@ export async function applyCreditNote(
 }
 
 /** Take a credit note off a bill: the bill owes that much again, the credit is free to apply elsewhere. No ledger change. */
-export async function unapplyCreditNote(creditNoteId: string, billId: string) {
+export async function unapplyCreditNote(creditNoteId: string, billId: string, actor: { userId: string | null; reason?: string | null } = { userId: null }) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${creditNoteId} FOR UPDATE`
     await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${billId} FOR UPDATE`
     const application = await tx.supplierCreditApplication.findUnique({
       where: { creditNoteId_billId: { creditNoteId, billId } },
+      include: {
+        bill: { select: { billNumber: true } },
+        creditNote: { select: { billNumber: true, supplier: { select: { name: true } } } },
+      },
     })
     if (!application) throw new AppError('NOT_APPLIED', 'This credit note is not applied to that bill', 422)
     const amount = toCents(application.amountCents)
+    // F5: the allocation is kept for ever in the Trash (type
+    // 'payment_application' — never restored, never erased; apply the credit
+    // note again), in this transaction, BEFORE the row goes.
+    const { bill: appBill, creditNote: appCn, ...appRow } = application
+    await moveToTrash(tx, actor, {
+      type: 'payment_application', entityId: application.id, tenantId: application.tenantId,
+      title: `Credit note ${appCn.billNumber ?? creditNoteId.slice(-8).toUpperCase()} taken off bill ${appBill.billNumber ?? billId.slice(-8).toUpperCase()}`,
+      subtitle: `${appCn.supplier.name} · PKR ${(amount / 100).toLocaleString('en-PK')}`,
+      reason: actor.reason ?? null,
+      meta: { kind: 'credit_note', creditNoteId, billId },
+      snapshot: takeSnapshot('SupplierCreditApplication', appRow),
+    })
     await tx.supplierCreditApplication.delete({ where: { id: application.id } })
     const bill = await tx.supplierBill.update({ where: { id: billId }, data: { creditedCents: { decrement: amount } } })
     const billStatus = settledStatus(bill)

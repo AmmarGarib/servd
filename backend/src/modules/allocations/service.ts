@@ -78,7 +78,7 @@ export async function runAllocationRule(input: {
   tenantId: string
 }) {
   const rule = await prisma.costAllocationRule.findFirst({
-    where: { id: input.ruleId, tenantId: input.tenantId },
+    where: { id: input.ruleId, tenantId: input.tenantId, deletedAt: null },
     include: { weights: { include: { concept: { select: { slug: true, tenantId: true } } } } },
   })
   if (!rule) throw new NotFoundError('CostAllocationRule', input.ruleId)

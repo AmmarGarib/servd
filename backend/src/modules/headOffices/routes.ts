@@ -35,6 +35,7 @@ import { invalidateTestTenants } from '../../lib/testCompany.js'
 import { monthOf } from '../intercompany/fleet.js'
 import { createHeadOffice, linkCompany, endLink, assertHeadOfficeMayDeactivate, liveHoWideDelegationIds } from './service.js'
 import { createSplitVersion, deleteSplitVersion, listSplits, splitForOrNull } from './splits.js'
+import { trashReasonOf } from '../../lib/trash.js'
 import { applyMapping } from './accounts.js'
 import { booksView, confirmBooks, setRecharge, updatePool, zConfirm, zCostPool, zRecharge } from './books.js'
 
@@ -277,7 +278,9 @@ export async function headOfficeRoutes(fastify: FastifyInstance) {
 
   fastify.delete<{ Params: { id: string; splitId: string } }>('/:id/splits/:splitId', ceo, async (req) => {
     const ho = await headOfficeOf(req, req.params.id)
-    const r = await serviceClient.$transaction((tx) => deleteSplitVersion(tx, { hoId: ho.id, splitId: req.params.splitId }), TX_OPTS)
+    const r = await serviceClient.$transaction((tx) => deleteSplitVersion(tx, {
+      hoId: ho.id, splitId: req.params.splitId, actorId: req.staffUser!.id, reason: trashReasonOf(req),
+    }), TX_OPTS)
     await auditIn(req, [ho.id, ...r.split.lines.map((l) => l.companyTenantId)], {
       category: 'accounting', action: 'ho.split.delete', entity: 'RechargeSplit', entityId: r.split.id,
       before: r.split, after: null, metadata: { staleRuns: r.staleRuns },

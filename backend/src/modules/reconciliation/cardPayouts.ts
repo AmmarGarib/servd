@@ -59,6 +59,8 @@ import type { CloseCheck, CloseCheckContext, CloseProblem } from '../accounting/
 import { NON_BANK_MONEY_CODES } from '../../connectors/raast/accounts.js'
 import { postCardPayoutSplitTx } from './service.js'
 import { raastLinesToLeaveTx } from './raast.js'
+import { moveToTrash } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 
 type Tx = Prisma.TransactionClient
 type Db = Tx | typeof defaultPrisma
@@ -762,7 +764,7 @@ export async function undoCardSettlement(input: { settlementId: string; tenantId
     await lockCardSettlementTx(tx, input.tenantId)
     const st = await tx.cardSettlement.findFirst({
       where: { id: input.settlementId, tenantId: input.tenantId },
-      include: { days: { select: { day: true } } },
+      include: { days: true },
     })
     if (!st) throw new NotFoundError('CardSettlement', input.settlementId)
     let reversalEntryId: string | null = null
@@ -774,6 +776,18 @@ export async function undoCardSettlement(input: { settlementId: string; tenantId
       const rev = await reverseJournalEntry(st.tenantId, ref.slice(0, cut), ref.slice(cut + 1), `Card payout undone: ${input.reason}`.slice(0, 300), { tx, postedBy: input.actorId })
       reversalEntryId = rev.entryId
     }
+    // F2: the undone payout is kept for ever in the Trash (type
+    // 'card_settlement' — never restored, never erased; its days are free to
+    // match again), in the reversal's transaction, BEFORE the row goes.
+    const { days, ...settlement } = st
+    await moveToTrash(tx, { userId: input.actorId }, {
+      type: 'card_settlement', entityId: st.id, tenantId: st.tenantId,
+      title: `Card payout ${st.dayFrom === st.dayTo ? st.dayFrom : `${st.dayFrom} – ${st.dayTo}`}`,
+      subtitle: `Net PKR ${(toCents(st.netCents) / 100).toLocaleString('en-PK')} · ${st.unit}`,
+      reason: input.reason,
+      meta: { statementLineId: st.statementLineId, reversalEntryId, status: st.status },
+      snapshot: takeSnapshot('CardSettlement', settlement, { CardSettlementDay: days }),
+    })
     await tx.cardSettlement.delete({ where: { id: st.id } })
     await tx.bankStatementLine.updateMany({
       where: { id: st.statementLineId, matchStatus: { in: ['matched', 'adjusted'] } },
