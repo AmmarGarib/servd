@@ -147,7 +147,8 @@ export async function floorRoutes(fastify: FastifyInstance) {
         const liveTables = await tx.table.findMany({ where: { floorId: existing.id, deletedAt: null }, select: { id: true } })
         await moveToTrash(tx, req, {
           type: 'floor', entityId: existing.id, tenantId: concept?.tenantId ?? null, conceptId: existing.conceptId,
-          title: existing.name, reason: trashReasonOf(req), meta: { tableIds: liveTables.map((t) => t.id) },
+          title: existing.name, reason: trashReasonOf(req),
+          meta: { tableIds: liveTables.map((t) => t.id), previous: { isActive: existing.isActive } },
         })
         await tx.table.updateMany({ where: { floorId: existing.id }, data: { floorId: null } })
         await tx.floor.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })

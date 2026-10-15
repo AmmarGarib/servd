@@ -280,7 +280,9 @@ const floor: TrashProvider = {
     return null
   },
   async restore(tx, _ctx, entry) {
-    const f = await tx.floor.update({ where: { id: entry.entityId }, data: { deletedAt: null, isActive: true }, select: { conceptId: true } })
+    // Back to the on/off state it had before the delete (older entries: on).
+    const prev = (metaOf(entry).previous ?? {}) as { isActive?: boolean }
+    const f = await tx.floor.update({ where: { id: entry.entityId }, data: { deletedAt: null, isActive: prev.isActive ?? true }, select: { conceptId: true } })
     const ids = metaOf(entry).tableIds
     if (Array.isArray(ids) && ids.length) {
       // Only tables still unplaced, live and of the floor's own brand.

@@ -179,18 +179,30 @@ const receivablePayment: TrashProvider = {
 
 // ── Rejected / cancelled write-offs ──────────────────────────────────────────
 
+// ReceivableWriteOff has no relation to its invoice: invoices are read in one
+// query per page, in the same company.
 const WO_SELECT = {
-  id: true, tenantId: true, amountCents: true, reason: true, status: true, decidedAt: true, decidedById: true, decisionNote: true, requestedAt: true,
-  invoice: { select: { number: true, customerName: true, conceptId: true } },
+  id: true, tenantId: true, invoiceId: true, amountCents: true, reason: true, status: true,
+  decidedAt: true, decidedById: true, decisionNote: true, requestedAt: true,
 } satisfies Prisma.ReceivableWriteOffSelect
 type WoSel = Prisma.ReceivableWriteOffGetPayload<{ select: typeof WO_SELECT }>
+type InvLite = { id: string; number: string; customerName: string; conceptId: string | null }
 
-const woRow = (w: WoSel): TrashRow => ({
+async function invoicesOf(rows: WoSel[]): Promise<Map<string, InvLite>> {
+  if (!rows.length) return new Map()
+  const invs = await db.receivableInvoice.findMany({
+    where: { OR: rows.map((r) => ({ id: r.invoiceId, tenantId: r.tenantId })) },
+    select: { id: true, number: true, customerName: true, conceptId: true },
+  })
+  return new Map(invs.map((i) => [i.id, i]))
+}
+
+const woRow = (w: WoSel, inv: InvLite | undefined): TrashRow => ({
   id: w.id,
   tenantId: w.tenantId,
-  conceptId: w.invoice.conceptId,
-  title: `Write-off ${pkr(w.amountCents)} on ${w.invoice.number}`,
-  subtitle: w.invoice.customerName,
+  conceptId: inv?.conceptId ?? null,
+  title: `Write-off ${pkr(w.amountCents)}${inv ? ` on ${inv.number}` : ''}`,
+  subtitle: inv?.customerName ?? null,
   at: w.decidedAt ?? w.requestedAt,
   byId: w.decidedById,
   reason: w.decisionNote,
@@ -210,22 +222,30 @@ const receivableWriteOff: TrashProvider = {
   linkOf: () => LINK,
   async list(ctx, f) {
     const s = f.q?.trim()
+    const invoiceIds = s
+      ? (await db.receivableInvoice.findMany({
+          where: { ...tenantIn(ctx), OR: [{ number: { contains: s, mode: 'insensitive' } }, { customerName: { contains: s, mode: 'insensitive' } }] },
+          select: { id: true }, take: 500,
+        })).map((i) => i.id)
+      : []
     const rows = await db.receivableWriteOff.findMany({
       where: {
         AND: [
           tenantIn(ctx), WO_DEAD, { decidedAt: { not: null } }, atWhere('decidedAt', f),
-          s ? { OR: [{ reason: { contains: s, mode: 'insensitive' } }, { invoice: { number: { contains: s, mode: 'insensitive' } } }] } : {},
+          s ? { OR: [{ reason: { contains: s, mode: 'insensitive' } }, { invoiceId: { in: invoiceIds } }] } : {},
         ],
       },
       orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
       take: f.limit,
       select: WO_SELECT,
     })
-    return rows.map(woRow)
+    const invs = await invoicesOf(rows)
+    return rows.map((w) => woRow(w, invs.get(w.invoiceId)))
   },
   async get(ctx, id) {
     const w = await db.receivableWriteOff.findFirst({ where: { id, ...tenantIn(ctx), ...WO_DEAD }, select: WO_SELECT })
-    return w ? woRow(w) : null
+    if (!w) return null
+    return woRow(w, (await invoicesOf([w])).get(w.invoiceId))
   },
   async copy(ctx, id) {
     const w = await db.receivableWriteOff.findFirst({
