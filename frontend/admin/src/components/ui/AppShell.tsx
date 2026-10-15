@@ -214,6 +214,8 @@ function NavLinks({
       '/team': hasTeam || addsLogins,
       '/ceo/approvals': !allowedModules.has('approvals') && (hasTeam || isDelegate || approvalsWaiting > 0 || (team?.pendingApprovals ?? 0) > 0),
       '/hr/me': Boolean(team?.me),
+      // The Trash: one link — in the CEO section for whoever holds `trash`.
+      '/trash': !allowedModules.has('trash'),
     }
     return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
       href: p.href, label: p.label, icon: '·',
