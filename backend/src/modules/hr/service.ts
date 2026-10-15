@@ -32,11 +32,13 @@ export async function getSettings(tenantId: string): Promise<HrSettings> {
   const row = await prisma.setting.findUnique({ where: { key: settingsKey(tenantId) } })
   let stored: Partial<HrSettings> | null = null
   try { stored = row ? JSON.parse(row.value) as Partial<HrSettings> : null } catch { stored = null }
-  return mergeSettings(stored)
+  // The pay basis is company policy, not an HR setting (owner, 2026-10-16):
+  // always the actual days of each month, whatever a saved row says.
+  return { ...mergeSettings(stored), workingDaysPerMonth: 0 }
 }
 
 export async function saveSettings(tenantId: string, s: HrSettings): Promise<void> {
-  const value = JSON.stringify(s)
+  const value = JSON.stringify({ ...s, workingDaysPerMonth: 0 })
   await prisma.setting.upsert({ where: { key: settingsKey(tenantId) }, create: { key: settingsKey(tenantId), value }, update: { value } })
 }
 

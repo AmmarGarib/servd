@@ -949,8 +949,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.put('/settings', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const tenantId = activeTenant(req)
     const body = z.object({
-      // 0 = the actual days of each month (the default, owner HR-1).
-      workingDaysPerMonth: z.number().int().min(0).max(31),
+      // Ignored: pay is always on the actual days of each month (owner,
+      // 2026-10-16 — not an HR setting). Accepted so older screens still save.
+      workingDaysPerMonth: z.number().int().min(0).max(31).optional(),
       hoursPerDay: z.number().min(1).max(24),
       otMultiplier: z.number().min(1).max(5),
       eobi: z.object({

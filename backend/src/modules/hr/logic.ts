@@ -17,7 +17,9 @@ import type { FastifyRequest } from 'fastify'
 export interface HrSettings {
   /** Days a monthly salary is divided by for the daily rate (absence, unpaid
    *  leave, lates, OT, leave encashment). 0 = the ACTUAL days of the month in
-   *  question, 28–31 (owner HR-1, 2026-10-16 — the default). */
+   *  question, 28–31. Company policy (owner HR-1, 2026-10-16), not an HR
+   *  setting: getSettings / saveSettings (service.ts) always hold 0. Only the
+   *  engine's own tests pass a fixed number. */
   workingDaysPerMonth: number
   hoursPerDay: number
   /** OT multiplier when a request doesn't specify one. Sindh's shops &

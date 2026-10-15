@@ -106,13 +106,8 @@ export default function HrSettingsPage() {
         <div ref={rootRef} className="grid lg:grid-cols-2 gap-4 pb-24">
           <Panel title="Pay & overtime">
             <div>
-              <label className="flex items-center gap-2 text-[11px] font-bold text-white/55 mb-1">
-                <input type="checkbox" checked={s.workingDaysPerMonth === 0} onChange={(e) => setS({ ...s, workingDaysPerMonth: e.target.checked ? 0 : 30 })} />
-                Pay on the actual days of each month
-              </label>
-              {s.workingDaysPerMonth === 0
-                ? <span className="block text-xs text-white/55 mt-1">Daily rate = gross ÷ the days of that month (28–31), the same basis a joiner&rsquo;s first month is paid on. Absences, unpaid leave, lates and overtime use it.</span>
-                : <Num label="Pay days per month" max={31} help="Daily rate = gross ÷ this. Absences, unpaid leave, lates and overtime use it." v={s.workingDaysPerMonth} onSet={(v) => setS({ ...s, workingDaysPerMonth: Math.max(1, v) })} />}
+              <span className="block text-[11px] font-bold text-white/55 mb-1">Pay days</span>
+              <span className="block text-xs text-white/70">The actual days of each month (28–31) — company policy, set by the CEO. Daily rate = gross ÷ that month&rsquo;s days, the same basis a joiner&rsquo;s first month is paid on; absences, unpaid leave, lates and overtime use it.</span>
             </div>
             <Num label="Hours per day" max={24} help="Hourly rate = daily rate ÷ this." v={s.hoursPerDay} onSet={(v) => setS({ ...s, hoursPerDay: v })} />
             <Num label="Overtime multiplier" help="OT = hours × hourly rate × this. Factories Act default is 2." v={s.otMultiplier} step="0.25" onSet={(v) => setS({ ...s, otMultiplier: v })} />
