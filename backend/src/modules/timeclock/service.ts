@@ -8,8 +8,13 @@
 // (the CEO, an agency user) still punches; it just has no attendance.
 //
 // Staff WITHOUT a login punch at a shared kiosk with their HR employee code
-// and PIN (hr/kioskPin.ts). Their punch goes straight to attendance: ClockLog
-// requires a login until it gets employeeId/tenantId columns (see the report).
+// and PIN (hr/kioskPin.ts), with the tablet's GPS. Their punch goes straight to
+// attendance (ClockLog is the punch log of logins).
+//
+// Where (owner, 2026-10-15): every punch is measured against the employee's
+// own work locations (policy.ts) and is NEVER refused for where it was taken —
+// out of area is recorded on the ClockLog (tenantId, locationId, outOfArea) and
+// on the day's attendance, and flagged for HR when the geofence is on.
 
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
@@ -18,12 +23,23 @@ import { recordPunch, attendanceKeys, closeMissedDays, isMissedClockOut, lastInO
 import { verifyKioskPin } from '../hr/kioskPin.js'
 import { getFormat, STANDING_ATTENDANCE } from '../hr/service.js'
 import { pktToday } from '../hr/logic.js'
-import { enforceClockInPolicy } from './policy.js'
+import { enforceClockInPolicy, flagOutOfArea, type ClockInVerdict } from './policy.js'
 
 export interface Actor { id: string; role: string; tenantId: string | null; name?: string | null }
 export interface PunchBody { lat?: number; lng?: number; selfieUrl?: string }
 
 const activeCompany = (actor: Actor): string => requireTenantId(actor.tenantId, 'a punch belongs to one company')
+
+/** What the punch screen shows about where the punch was taken. */
+const whereOut = (v: ClockInVerdict | null) => v && (v.geofenceMatched != null || v.outOfArea != null)
+  ? { locationId: v.locationId, location: v.locationName, distanceM: v.geofenceDistanceM, radiusM: v.radiusM, matched: v.geofenceMatched, outOfArea: !!v.outOfArea, reason: v.outOfArea ? v.outOfAreaReason : null, flagged: !!(v.enforced && v.outOfArea) }
+  : null
+
+/** The verdict's columns on the punch log and the attendance punch. */
+const verdictCols = (v: ClockInVerdict | null) => ({
+  geofenceMatched: v?.geofenceMatched ?? null, geofenceDistanceM: v?.geofenceDistanceM ?? null,
+  locationId: v?.locationId ?? null, outOfArea: v?.outOfArea ?? null,
+})
 
 const attendanceOut = (r: PunchResult | null) => r && r.recordId ? { recordId: r.recordId, status: r.status, lateMinutes: r.lateMinutes, ...(r.skipped && { note: r.skipped }) } : null
 
@@ -33,10 +49,10 @@ const attendanceOut = (r: PunchResult | null) => r && r.recordId ? { recordId: r
  * clockIn, clockOut and GET /time-clock/status all read it, so the status
  * the tablet shows and what a punch does always agree.
  */
-export async function openClockIn(userId: string, now = new Date()): Promise<{ since: Date; missed: boolean } | null> {
-  const last = await prisma.clockLog.findFirst({ where: { userId }, orderBy: { recordedAt: 'desc' }, select: { type: true, recordedAt: true } })
+export async function openClockIn(userId: string, now = new Date()): Promise<{ since: Date; missed: boolean; tenantId: string | null } | null> {
+  const last = await prisma.clockLog.findFirst({ where: { userId }, orderBy: { recordedAt: 'desc' }, select: { type: true, recordedAt: true, tenantId: true } })
   if (last?.type !== 'in') return null
-  return { since: last.recordedAt, missed: isMissedClockOut(last.recordedAt, now) }
+  return { since: last.recordedAt, missed: isMissedClockOut(last.recordedAt, now), tenantId: last.tenantId }
 }
 
 /** Close the day a forgotten clock-out left open, in every company this
@@ -58,24 +74,25 @@ export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
   const open = await openClockIn(actor.id, now)
   if (open && !open.missed) return { alreadyClockedIn: true, since: open.since }
 
-  const verdict = await enforceClockInPolicy(tenantId, actor.role, body)
+  const emp = await prisma.hrEmployee.findFirst({ where: { userId: actor.id, tenantId } })
+  const verdict = await enforceClockInPolicy(tenantId, actor.role, body, { employeeId: emp?.id ?? null, kind: 'in' })
   if (open?.missed) await closeMissedOutFor(actor.id, now)
   const log = await prisma.clockLog.create({
     data: {
       userId: actor.id, type: 'in', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null,
-      geofenceMatched: verdict.geofenceMatched, geofenceDistanceM: verdict.geofenceDistanceM, ipAddress: ip ?? null,
+      ipAddress: ip ?? null, tenantId, ...verdictCols(verdict),
     },
   })
-  const emp = await prisma.hrEmployee.findFirst({ where: { userId: actor.id, tenantId } })
   const att = emp
     ? await recordPunch({
         tenantId, employeeId: emp.id, kind: 'in', at: log.recordedAt, source: 'clock', actorUserId: actor.id, clockLogId: log.id,
-        geofenceMatched: verdict.geofenceMatched, geofenceDistanceM: verdict.geofenceDistanceM, locationId: verdict.locationId, selfieUrl: body.selfieUrl ?? null,
+        ...verdictCols(verdict), outOfAreaReason: verdict.outOfAreaReason, selfieUrl: body.selfieUrl ?? null,
       })
     : null
+  await flagOutOfArea({ tenantId, employeeId: emp?.id ?? null, userId: actor.id, name: emp?.fullName ?? actor.name ?? null, kind: 'in', at: log.recordedAt, verdict })
   return {
     clockedInAt: log.recordedAt, geofenceMatched: verdict.geofenceMatched, geofenceDistanceM: verdict.geofenceDistanceM,
-    location: verdict.locationName, hrLinked: !!emp, attendance: attendanceOut(att),
+    location: verdict.locationName, where: whereOut(verdict), hrLinked: !!emp, attendance: attendanceOut(att),
     ...(open?.missed && { missedClockOut: { since: open.since, note: MISSED_OUT_NOTE } }),
   }
 }
@@ -90,19 +107,32 @@ export async function clockOut(actor: Actor, body: PunchBody = {}, ip?: string) 
     await closeMissedOutFor(actor.id, now)
     return { notClockedIn: true, missedClockOut: { since: open.since, note: MISSED_OUT_NOTE } }
   }
-  const log = await prisma.clockLog.create({
-    data: { userId: actor.id, type: 'out', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null, ipAddress: ip ?? null },
-  })
-  // Close the open day wherever it is: the active company's record first, then
-  // any other company this login is an employee in (they clocked in there).
+  // The out belongs to the company of the in it closes (a legacy in with no
+  // company: the active one). It is measured there when the device sent a fix.
+  const tenantId = open.tenantId ?? actor.tenantId
   const emps = await prisma.hrEmployee.findMany({ where: { userId: actor.id, status: { in: ['active', 'on_leave'] } } })
-  emps.sort((a, b) => Number(b.tenantId === actor.tenantId) - Number(a.tenantId === actor.tenantId))
+  const empThere = tenantId ? emps.find((e) => e.tenantId === tenantId) ?? null : null
+  const verdict = tenantId ? await enforceClockInPolicy(tenantId, actor.role, body, { employeeId: empThere?.id ?? null, kind: 'out' }) : null
+  const log = await prisma.clockLog.create({
+    data: {
+      userId: actor.id, type: 'out', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null, ipAddress: ip ?? null,
+      tenantId: tenantId ?? null, ...verdictCols(verdict),
+    },
+  })
+  // Close the open day wherever it is: the in's company first, then any other
+  // company this login is an employee in (they clocked in there).
+  emps.sort((a, b) => Number(b.tenantId === tenantId) - Number(a.tenantId === tenantId))
   let att: PunchResult | null = null
   for (const e of emps) {
-    const r = await recordPunch({ tenantId: e.tenantId, employeeId: e.id, kind: 'out', at: log.recordedAt, source: 'clock', actorUserId: actor.id, clockLogId: log.id })
+    const measured = e.tenantId === tenantId ? verdict : null
+    const r = await recordPunch({
+      tenantId: e.tenantId, employeeId: e.id, kind: 'out', at: log.recordedAt, source: 'clock', actorUserId: actor.id, clockLogId: log.id,
+      ...verdictCols(measured), outOfAreaReason: measured?.outOfAreaReason ?? null,
+    })
     if (r.recordId) { att = r; break }
   }
-  return { clockedOutAt: log.recordedAt, attendance: attendanceOut(att) }
+  if (tenantId && verdict) await flagOutOfArea({ tenantId, employeeId: empThere?.id ?? null, userId: actor.id, name: empThere?.fullName ?? actor.name ?? null, kind: 'out', at: log.recordedAt, verdict })
+  return { clockedOutAt: log.recordedAt, where: whereOut(verdict), attendance: attendanceOut(att) }
 }
 
 /**
@@ -142,15 +172,18 @@ export async function kioskPunch(device: Actor, body: PunchBody & { employeeCode
   const emp = await verifyKioskPin(tenantId, body.employeeCode, body.pin)
   if (emp.userId) throw new AppError('HAS_LOGIN', 'You have a servd login — clock in with it instead of the kiosk PIN', 409)
   const kind = body.action ?? ((await openDayState(tenantId, emp.id)) === 'none' ? 'in' : 'out')
-  const verdict = kind === 'in' ? await enforceClockInPolicy(tenantId, null, body) : null
+  // The tablet's GPS (lat/lng in the body) is measured against the
+  // employee's own work locations, for an in and — when it sent a fix — an out.
+  const verdict = await enforceClockInPolicy(tenantId, null, body, { employeeId: emp.id, kind })
+  const at = new Date()
   const r = await recordPunch({
-    tenantId, employeeId: emp.id, kind, source: 'kiosk', actorUserId: device.id,
-    geofenceMatched: verdict?.geofenceMatched ?? null, geofenceDistanceM: verdict?.geofenceDistanceM ?? null,
-    locationId: verdict?.locationId ?? null, selfieUrl: body.selfieUrl ?? null,
+    tenantId, employeeId: emp.id, kind, at, source: 'kiosk', actorUserId: device.id,
+    ...verdictCols(verdict), outOfAreaReason: verdict.outOfAreaReason, selfieUrl: body.selfieUrl ?? null,
   })
   if (kind === 'out' && r.skipped === 'no_open_day') throw new AppError('NOT_CLOCKED_IN', 'You are not clocked in today', 409)
   if (kind === 'out' && r.skipped === 'missed_out') throw new AppError('MISSED_CLOCK_OUT', KIOSK_MISSED_OUT, 409, { recordId: r.recordId })
-  return { employee: { id: emp.id, fullName: emp.fullName, employeeCode: emp.employeeCode }, action: kind, at: new Date(), attendance: attendanceOut(r), location: verdict?.locationName ?? null }
+  if (r.recordId) await flagOutOfArea({ tenantId, employeeId: emp.id, userId: null, name: emp.fullName, kind, at, verdict })
+  return { employee: { id: emp.id, fullName: emp.fullName, employeeCode: emp.employeeCode }, action: kind, at, attendance: attendanceOut(r), location: verdict.locationName ?? null, where: whereOut(verdict) }
 }
 
 // ─── The punch report ────────────────────────────────────────────────────────
@@ -170,8 +203,9 @@ export interface PunchRow {
  * Every punch on a Karachi calendar day in these companies, one row per
  * person, with the attendance record it produced beside it. Login punches
  * come from ClockLog (selfie and geofence verdict included); kiosk punches
- * from the attendance record. ClockLog has no company yet, so a login's
- * punches are those of people who belong to the company.
+ * from the attendance record. A login's punch belongs to the company stamped
+ * on it (ClockLog.tenantId); a legacy row with no company falls back to the
+ * people who belong to the company.
  */
 export async function punchReport(tenantIds: string[], day: string): Promise<PunchRow[]> {
   const date = new Date(`${day}T00:00:00.000Z`)
@@ -179,7 +213,14 @@ export async function punchReport(tenantIds: string[], day: string): Promise<Pun
   const to = new Date(from.getTime() + 86_400_000 - 1)
   const [logs, records] = await Promise.all([
     prisma.clockLog.findMany({
-      where: { recordedAt: { gte: from, lte: to }, user: { OR: [{ tenantId: { in: tenantIds } }, { tenantMemberships: { some: { tenantId: { in: tenantIds } } } }] } },
+      where: {
+        recordedAt: { gte: from, lte: to },
+        OR: [
+          { tenantId: { in: tenantIds } },
+          // Legacy punches from before ClockLog had a company — only when the column is empty.
+          { tenantId: null, user: { OR: [{ tenantId: { in: tenantIds } }, { tenantMemberships: { some: { tenantId: { in: tenantIds } } } }] } },
+        ],
+      },
       include: { user: { select: { id: true, name: true, role: true } } },
       orderBy: { recordedAt: 'asc' },
     }),
@@ -213,6 +254,7 @@ export async function punchReport(tenantIds: string[], day: string): Promise<Pun
     row.punches.push({
       type: l.type === 'out' ? 'out' : 'in', at: l.recordedAt.toISOString(), source: 'clock', clockLogId: l.id,
       geofenceMatched: l.geofenceMatched, geofenceDistanceM: l.geofenceDistanceM, selfieUrl: l.selfieUrl, lat: l.lat, lng: l.lng,
+      locationId: l.locationId, outOfArea: l.outOfArea,
     })
     rows.set(key, row)
   }

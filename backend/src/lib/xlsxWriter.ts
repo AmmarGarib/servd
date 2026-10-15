@@ -4,7 +4,7 @@
 
 import zlib from 'node:zlib'
 
-export type XlsxStyle = 'normal' | 'bold' | 'title' | 'currency' | 'boldCurrency' | 'wrap' | 'header'
+export type XlsxStyle = 'normal' | 'bold' | 'title' | 'currency' | 'boldCurrency' | 'wrap' | 'header' | 'amount' | 'boldAmount' | 'percent'
 export type XlsxCell = string | number | { v: string | number; s?: XlsxStyle } | null
 
 export interface XlsxSheet {
@@ -16,7 +16,7 @@ export interface XlsxSheet {
   merges?: string[]
 }
 
-const STYLE_INDEX: Record<XlsxStyle, number> = { normal: 0, bold: 1, title: 2, currency: 3, boldCurrency: 4, wrap: 5, header: 6 }
+const STYLE_INDEX: Record<XlsxStyle, number> = { normal: 0, bold: 1, title: 2, currency: 3, boldCurrency: 4, wrap: 5, header: 6, amount: 7, boldAmount: 8, percent: 9 }
 
 export function xmlEscape(s: string): string {
   // Drop characters XML 1.0 forbids, then escape the five specials.
@@ -112,12 +112,12 @@ export function zipStored(files: Array<{ name: string; data: Buffer }>): Buffer 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
 const STYLES_XML = `${XML_HEAD}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;PKR&quot; #,##0.00"/></numFmts>
+<numFmts count="2"><numFmt numFmtId="164" formatCode="&quot;PKR&quot; #,##0.00"/><numFmt numFmtId="165" formatCode="0.0%"/></numFmts>
 <fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts>
 <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="7">
+<cellXfs count="10">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
@@ -125,6 +125,9 @@ const STYLES_XML = `${XML_HEAD}<styleSheet xmlns="http://schemas.openxmlformats.
 <xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="4" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
+<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`

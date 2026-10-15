@@ -22,6 +22,10 @@
 // rewrites the day. A row HR keyed or edited by hand is never overwritten by a
 // punch. ClockLog stays the raw punch log; the record keeps a copy of the
 // punches it was built from (data._punches) so the row can be read on its own.
+//
+// Where (owner, 2026-10-15): each punch carries the work location it was measured at, its distance and whether it
+// was out of area (timeclock/policy.ts). When the company's geofence is on, an out-of-area punch marks the day
+// (data._outOfArea = true; the punch itself has outOfArea: true) — allowed, never refused, flagged for HR.
 
 import type { Prisma, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -76,6 +80,9 @@ export interface PunchEntry {
   geofenceDistanceM?: number | null
   locationId?: string | null
   selfieUrl?: string | null
+  /** Outside the work locations / no location while the geofence is on (null = not judged). */
+  outOfArea?: boolean | null
+  outOfAreaReason?: string | null
 }
 
 /** Karachi wall-clock time of an instant, HH:MM. */
@@ -196,6 +203,8 @@ export interface PunchInput {
   geofenceDistanceM?: number | null
   locationId?: string | null
   selfieUrl?: string | null
+  outOfArea?: boolean | null
+  outOfAreaReason?: string | null
 }
 
 export interface PunchResult {
@@ -216,7 +225,11 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
     type: p.kind, at: at.toISOString(), source: p.source, clockLogId: p.clockLogId ?? null,
     geofenceMatched: p.geofenceMatched ?? null, geofenceDistanceM: p.geofenceDistanceM ?? null,
     locationId: p.locationId ?? null, selfieUrl: p.selfieUrl ?? null,
+    ...(p.outOfArea != null && { outOfArea: p.outOfArea }),
+    ...(p.outOfArea && p.outOfAreaReason && { outOfAreaReason: p.outOfAreaReason }),
   }
+  /** The day is marked once any of its punches is out of area. */
+  const markOutOfArea = (d: Record<string, unknown>) => { if (p.outOfArea) d['_outOfArea'] = true }
   const fmt = await getFormat(p.tenantId, 'attendance')
   const k = attendanceKeys(fmt.fields)
 
@@ -235,6 +248,7 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
         const d = { ...(cur.data as Record<string, unknown>) }
         d['_punches'] = [...((d['_punches'] as PunchEntry[] | undefined) ?? []), entry]
         d[k.checkOut] = null
+        markOutOfArea(d)
         // The day was closed as a missed clock-out earlier today: it opens
         // again for this in (the forgotten in stays unpaired — no hours), and
         // the note is kept for HR.
@@ -257,6 +271,7 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
         ...(cell.kind === 'leave' && { remarks: 'Punched in on an approved leave day' }),
         _source: p.source, _inStatus: status, _punches: [entry],
         _expected: cell.kind === 'shift' ? { start: firstShift?.start, end: firstShift?.end, source: cell.source } : { kind: cell.kind },
+        ...(p.outOfArea && { _outOfArea: true }),
       }
       const rec = await tx.hrRecord.create({
         data: {
@@ -296,6 +311,7 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
     const d = { ...(cur.data as Record<string, unknown>) }
     d['_punches'] = [...((d['_punches'] as PunchEntry[] | undefined) ?? []), entry]
     d[k.checkOut] = hhmm
+    markOutOfArea(d)
     const category = cur.category === 'missing_punch' ? String(d['_inStatus'] ?? 'present') : cur.category
     d[k.status] = category
     await tx.hrRecord.update({ where: { id: cur.id }, data: { category, data: d as Prisma.InputJsonValue } })

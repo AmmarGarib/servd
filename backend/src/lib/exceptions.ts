@@ -110,6 +110,8 @@ export type ExceptionKind =
   // Tax
   | 'card_payout_unmatched'      // a card machine's sales with no matching bank payout
   | 'gift_card_breakage_held'    // a sold gift card expired but its breakage could not be booked yet
+  // Attendance by work location (owner, 2026-10-15). Plain String column — no migration.
+  | 'attendance_out_of_area'     // a punch outside the employee's work locations (or with no location) — allowed, flagged once a day
 
 /**
  * The kind a flag was filed under before it had its own. A query that looks

@@ -94,7 +94,9 @@ type OperationsConfigT = Awaited<ReturnType<typeof prisma.operationsConfig.findF
 // punch at ANY of their company's locations, so the nearest one decides. The
 // old company-less 'location_config' Setting is not read any more.
 
-export interface GeofenceAnchor { locationId: string; name: string; lat: number; lng: number }
+/** A place a punch is measured from. `radiusM` is the place's own fence (a work location's radius, else the
+ *  location's geofenceRadiusMetres); null = the company's radius. */
+export interface GeofenceAnchor { locationId: string; name: string; lat: number; lng: number; radiusM?: number | null }
 export interface GeofenceConfig {
   enforced: boolean
   radiusM: number
@@ -106,14 +108,14 @@ export async function getGeofenceConfig(tenantId: string): Promise<GeofenceConfi
   const ops = await getOperationsConfig(tenantId)
   const locs = await prisma.location.findMany({
     where: { tenantId, isActive: true, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
-    select: { id: true, name: true, latitude: true, longitude: true },
+    select: { id: true, name: true, latitude: true, longitude: true, geofenceRadiusMetres: true },
     orderBy: { name: 'asc' },
   })
   return {
     enforced: ops?.geofenceEnforced ?? false,
     radiusM: ops?.geofenceRadiusMetres ?? 150,
     selfieRequired: ops?.selfieRequiredAtClockIn ?? false,
-    anchors: locs.map((l) => ({ locationId: l.id, name: l.name, lat: l.latitude!, lng: l.longitude! })),
+    anchors: locs.map((l) => ({ locationId: l.id, name: l.name, lat: l.latitude!, lng: l.longitude!, radiusM: l.geofenceRadiusMetres })),
   }
 }
 
