@@ -38,6 +38,7 @@ const { financePlanningRoutes } = await import('../src/modules/financePlanning/r
 const { allocationRoutes } = await import('../src/modules/allocations/routes.js')
 const { opexRoutes } = await import('../src/modules/opex/routes.js')
 const { crosschecksRoutes } = await import('../src/modules/crosschecks/routes.js')
+const { tipPoolRoutes } = await import('../src/modules/tipPools/routes.js')
 const { undoCardSettlement } = await import('../src/modules/reconciliation/cardPayouts.js')
 
 const stamp = Date.now()
@@ -120,6 +121,7 @@ beforeAll(async () => {
     await api.register(allocationRoutes, { prefix: '/allocations' })
     await api.register(opexRoutes, { prefix: '/opex' })
     await api.register(crosschecksRoutes, { prefix: '/crosschecks' })
+    await api.register(tipPoolRoutes, { prefix: '/tip-pools' })
   }, { prefix: '/api/v1' })
   await app.ready()
 }, 60_000)
@@ -449,5 +451,34 @@ describe('status types', () => {
     expect((await call('finA', 'POST', `/trash/exception_flag/${flag.id}/restore`, {})).statusCode).toBe(403)
     expect((await call('ceo', 'POST', `/trash/exception_flag/${flag.id}/restore`, {})).statusCode).toBe(200)
     expect((await prisma.exceptionFlag.findUnique({ where: { id: flag.id } }))!.status).toBe('open')
+  })
+})
+
+// ── Tip pool draft ───────────────────────────────────────────────────────────
+
+describe('tip pool draft', () => {
+  it('goes to the Trash with its members and comes back whole; a posted pool stays', async () => {
+    const pool = await prisma.tipPool.create({
+      data: {
+        tenantId: T.A, name: `${P} Sat dinner`, periodStart: new Date('2026-09-05'), periodEnd: new Date('2026-09-06'), totalTipsCents: 3_000,
+        members: { create: [{ userId: U.finA!.id, userName: 'Fin A', hoursWorked: 6, shareUnits: 6 }] },
+      },
+    })
+    expect((await call('ceoB', 'DELETE', `/tip-pools/${pool.id}`)).statusCode).toBe(404)
+    expect((await call('ceo', 'DELETE', `/tip-pools/${pool.id}`)).statusCode).toBe(204)
+    expect(await prisma.tipPool.findUnique({ where: { id: pool.id } })).toBeNull()
+    expect(await openEntry('tip_pool', pool.id)).toMatchObject({ tenantId: T.A, deletedById: U.ceo!.id })
+    expect((await call('ceoB', 'POST', `/trash/tip_pool/${pool.id}/restore`, {})).statusCode).toBe(404)
+    expect((await call('ceo', 'POST', `/trash/tip_pool/${pool.id}/restore`, {})).statusCode).toBe(200)
+    const back = await prisma.tipPool.findUnique({ where: { id: pool.id }, include: { members: true } })
+    expect(back).toMatchObject({ tenantId: T.A, status: 'draft', totalTipsCents: 3_000 })
+    expect(back!.members.map((m) => m.userId)).toEqual([U.finA!.id])
+
+    const posted = await prisma.tipPool.create({
+      data: { tenantId: T.A, name: `${P} posted`, periodStart: new Date('2026-09-07'), periodEnd: new Date('2026-09-08'), status: 'posted' },
+    })
+    const r = await call('ceo', 'DELETE', `/tip-pools/${posted.id}`)
+    expect(r.statusCode).toBe(409)
+    expect(await openEntry('tip_pool', posted.id)).toBeNull()
   })
 })
