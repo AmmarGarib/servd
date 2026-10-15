@@ -8,7 +8,8 @@
 //   - a manual journal to 1510 is refused without a reason; with one, the
 //     next worker run raises fixed_asset_gl_mismatch (once);
 //   - the 1340 advances report and its flags;
-//   - tax (H23): initial allowance + WDV, smallwares listed "to confirm", the
+//   - tax (H23): initial allowance + WDV (kitchen/power only, H42), smallwares
+//     deducted in full in the year bought (H35) and frozen with the year, the
 //     CEO's freeze (409 twice, 422 while open), a frozen year never restated;
 //   - no deferred-tax report (H24: not needed);
 //   - CSV equals JSON; company B's scope never shows company A.
@@ -278,26 +279,34 @@ describe('1340 advances by CapEx line', () => {
   })
 })
 
-describe('tax (H23) — smallwares to confirm; the CEO\'s freeze', () => {
-  it('initial allowance then WDV; smallwares listed apart; a frozen year is never restated', async () => {
+describe('tax (H23) — smallwares in full in the year bought (H35); the CEO\'s freeze', () => {
+  it('initial allowance then WDV; smallwares deducted in full in the year bought; a frozen year is never restated', async () => {
     const r = (await call('finA', 'GET', `/reports/tax?taxYear=${Y}`)).json()
-    expect(r.rows.map((x: { assetId: string }) => x.assetId).sort()).toEqual([oven.id, laptop.id].sort())
+    expect(r.rows.map((x: { assetId: string }) => x.assetId).sort()).toEqual([oven.id, laptop.id, plates.layer.id].sort())
     expect(r.rows.find((x: { assetId: string }) => x.assetId === oven.id)).toMatchObject({
       additionsCents: 1_200_000, initialAllowanceCents: 300_000, depreciationCents: 135_000, closingWdvCents: 765_000, frozen: 'no',
     })
-    expect(r.rows.find((x: { assetId: string }) => x.assetId === laptop.id)).toMatchObject({ initialAllowanceCents: 90_000, depreciationCents: 81_000, closingWdvCents: 189_000 })
-    expect(r.toConfirm).toEqual([expect.objectContaining({ assetId: plates.layer.id, classKey: 'smallwares' })])
-    expect(r.toConfirmNote).toMatch(/smallwares/)
-    expect(r.byClass.map((c: { classKey: string }) => c.classKey).sort()).toEqual(['it_equipment', 'kitchen_equipment'])
-    expect(r.totals.closingWdvCents).toBe(765_000 + 189_000)
+    // IT equipment: no initial allowance (H42) — 30 % of 360,000.
+    expect(r.rows.find((x: { assetId: string }) => x.assetId === laptop.id)).toMatchObject({ initialAllowanceCents: 0, depreciationCents: 108_000, closingWdvCents: 252_000 })
+    // Smallwares: the whole cost in the year bought, nothing left (H35).
+    expect(r.rows.find((x: { assetId: string }) => x.assetId === plates.layer.id)).toMatchObject({
+      classKey: 'smallwares', additionsCents: 240_000, initialAllowanceCents: 0, depreciationCents: 240_000, closingWdvCents: 0, frozen: 'no',
+    })
+    expect(r.toConfirm).toEqual([])
+    expect(r.toConfirmNote).toBeNull()
+    expect(r.smallwaresNote).toMatch(/smallwares/i)
+    expect(r.byClass.map((c: { classKey: string }) => c.classKey).sort()).toEqual(['it_equipment', 'kitchen_equipment', 'smallwares'])
+    expect(r.byClass.find((c: { classKey: string }) => c.classKey === 'smallwares')).toMatchObject({ additionsCents: 240_000, depreciationCents: 240_000, closingWdvCents: 0 })
+    expect(r.totals.closingWdvCents).toBe(765_000 + 252_000)
+    expect(r.totals.depreciationCents).toBe(135_000 + 108_000 + 240_000)
 
     expect((await call('finA', 'POST', `/reports/tax/${Y}/freeze`, {})).statusCode).toBe(403)
     const f = await call('ceoA', 'POST', `/reports/tax/${Y}/freeze`, {})
     expect(f.statusCode).toBe(201)
     expect(f.json()).toMatchObject({ tenantId: A.tenantId, taxYear: Y })
-    // H23: smallwares (pooled) are never frozen into the tax register.
-    expect(await prisma.fixedAssetTaxYear.count({ where: { tenantId: A.tenantId, taxYear: Y, assetId: plates.layer.id } })).toBe(0)
-    expect(await prisma.fixedAssetTaxYear.count({ where: { tenantId: A.tenantId, taxYear: Y } })).toBe(2)
+    // H35: smallwares are frozen with the year, like every other asset.
+    expect(await prisma.fixedAssetTaxYear.count({ where: { tenantId: A.tenantId, taxYear: Y, assetId: plates.layer.id } })).toBe(1)
+    expect(await prisma.fixedAssetTaxYear.count({ where: { tenantId: A.tenantId, taxYear: Y } })).toBe(3)
     const again = await call('ceoA', 'POST', `/reports/tax/${Y}/freeze`, {})
     expect(again.statusCode).toBe(409)
     expect(again.json().error.code).toBe('TAX_YEAR_FROZEN')
@@ -308,7 +317,11 @@ describe('tax (H23) — smallwares to confirm; the CEO\'s freeze', () => {
     const frozen = (await call('finA', 'GET', `/reports/tax?taxYear=${Y}`)).json()
     expect(frozen.frozen).toBe(true)
     expect(frozen.rows.find((x: { assetId: string }) => x.assetId === oven.id)).toMatchObject({ depreciationCents: 135_000, closingWdvCents: 765_000, frozen: 'yes' })
-    expect((await call('finA', 'GET', `/reports/tax?taxYear=${Y + 1}`)).json().rows.find((x: { assetId: string }) => x.assetId === oven.id)).toMatchObject({ openingWdvCents: 765_000, depreciationCents: 229_500 })
+    expect(frozen.rows.find((x: { assetId: string }) => x.assetId === plates.layer.id)).toMatchObject({ depreciationCents: 240_000, closingWdvCents: 0, frozen: 'yes' })
+    const next = (await call('finA', 'GET', `/reports/tax?taxYear=${Y + 1}`)).json()
+    expect(next.rows.find((x: { assetId: string }) => x.assetId === oven.id)).toMatchObject({ openingWdvCents: 765_000, depreciationCents: 229_500 })
+    // Fully deducted: smallwares have no row the year after.
+    expect(next.rows.some((x: { assetId: string }) => x.assetId === plates.layer.id)).toBe(false)
   })
 
   it('there is no deferred-tax report (H24: not needed)', async () => {
