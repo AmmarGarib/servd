@@ -1292,13 +1292,21 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       const members = new Set(su.memberTenantIds ?? [])
       const roleIds = (await resolveTenantScope(req)).tenantIds.filter((t) => members.has(t))
       roleRows = await filterInScope(pending, await recipeScopeFor(roleIds, 'read'))
-      // Through head office (A3/A6): only when a head office is linked at all.
-      if (su.role !== 'admin' && roleRows.length > 0 && (await serviceClient.headOfficeLink.findFirst({ select: { id: true } }))) {
-        const subjects = await Promise.all(roleRows.map((r) => approvalSubject(RECIPE_TYPE, r.id)))
-        const through = await throughHeadOfficeBatch(subjects.map((x) => ({
-          tenantId: x?.ownerTenantId ?? null, submittedByIds: x?.submitterIds ?? [], submittedAt: x?.submittedAt ?? null, viaHeadOfficeId: x?.viaHeadOfficeId ?? null,
-        })))
-        roleRows = roleRows.filter((_, i) => (through[i] ?? []).length === 0 && !subjects[i]?.viaHeadOfficeId)
+      if (su.role !== 'admin' && roleRows.length > 0) {
+        let subjects = await Promise.all(roleRows.map((r) => approvalSubject(RECIPE_TYPE, r.id)))
+        // A21: a recipe with no company of its own (an unused, line-less
+        // sub-recipe) is the CEO's — it sits in no listed company, so a
+        // non-admin approver must not see a row whose buttons would 403.
+        const owned = subjects.map((x) => (x?.companyIds.length ?? 0) > 0)
+        roleRows = roleRows.filter((_, i) => owned[i])
+        subjects = subjects.filter((_, i) => owned[i])
+        // Through head office (A3/A6): only when a head office is linked at all.
+        if (roleRows.length > 0 && (await serviceClient.headOfficeLink.findFirst({ select: { id: true } }))) {
+          const through = await throughHeadOfficeBatch(subjects.map((x) => ({
+            tenantId: x?.ownerTenantId ?? null, submittedByIds: x?.submitterIds ?? [], submittedAt: x?.submittedAt ?? null, viaHeadOfficeId: x?.viaHeadOfficeId ?? null,
+          })))
+          roleRows = roleRows.filter((_, i) => (through[i] ?? []).length === 0 && !subjects[i]?.viaHeadOfficeId)
+        }
       }
     }
     const listed = new Set(roleRows.map((r) => r.id))

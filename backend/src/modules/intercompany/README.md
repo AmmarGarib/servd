@@ -86,7 +86,8 @@ debtor / creditor chosen by direction (the company owes the HO more → debtor
 - **Prepare** (`POST /transfers`, admin / finance): `assertPairPreparer` —
   a member of both companies as before, OR a member of the head office whose
   ACTIVE company is that head office, for a company LIVE-linked to it
-  (`lib/headOffice.ts liveLink`). `postNow` stays CEO only.
+  (`lib/headOffice.ts liveLink`). `postNow` stays CEO only AND needs membership of both companies (403
+  `NOT_IN_BOTH_COMPANIES`) — the head-office preparer path only submits.
 - **Pair rule:** a transfer with a head office on one side needs a link
   (live or ended) between them, and never two head offices — 422
   `HEAD_OFFICE_NOT_LINKED`.
@@ -114,7 +115,9 @@ debtor / creditor chosen by direction (the company owes the HO more → debtor
   not a member of) they see ONLY that company's pairs with their own head
   offices, read on `serviceClient` with an explicit pair filter; nothing else
   of the company's inter-company rows. `/balances` shows both sides of such a
-  pair (`headOfficePair: true`). `/companies` adds `headOfficePairs`
+  pair. Every `/balances` row carries `headOfficePair`: true when one side is
+  a head office of the caller's with a live link to the other — also for the
+  CEO who belongs to both (it marks the pair's kind, not why it is shown). `/companies` adds `headOfficePairs`
   (`[{ headOffice, companies }]`, live links). Every transfer row carries
   `canApprove` (decided by `lib/approvalRights.ts` for rows with a head
   office on one side).
@@ -178,7 +181,7 @@ Dr 2050/2060 / Cr 6060; lower → Dr 6060 / Cr 2050/2060. Key
 | GET | `/balances?asOf=` | FINANCIALS_VIEWERS | both sides for a member of both, or on the caller's own head-office pair |
 | GET | `/transfers?status=&limit=` | FINANCIALS_VIEWERS | either party in read scope (+ own head-office pairs); `{ items }` with `canApprove` / `canReverse` |
 | GET | `/transfers/:id` | FINANCIALS_VIEWERS | 404 outside read scope |
-| POST | `/transfers` | admin, finance | `assertPairPreparer`; `postNow` CEO only; settlement: `method`, `bankReference` required (422 `PAYMENT_REFERENCE_REQUIRED`), 422 `BANK_ACCOUNT_ON_DEPOSIT`; HO pair: 422 `HEAD_OFFICE_NOT_LINKED`, `COUNTER_ACCOUNT_INVALID`; 201 + `referenceUsedBefore` |
+| POST | `/transfers` | admin, finance | `assertPairPreparer`; `postNow` CEO only and member of both (403 `NOT_IN_BOTH_COMPANIES`); settlement: `method`, `bankReference` required (422 `PAYMENT_REFERENCE_REQUIRED`), 422 `BANK_ACCOUNT_ON_DEPOSIT`; HO pair: 422 `HEAD_OFFICE_NOT_LINKED`, `COUNTER_ACCOUNT_INVALID`; 201 + `referenceUsedBefore` |
 | POST | `/transfers/:id/approve` | any staff role; `assertCanApprove` | CEO of both, or a Finance delegate on a head-office pair; 404 unseen, 403 `APPROVAL_NOT_YOURS` / `SELF_APPROVAL_BLOCKED`, 409 `NOT_SUBMITTED` |
 | POST | `/transfers/:id/reject` | same as approve | `{ note ≥ 3 }` |
 | POST | `/transfers/:id/reverse` | admin | member of both; `{ reason ≥ 10 }`; 409 `NOT_POSTED`, `REVERSE_FROM_SOURCE` (COD, head-office recharge) |

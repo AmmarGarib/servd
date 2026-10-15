@@ -178,6 +178,20 @@ describe('before the setup wizard: today\'s numbers, no plan charges', () => {
     expect(same.json().tenantCostShareCents).toBe(K(50))
   })
 
+  it('A15: a scaled share that would not fit INT4 is 422 AMOUNT_TOO_LARGE (the seat is unchanged)', async () => {
+    const r = await call('bossC', 'POST', '/positions', { title: 'Analyst', monthlySalaryCents: 100, tenantCostShareCents: 2_000_000_000 })
+    expect(r.statusCode, r.body).toBe(200)
+    const id = r.json().id as string
+    const p = await call('bossC', 'PATCH', `/positions/${id}`, { monthlySalaryCents: 1_000 })
+    expect(p.statusCode, p.body).toBe(422)
+    expect(p.json().error.code).toBe('AMOUNT_TOO_LARGE')
+    const big = await call('bossC', 'POST', '/positions', { title: 'Analyst', monthlySalaryCents: 3_000_000_000 })
+    expect(big.json().error.code).toBe('AMOUNT_TOO_LARGE')
+    const seat = await prisma.position.findUniqueOrThrow({ where: { id }, select: { monthlySalaryCents: true, tenantCostShareCents: true } })
+    expect(seat).toEqual({ monthlySalaryCents: 100, tenantCostShareCents: 2_000_000_000 })
+    await prisma.position.delete({ where: { id } })
+  })
+
   it('A15: head_office contributions can still be recorded and corrected; the category is required', async () => {
     const none = await call('bossC', 'POST', '/positions/contributions', { sourceTenantId: D, destinationTenantId: C, monthlyCents: K(10), label: 'x' })
     expect(none.statusCode).toBe(400)

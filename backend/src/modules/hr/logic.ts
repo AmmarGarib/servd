@@ -848,6 +848,11 @@ export async function decideRight(
     subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] }
     decision: 'approved' | 'rejected' | null
     through?: string[]
+    /** The companies an hr_request hand-over of the caller covers
+     *  (delegatedTenantsByType), when the caller already read it — a list
+     *  pass reads it once; with it, a company outside the set skips the
+     *  per-record hand-over lookup. */
+    delegatedTenants?: Set<string>
   },
 ): Promise<DecideRight> {
   const actor: DecideActor | undefined = req.staffUser
@@ -877,6 +882,7 @@ export async function decideRight(
   // and never over separation of duties.
   const handover = async (): Promise<DecideRight | null> => {
     if (isAdmin || own || again) return null
+    if (ctx.delegatedTenants && !ctx.delegatedTenants.has(rec.tenantId)) return null
     const d = await delegationCovering(actor.id, 'hr_request', {
       tenantId: rec.tenantId, touchesTenantIds: [rec.tenantId], throughHeadOfficeIds: await throughIds(),
     })

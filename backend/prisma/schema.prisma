@@ -7634,6 +7634,19 @@ enum CashVoucherStatus {
   cancelled // withdrawn before payment
   settled // receipts + change returned cover the amount
   converted // the unsettled rest moved to the director's current account (1356) or an HR staff loan (1350)
+  submitted // (2026-10-15 flow) raised; waiting for FINANCE approval
+  finance_approved // finance approved; waiting for the CEO's final approval (legacy hod_signed rows also wait for the CEO)
+  returned // finance or the CEO sent it back for correction (with a note); the raiser edits and resubmits
+  posted // paid, supporting documents verified by finance, expense booked out of 1357
+}
+
+/// Who raised a cash_vouchers row (2026-10-15, owner): 'request' = any staff login asks for cash for themselves (the
+/// voucher is created automatically); 'expense' = finance raises a voucher for an outside payee (vendor). Both follow
+/// ONE flow: finance approves → CEO final approval → cashier pays (Dr 1357 / Cr 1011) → supporting documents →
+/// finance verifies → the expense is booked (Dr 6xxx / Cr 1357).
+enum CashVoucherKind {
+  request
+  expense
 }
 
 model CashVoucher {
@@ -7690,6 +7703,29 @@ model CashVoucher {
   conversionNote   String?
   hrLoanRecordId   String?
 
+  // ── Petty-cash expense vouchers (2026-10-15, owner) ──
+  // amountCents stays the amount PAID (the total). grossCents = the amount before discount; amountCents = gross −
+  // discount (CHECK cash_vouchers_discount_chk, SQL only). A request carries discount 0 and no gross.
+  kind                 CashVoucherKind @default(request)
+  grossCents           Int?
+  discountCents        Int             @default(0)
+  submittedById        String?
+  submittedAt          DateTime?
+  financeApprovedById  String?
+  financeApprovedAt    DateTime?
+  // true = paid under the 2026-10-15 flow (pay held on 1357, expense booked when finance verifies the documents);
+  // false = a legacy request paid under H3 (expensed at pay; its old settlement rules still apply).
+  expenseOnVerify      Boolean         @default(false)
+  returnedById         String?
+  returnedAt           DateTime?
+  returnNote           String?
+  returnCount          Int             @default(0)
+  docsVerifiedById     String?
+  docsVerifiedAt       DateTime?
+  postedAt             DateTime?
+  postedById           String?
+  postedJournalEntryId String?         @unique // the Dr 6xxx / Cr 1357 entry (reference cashvoucher.post:<id>) — posts once
+
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).
   box         PettyCashBox?           @relation(fields: [boxId], references: [id], onDelete: Restrict)
@@ -7700,6 +7736,7 @@ model CashVoucher {
   @@unique([tenantId, hrLoanRecordId])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, status, dueBy])
+  @@index([tenantId, kind, status])
   @@map("cash_vouchers")
 }
 
@@ -7711,8 +7748,9 @@ model CashVoucherAttachment {
   id           String   @id @default(cuid())
   tenantId     String
   voucherId    String? // WAS required (before wave B)
-  kind         String   @default("signed_voucher") // 'signed_voucher' (legacy paper photo) | 'receipt'
-  mime         String // image/jpeg | image/png | image/webp (receipts may also be application/pdf, lib/evidenceFile.ts)
+  kind         String   @default("signed_voucher") // 'signed_voucher' (legacy paper photo) | 'receipt' | 'supporting' (expense voucher document)
+  mime         String // image/jpeg | image/png | image/webp (receipts may also be application/pdf, lib/evidenceFile.ts); 'supporting' also takes Excel / Word / CSV / text
+  fileName     String? // the uploaded file's name (supporting documents), shown and used on download
   sizeBytes    Int
   data         Bytes
   uploadedById String

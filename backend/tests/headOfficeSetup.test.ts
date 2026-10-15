@@ -29,7 +29,7 @@ import { suggestSplit } from '../src/modules/positions/headOfficeSetup.js'
 const P = `hosu-${Date.now()}`
 const K = (pkr: number) => pkr * 100_000
 let app: FastifyInstance
-let GS: string, VV: string, F: string, HO: string
+let GS: string, VV: string, F: string, HO: string, T1: string, T2: string
 let hoContrib: string, sharedSeat: string, hodUser: string, strangerUser: string
 const hoSeats: string[] = []
 const users: Record<string, { id: string; token: string }> = {}
@@ -93,7 +93,10 @@ beforeAll(async () => {
   })).id
   await prisma.hrEmployee.create({ data: { tenantId: GS, employeeCode: `${P}-1`, fullName: 'Head of Procurement', departmentId: depts.Procurement!, userId: hodUser } })
 
-  await mkUser('ceo', 'admin', GS, [GS, VV])
+  // Two practice companies the CEO belongs to — the setup must refuse them.
+  T1 = (await prisma.tenant.create({ data: { name: 'Practice A', slug: `${P}-t1`, isTest: true } })).id
+  T2 = (await prisma.tenant.create({ data: { name: 'Practice B', slug: `${P}-t2`, isTest: true } })).id
+  await mkUser('ceo', 'admin', GS, [GS, VV, T1, T2])
   await mkUser('fin', 'finance', GS, [GS])
 
   app = Fastify()
@@ -119,6 +122,19 @@ describe('who may', () => {
     expect((await call('ceo', 'GET', `/head-offices/setup/preview?companyIds=${GS},${F}`)).statusCode).toBe(404)
     expect((await call('ceo', 'POST', '/head-offices/setup', { companyIds: [GS, F] })).statusCode).toBe(404)
     expect(await prisma.tenant.count({ where: { kind: 'head_office' } })).toBe(0)
+  })
+
+  it('refuses test companies (422 TEST_COMPANY_NOT_ALLOWED); the platform marker stays off', async () => {
+    const p = await call('ceo', 'GET', `/head-offices/setup/preview?companyIds=${T1},${T2}`)
+    expect(p.statusCode).toBe(422)
+    expect(code(p)).toBe('TEST_COMPANY_NOT_ALLOWED')
+    const r = await call('ceo', 'POST', '/head-offices/setup', { companyIds: [T1, T2], split: [{ companyTenantId: T1, shareBps: 5000 }, { companyTenantId: T2, shareBps: 5000 }] })
+    expect(r.statusCode).toBe(422)
+    expect(code(r)).toBe('TEST_COMPANY_NOT_ALLOWED')
+    const mix = await call('ceo', 'POST', '/head-offices/setup', { companyIds: [GS, T1] })
+    expect(code(mix)).toBe('TEST_COMPANY_NOT_ALLOWED')
+    expect(await prisma.tenant.count({ where: { kind: 'head_office' } })).toBe(0)
+    expect(await headOfficeSetupApplied()).toBe(false)
   })
 })
 

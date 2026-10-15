@@ -79,6 +79,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1351', name: 'Rider Cash Receivable (COD)',        type: 'asset',     description: 'Delivered cash-on-delivery money an own-fleet rider has not handed in (H5); cleared when the rider pays it in at the till' },
   { code: '1355', name: 'Cash Advances to Settle',            type: 'asset',     description: 'Cash requests paid out, awaiting receipts or change (H3)' },
   { code: '1356', name: "Director's Current Account",         type: 'asset',     description: 'Unsettled cash advances held by a director (H4, Companies Act 2017 s.182); a credit balance is owed to the director' },
+  { code: '1357', name: 'Petty Cash Vouchers Awaiting Documents', type: 'asset', description: 'Expense vouchers paid from petty cash, waiting for finance to verify the supporting documents before the expense is booked (2026-10-15)' },
   { code: '1360', name: 'Security Deposits (refundable)',     type: 'asset',     description: 'Refundable deposits paid, held until returned or forfeited (H25)' },
   // Fixed assets — the register's accounts (controlledBy 'fixed_asset').
   { code: '1500', name: 'Land',                               type: 'asset',     description: 'Never depreciated',                                    controlledBy: 'fixed_asset' },
@@ -215,7 +216,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
 export const REQUIRED_ACCOUNT_CODES = [
   // Money, receivables, stock, prepaid / advances, deposits
   '1010', '1011', '1015', '1020', '1030', '1110', '1115',
-  '1210', '1220', '1230', '1290', '1310', '1320', '1340', '1355', '1360',
+  '1210', '1220', '1230', '1290', '1310', '1320', '1340', '1355', '1357', '1360',
   // Fixed assets: class cost codes + accumulated depreciation per class
   '1500', '1505', '1510', '1515', '1520', '1525', '1530', '1540', '1550', '1560',
   '1591', '1592', '1593', '1594', '1595', '1596', '1597', '1598', '1599',

@@ -26,6 +26,7 @@
 // no silent planning change before the wizard normalises it).
 
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { assertInt4Fits, zInt4Cents } from '../../lib/money.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -81,8 +82,8 @@ const positionSchema = z.object({
   title:                z.string().min(1).max(120).optional(),
   /** HR designation (HrOrgUnit kind=designation). Sets the title. */
   designationId:        z.string().uuid().nullable().optional(),
-  monthlySalaryCents:   z.number().int().nonnegative(),
-  tenantCostShareCents: z.number().int().nonnegative().optional(),
+  monthlySalaryCents:   zInt4Cents('Monthly salary'),
+  tenantCostShareCents: zInt4Cents('Cost share').optional(),
   costShareNote:        z.string().max(280).nullable().optional(),
   headcount:            z.number().int().positive().default(1),
   filledByUserId:       z.string().nullable().optional(),
@@ -334,10 +335,13 @@ export async function positionRoutes(fastify: FastifyInstance) {
       } else if (salaryChanged) {
         // A15: keep the seat's share ratio (share × new / old) until the wizard
         // normalises it; a seat with no salary before takes the new gross.
+        // Ratio first (share × (new / old)) so the product never leaves the
+        // safe-integer range; the result is INT4-checked before the write.
         share = seat.monthlySalaryCents > 0
-          ? Math.round((seat.tenantCostShareCents * rest.monthlySalaryCents!) / seat.monthlySalaryCents)
+          ? Math.round(seat.tenantCostShareCents * (rest.monthlySalaryCents! / seat.monthlySalaryCents))
           : rest.monthlySalaryCents!
       }
+      if (share !== undefined) assertInt4Fits(share, 'Cost share')
       const body = applied ? rest : { ...rest, ...(costShareNote !== undefined && { costShareNote }) }
       await checkSeatRefs(seat.tenantId, body, seat.shiftBandId)
       const title = await seatTitle(seat.tenantId, { title: body.title, designationId })

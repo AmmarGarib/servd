@@ -134,6 +134,7 @@ export const ACCT = {
   STAFF_LOANS:              '1350',
   RIDER_COD_RECEIVABLE:     '1351',
   CASH_ADVANCES:            '1355',
+  VOUCHERS_AWAITING_DOCS:   '1357',
   DIRECTOR_CURRENT:         '1356',
   SECURITY_DEPOSITS:        '1360',
   // Fixed-asset class cost codes and accumulated depreciation per class

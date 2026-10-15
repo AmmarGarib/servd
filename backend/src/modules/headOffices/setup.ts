@@ -22,8 +22,8 @@
 //
 // Company separation: the companies are the CEO's own member companies
 // (anything else → 404); a company that is not an active trading company is
-// refused by linkCompany (422 LINK_TARGET_NOT_A_COMPANY), a test / real mix by
-// 422 TEST_COMPANY_MIX; an HOD login must already belong to one of the
+// refused by linkCompany (422 LINK_TARGET_NOT_A_COMPANY), any test company by
+// 422 TEST_COMPANY_NOT_ALLOWED (the marker is platform-wide); an HOD login must already belong to one of the
 // companies (422 HOD_NOT_IN_COMPANIES).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -33,7 +33,6 @@ import { serviceClient } from '../../lib/prisma.js'
 import { requireAuth, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
-import { invalidateTestTenants } from '../../lib/testCompany.js'
 import { planMonth } from '../../lib/labour-budget.js'
 import { applyHeadOfficePeople, planHeadOfficePeople, type HeadOfficePeoplePlan } from '../positions/headOfficeSetup.js'
 import { createHeadOffice, linkCompany } from './service.js'
@@ -76,12 +75,20 @@ async function companiesFor(req: FastifyRequest, named: string[] | undefined): P
   const su = req.staffUser!
   const ids = named && named.length ? [...new Set(named)] : await defaultCompanies(su.memberTenantIds)
   for (const id of ids) if (!su.memberTenantIds.includes(id)) throw new NotFoundError('Company', id)
+  // The setup marker is read platform-wide (headOfficeSetupApplied), so a
+  // practice run must never set it: test companies are refused outright.
+  if (ids.length) {
+    const tests = await serviceClient.tenant.findMany({ where: { id: { in: ids }, isTest: true }, select: { id: true } })
+    if (tests.length) {
+      throw new AppError('TEST_COMPANY_NOT_ALLOWED', 'The head-office setup runs on trading companies only', 422, { companyIds: tests.map((t) => t.id) })
+    }
+  }
   return ids
 }
 
 async function alreadyApplied(db: Prisma.TransactionClient | typeof serviceClient) {
   return db.headOfficeBooks.findFirst({
-    where: { setupAppliedAt: { not: null } },
+    where: { setupAppliedAt: { not: null }, tenant: { isTest: false } },
     select: { tenantId: true, setupAppliedAt: true, tenant: { select: { name: true } } },
   })
 }
@@ -143,15 +150,13 @@ export async function headOfficeSetupRoutes(fastify: FastifyInstance) {
       }
     }
     const hods = [...new Set(body.addHodMemberships ?? [])].filter((u) => u !== su.id)
-    const tests = await serviceClient.tenant.findMany({ where: { id: { in: companyIds } }, select: { isTest: true } })
-    const isTest = tests.length > 0 && tests.every((t) => t.isTest)
 
     const result = await serviceClient.$transaction(async (tx): Promise<SetupResult> => {
       // One setup at a time; the marker is the guard (a second run → 409).
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'ho.setup'}::text))`
       if (await alreadyApplied(tx)) throw new AppError('SETUP_ALREADY_DONE', 'The head office has already been set up from today\'s records', 409)
 
-      const ho = await createHeadOffice(tx, { name, actorId: su.id, isTest })
+      const ho = await createHeadOffice(tx, { name, actorId: su.id })
       const links: SetupResult['links'] = []
       for (const companyId of companyIds) {
         const l = await linkCompany(tx, { hoId: ho.id, companyId, actorId: su.id })
@@ -206,7 +211,6 @@ export async function headOfficeSetupRoutes(fastify: FastifyInstance) {
       return out
     }, TX_OPTS)
 
-    if (result.headOffice.isTest) invalidateTestTenants()
     const hoId = result.headOffice.id
     for (const tenantId of [hoId, ...companyIds]) {
       await audit({

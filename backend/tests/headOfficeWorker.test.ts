@@ -227,3 +227,42 @@ describe('drift', () => {
     expect(h.detail).not.toContain('Head Office')
   })
 })
+
+describe('a month the worker cannot prepare does not stop the others', () => {
+  it('cutover 2026-08 with a split only from 2026-09: September is prepared, August is flagged once from day 5', async () => {
+    const ceo = users.ceo!.id
+    const HD = (await prisma.$transaction((t) => createHeadOffice(t, { name: 'Head Office D', actorId: ceo }), { timeout: 30_000 })).id
+    await prisma.$transaction(async (t) => {
+      await linkCompany(t, { hoId: HD, companyId: CA, actorId: ceo })
+      await createSplitVersion(t, { hoId: HD, effectiveFrom: '2026-09', lines: [{ companyTenantId: CA, shareBps: 10_000 }], actorId: ceo })
+      await confirmBooks(t, HD, { note: 'CA confirmed the accounts', taxAnswer: 'No tax on the recharge — CA confirmed' }, ceo)
+      await setRecharge(t, HD, { enabled: true, fromPeriod: '2026-08' }, ceo)
+    }, { timeout: 30_000 })
+    await cost(HD, '2026-08-10', 1_000_000)
+    await cost(HD, '2026-09-10', 2_000_000)
+    const hdRuns = (period: string) => prisma.rechargeRun.findMany({ where: { tenantId: HD, period } })
+    const augFlags = () => prisma.exceptionFlag.findMany({ where: { kind: 'recharge_missing', tenantId: HD, entityId: `${HD}:2026-08` } })
+
+    // 3 Sep: August cannot be prepared (no split) — no throw, no flag before day 5.
+    const early = await runHeadOfficeRechargeTick(new Date('2026-09-03T08:00:00+05:00'))
+    expect(early.failed).toBe(0)
+    expect(await hdRuns('2026-08')).toHaveLength(0)
+    expect(await augFlags()).toHaveLength(0)
+
+    // 6 Sep: August is flagged once.
+    await runHeadOfficeRechargeTick(new Date('2026-09-06T08:00:00+05:00'))
+    expect(await augFlags()).toHaveLength(1)
+
+    // 6 Oct: September is prepared and submitted although August still fails.
+    const r = await runHeadOfficeRechargeTick(DAY6)
+    expect(r.failed).toBe(0)
+    const sep = await hdRuns('2026-09')
+    expect(sep).toHaveLength(1)
+    expect(sep[0]!.status).toBe('submitted')
+    expect(await hdRuns('2026-08')).toHaveLength(0)
+    await runHeadOfficeRechargeTick(DAY6)
+    const f = await augFlags()
+    expect(f).toHaveLength(1)
+    expect(f[0]!.status).toBe('open')
+  })
+})

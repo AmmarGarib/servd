@@ -33,7 +33,7 @@ let app: FastifyInstance
 let HO: string, C1: string, C2: string, B: string
 
 interface Who { id: string; token: string }
-let ceo: Who, hoFin: Who, deleg: Who, bFin: Who, c1Fin: Who
+let ceo: Who, hoAdmin: Who, hoFin: Who, deleg: Who, bFin: Who, c1Fin: Who
 
 async function mkTenant(name: string, kind: 'company' | 'head_office' = 'company'): Promise<string> {
   const id = (await prisma.tenant.create({ data: { name: `${P} ${name}`, slug: `${P}-${name.toLowerCase()}`, kind } })).id
@@ -74,6 +74,7 @@ beforeAll(async () => {
   C2 = await mkTenant('C2')
   B = await mkTenant('B')
   ceo = await mkUser('ceo', 'admin', [HO, C1, C2, B], HO)
+  hoAdmin = await mkUser('hoadmin', 'admin', [HO])        // admin of HO only, not a company member
   hoFin = await mkUser('hofin', 'finance', [HO])          // HO finance, not a company member
   deleg = await mkUser('deleg', 'finance', [HO])          // HO finance, Finance delegate for C1 only
   bFin = await mkUser('bfin', 'finance', [B])
@@ -335,5 +336,43 @@ describe('separation', () => {
     const hoPairs = balHo.json().pairs as Array<{ a: { id: string }; b: { id: string }; headOfficePair?: boolean }>
     expect(hoPairs.map((p) => [p.a.id, p.b.id].sort().join(':')).sort()).toEqual([[HO, C1].sort().join(':'), [HO, C2].sort().join(':')].sort())
     expect(hoPairs.every((p) => p.headOfficePair)).toBe(true)
+  })
+})
+
+describe('postNow needs membership of both companies', () => {
+  it('an admin who belongs to HO only cannot post HO↔C1 at once, but can submit it', async () => {
+    const body = {
+      kind: 'settlement', debtorTenantId: C1, creditorTenantId: HO, amountCents: 1_500, entryDate: daysAgo(1),
+      memo: 'HO admin settle', method: 'cash', bankReference: 'HO-ADMIN-1',
+    }
+    const before = await prisma.intercompanyTransfer.count({ where: { tenantId: { in: [HO, C1] }, memo: 'HO admin settle' } })
+    const no = await call(hoAdmin, 'POST', '/transfers', { ...body, postNow: true })
+    expect(no.statusCode).toBe(403)
+    expect(no.json().error.code).toBe('NOT_IN_BOTH_COMPANIES')
+    expect(await prisma.intercompanyTransfer.count({ where: { tenantId: { in: [HO, C1] }, memo: 'HO admin settle' } })).toBe(before)
+    const ok = await call(hoAdmin, 'POST', '/transfers', body)
+    expect(ok.statusCode).toBe(201)
+    expect(ok.json().status).toBe('submitted')
+    expect(await entryOf(C1, `ic.transfer:${ok.json().id}`)).toBeNull()
+  })
+
+  it('the CEO (member of both) still posts HO↔C1 at once', async () => {
+    const r = await call(ceo, 'POST', '/transfers', {
+      kind: 'settlement', debtorTenantId: C1, creditorTenantId: HO, amountCents: 700, entryDate: daysAgo(1),
+      memo: 'CEO settle', method: 'cash', bankReference: 'HO-CEO-1', postNow: true,
+    })
+    expect(r.statusCode).toBe(201)
+    expect(r.json().status).toBe('posted')
+  })
+})
+
+describe('headOfficePair marks the pair, not the reason it is shown', () => {
+  it('the CEO (member of both) sees HO↔C1 as a head-office pair and C1↔C2 as not', async () => {
+    const r = await call(ceo, 'GET', '/balances', undefined, { 'x-servd-active-tenant': C1 })
+    expect(r.statusCode).toBe(200)
+    const pairs = r.json().pairs as Array<{ a: { id: string }; b: { id: string }; memberOfBoth: boolean; headOfficePair: boolean }>
+    const find = (x: string, y: string) => pairs.find((p) => [p.a.id, p.b.id].sort().join(':') === [x, y].sort().join(':'))
+    expect(find(HO, C1)).toMatchObject({ memberOfBoth: true, headOfficePair: true })
+    expect(find(C1, C2)).toMatchObject({ memberOfBoth: true, headOfficePair: false })
   })
 })

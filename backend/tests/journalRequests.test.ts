@@ -131,6 +131,17 @@ describe('two companies', () => {
     const finance = await call('finB', 'POST', '/accounting/journal-requests', { description: 'x', lines })
     expect([finance.statusCode, code(finance)]).toEqual([422, 'ACCOUNT_NOT_IN_COMPANY'])
   })
+
+  it('a total above the BIGINT money cap → 422 AMOUNT_TOO_LARGE, no row stored', async () => {
+    const before = await prisma.journalRequest.count({ where: { tenantId: A } })
+    const big = await draft('fin', { description: 'Too big', lines: [
+      { ...lines[0], amountCents: 90_000_000_000_000 },
+      { ...lines[0], amountCents: 90_000_000_000_000, memo: 'second' },
+      { ...lines[1], amountCents: 180_000_000_000_000 },
+    ] })
+    expect([big.statusCode, code(big)], big.body).toEqual([422, 'AMOUNT_TOO_LARGE'])
+    expect(await prisma.journalRequest.count({ where: { tenantId: A } })).toBe(before)
+  })
 })
 
 describe('the cycle', () => {
@@ -166,7 +177,9 @@ describe('the cycle', () => {
     const edited = await call('fin', 'PATCH', `/accounting/journal-requests/${id}`, { description: 'Rent accrual (fixed)' })
     expect(edited.statusCode, edited.body).toBe(200)
     expect(edited.json().request).toMatchObject({ status: 'returned', description: 'Rent accrual (fixed)' })
-    expect((await call('fin', 'POST', `/accounting/journal-requests/${id}/submit`, {})).json().request.status).toBe('submitted')
+    const resub = (await call('fin', 'POST', `/accounting/journal-requests/${id}/submit`, {})).json().request
+    // Undecided again: the return's decider is cleared; its note stays as the last return note.
+    expect(resub).toMatchObject({ status: 'submitted', decidedById: null, decidedByName: null, decidedAt: null, decidedVia: null, decisionNote: 'Use the accrual account' })
 
     const ok = await call('ceo', 'POST', `/accounting/journal-requests/${id}/approve`, {})
     expect(ok.statusCode, ok.body).toBe(200)

@@ -314,16 +314,19 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     const out = []
     for (const p of pairs) {
       const both = isMemberOfBoth(viewer, p.a, p.b)
-      if (both || isOwnHeadOfficePair(req, p.a, p.b)) {
+      // headOfficePair = one side is a head office of the caller's with a LIVE
+      // link to the other (true for the CEO who belongs to both as well).
+      const hoPair = isOwnHeadOfficePair(req, p.a, p.b)
+      if (both || hoPair) {
         // A member of both, or a head-office member on their own head office's
         // pair with a company it serves (spec §4.8): both sides.
         const bal = await pairBalances(serviceClient, p.a, p.b, asOf)
-        out.push({ a: { id: p.a, name: names.get(p.a) ?? null }, b: { id: p.b, name: names.get(p.b) ?? null }, memberOfBoth: both, headOfficePair: !both, ...bal })
+        out.push({ a: { id: p.a, name: names.get(p.a) ?? null }, b: { id: p.b, name: names.get(p.b) ?? null }, memberOfBoth: both, headOfficePair: hoPair, ...bal })
       } else {
         // Only the side the caller belongs to; the other company's books stay closed to them.
         const s = await sideBalances(serviceClient, p.a, p.b, asOf)
         out.push({
-          a: { id: p.a, name: names.get(p.a) ?? null }, b: { id: p.b, name: names.get(p.b) ?? null }, memberOfBoth: false,
+          a: { id: p.a, name: names.get(p.a) ?? null }, b: { id: p.b, name: names.get(p.b) ?? null }, memberOfBoth: false, headOfficePair: false,
           aDueFromB: s.dueFrom, aDueToB: s.dueTo, bDueFromA: null, bDueToA: null, netOwedByA: s.dueTo - s.dueFrom, mismatchCents: null,
         })
       }
@@ -370,6 +373,12 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     await assertPairPreparer(req, body.debtorTenantId, body.creditorTenantId, { what: 'transfer' })
     if (body.postNow && !isCeo(req.staffUser!.role)) {
       throw new ForbiddenError('Only the CEO can post a transfer at once — submit it for approval instead')
+    }
+    // Posting at once writes BOTH books: it needs membership of both companies,
+    // as before. The head-office preparer path (a served company the caller is
+    // not a member of) may only submit for approval.
+    if (body.postNow && !isMemberOfBoth(req.staffUser!, body.debtorTenantId, body.creditorTenantId)) {
+      throw new AppError('NOT_IN_BOTH_COMPANIES', 'Only someone who belongs to both companies can post a transfer at once — submit it for approval instead', 403)
     }
     const row = await createTransfer(actorOf(req), body, { postNow: body.postNow })
     const [view] = await withApprovalFlags(req, await presentTransfers([row], actorOf(req)))

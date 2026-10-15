@@ -340,6 +340,19 @@ describe('recipes through head office', () => {
     expect(rej.json().status).toBe('iteration')
   })
 
+  it("a pending sub-recipe with no company is the CEO's: not in the owner's queue (owner 403), in the CEO's", async () => {
+    const comp = await prisma.recipe.create({
+      data: { kind: 'component', name: `Orphan sauce ${P}`, yieldGrams: 500, status: 'pending_approval', submittedById: U.chefA!.id, submittedAt: new Date() },
+    })
+    const ownerQ = await call('ownerA', 'GET', '/recipes/pending-approval')
+    expect(ownerQ.statusCode).toBe(200)
+    expect((ownerQ.json() as Array<{ id: string }>).map((r) => r.id)).not.toContain(comp.id)
+    expect((await call('ownerA', 'POST', `/recipes/${comp.id}/approve`)).statusCode).toBe(403)
+    const ceoQ = await call('ceo', 'GET', '/recipes/pending-approval')
+    expect(ceoQ.statusCode).toBe(200)
+    expect((ceoQ.json() as Array<{ id: string }>).map((r) => r.id)).toContain(comp.id)
+  })
+
   it('a chef (no approver role, no hand-over) gets the old 403 on approve and on the queue', async () => {
     const id = await chefRecipe()
     expect((await call('chefA', 'POST', `/recipes/${id}/approve`)).json().error.code).toBe('FORBIDDEN')

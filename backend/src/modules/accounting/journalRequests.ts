@@ -44,7 +44,7 @@ import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
-import { toCents } from '../../lib/money.js'
+import { assertMoneyFits, toCents } from '../../lib/money.js'
 import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { assertHoMayPropose, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
 import {
@@ -167,6 +167,7 @@ export interface JournalRequestDto {
   decidedById: string | null
   decidedByName: string | null
   decidedAt: string | null
+  /** On a submitted / returned row: the last return's note. On a posted row: unchanged from that. */
   decisionNote: string | null
   decidedVia: string | null
   postedEntryId: string | null
@@ -234,9 +235,14 @@ async function auditRequest(req: FastifyRequest, row: Pick<Row, 'id' | 'tenantId
   })
 }
 
-/** Validate a post request's lines in its company (the direct route's checks); returns the total. */
+/**
+ * Validate a post request's lines in its company (the direct route's checks); returns the total.
+ * The total is stored in a BIGINT money column, so it must fit MAX_MONEY_CENTS even though each
+ * line already does (200 lines of the line cap would not) — 422 AMOUNT_TOO_LARGE otherwise.
+ */
 async function checkPostLines(tenantId: string, lines: ManualJournalLine[]): Promise<number> {
   const { debits } = await assertManualLines(prisma, tenantId, lines)
+  assertMoneyFits(debits, 'journal request total')
   return debits
 }
 
@@ -312,6 +318,7 @@ export async function createRequest(req: FastifyRequest, body: CreateRequestBody
   let data: Prisma.JournalRequestUncheckedCreateInput
   if (body.kind === 'reverse') {
     const { original, amountCents } = await checkReverseTarget(tenantId, body.reverseEntryId)
+    assertMoneyFits(amountCents, 'journal request total')
     data = {
       tenantId, kind: 'reverse', status: 'draft',
       description: `Reverse: ${original.description}`.slice(0, 500),
@@ -399,7 +406,13 @@ export async function submitRequest(req: FastifyRequest, id: string): Promise<Jo
   const via = await viaHeadOfficeForSubmit(req, row.tenantId)
   const n = await prisma.journalRequest.updateMany({
     where: { id, status: { in: [...EDITABLE] }, preparedById: su.id },
-    data: { status: 'submitted', submittedById: su.id, submittedAt: new Date(), viaHeadOfficeId: via, preparedByIds: uniq([...row.preparedByIds, su.id]) },
+    data: {
+      status: 'submitted', submittedById: su.id, submittedAt: new Date(), viaHeadOfficeId: via, preparedByIds: uniq([...row.preparedByIds, su.id]),
+      // A resubmitted (returned) request is undecided again: clear the return's decider fields.
+      // decisionNote stays as the LAST RETURN's note so the preparer and approver still see why it
+      // came back (the full history is in the audit log); it never means "decided" on its own.
+      decidedById: null, decidedAt: null, decidedVia: null, delegationId: null,
+    },
   })
   if (n.count === 0) throw new AppError('REQUEST_NOT_EDITABLE', 'This request changed meanwhile — reload it', 409)
   const after = await prisma.journalRequest.findUniqueOrThrow({ where: { id } })

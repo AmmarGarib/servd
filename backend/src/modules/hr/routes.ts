@@ -193,10 +193,9 @@ async function payrollDecision(
   return { run: found, grant }
 }
 
-/** approval.decide for a payroll decision through a hand-over or on a run
- *  prepared through head office — in the run's company (A19). */
+/** approval.decide for every payroll decision (payroll_run is delegable,
+ *  spec §7.8) — in the run's company (A19). */
 async function auditPayrollDecision(req: FastifyRequest, run: { id: string; tenantId: string; period: string; viaHeadOfficeId: string | null }, grant: ApprovalGrant, decision: string) {
-  if (grant.via !== 'delegation' && !run.viaHeadOfficeId) return
   await auditApproval(req, {
     type: 'payroll_run', id: run.id, tenantId: run.tenantId, decision, grant, entity: 'HrPayrollRun',
     metadata: { period: run.period, ...(run.viaHeadOfficeId && { viaHeadOfficeId: run.viaHeadOfficeId }) },
@@ -1608,10 +1607,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: rec.tenantId,
       after: { step: step.key, status: nextStatus, override: who.override },
     })
-    // D3 §7.8: a decision through head office (reach or a hand-over), or on a
-    // record that came through one, also writes approval.decide — in the
-    // record's company (A19), never the decider's.
-    if (right.via !== 'member' || rec.viaHeadOfficeId) {
+    // D3 §7.8: every decision on a delegable type (hr_request is one) also
+    // writes approval.decide — in the record's company (A19), never the
+    // decider's. `path` says how the right was held (member / reach / delegation).
+    {
       const grant: ApprovalGrant = right.via === 'delegation' && right.delegationId ? { via: 'delegation', delegationId: right.delegationId } : { via: 'role' }
       await auditApproval(req, {
         type: 'hr_request', id: rec.id, tenantId: rec.tenantId, decision: body.decision === 'approved' ? 'approve' : 'reject', grant, entity: 'HrRecord',
@@ -2210,7 +2209,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       if (!step) continue
       const subject = await approvalSubject(rec)
       const isLast = rec.currentStep >= fmt.workflow.length - 1
-      const who = await decideRight(req, rec, step, isLast, { subject, decision: null, through: through[i] ?? [] })
+      const who = await decideRight(req, rec, step, isLast, { subject, decision: null, through: through[i] ?? [], delegatedTenants: delegated.get('hr_request') ?? new Set<string>() })
       // An admin override is possible on everything; only list it for the CEO
       // when it is genuinely theirs, or nothing would ever leave their queue.
       if (!who.ok || who.override) continue

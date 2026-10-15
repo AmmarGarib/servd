@@ -90,6 +90,13 @@ async function prepareAndSubmit(hoId: string, period: string, now: Date, r: Tick
     runId = (await prepareRun(SYSTEM, hoId, period, now)).id
   } catch (err) {
     if (err instanceof AppError && (err.code === 'NOTHING_TO_RECHARGE' || err.code === 'RUN_OPEN')) return
+    // Any other refusal (NO_SPLIT, COMPANY_UNLINKED, …) is a setup problem for a
+    // person: log it and carry on, so the month is still flagged and later
+    // months are still prepared.
+    if (err instanceof AppError) {
+      console.warn(`[headOfficeRecharge] ${hoId} ${period}: no run prepared — ${err.code}: ${err.message}`)
+      return
+    }
     throw err
   }
   r.prepared += 1

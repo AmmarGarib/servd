@@ -745,9 +745,12 @@ export interface RunView {
   poolCents: number
   priorCents: number
   baseCents: number
+  /** Full viewers: the whole run's charge. A company-only viewer: its own lines' sum (A5). */
   rechargedCents: number
-  retainedCents: number
+  /** null for a company-only viewer (it would expose the other companies' share). */
+  retainedCents: number | null
   driftAtApprovalCents: number | null
+  /** A company-only viewer gets only the warnings that name no other company. */
   warnings: string[]
   preparedById: string | null
   preparedByIds: string[]
@@ -766,6 +769,25 @@ export interface RunView {
   memberOfHeadOffice: boolean
 }
 
+const BOOKS_CLOSED_WARNING = /^(.*)'s books are closed through /
+const SPLIT_TOTAL_WARNING = /^The % table adds up to /
+
+/**
+ * The run's warnings a company-only viewer may read (A5, fail closed): a
+ * "books are closed" warning only when it names the head office or one of the
+ * viewer's own companies on the run (a renamed company's old warning is dropped, never
+ * shown), and never the % table total (it tells the other companies' share).
+ */
+export function companyViewWarnings(warnings: readonly string[], ownNames: readonly string[]): string[] {
+  const own = new Set(ownNames)
+  return warnings.filter((w) => {
+    if (SPLIT_TOTAL_WARNING.test(w)) return false
+    const m = BOOKS_CLOSED_WARNING.exec(w)
+    if (m) return own.has(m[1]!)
+    return true
+  })
+}
+
 /**
  * Rows the viewer may see (the caller filtered them). A viewer who belongs to
  * the head office (or holds its hand-over) sees every line; a company member
@@ -777,6 +799,7 @@ export async function presentRuns(rows: RunRow[], viewer: { memberTenantIds: str
   const members = new Set(viewer.memberTenantIds)
   return rows.map((r) => {
     const full = viewer.fullHeadOffices.has(r.tenantId)
+    const ownLines = r.lines.filter((l) => full || members.has(l.companyTenantId))
     return {
       id: r.id,
       tenantId: r.tenantId,
@@ -791,10 +814,10 @@ export async function presentRuns(rows: RunRow[], viewer: { memberTenantIds: str
       poolCents: toCents(r.poolCents),
       priorCents: toCents(r.priorCents),
       baseCents: toCents(r.baseCents),
-      rechargedCents: toCents(r.rechargedCents),
-      retainedCents: toCents(r.retainedCents),
+      rechargedCents: full ? toCents(r.rechargedCents) : ownLines.reduce((a, l) => a + toCents(l.amountCents), 0),
+      retainedCents: full ? toCents(r.retainedCents) : null,
       driftAtApprovalCents: r.driftAtApprovalCents === null ? null : toCents(r.driftAtApprovalCents),
-      warnings: r.warnings,
+      warnings: full ? r.warnings : companyViewWarnings(r.warnings, [r.tenantId, ...ownLines.map((l) => l.companyTenantId)].map((t) => names.get(t)).filter((n): n is string => !!n)),
       preparedById: r.preparedById,
       preparedByIds: r.preparedByIds,
       preparedAt: r.preparedAt.toISOString(),
@@ -807,8 +830,7 @@ export async function presentRuns(rows: RunRow[], viewer: { memberTenantIds: str
       postedAt: iso(r.postedAt),
       reversedAt: iso(r.reversedAt),
       reversalReason: r.reversalReason,
-      lines: r.lines
-        .filter((l) => full || members.has(l.companyTenantId))
+      lines: ownLines
         .map((l) => ({
           id: l.id,
           companyTenantId: l.companyTenantId,

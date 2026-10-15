@@ -479,6 +479,26 @@ describe('company separation', () => {
     expect(s.differenceCents).toBe(0)
     expect(s.closingCents).toBe((await pairBalances(prisma, HO, C1)).aDueFromB - (await pairBalances(prisma, HO, C1)).aDueToB)
     expect(s.chargesCents).toBe(s.closingCents)
+ 
+    // A5: C2's books are closed (the true-ups above), and the run's warning names
+    // it — a C1-only viewer never reads C2's name or close date, nor the other
+    // companies' share of the charge.
+    const full = (await call('ceo', 'GET', `/${posTrueUp}`)).json()
+    expect(full.warnings.join(' ')).toContain("Company Two's books are closed")
+    expect(full.retainedCents).not.toBeNull()
+    const own = await call('c1fin', 'GET', `/${posTrueUp}`)
+    expect(own.statusCode).toBe(200)
+    const v = own.json()
+    expect(JSON.stringify(v.warnings)).not.toContain('Company Two')
+    expect(v.warnings.some((w: string) => w.includes('Company Two'))).toBe(false)
+    expect(v.lines.map((l: { companyTenantId: string }) => l.companyTenantId)).toEqual([C1])
+    expect(v.rechargedCents).toBe(v.lines[0].amountCents)
+    expect(v.rechargedCents).not.toBe(full.rechargedCents)
+    expect(v.retainedCents).toBeNull()
+    const listed = (await call('c1fin', 'GET', '/')).json().runs.find((r: { id: string }) => r.id === posTrueUp)
+    expect(JSON.stringify(listed.warnings)).not.toContain('Company Two')
+    expect(listed.rechargedCents).toBe(v.lines[0].amountCents)
+    expect(listed.retainedCents).toBeNull()
   })
 
   it('the head office summary lists both companies with balances that agree', async () => {
