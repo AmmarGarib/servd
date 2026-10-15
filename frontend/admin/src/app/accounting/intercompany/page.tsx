@@ -38,6 +38,7 @@ import {
 import { Select } from '@/components/ui/Select'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { HeadOfficeTab } from './HeadOfficeTab'
+import { useActiveCompany } from '../../../lib/connectorsApi'
 
 // ─── API shapes ──────────────────────────────────────────────────────────────
 
@@ -234,12 +235,17 @@ export default function IntercompanyPage() {
     queryFn: () => api.get<{ runs: unknown[] }>('/accounting/intercompany/recharge-runs?limit=1'),
     retry: false,
   })
-  const showHeadOffice = headOffices.length > 0 || reach.length > 0 || (hoRuns.data?.runs.length ?? 0) > 0
+  // The close checklist links a served company's finance user to ?tab=recharges
+  // even before its head office has ever charged it — keep the tab for them.
+  const [deepLinked, setDeepLinked] = useState(false)
+  const showHeadOffice = deepLinked || headOffices.length > 0 || reach.length > 0 || (hoRuns.data?.runs.length ?? 0) > 0
   const visibleTabs = TABS.filter((t) => t.key !== 'recharges' || showHeadOffice)
+  const activeCompany = useActiveCompany()
 
   // ?tab=… deep links (the close checklist links here).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
+    if (t === 'recharges') setDeepLinked(true)
     if (t && TABS.some((x) => x.key === t)) setTab(t as Tab)
   }, [])
   const pick = (t: Tab) => {
@@ -303,9 +309,11 @@ export default function IntercompanyPage() {
         {tab === 'recharges' && showHeadOffice && (
           <HeadOfficeTab
             headOffices={headOffices}
+            activeCompany={activeCompany ? { id: activeCompany.id, name: activeCompany.name } : null}
             canPrepare={can.prepare && headOffices.length > 0}
-            // The CEO, or a head-office-wide Finance hand-over; the server decides.
-            canDecide={can.decide || delegations.length > 0}
+            // The CEO, or a head-office-wide Finance hand-over (ho_recharge is a
+            // Finance-section right); the server decides.
+            canDecide={can.decide || delegations.some((d) => d.section === 'finance')}
             canReverse={can.decide}
             setMsg={setMsg}
           />

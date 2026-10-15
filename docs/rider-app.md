@@ -127,8 +127,10 @@ hand-over code).
 - Generated with `crypto.randomInt` (4 digits), compared timing-safe.
 - The customer sees it on their order tracker once a rider is assigned, and
   gets it on WhatsApp at pick-up.
-- Staff never see it in order lists, and no staff role can read it (reading it
-  would be a disguised "Delivered").
+- Staff never see it in order lists. While the company's code-only switch is
+  OFF, admin and management may read it for support; once the switch is ON no
+  role can read it, the CEO included (reading it would be a disguised
+  "Delivered"). `lib/deliveryOtp.ts canReadDeliveryOtp` is the rule.
 - The staff check (`POST /trustops/orders/:id/verify-otp`, tablet and admin
   "Enter customer's code") shares the rider's budget: 5 wrong codes in total
   across both doors, then `423 OTP_LOCKED`. A wrong code answers
@@ -160,8 +162,11 @@ possible once the job is picked up. In the rider apps:
 - The job page shows "A manager sent the code to your WhatsApp", the code, and
   a "Use this code" button. For a cash order the copy is: take the cash first,
   then enter the code. The jobs list shows a "Code sent to you" chip.
-- A locked code (no reroute yet) shows "Call your manager - they can send the
-  code to you."
+- A locked code (no reroute yet) at a code-only company shows "Call your
+  manager - they can send the code to you." With the switch OFF the reroute is
+  refused (`409 CODE_ONLY_OFF`), so the app keeps today's copy: "5 wrong codes
+  were entered. Call the kitchen - a manager will mark the order delivered"
+  (from Dispatch).
 
 ### Door problems
 

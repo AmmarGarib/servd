@@ -9,6 +9,7 @@ The two areas below come OUT of wave B. Finance ships first. Everything already 
   (verified: no Edit/Write in its transcript), so there is nothing to move to a branch.
 
 ## A. Delivery and customers — PARKED
+**RESUMED 2026-10-15** — built and documented in CLAUDE.md, "Delivery money and customers (resumed 2026-10-15)". Strikes and bans became SERVD-WIDE (owner, 2026-10-15), not per company as briefed below.
 - Delivery completes only with the customer's code; no staff "Delivered"; reroute the code to the rider; door problems; rider
   app server side (w1-dlv-core — cancelled before it started).
 - Strikes and bans per company, ban appeals via the help desk, blocked-customer notices (w1-bans — stopped).
@@ -23,6 +24,7 @@ The two areas below come OUT of wave B. Finance ships first. Everything already 
 - Docs: rider-app and emergency-override runbooks.
 
 ## B. Corporate clients on account — PARKED
+**RESUMED 2026-10-15** — built and documented in CLAUDE.md, "On-account clients (resumed 2026-10-15)" (till-clearing cut-over is CEO-triggered, never at boot).
 - On-account clients, QR cards, exposure/credit limits, charging at the till, statements, on-account refunds, the till's
   "On account" panel, client pages, card print, Z-report on-account rows (w2-oa-recv's on-account part; w3-till's on-account
   tender + onAccountRoutes; w4-admin-oa's till/clients/statement parts).

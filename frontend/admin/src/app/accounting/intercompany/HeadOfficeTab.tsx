@@ -94,9 +94,11 @@ function lastDayOfPrevMonthPkt(): string {
 
 // ─── The tab ─────────────────────────────────────────────────────────────────
 
-export function HeadOfficeTab({ headOffices, canPrepare, canDecide, canReverse, setMsg }: {
+export function HeadOfficeTab({ headOffices, activeCompany, canPrepare, canDecide, canReverse, setMsg }: {
   /** The head offices the caller belongs to (from /permissions/me). */
   headOffices: MyHeadOffice[]
+  /** The operator's active company: its close status shows even before any charge. */
+  activeCompany: { id: string; name: string } | null
   canPrepare: boolean
   canDecide: boolean
   canReverse: boolean
@@ -125,7 +127,11 @@ export function HeadOfficeTab({ headOffices, canPrepare, canDecide, canReverse, 
       {charges.length > 0 && <ChargesSection runs={charges} setMsg={setMsg} />}
 
       {!runs.isLoading && headOffices.length === 0 && charges.length === 0 && (
-        <p className="s-card p-6 text-center text-sm text-white/45">No head office is linked to your companies yet.</p>
+        <>
+          <p className="s-card p-6 text-center text-sm text-white/45">No head office has charged your companies yet.</p>
+          {/* A served company's first month: show why its close is held up. */}
+          {activeCompany && <CompanyCloseStatus companies={[activeCompany]} />}
+        </>
       )}
     </div>
   )

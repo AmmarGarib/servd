@@ -120,10 +120,13 @@ export function CodPayInPanel({ shiftId }: { shiftId: string }) {
   })
   const rows = data?.payments ?? []
   // Group by rider (no rider = the counter), keeping the API's oldest-first order.
-  const groupMap = new Map<string, CodDue[]>()
+  // Keyed by rider id (names can repeat); the counter has its own key.
+  const groupMap = new Map<string, { name: string; rows: CodDue[] }>()
   for (const p of rows) {
-    const k = p.rider?.name ?? 'No rider (at the counter)'
-    groupMap.set(k, [...(groupMap.get(k) ?? []), p])
+    const k = p.rider?.id ?? '__counter'
+    const g = groupMap.get(k) ?? { name: p.rider?.name ?? 'No rider (at the counter)', rows: [] }
+    g.rows.push(p)
+    groupMap.set(k, g)
   }
   const groups = [...groupMap.entries()]
   return (
@@ -132,8 +135,8 @@ export function CodPayInPanel({ shiftId }: { shiftId: string }) {
       <p className="text-xs text-kds-subtext">Delivered orders paid in cash whose money has not reached a drawer. Take the rider&apos;s cash into this drawer.</p>
       {isLoading && <p className="text-xs text-kds-subtext">Loading…</p>}
       {!isLoading && rows.length === 0 && <p className="text-xs text-kds-subtext">Nothing waiting.</p>}
-      {groups.map(([riderName, list]) => (
-        <div key={riderName} className="space-y-2">
+      {groups.map(([groupKey, { name: riderName, rows: list }]) => (
+        <div key={groupKey} className="space-y-2">
           <p className="text-xs font-bold text-kds-subtext">{riderName}</p>
           <ul className="space-y-2">
             {list.map((p) => {

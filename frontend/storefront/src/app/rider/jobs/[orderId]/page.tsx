@@ -7,9 +7,12 @@
 //   accepted   Picked up        (409 NOT_READY until the kitchen marks it ready)
 //   picked_up  Arrived
 //   arrived    The customer's 4-digit code → delivered. Wrong codes count down;
-//              after 5 the hand-over locks: call the manager, who can send the
-//              code to the rider's WhatsApp (Emergency overrides). The code
+//              after 5 the hand-over locks. Code-only companies
+//              (job.doorProblemEnabled): call the manager, who can send the
+//              code to the rider's WhatsApp (Emergency overrides); the code
 //              shows here too, as a fallback, with a "Use this code" fill.
+//              Otherwise (switch off): call the kitchen — a manager marks the
+//              order delivered from Dispatch.
 //   picked up / arrived, code-only companies: "Problem at the door" (no code,
 //              refused, can't reach) → bring the food back; a manager logs it.
 //
@@ -34,6 +37,8 @@ import {
 
 const DECLINE_REASONS = ['Too far', 'Vehicle problem', 'Already carrying an order', 'Other'] as const
 const OTP_LENGTH = 4
+// Matches the backend's OTP lock (modules/rider/service.ts).
+const OTP_MAX_ATTEMPTS = 5
 
 const DOOR_PROBLEMS: Array<{ kind: DoorProblemKind; label: string }> = [
   { kind: 'no_code', label: "Customer can't get the code" },
@@ -363,7 +368,9 @@ export default function RiderJobPage() {
           locked ? (
             <>
               <Banner tone="danger" title="Code locked">
-                Call your manager — they can send the code to you.
+                {job.doorProblemEnabled
+                  ? 'Call your manager — they can send the code to you.'
+                  : `${OTP_MAX_ATTEMPTS} wrong codes were entered. Call the kitchen — a manager will mark the order delivered.`}
               </Banner>
               <ButtonLink href={telHref(job.pickup?.phone)} intent="secondary" size="xl" icon={<PhoneIcon />}>
                 Call the kitchen

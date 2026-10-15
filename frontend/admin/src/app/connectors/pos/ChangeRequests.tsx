@@ -16,6 +16,7 @@ import {
   type ChangeRequestBody, type ChangeRequestStatus, type ConnectorChangeRequest, type ConnectorKind, type ConnectorsOverview,
 } from '../../../lib/connectorsApi'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
+import { useAuthStore } from '../../../store/auth'
 import { Badge, Card, ErrorLine, Field, OkLine, fmtWhen, type Tone } from '../../../components/connectors/ui'
 import { Select } from '@/components/ui/Select'
 
@@ -50,8 +51,10 @@ export function ChangeRequests({ data, companyName, canSend, isCeo, activeTenant
 }) {
   const qc = useQueryClient()
   const { delegations } = useHeadOfficeMe()
-  // The server decides; a Dev hand-over holder gets the buttons too.
-  const canDecide = isCeo || delegations.length > 0
+  const userId = useAuthStore((s) => s.user?.id ?? '')
+  // The server decides; a Dev hand-over holder (connector_change is a Dev-section
+  // right) gets the buttons too — not a Finance / HR / Marketing delegate.
+  const canDecide = isCeo || delegations.some((d) => d.section === 'dev')
   const [status, setStatus] = useState<'' | ChangeRequestStatus>('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -105,16 +108,18 @@ export function ChangeRequests({ data, companyName, canSend, isCeo, activeTenant
       )}
       <ul className="space-y-2">
         {changes.map((c) => (
-          <RequestRow key={c.id} c={c} canDecide={canDecide} onDone={(text) => { setMsg({ ok: true, text }); refresh() }} onError={(e) => setMsg({ ok: false, text: connectorErrorText(e) })} />
+          <RequestRow key={c.id} c={c} canDecide={canDecide} userId={userId} onDone={(text) => { setMsg({ ok: true, text }); refresh() }} onError={(e) => setMsg({ ok: false, text: connectorErrorText(e) })} />
         ))}
       </ul>
     </div>
   )
 }
 
-function RequestRow({ c, canDecide, onDone, onError }: {
+function RequestRow({ c, canDecide, userId, onDone, onError }: {
   c: ConnectorChangeRequest
   canDecide: boolean
+  /** The signed-in login: only the preparer may withdraw (server: NOT_PREPARER). */
+  userId: string
   onDone: (text: string) => void
   onError: (e: unknown) => void
 }) {
@@ -134,6 +139,7 @@ function RequestRow({ c, canDecide, onDone, onError }: {
     onError,
   })
   const items = describe(c)
+  const mine = !!userId && (c.preparedById === userId || (c.preparedByIds ?? []).includes(userId))
   return (
     <li className="s-card p-4 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -162,7 +168,7 @@ function RequestRow({ c, canDecide, onDone, onError }: {
               <button type="button" className="s-btn-secondary text-sm" onClick={() => setRejecting(true)}>Reject</button>
             </>
           )}
-          {!rejecting && (
+          {!rejecting && mine && (
             <button type="button" className="s-btn-ghost text-sm" disabled={act.isPending}
               onClick={() => { if (window.confirm('Withdraw this request? Only the person who sent it can.')) act.mutate('withdraw') }}>
               Withdraw

@@ -625,7 +625,8 @@ noindex, no servd chrome / feedback / pop-ups).
 - **The hand-over code** is shown to the customer (tracker + WhatsApp at
   pick-up) and to admin/management only; never in staff order lists. The
   staff "Delivered" override is managers-only and only when the code locked
-  or the rider never accepted.
+  or the rider never accepted — and only while the company's code-only
+  switch is OFF (see "Delivery money and customers").
 - **Not built yet:** earnings/payouts, push notifications for offers (the app
   polls), store release (EAS, icons, Play background-location declaration),
   KYC, route optimisation.
@@ -775,7 +776,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
 ### Raast QR (2026-10-12, owner decisions)
 
 - **Tenders:** tills take exactly Cash, Card – Keenu and Raast QR
-  (`backend/src/lib/tenders.ts` is the ONE list). `keenu_qr` is RETIRED:
+  (`backend/src/lib/tenders.ts` is the ONE list; `TILL_TENDERS` is those
+  three). **On account** (`ON_ACCOUNT_TENDER`, 2026-10-15) is the fourth way a
+  bill is settled, for approved named clients only, through its own route
+  (see "On-account clients"), never `POST /pos/payments`. `keenu_qr` is RETIRED:
   kept in the enum, old rows read and refund the way they were paid, new
   payments / settles / splits / intents answer 422 `KEENU_QR_RETIRED`
   (ring-up and quotes map it to `raast` so an old offline ring-up never 400s).
@@ -897,9 +901,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   REPOSTERS. A new posting that can be refused adds both (and puts
   `metadata.documentDate` on its flag, so the period close dates it).
 - **Pending owner/CA decisions** (decisions page
-  https://claude.ai/artifact/W8tzVdHxhzYSKJiyzhcLRk): COD never paid (G1)
-  and on-account tender (G14) — both PARKED with delivery / on-account, as
-  are H5 (rider COD on 1351) and H14 (on-account tax invoice). Everything
+  https://claude.ai/artifact/W8tzVdHxhzYSKJiyzhcLRk): COD never paid (G1),
+  rider COD on 1351 (H5), on-account tender (G14) and the on-account tax
+  invoice (H14) — resumed 2026-10-15 and BUILT on the defaults, awaiting
+  owner/CA confirmation (see "Delivery money and customers" and "On-account
+  clients"). Head-office HO-Q1 / HO-Q3 wait for the CA (see "Head office").
+  Everything
   else (C*, G2–G13, F*, K*, H1–H31) is answered and built — see "Finance
   wave B" below. Seams still marked `TODO(<id>)` in code — build only on the
   owner's answer.
@@ -1069,16 +1076,225 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   in `backend/entrypoint.sh` BEFORE any migration — never move a migration
   step above it.
 
+### Head office and approval hand-over (D1/D3, 2026-10-15)
+
+Everything ships OFF: no head office exists until the CEO runs the setup
+wizard (`/ceo/head-offices/setup`; module `tenants`, API `/head-offices`, CEO
+only, foreign rows 404). Contract: `backend/src/modules/headOffices/README.md`.
+
+- **`Tenant.kind` (`TenantKind`: `company` | `head_office`).** A head office has
+  its own HR, payroll and books and serves companies through `HeadOfficeLink`
+  rows; it never has brands, menus, orders or a till (422
+  `HEAD_OFFICE_HAS_NO_BRANDS`, `lib/headOffice.ts assertTradingCompany`) and
+  no fiscal POS. Boot location seeding and `primaryTenantId()` only ever pick
+  `kind: 'company'`; `ensureChartOfAccounts` still runs for head offices.
+- **Head-office pairs ride the inter-company engine (owner, 2026-10-15: "reuse
+  the existing inter-company transfer engine").** No second transfer table, no
+  `head_office` due accounts: due from / due to are the pair accounts
+  1450–1499 / 2150–2199 (`ensurePairAccounts`, created at link time);
+  1400–1449 / 2100–2149 stay reserved and unused. A monthly charge is one
+  `IntercompanyTransfer` per run line, `source 'ho_recharge'`,
+  `sourceRef 'ho_recharge:<lineId>'`, via `postSystemTransferTx`; settlements
+  are ordinary manual transfers. Head office books use 6990 "Costs Recharged to
+  Group Companies" (resolved, never 6991+); each company gets "Head office
+  charges — <HO>" at the first free code in 6200–6249.
+- **The split is owner-set:** 37.5% GS Foods / 62.5% GS x Viva (3750 / 6250
+  bps), created only by the setup wizard as "GS Head Office". Versioned per
+  month (`splits.ts`); `splitByBps` is the ONE rounding rule (leftover paisa
+  to the largest share at exactly 100%; below 100% the rest stays with the
+  head office).
+- **Recharge posting is OFF per head office** until the CA confirms the
+  accounts (`HeadOfficeBooks.accountsConfirmedAt`) and the CEO sets
+  `rechargeFromPeriod` (DB CHECK `head_office_books_enable_chk`). Any change
+  to accounts, pool or links switches it back off. The worker (under
+  `ENABLE_WORKERS`) only PREPARES and SUBMITS a run for approval — it never
+  posts. **Still open with the accountant:** HO-Q1 (the cost pool — default =
+  the head office's net cost, 5000–6999 at cost, no markup, 6990 excluded)
+  and HO-Q3 (6990 contra-expense vs re-mapped to income — default
+  contra-expense; the All-companies P&L would show income and cost until
+  eliminations exist).
+- **Reach and the lens are submit-only** (`lib/headOffice.ts`): a head-office
+  login reaches its linked companies and picks one with the lens header
+  (`x-servd-active-tenant`); in a reached company it may only SUBMIT (403
+  `HEAD_OFFICE_SUBMIT_ONLY` on any other write; a short allow-list such as
+  `POST /auth/staff/invite`). Approving is never reach — it needs the role
+  path or a hand-over. `COMPANY_HEADER_NOT_ALLOWED` is enforced only for callers
+  with reach. A new write route that a head office should be able to submit
+  goes on that allow-list in the same change.
+- **`APPROVAL_RIGHTS` (`lib/approvalRights.ts`) is the ONE registry of who
+  approves what:** every `APPROVAL_TYPES` entry has a section, queue module,
+  role path, delegable flag, module a delegate must hold and owner (company /
+  head office); providers, approve routes, queue routes and the hand-over
+  catalogue all read it. A new approval type is added there (and to
+  `approvalSubject`) in the same change; tested. `assertCanApprove` order:
+  role path (member of every company the item touches; an item that came
+  through a head office goes to the CEO or a delegate, A3) → delegation path →
+  separation of duties (403 `SELF_APPROVAL_BLOCKED`) → 403
+  `APPROVAL_NOT_YOURS` / 404. Nothing is cached.
+- **Delegation (`approvals/delegations.ts`, `/approvals/delegations`):** the
+  CEO ONLY hands a SECTION (optionally narrowed to types) of a head office's
+  companies to an active non-admin head-office member who holds the module.
+  Never the `ceo` section. Rows are never edited — revoke + grant again.
+  Checked live on every use (revoked, window, delegate active, still a member,
+  module, link live); ending a link revokes that company's hand-overs in the
+  same transaction. One head office per (company, section). Head-office-wide
+  hand-overs only for `ho_recharge`. `OWN_PAY_IN_RUN`: a delegate (or a
+  head-office run) never decides a payroll run carrying their own pay.
+- **CEO-only list (never delegable):** `cash_voucher`, `fixed_asset_request`,
+  `bad_debt`, `raast_void`, `grni_writeoff`, `stock_difference`,
+  `on_account_client`, `cash_request_finance`, every password-role login, a
+  journal REVERSAL, a recipe with no company, shared (no-company) servd pages
+  and company-to-company inter-company transfers (a delegate decides
+  head-office pairs only).
+- **Locked by constants (owner has not said yes):** `DELEGATION_ENABLED`
+  holds `storefront_publish: false` (Marketing) and `journal_request: false`
+  (journal hand-over, A22) — a grant answers 422 `SECTION_NOT_YET_DELEGABLE`.
+  Flip a constant only on the owner's word.
+- **Head-office logins land on `/head-office`** (`ALWAYS_OPEN_PREFIXES` in
+  `frontend/admin/src/lib/moduleCatalog.ts`); the CEO's pages are
+  `/ceo/head-offices` and `/ceo/approvals/hand-over`.
+- **Staff move to a head office only via `POST /hr/head-office-transfers`**
+  (+ `/preview`; CEO only, `hr/transferRoutes.ts`; one transaction, first of a
+  month) — never by editing an employee's company by hand. The wizard also
+  retires `isHeadOffice` / cost-share / `head_office` contributions, but only
+  once `headOfficeSetupApplied()` is true; before that planning, HR and
+  contributions behave as today.
+- **Closing:** `headOfficeCloseChecks` are in `CLOSE_CHECKS`. Linking, ending
+  a link (`lastChargedPeriod`) and switching off follow README guards
+  (`HEAD_OFFICE_IN_USE`, `DELEGATIONS_UNANSWERED`, `RUN_AFTER_LAST_CHARGED`).
+
+### Delivery money and customers (resumed 2026-10-15)
+
+Resumed from the 2026-10-13 park; everything here ships behind a switch.
+Briefs: `.handoff/parked/2026-10-14/`.
+
+- **Code-only delivery, per company, OFF by default**
+  (`lib/deliveryRules.ts`, Setting `delivery.codeOnlyAt:<tenantId>`; CEO only
+  on `/emergency-overrides` via `PUT /emergency-overrides/settings`, reason
+  10+ characters, audit `delivery.code_only.switch`). ON: a delivery completes
+  only with the customer's 4-digit code; the staff "Delivered" override is
+  gone. OFF: staff Delivered, the admin/management code read and normal cancel
+  of a picked-up delivery behave as before, and the COD flags, COD close check
+  and COD tab stay quiet. Brief staff before switching a company on:
+  deliveries already on the road lose Delivered.
+- **Emergency overrides** (`/emergency-overrides`, module `emergency_overrides`;
+  defaults RGM, chef, `fnb_manager`, `management`, CEO; not the co-owner):
+  send the code to the rider (new code, WhatsApp to the rider, ONCE per order,
+  mandatory reason; a collusion path, so audited and scored) and log
+  returned food as waste. Every action answers 409 `CODE_ONLY_OFF` while the
+  order's company has the switch off. Thin shell: the rules live in
+  `dispatch/service.ts` and `orders/returnedFood.ts`.
+- **COD custody (H5):** `lib/cod.ts` is the ONE definition (a cash payment
+  still `pending` on a completed non-till order; statuses `with_rider`,
+  `overdue` after `COD_PAY_IN_HOURS` = 12, `rider_owes`, `at_counter`).
+  Rider debt on 1351 (own rider) or the inter-company `cod` transfer (fleet
+  rider; `accounting/codPosting.ts`) is NEVER automatic: finance or the CEO
+  books each one. Worker `codCustody` (every 30 min, switched-on companies
+  only) flags `cod_cash_overdue` and `delivery_on_road_overdue`, once each,
+  and posts nothing. **The month close is BLOCKED while any COD is pending**
+  (owner DLV-COD-close, 2026-10-15: no proceeding until approval):
+  `reconciliation/codCloseCheck.ts`, key `cod_with_rider`, severity block,
+  overridable only by the CEO with `acknowledge {keys, reason ≥ 10}`; runs for
+  every company with COD pending, switched on or not. Pickup cash at the
+  counter is counted by the check but never flagged as a rider debt.
+- **Customer strikes and bans are SERVD-WIDE (owner, 2026-10-15: "if strikes
+  and bans is about customers accounts then its ok, let it be across servd" —
+  REPLACES the per-company rule of 2026-10-13).** `lib/strikes.ts`: one
+  standing per customer across companies (sum of ACTIVE strikes, `BAN_THRESHOLD`
+  3, decay 12 months); the auto ban is one `CustomerBan` locking the account,
+  email and phone at every brand of every company, enforced through
+  `activeBanAtCompany`; at most one active auto ban per customer (unique index
+  `customer_bans_one_active_auto_per_customer`, migration
+  `20261015150000_bans_servd_wide`). Each strike and ban is stamped with the
+  RAISING company: that company's managers (the CEO through membership)
+  decide reversals, lifts and appeals; a legacy NULL-company ban is the CEO's.
+  Other companies see the standing (count, blocked yes/no) and an anonymised
+  "Another servd kitchen" incident — never the details. The mirror columns
+  `Customer.strikeCount / bannedAt / isBlacklisted` are not enforced on.
+  Customer-facing copy says "your servd account".
+- **Ban appeals** are an `OrderComplaint` of kind `ban_appeal` on the existing
+  Complaints queue (no second table; `complaints/appeals.ts`; one queue, any
+  company in the customer's history sees it). Customer routes
+  `GET /storefront/account/blocks`, `POST /storefront/account/ban-appeals`
+  (3 a customer an hour). **Switch:** platform Setting `crm.banAppealsEnabled`,
+  OFF by default, the CEO's on Complaints (`PUT /complaints/settings/appeals`);
+  OFF = storefront routes 404, WhatsApp keeps the BANNED reply, no
+  BlockedNotice. `release-contact` clears `Customer.phone` and is audited.
+- **Pending owner/CA confirmation:** G1 (COD never paid), H5 (rider COD on
+  1351) — built on the defaults above.
+
+### On-account clients (resumed 2026-10-15)
+
+Corporate clients who pay on a monthly statement. API
+`/accounting/customer-accounts` (module `accounting`; `CLIENT_VIEWERS` /
+`CLIENT_EDITORS` = admin, owner, management, finance — not `fnb_manager`);
+till door `/pos/on-account/*`. Docs in the files' headers
+(`receivables/customerAccounts.ts`, `pos/onAccountRoutes.ts`).
+
+- **QR card = a bearer secret stored as a hash only** (`lib/onAccountCard.ts`:
+  sha256 + last 4; the code is shown ONCE, rotate/revoke kill the old one).
+  It never appears in logs, audit rows, errors or URLs — request BODIES only;
+  lookup is rate-limited (20/min per login); an unknown or other-company card
+  is the same 404.
+- **One charge route:** `POST /pos/orders/:id/on-account` — never
+  `POST /pos/payments` (it still refuses `on_account`). The WHOLE bill goes to
+  the client (no part-pay), on an open shift of the order's company, no manager
+  PIN: the card, the credit limit and the signature on the bill are the
+  control. Charged at the CASH tax class (`lib/pricing.ts tenderOf`); a refund
+  goes back on the account. Lock order everywhere: order → client account →
+  invoice.
+- **1110 vs 1115:** 1110 Customer receivable = invoiced / statement balances
+  and booked on-account charges; 1115 Till clearing = till bills not settled
+  on their drawer, money owed back on cancelled tickets, card tenders failed
+  after the close, Raast customer-owes write-offs. Until a company is cut over
+  both sit on 1110 (`tillClearingCode.ts`). **The cut-over is the CEO's, per
+  company, never at boot** (`POST /accounting/till-clearing/cutover`; marker
+  Setting `ledger.tillClearingCutoverAt:<tenantId>`; once the CA confirms; one
+  balanced `ledger.till_clearing_split` entry per brand). A daily sweep moves
+  late till-source lines (cut-over companies only); the 1110 tie-out is
+  `GET /accounting/customer-accounts/tie-out`. A client cannot be approved
+  (409 `TILL_CLEARING_NOT_SPLIT`) and the till hides the tender
+  (`GET /pos/on-account/enabled`) until the cut-over, an active client and the
+  CEO's approval all exist.
+- **Statements are not tax invoices** ("Statement — not a tax invoice"). The
+  sale's tax invoice / fiscal document is filed at completion as for any
+  sale; the statement only collects bills for payment.
+- **The CEO approves** every new client, every credit-limit INCREASE (a
+  decrease or a suspension applies at once; reactivate is CEO only) and every
+  bad debt (`bad_debt`, G12/H15). Approval type `on_account_client` is
+  CEO-only, never delegable. **A statement write-off suspends the client**
+  (`receivables/writeOffs.ts`). Close check `on_account_tieout` (warn,
+  overridable, cut-over companies only). Statements, emails and reminders are
+  manual (one reminder a Karachi day). **Pending owner/CA confirmation:** G14
+  (on-account tender) and H14 (on-account tax invoice) — built on the defaults
+  above.
+
 ### Parked (owner, 2026-10-13)
 
-Delivery and customers (customer-code-only completion, emergency overrides,
-strikes / bans / appeals, COD custody on 1351) and corporate clients on
-account (clients, QR cards, the till's on-account tender, statements, till
-clearing 1115) are PARKED until finance is sorted. Their schema and wave-0
-libs stay in the tree unused; no parked route, worker or admin link is
-registered; staff "Delivered" works as before. The plan, original briefs and
-generator are in `.handoff/parked/2026-10-14/` (start with `PARKED.md`).
-Remind the owner to resume both once finance is deployed.
+Delivery and customers, and corporate clients on account, were PARKED on
+2026-10-13 and both RESUMED 2026-10-15 — see "Delivery money and customers"
+and "On-account clients (resumed 2026-10-15)". Nothing from that park remains
+parked except what each of those sections lists as not built (rider-debt
+write-off, automatic COD debt booking, the per-company COD pay-in hours).
+The plan, original briefs and generator stay in `.handoff/parked/2026-10-14/`
+(start with `PARKED.md`) for reference.
+
+### Rollback caveats (2026-10-15 release: head office, delivery, on account)
+
+Never roll the API image back below this release once ANY of these exists:
+a `Tenant` row of kind `head_office` (an older Prisma client throws on the
+`TenantKind` enum), an `ho_recharge` transfer / head-office link / delegation,
+a till-clearing cut-over marker, or a new enum value. Specifically:
+- Below this release the per-company ban index and the old global ban logic
+  return, and the unique index `customer_bans_one_active_auto_per_customer`
+  (one auto ban per customer) conflicts with older per-company writes.
+- Below this release the old image books on-account sales to 1030 and till
+  clearing to 1110 again, and the staff Delivered route returns. Suspend every
+  on-account client before any rollback, and re-run the cut-over after.
+- Migrations `20261015120000_head_office`, `20261015120100_on_account_resume`
+  and `20261015150000_bans_servd_wide` must sort after `20261015100000`; if one
+  fails on deploy run `prisma migrate resolve --rolled-back <name>` in the api
+  image before redeploying any image (P3009 blocks both).
 
 ## Claude Code operating policy — model routing & parallel agents
 

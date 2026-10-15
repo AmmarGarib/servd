@@ -75,7 +75,7 @@ interface StatementLine {
 
 type ReconTab = 'shifts' | 'bank' | 'cards' | 'raast' | 'cod'
 const TABS: readonly ReconTab[] = ['shifts', 'bank', 'cards', 'raast', 'cod']
-// COD custody is PARKED (owner, 2026-10-13): no COD tab; /reconciliation/cod is an empty stub.
+// The COD tab shows only while GET /reconciliation/cod/enabled is true (OFF by default).
 
 // The till's tenders (owner, 2026-10-12): Cash, Card – Keenu, Raast QR.
 // Keenu QR is retired — its rows are older sales.
@@ -614,13 +614,17 @@ export default function ReconciliationPage() {
     if (t && (TABS as readonly string[]).includes(t)) setTab(t as ReconTab)
   }, [])
   // Cash on delivery shows only while a company in view has code-only delivery on.
-  const { data: codOn } = useQuery({
+  const { data: codOn, isError: codOnError } = useQuery({
     queryKey: ['recon-cod-enabled'],
     queryFn: () => api.get<{ enabled: boolean }>('/reconciliation/cod/enabled'),
     retry: false,
     staleTime: 60_000,
   })
   const codEnabled = !!codOn?.enabled
+  // ?tab=cod while COD is off (or the check failed) would leave a blank page.
+  useEffect(() => {
+    if (tab === 'cod' && ((codOn && !codOn.enabled) || codOnError)) setTab('shifts')
+  }, [codOn, codOnError, tab])
   const [selectedShift, setSelectedShift] = useState<string | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [openImport, setOpenImport] = useState<string | null>(null)

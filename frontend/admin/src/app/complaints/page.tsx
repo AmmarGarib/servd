@@ -158,10 +158,10 @@ function AppealCard({ c, canDecide, now }: { c: Complaint; canDecide: boolean; n
         </div>
       )}
       {c.resolution && <p className="text-xs text-primary-ink">Decision: {c.resolution}</p>}
-      {c.ban?.otherKitchen && !decided && (
-        <p className="text-xs text-s-muted">Raised by another servd kitchen &mdash; only that kitchen can decide this appeal.</p>
+      {canDecide && !c.ban?.canDecide && !decided && (
+        <p className="text-xs text-s-muted">Raised by another servd kitchen: only that kitchen or the CEO can decide this appeal.</p>
       )}
-      {canDecide && c.ban?.canDecide !== false && !decided && c.banId && (
+      {canDecide && !!c.ban?.canDecide && !decided && c.banId && (
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             {(Object.keys(APPEAL_ACTIONS) as AppealAction[]).map((a) => (
@@ -214,7 +214,7 @@ function AppealsSwitch() {
           <p className="text-xs text-s-muted">Off until you switch it on. Staff can always review appeals here.</p>
         </div>
         <button role="switch" aria-checked={on} onClick={() => setPending(!on)}
-          className={`rounded-full border px-3 py-1 text-xs font-semibold ${on ? 'border-primary bg-primary/10 text-primary-ink' : 'border-s-border text-s-muted'}`}>
+          className={`rounded-full border px-3 py-1 text-xs font-semibold ${on ? 'border-success bg-accent/15 text-success' : 'border-s-border text-s-muted'}`}>
           {on ? 'On' : 'Off'}
         </button>
       </div>
