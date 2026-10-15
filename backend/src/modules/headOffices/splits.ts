@@ -24,6 +24,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { liveLink } from '../../lib/headOffice.js'
 import { assertMonth } from '../intercompany/fleet.js'
+import { assertMoneyFits } from '../../lib/money.js'
 
 export type Tx = Prisma.TransactionClient
 export type Db = Tx | PrismaClient
@@ -69,6 +70,7 @@ export interface SplitVersion {
  */
 export function splitByBps(base: number, lines: readonly SplitLineInput[]): SplitAmount[] {
   if (!Number.isSafeInteger(base)) throw new AppError('INVALID_AMOUNT', 'The amount to split must be whole paisa', 422)
+  assertMoneyFits(Math.abs(base), 'recharge base')
   for (const l of lines) {
     if (!Number.isInteger(l.shareBps) || l.shareBps < 0 || l.shareBps > FULL_BPS) {
       throw new AppError('SPLIT_OVER_100', 'Each share must be between 0.01% and 100%', 422)

@@ -190,7 +190,11 @@ head-office-wide ones a new link would extend. Audit:
 submit them) carry `handedOverTo` and are collapsed per section
 (`handedOverItems`, `sections[].handedOver`, `handedOver`) — never in `total`;
 `?view=all` lists them inline. A delegate sees the covered companies' items
-whatever the view, never their own submissions. Company role approvers no
+whatever the view — only those one of their own live delegations covers by
+`delegationCovers` (section never `ceo`, ownership, A13; read through
+`ApprovalDelegations.asDelegate`, fail-closed when absent), checked AFTER the
+through-head-office block so role items moved onto a hand-over are checked
+too — never their own submissions, never a company-less row. Company role approvers no
 longer see items that came through a head office. `GET /approvals?type&
 section&view`. With no head office and no hand-over, the inbox is exactly as
 before. `delegations.ts` is the seam: `LIVE_DELEGATIONS` (the default) reads

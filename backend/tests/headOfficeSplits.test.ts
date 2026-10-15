@@ -93,6 +93,17 @@ describe('splitByBps', () => {
     expect(() => splitByBps(1.5, [{ companyTenantId: 'a', shareBps: 10_000 }])).toThrow()
   })
 
+  it('refuses a base above MAX_MONEY_CENTS with 422 AMOUNT_TOO_LARGE (either sign)', () => {
+    const one = [{ companyTenantId: 'a', shareBps: 10_000 }]
+    expect(splitByBps(MAX_MONEY_CENTS, one)).toEqual([{ companyTenantId: 'a', shareBps: 10_000, amountCents: MAX_MONEY_CENTS }])
+    for (const base of [MAX_MONEY_CENTS + 1, -(MAX_MONEY_CENTS + 1)]) {
+      let err: unknown
+      try { splitByBps(base, one) } catch (e) { err = e }
+      expect((err as { code?: string }).code).toBe('AMOUNT_TOO_LARGE')
+      expect((err as { statusCode?: number }).statusCode).toBe(422)
+    }
+  })
+
   it('is pure: the input lines are not changed', () => {
     const lines = [{ companyTenantId: 'b', shareBps: 5000 }, { companyTenantId: 'a', shareBps: 5000 }]
     const copy = JSON.parse(JSON.stringify(lines))

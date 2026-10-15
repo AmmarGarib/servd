@@ -16,6 +16,7 @@
 //                                     effective month or later already pays them
 //     409 ALREADY_IN_HEAD_OFFICE      their login already has an employee record in that head office
 //     422 JOINED_AFTER_MOVE           they join after the effective date
+//     409 DUPLICATE_LOGIN_IN_BATCH    two picked records share one login (the head office holds one per login)
 //   A DRAFT payroll of the old company for the effective month or later only
 //   warns: recalculating it drops them (lastWorkingDay = effective − 1 day).
 //
@@ -177,10 +178,21 @@ async function employeesFor(actor: TransferActor, ids: string[]): Promise<HrEmpl
   return unique.map((id) => emps.find((x) => x.id === id)!)
 }
 
-/** The companies with a LIVE link to the head office — the memberships the move may remove. */
+/** A tenant that can be relied on: active and not deleted (same as lib/headOffice.ts). */
+const LIVE_TENANT = { isActive: true, deletedAt: null } as const
+
+/**
+ * The companies with a LIVE link to the head office — the memberships the move
+ * may remove. The same "live" as lib/headOffice.ts liveLink (its liveLinkWhere
+ * is module-private): link not ended, head office and company active and not deleted.
+ */
 async function linkedCompanyIds(hoId: string): Promise<string[]> {
   const links = await prisma.headOfficeLink.findMany({
-    where: { tenantId: hoId, endedAt: null, company: { deletedAt: null, kind: 'company' } },
+    where: {
+      tenantId: hoId, endedAt: null,
+      headOffice: { ...LIVE_TENANT, kind: 'head_office' },
+      company: { ...LIVE_TENANT, kind: 'company' },
+    },
     select: { companyTenantId: true },
   })
   return [...new Set(links.map((l) => l.companyTenantId))]
@@ -216,6 +228,8 @@ interface Assessed {
   emps: HrEmployee[]
   linked: string[]
   keep: string[]
+  /** Approved loan / advance record ids seen per employee (re-checked inside the move's transaction). */
+  loanIdsSeen: Map<string, string[]>
 }
 
 async function assess(input: TransferInput, actor: TransferActor): Promise<Assessed> {
@@ -233,6 +247,16 @@ async function assess(input: TransferInput, actor: TransferActor): Promise<Asses
   const period = periodOf(effective)
   const lastWorkingDay = dayBefore(effective)
   const batch = new Set(emps.map((e) => e.id))
+  const loanIdsSeen = new Map<string, string[]>()
+  // One login, one head-office record (@@unique([tenantId, userId])): a login with
+  // records in two linked companies can only be moved from one of them.
+  const loginCount = new Map<string, number>()
+  for (const e of emps) if (e.userId) loginCount.set(e.userId, (loginCount.get(e.userId) ?? 0) + 1)
+  // Direct reports who stay behind lose their manager in the company.
+  const staying = await prisma.hrEmployee.findMany({
+    where: { managerId: { in: [...batch] }, id: { notIn: [...batch] }, status: { in: CURRENT } },
+    select: { managerId: true, fullName: true, tenantId: true },
+  })
 
   // Head office lookups (by name) for the preview's "existing / create".
   const [hoDepts, hoUnits, hoLeaveTypes, hoEarlierRuns, companies] = await Promise.all([
@@ -269,7 +293,11 @@ async function assess(input: TransferInput, actor: TransferActor): Promise<Asses
     if (e.joiningDate && e.joiningDate > lastWorkingDay) {
       blockers.push({ code: 'JOINED_AFTER_MOVE', status: 422, message: `${e.fullName} joins on ${d10(e.joiningDate)}, after the move date — move them from a later month` })
     }
+    if (e.userId && (loginCount.get(e.userId) ?? 0) > 1) {
+      blockers.push({ code: 'DUPLICATE_LOGIN_IN_BATCH', status: 409, message: `${e.fullName}'s login has another employee record in this batch — move one record per login` })
+    }
     const loans = await loansFor(e.tenantId, e.id)
+    loanIdsSeen.set(e.id, loans.map((l) => l.id))
     const owed = loans.reduce((a, l) => a + l.outstandingCents, 0)
     if (owed > 0) {
       blockers.push({ code: 'TRANSFER_LOAN_OUTSTANDING', status: 409, message: `${e.fullName} still owes PKR ${(owed / 100).toFixed(2)} on a loan or advance — recover or settle it first` })
@@ -288,6 +316,10 @@ async function assess(input: TransferInput, actor: TransferActor): Promise<Asses
     }
     const futureLeave = await prisma.hrRecord.count({ where: { tenantId: e.tenantId, employeeId: e.id, section: 'leave', status: 'approved', endDate: { gte: effective } } })
     if (futureLeave > 0) warnings.push('Approved leave on or after the move date stays on the old record; it is already taken off the balance carried over')
+    const reports = staying.filter((r) => r.managerId === e.id && r.tenantId === e.tenantId)
+    if (reports.length > 0) {
+      warnings.push(`${reports.length} direct report(s) stay in the company and will have no manager there — reassign them in HR: ${reports.map((r) => r.fullName).join(', ')}`)
+    }
 
     // Org lists.
     const dept = depts.find((d) => d.id === e.departmentId)
@@ -379,7 +411,7 @@ async function assess(input: TransferInput, actor: TransferActor): Promise<Asses
     suggestedAdjustmentCents: out.reduce((a, e) => a + e.suggestedAdjustmentCents, 0),
     suggestedAdjustmentNote: 'Carried leave days × daily rate. A suggestion for the CA only — nothing is posted.',
   }
-  return { preview, emps, linked, keep }
+  return { preview, emps, linked, keep, loanIdsSeen }
 }
 
 /** What the move would do — every blocker and warning; nothing is written. */
@@ -451,7 +483,7 @@ async function ensureHoLeaveTypes(tx: Tx, hoId: string, companyId: string, actor
  * blocker found (see the header). Everything happens in one transaction.
  */
 export async function transferEmployeesToHeadOffice(input: TransferInput, actor: TransferActor): Promise<TransferResult> {
-  const { preview, emps, linked, keep } = await assess(input, actor)
+  const { preview, emps, linked, keep, loanIdsSeen } = await assess(input, actor)
   for (const e of preview.employees) {
     const b = e.blockers[0]
     if (b) throw new AppError(b.code, b.message, b.status, { employeeId: e.employeeId, blockers: e.blockers })
@@ -470,6 +502,16 @@ export async function transferEmployeesToHeadOffice(input: TransferInput, actor:
     for (const e of emps) {
       const b = (await stateBlockers(tx, e, hoId, effective))[0]
       if (b) throw new AppError(b.code, b.message, b.status, { employeeId: e.id })
+      // The link may have ended, or a loan been approved, since the checks above.
+      if (!await liveLink(hoId, e.tenantId, tx)) {
+        throw new AppError('NOT_IN_LINKED_COMPANY', `${e.fullName}'s company is no longer linked to this head office`, 422, { employeeId: e.id })
+      }
+      const newLoans = await tx.hrRecord.count({
+        where: { tenantId: e.tenantId, employeeId: e.id, section: 'loan', status: 'approved', id: { notIn: loanIdsSeen.get(e.id) ?? [] } },
+      })
+      if (newLoans > 0) {
+        throw new AppError('TRANSFER_LOAN_OUTSTANDING', `${e.fullName} has a loan or advance approved since the check — recover or settle it first`, 409, { employeeId: e.id })
+      }
     }
 
     const deptCache = new Map<string, string | null>()

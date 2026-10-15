@@ -125,6 +125,10 @@ beforeAll(async () => {
   await run(A, '2026-12', 'approved', [emp.paid!])
   await mkEmp('unlinked', B)
   await mkEmp('gone', A, { status: 'resigned', lastWorkingDay: new Date(Date.UTC(2026, 5, 30)) })
+  // One login with records in two linked companies (A and A2).
+  const u3 = await mkUser('dup', 'finance', A, [A, A2])
+  await mkEmp('dupA', A, { userId: u3 })
+  await mkEmp('dupA2', A2, { userId: u3 })
   // A draft payroll for K only warns.
   await mkEmp('draft', A)
   await run(A, K, 'draft', [emp.draft!])
@@ -197,6 +201,26 @@ describe('refusals', () => {
   it('a submitted record → 409 TRANSFER_OPEN_RECORDS', () => refused('open', 409, 'TRANSFER_OPEN_RECORDS'))
   it('an approved payroll at/after the move month → 409 TRANSFER_PAYROLL_CONFLICT', () => refused('paid', 409, 'TRANSFER_PAYROLL_CONFLICT'))
 
+  it('two records of one login in a batch → 409 DUPLICATE_LOGIN_IN_BATCH (no raw unique-key 500)', async () => {
+    const r = await call('ceo', '/head-office-transfers', body([emp.dupA!, emp.dupA2!]))
+    expect(r.statusCode, r.body).toBe(409)
+    expect(r.json().error.code).toBe('DUPLICATE_LOGIN_IN_BATCH')
+    expect(await prisma.hrEmployee.count({ where: { tenantId: HO } })).toBe(0)
+  })
+
+  it('a link ended since it was set up → 422 NOT_IN_LINKED_COMPANY', async () => {
+    const link = await prisma.headOfficeLink.findFirstOrThrow({ where: { tenantId: HO, companyTenantId: A2 } })
+    await prisma.tenant.update({ where: { id: A2 }, data: { isActive: false } })
+    try {
+      const r = await call('ceo', '/head-office-transfers', body([emp.dupA2!]))
+      expect(r.statusCode, r.body).toBe(422)
+      expect(r.json().error.code).toBe('NOT_IN_LINKED_COMPANY')
+    } finally {
+      await prisma.tenant.update({ where: { id: A2 }, data: { isActive: true } })
+    }
+    expect(link.endedAt).toBeNull()
+  })
+
   it('one blocked person stops the whole batch (nothing moves)', async () => {
     const r = await call('ceo', '/head-office-transfers', body([emp.mgr!, emp.loan!]))
     expect(r.statusCode).toBe(409)
@@ -237,6 +261,16 @@ describe('preview', () => {
     // Nothing written, nothing posted.
     expect(await prisma.hrEmployee.count({ where: { tenantId: HO } })).toBe(0)
     expect(await prisma.journalEntry.count({ where: { tenantId: { in: [A, HO] } } })).toBe(0)
+  })
+
+  it('direct reports who stay in the company are listed as a warning', async () => {
+    const r = await call('ceo', '/head-office-transfers/preview', body([emp.mgr!]))
+    const p = r.json()
+    expect(p.ok).toBe(true)
+    expect(p.employees[0].warnings.join(' ')).toMatch(/1 direct report\(s\) stay in the company.*Person staff/)
+    // Moving together: no warning.
+    const both = (await call('ceo', '/head-office-transfers/preview', body([emp.mgr!, emp.staff!]))).json()
+    expect(both.employees[0].warnings.join(' ')).not.toMatch(/direct report/)
   })
 
   it('a draft payroll at the move month only warns', async () => {
@@ -303,6 +337,8 @@ describe('the move', () => {
     expect(await ids(A, K_1)).toContain(emp.mgr)
     expect(await ids(A, K)).not.toContain(emp.mgr)
     expect(await ids(HO, K)).toContain(toOf('mgr'))
+    // Joining date kept (2024): still the head office never pays a month before K.
+    expect(await ids(HO, K_1)).not.toContain(toOf('mgr'))
   })
 
   it('with keepJoiningDate=false the head office starts at K only', async () => {

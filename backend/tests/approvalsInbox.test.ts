@@ -788,6 +788,62 @@ describe('sections, hand-over and the new providers (D3)', () => {
       const none = await collectApprovals({ ...ctx, delegated: new Map() }, { providers: [fake] })
       expect(none.types).toEqual([])
     })
+
+    it('a delegate is listed only what their approve route accepts: no company-less row, no CEO-section item, nothing through another head office (A13)', async () => {
+      const otherHo = (await prisma.tenant.create({ data: { name: 'Other HO', slug: `${P}-ho2`, kind: 'head_office' } })).id
+      const provider = APPROVAL_PROVIDERS.find((p) => p.type === 'purchase_order')!
+      const row = (id: string, extra: Record<string, unknown> = {}) => ({
+        type: 'purchase_order' as const, id, tenantId: T.A as string | null, title: 'x', facts: [], waitingSince: null, link: null, actions: [], submittedByIds: [U['hodA']!.id], ...extra,
+      })
+      const rows = [
+        row('po-ok'),
+        row('po-null', { tenantId: null }),
+        row('po-ceo', { section: 'ceo' }),
+        row('po-other-ho', { viaHeadOfficeId: otherHo }),
+        row('po-this-ho', { viaHeadOfficeId: HO }),
+      ]
+      const fake = { ...provider, async load() { return rows.map((r) => ({ ...r })) } }
+      const { LIVE_DELEGATIONS } = await import('../src/modules/approvals/delegations.js')
+      const ctx = {
+        user: { id: U['hoBuyer']!.id, role: 'procurement' as never }, tenantIds: [HO], memberTenantIds: [HO],
+        delegated: await LIVE_DELEGATIONS.tenantsByType!(U['hoBuyer']!.id), read: async () => null,
+      }
+      const res = await collectApprovals(ctx, { providers: [fake], delegations: LIVE_DELEGATIONS })
+      expect(res.items.map((i) => i.id).sort()).toEqual(['po-ok', 'po-this-ho'])
+      expect(res.total).toBe(2)
+      // A delegations object that cannot say what the viewer holds keeps nothing by hand-over (fails closed).
+      const closed = await collectApprovals(ctx, { providers: [fake], delegations: { typesFor: LIVE_DELEGATIONS.typesFor } })
+      expect(closed.items).toEqual([])
+      // The CEO still sees the company-less row on the role path.
+      const ceo = await collectApprovals({ user: { id: U['admin']!.id, role: 'admin' as never }, tenantIds: [T.A], memberTenantIds: [T.A], read: async () => null }, { providers: [fake] })
+      expect(ceo.items.map((i) => i.id)).toContain('po-null')
+    })
+
+    it("a dual-member head-office approver's own submission moved onto their hand-over is never listed (§7.6)", async () => {
+      await mkUser('hoMgr', 'management', [HO, T.A])
+      const d = await prisma.approvalDelegation.create({
+        data: { tenantId: HO, companyTenantId: T.A, section: 'finance', delegateUserId: U['hoMgr']!.id, grantedById: U['admin']!.id, note: 'test' },
+      })
+      try {
+        const provider = APPROVAL_PROVIDERS.find((p) => p.type === 'tip_pool')!
+        const rows = [
+          { type: 'tip_pool' as const, id: 'tp-mine', tenantId: T.A, title: 'x', facts: [], waitingSince: null, link: null, actions: [], submittedByIds: [U['hoMgr']!.id] },
+          { type: 'tip_pool' as const, id: 'tp-colleague', tenantId: T.A, title: 'x', facts: [], waitingSince: null, link: null, actions: [], submittedByIds: [U['hoChef']!.id] },
+        ]
+        const fake = { ...provider, async load() { return rows.map((r) => ({ ...r })) } }
+        const { LIVE_DELEGATIONS } = await import('../src/modules/approvals/delegations.js')
+        const ctx = {
+          user: { id: U['hoMgr']!.id, role: 'management' as never }, tenantIds: [T.A], memberTenantIds: [HO, T.A],
+          delegated: await LIVE_DELEGATIONS.tenantsByType!(U['hoMgr']!.id), read: async () => null,
+        }
+        expect(ctx.delegated.get('tip_pool')?.has(T.A)).toBe(true)
+        const res = await collectApprovals(ctx, { providers: [fake], delegations: LIVE_DELEGATIONS })
+        // Both came through the head office (HO-member submitters): the colleague's is theirs by hand-over, their own never.
+        expect(res.items.map((i) => i.id)).toEqual(['tp-colleague'])
+      } finally {
+        await prisma.approvalDelegation.update({ where: { id: d.id }, data: { revokedAt: new Date() } })
+      }
+    })
   })
 
   it('new providers are not listed while their queue routes 404, and map rows once they answer', async () => {

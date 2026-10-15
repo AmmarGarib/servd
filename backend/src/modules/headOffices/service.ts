@@ -18,7 +18,8 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { isMemberOfBoth } from '../../lib/companyPairs.js'
 import { revokeDelegationsForUnlinkTx } from '../../lib/approvalRights.js'
 import { ensurePairAccounts, counterpartiesOf, pairBalances } from '../intercompany/accounts.js'
-import { addMonths, assertMonth } from '../intercompany/fleet.js'
+import { addMonths, assertMonth, monthOf } from '../intercompany/fleet.js'
+import { isTestTenant } from '../../lib/testCompany.js'
 import { DEFAULT_HR_SETTINGS } from '../hr/logic.js'
 import { saveSettings } from '../hr/service.js'
 import { createChargesAccount, ensureChartInTx, resolveRechargeAccount, chargesAccountCodeFor } from './accounts.js'
@@ -153,8 +154,8 @@ export async function linkCompany(tx: Tx, input: LinkInput): Promise<LinkResult>
   if (!isMemberOfBoth({ id: actorId, memberTenantIds: members }, hoId, companyId)) throw new NotFoundError('Company', companyId)
 
   const [ho, co] = await Promise.all([
-    tx.tenant.findUnique({ where: { id: hoId }, select: { id: true, name: true, kind: true, isActive: true, deletedAt: true, isTest: true } }),
-    tx.tenant.findUnique({ where: { id: companyId }, select: { id: true, name: true, kind: true, isActive: true, deletedAt: true, isTest: true } }),
+    tx.tenant.findUnique({ where: { id: hoId }, select: { id: true, name: true, kind: true, isActive: true, deletedAt: true } }),
+    tx.tenant.findUnique({ where: { id: companyId }, select: { id: true, name: true, kind: true, isActive: true, deletedAt: true } }),
   ])
   if (!ho || ho.kind !== 'head_office' || ho.deletedAt) throw new NotFoundError('Head office', hoId)
   if (!co || co.deletedAt) throw new NotFoundError('Company', companyId)
@@ -162,10 +163,13 @@ export async function linkCompany(tx: Tx, input: LinkInput): Promise<LinkResult>
   if (co.kind !== 'company' || !co.isActive) {
     throw new AppError('LINK_TARGET_NOT_A_COMPANY', `${co.name} is not an active trading company — a head office only serves companies (never another head office)`, 422)
   }
-  if (ho.isTest !== co.isTest) {
+  // lib/testCompany.ts is the one test-company predicate; with `tx` it reads
+  // fresh, so a head office created earlier in this transaction is seen.
+  const [hoIsTest, coIsTest] = await Promise.all([isTestTenant(hoId, tx), isTestTenant(companyId, tx)])
+  if (hoIsTest !== coIsTest) {
     throw new AppError(
       'TEST_COMPANY_MIX',
-      ho.isTest ? 'A test head office serves only test companies' : 'A test company cannot sit under a real head office — practice numbers must never reach real books',
+      hoIsTest ? 'A test head office serves only test companies' : 'A test company cannot sit under a real head office — practice numbers must never reach real books',
       422,
     )
   }
@@ -247,6 +251,7 @@ export interface EndLinkResult extends Invalidation {
  * hand-over cover stop at once; balances and history stay.
  *   404                         not a member of both / no live link
  *   422 INVALID_MONTH           lastChargedPeriod is not YYYY-MM
+ *   422 LAST_CHARGED_IN_FUTURE  lastChargedPeriod is after this (Karachi) month
  *   422 RUN_AFTER_LAST_CHARGED  a draft, submitted or posted run line for the
  *                               company exists after lastChargedPeriod (A11; listed)
  *   409 SPLIT_PERIOD_IN_USE     the automatic version (below) would start in a used month
@@ -260,6 +265,11 @@ export interface EndLinkResult extends Invalidation {
 export async function endLink(tx: Tx, input: EndLinkInput): Promise<EndLinkResult> {
   const { hoId, companyId, actorId, lastChargedPeriod } = input
   assertMonth(lastChargedPeriod, 'lastChargedPeriod')
+  // §9: a run for a month after lastChargedPeriod never charges the company, so
+  // a future month would leave an ended company chargeable until then.
+  if (lastChargedPeriod > monthOf(new Date())) {
+    throw new AppError('LAST_CHARGED_IN_FUTURE', 'The last charged month cannot be after this month', 422)
+  }
   const reason = input.reason.trim()
   if (reason.length < 3) throw new AppError('REASON_REQUIRED', 'Say why the link ends', 422)
   const members = await membersOf(tx, actorId)

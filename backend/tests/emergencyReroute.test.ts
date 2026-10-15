@@ -44,6 +44,7 @@ const {
 const { deliverJob } = await import('../src/modules/rider/service.js')
 const { dispatchRoutes } = await import('../src/modules/dispatch/routes.js')
 const { trustopsRoutes } = await import('../src/modules/trustops/routes.js')
+const { expoRoutes } = await import('../src/modules/expo/routes.js')
 
 let app: FastifyInstance
 let tenantA: string
@@ -122,6 +123,7 @@ beforeAll(async () => {
   })
   await app.register(dispatchRoutes, { prefix: '/dispatch' })
   await app.register(trustopsRoutes, { prefix: '/trustops' })
+  await app.register(expoRoutes, { prefix: '/expo' })
   await app.ready()
 })
 
@@ -339,6 +341,20 @@ describe('code-only switch', () => {
     expect((await call('mgrB', 'POST', `/dispatch/orders/${o.id}/delivered`)).statusCode).toBe(404)
     expect((await call('mgrB', 'GET', `/trustops/orders/${o.id}/otp`)).statusCode).toBe(404)
     expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).deliveredAt).toBeNull()
+  })
+
+  it('ON: the expo board never carries the code, even for the CEO; OFF it does as today', async () => {
+    const oC = await job(conceptC, (await rider(tenantC)).id)
+    const resC = await call('mgrC', 'GET', '/expo/queue')
+    expect(resC.statusCode).toBe(200)
+    const rowC = (resC.json().ready as Array<{ id: string; deliveryOtp: string | null }>).find((x) => x.id === oC.id)
+    expect(rowC).toBeDefined()
+    expect(rowC!.deliveryOtp).toBeNull()
+
+    const oA = await job(conceptA, (await rider(tenantA)).id)
+    const resA = await call('mgrA', 'GET', '/expo/queue')
+    const rowA = (resA.json().ready as Array<{ id: string; deliveryOtp: string | null }>).find((x) => x.id === oA.id)
+    expect(rowA!.deliveryOtp).toBe('1234')   // switch OFF: admin reads it as today
   })
 
   it('ON: no role reads the code, the CEO included', () => {

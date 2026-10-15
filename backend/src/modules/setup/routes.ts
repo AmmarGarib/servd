@@ -20,7 +20,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { Prisma, type UserRole } from '@prisma/client'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, APPROVERS } from '../auth/middleware.js'
 import { WORKSPACES, WORKSPACE_OF_MODULE } from '../../lib/workspaces.js'
@@ -69,8 +69,10 @@ async function assertAccountMayBeSwitchedOff(acc: { id: string; tenantId: string
   // too — reversing an earlier month still posts there). Switching it off
   // would make every later recharge approval and reversal fail.
   const [hoBooks, hoLinks] = await Promise.all([
-    prisma.headOfficeBooks.count({ where: { rechargeAccountId: acc.id } }),
-    prisma.headOfficeLink.count({ where: { chargesAccountId: acc.id } }),
+    // Service client: the guard must not depend on the caller's RLS context
+    // (counts by an account id the route has already resolved in scope).
+    serviceClient.headOfficeBooks.count({ where: { rechargeAccountId: acc.id } }),
+    serviceClient.headOfficeLink.count({ where: { chargesAccountId: acc.id } }),
   ])
   if (hoBooks > 0 || hoLinks > 0) {
     throw new AppError(

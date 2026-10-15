@@ -1,5 +1,6 @@
 // DLV-banreaders — bans are per company, and complaint readers ignore ban appeals.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import Fastify, { type FastifyInstance } from 'fastify'
 
 const sent: Array<{ to: string }> = []
 vi.mock('../src/lib/notify.js', async (orig) => {
@@ -15,6 +16,8 @@ const { serviceClient: prisma } = await import('../src/lib/prisma.js')
 const { reachableAtCompany } = await import('../src/lib/marketingAudience.js')
 const { recomputeCustomerRollups } = await import('../src/lib/customerRollups.js')
 const loyalty = await import('../src/workers/loyaltyTriggers.js')
+const { managementRoutes } = await import('../src/modules/management/routes.js')
+const { issueStaffSession } = await import('../src/modules/auth/service.js')
 
 const RUN = Math.random().toString(36).slice(2, 8)
 let tA: string, tB: string, tHO: string, cA: string, cB: string, cHO: string
@@ -56,6 +59,18 @@ beforeAll(async () => {
 
 afterAll(async () => { await prisma.$disconnect() })
 
+describe('activate (platform welcome, no sending company)', () => {
+  it('a banned customer with no orders gets no activate message; an unbanned one does', async () => {
+    const signedUp = new Date(Date.now() - 2 * 864e5)
+    const banned = await prisma.customer.create({ data: { name: 'act-banned', email: mail('act-banned'), createdAt: signedUp, bannedAt: new Date() } })
+    await ban(banned.id, tA)
+    const ok = await prisma.customer.create({ data: { name: 'act-ok', email: mail('act-ok'), createdAt: signedUp } })
+    await loyalty.runActivateUsersTrigger()
+    expect(await prisma.triggerLog.count({ where: { customerId: banned.id, triggerType: 'activate' } })).toBe(0)
+    expect(await prisma.triggerLog.count({ where: { customerId: ok.id, triggerType: 'activate' } })).toBe(1)
+  })
+})
+
 describe('audience', () => {
   it('a customer banned at A is out of A audience and in B audience', async () => {
     const c = await customer('aud')
@@ -78,7 +93,7 @@ describe('referral', () => {
     await order(referee.id, orderConcept, 100_000)
     return { referrer, referee }
   }
-  it('a referrer banned at A is paid and told at B, paid but not messaged at A', async () => {
+  it('a referrer banned at A is paid and told at B; at A the referee is paid, the referrer neither paid nor told', async () => {
     const atB = await referral('refB', cB, tA)
     const atA = await referral('refA', cA, tA)
     sent.length = 0
@@ -86,7 +101,9 @@ describe('referral', () => {
     const earned = (cid: string, t: string) => prisma.loyaltyTransaction.count({ where: { type: 'earn', loyaltyAccount: { tenantId: t, customerId: cid } } })
     expect(await earned(atB.referrer.id, tB)).toBeGreaterThan(0)
     expect(sent.some((m) => m.to === mail('refB-referrer'))).toBe(true)
-    expect(await earned(atA.referrer.id, tA)).toBeGreaterThan(0)
+    expect(await earned(atA.referrer.id, tA)).toBe(0)
+    expect(await earned(atA.referee.id, tA)).toBeGreaterThan(0)
+    expect((await prisma.customer.findUnique({ where: { id: atA.referee.id } }))!.referralRewardCreditedAt).not.toBeNull()
     expect(sent.some((m) => m.to === mail('refA-referrer'))).toBe(false)
   })
 })
@@ -102,6 +119,34 @@ describe('ban appeals are not complaints', () => {
     expect((await prisma.orderComplaint.findUnique({ where: { id: real.id } }))!.followUpSentAt).not.toBeNull()
     await recomputeCustomerRollups(c.id)
     expect((await prisma.customer.findUnique({ where: { id: c.id } }))!.complaintCount).toBe(1)
+  })
+})
+
+describe('management KPIs ignore ban appeals', () => {
+  it('open complaints and food-quality figures count the complaint, not the appeal', async () => {
+    const cK = (await prisma.concept.create({ data: { name: 'k', slug: `br-k-${RUN}`, type: 'restaurant', tenantId: tA } as never })).id
+    const c = await customer('kpi')
+    const base = { customerId: c.id, conceptId: cK, title: 't', description: 'd', category: 'quality', status: 'open' }
+    await prisma.orderComplaint.create({ data: { ...base, kind: 'ban_appeal' } as never })
+    await prisma.orderComplaint.create({ data: { ...base, kind: 'complaint' } as never })
+    const u = await prisma.user.create({
+      data: { name: 'kpi-admin', email: `kpi-admin-${RUN}@banreaders.test`, password: 'x', role: 'admin', isActive: true, accountStatus: 'active', tenantId: tA } as never,
+    })
+    await prisma.tenantMember.create({ data: { tenantId: tA, userId: u.id } })
+    const token = (issueStaffSession(u) as { accessToken: string }).accessToken
+    const app: FastifyInstance = Fastify()
+    await app.register(managementRoutes, { prefix: '/management' })
+    await app.ready()
+    const get = (url: string) => app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${token}` } })
+    const brand = await get(`/management/brand-metrics?conceptId=${cK}`)
+    expect(brand.statusCode).toBe(200)
+    expect((brand.json() as { reputation: { openComplaints: number } }).reputation.openComplaints).toBe(1)
+    const fnb = await get(`/management/fnb-metrics?conceptId=${cK}`)
+    expect(fnb.statusCode).toBe(200)
+    const q = (fnb.json() as { quality: { foodComplaints: number; complaintsByCategory: Array<{ category: string; count: number }> } }).quality
+    expect(q.foodComplaints).toBe(1)
+    expect(q.complaintsByCategory).toEqual([{ category: 'quality', count: 1 }])
+    await app.close()
   })
 })
 

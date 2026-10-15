@@ -16,6 +16,7 @@ import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
+import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
 import { SERVICE_PHASES } from './fire.js'
 
 const HANDOFF_ACTION = 'expo.handoff'
@@ -125,7 +126,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
       // them (an empty scope → no ids → nothing, never everything).
       const conceptIds = (await prisma.concept.findMany({ where: conceptScope, select: { id: true } })).map((c) => c.id)
       const orderInclude = {
-        concept:  { select: { id: true, name: true, slug: true } },
+        concept:  { select: { id: true, name: true, slug: true, tenantId: true } },
         customer: { select: { id: true, name: true, phone: true } },
         table:    { select: { id: true, label: true } },
         rider:    { select: { id: true, name: true, phone: true } },
@@ -230,20 +231,30 @@ export async function expoRoutes(fastify: FastifyInstance) {
       }
 
       // The customer's hand-over code stays off the pass: expo hands the bag
-      // to the rider, and only admin / management may read it (lib/deliveryOtp.ts).
+      // to the rider. Only admin / management may read it, and nobody (the
+      // CEO included) when the order's company has code-only delivery on
+      // (lib/deliveryOtp.ts, lib/deliveryRules.ts codeOnlyDelivery).
       const role = req.staffUser!.role
+      const shownTenants = new Set<string>()
+      for (const o of [...awaitingFire, ...inProgress, ...ready, ...upcomingRows]) {
+        if (o.concept?.tenantId) shownTenants.add(o.concept.tenantId)
+      }
+      const codeOnlyTenants = new Set<string>()
+      for (const t of shownTenants) if (await codeOnlyDelivery(prisma, t)) codeOnlyTenants.add(t)
+      const codeOnlyOf = (o: { concept?: { tenantId: string | null } | null }) =>
+        !!o.concept?.tenantId && codeOnlyTenants.has(o.concept.tenantId)
       return {
         // `paid` = already paid at the till (completed at payment), so the
         // pass knows not to send the customer back to the counter.
-        awaitingFire: awaitingFire.map((o) => redactDeliveryOtp({ ...o, ...summarise(o), paid: o.status === 'completed' }, role)),
-        inProgress:   inProgress.map((o)   => redactDeliveryOtp({ ...o, ...summarise(o), paid: o.status === 'completed' }, role)),
-        ready:        ready.map((o)        => redactDeliveryOtp({ ...o, ...summarise(o), paid: o.status === 'completed' }, role)),
+        awaitingFire: awaitingFire.map((o) => redactDeliveryOtp({ ...o, ...summarise(o), paid: o.status === 'completed' }, role, codeOnlyOf(o))),
+        inProgress:   inProgress.map((o)   => redactDeliveryOtp({ ...o, ...summarise(o), paid: o.status === 'completed' }, role, codeOnlyOf(o))),
+        ready:        ready.map((o)        => redactDeliveryOtp({ ...o, ...summarise(o), paid: o.status === 'completed' }, role, codeOnlyOf(o))),
         // Pre-orders before their prep window: shown with `scheduledFor` and
         // `kitchenAt` (when they join awaiting fire). Not to be cooked yet.
         upcoming:     upcomingRows.map((o) => redactDeliveryOtp({
           ...o, ...summarise(o), paid: o.status === 'completed',
           kitchenAt: new Date(o.scheduledFor!.getTime() - PRE_ORDER_PREP_MS).toISOString(),
-        }, role)),
+        }, role, codeOnlyOf(o))),
         stations: stations.map((s) => ({
           id:    s.id,
           name:  s.name,

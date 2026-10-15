@@ -205,13 +205,17 @@ async function runWinBackTriggers() {
 }
 
 // Users who signed up but never placed an order (within 3 days of signup)
-async function runActivateUsersTrigger() {
+export async function runActivateUsersTrigger() {
   const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000)
   const oneDayAgo = new Date(Date.now() - 86_400_000)
 
   const customers = await prisma.customer.findMany({
     where: {
       ...reachableCustomer,
+      // A platform message: no company sends it, so there is no company to
+      // scope a ban to. Stay conservative and keep the old "any ban"
+      // exclusion — a customer banned anywhere gets no welcome offer.
+      bannedAt: null,
       createdAt: { gte: threeDaysAgo, lte: oneDayAgo },
       firstOrderAt: null,
     },
@@ -518,6 +522,11 @@ export async function runReferralRewardTrigger() {
       continue
     }
 
+    // Bans are per company: a referrer banned by the company that would pay
+    // earns nothing there (and is not told); the referee is still welcomed and
+    // the referral stamped. A ban held elsewhere does not stop this payout.
+    const referrerBanned = !!(await activeBanAtCompany({ customerId: referrer.id, email: referrer.email, phone: referrer.phone, tenantId }))
+
     // Both bonuses through the loyalty service, in one transaction with the
     // stamp; the liability for each is booked once it commits.
     const [refereeTx, referrerTx] = await prisma.$transaction(async (tx) => {
@@ -527,7 +536,7 @@ export async function runReferralRewardTrigger() {
         points: REFEREE_BONUS,
         description: `Welcome bonus: signed up via ${referrer.name}'s referral`,
       })
-      const b = await creditPointsTx(tx, {
+      const b = referrerBanned ? null : await creditPointsTx(tx, {
         customerId: referrer.id,
         tenantId,
         points: REFERRER_BONUS,
@@ -537,15 +546,13 @@ export async function runReferralRewardTrigger() {
         where: { id: referee.id },
         data: { referralRewardCreditedAt: new Date() },
       })
-      return [a.txId, b.txId] as const
+      return [a.txId, b?.txId ?? null] as const
     })
     await bookEarn(refereeTx)
-    await bookEarn(referrerTx)
+    if (referrerTx) await bookEarn(referrerTx)
 
-    // Notify the referrer, when marketing may reach them.
-    // Only a ban held by the company that paid the bonus silences this note.
-    if (referrer.marketingOptOutAt) continue
-    if (await activeBanAtCompany({ customerId: referrer.id, email: referrer.email, phone: referrer.phone, tenantId })) continue
+    // Notify the referrer, when marketing may reach them (and they were paid).
+    if (referrerBanned || referrer.marketingOptOutAt) continue
     const msg = `${referee.name ?? 'Your friend'} just placed their first order using your code — you've got ${REFERRER_BONUS} loyalty points (${await pointsWorth(REFERRER_BONUS, tenantId)} off your next order). Thanks for the love.`
     await reach(referrer, `Your friend ordered — points credited`, `<p>${msg}</p>`, msg, tenantId).catch(() => {})
   }

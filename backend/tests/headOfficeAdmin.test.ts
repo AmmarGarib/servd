@@ -9,7 +9,7 @@
 //
 //   ceo      admin, member of A, B, C, T (and every head office it creates)
 //   fin      finance, member of A — every /head-offices route answers 403
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
 import bcrypt from 'bcryptjs'
@@ -407,6 +407,30 @@ describe('splits', () => {
 })
 
 describe('end a link', () => {
+  // The months below (runs in 2026-10..2027-01, a split from 2026-11) are fixed,
+  // so "this month" is pinned to 2026-12 (Karachi) for the end-a-link rules.
+  // Only Date is faked; the CEO's token is re-issued at the pinned time.
+  let realCeoToken = ''
+  beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-15T07:00:00Z') })
+    realCeoToken = users.ceo!.token
+    const u = await prisma.user.findUniqueOrThrow({ where: { id: users.ceo!.id } })
+    users.ceo!.token = (issueStaffSession(u) as { accessToken: string }).accessToken
+  })
+  afterAll(() => {
+    vi.useRealTimers()
+    users.ceo!.token = realCeoToken
+  })
+
+  it('refuses a last charged month after this month (LAST_CHARGED_IN_FUTURE)', async () => {
+    for (const lastChargedPeriod of ['2027-01', '2099-12']) {
+      const res = await call('ceo', 'POST', `/head-offices/${HO}/companies/${A}/end`, { reason: 'Moved to another head office', lastChargedPeriod })
+      expect(res.statusCode).toBe(422)
+      expect(code(res)).toBe('LAST_CHARGED_IN_FUTURE')
+    }
+    expect(await prisma.headOfficeLink.count({ where: { tenantId: HO, companyTenantId: A, endedAt: null } })).toBe(1)
+  })
+
   it('validates lastChargedPeriod against run lines (A11), revokes the company hand-overs (A12), re-spreads the split', async () => {
     const companyGrant = await prisma.approvalDelegation.create({
       data: { tenantId: HO, companyTenantId: A, section: 'procurement', delegateUserId: users.fin!.id, grantedById: users.ceo!.id },

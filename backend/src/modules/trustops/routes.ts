@@ -318,15 +318,20 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       if (!deliveryOtpMatches(order.deliveryOtp, body.otp)) {
         const attempts = slot.attempts
         if (attempts >= 3) {
+          // Advice follows the company's switch: with code-only delivery on,
+          // the way out is Emergency overrides; off, today's text stands.
+          const codeOnlyFlag = await codeOnlyDelivery(prisma, order.concept.tenantId)
           await flagException({
             tenantId: order.concept.tenantId,
             conceptId: order.conceptId,
             kind: 'lost_package',
             severity: 'high',
             title: `OTP failed 3+ times on order ${orderRefOf(order.id)}`,
-            description: `${attempts} wrong hand-over codes were entered on this delivery. The customer may be disputing it, `
-              + 'or the rider may be at the wrong door. Call the customer before anything else; if they really cannot give the code, '
-              + 'a manager can send it to the rider (Emergency overrides) or log the food as returned.',
+            description: codeOnlyFlag
+              ? `${attempts} wrong hand-over codes were entered on this delivery. The customer may be disputing it, `
+                + 'or the rider may be at the wrong door. Call the customer before anything else; if they really cannot give the code, '
+                + 'a manager can send it to the rider (Emergency overrides) or log the food as returned.'
+              : `Rider attempted delivery hand-off ${attempts} times without correct OTP. Either customer dispute or rider attempting to deliver to wrong recipient. Investigate before marking delivered.`,
             entityType: 'Order',
             entityId: order.id,
             actorId: order.riderId ?? req.staffUser!.id,

@@ -8,7 +8,10 @@
 //    section, counted in `handedOver`, never in `total`; the CEO can still act
 //    on them. `view: 'all'` lists them inline.
 //  • A delegate: the items of their handed-over types in the covered companies,
-//    whatever the view, labelled by company — never their own submissions.
+//    whatever the view, labelled by company — only those one of their own live
+//    delegations covers by delegationCovers (section never 'ceo', ownership,
+//    A13), so the list matches what the approve route accepts; never their own
+//    submissions; never a company-less row (CEO only).
 //  • Company role approvers: as before, minus items that came through a head
 //    office (lib/approvalRights.ts throughHeadOfficeBatch — one batched lookup).
 // With no head office and no hand-over this is exactly the inbox it was.
