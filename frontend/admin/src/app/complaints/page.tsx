@@ -9,6 +9,7 @@ import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { Select } from '@/components/ui/Select'
+import { useManagerRoles } from '../../lib/roles'
 
 interface Complaint {
   id: string
@@ -32,6 +33,11 @@ interface Complaint {
     id: string; source: string; customerName: string | null; placedAt: string
     customer?: { id: string; name: string; email: string | null; phone: string | null } | null
   } | null
+  // Ban appeals (kind 'ban_appeal'): the ban and strikes come from the API for managers only.
+  kind?: 'complaint' | 'ban_appeal'
+  banId?: string | null
+  ban?: { id: string; reason: string; bannedAt: string; auto: boolean; active: boolean; customer?: { id: string; name: string | null } | null }
+  strikes?: Array<{ kind: string; at: string; reason: string | null; severity?: number | null }>
 }
 
 interface ComplaintsResponse {
@@ -92,6 +98,136 @@ function AgeBadge({ createdAt, now }: { createdAt: string; now: number }) {
   )
 }
 
+type AppealAction = 'lift' | 'release' | 'keep'
+const APPEAL_ACTIONS: Record<AppealAction, { label: string; needsReason: boolean }> = {
+  lift: { label: 'Lift the block', needsReason: true },
+  release: { label: 'Release this number only', needsReason: true },
+  keep: { label: 'Keep the block', needsReason: false },
+}
+
+function appealErrorText(e: unknown): string {
+  return e instanceof Error ? e.message : 'That did not work'
+}
+
+/** A ban appeal: the customer's words, the block, the strikes, and the three decisions. */
+function AppealCard({ c, canDecide, now }: { c: Complaint; canDecide: boolean; now: number }) {
+  const qc = useQueryClient()
+  const [action, setAction] = useState<AppealAction | null>(null)
+  const [reason, setReason] = useState('')
+  const decided = c.status === 'resolved' || c.status === 'closed'
+  const decide = useMutation({
+    mutationFn: async (a: AppealAction) => {
+      const text = reason.trim()
+      if (a === 'lift') return api.post(`/crm/bans/${c.banId}/lift`, { reason: text })
+      if (a === 'release') return api.post(`/crm/bans/${c.banId}/release-contact`, { contact: 'phone', reason: text })
+      return api.patch(`/complaints/${c.id}`, { status: 'closed', ...(text && { resolution: text }) })
+    },
+    onSuccess: () => { setAction(null); setReason(''); void qc.invalidateQueries({ queryKey: ['complaints'] }) },
+  })
+  const minLen = action === 'release' ? 5 : 1
+  const ready = !!action && (!APPEAL_ACTIONS[action].needsReason || reason.trim().length >= minLen)
+  return (
+    <div className="px-4 py-4 border-b border-s-border last:border-0 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="font-semibold text-s-text">Ban appeal</p>
+        <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[c.status]}`}>{c.status.replace('_', ' ')}</span>
+        <AgeBadge createdAt={c.createdAt} now={now} />
+        <span className="text-xs text-s-muted">{new Date(c.createdAt).toLocaleDateString()}</span>
+      </div>
+      <p className="text-sm text-s-text whitespace-pre-line break-words">{c.description}</p>
+      {c.ban && (
+        <div className="rounded-lg border border-s-border bg-s-surface p-3 text-xs text-s-muted space-y-1">
+          <p>
+            <span className="font-semibold text-s-text">The block:</span>{' '}
+            {c.ban.auto ? 'applied automatically' : 'applied by staff'} on {new Date(c.ban.bannedAt).toLocaleDateString()}
+            {c.ban.active ? '' : ' (no longer in force)'}
+          </p>
+          {c.ban.reason && <p>Reason: {c.ban.reason}</p>}
+          {c.strikes && c.strikes.length > 0 && (
+            <div>
+              <p className="font-semibold text-s-text">Strikes ({c.strikes.length})</p>
+              <ul className="list-disc pl-4">
+                {c.strikes.map((st, i) => (
+                  <li key={i}>{st.kind.replace(/_/g, ' ')} · {new Date(st.at).toLocaleDateString()}{st.reason ? ` · ${st.reason}` : ''}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+      {c.resolution && <p className="text-xs text-primary-ink">Decision: {c.resolution}</p>}
+      {canDecide && !decided && c.banId && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(APPEAL_ACTIONS) as AppealAction[]).map((a) => (
+              <button key={a} onClick={() => { setAction(a); setReason('') }}
+                className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                  action === a ? 'border-primary bg-primary/10 text-primary-ink' : 'border-s-border text-s-muted hover:border-primary hover:text-primary-ink'}`}>
+                {APPEAL_ACTIONS[a].label}
+              </button>
+            ))}
+          </div>
+          {action && (
+            <div className="flex flex-wrap gap-2 items-start">
+              <input value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder={APPEAL_ACTIONS[action].needsReason ? 'Why (kept in the audit trail)' : 'Note to keep (optional)'}
+                className={`${inp} flex-1 min-w-[200px]`} />
+              <button onClick={() => decide.mutate(action)} disabled={!ready || decide.isPending}
+                className="rounded-lg bg-primary text-primary-on font-bold px-3 py-2 text-xs disabled:opacity-50">
+                {decide.isPending ? 'Saving…' : 'Confirm'}
+              </button>
+              <button onClick={() => setAction(null)} className="rounded-lg border border-s-border text-s-muted px-3 py-2 text-xs">Cancel</button>
+            </div>
+          )}
+          {action === 'lift' && <p className="text-xs text-s-muted">Lifting keeps this customer&apos;s strike history.</p>}
+          {decide.error && <p role="alert" className="text-xs text-s-red">{appealErrorText(decide.error)}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** CEO only: customers can appeal blocks. OFF until switched on. */
+function AppealsSwitch() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['complaints', 'appeals-setting'],
+    queryFn: () => api.get<{ enabled: boolean }>('/complaints/settings/appeals'),
+  })
+  const [reason, setReason] = useState('')
+  const [pending, setPending] = useState<boolean | null>(null)
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => api.put('/complaints/settings/appeals', { enabled, reason: reason.trim() }),
+    onSuccess: () => { setPending(null); setReason(''); void qc.invalidateQueries({ queryKey: ['complaints', 'appeals-setting'] }) },
+  })
+  const on = !!data?.enabled
+  return (
+    <div className="mb-4 rounded-xl border border-s-border bg-s-surface p-4 space-y-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-sm font-semibold text-s-text">Customers can appeal blocks</p>
+          <p className="text-xs text-s-muted">Off until you switch it on. Staff can always review appeals here.</p>
+        </div>
+        <button role="switch" aria-checked={on} onClick={() => setPending(!on)}
+          className={`rounded-full border px-3 py-1 text-xs font-semibold ${on ? 'border-primary bg-primary/10 text-primary-ink' : 'border-s-border text-s-muted'}`}>
+          {on ? 'On' : 'Off'}
+        </button>
+      </div>
+      {pending !== null && (
+        <div className="flex flex-wrap gap-2 items-start">
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why (at least 5 characters)" className={`${inp} flex-1 min-w-[200px]`} />
+          <button onClick={() => save.mutate(pending)} disabled={reason.trim().length < 5 || save.isPending}
+            className="rounded-lg bg-primary text-primary-on font-bold px-3 py-2 text-xs disabled:opacity-50">
+            {pending ? 'Switch on' : 'Switch off'}
+          </button>
+          <button onClick={() => setPending(null)} className="rounded-lg border border-s-border text-s-muted px-3 py-2 text-xs">Cancel</button>
+        </div>
+      )}
+      {save.error && <p role="alert" className="text-xs text-s-red">{appealErrorText(save.error)}</p>}
+    </div>
+  )
+}
+
 export default function ComplaintsPage() {
   const qc = useQueryClient()
   const { data: tenants = [] } = useMyTenants()
@@ -101,6 +237,10 @@ export default function ComplaintsPage() {
   const { data: me } = usePermissions()
   const canOpenCrm = !!me && canOpenPath('/crm', me.role, me.modules ?? [])
   const canOpenOrders = !!me && canOpenPath('/orders', me.role, me.modules ?? [])
+  const isCeo = me?.role === 'admin'
+  const managerRoles = useManagerRoles()
+  const canDecideAppeals = !!me && managerRoles.has(me.role)
+  const [kindFilter, setKindFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
   const [conceptFilter, setConceptFilter] = useState('')
@@ -145,9 +285,10 @@ export default function ComplaintsPage() {
   })
 
   const { data, isLoading } = useQuery({
-    queryKey: ['complaints', statusFilter, priorityFilter, conceptFilter],
+    queryKey: ['complaints', kindFilter, statusFilter, priorityFilter, conceptFilter],
     queryFn: () => api.get<ComplaintsResponse>(
       `/complaints?${new URLSearchParams({
+        ...(kindFilter && { kind: kindFilter }),
         ...(statusFilter && { status: statusFilter }),
         ...(priorityFilter && { priority: priorityFilter }),
         ...(conceptFilter && { conceptId: conceptFilter }),
@@ -274,8 +415,14 @@ export default function ComplaintsPage() {
         </div>
       )}
 
+      {isCeo && <AppealsSwitch />}
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
+        <Select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} className={`${inp} w-auto`}>
+          <option value="">All requests</option>
+          <option value="ban_appeal">Ban appeals</option>
+        </Select>
         <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All concepts</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -302,7 +449,9 @@ export default function ComplaintsPage() {
         {!isLoading && complaints.length === 0 && (
           <p className="px-4 py-10 text-center text-s-muted">No complaints — nice!</p>
         )}
-        {complaints.map((c) => (
+        {complaints.map((c) => c.kind === 'ban_appeal' ? (
+          <AppealCard key={c.id} c={c} canDecide={canDecideAppeals} now={now} />
+        ) : (
           <div key={c.id} className="px-4 py-4 border-b border-s-border last:border-0 space-y-2">
             <div className="flex items-start gap-3 flex-wrap">
               {/* Checkbox */}
@@ -450,10 +599,12 @@ export default function ComplaintsPage() {
             className="rounded-lg border border-s-amber text-s-amber px-3 py-1.5 text-xs font-semibold hover:bg-s-amber/10 transition-colors">
             In Progress
           </button>
+          {!complaints.some((c) => selectedIds.has(c.id) && c.kind === 'ban_appeal') && (
           <button onClick={() => void bulkUpdate('resolved')}
             className="rounded-lg border border-primary text-primary-ink px-3 py-1.5 text-xs font-semibold hover:bg-primary/10 transition-colors">
             Resolved
           </button>
+          )}
           <button onClick={() => void bulkUpdate('closed')}
             className="rounded-lg border border-s-border text-s-muted px-3 py-1.5 text-xs font-semibold hover:border-s-red hover:text-s-red transition-colors">
             Close

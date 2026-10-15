@@ -22,6 +22,16 @@ interface CodDue {
   rider?: { id: string; name: string } | null
   hoursSinceDelivered?: number
   overdue?: boolean
+  // From the API's one COD status rule; older APIs omit it (then `overdue` is used).
+  status?: 'with_rider' | 'overdue' | 'rider_owes' | 'at_counter'
+}
+
+function codBadge(p: CodDue): { label: string; cls: string } | null {
+  const st = p.status ?? (p.overdue ? 'overdue' : undefined)
+  if (st === 'overdue') return { label: 'Overdue', cls: 'bg-kds-amber/20 text-kds-amber' }
+  if (st === 'rider_owes') return { label: 'Owed by rider', cls: 'bg-kds-red/20 text-kds-red' }
+  if (st === 'at_counter') return { label: 'At the counter', cls: 'bg-kds-border text-kds-subtext' }
+  return null
 }
 
 /** A cashier-readable line for a refused pay-out (PIN missing, wrong or locked out). */
@@ -109,27 +119,43 @@ export function CodPayInPanel({ shiftId }: { shiftId: string }) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['cod-due'] }),
   })
   const rows = data?.payments ?? []
+  // Group by rider (no rider = the counter), keeping the API's oldest-first order.
+  const groupMap = new Map<string, CodDue[]>()
+  for (const p of rows) {
+    const k = p.rider?.name ?? 'No rider (at the counter)'
+    groupMap.set(k, [...(groupMap.get(k) ?? []), p])
+  }
+  const groups = [...groupMap.entries()]
   return (
     <div className="rounded-2xl bg-kds-card p-6 space-y-3">
       <h2 className="font-bold text-kds-text">Rider cash-on-delivery</h2>
       <p className="text-xs text-kds-subtext">Delivered orders paid in cash whose money has not reached a drawer. Take the rider&apos;s cash into this drawer.</p>
       {isLoading && <p className="text-xs text-kds-subtext">Loading…</p>}
       {!isLoading && rows.length === 0 && <p className="text-xs text-kds-subtext">Nothing waiting.</p>}
-      <ul className="space-y-2">
-        {rows.map((p) => (
-          <li key={p.id} className="flex items-center justify-between gap-3 rounded-lg border border-kds-border px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-sm text-kds-text truncate">{p.order.concept.name} · #{orderRef(p.order.id)}</p>
-              <p className="text-xs text-kds-subtext truncate">{p.order.customerName ?? 'Customer'}{p.rider?.name && ` · rider ${p.rider.name}`}{p.order.completedAt && ` · delivered ${new Date(p.order.completedAt).toLocaleString()}`}{p.overdue && ' · overdue'}</p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="font-mono text-sm text-kds-text">{fmtPkrWhole(p.amountCents)}</span>
-              <button onClick={() => take.mutate(p.id)} disabled={take.isPending}
-                className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black disabled:opacity-50">Take cash</button>
-            </div>
-          </li>
-        ))}
-      </ul>
+      {groups.map(([riderName, list]) => (
+        <div key={riderName} className="space-y-2">
+          <p className="text-xs font-bold text-kds-subtext">{riderName}</p>
+          <ul className="space-y-2">
+            {list.map((p) => {
+              const badge = codBadge(p)
+              return (
+                <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-kds-border px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm text-kds-text truncate">{p.order.concept.name} · #{orderRef(p.order.id)}</p>
+                    <p className="text-xs text-kds-subtext truncate">{p.order.customerName ?? 'Customer'}{p.order.completedAt && ` · delivered ${new Date(p.order.completedAt).toLocaleString()}`}</p>
+                    {badge && <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.cls}`}>{badge.label}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono text-sm text-kds-text">{fmtPkrWhole(p.amountCents)}</span>
+                    <button onClick={() => take.mutate(p.id)} disabled={take.isPending}
+                      className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black disabled:opacity-50">Take cash</button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
       {take.error && <p role="alert" className="text-xs text-kds-red">{(take.error as Error).message}</p>}
     </div>
   )

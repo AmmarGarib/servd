@@ -22,12 +22,14 @@
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import Link from 'next/link'
+import { api, ApiError } from '../../lib/api'
 import { fmtPkrWhole } from '../../lib/money'
 import { formatBrandName } from '../../lib/brandName'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { useManagerRoles } from '../../lib/roles'
+import { canOpenPath } from '../../lib/moduleCatalog'
 import { Select } from '@/components/ui/Select'
 
 interface RiderRow {
@@ -46,6 +48,13 @@ interface RiderRow {
     deliveredAt?: string | null
     /** Wrong hand-over codes so far (locks at OTP_MAX_ATTEMPTS). */
     deliveryOtpAttempts?: number
+    /** The order's company runs code-only delivery: no staff "Delivered". */
+    codeOnly?: boolean
+    /** The code was sent to this rider by a manager (Emergency overrides). */
+    handoverReroutedAt?: string | null
+    handoverRerouteByName?: string | null
+    /** The rider reported a problem at the door (no code / refused / unreachable). */
+    doorProblem?: { kind: string; at: string } | null
     concept: { name: string; slug: string }
   }>
 }
@@ -93,6 +102,15 @@ function onTheRoad(o: BoardOrder): boolean {
 function deliverGate(o: BoardOrder, isManager: boolean): { canMark: boolean; locked: boolean; note: string | null } {
   if (!onTheRoad(o)) return { canMark: false, locked: false, note: null }
   const locked = (o.deliveryOtpAttempts ?? 0) >= OTP_MAX_ATTEMPTS
+  // Code-only delivery: there is no staff "Delivered" at all. The rider app or
+  // "Enter customer's code" completes it; a locked code goes to a manager on
+  // Emergency overrides.
+  if (o.codeOnly) {
+    return {
+      canMark: false, locked,
+      note: locked ? 'Code locked — a manager can send the code to the rider.' : "Closed with the customer's code only.",
+    }
+  }
   if (o.riderAcceptedAt && !locked) {
     return { canMark: false, locked, note: "Rider closes it with the customer's code." }
   }
@@ -106,6 +124,53 @@ function deliverGate(o: BoardOrder, isManager: boolean): { canMark: boolean; loc
     canMark: true, locked,
     note: locked ? `Code locked after ${OTP_MAX_ATTEMPTS} wrong tries.` : 'Not taken in the rider app.',
   }
+}
+
+/**
+ * "Enter customer's code" — staff type the customer's 4-digit hand-over code
+ * for a rider without the app. POST /trustops/orders/:id/verify-otp: a right
+ * code delivers the order; a wrong one answers 403 OTP_MISMATCH with
+ * attemptsLeft; once locked it answers 423 OTP_LOCKED (a manager then uses
+ * Emergency overrides when the company is code-only).
+ */
+function EnterCode({ orderId, onDone }: { orderId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [code, setCode] = useState('')
+  const [msg, setMsg] = useState<{ tone: 'bad' | 'info'; text: string } | null>(null)
+  const verify = useMutation({
+    mutationFn: () => api.post(`/trustops/orders/${orderId}/verify-otp`, { otp: code }),
+    onSuccess: () => { setOpen(false); setCode(''); setMsg(null); onDone() },
+    onError: (err: unknown) => {
+      setCode('')
+      if (err instanceof ApiError && err.status === 423) {
+        setMsg({ tone: 'bad', text: 'Ask a manager to send the code to the rider.' })
+      } else if (err instanceof ApiError && err.code === 'OTP_MISMATCH') {
+        const left = (err.details as { attemptsLeft?: number } | undefined)?.attemptsLeft
+        setMsg({ tone: 'bad', text: left != null ? `Wrong code. ${left} ${left === 1 ? 'try' : 'tries'} left.` : 'Wrong code.' })
+      } else {
+        setMsg({ tone: 'bad', text: err instanceof Error ? err.message : 'Could not check the code.' })
+      }
+      onDone()
+    },
+  })
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="text-[11px] text-primary-ink hover:underline">Enter customer's code</button>
+    )
+  }
+  return (
+    <div className="w-full space-y-1">
+      <div className="flex gap-2 items-center">
+        <input inputMode="numeric" autoComplete="off" maxLength={4} aria-label="Customer's 4-digit code"
+          value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+          className="s-input w-24 text-center tracking-widest" placeholder="0000" />
+        <button disabled={code.length !== 4 || verify.isPending} onClick={() => verify.mutate()}
+          className="s-btn-primary text-xs disabled:opacity-50">{verify.isPending ? 'Checking…' : 'Check'}</button>
+        <button onClick={() => { setOpen(false); setMsg(null) }} className="text-[11px] text-s-muted hover:underline">Cancel</button>
+      </div>
+      {msg && <p role="alert" className={`text-[11px] ${msg.tone === 'bad' ? 'text-s-red' : 'text-s-muted'}`}>{msg.text}</p>}
+    </div>
+  )
 }
 
 const FULFILMENT_LABEL: Record<string, string> = { dine_in: 'dine-in', takeout: 'pickup' }
@@ -133,6 +198,7 @@ export default function DispatchPage() {
   // The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts).
   const managerRoles = useManagerRoles()
   const isManager = managerRoles.has(me?.role ?? '')
+  const canOverrides = canOpenPath('/emergency-overrides', me?.role, me?.modules ?? [])
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['dispatch-board'],
@@ -290,7 +356,20 @@ export default function DispatchPage() {
                         {deliverError[o.id] && (
                           <p role="alert" className="text-[11px] mt-1 text-s-red">{deliverError[o.id]}</p>
                         )}
-                        <div className="mt-2 flex gap-3">
+                        {o.handoverReroutedAt && (
+                          <p className="text-[11px] mt-1 text-success">
+                            Code sent to the rider{o.handoverRerouteByName ? ` by ${o.handoverRerouteByName}` : ' by a manager'} · {fmtTime(o.handoverReroutedAt)}
+                          </p>
+                        )}
+                        {gate && canOverrides && o.codeOnly && (gate.locked || o.doorProblem) && (
+                          <Link href="/emergency-overrides" className="text-[11px] text-primary-ink hover:underline mt-1 inline-block">
+                            Open Emergency overrides
+                          </Link>
+                        )}
+                        <div className="mt-2 flex gap-3 flex-wrap items-start">
+                          {gate && onTheRoad(o) && (
+                            <EnterCode orderId={o.id} onDone={() => qc.invalidateQueries({ queryKey: ['dispatch-board'] })} />
+                          )}
                           {gate?.canMark && (
                             <button onClick={() => markDelivered(o)} disabled={delivered.isPending}
                               className="text-[11px] text-primary-ink hover:underline disabled:opacity-50">Delivered</button>

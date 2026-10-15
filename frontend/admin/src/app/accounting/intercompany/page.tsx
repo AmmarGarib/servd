@@ -36,12 +36,16 @@ import {
   PAYMENT_REFERENCE_ERROR_TEXT, ReferenceUsedBeforeNotice, receiptMethodLabel, type PaymentRefUse,
 } from '../../../components/finance/PaymentReceivedFields'
 import { Select } from '@/components/ui/Select'
+import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
+import { HeadOfficeTab } from './HeadOfficeTab'
 
 // ─── API shapes ──────────────────────────────────────────────────────────────
 
 interface Companies {
   activeTenantId: string | null
   companies: Array<{ id: string; name: string }>
+  /** D1: the caller's head offices and the companies each serves through a live link. */
+  headOfficePairs?: Array<{ headOffice: { id: string; name: string | null }; companies: Array<{ id: string; name: string | null }> }>
   can: { prepare: boolean; decide: boolean }
 }
 
@@ -144,6 +148,8 @@ const TABS = [
   { key: 'transfers', label: 'Transfers' },
   { key: 'fleet', label: 'Shared fleet' },
   { key: 'tieout', label: 'Tie-out & legacy' },
+  // Shown only with a head office (or a charge from one); `?tab=recharges` is the close checklist's link.
+  { key: 'recharges', label: 'Head office' },
 ] as const
 type Tab = (typeof TABS)[number]['key']
 
@@ -222,6 +228,15 @@ export default function IntercompanyPage() {
   const [msg, setMsg] = useState<Msg | null>(null)
   const [settlePrefill, setSettlePrefill] = useState<{ debtor: string; creditor: string; cents: number } | null>(null)
 
+  const { headOffices, reach, delegations } = useHeadOfficeMe()
+  const hoRuns = useQuery({
+    queryKey: ['ic', 'recharge-runs', 'any'],
+    queryFn: () => api.get<{ runs: unknown[] }>('/accounting/intercompany/recharge-runs?limit=1'),
+    retry: false,
+  })
+  const showHeadOffice = headOffices.length > 0 || reach.length > 0 || (hoRuns.data?.runs.length ?? 0) > 0
+  const visibleTabs = TABS.filter((t) => t.key !== 'recharges' || showHeadOffice)
+
   // ?tab=… deep links (the close checklist links here).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
@@ -255,7 +270,7 @@ export default function IntercompanyPage() {
 
       <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 sm:px-7">
         <div role="tablist" aria-label="Inter-company sections" className="flex gap-1 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <button
               key={t.key}
               role="tab"
@@ -285,6 +300,16 @@ export default function IntercompanyPage() {
         )}
         {tab === 'fleet' && <FleetTab canDecide={can.decide} setMsg={setMsg} />}
         {tab === 'tieout' && <TieOutTab setMsg={setMsg} />}
+        {tab === 'recharges' && showHeadOffice && (
+          <HeadOfficeTab
+            headOffices={headOffices}
+            canPrepare={can.prepare && headOffices.length > 0}
+            // The CEO, or a head-office-wide Finance hand-over; the server decides.
+            canDecide={can.decide || delegations.length > 0}
+            canReverse={can.decide}
+            setMsg={setMsg}
+          />
+        )}
       </div>
     </div>
   )
@@ -548,7 +573,20 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
   onCancel: () => void
   onError: (text: string) => void
 }) {
-  const list = companies.companies
+  // The caller's own companies, plus — for a head-office member — its head office and the companies it serves
+  // through a live link ("my head office ↔ its linked companies"). The server checks the pair on submit.
+  const own = companies.companies
+  const extra = useMemo(() => {
+    const seen = new Set(own.map((c) => c.id))
+    const out: Array<{ id: string; name: string }> = []
+    for (const p of companies.headOfficePairs ?? []) {
+      for (const c of [{ id: p.headOffice.id, name: p.headOffice.name }, ...p.companies]) {
+        if (!seen.has(c.id)) { seen.add(c.id); out.push({ id: c.id, name: c.name ?? 'Company' }) }
+      }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name))
+  }, [own, companies.headOfficePairs])
+  const list = useMemo(() => [...own, ...extra], [own, extra])
   const first = companies.activeTenantId ?? list[0]?.id ?? ''
   const [kind, setKind] = useState<TransferKind>(prefill ? 'settlement' : 'charge')
   const [debtor, setDebtor] = useState(prefill?.debtor ?? first)
@@ -615,13 +653,23 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
         <label className="block">
           <span className={labelCls}>{words.debtor}</span>
           <Select value={debtor} onChange={(e) => setDebtor(e.target.value)} className="s-select">
-            {list.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {own.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {extra.length > 0 && (
+              <optgroup label="Head office and its linked companies">
+                {extra.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </optgroup>
+            )}
           </Select>
         </label>
         <label className="block">
           <span className={labelCls}>{words.creditor}</span>
           <Select value={creditor} onChange={(e) => setCreditor(e.target.value)} className="s-select">
-            {list.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {own.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {extra.length > 0 && (
+              <optgroup label="Head office and its linked companies">
+                {extra.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </optgroup>
+            )}
           </Select>
         </label>
         <label className="block">

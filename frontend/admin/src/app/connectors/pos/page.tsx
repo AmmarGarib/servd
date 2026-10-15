@@ -13,6 +13,9 @@
 // counter phones, bank senders, SMS templates, the tester and the bank SMS
 // log. OFF per company until the CEO switches it on. The receiving bank
 // accounts are finance's (Finance → Bank accounts) and read-only here.
+//
+// Change requests tab (head office D1/D3): IT sends a settings change for
+// approval; the CEO (or a Dev hand-over) approves it. Secrets are typed once.
 
 import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -30,8 +33,9 @@ import { TerminalSetup } from '../../../components/connectors/TerminalSetup'
 import { FiscalSubmissions } from '../../../components/connectors/FiscalSubmissions'
 import { TerminalCharges } from '../../../components/connectors/TerminalCharges'
 import { RaastSetup } from '../../../components/connectors/RaastSetup'
+import { ChangeRequests } from './ChangeRequests'
 
-type Tab = 'status' | 'fiscal' | 'posids' | 'terminal' | 'raast' | 'submissions' | 'charges'
+type Tab = 'status' | 'fiscal' | 'posids' | 'terminal' | 'raast' | 'submissions' | 'charges' | 'changes'
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'status', label: 'Status' },
   { key: 'fiscal', label: 'Fiscal setup' },
@@ -40,6 +44,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'raast', label: 'Raast QR' },
   { key: 'submissions', label: 'Submissions' },
   { key: 'charges', label: 'Card charges' },
+  { key: 'changes', label: 'Change requests' },
 ]
 
 const CONNECTOR_ADMINS = ['admin', 'it']
@@ -162,6 +167,7 @@ function PosConnector() {
             {tab === 'raast' && <RaastSetup companyName={companyName} canEdit={canEdit} isCeo={isCeo} activeTenantId={company?.id ?? null} />}
             {tab === 'submissions' && <FiscalSubmissions key={docOpen.n} data={data} initialStatus={docStatus} initialDay={docOpen.day} canConfigure={canEdit} portfolio={portfolio} />}
             {tab === 'charges' && <TerminalCharges data={data} canConfigure={canEdit} portfolio={portfolio} />}
+            {tab === 'changes' && <ChangeRequests data={data} companyName={companyName} canSend={canEdit} isCeo={isCeo} activeTenantId={company?.id ?? null} />}
           </>
         )}
       </main>

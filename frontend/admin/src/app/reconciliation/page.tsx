@@ -7,6 +7,7 @@ import { orderRef } from '../../lib/orderRef'
 import { format } from 'date-fns'
 import { BackfillUnposted } from './BackfillUnposted'
 import { RaastTab } from './RaastTab'
+import { CodTab } from './CodTab'
 import { CardPayouts, CardPayoutChip, CardPayoutSuggest, cardPayoutErrorText, useCardPayoutBanks, type CardSettlementChip } from './CardPayouts'
 import { OpenTicketsCloseConfirm } from '../../components/pos/OpenTicketsCloseConfirm'
 import { closeDrawer, isOpenTicketsError, type ZReportExtras } from '../../components/pos/tillApi'
@@ -72,8 +73,8 @@ interface StatementLine {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type ReconTab = 'shifts' | 'bank' | 'cards' | 'raast'
-const TABS: readonly ReconTab[] = ['shifts', 'bank', 'cards', 'raast']
+type ReconTab = 'shifts' | 'bank' | 'cards' | 'raast' | 'cod'
+const TABS: readonly ReconTab[] = ['shifts', 'bank', 'cards', 'raast', 'cod']
 // COD custody is PARKED (owner, 2026-10-13): no COD tab; /reconciliation/cod is an empty stub.
 
 // The till's tenders (owner, 2026-10-12): Cash, Card – Keenu, Raast QR.
@@ -612,6 +613,14 @@ export default function ReconciliationPage() {
     const t = new URLSearchParams(window.location.search).get('tab')
     if (t && (TABS as readonly string[]).includes(t)) setTab(t as ReconTab)
   }, [])
+  // Cash on delivery shows only while a company in view has code-only delivery on.
+  const { data: codOn } = useQuery({
+    queryKey: ['recon-cod-enabled'],
+    queryFn: () => api.get<{ enabled: boolean }>('/reconciliation/cod/enabled'),
+    retry: false,
+    staleTime: 60_000,
+  })
+  const codEnabled = !!codOn?.enabled
   const [selectedShift, setSelectedShift] = useState<string | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [openImport, setOpenImport] = useState<string | null>(null)
@@ -684,6 +693,7 @@ export default function ReconciliationPage() {
             { key: 'bank', label: 'Bank Imports' },
             { key: 'cards', label: 'Card payouts' },
             { key: 'raast', label: 'Raast' },
+            ...(codEnabled ? [{ key: 'cod', label: 'Cash on delivery' }] : []),
           ] as { key: ReconTab; label: string }[]).map((t) => (
             <button
               key={t.key}
@@ -774,6 +784,7 @@ export default function ReconciliationPage() {
 
         {/* ── Raast tab ── */}
         {tab === 'raast' && <RaastTab />}
+        {tab === 'cod' && codEnabled && <CodTab />}
 
         {/* ── Card payouts tab (H12) ── */}
         {tab === 'cards' && <CardPayouts />}
