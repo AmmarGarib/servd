@@ -17,6 +17,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { runWithRlsContext } from '../src/lib/rlsContext.js'
 import { hrHeadOfficeTransferRoutes } from '../src/modules/hr/transferRoutes.js'
+import { hrRoutes } from '../src/modules/hr/routes.js'
 import { payableEmployees, leaveBalancesFor } from '../src/modules/hr/service.js'
 import { LEFT_STATUSES } from '../src/modules/hr/separations.js'
 import { buildReport } from '../src/modules/hr/reports.js'
@@ -130,6 +131,11 @@ beforeAll(async () => {
   const u3 = await mkUser('dup', 'finance', A, [A, A2])
   await mkEmp('dupA', A, { userId: u3 })
   await mkEmp('dupA2', A2, { userId: u3 })
+  // Already leaving: an approved resignation.
+  await mkEmp('leaving', A)
+  await prisma.hrRecord.create({
+    data: { tenantId: A, section: 'resignation', formVersion: 0, employeeId: emp.leaving, status: 'approved', startDate: new Date(Date.UTC(2026, 9, 1)), endDate: new Date(Date.UTC(2026, 11, 31)) },
+  })
   // A draft payroll for K only warns.
   await mkEmp('draft', A)
   await run(A, K, 'draft', [emp.draft!])
@@ -143,6 +149,7 @@ beforeAll(async () => {
   })
   await app.register(async (api) => {
     await api.register(hrHeadOfficeTransferRoutes, { prefix: '/hr' })
+    await api.register(hrRoutes, { prefix: '/hr' })
   }, { prefix: '/api/v1' })
   await app.ready()
 }, 60_000)
@@ -201,6 +208,7 @@ describe('refusals', () => {
   it('an outstanding loan → 409 TRANSFER_LOAN_OUTSTANDING', () => refused('loan', 409, 'TRANSFER_LOAN_OUTSTANDING'))
   it('a submitted record → 409 TRANSFER_OPEN_RECORDS', () => refused('open', 409, 'TRANSFER_OPEN_RECORDS'))
   it('an approved payroll at/after the move month → 409 TRANSFER_PAYROLL_CONFLICT', () => refused('paid', 409, 'TRANSFER_PAYROLL_CONFLICT'))
+  it('an approved resignation / F&F → 409 TRANSFER_EMPLOYEE_LEAVING', () => refused('leaving', 409, 'TRANSFER_EMPLOYEE_LEAVING'))
 
   it('two records of one login in a batch → 409 DUPLICATE_LOGIN_IN_BATCH (no raw unique-key 500)', async () => {
     const r = await call('ceo', '/head-office-transfers', body([emp.dupA!, emp.dupA2!]))
@@ -437,5 +445,69 @@ describe('HR reports after the moves (spec §5 step 3)', () => {
     expect((await buildReport('new_joiners', T(), A, { from: '2024-01-01', to: '2026-11-30' })).rows
       .some((r) => String(r[0]).startsWith('EMP-'))).toBe(false)
     expect((await buildReport('separations', T(), A, { from: '2026-10-01', to: '2026-11-30' })).rows).toHaveLength(0)
+  })
+})
+
+describe('the old (transferred) record: no exit, F&F, leave encashment or gratuity there', () => {
+  const req = (method: 'POST' | 'PATCH', url: string, payload: unknown) =>
+    app.inject({ method, url: `/api/v1/hr${url}`, headers: { authorization: `Bearer ${users.ceo!.token}` }, payload: payload as never })
+  const transferred = async (r: { statusCode: number; json: () => { error: { code: string; message: string } } }) => {
+    expect(r.statusCode).toBe(409)
+    expect(r.json().error.code).toBe('EMPLOYEE_TRANSFERRED')
+    expect(r.json().error.message).toMatch(/head-office employee EMP-\d{4}/)
+  }
+
+  it('raising a resignation, termination or full & final is refused', async () => {
+    await transferred(await req('POST', '/records/resignation', { data: { employee: emp.mgr, resignationDate: '2026-12-01', lastWorkingDay: '2026-12-31' }, submit: true }))
+    await transferred(await req('POST', '/records/termination', { data: { employee: emp.mgr, terminationDate: '2026-12-01', lastWorkingDay: '2026-12-31', reason: 'x' }, submit: true }))
+    await transferred(await req('POST', '/records/final_settlement', { data: { employee: emp.mgr, lastWorkingDay: '2026-10-31', leaveEncashment: 1_000_000, gratuity: 5_000_000 } }))
+    expect(await prisma.hrRecord.count({ where: { employeeId: emp.mgr, section: { in: ['resignation', 'termination', 'final_settlement'] } } })).toBe(0)
+  })
+
+  it('"Calculate" (leave encashment, gratuity) is refused', async () => {
+    await transferred(await req('POST', '/final-settlement/calculate', { employeeId: emp.mgr, lastWorkingDay: '2026-10-31' }))
+  })
+
+  it('approving one raised before the move is refused (checked at approval, nothing booked)', async () => {
+    for (const section of ['resignation', 'final_settlement']) {
+      const r = await prisma.hrRecord.create({
+        data: { tenantId: A, section, formVersion: 0, employeeId: emp.mgr, status: 'submitted', currentStep: 1, startDate: new Date(Date.UTC(2026, 9, 1)), endDate: new Date(Date.UTC(2026, 9, 31)), amountCents: 6_000_000, data: { employee: emp.mgr, lastWorkingDay: '2026-10-31', gratuity: 5_000_000, leaveEncashment: 1_000_000 } },
+      })
+      await transferred(await req('POST', `/records/${section}/${r.id}/decide`, { decision: 'approved' }))
+      expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id: r.id } })).status).toBe('submitted')
+      // Rejecting it is still allowed.
+      expect((await req('POST', `/records/${section}/${r.id}/decide`, { decision: 'rejected' })).statusCode).toBe(200)
+    }
+    expect((await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emp.mgr! } })).status).toBe('transferred')
+    expect(await prisma.journalEntry.count({ where: { tenantId: A } })).toBe(0)
+  })
+
+  it('paying an approved settlement on it is refused', async () => {
+    const r = await prisma.hrRecord.create({
+      data: { tenantId: A, section: 'final_settlement', formVersion: 0, employeeId: emp.mgr, status: 'approved', endDate: new Date(Date.UTC(2026, 9, 31)), amountCents: 6_000_000, data: { employee: emp.mgr, gratuity: 5_000_000 } },
+    })
+    await transferred(await req('POST', `/final-settlement/${r.id}/paid`, { cash: true }))
+    expect(((await prisma.hrRecord.findUniqueOrThrow({ where: { id: r.id } })).data as Record<string, unknown>)['_paidAt']).toBeUndefined()
+    await prisma.hrRecord.delete({ where: { id: r.id } })
+  })
+
+  it('the head-office record itself is unaffected: its F&F calculation works', async () => {
+    const hoId = (await prisma.hrEmployee.findFirstOrThrow({ where: { tenantId: HO, data: { path: ['transferredFrom', 'employeeId'], equals: emp.mgr } } })).id
+    const r = await app.inject({ method: 'POST', url: '/api/v1/hr/final-settlement/calculate', headers: { authorization: `Bearer ${users.ceo!.token}` }, payload: { employeeId: hoId, lastWorkingDay: '2026-12-31' } })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().gratuityDetail).toBeDefined()
+  })
+})
+
+describe('an inactive head-office designation', () => {
+  it('is switched back on rather than used inactive', async () => {
+    const src = (await prisma.hrOrgUnit.create({ data: { tenantId: A, kind: 'designation', name: 'Storekeeper' } })).id
+    const off = (await prisma.hrOrgUnit.create({ data: { tenantId: HO, kind: 'designation', name: 'Storekeeper', isActive: false } })).id
+    const id = await mkEmp('storekeeper', A, { designationId: src })
+    const r = await call('ceo', '/head-office-transfers', body([id]))
+    expect(r.statusCode, r.body).toBe(201)
+    const n = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: r.json().moved[0].toEmployeeId } })
+    expect(n.designationId).toBe(off)
+    expect((await prisma.hrOrgUnit.findUniqueOrThrow({ where: { id: off } })).isActive).toBe(true)
   })
 })

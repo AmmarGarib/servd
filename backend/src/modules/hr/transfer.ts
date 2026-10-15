@@ -17,6 +17,7 @@
 //     409 ALREADY_IN_HEAD_OFFICE      their login already has an employee record in that head office
 //     422 JOINED_AFTER_MOVE           they join after the effective date
 //     409 DUPLICATE_LOGIN_IN_BATCH    two picked records share one login (the head office holds one per login)
+//     409 TRANSFER_EMPLOYEE_LEAVING   an approved resignation / termination / full & final in their company
 //   A DRAFT payroll of the old company for the effective month or later only
 //   warns: recalculating it drops them (lastWorkingDay = effective − 1 day).
 //
@@ -217,14 +218,23 @@ async function stillEmployedIn(q: Tx | typeof prisma, userId: string, linked: st
 async function stateBlockers(q: Tx | typeof prisma, emp: HrEmployee, hoId: string, effective: Date): Promise<TransferBlocker[]> {
   const out: TransferBlocker[] = []
   const period = periodOf(effective)
-  const [open, conflict, already] = await Promise.all([
+  const [open, conflict, already, leaving] = await Promise.all([
     q.hrRecord.count({ where: { tenantId: emp.tenantId, employeeId: emp.id, status: 'submitted' } }),
     q.hrPayslip.findMany({
       where: { employeeId: emp.id, tenantId: emp.tenantId, run: { tenantId: emp.tenantId, status: { in: ['approved', 'locked'] }, period: { gte: period } } },
       select: { run: { select: { period: true, status: true } } },
     }),
     emp.userId ? q.hrEmployee.findFirst({ where: { tenantId: hoId, userId: emp.userId }, select: { employeeCode: true } }) : Promise.resolve(null),
+    // Someone already leaving the company (an approved exit or full & final)
+    // is settled there: moving them would carry service the F&F already pays.
+    q.hrRecord.findMany({
+      where: { tenantId: emp.tenantId, employeeId: emp.id, status: 'approved', section: { in: ['resignation', 'termination', 'final_settlement'] } },
+      select: { section: true },
+    }),
   ])
+  if (leaving.length > 0) {
+    out.push({ code: 'TRANSFER_EMPLOYEE_LEAVING', status: 409, message: `${emp.fullName} has an approved ${[...new Set(leaving.map((l) => l.section.replace('_', ' ')))].join(' / ')} in their company — cancel it first if they are moving instead of leaving` })
+  }
   if (open > 0) {
     out.push({ code: 'TRANSFER_OPEN_RECORDS', status: 409, message: `${emp.fullName} has ${open} HR request(s) still waiting for approval — decide or cancel them first` })
   }
@@ -472,7 +482,13 @@ async function twinOrgUnit(tx: Tx, hoId: string, sourceId: string | null, kind: 
   const src = await tx.hrOrgUnit.findUnique({ where: { id: sourceId }, select: { name: true, code: true, kind: true } })
   let id: string | null = null
   if (src && src.kind === kind) {
-    const have = await tx.hrOrgUnit.findFirst({ where: { tenantId: hoId, kind, name: { equals: src.name, mode: 'insensitive' } }, select: { id: true } })
+    // An active one first; an inactive one of that name is switched back on.
+    const have = await tx.hrOrgUnit.findFirst({
+      where: { tenantId: hoId, kind, name: { equals: src.name, mode: 'insensitive' } },
+      orderBy: [{ isActive: 'desc' }],
+      select: { id: true, isActive: true },
+    })
+    if (have && !have.isActive) await tx.hrOrgUnit.update({ where: { id: have.id }, data: { isActive: true } })
     id = have?.id ?? (await tx.hrOrgUnit.create({ data: { tenantId: hoId, kind, name: src.name, code: src.code }, select: { id: true } })).id
   }
   cache.set(sourceId, id)

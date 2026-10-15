@@ -45,6 +45,7 @@ import { applyAttendanceCorrection, flagMissingPunches } from './attendance.js'
 import { approvedLeaveOn, leaveSpan, isHalfDayLeave, OFF_MARK, ymd as rotaYmd } from './rota.js'
 import { hasKioskPin, setKioskPin, clearKioskPin } from './kioskPin.js'
 import { loginsToDeactivate, deactivateLeftLogins } from './separations.js'
+import { TRANSFERRED_STATUS } from './transfer.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { assertHoMayPropose, isHeadOfficeTenant, isReachOnly, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
@@ -420,6 +421,31 @@ async function checkReferences(tenantId: string, fields: HrField[], data: Record
   }
 }
 
+/** An exit and everything it pays (full & final, leave encashment, gratuity). */
+const SEPARATION_SECTIONS = new Set(['resignation', 'termination', 'exit_clearance', 'final_settlement'])
+
+/**
+ * 409 EMPLOYEE_TRANSFERRED when the record is a company's old record of someone
+ * moved to head office (hr/transfer.ts). Their service, leave and gratuity went
+ * with them: an exit, a full & final, leave encashment or gratuity is the head
+ * office's, raised on the head-office record — never paid twice from here.
+ * Inside a transaction it takes the employee's lock first (the one the move
+ * takes), so a move and an approval cannot pass each other.
+ */
+async function assertNotTransferred(q: Tx | typeof prisma, tenantId: string, employeeId: string | null | undefined, lock = false) {
+  if (!employeeId) return
+  if (lock) await lockEmployeeLeave(q as Tx, employeeId)
+  const e = await q.hrEmployee.findFirst({ where: { id: employeeId, tenantId }, select: { status: true, data: true } })
+  if (e?.status !== TRANSFERRED_STATUS) return
+  const to = ((e.data ?? {}) as { transferredTo?: { employeeId?: string; effectiveDate?: string } }).transferredTo
+  const ho = to?.employeeId ? await q.hrEmployee.findFirst({ where: { id: to.employeeId }, select: { employeeCode: true } }) : null
+  throw new AppError(
+    'EMPLOYEE_TRANSFERRED',
+    `This person moved to head office${to?.effectiveDate ? ` on ${to.effectiveDate}` : ''}${ho ? ` (head-office employee ${ho.employeeCode})` : ''} — their exit, full & final, leave encashment and gratuity belong to the head office: raise it on the head-office record`,
+    409,
+  )
+}
+
 /** Section-specific work before a record is saved. Runs inside the saving
  *  transaction: leave takes the employee's booking lock here, so its balance
  *  check and the write that follows are one step. */
@@ -429,6 +455,7 @@ async function prepareRecord(tx: Tx, tenantId: string, section: string, fields: 
   const negative = negativeMoney(section, fields, data)
   if (negative.length) throw new AppError('NEGATIVE_AMOUNT', `${negative.join(', ')} cannot be negative`, 400)
   await assertTransferInCompany(tx, section, tenantId, data)
+  if (SEPARATION_SECTIONS.has(section)) await assertNotTransferred(tx, tenantId, cols.employeeId, true)
   if (section === 'shift_swap' && cols.employeeId) await checkSwapPartner(tx, tenantId, cols.employeeId, data, cols.startDate as Date | null | undefined)
   if (section === 'leave') {
     if (cols.employeeId) await lockEmployeeLeave(tx, cols.employeeId)
@@ -534,6 +561,9 @@ async function approvalSubject(rec: HrRecord) {
  *  approver got it there or its format has no approval steps at all. Effects
  *  (applyDueEffects) follow once the transaction commits. */
 async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: number | null; actorId?: string } = {}) {
+  // Checked again at approval (under the employee's lock): a move may have
+  // landed since the record was raised.
+  if (SEPARATION_SECTIONS.has(rec.section)) await assertNotTransferred(tx, rec.tenantId, rec.employeeId, true)
   const s = await getSettings(rec.tenantId)
   const emp = rec.employeeId ? await tx.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId } }) : null
   await onFinalApproval(tx, { ...rec, status: 'approved' }, emp, s, extra)
@@ -1789,6 +1819,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     const found = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } })
     if (!found) throw new NotFoundError('Employee', body.employeeId)
+    await assertNotTransferred(prisma, found.tenantId, found.id)
     const lwd = parseHrDate(body.lastWorkingDay)
     if (!lwd) throw new AppError('BAD_DATE', 'Last working day is not a date', 400)
     const target = body.recordId
@@ -1874,6 +1905,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }).parse(req.body ?? {})
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: 'final_settlement', ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('Full & final settlement', req.params.id)
+    // The move refuses anyone with an approved settlement (hr/transfer.ts), so
+    // this only catches data from before that rule — never pay it from here.
+    await assertNotTransferred(prisma, rec.tenantId, rec.employeeId)
     const paidOn = paidOnOf(body.paidOn)
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
     const updated = await postFinalSettlementPayment(rec.id, req.staffUser!.id, {
