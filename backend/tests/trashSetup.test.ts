@@ -200,6 +200,7 @@ describe('bank account', () => {
     const b = await prisma.bankAccount.create({
       data: { tenantId: T.A, name: `${P} HBL`, bankName: 'HBL', isActive: true, raastDefault: true, raastId: '03001234567' },
     })
+    const rb = await prisma.concept.create({ data: { name: `${P} raast brand`, slug: `${P}-raast`, type: 'restaurant', tenantId: T.A, raastBankAccountId: b.id } })
     expect((await call('ownerB', 'DELETE', `/setup/bank-accounts/${b.id}`)).statusCode).toBe(404)
     expect((await call('cashierA', 'DELETE', `/setup/bank-accounts/${b.id}`)).statusCode).toBe(403)
     expect((await call('financeA', 'DELETE', `/setup/bank-accounts/${b.id}?reason=closed`)).statusCode).toBe(204)
@@ -227,6 +228,15 @@ describe('bank account', () => {
     expect(back!.deletedAt).toBeNull()
     expect(back!.isActive).toBe(true)
     expect(back!.raastDefault).toBe(false)
+    // A brand override that pointed at it does not silently revive Raast on it.
+    expect((await prisma.concept.findUnique({ where: { id: rb.id } }))!.raastBankAccountId).toBeNull()
+  })
+
+  it('a switched-off account comes back switched off', async () => {
+    const b = await prisma.bankAccount.create({ data: { tenantId: T.A, name: `${P} Off`, isActive: false } })
+    expect((await call('financeA', 'DELETE', `/setup/bank-accounts/${b.id}`)).statusCode).toBe(204)
+    expect((await call('financeA', 'POST', `/trash/bank_account/${b.id}/restore`, {})).statusCode).toBe(200)
+    expect((await prisma.bankAccount.findUnique({ where: { id: b.id } }))!.isActive).toBe(false)
   })
 
   it('a bank whose chart code is gone cannot come back', async () => {

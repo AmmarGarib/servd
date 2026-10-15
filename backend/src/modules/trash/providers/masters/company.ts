@@ -107,6 +107,17 @@ async function locationRefs(tx: Tx, id: string): Promise<Reference[]> {
       tx.clockLog.count({ where: w }),
       tx.hrEmployee.count({ where: w }),
     ])
+  // Money / tax / HR rows that also carry the location (no FK on most, so a
+  // purge would leave them dangling; HrWorkLocation's FK would 500).
+  const [deps, petty, workLocs, foodSafety, cleaning, smsDevices, smsAlerts] = await Promise.all([
+    tx.fixedAssetDepreciation.count({ where: w }),
+    tx.pettyCashSpendLine.count({ where: w }),
+    tx.hrWorkLocation.count({ where: w }),
+    tx.foodSafetyUnit.count({ where: w }),
+    tx.cleaningTask.count({ where: w }),
+    tx.bankSmsDevice.count({ where: w }),
+    tx.bankSmsAlert.count({ where: w }),
+  ])
   return [
     { label: 'Stock lots', count: lots },
     { label: 'Stock movements', count: moves },
@@ -125,10 +136,22 @@ async function locationRefs(tx: Tx, id: string): Promise<Reference[]> {
     { label: 'Stock transfers', count: transfers },
     { label: 'Clock-ins', count: clocks },
     { label: 'Employees', count: staff },
+    { label: 'Depreciation lines', count: deps },
+    { label: 'Petty cash lines', count: petty },
+    { label: 'HR work locations', count: workLocs },
+    { label: 'Food safety units', count: foodSafety },
+    { label: 'Cleaning tasks', count: cleaning },
+    { label: 'Bank SMS devices', count: smsDevices },
+    { label: 'Bank SMS alerts', count: smsAlerts },
   ]
 }
 
-const BOOKS_REFS = new Set(['Stock lots', 'Stock movements', 'Orders', 'Till shifts'])
+// Books, tax and stock records: once any exists the location is never erased.
+const BOOKS_REFS = new Set([
+  'Stock lots', 'Stock movements', 'Orders', 'Till shifts', 'Goods receipts', 'Stock counts', 'Waste logs',
+  'Prep batches', 'Fixed assets', 'Asset pools', 'CapEx projects', 'Fiscal documents', 'Pre-bills',
+  'Financial entries', 'Stock transfers', 'Depreciation lines', 'Petty cash lines', 'Bank SMS alerts',
+])
 
 /** Called by DELETE /locations/:id: did this location ever touch stock, orders or shifts? */
 export async function locationEverUsed(tx: Tx, id: string): Promise<boolean> {
@@ -169,8 +192,15 @@ const location: TrashProvider = {
     const liveIds = new Set(live.map((c) => c.id))
     const keep = wanted.filter((l) => liveIds.has(l.conceptId!))
     if (keep.length) {
+      // A brand that got another primary kitchen while this one was in the
+      // Trash keeps it: the restored link comes back as a secondary.
+      const primaries = await tx.conceptLocation.findMany({
+        where: { conceptId: { in: keep.map((l) => l.conceptId!) }, isPrimary: true, locationId: { not: loc.id } },
+        select: { conceptId: true },
+      })
+      const hasPrimary = new Set(primaries.map((p) => p.conceptId))
       await tx.conceptLocation.createMany({
-        data: keep.map((l) => ({ conceptId: l.conceptId!, locationId: loc.id, isPrimary: !!l.isPrimary })),
+        data: keep.map((l) => ({ conceptId: l.conceptId!, locationId: loc.id, isPrimary: !!l.isPrimary && !hasPrimary.has(l.conceptId!) })),
         skipDuplicates: true,
       })
       await syncConceptLocationMirror(keep.map((l) => l.conceptId!), tx)
@@ -272,7 +302,7 @@ const rider: TrashProvider = {
     const id = entry.entityId
     const [jobs, orders, ratings] = await Promise.all([
       tx.riderJobEvent.count({ where: { riderId: id } }),
-      tx.order.count({ where: { riderId: id } }),
+      tx.order.count({ where: { OR: [{ riderId: id }, { handoverRerouteRiderId: id }] } }),
       tx.riderRating.count({ where: { riderId: id } }),
     ])
     return nonZero([

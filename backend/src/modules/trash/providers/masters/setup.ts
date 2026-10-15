@@ -4,10 +4,11 @@
 //   delivery_zone          DeliveryZone            snapshot  parent: its brand (when pinned to one).
 //   notification_template  NotificationTemplate    snapshot  clash on the scope key (brand, channel, event, language).
 //   bank_account           BankAccount             soft      NEVER erasable (it names a chart code). Restore never
-//                                                            makes it the Raast default again.
+//                                                            makes it receive Raast again (default or brand override).
 //   custom_field           CustomFieldDefinition   snapshot  WITH every stored value (finding F8); clash on the key
 //                                                            renames it.
-//   scheduled_report       ScheduledReport         soft      restore re-checks mayScheduleReport for its creator.
+//   scheduled_report       ScheduledReport         soft      restore re-checks mayScheduleReport for its creator
+//                                                            (module-gated types, as the worker does).
 //
 // KDS devices are not here (a pairing credential: re-pair). Roles are the
 // module routes' own guards (MANAGERS / FINANCE_TEAM), imported, never retyped.
@@ -17,7 +18,7 @@
 
 import type { TrashEntry, UserRole } from '@prisma/client'
 import { AppError } from '../../../../lib/errors.js'
-import { mayScheduleReport } from '../../../../lib/moduleAccess.js'
+import { mayScheduleReport, SCHEDULED_REPORT_MODULES } from '../../../../lib/moduleAccess.js'
 import { MANAGERS, FINANCE_TEAM } from '../../../auth/middleware.js'
 import { restoreSnapshot, type Snapshot } from '../../snapshot.js'
 import type { Reference, TrashProvider, Tx } from '../../types.js'
@@ -152,8 +153,14 @@ const bankAccount: TrashProvider = {
         throw new AppError('BANK_ACCOUNT_NOT_LINKED', `Chart code ${row.accountCode} is no longer an active account in this company's chart — relink it first`, 409)
       }
     }
-    // Back, active — but NEVER the Raast default again: the finance team picks that on purpose.
-    await tx.bankAccount.update({ where: { id: entry.entityId }, data: { deletedAt: null, isActive: true, raastDefault: false } })
+    // Back as it was (active unless it was switched off) — but NEVER receiving
+    // Raast again by itself: not the company default, and brand overrides that
+    // still point at it (dead while it was deleted — the resolver fell back to
+    // the default) are cleared, so the Raast "one account, one company" check
+    // runs again when finance picks it on purpose.
+    const prev = (metaOf(entry).previous ?? {}) as { isActive?: boolean }
+    await tx.concept.updateMany({ where: { raastBankAccountId: entry.entityId, tenantId: row.tenantId }, data: { raastBankAccountId: null } })
+    await tx.bankAccount.update({ where: { id: entry.entityId }, data: { deletedAt: null, isActive: prev.isActive ?? true, raastDefault: false } })
     return { id: entry.entityId, link: '/configuration/bank-accounts' }
   },
   async references(tx, entry): Promise<Reference[]> {
@@ -217,21 +224,23 @@ const scheduledReport: TrashProvider = {
   model: 'ScheduledReport',
   linkOf: () => '/configuration/scheduled-reports',
   parentOf,
-  async restore(tx, ctx, entry) {
+  async restore(tx, _ctx, entry) {
     const row = await tx.scheduledReport.findUnique({
       where: { id: entry.entityId }, select: { reportType: true, conceptId: true, tenantId: true, createdById: true },
     })
     if (!row) throw new AppError('PURGED', 'This item was deleted forever', 409)
     await assertBrandLive(tx, row.tenantId, row.conceptId)
-    // The report emails data of a module (food cost, AP aging): its creator
-    // must still hold that module, as at creation and on every run. A report
-    // with no known creator is checked against the person restoring it.
-    const who = row.createdById ?? ctx.user.id
-    const u = await tx.user.findFirst({
-      where: { id: who, deletedAt: null }, select: { role: true, moduleAllow: true, moduleDeny: true },
-    })
-    if (!u || !(await mayScheduleReport({ role: u.role, moduleAllow: u.moduleAllow ?? [], moduleDeny: u.moduleDeny ?? [] }, row.reportType))) {
-      throw new AppError('REPORT_MODULE_REQUIRED', 'The person who set this report up no longer has access to the module it reports on, so it cannot be restored', 403)
+    // A module-gated report (food cost, AP aging) emails that module's data:
+    // its creator must still be an active login holding the module — the same
+    // rule the worker applies on every run (workers/scheduledReports.ts), so a
+    // restored report never just fails each run. Other report types need no check.
+    if (SCHEDULED_REPORT_MODULES[row.reportType]) {
+      const u = row.createdById ? await tx.user.findFirst({
+        where: { id: row.createdById, deletedAt: null, isActive: true }, select: { role: true, moduleAllow: true, moduleDeny: true },
+      }) : null
+      if (!u || !(await mayScheduleReport({ role: u.role, moduleAllow: u.moduleAllow ?? [], moduleDeny: u.moduleDeny ?? [] }, row.reportType))) {
+        throw new AppError('REPORT_MODULE_REQUIRED', 'The person who set this report up no longer has access to the module it reports on, so it cannot be restored', 403)
+      }
     }
     const prev = (metaOf(entry).previous ?? {}) as { isActive?: boolean }
     await tx.scheduledReport.update({ where: { id: entry.entityId }, data: { deletedAt: null, isActive: prev.isActive ?? true } })
