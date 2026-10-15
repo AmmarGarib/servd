@@ -216,7 +216,9 @@ module id must be placed in a workspace in the same change.
   every other role waits for the CEO (`staff_login`). Managers' invites stay
   pending. `POST /auth/staff/:id/offboard {reason}` / `/reinstate`: HR and the
   CEO only, own companies (404), never an admin login (403
-  `CANNOT_OFFBOARD_CEO`), never your own (403 `CANNOT_OFFBOARD_SELF`; the
+  `CANNOT_OFFBOARD_CEO`), never a co-owner — by anyone, the CEO included, nor
+  through the staff editor or the HR leaver sweep (403 `CANNOT_OFFBOARD_OWNER`;
+  owner, 2026-10-16), never your own (403 `CANNOT_OFFBOARD_SELF`; the
   staff editor refuses the CEO switching themselves off too). Offboard =
   `switchOffLogin` (suspend + revoke every session), the ONE switch-off the
   HR leaver sweep (`hr/separations.ts`) uses too. HR's reinstate of a manager

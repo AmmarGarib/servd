@@ -198,6 +198,17 @@ describe('offboarding', () => {
     expect((await row(U['ceoA']!.id)).accountStatus).toBe('active')
   })
 
+  it('nobody offboards a co-owner — not HR, not the CEO, not through the staff editor', async () => {
+    for (const who of ['hrA', 'ceoA']) {
+      const r = await offboard(who, U['ownerA']!.id)
+      expect(r.statusCode).toBe(403)
+      expect(r.json().error.code).toBe('CANNOT_OFFBOARD_OWNER')
+    }
+    const p = await app.inject({ method: 'PATCH', url: `/api/v1/auth/users/${U['ownerA']!.id}`, headers: auth('ceoA'), payload: { isActive: false } })
+    expect(p.statusCode).toBe(403)
+    expect((await row(U['ownerA']!.id)).accountStatus).toBe('active')
+  })
+
   it('other roles cannot offboard; a reason is required', async () => {
     expect((await offboard('mgmtA', U['cashier']!.id)).statusCode).toBe(403)
     expect((await offboard('ownerA', U['cashier']!.id)).statusCode).toBe(403)
@@ -237,10 +248,7 @@ describe('offboarding', () => {
     expect(c.json()).toMatchObject({ status: 'active', waitsForCeo: false })
   })
 
-  it('HR may offboard the co-owner (only the CEO is protected)', async () => {
-    const o = await mkUser('owner2', 'owner', [T.A])
-    expect((await offboard('hrA', o.id)).statusCode).toBe(200)
-    // The CEO's login cannot be reinstated by HR either.
+  it("HR cannot reinstate a CEO login", async () => {
     expect((await reinstate('hrA', U['ceoA2']!.id)).statusCode).toBe(403)
   })
 })

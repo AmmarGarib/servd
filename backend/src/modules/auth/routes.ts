@@ -1306,6 +1306,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true })
       if (target.id === req.staffUser!.id) throw new AppError('CANNOT_OFFBOARD_SELF', 'You cannot offboard your own login.', 403)
       if (target.role === 'admin') throw new AppError('CANNOT_OFFBOARD_CEO', "The CEO's login cannot be offboarded.", 403)
+      // Owner (2026-10-16): "Co owner cannot be fired" — by HR or the CEO.
+      if (target.role === 'owner') throw new AppError('CANNOT_OFFBOARD_OWNER', "A co-owner's login cannot be offboarded.", 403)
       const before = accountStateOf(target)
       const changed = await switchOffLogin(target.id)
       if (changed) {
@@ -2113,6 +2115,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       // never switches their own login off here.
       if (body.isActive === false && req.params.id === req.staffUser!.id) {
         throw new AppError('CANNOT_OFFBOARD_SELF', 'You cannot switch off your own login.', 403)
+      }
+      // "Co owner cannot be fired" (owner, 2026-10-16).
+      if (body.isActive === false && existing.role === 'owner') {
+        throw new AppError('CANNOT_OFFBOARD_OWNER', "A co-owner's login cannot be switched off.", 403)
       }
 
       // Moving or adding companies: only ones the operator belongs to (422).

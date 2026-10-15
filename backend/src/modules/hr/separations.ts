@@ -49,7 +49,7 @@ export async function loginsToDeactivate(tenantId: string, now = new Date()) {
   const active = new Map(users.map((u) => [u.id, u]))
   // The CEO's own login is never switched off by an HR record.
   return gone
-    .filter((e) => !keep.has(e.userId!) && active.has(e.userId!) && active.get(e.userId!)!.role !== 'admin')
+    .filter((e) => !keep.has(e.userId!) && active.has(e.userId!) && !['admin', 'owner'].includes(active.get(e.userId!)!.role))
     .map((e) => ({ employeeId: e.id, userId: e.userId!, fullName: e.fullName, status: e.status, lastWorkingDay: e.lastWorkingDay }))
 }
 
