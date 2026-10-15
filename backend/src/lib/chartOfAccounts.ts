@@ -189,6 +189,18 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '6170', name: 'Office & Stationery',                type: 'expense' },
   { code: '6175', name: 'Postage & Courier',                  type: 'expense' },
   { code: '6180', name: 'Staff Welfare & Refreshments',       type: 'expense' },
+  // Petty-cash expense heads (owner, 2026-10-15: "Misc. expense, Petty expense, IT and other expense heads usually
+  // required to record petty expenses"). Added to every company's chart at boot.
+  { code: '6042', name: 'Pest Control & Fumigation',          type: 'expense' },
+  { code: '6075', name: 'IT & Computer Expenses',             type: 'expense',   description: 'IT consumables, accessories, small IT repairs, toner and cables — software subscriptions stay on 6070; computers and equipment go through CapEx' },
+  { code: '6145', name: 'Vehicle Running & Fuel',             type: 'expense',   description: 'Fuel, tolls, parking and small running costs of company vehicles and bikes' },
+  { code: '6146', name: 'Freight & Cartage (non-stock)',      type: 'expense',   description: 'Loading, cartage and freight that is not part of a stock purchase (stock freight is in the stock cost)' },
+  { code: '6172', name: 'Printing & Photocopying',            type: 'expense' },
+  { code: '6182', name: 'Uniforms & Laundry',                 type: 'expense' },
+  { code: '6183', name: 'Medical & First Aid',                type: 'expense' },
+  { code: '6185', name: 'Petty Expenses (Sundry)',            type: 'expense',   description: 'Small day-to-day petty-cash items with no better head — review monthly and keep small' },
+  { code: '6190', name: 'Miscellaneous Expenses',             type: 'expense',   description: 'Occasional expenses with no better head — review monthly; finance may reclass' },
+  { code: '6195', name: 'Donations & Charity',                type: 'expense',   description: 'Not deductible for income tax unless to an approved institution (confirm with your CA)' },
   // Credits only — the recovery side of a cost this company bore for another
   // group company (H30 shared-fleet recharges, D1 head-office recharges). The
   // fleet provider credits it, so 6035 stays gross rider wages.

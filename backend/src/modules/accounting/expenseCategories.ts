@@ -49,6 +49,7 @@ const RULES: Array<{ match: RegExp; unless?: RegExp; code: string; label: string
   // above) is the utility bill, which for a kitchen is the power bill. The
   // till's 'utilities' pay-out uses the SAME code (UTILITIES_CODE below).
   { match: /\butilit(y|ies)\b/i,                                 code: '6020', label: 'Electricity' },
+  { match: /\b(pest|fumigat)/i,                                   code: '6042', label: 'Pest Control & Fumigation' },
   { match: /\b(clean|cleaning|supplies|janitorial|toiletr)/i,    code: '6040', label: 'Cleaning & Supplies' },
   { match: /\b(repair|maintenance|maint|service contract|amc)\b/i, code: '6050', label: 'Repairs & Maintenance' },
   { match: /\b(marketing|promo|advertis|ads|social media|influencer)/i, code: '6060', label: 'Marketing & Promo' },
@@ -56,10 +57,18 @@ const RULES: Array<{ match: RegExp; unless?: RegExp; code: string; label: string
   // licence, not a subscription — unless the name says it is software.
   { match: /\b(licen[cs]es?|permits?|registration)\b/i, unless: /\b(software|saas|subscriptions?)\b/i, code: '6120', label: 'Licences & Permits' },
   { match: /\b(software|subscriptions?|saas)\b/i,                code: '6070', label: 'Software & Subscriptions' },
+  { match: /\bIT\b|\b[Cc]omputers?\b|\b[Pp]rinters?\b|\b[Tt]oners?\b|\b[Cc]artridges?\b/, code: '6075', label: 'IT & Computer Expenses' },
+  { match: /\b(printing|photocop)/i,                              code: '6172', label: 'Printing & Photocopying' },
+  { match: /\b(uniforms?|laundry)\b/i,                            code: '6182', label: 'Uniforms & Laundry' },
+  { match: /\b(medical|first aid|medicine)\b/i,                   code: '6183', label: 'Medical & First Aid' },
+  { match: /\b(donations?|charity|zakat|sadqa)\b/i,               code: '6195', label: 'Donations & Charity' },
+  { match: /\b(cartage|freight|loading)\b/i,                      code: '6146', label: 'Freight & Cartage (non-stock)' },
+  { match: /\b(vehicle|car|bike) (fuel|running|petrol)|\b(petrol|toll|parking)\b/i, code: '6145', label: 'Vehicle Running & Fuel' },
   { match: /\b(bank charge|bank fee)/i,                          code: '6081', label: 'Bank Charges' },
   { match: /\b(insurance)\b/i,                                   code: '6100', label: 'Insurance' },
   { match: /\b(legal|accounting|audit|consult|professional|broker)/i, code: '6110', label: 'Professional Fees' },
   { match: /\b(property tax)\b/i,                                code: '6130', label: 'Property Taxes' },
+  // No keyword rule for 6185 Petty / 6190 Misc: a vague word like "misc" still asks a person (they are picks only).
   { match: /\b(travel|fuel|transport|entertainment|conveyance)\b/i, code: '6140', label: 'Travel & Entertainment' },
 ]
 
@@ -86,6 +95,22 @@ export const PAYOUT_CATEGORIES: ReadonlyArray<{ key: string; label: string; code
   { key: 'courier',           label: 'Postage & courier',            code: '6175',          kind: 'expense' },
   { key: 'staff_welfare',     label: 'Staff welfare & refreshments', code: '6180',          kind: 'expense' },
   { key: 'phone',             label: 'Phone & internet top-ups',     code: '6022',          kind: 'expense' },
+  // Petty-cash heads (owner, 2026-10-15).
+  { key: 'it',                label: 'IT & computer expenses',       code: '6075',          kind: 'expense' },
+  { key: 'software',          label: 'Software & subscriptions',     code: '6070',          kind: 'expense' },
+  { key: 'printing',          label: 'Printing & photocopying',      code: '6172',          kind: 'expense' },
+  { key: 'vehicle_fuel',      label: 'Vehicle running & fuel',       code: '6145',          kind: 'expense' },
+  { key: 'generator_fuel',    label: 'Generator fuel',               code: UTILITIES_CODE,  kind: 'expense' },
+  { key: 'cartage',           label: 'Freight & cartage (non-stock)', code: '6146',         kind: 'expense' },
+  { key: 'entertainment',     label: 'Entertainment (guests & meetings)', code: '6140',     kind: 'expense' },
+  { key: 'pest_control',      label: 'Pest control & fumigation',    code: '6042',          kind: 'expense' },
+  { key: 'uniforms',          label: 'Uniforms & laundry',           code: '6182',          kind: 'expense' },
+  { key: 'medical',           label: 'Medical & first aid',          code: '6183',          kind: 'expense' },
+  { key: 'bank_charges',      label: 'Bank charges',                 code: '6081',          kind: 'expense' },
+  { key: 'professional',      label: 'Professional fees',            code: '6110',          kind: 'expense' },
+  { key: 'donations',         label: 'Donations & charity',          code: '6195',          kind: 'expense' },
+  { key: 'petty',             label: 'Petty expenses (sundry)',      code: '6185',          kind: 'expense' },
+  { key: 'misc',              label: 'Miscellaneous expenses',       code: '6190',          kind: 'expense' },
   // History backfill picks only (pre-FIFO kitchen spends) — never live.
   { key: 'kitchen_food',      label: 'Kitchen food (history only)',      code: '5010', kind: 'cogs' },
   { key: 'kitchen_drinks',    label: 'Kitchen drinks (history only)',    code: '5020', kind: 'cogs' },

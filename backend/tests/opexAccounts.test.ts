@@ -231,8 +231,9 @@ describe('OpEx payments post to the category account, from the right bank', () =
     // Booked on the day it was paid, not the day it was keyed.
     expect(je!.entryDate.toISOString().slice(0, 10)).toBe('2026-09-28')
 
-    const pest = await prisma.opexCategory.create({ data: { tenantId: tenantA, name: 'Pest control' } })
-    const pl = await prisma.opexLine.create({ data: { categoryId: pest.id, name: 'Fumigation', amountCents: 15_000, bankAccountId: bank.hblA } })
+    // A name no keyword rule knows ('Pest control' maps to 6042 since 2026-10-15).
+    const pest = await prisma.opexCategory.create({ data: { tenantId: tenantA, name: 'Festive decorations' } })
+    const pl = await prisma.opexLine.create({ data: { categoryId: pest.id, name: 'Eid lights', amountCents: 15_000, bankAccountId: bank.hblA } })
     const bad = await call('adminA', 'POST', '/opex/payments', { lineId: pl.id, periodStart: '2026-09-01', periodEnd: '2026-09-30', expectedCents: 15_000, paidAt: '2026-09-10' })
     expect(bad.json().error.code).toBe('CATEGORY_NOT_MAPPED')
     expect(await prisma.opexPayment.count({ where: { lineId: pl.id } })).toBe(0)
