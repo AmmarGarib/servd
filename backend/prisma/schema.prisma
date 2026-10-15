@@ -1050,10 +1050,17 @@ model ClockLog {
   geofenceDistanceM Float? // metres from concept lat/lng (when checked)
   ipAddress         String?
   recordedAt        DateTime @default(now())
+  // Attendance tracking (owner, 2026-10-15): the punch's company, the work location it was measured against (the
+  // nearest of the employee's work locations, else of the company's), and whether it was outside the allowed radius
+  // or had no location fix. Outside = allowed but flagged for HR (never refused).
+  tenantId          String?
+  locationId        String?
+  outOfArea         Boolean?
 
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId, recordedAt])
+  @@index([tenantId, recordedAt])
   @@map("clock_logs")
 }
 
@@ -1464,20 +1471,20 @@ model TierConfig {
 //   csat       — "How was your most recent experience?" 1..5 score
 //   open       — anonymous freeform suggestion box ("got an idea?")
 model FeedbackEntry {
-  id         String   @id @default(uuid())
-  customerId String?
-  conceptId  String? // null = brand-agnostic / servd-wide feedback
-  kind       String // 'nps' | 'csat' | 'open' | 'contact'
-  score      Int? // 0..10 for nps, 1..5 for csat, null for open / contact
-  comment    String?
-  context    Json? // { page, orderId, reservationId, etc. } — set by client
-  source     String   @default("storefront")
-  createdAt  DateTime @default(now())
+  id          String   @id @default(uuid())
+  customerId  String?
+  conceptId   String? // null = brand-agnostic / servd-wide feedback
+  kind        String // 'nps' | 'csat' | 'open' | 'contact'
+  score       Int? // 0..10 for nps, 1..5 for csat, null for open / contact
+  comment     String?
+  context     Json? // { page, orderId, reservationId, etc. } — set by client
+  source      String   @default("storefront")
+  createdAt   DateTime @default(now())
   // SEO round 1 (WP4): the company that owns the entry — always derived on
   // the server (the chosen brand's company, else the primary company for a
   // contact message), never from the client. Null only on legacy rows with no
   // brand, which no company can read.
-  tenantId   String?
+  tenantId    String?
   // 'contact' kind only: who wrote, how to reply (never messaged on submit),
   // and the topic (catering | complaint | press | jobs | other).
   contactName String?
@@ -5171,6 +5178,7 @@ model Tenant {
   suppliers              Supplier[]              @relation("TenantSuppliers")
   inventoryItems         InventoryItem[]         @relation("TenantInventoryItems")
   locations              Location[]              @relation("TenantLocations")
+  hrWorkLocations        HrWorkLocation[]        @relation("TenantHrWorkLocations")
   bankAccounts           BankAccount[]           @relation("TenantBankAccounts")
   depositDrops           DepositDrop[]           @relation("TenantDepositDrops")
   bankStatementImports   BankStatementImport[]   @relation("TenantBankStatementImports")
@@ -5304,24 +5312,26 @@ model PaymentGatewayConfig {
 // a printer). Accounting and ops need to filter by both axes independently.
 
 model Location {
-  id        String    @id @default(uuid())
-  slug      String    @unique
-  name      String // "Gulberg Branch", "DHA Kitchen"
-  address   String?
-  city      String?
-  latitude  Float?
-  longitude Float?
-  phone     String?
-  isActive  Boolean   @default(true)
+  id                   String    @id @default(uuid())
+  slug                 String    @unique
+  name                 String // "Gulberg Branch", "DHA Kitchen"
+  address              String?
+  city                 String?
+  latitude             Float?
+  longitude            Float?
+  phone                String?
+  isActive             Boolean   @default(true)
+  // Time-clock radius for this place (metres); null = the company's OperationsConfig.geofenceRadiusMetres.
+  geofenceRadiusMetres Int?
   // Company that owns this physical location. Locations are company master
   // data: GS Foods' Bukhari kitchen must never appear in GSX Viva's Locations
   // page, and a location may only link brands of its own company. Nullable
   // only for the column-add; the migration backfills every row from its
   // linked brands and the API never creates a row without one.
-  tenantId  String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
+  tenantId             String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  deletedAt            DateTime?
 
   tenant           Tenant?           @relation("TenantLocations", fields: [tenantId], references: [id])
   concepts         ConceptLocation[]
@@ -5329,6 +5339,7 @@ model Location {
   shifts           Shift[]
   financialEntries FinancialEntry[]
   transfersFrom    StockTransfer[]   @relation("TransferFrom")
+  hrWorkLocations  HrWorkLocation[]
   transfersTo      StockTransfer[]   @relation("TransferTo")
   expoPushTokens   ExpoPushToken[]
   // Fixed assets v2 (2026-10-14)
@@ -6938,6 +6949,9 @@ model HrEmployee {
   payslips           HrPayslip[]
   // Tip pools this person is in without a servd login (kiosk / time-clock staff)
   tipPoolMemberships TipPoolMember[]
+  // Where this person works (owner, 2026-10-15): one or more of the company's Locations; the time clock checks a
+  // punch against the nearest of them.
+  workLocations      HrWorkLocation[]
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, userId])
@@ -7012,32 +7026,32 @@ model HrFormDefinition {
 // One entry in any section — a leave application, an OT request, a candidate,
 // a promotion. The format's fields are in `data`; the slots are what logic reads.
 model HrRecord {
-  id            String    @id @default(uuid())
-  tenantId      String
-  section       String
-  formVersion   Int
-  employeeId    String?
+  id              String    @id @default(uuid())
+  tenantId        String
+  section         String
+  formVersion     Int
+  employeeId      String?
   // ── slots (a format binds fields to these) ──
-  startDate     DateTime?
-  endDate       DateTime?
-  effectiveDate DateTime?
-  quantity      Float? // days, hours, installments — whatever the section counts
-  amountCents   Int?
-  refId         String? // a related record (the interview's candidate, the leave's leave type)
-  category      String? // a classification logic reads: attendance status, paid/unpaid, adjustment type, outcome
+  startDate       DateTime?
+  endDate         DateTime?
+  effectiveDate   DateTime?
+  quantity        Float? // days, hours, installments — whatever the section counts
+  amountCents     Int?
+  refId           String? // a related record (the interview's candidate, the leave's leave type)
+  category        String? // a classification logic reads: attendance status, paid/unpaid, adjustment type, outcome
   // ── lifecycle ──
-  status        String    @default("draft") // draft | submitted | approved | rejected | cancelled
-  stage         String? // pipeline position, for sections that have stages
-  currentStep   Int       @default(0)
-  approvals     Json      @default("[]") // [{ step, role, decision, byUserId, byName, at, note }]
-  data          Json      @default("{}")
+  status          String    @default("draft") // draft | submitted | approved | rejected | cancelled
+  stage           String? // pipeline position, for sections that have stages
+  currentStep     Int       @default(0)
+  approvals       Json      @default("[]") // [{ step, role, decision, byUserId, byName, at, note }]
+  data            Json      @default("{}")
   // Effects applied to the employee on final approval (promotion, transfer…),
   // stamped so they are applied exactly once.
-  appliedAt     DateTime?
-  createdById   String?
+  appliedAt       DateTime?
+  createdById     String?
   viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   employee HrEmployee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
 
@@ -7049,24 +7063,24 @@ model HrRecord {
 }
 
 model HrPayrollRun {
-  id            String    @id @default(uuid())
-  tenantId      String
-  period        String // YYYY-MM
-  status        String    @default("draft") // draft | approved | locked
-  settings      Json // the rates in force when it was calculated
-  totals        Json      @default("{}")
-  createdById   String?
+  id              String    @id @default(uuid())
+  tenantId        String
+  period          String // YYYY-MM
+  status          String    @default("draft") // draft | approved | locked
+  settings        Json // the rates in force when it was calculated
+  totals          Json      @default("{}")
+  createdById     String?
   // Everyone who recalculated it or edited a payslip on it. None of them may
   // approve it (the CEO excepted) — nor may the creator.
-  preparedByIds String[]  @default([])
-  approvedById  String?
-  approvedAt    DateTime?
-  lockedAt      DateTime?
+  preparedByIds   String[]  @default([])
+  approvedById    String?
+  approvedAt      DateTime?
+  lockedAt        DateTime?
   // Marked paid: the wages-payable clearance is posted then.
-  paidAt        DateTime?
+  paidAt          DateTime?
   viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   payslips HrPayslip[]
 
@@ -8107,4 +8121,27 @@ model PosConnectorChange {
 
   @@index([tenantId, status])
   @@map("pos_connector_changes")
+}
+
+/// An employee's work location (owner, 2026-10-15: "multiple employment locations"). A Location of the employee's OWN
+/// company (422 LOCATION_NOT_IN_COMPANY otherwise). The time clock measures a punch against the nearest of these
+/// (radius: this row's, else the Location's, else the company's OperationsConfig). No rows = the company's locations.
+model HrWorkLocation {
+  id           String   @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  locationId   String
+  radiusMetres Int?
+  isPrimary    Boolean  @default(false)
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  tenant   Tenant     @relation("TenantHrWorkLocations", fields: [tenantId], references: [id])
+  employee HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  location Location   @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, locationId])
+  @@index([tenantId])
+  @@index([locationId])
+  @@map("hr_work_locations")
 }
