@@ -47,7 +47,7 @@ export default async function GroupOrderEntryPage() {
 
   return (
     <>
-      <div className="container-narrow" style={{ paddingTop: '1rem' }}><BlockedNotice /></div>
+      <BlockedNotice className="container-narrow" style={{ paddingTop: '1rem' }} />
       <GroupOrderEntryClient brands={brandCards} />
     </>
   )

@@ -51,7 +51,7 @@ export default async function ReservePage() {
   return (
     <PageSurface slug="servd:reserve">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
-      <div className="container-narrow" style={{ paddingTop: '1rem' }}><BlockedNotice /></div>
+      <BlockedNotice className="container-narrow" style={{ paddingTop: '1rem' }} />
       <ManagedPage slug="servd:reserve" {...(live.length > 0 && { concepts: live })} />
     </PageSurface>
   )

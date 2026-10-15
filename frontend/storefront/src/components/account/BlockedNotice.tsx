@@ -19,6 +19,7 @@ import { useCustomerAuth } from '../../store/customerAuth'
 // shown next to the way forward, not instead of it.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const BLOCKS_TIMEOUT_MS = 3000
 
 export interface AccountBlock {
   banId: string
@@ -32,14 +33,17 @@ export interface AccountBlock {
  *  or when none are in force — the caller then shows nothing. */
 export async function fetchBlocks(token: string | null): Promise<AccountBlock[]> {
   if (!token) return []
+  // Never hold up a sign-in redirect on a slow API: give up after 3 s.
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), BLOCKS_TIMEOUT_MS)
   try {
     const res = await fetch(`${API_URL}/api/v1/storefront/account/blocks`, {
-      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: ctrl.signal,
     })
     if (!res.ok) return []
     const data = await res.json().catch(() => null) as { blocks?: AccountBlock[] } | null
     return Array.isArray(data?.blocks) ? data.blocks : []
-  } catch { return [] }
+  } catch { return [] } finally { clearTimeout(timer) }
 }
 
 /** Reads a BANNED API error body: the details the checkout keeps. */
@@ -166,7 +170,7 @@ function BlockCard({ block, token, conceptSlug }: { block: AccountBlock; token: 
 }
 
 export function BlockedNotice({
-  blocks: given, conceptSlug, onContinue, continueLabel = 'Continue', className,
+  blocks: given, conceptSlug, onContinue, continueLabel = 'Continue', className, style,
 }: {
   /** Blocks already read by the caller (after sign-in); else read here. */
   blocks?: AccountBlock[]
@@ -175,7 +179,11 @@ export function BlockedNotice({
   /** Shown as a button under the notice (after sign-in / sign-up). */
   onContinue?: () => void
   continueLabel?: string
+  /** Classes / style for the notice's own root. The page passes its spacing
+   *  here (never a wrapper of its own), so nothing renders when there is no
+   *  block or appeals are off. */
   className?: string
+  style?: React.CSSProperties
 }) {
   const token = useCustomerAuth((s) => s.token)
   const [blocks, setBlocks] = useState<AccountBlock[]>(given ?? [])
@@ -194,7 +202,7 @@ export function BlockedNotice({
   // One account-wide block is the normal case; show the first, others read the same.
   const first = blocks[0]!
   return (
-    <div className={className} style={{ display: 'grid', gap: '0.6rem' }}>
+    <div className={className} style={{ display: 'grid', gap: '0.6rem', ...style }}>
       <BlockCard key={first.banId} block={first} token={token} {...(conceptSlug && { conceptSlug })} />
       {onContinue && (
         <button type="button" onClick={onContinue}

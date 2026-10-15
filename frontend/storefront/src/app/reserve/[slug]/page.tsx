@@ -83,7 +83,7 @@ export default async function ReserveBrandPage({ params }: Params) {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
-      <div className="container-narrow" style={{ paddingTop: '1rem' }}><BlockedNotice conceptSlug={concept.slug} /></div>
+      <BlockedNotice conceptSlug={concept.slug} className="container-narrow" style={{ paddingTop: '1rem' }} />
       <ReserveScreen brandName={name} intro={intro} />
     </>
   )
