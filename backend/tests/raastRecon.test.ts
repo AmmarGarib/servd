@@ -10,8 +10,9 @@
 //     404 on A's receipts / lines; a line of another account is 422
 //   - manual match / unmatch / reference fix (APPROVERS, M4) / not received
 //     (+ the write-off reversed when the statement later shows it; the
-//     'customer owes' contra is 1110 — the 1115 till-clearing split is PARKED
-//     with on-account clients, so 1115 is refused as a contra)
+//     'customer owes' contra is the company's till clearing, resolved
+//     server-side: 1110 before the CEO's 1110 → 1115 cut-over, 1115 after —
+//     an explicit '1115' or legacy '1110' lands on that same code)
 //   - POST /bank/lines/:id/unmatch (S3), /rematch, /alerts, /summary
 //   - the daily raast_unmatched flag (one per bank account, resolved at 0)
 //   - period close: 409 RAAST_UNMATCHED unless the CEO closes anyway (S6)
@@ -26,6 +27,7 @@ import { accountingRoutes } from '../src/modules/accounting/routes.js'
 import { postJournalEntry } from '../src/modules/accounting/journal.js'
 import { RAAST_RECEIPTS_MEMO, refundDueMemo } from '../src/modules/accounting/orderPosting.js'
 import { flagUnmatchedReceipts } from '../src/modules/reconciliation/raast.js'
+import { cutoverTillClearing } from '../src/modules/accounting/tillClearing.js'
 import { fmtPktDate } from '../src/modules/accounting/dates.js'
 import { toCents } from '../src/lib/money.js'
 
@@ -425,8 +427,6 @@ describe('the Raast tab — manual actions', () => {
 
     expect((await call(financeA, 'POST', url, { reason: 'bank says no such transfer' })).statusCode).toBe(403)
     expect((await call(adminA, 'POST', url, { reason: 'x', contraAccountCode: '4100' })).statusCode).toBe(400)
-    // Till clearing stays on 1110 while the 1115 split is PARKED (owner 2026-10-13): 1115 is not a write-off contra.
-    expect((await call(adminA, 'POST', url, { reason: 'bank says no such transfer', contraAccountCode: '1115' })).statusCode).toBe(400)
     const w = await call(adminA, 'POST', url, { reason: 'bank says no such transfer', contraAccountCode: '1350' })
     expect(w.statusCode, w.body).toBe(200)
     expect(w.json().status).toBe('unreceived')
@@ -618,7 +618,7 @@ describe('review fixes', () => {
     expect(je.lines.map((l) => [l.account.code, l.type, toCents(l.amountCents)]).sort()).toEqual([['1110', 'debit', 108_000], [bankD.ledgerCode, 'credit', 108_000]].sort())
   })
 
-  it('the default "customer owes" contra is 1110 (till clearing — the 1115 split is parked)', async () => {
+  it('the default "customer owes" contra is the till-clearing code: 1110 while the company is not cut over', async () => {
     const r = await receiptOf(D, bankD, adminD, { amountCents: 21_500 })
     await bookSale(D, { orderId: r.orderId, amountCents: r.amountCents, ledgerCode: r.ledgerCode })
     const ok = await call(adminD, 'POST', `/reconciliation/raast/receipts/${r.id}/unreceived`, { reason: 'customer reversed it' })
@@ -627,7 +627,44 @@ describe('review fixes', () => {
     expect(je.lines.find((l) => l.type === 'debit')!.account.code).toBe('1110')
   })
 
-  it('RV-MONEY-1: a cancelled non-till ticket — only a close that held it as a refund due (1110 till clearing) lets it be written off', async () => {
+  it('before the cut-over an explicit "1115" (customer owes) still lands on 1110, the company\'s till-clearing code', async () => {
+    const r = await receiptOf(D, bankD, adminD, { amountCents: 12_300 })
+    await bookSale(D, { orderId: r.orderId, amountCents: r.amountCents, ledgerCode: r.ledgerCode })
+    const ok = await call(adminD, 'POST', `/reconciliation/raast/receipts/${r.id}/unreceived`, { reason: 'customer reversed it', contraAccountCode: '1115' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: D.tenantId, reference: `raast.unreceived:${r.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(je.lines.find((l) => l.type === 'debit')!.account.code).toBe('1110')
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'raast.receipt.unreceived', entityId: r.id } })
+    expect(log.metadata).toMatchObject({ contraAccountCode: '1110', contraRequested: '1115' })
+  })
+
+  it('after the CEO\'s cut-over: the default and the legacy "1110" both land on 1115; 8010 / 1350 stay as chosen; another company is untouched', async () => {
+    const F = await mkCompany('rrecon-f')
+    const adminF = await mkUser('rr-admin-f', 'admin', F.tenantId)
+    const bankF = await mkRaastAccount(F, { code: '1021' })
+    const cut = await cutoverTillClearing(F.tenantId, adminF.id, { reason: 'test cut-over of F' })
+    expect(cut).toMatchObject({ status: 'cut_over', reason: 'zero' })
+    const debitOf = async (id: string) => {
+      const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: F.tenantId, reference: `raast.unreceived:${id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+      return je.lines.find((l) => l.type === 'debit')!.account.code
+    }
+    const cases: Array<[string | undefined, string]> = [[undefined, '1115'], ['1110', '1115'], ['1115', '1115'], ['8010', '8010'], ['1350', '1350']]
+    for (const [contra, expected] of cases) {
+      const r = await receiptOf(F, bankF, adminF, { amountCents: 10_100 })
+      await bookSale(F, { orderId: r.orderId, amountCents: r.amountCents, ledgerCode: r.ledgerCode })
+      const res = await call(adminF, 'POST', `/reconciliation/raast/receipts/${r.id}/unreceived`, { reason: 'never arrived', ...(contra && { contraAccountCode: contra }) })
+      expect(res.statusCode, res.body).toBe(200)
+      expect(await debitOf(r.id)).toBe(expected)
+    }
+    // D (not cut over) still defaults to 1110.
+    const d = await receiptOf(D, bankD, adminD, { amountCents: 10_200 })
+    await bookSale(D, { orderId: d.orderId, amountCents: d.amountCents, ledgerCode: d.ledgerCode })
+    expect((await call(adminD, 'POST', `/reconciliation/raast/receipts/${d.id}/unreceived`, { reason: 'never arrived' })).statusCode).toBe(200)
+    const dje = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: D.tenantId, reference: `raast.unreceived:${d.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(dje.lines.find((l) => l.type === 'debit')!.account.code).toBe('1110')
+  })
+
+  it('RV-MONEY-1: a cancelled non-till ticket — only a close that held it as a refund due (1110 till clearing, before the cut-over) lets it be written off', async () => {
     const shift = await prisma.shift.create({ data: { userId: adminD.id, tenantId: D.tenantId, status: 'closed', openingFloatCents: 0, closedAt: new Date(), closingFloatCents: 0 } })
     const held = await receiptOf(D, bankD, adminD, { amountCents: 33_300, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
     const bare = await receiptOf(D, bankD, adminD, { amountCents: 44_400, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
@@ -645,7 +682,7 @@ describe('review fixes', () => {
     expect(heldRes.statusCode, heldRes.body).toBe(200)
   })
 
-  it('RV-MONEY-1: a refund due held on 1115 (TILL_CLEARING_CODES — the parked split\'s code) counts as booked too', async () => {
+  it('RV-MONEY-1: a refund due held on 1115 (TILL_CLEARING_CODES — the code after the cut-over) counts as booked too', async () => {
     const shift = await prisma.shift.create({ data: { userId: adminD.id, tenantId: D.tenantId, status: 'closed', openingFloatCents: 0, closedAt: new Date(), closingFloatCents: 0 } })
     const held = await receiptOf(D, bankD, adminD, { amountCents: 36_600, shiftId: shift.id, orderStatus: 'cancelled', source: 'servd' })
     await postJournalEntry({

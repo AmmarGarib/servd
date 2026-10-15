@@ -10,8 +10,8 @@
 //   - The plugin works registered under /api/v1 (registerApprovalsPlugin).
 //   - Finance wave B types (fixed-asset requests, inter-company transfers, bad
 //     debts, Raast voids, GRNI write-offs, cash requests for the HOD, stock
-//     differences): per company, CEO-only buttons through the module routes,
-//     on_account_client PARKED (lists nothing).
+//     differences, on-account clients): per company, CEO-only buttons through
+//     the module routes.
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
@@ -44,6 +44,8 @@ const { receivableRoutes } = await import('../src/modules/receivables/routes.js'
 const { reconciliationRoutes } = await import('../src/modules/reconciliation/routes.js')
 const { grniRoutes } = await import('../src/modules/procurement/grniRoutes.js')
 const { intercompanyRoutes } = await import('../src/modules/intercompany/routes.js')
+const { customerAccountRoutes } = await import('../src/modules/receivables/customerAccounts.js')
+const { tillClearingCutoverKey } = await import('../src/modules/accounting/tillClearingCode.js')
 const { ensureChartOfAccounts } = await import('../src/lib/chartOfAccounts.js')
 const { registerApprovalsPlugin, APPROVAL_PROVIDERS, collectApprovals } = await import('../src/modules/approvals/index.js')
 const { ALL_ROLES } = await import('../src/lib/roles.js')
@@ -186,6 +188,11 @@ async function seedCompany(co: 'A' | 'B', hod: string, owner: string) {
     data: { receiptId: receipt.id, description: `${P} sample crates ${co}`, receivedQty: 4, writeOffRequestedAt: new Date(), writeOffRequestedById: asker, writeOffReason: 'Free samples' },
   })
   ids[co]['grni_writeoff'] = grLine.id
+  // A new on-account client waiting for the CEO.
+  const client = await prisma.customerAccount.create({
+    data: { tenantId, number: 'OA-0001', legalName: `${P} Corporate ${co}`, creditLimitCents: 250_000_00, conceptIds: [concept.id], createdById: asker },
+  })
+  ids[co]['on_account_client'] = client.id
 }
 
 beforeAll(async () => {
@@ -223,6 +230,7 @@ beforeAll(async () => {
     await api.register(trustopsRoutes, { prefix: '/trustops' })
     await api.register(fixedAssetRoutes, { prefix: '/accounting/fixed-assets' })
     await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
+    await api.register(customerAccountRoutes, { prefix: '/accounting/customer-accounts' })
     await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
     await api.register(reconciliationRoutes, { prefix: '/reconciliation' })
     await api.register(grniRoutes, { prefix: '/procurement/grni' })
@@ -243,11 +251,11 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
-      'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'payroll_run',
+      'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_run',
       'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool',
     ])
     for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher',
-      'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff']) {
+      'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'on_account_client']) {
       expect(countOf(body, t), t).toBe(1)
       expect(body.items.find((i) => i.type === t)?.id, t).toBe(ids.A[t])
     }
@@ -486,7 +494,7 @@ describe('review fixes', () => {
 })
 
 describe('finance wave B types', () => {
-  const NEW_CEO_TYPES = ['fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff'] as const
+  const NEW_CEO_TYPES = ['fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'on_account_client'] as const
   const act = (key: string, a: { method: string; path: string; body: Record<string, unknown> }, extra: Record<string, unknown> = {}) =>
     app.inject({ method: a.method as 'POST', url: `/api/v1${a.path}`, headers: auth(key), payload: { ...a.body, ...extra } })
 
@@ -549,11 +557,58 @@ describe('finance wave B types', () => {
     expect(raast.actions.find((a) => a.kind === 'reject')).toMatchObject({ path: `/reconciliation/raast/receipts/${ids.A['raast_void']}/void-request/reject` })
   })
 
-  it('on_account_client is PARKED: no provider, it lists nothing', async () => {
-    expect(APPROVAL_PROVIDERS.some((p) => p.type === 'on_account_client')).toBe(false)
-    const body = (await inbox('admin', {}, '?type=on_account_client')).json() as Inbox
-    expect(body.items).toEqual([])
-    expect(body.types.some((t) => t.type === 'on_account_client')).toBe(false)
+  it("on_account_client: each company's pending client to its own CEO; Approve waits for the till-clearing cut-over", async () => {
+    const a = ((await inbox('admin')).json() as Inbox).items.filter((i) => i.type === 'on_account_client')
+    expect(a.map((i) => i.id)).toEqual([ids.A['on_account_client']])
+    expect(a[0]).toMatchObject({ tenantId: T.A, section: 'ceo', link: `/accounting/receivables/clients/${ids.A['on_account_client']}` })
+    const b = ((await inbox('adminB')).json() as Inbox).items.filter((i) => i.type === 'on_account_client')
+    expect(b.map((i) => i.id)).toEqual([ids.B['on_account_client']])
+    const both = (await counts('ceoBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
+    expect(countOf(both, 'on_account_client')).toBe(2)
+    // Before company A is cut over to 1115 the route would refuse: Approve is disabled, Reject stays.
+    const approve = a[0]!.actions.find((x) => x.kind === 'approve')!
+    const reject = a[0]!.actions.find((x) => x.kind === 'reject')!
+    expect(approve).toMatchObject({ method: 'POST', path: `/accounting/customer-accounts/${ids.A['on_account_client']}/approve` })
+    expect(approve.disabledReason).toBeTruthy()
+    expect(reject).toMatchObject({ path: `/accounting/customer-accounts/${ids.A['on_account_client']}/reject`, input: { field: 'note', required: true } })
+    expect((await act('admin', approve)).statusCode).toBe(409)
+    await prisma.setting.create({ data: { key: tillClearingCutoverKey(T.A), value: new Date().toISOString() } })
+    const after = ((await inbox('admin')).json() as Inbox).items.find((i) => i.type === 'on_account_client')!
+    expect(after.actions.find((x) => x.kind === 'approve')!.disabledReason).toBeUndefined()
+    // The module's guards: finance 403, the other company's CEO 404, A's CEO approves.
+    expect((await act('finance', approve)).statusCode).toBe(403)
+    expect((await act('adminB', approve)).statusCode).toBe(404)
+    expect((await act('admin', approve)).statusCode).toBe(200)
+    expect((await prisma.customerAccount.findUniqueOrThrow({ where: { id: ids.A['on_account_client']! } })).status).toBe('active')
+    expect(countOf((await counts('admin')).json() as Inbox, 'on_account_client')).toBe(0)
+  })
+
+  it("bad_debt on a client's statement names the client and the statement period", async () => {
+    const concept = await prisma.concept.findFirstOrThrow({ where: { tenantId: T.B } })
+    const st = await prisma.receivableInvoice.create({
+      data: {
+        tenantId: T.B, conceptId: concept.id, number: 'AR-ST-2026-0001', kind: 'statement', customerName: `${P} Corporate B`,
+        customerAccountId: ids.B['on_account_client'], periodFrom: new Date('2026-08-31T19:00:00Z'), periodTo: new Date('2026-09-30T18:59:59Z'),
+        issueDate: new Date('2026-10-01'), dueDate: new Date('2026-10-31'), description: 'Statement', amountCents: 10_000_00,
+      },
+    })
+    const wo = await prisma.receivableWriteOff.create({
+      data: { tenantId: T.B, invoiceId: st.id, amountCents: 10_000_00, reason: 'Client went bust, nothing to recover', requestedById: U['adminB']!.id, status: 'requested' },
+    })
+    try {
+      const item = ((await inbox('adminB')).json() as Inbox & { items: Array<{ facts: Array<{ label: string; value: string }> }> })
+        .items.find((i) => i.id === wo.id) as unknown as { facts: Array<{ label: string; value: string }> }
+      expect(item.facts).toEqual(expect.arrayContaining([
+        { label: 'Client', value: `${P} Corporate B (OA-0001)` },
+        { label: 'Statement period', value: '2026-09-01 to 2026-09-30' },
+      ]))
+      // An ordinary invoice's write-off carries neither.
+      const plain = ((await inbox('adminB')).json() as Inbox & { items: Array<{ id: string; facts: Array<{ label: string }> }> })
+        .items.find((i) => i.id === ids.B['bad_debt']) as unknown as { facts: Array<{ label: string }> }
+      expect(plain.facts.map((f) => f.label)).not.toContain('Client')
+    } finally {
+      await prisma.receivableWriteOff.update({ where: { id: wo.id }, data: { status: 'cancelled' } })
+    }
   })
 
   it("cash requests: labelled 'Cash requests'; Approve is disabled for the login that signed as HOD", async () => {

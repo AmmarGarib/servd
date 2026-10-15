@@ -25,7 +25,9 @@
 //      cancelled ticket's unwind and a till card failed after its close — and
 //      (finance wave B) depreciation, prepayment releases, ad-hoc prep draws,
 //      gift-card breakage, shared-fleet recharges and the cost-of-sales moves
-//      of an order's stock events after its cost was booked. See REPOSTERS.
+//      of an order's stock events after its cost was booked — and (2026-10-15)
+//      the CEO's till-clearing cut-over and a COD pay-in's rider-debt
+//      reversal. See REPOSTERS.
 //   5. Stock steps that failed (finance wave B) — open 'stock_restore_failed'
 //      flags: an order's depletion, a cancelled order's give-back / waste, a
 //      KDS remake's waste. Each re-runs its own once-only step (see
@@ -50,6 +52,8 @@ import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { sumCents, toCents } from '../../lib/money.js'
 import { STOCK_SOURCE } from '../../lib/stockLedger.js'
 import { FLEET_CHARGE_ENTITY, FLEET_NOTHING_TO_POST, fleetChargeRefusedDoc } from '../intercompany/fleet.js'
+import { TILL_SPLIT_ENTITY, tillClearingRefusedDoc } from '../accounting/tillClearing.js'
+import { codRiderDebtReversalReposter } from '../accounting/codPosting.js'
 import {
   ORDER_COGS_FIX_ENTITY, ORDER_COGS_FIX_NOTHING, ORDER_COGS_FIX_SOURCES, STOCK_DEPLETE, STOCK_RESTORE,
   bookRemakeWaste, ensureOrderDepleted, flagOrderStockFailure, orderCogsFixDoc, restoreInventoryForOrder,
@@ -62,6 +66,9 @@ export type RefusedPostingKind = 'deposit.drop' | 'inventory.waste' | 'inventory
   | 'fixed_asset.depreciation' | 'prepaid.release' | 'inventory.prep_draw' | 'giftcard.expire' | 'ic.fleet_charge'
   // An order's cost of sales moved after its cost was booked (orders/stock.ts ORDER_COGS_FIX).
   | OrderCogsFixSource
+  // On-account clients / Delivery (2026-10-15): the CEO's till-clearing cut-over
+  // (and its late moves), and a rider's COD pay-in that did not clear the debt.
+  | 'ledger.till_clearing_split' | 'cod.rider_debt.reversal'
 /** Step 5's kinds: a stock step of an order that failed ('stock_restore_failed', by metadata.phase). */
 export type StockRerunKind = 'stock.deplete' | 'stock.restore' | 'stock.remake'
 export type OrderBackfillKind = 'order.complete' | 'loyalty.earn' | 'loyalty.redeem' | 'order.refund' | RefusedPostingKind | StockRerunKind
@@ -755,6 +762,27 @@ const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
     nothingToPost: FLEET_NOTHING_TO_POST,
     load: (sourceId) => fleetChargeRefusedDoc(sourceId),
   },
+
+  // ── On-account clients / Delivery (2026-10-15) ────────────────────────────
+
+  // The CEO's 1110 → 1115 till-clearing cut-over (accounting/tillClearing.ts),
+  // refused (a locked period, a missing account): the flag sits on the company
+  // (entityType 'Tenant', sourceId = tenantId). Before the marker, post runs
+  // the cut-over (X = 0 → 'zero': the marker is written, nothing posted);
+  // after it, post moves the till lines still waiting on 1110 (a refused late
+  // move flags the same company). The split's own key never decides alone —
+  // a late move uses '<tenantId>:r:<entryId>' — so the doc does (multiPost).
+  'ledger.till_clearing_split': {
+    entityType: TILL_SPLIT_ENTITY,
+    title: 'Till clearing not moved out of 1110',
+    multiPost: true,
+    nothingToPost: new Set(['already_cut_over', 'zero', 'nothing_late']),
+    load: (tenantId) => tillClearingRefusedDoc(tenantId),
+  },
+
+  // A rider's COD pay-in whose reversal of the rider's debt (1351) was refused
+  // (accounting/codPosting.ts) — the payment's state decides (multiPost).
+  'cod.rider_debt.reversal': codRiderDebtReversalReposter,
 
   ...cogsFixReposters(),
 }

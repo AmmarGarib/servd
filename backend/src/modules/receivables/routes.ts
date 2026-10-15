@@ -52,8 +52,25 @@
 //
 // Done: bad-debt write-off with recovery (G12 / H15 — writeOffs.ts, the CEO
 // approves every one) and sales tax withheld by the customer (G13 / H13).
-// PARKED (owner, 2026-10-13): the on-account tender at the till and on-account
-// statements (G14 / H14) — kind 'statement' and customerAccountId stay unused.
+//
+// On-account statements (kind 'statement', AR-ST-YYYY-NNNN — statements.ts,
+// issued from /accounting/customer-accounts) bill a client's on-account till
+// bills that are already booked. A statement posts NOTHING on issue and is
+// never a tax invoice (each bill's sale, tax and fiscal number were booked at
+// the till). Here it is listed, aged and settled exactly like an invoice
+// (LIVE_KINDS): payments, income-tax withholding, refunds, reversals and
+// write-offs, in the statement's company. Differences:
+//   - a credit note on a statement is 409 STATEMENT_CREDIT_AT_TILL — refund
+//     the bill at the till (the fiscal return files the refund, and
+//     applyChargeRefundTx credits the statement);
+//   - sales tax withheld on a statement takes the authority from its bills'
+//     brands (there is no issue entry); a statement spanning FBR and SRB is
+//     422 STATEMENT_MIXED_AUTHORITY (record it per authority by hand);
+//   - voiding a statement (only with nothing against it) releases its bills
+//     for the next statement and reverses nothing.
+// An invoice may name an on-account client (customerAccountId, ACTIVE
+// company only — 422 CLIENT_NOT_IN_COMPANY): it then counts toward that
+// client's exposure and statement of account.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma, ReceivableInvoice, ReceivablePayment } from '@prisma/client'
@@ -73,8 +90,9 @@ import { fmtPktDate } from '../accounting/dates.js'
 import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
 import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
+import { lockAccountTx } from './onAccount.js'
 import {
-  INVOICE, CREDIT_NOTE, WHT_METHOD, ST_WITHHELD_METHOD,
+  INVOICE, CREDIT_NOTE, STATEMENT, LIVE_KINDS, WHT_METHOD, ST_WITHHELD_METHOD,
   totalOf, balanceOf, statusFor, paymentKind, sourceOfPayment, lockInvoice, restatus, nextNumber, withNumberRetry,
 } from './ledger.js'
 
@@ -138,9 +156,9 @@ export async function findInScope(req: FastifyRequest, id: string): Promise<Rece
   return inv
 }
 
-/** 409 unless this is a live invoice (not a credit note, not void). */
+/** 409 unless this is a live invoice or statement (not a credit note, not void). */
 export function assertLiveInvoice(inv: ReceivableInvoice): void {
-  if (inv.kind !== INVOICE) throw new AppError('NOT_AN_INVOICE', 'This is a credit note — record this against the invoice it credits', 409)
+  if (!LIVE_KINDS.includes(inv.kind)) throw new AppError('NOT_AN_INVOICE', 'This is a credit note — record this against the invoice it credits', 409)
   if (inv.status === 'void') throw new AppError('INVOICE_VOID', 'This invoice has been voided', 409)
 }
 
@@ -159,6 +177,31 @@ async function taxAccountOfInvoice(inv: ReceivableInvoice, taxShareCents: number
   if (!inv.conceptId) return invoiced ?? outputTaxCodeFor(null)
   const brand = await prisma.concept.findUnique({ where: { id: inv.conceptId }, select: { province: true, srbPosId: true } })
   return refundTaxAccountFor(appPrisma, inv.tenantId, { conceptId: inv.conceptId, concept: brand ?? {} }, invoiced, taxShareCents)
+}
+
+/**
+ * The one authority whose output account a statement's tax sits in: its
+ * bills' brands (outputTaxCodeFor → authorityOfOutputCode — the rule the
+ * till's sale posting follows). A statement has no issue entry to read.
+ * 422 STATEMENT_MIXED_AUTHORITY when its bills span more than one authority.
+ */
+async function authorityOfStatement(inv: ReceivableInvoice): Promise<AuthorityKey | null> {
+  const charges = await prisma.customerAccountCharge.findMany({
+    where: { tenantId: inv.tenantId, statementInvoiceId: inv.id },
+    select: { conceptId: true, taxCents: true },
+  })
+  const conceptIds = [...new Set(charges.filter((c) => c.taxCents > 0).map((c) => c.conceptId))]
+  if (conceptIds.length === 0) return null
+  const brands = await prisma.concept.findMany({ where: { id: { in: conceptIds } }, select: { province: true, srbPosId: true } })
+  const keys = new Set(brands.map((b) => authorityOfOutputCode(outputTaxCodeFor(b))))
+  if (keys.size > 1 || keys.has(null)) {
+    throw new AppError(
+      'STATEMENT_MIXED_AUTHORITY',
+      `Statement ${inv.number} bills brands of more than one tax authority — record the sales tax withheld per authority by hand`,
+      422,
+    )
+  }
+  return [...keys][0] ?? null
 }
 
 const staffOf = (req: FastifyRequest) => ({ userId: req.staffUser!.id, userEmail: req.staffUser!.email })
@@ -182,9 +225,9 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     // Summary: every invoice still owed, and every one that could be in credit
     // (a credit note, or a reversed refund, can push an invoice below zero).
     const [owed, maybeInCredit] = await Promise.all([
-      prisma.receivableInvoice.findMany({ where: { ...scope, kind: INVOICE, status: { in: ['open', 'partial'] } }, include }),
+      prisma.receivableInvoice.findMany({ where: { ...scope, kind: { in: [...LIVE_KINDS] }, status: { in: ['open', 'partial'] } }, include }),
       prisma.receivableInvoice.findMany({
-        where: { ...scope, kind: INVOICE, status: 'paid', OR: [{ creditedCents: { gt: 0 } }, { payments: { some: { reversedAt: { not: null } } } }] },
+        where: { ...scope, kind: { in: [...LIVE_KINDS] }, status: 'paid', OR: [{ creditedCents: { gt: 0 } }, { payments: { some: { reversedAt: { not: null } } } }] },
         include,
       }),
     ])
@@ -217,7 +260,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
 
     // Credit notes against the listed invoices, the originals of the listed
     // credit notes, and the banks money went through — all in scope.
-    const invoiceIds = rows.filter((r) => r.kind === INVOICE).map((r) => r.id)
+    const invoiceIds = rows.filter((r) => LIVE_KINDS.includes(r.kind)).map((r) => r.id)
     const originalIds = [...new Set(rows.map((r) => r.originalInvoiceId).filter((x): x is string => !!x))]
     const bankIds = [...new Set(rows.flatMap((r) => r.payments.map((p) => p.bankAccountId)).filter((x): x is string => !!x))]
     const [notes, originals, banks, writeOffs] = await Promise.all([
@@ -254,6 +297,10 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         totalCents: totalOf(r),
         balanceCents: balance,
         bucket: balance > 0 ? agingBucket(r.dueDate, now) : null,
+        // A statement's period (Karachi days, stored as UTC midnight of the day).
+        statementPeriod: r.kind === STATEMENT && r.periodFrom && r.periodTo
+          ? { from: r.periodFrom.toISOString().slice(0, 10), to: r.periodTo.toISOString().slice(0, 10) }
+          : null,
         originalNumber: r.originalInvoiceId ? numberOf.get(r.originalInvoiceId) ?? null : null,
         creditNotes: r.kind === INVOICE
           ? notes.filter((n) => n.originalInvoiceId === r.id).map((n) => ({ ...n, totalCents: totalOf(n) }))
@@ -261,7 +308,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         // Bad-debt write-offs of this invoice (details, evidence and the
         // approve / recover buttons: GET /write-offs?invoiceId=).
         writeOffs: writeOffs.filter((w) => w.invoiceId === r.id),
-        canRequestWriteOff: mayRequestWriteOff && r.kind === INVOICE && r.status !== 'void' && balance > 0
+        canRequestWriteOff: mayRequestWriteOff && LIVE_KINDS.includes(r.kind) && r.status !== 'void' && balance > 0
           && !writeOffs.some((w) => w.invoiceId === r.id && w.status === 'requested'),
         payments: r.payments.map((p) => ({
           ...p,
@@ -299,10 +346,14 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /accounting/receivables — raise an invoice.
+  // POST /accounting/receivables — raise an invoice. customerAccountId names
+  // an on-account client of the ACTIVE company (else 422 CLIENT_NOT_IN_COMPANY);
+  // its legal name and NTN are copied onto the invoice (customerName may then
+  // be left out).
   fastify.post('/', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req, reply) => {
     const body = z.object({
-      customerName: z.string().min(1).max(160),
+      customerName: z.string().min(1).max(160).optional(),
+      customerAccountId: z.string().min(1).max(64).nullable().optional(),
       customerEmail: z.string().email().optional().or(z.literal('')),
       customerPhone: z.string().max(20).optional(),
       customerNtn: z.string().max(40).optional(),
@@ -319,6 +370,18 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     assertMoneyFits(body.amountCents + body.taxCents, 'The invoice total')
     const tenantId = activeTenant(req)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    // The client is resolved to its company — never trusted from the body.
+    const client = body.customerAccountId
+      ? await prisma.customerAccount.findFirst({
+          where: { id: body.customerAccountId, tenantId },
+          select: { id: true, legalName: true, ntn: true, contactEmail: true, contactPhone: true },
+        })
+      : null
+    if (body.customerAccountId && !client) {
+      throw new AppError('CLIENT_NOT_IN_COMPANY', 'That on-account client is not a client of the company you are working in', 422)
+    }
+    const customerName = client?.legalName ?? body.customerName?.trim()
+    if (!customerName) throw new AppError('CUSTOMER_REQUIRED', 'Name the customer, or pick an on-account client', 400)
     const issueDate = new Date(body.issueDate)
     const dueDate = new Date(body.dueDate)
     if (dueDate < issueDate) throw new AppError('BAD_DUE_DATE', 'Due date cannot be before the issue date', 400)
@@ -335,10 +398,11 @@ export async function receivableRoutes(fastify: FastifyInstance) {
           tenantId,
           kind: INVOICE,
           number: await nextNumber(tx, tenantId, issueDate, INVOICE),
-          customerName: body.customerName.trim(),
-          customerEmail: body.customerEmail || null,
-          customerPhone: body.customerPhone || null,
-          customerNtn: body.customerNtn || null,
+          customerAccountId: client?.id ?? null,
+          customerName,
+          customerEmail: body.customerEmail || client?.contactEmail || null,
+          customerPhone: body.customerPhone || client?.contactPhone || null,
+          customerNtn: client ? client.ntn ?? (body.customerNtn || null) : body.customerNtn || null,
           conceptId: body.conceptId ?? null,
           issueDate, dueDate,
           description: body.description,
@@ -479,7 +543,14 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     // (read outside the transaction — the issue entry never changes), and
     // 1335 must be in the company's chart before anything is saved.
     let authority: AuthorityKey | null = null
-    if (salesTax) {
+    if (salesTax && found.kind === STATEMENT) {
+      // A statement has no issue entry: its bills' brands name the authority.
+      authority = await authorityOfStatement(found)
+      if (!authority || toCents(found.taxCents) <= 0) {
+        throw new AppError('NO_OUTPUT_TAX', `Statement ${found.number} charged no sales tax, so the client cannot have withheld any`, 422)
+      }
+      await assertTemplateAccounts(prisma, found.tenantId, [ST_WITHHELD, RECEIVABLE])
+    } else if (salesTax) {
       const issue = await prisma.journalEntry.findFirst({
         where: { tenantId: found.tenantId, reference: `receivable.issue:${found.id}` },
         select: { lines: { select: { type: true, amountCents: true, account: { select: { code: true } } } } },
@@ -572,6 +643,13 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     assertMoneyFits(credit, 'The credit note total')
     const found = await findInScope(req, req.params.id)
     assertLiveInvoice(found)
+    if (found.kind === STATEMENT) {
+      throw new AppError(
+        'STATEMENT_CREDIT_AT_TILL',
+        `${found.number} is an on-account statement — refund the bill at the till (the refund files with the fiscal POS and credits the statement)`,
+        409,
+      )
+    }
     const date = new Date(body.date)
     if (date < found.issueDate) throw new AppError('BAD_DATE', 'A credit note cannot be dated before its invoice', 400)
     // Read outside the transaction: the invoice's own entry never changes.
@@ -836,6 +914,42 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         ...staffOf(req), tenantId: found.tenantId, after: { reason: body.reason, invoiceId: found.originalInvoiceId },
       })
       return { ok: true }
+    }
+
+    if (found.kind === STATEMENT) {
+      // A statement posted nothing on issue, so voiding it reverses nothing:
+      // it only releases its bills for the next statement. Lock order:
+      // client account → statement (onAccount.ts).
+      const released = await prisma.$transaction(async (tx) => {
+        if (found.customerAccountId) await lockAccountTx(tx, found.customerAccountId)
+        await lockInvoice(tx, found.id)
+        const claimed = await tx.receivableInvoice.updateMany({
+          where: {
+            id: found.id, tenantId: found.tenantId, kind: STATEMENT, status: 'open',
+            paidCents: 0, creditedCents: 0, whtCents: 0, writtenOffCents: 0,
+            payments: { none: { reversedAt: null } },
+          },
+          data: { status: 'void', voidedAt: new Date(), voidReason: body.reason },
+        })
+        if (claimed.count === 0) {
+          throw new AppError('CANNOT_VOID', 'Only a statement with nothing received, credited, withheld, written off or refunded can be voided', 409)
+        }
+        await tx.receivableWriteOff.updateMany({
+          where: { invoiceId: found.id, status: 'requested' },
+          data: { status: 'cancelled', decidedById: req.staffUser!.id, decidedAt: new Date(), decisionNote: `Statement voided: ${body.reason}`.slice(0, 500) },
+        })
+        const r = await tx.customerAccountCharge.updateMany({
+          where: { tenantId: found.tenantId, statementInvoiceId: found.id },
+          data: { statementInvoiceId: null },
+        })
+        return r.count
+      })
+      await audit({
+        category: 'accounting', action: 'receivable.statement.void', entity: 'ReceivableInvoice', entityId: found.id,
+        ...staffOf(req), tenantId: found.tenantId,
+        after: { reason: body.reason, chargesReleased: released },
+      })
+      return { ok: true, chargesReleased: released }
     }
 
     await prisma.$transaction(async (tx) => {

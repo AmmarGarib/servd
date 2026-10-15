@@ -476,3 +476,33 @@ describe('end to end: ring → Raast at the till → close → refund', () => {
     expect((ret!.payload as { payment: { tenders: Array<{ method: string }> } }).payment.tenders[0]!.method).toBe('raast')
   })
 })
+
+describe('after the CEO\'s till-clearing cut-over (1110 → 1115)', () => {
+  it('a cancelled ticket\'s Raast money is held on 1115 and the hand-back clears 1115; 1110 untouched; another company still on 1110', async () => {
+    const { cutoverTillClearing } = await import('../src/modules/accounting/tillClearing.js')
+    const K = await mkCompany(`rl-k-${RUN.toLowerCase()}`)
+    const cashierK = await mkUser(`rl-cashier-k-${RUN}`, 'cashier', K.tenantId)
+    await mkRaastAccount(K, { code: '1020' })
+    const cut = await cutoverTillClearing(K.tenantId, cashierK.id, { reason: 'test cut-over of K' })
+    expect(cut.status).toBe('cut_over')
+
+    const s = await openDrawer(K, cashierK)
+    const o = await order(K, K.conceptId, { items: 110_000, tax: 8_800, ratePct: 8, status: 'cancelled' })
+    const paid = await payRaast(K, K.conceptId, o, s, 118_800, { who: cashierK })
+    const lines = await closeAndPost(s, 0)
+    const tag = `(shift ${s.slice(0, 8)})`
+    expect(balanced(lines)).toBe(true)
+    expect(lines.filter((l) => l.code === '1115')).toEqual([expect.objectContaining({ type: 'credit', amount: 118_800, memo: refundDueMemo(o, tag) })])
+    expect(lines.some((l) => l.code === '1110')).toBe(false)
+
+    const back = await raastRefundRow(o, null, 118_800, { receiptId: paid.receiptId!, bankAccountId: paid.bankAccountId!, ledgerCode: paid.ledgerCode! })
+    expect((await postRefundPayment(back.id)).posted).toBe(true)
+    const hb = (await entry(K.tenantId, `order.refund:${back.id}`))!
+    expect(hb.map((l) => [l.code, l.type, l.amount]).sort()).toEqual([['1020', 'credit', 118_800], ['1115', 'debit', 118_800]])
+    expect(await netDebit(K.tenantId, '1115')).toBe(0)
+    expect(await netDebit(K.tenantId, '1110')).toBe(0)
+    // A has no marker: its new till clearing stays on 1110.
+    const { tillClearingCodeTx } = await import('../src/modules/accounting/tillClearingCode.js')
+    expect(await tillClearingCodeTx(prisma, A.tenantId)).toBe('1110')
+  })
+})

@@ -21,6 +21,8 @@ import { prisma } from '../../lib/prisma.js'
 import { isSelfApprovalExempt } from '../../lib/separation-of-duties.js'
 import { APPROVAL_RIGHTS, sectionOf } from '../../lib/approvalRights.js'
 import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } from './types.js'
+import { onAccountClients } from './onAccountProvider.js'
+import { karachiDay } from '../../connectors/util.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -766,9 +768,35 @@ const badDebts: ApprovalProvider = {
     }
     const res = await ctx.read<{ items: Row[] }>('/accounting/receivables/write-offs?status=requested&limit=200')
     if (res === null) return null
+    // An on-account client's statement (or invoice): name the client and the
+    // statement period — by the invoice ids the route itself returned.
+    const invoices = res.items.length
+      ? await prisma.receivableInvoice.findMany({
+          where: { id: { in: idList(res.items.map((r) => r.invoiceId)) }, customerAccountId: { not: null } },
+          select: { id: true, tenantId: true, customerAccountId: true, periodFrom: true, periodTo: true },
+        })
+      : []
+    const clients = invoices.length
+      ? await prisma.customerAccount.findMany({
+          where: { id: { in: idList(invoices.map((i) => i.customerAccountId)) } },
+          select: { id: true, tenantId: true, number: true, legalName: true },
+        })
+      : []
+    const clientOf = new Map(clients.map((c) => [c.id, c]))
+    const onAccountOf = new Map(invoices.map((i) => {
+      const c = i.customerAccountId ? clientOf.get(i.customerAccountId) : undefined
+      return [i.id, {
+        client: c && c.tenantId === i.tenantId ? `${c.legalName} (${c.number})` : null,
+        // Statement periods are Karachi calendar days.
+        period: i.periodFrom || i.periodTo
+          ? `${i.periodFrom ? karachiDay(new Date(i.periodFrom)) : '—'} to ${i.periodTo ? karachiDay(new Date(i.periodTo)) : '—'}`
+          : null,
+      }] as const
+    }))
     return res.items.map((r): ApprovalItem => {
       const base = `/accounting/receivables/write-offs/${r.id}`
       const files = r.attachments?.length ?? 0
+      const oa = onAccountOf.get(r.invoiceId)
       return {
         type: 'bad_debt',
         id: r.id,
@@ -779,6 +807,8 @@ const badDebts: ApprovalProvider = {
         facts: facts([
           ['Invoice', r.invoiceNumber],
           ['Customer', r.customerName],
+          ['Client', oa?.client],
+          ['Statement period', oa?.period],
           ['Brand', r.conceptName],
           ['Write off', pkr(r.amountCents)],
           ['Still owed', r.invoice ? pkr(r.invoice.balanceCents) : null],
@@ -1129,13 +1159,6 @@ const connectorChanges: ApprovalProvider = {
   },
 }
 
-// ── On-account clients — PARKED (owner, 2026-10-13) ──────────────────────────
-// APPROVAL_TYPES still lists 'on_account_client' (w0), but the feature and its
-// route are parked: no provider calls /accounting/customer-accounts. Nothing
-// requires a provider per type (the inbox lists only registered providers), so
-// none is registered; the resume adds it here (OA-clients, wave 2), taking
-// approverRoles / delegable from the registry with ...rightsOf('on_account_client').
-
 /** Every approval type, in the order the inbox shows them. */
 export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   staffLogins,
@@ -1153,6 +1176,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   rechargeRuns,
   journalRequests,
   badDebts,
+  onAccountClients,
   raastVoids,
   grniWriteOffs,
   stockDifferences,
