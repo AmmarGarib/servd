@@ -1,3 +1,4 @@
+import { UNREGISTERED_PROVINCES } from '../accounting/taxAuthorities.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
@@ -9,6 +10,12 @@ import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/ten
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
 import { KIT_CONCEPT_FIELDS, lockKitRowTx, refreshKitSnapshotTx } from '../siteLayouts/service.js'
+
+// Brands may only sit where the company is registered for sales tax (FBR, SRB):
+// Punjab, KP and Balochistan were removed (owner, 2026-10-15) — see
+// accounting/taxAuthorities.ts UNREGISTERED_PROVINCES.
+const zProvince = z.enum(['PB', 'SD', 'KP', 'BL', 'ICT', 'GB', 'AJK']).nullable().optional()
+  .refine((v) => !v || !UNREGISTERED_PROVINCES.has(v), { message: 'The company is registered only with FBR and SRB — Punjab, KP and Balochistan are not available' })
 
 // What a till role (cashier, foh/waiter) may read about a brand: enough to
 // pick it at the till and see its tender GST split, nothing else. The brand
@@ -228,7 +235,7 @@ const createConceptSchema = z.object({
   taxRateCard: z.number().min(0).max(100).default(8),
   // Province: drives default sales-tax rate via the provincial revenue authority.
   // Operator picks the province on creation; we auto-fill taxRate from it.
-  province:         z.enum(['PB', 'SD', 'KP', 'BL', 'ICT', 'GB', 'AJK']).nullable().optional(),
+  province:         zProvince,
   // Storefront CMS
   storefrontVisible: z.boolean().optional(),
   heroTagline: z.string().max(120).optional().nullable(),
@@ -302,7 +309,7 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
   // FBR / tax invoice details
   strn:             z.string().max(40).nullable().optional(),
   ntn:              z.string().max(40).nullable().optional(),
-  province:         z.enum(['PB', 'SD', 'KP', 'BL', 'ICT', 'GB', 'AJK']).nullable().optional(),
+  province:         zProvince,
   invoiceLegalName: z.string().max(120).nullable().optional(),
   invoiceAddress:   z.string().max(500).nullable().optional(),
   invoicePrefix:    z.string().max(10).nullable().optional(),

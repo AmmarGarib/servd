@@ -386,7 +386,7 @@ export async function syncCapexPaymentPosting(
   let inputCode: string | null = null
   if (inputShare > 0) {
     if (!isAuthorityKey(line.inputTaxAuthority)) {
-      throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say which authority charged the sales tax on this line (FBR, SRB, PRA, KPRA or BRA)', 422)
+      throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say which authority charged the sales tax on this line (FBR or SRB)', 422)
     }
     inputCode = inputTaxCodeFor(line.inputTaxAuthority)
   }

@@ -507,7 +507,7 @@ export async function postAcquisition(tx: Tx, asset: FixedAsset, a: AcquisitionA
   if (amounts.some((v) => !Number.isInteger(v) || v < 0)) throw new AppError('ASSET_FUNDING_SPLIT', 'Advances, amount owed and input tax must be whole paisa, not negative', 422)
   for (const v of amounts) assertMoneyFits(v, 'An acquisition amount')
   if (a.inputTaxCents > 0 && (!a.inputTaxCode || !INPUT_TAX_ACCOUNTS.includes(a.inputTaxCode))) {
-    throw new AppError('INPUT_TAX_CODE', 'Input tax needs its authority\'s input account (1320–1324)', 422)
+    throw new AppError('INPUT_TAX_CODE', 'Input tax needs its authority\'s input account (1320 FBR or 1322 SRB)', 422)
   }
   if (a.advancedCents + a.owedCents !== cost + a.inputTaxCents) {
     throw new AppError('ASSET_FUNDING_SPLIT', 'What was advanced plus what is owed must equal the asset\'s cost plus its input tax', 422)

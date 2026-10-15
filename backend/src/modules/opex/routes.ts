@@ -233,7 +233,7 @@ async function workOutPaymentMoney(a: {
   if (inputTaxCents > 0 && !isAuthorityKey(authority)) {
     authority = [line.inputTaxAuthority, supplier?.defaultTaxAuthority].find((x) => isAuthorityKey(x)) ?? null
     if (!authority) {
-      throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say who charged the sales tax on this invoice (FBR, SRB, PRA, KPRA or BRA) — input tax is set off only against that authority', 422)
+      throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say who charged the sales tax on this invoice (FBR or SRB) — input tax is set off only against that authority', 422)
     }
   }
 

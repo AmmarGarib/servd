@@ -9,7 +9,7 @@
 //            the category's account by accounting/prepaidReleases.ts, source
 //            'opex_payment')
 //   Dr 132x  the CHARGING authority's input account (inputTaxCodeFor —
-//            fbr 1320, pra 1321, srb 1322, kpra 1323, bra 1324)   input tax
+//            fbr 1320, srb 1322)   input tax
 //   Cr where the money came from — lib/bankAccounts.ts moneyAccountCode, the
 //      one resolver: 1010 cash on hand for a cash payment; else the named bank
 //      account's chart code (a live, linked bank of the CATEGORY's company),
@@ -185,7 +185,7 @@ export async function syncOpexPaymentPosting(
   let inputCode: string | null = null
   if (a.inputTaxCents > 0) {
     if (!isAuthorityKey(p.inputTaxAuthority)) {
-      throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say who charged the sales tax on this invoice (FBR, SRB, PRA, KPRA or BRA) — input tax is set off only against that authority', 422)
+      throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say who charged the sales tax on this invoice (FBR or SRB) — input tax is set off only against that authority', 422)
     }
     inputCode = inputTaxCodeFor(p.inputTaxAuthority)
   }

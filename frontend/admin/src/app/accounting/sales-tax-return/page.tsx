@@ -27,7 +27,7 @@ import WithholdingRegister from './WithholdingRegister'
 import { Select } from '@/components/ui/Select'
 
 interface AccountTotal { code: string; name: string; totalCents: number }
-type AuthorityKey = 'fbr' | 'pra' | 'srb' | 'kpra' | 'bra'
+type AuthorityKey = 'fbr' | 'srb'
 type WithholdingKey = 'wht' | 'stwh'
 type PayKey = AuthorityKey | WithholdingKey
 interface AuthorityReturn {
@@ -109,8 +109,8 @@ interface TaxPayment {
 interface STR {
   tenantId: string
   period: { from: string; to: string }
-  outputTax: { fbr: AccountTotal; pra: AccountTotal; srb: AccountTotal; kpra: AccountTotal; bra: AccountTotal; totalCents: number }
-  inputTax:  { fbr: AccountTotal; pra: AccountTotal; srb: AccountTotal; kpra: AccountTotal; bra: AccountTotal; totalCents: number }
+  outputTax: { fbr: AccountTotal; srb: AccountTotal; totalCents: number }
+  inputTax:  { fbr: AccountTotal; srb: AccountTotal; totalCents: number }
   taxableSalesCents: number
   /** Delivery fees (4110) booked in the period — a taxable supply of their own (H9). */
   deliveryFeesCents?: number
@@ -148,7 +148,7 @@ const isDeclared = (r: RateLine) => r.supply !== 'deposit_forfeit'
 /** The API's old H10 caveat ("No-show deposits kept are taxable…") is superseded. */
 const isStaleNote = (n: string) => /no-show deposits? kept are taxable|deposit_forfeit/i.test(n)
 const PAY_LABEL: Record<PayKey, string> = {
-  fbr: 'FBR sales tax', pra: 'PRA', srb: 'SRB', kpra: 'KPRA', bra: 'BRA',
+  fbr: 'FBR sales tax', srb: 'SRB',
   wht: 'Income tax withheld', stwh: 'Sales tax withheld',
 }
 const TABS = [
@@ -160,7 +160,7 @@ type Tab = (typeof TABS)[number]['key']
 
 // The settlement routes' codes, in words (the API's own message is the fallback).
 const ERROR_TEXT: Record<string, string> = {
-  NO_WITHHELD_SET_OFF: 'Withheld tax can be set off only against a sales tax authority\'s payment (FBR, PRA, SRB, KPRA, BRA) — never against income tax or sales tax withheld by us. Leave "Withheld by customers set off" at 0.',
+  NO_WITHHELD_SET_OFF: 'Withheld tax can be set off only against a sales tax authority\'s payment (FBR or SRB) — never against income tax or sales tax withheld by us. Leave "Withheld by customers set off" at 0.',
   WITHHELD_SET_OFF_TOO_LARGE: 'That is more withheld tax than our clients withheld for this authority and is still unused. Lower "Withheld by customers set off".',
   NO_INPUT_SET_OFF: 'This tax is paid in full — there is no input tax to set off against it.',
   NOTHING_PAID: 'Enter the amount paid (or the tax set off).',
@@ -182,7 +182,7 @@ const ERROR_TEXT: Record<string, string> = {
   BAD_AUTHORITY: 'Pick which tax this payment is for.',
   WITHHELD_ALREADY_SET_OFF: 'That withheld tax has already been set off in a sales-tax payment — void or correct that payment first.',
   CROSS_SETOFF_TOO_LARGE: 'That is more federal input on raw materials than can still be claimed. Use the claimable figure shown (FBR output owed is paid from it first).',
-  NO_CROSS_SET_OFF: 'Federal input on raw materials can only be set off against a provincial authority (SRB, PRA, KPRA or BRA), never FBR, withholding or statutory payments.',
+  NO_CROSS_SET_OFF: 'Federal input on raw materials can only be set off against a provincial authority (SRB), never FBR, withholding or statutory payments.',
 }
 const errText = (e: unknown) => {
   const x = e as { code?: string; message?: string } | null
@@ -325,7 +325,7 @@ export default function SalesTaxReturnPage() {
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
-                  {[data.outputTax.fbr, data.outputTax.pra, data.outputTax.srb, data.outputTax.kpra, data.outputTax.bra].map((r) => (
+                  {[data.outputTax.fbr, data.outputTax.srb].map((r) => (
                     <tr key={r.code} className="border-t border-s-border">
                       <td className="px-4 py-2 font-mono text-xs text-s-muted w-20">{r.code}</td>
                       <td className="px-4 py-2 text-s-text">{r.name}</td>
@@ -346,7 +346,7 @@ export default function SalesTaxReturnPage() {
               <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
-                  {[data.inputTax.fbr, data.inputTax.pra, data.inputTax.srb, data.inputTax.kpra, data.inputTax.bra].map((r) => (
+                  {[data.inputTax.fbr, data.inputTax.srb].map((r) => (
                     <tr key={r.code} className="border-t border-s-border">
                       <td className="px-4 py-2 font-mono text-xs text-s-muted w-20">{r.code}</td>
                       <td className="px-4 py-2 text-s-text">{r.name}</td>
@@ -763,7 +763,7 @@ export default function SalesTaxReturnPage() {
 
 interface PayTarget { key: PayKey; paidCents: number; inputSetOffCents: number; withheldAvailableCents: number; crossAvailableCents: number }
 /** H8: federal input on raw materials is set off against the provincial authorities only. */
-const PROVINCIAL: ReadonlySet<PayKey> = new Set<PayKey>(['pra', 'srb', 'kpra', 'bra'])
+const PROVINCIAL: ReadonlySet<PayKey> = new Set<PayKey>(['srb'])
 
 function PayModal({ report, target, onClose }: { report: STR; target: PayTarget; onClose: () => void }) {
   const qc = useQueryClient()

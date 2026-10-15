@@ -44,7 +44,7 @@ export const WHT_SECTION_LABEL: Record<string, string> = {
   none: 'No withholding',
 }
 export const AUTHORITY_LABEL: Record<string, string> = {
-  fbr: 'FBR (federal)', srb: 'SRB (Sindh)', pra: 'PRA (Punjab)', kpra: 'KPRA (Khyber Pakhtunkhwa)', bra: 'BRA (Balochistan)',
+  fbr: 'FBR (federal)', srb: 'SRB (Sindh)',
 }
 
 // ─── Data hooks ─────────────────────────────────────────────────────────────

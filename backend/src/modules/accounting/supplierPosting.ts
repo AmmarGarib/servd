@@ -176,7 +176,7 @@ function whtMemo(bill: { billNumber: string; whtSection: string | null; whtRateB
   return `WHT ${section ? `${WHT_SECTION_LABEL[section]} ` : ''}${rate}% on bill ${bill.billNumber}`
 }
 
-/** The input-tax code of a bill's authority (1320 FBR … 1324 BRA). */
+/** The input-tax code of a bill's authority (1320 FBR, 1322 SRB). */
 function inputCodeOfAuthority(authority: string | null | undefined): string {
   return isAuthorityKey(authority) ? inputTaxCodeFor(authority) : ACCT.GST_INPUT
 }
@@ -856,7 +856,7 @@ type CreditNoteStockLineV1 = {
 }
 
 /**
- * The input-tax code a bill's own entry debited — the authority's 1320–1324
+ * The input-tax code a bill's own entry debited — the authority's 1320 / 1322
  * (G7 done: input tax by authority, H8). A credit note reverses on that code.
  */
 async function inputTaxCodeOfBill(tx: Tx, tenantId: string, billId: string): Promise<string> {

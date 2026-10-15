@@ -916,8 +916,8 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   refundable deposits (1360) only through CapEx. No deferred tax anywhere
   (H24). Sales tax on disposal proceeds: `TODO(asset-sale-tax)`.
 - **Tax:** `accounting/taxAuthorities.ts` is the one authority table; input
-  tax is booked by authority (1320 FBR, 1321–1324 provincial). Federal input
-  on food / drink stock may be set off against SRB / PRA output (H8:
+  tax is booked by authority (1320 FBR, 1322 SRB — the ONLY two: PRA, KPRA, BRA and their 1321/1323/1324 + 2031/2033/2034 were removed, owner 2026-10-15; brands cannot be set to Punjab, KP or Balochistan). Federal input
+  on food / drink stock may be set off against SRB output (H8:
   `salesTaxReturn.ts CROSS_SETOFF_ELIGIBLE_CLASSES`; a payment's
   `crossSetOffCents`, never above what is claimable; what is already used is
   read from the LEDGER — `crossSetOffUsedCents`, every Cr 1320 in an entry

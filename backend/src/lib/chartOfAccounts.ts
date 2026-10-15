@@ -71,12 +71,9 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1290', name: 'Stock Differences Suspense',         type: 'asset',     description: 'Waste and count differences awaiting the CEO\'s approval into cost of sales, with their reasons (H20)' },
   { code: '1310', name: 'Prepaid Expenses',                   type: 'asset' },
   { code: '1320', name: 'GST Input (Recoverable)',            type: 'asset',     description: 'Federal sales tax (FBR) recoverable on supplier purchases — offsets 2030' },
-  { code: '1321', name: 'PRA Sales Tax Input',                type: 'asset',     description: 'Punjab Revenue Authority sales tax on services — recoverable, Punjab outlets only' },
   { code: '1322', name: 'SRB Sales Tax Input',                type: 'asset',     description: 'Sindh Revenue Board sales tax — Sindh outlets only' },
-  { code: '1323', name: 'KPRA Sales Tax Input',               type: 'asset',     description: 'KP Revenue Authority sales tax — KP outlets only' },
-  { code: '1324', name: 'BRA Sales Tax Input',                type: 'asset',     description: 'Balochistan Revenue Authority sales tax — Balochistan outlets only' },
   { code: '1330', name: 'Income Tax (WHT) Receivable',        type: 'asset',     description: 'Income tax withheld at source by clients/platforms' },
-  { code: '1335', name: 'Sales Tax Withheld by Customers',    type: 'asset',     description: "SRB/PRA sales tax a client withheld as withholding agent, netted in that authority's return (H13)" },
+  { code: '1335', name: 'Sales Tax Withheld by Customers',    type: 'asset',     description: "SRB/FBR sales tax a client withheld as withholding agent, netted in that authority's return (H13)" },
   { code: '1340', name: 'Advances to Suppliers',              type: 'asset',     description: 'Payments made before goods received' },
   { code: '1350', name: 'Staff Loans & Advances',             type: 'asset',     description: 'HR loans paid to employees, recovered through payroll' },
   { code: '1351', name: 'Rider Cash Receivable (COD)',        type: 'asset',     description: 'Delivered cash-on-delivery money an own-fleet rider has not handed in (H5); cleared when the rider pays it in at the till' },
@@ -115,10 +112,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '2015', name: 'Goods Received Not Invoiced',        type: 'liability', description: 'Stock received, supplier invoice not yet booked (H17)' },
   { code: '2020', name: 'Wages Payable',                      type: 'liability' },
   { code: '2030', name: 'GST Output (Payable to FBR)',        type: 'liability', description: 'Federal sales tax collected on sales — owed to FBR' },
-  { code: '2031', name: 'PRA Sales Tax Output',               type: 'liability', description: 'Punjab service-sector sales tax collected' },
   { code: '2032', name: 'SRB Sales Tax Output',               type: 'liability', description: 'Sindh service-sector sales tax' },
-  { code: '2033', name: 'KPRA Sales Tax Output',              type: 'liability', description: 'KP service-sector sales tax' },
-  { code: '2034', name: 'BRA Sales Tax Output',               type: 'liability', description: 'Balochistan service-sector sales tax' },
   { code: '2040', name: 'Income Tax Withholding Payable (suppliers, s.153)', type: 'liability', description: 'WHT deducted from supplier payments, owed to FBR. Salary tax is 2042.' },
   { code: '2041', name: 'Sales Tax Withholding Payable',      type: 'liability', description: 'STWH where we are the withholding agent' },
   { code: '2042', name: 'Salary Income Tax Payable (s.149)',  type: 'liability', description: 'Income tax deducted from salaries, owed to FBR (H7)' },
@@ -214,7 +208,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
 /**
  * Codes the posting engine cannot run without — checked by /health, and a
  * required code can never be switched off in the chart. Codes posted only on
- * demand (1321–1324, 1335, 1351, 1356, 1590, 6160, 6170, 6175, 6180, 6990)
+ * demand (1322, 1335, 1351, 1356, 1590, 6160, 6170, 6175, 6180, 6990)
  * are NOT here: their postings refuse cleanly (assertTemplateAccounts → 422,
  * nothing saved) when a company lacks them.
  */

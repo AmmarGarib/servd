@@ -64,7 +64,7 @@ interface Bill {
   id: string; supplierId: string; poId?: string | null; billNumber: string
   billDate: string; dueDate: string; status: string
   subtotalCents: number; taxCents: number; totalCents: number; whtCents: number; paidCents: number
-  /** Who charged the sales tax (fbr / pra / srb / kpra / bra) and the withholding section applied. */
+  /** Who charged the sales tax (fbr / srb) and the withholding section applied. */
   taxAuthority?: string | null
   whtSection?: string | null
   creditedCents?: number
@@ -1243,10 +1243,7 @@ interface BillLine {
 
 const TAX_AUTHORITIES: Array<{ key: string; label: string }> = [
   { key: 'fbr', label: 'FBR — federal sales tax' },
-  { key: 'pra', label: 'PRA — Punjab' },
   { key: 'srb', label: 'SRB — Sindh' },
-  { key: 'kpra', label: 'KPRA — Khyber Pakhtunkhwa' },
-  { key: 'bra', label: 'BRA — Balochistan' },
 ]
 const WHT_SECTION_OPTIONS: Array<{ key: string; label: string }> = [
   { key: '153_1_a', label: 's.153(1)(a) — goods' },

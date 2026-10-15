@@ -262,7 +262,7 @@ async function assertLineNotCapitalised(tenantId: string | null, lineId: string)
 /** Input tax needs its authority; it cannot exceed the line. */
 function assertLineTax(inputTaxCents: number, authority: string | null | undefined, lineTotal: number): void {
   if (inputTaxCents > 0 && !authority) {
-    throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say which authority charged the sales tax (FBR, SRB, PRA, KPRA or BRA)', 422)
+    throw new AppError('INPUT_TAX_AUTHORITY_REQUIRED', 'Say which authority charged the sales tax (FBR or SRB)', 422)
   }
   if (inputTaxCents > 0 && inputTaxCents >= lineTotal) throw new AppError('INPUT_TAX_TOO_LARGE', 'The sales tax must be less than the line\'s cost', 422)
 }

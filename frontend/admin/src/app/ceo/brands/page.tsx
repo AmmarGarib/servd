@@ -141,10 +141,7 @@ const PRICE_TIERS = [
 const DAYPARTS = ['breakfast', 'lunch', 'afternoon', 'dinner', 'late_night']
 
 const PROVINCES = [
-  { code: 'PB',  label: 'Punjab' },
   { code: 'SD',  label: 'Sindh' },
-  { code: 'KP',  label: 'Khyber Pakhtunkhwa' },
-  { code: 'BL',  label: 'Balochistan' },
   { code: 'ICT', label: 'Islamabad Capital Territory' },
   { code: 'GB',  label: 'Gilgit-Baltistan' },
   { code: 'AJK', label: 'Azad Jammu & Kashmir' },

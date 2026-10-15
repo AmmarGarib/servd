@@ -58,7 +58,7 @@ interface Payment {
   amounts?: { cashCents: number; whtCents: number; inputTaxCents: number; invoiceCents: number; expenseCents: number }
 }
 type WhtSection = '153_1_a' | '153_1_b' | '153_1_c' | '155'
-type Authority = 'fbr' | 'srb' | 'pra' | 'kpra' | 'bra'
+type Authority = 'fbr' | 'srb'
 interface SupplierPick {
   id: string
   name: string
@@ -187,14 +187,14 @@ const WHT_SECTION_LABEL: Record<WhtSection, string> = {
   '153_1_c': 's.153(1)(c) — contracts',
   '155': 's.155 — rent',
 }
-const AUTHORITY_LABEL: Record<Authority, string> = { fbr: 'FBR', srb: 'SRB (Sindh)', pra: 'PRA (Punjab)', kpra: 'KPRA', bra: 'BRA' }
+const AUTHORITY_LABEL: Record<Authority, string> = { fbr: 'FBR', srb: 'SRB (Sindh)' }
 const FILER_LABEL: Record<string, string> = { filer: 'Filer', non_filer: 'Non-filer', exempt: 'Exempt', unknown: 'Filer status not known' }
 
 // The OpEx routes' codes, in words (the API's own message is the fallback).
 const OPEX_ERROR_TEXT: Record<string, string> = {
   INVOICE_AMOUNT_REQUIRED: 'This vendor is withheld at source: give the invoice amount (what the vendor billed). The cash paid is worked out from it.',
   VENDOR_REQUIRED_FOR_WHT: 'Withholding needs the vendor: pick the supplier on the line — its filer status and exemption decide the rate.',
-  INPUT_TAX_AUTHORITY_REQUIRED: 'Say who charged the sales tax on this invoice (FBR, SRB, PRA, KPRA or BRA).',
+  INPUT_TAX_AUTHORITY_REQUIRED: 'Say who charged the sales tax on this invoice (FBR or SRB).',
   INPUT_TAX_TOO_LARGE: 'The sales tax must be less than the invoice amount.',
   WHT_OVERRIDE_REASON_REQUIRED: 'Say why the withholding differs from the rate (at least 10 characters) — the CA reads it on the withholding register.',
   WHT_OVERRIDE_TOO_LARGE: 'The withholding cannot be more than the invoice less its sales tax.',

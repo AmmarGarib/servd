@@ -658,12 +658,11 @@ const PRICE_TIERS: { value: 'budget' | 'mid' | 'premium' | 'luxury'; label: stri
 // brand starts with (cash = `rate`, card = `cardRate` when the province has a
 // reduced card rate, else the same). The legacy single Concept.taxRate is no
 // longer written. Rates stay editable per brand in Brands → Tax registration.
-type ProvinceCode = 'SD' | 'PB' | 'KP' | 'BL' | 'ICT' | 'GB' | 'AJK'
+// Punjab, KP and Balochistan are not offered: the company is registered only
+// with FBR and SRB (owner, 2026-10-15).
+type ProvinceCode = 'SD' | 'ICT' | 'GB' | 'AJK'
 const PROVINCES: { value: ProvinceCode; name: string; authority: string; rate: number; cardRate?: number; note?: string }[] = [
   { value: 'SD',  name: 'Sindh',                  authority: 'SRB',  rate: 15, cardRate: 8, note: 'Karachi, Hyderabad. Card / digital payments at 8%.' },
-  { value: 'PB',  name: 'Punjab',                 authority: 'PRA',  rate: 16, cardRate: 5, note: 'Lahore, Faisalabad. Card / digital payments at 5%.' },
-  { value: 'KP',  name: 'Khyber Pakhtunkhwa',     authority: 'KPRA', rate: 8,  note: 'Peshawar, Mardan' },
-  { value: 'BL',  name: 'Balochistan',            authority: 'BRA',  rate: 15, note: 'Quetta' },
   { value: 'ICT', name: 'Islamabad Capital',      authority: 'FBR',  rate: 16, note: 'Federal jurisdiction' },
   { value: 'GB',  name: 'Gilgit-Baltistan',       authority: 'GBRA', rate: 15 },
   { value: 'AJK', name: 'Azad Jammu & Kashmir',   authority: 'AJK',  rate: 15 },

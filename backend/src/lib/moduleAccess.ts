@@ -577,6 +577,10 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // is the CRM module's (UI-12: boh_management read /crm/customers).
   { prefix: '/crm/customers/:id/context|notes', pattern: /^\/crm\/customers\/[^/]+\/(context|notes)$/, anyOf: ['crm', 'reservations'] },
   { prefix: '/crm/conversations',      anyOf: ['crm', 'complaints', 'reviews'] },
+  // The feedback inbox carries contact-form names, phones and emails: only the
+  // Reviews module's Messages page reads it (the public POST is unauthenticated
+  // and never reaches this gate).
+  { prefix: '/feedback',               anyOf: ['reviews'] },
   { prefix: '/crm/campaigns',          anyOf: ['campaigns', 'crm'] },
   { prefix: '/crm/behavioral-segments', anyOf: ['crm', 'campaigns'] },
   { prefix: '/crm/summary',            anyOf: ['crm', 'campaigns'] },

@@ -1,7 +1,7 @@
 // Sales tax return — the figures a company files with each tax authority for
 // a period: FBR (federal sales tax on goods, 2030 / 1320) and the provincial
-// authorities that tax restaurant SERVICES — SRB for Sindh (2032 / 1322), PRA,
-// KPRA, BRA. Operators still file through the authority's portal (IRIS for
+// authorities that tax restaurant SERVICES — SRB for Sindh (2032 / 1322). (PRA,
+// KPRA and BRA were removed — GS Foods is not registered with them.) Operators still file through the authority's portal (IRIS for
 // FBR, SRB's e-filing for Sindh); this report tells them what to enter.
 //
 // What it gives (BOOKS-10):
@@ -42,12 +42,12 @@
 //   • The authority table is accounting/taxAuthorities.ts (AUTHORITIES,
 //     re-exported here) — never a second copy. Input tax on bills, OpEx and
 //     CapEx is booked to the CHARGING authority's own input account
-//     (1320–1324) and set off against that authority (H8).
+//     (1320 / 1322) and set off against that authority (H8).
 //   • Federal input on raw materials, cross set-off (H8, Hasnain 2026-10-14,
 //     "as per SRB eligibility"): FBR input (1320) booked on SUPPLIER BILLS for
 //     stock lines whose cost class is in CROSS_SETOFF_ELIGIBLE_CLASSES (food
 //     and drinks — the one switch point) may ALSO be set off against a
-//     provincial authority's output (SRB, PRA, KPRA, BRA). Pool per company:
+//     provincial authority's output (SRB). Pool per company:
 //     eligible federal input booked to date − cross set-offs already recorded
 //     (any period, any authority), never more than 1320 still holds after
 //     what FBR is owed (federal output uses 1320 first). Shared over the
@@ -329,7 +329,7 @@ export async function crossSetOffByPayment(
  * Federal input (1320) already set off against a PROVINCIAL authority, read
  * from the LEDGER (not from payment records): Cr − Dr on the company's 1320 in
  * every entry of the company, any date, that also has a line on a provincial
- * output account (2031–2034, either side), supplier bills and credit notes
+ * output account (2032, either side), supplier bills and credit notes
  * excluded, less any part of it that paid FBR's own output (2030) in the same
  * entry. A payment posted here, a linked hand-posted entry, an UNLINKED
  * manual or reconciliation entry (never linked, or unlinked by
@@ -577,18 +577,12 @@ export interface SalesTaxReturnReport {
   period: { from: string; to: string }
   outputTax: {
     fbr: AccountTotal
-    pra: AccountTotal
     srb: AccountTotal
-    kpra: AccountTotal
-    bra: AccountTotal
     totalCents: number
   }
   inputTax: {
     fbr: AccountTotal
-    pra: AccountTotal
     srb: AccountTotal
-    kpra: AccountTotal
-    bra: AccountTotal
     totalCents: number
   }
   byAuthority: AuthorityReturn[]
@@ -631,7 +625,7 @@ export interface SalesTaxReturnReport {
   notes: string[]              // operator-facing caveats
 }
 
-/** Every output sales-tax account the return files: FBR 2030 + PRA/SRB/KPRA/BRA. */
+/** Every output sales-tax account the return files: FBR 2030 + SRB 2032. */
 export const OUTPUT_TAX_CODES: string[] = AUTHORITY_LIST.map((a) => a.outputCode)
 
 /**
@@ -1364,7 +1358,7 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     )
   }
   if (total('input') === 0) {
-    notes.push('No input tax recorded. Input tax comes from "Tax charged by" on supplier bills and OpEx (and CapEx) payments — each charging authority\'s own input account (FBR 1320, PRA 1321, SRB 1322, KPRA 1323, BRA 1324). Check those documents name the tax and who charged it.')
+    notes.push('No input tax recorded. Input tax comes from "Tax charged by" on supplier bills and OpEx (and CapEx) payments — each charging authority\'s own input account (FBR 1320, SRB 1322). Check those documents name the tax and who charged it.')
   }
   const unclassed = byRate.filter((r) => r.supply === 'zero_rated' || r.supply === 'exempt')
   if (unclassed.length > 0) {
@@ -1377,7 +1371,7 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     notes.push('pre-H10: the "deposit_forfeit" rows are no-show deposits kept under the earlier treatment (brand revenue with the tax inside, at the brand\'s card rate) — they stay declared as they were booked. Since H10 a kept deposit is untaxed compensation, booked to 4210 No-show Deposits Kept (other income), and is not on the return.')
   }
   if (byAuthority.some((r) => r.withheldByCustomersCents !== 0 || r.customerWithheldAvailableCents !== 0)) {
-    notes.push('Sales tax our clients withheld from us as withholding agents (1335) is deducted from that same authority\'s net ("Net after withheld") — SRB withholding never reduces PRA\'s. Set it off when recording the payment ("Withheld tax set off"); what is still available is shown per authority.')
+    notes.push('Sales tax our clients withheld from us as withholding agents (1335) is deducted from that same authority\'s net ("Net after withheld") — SRB withholding never reduces FBR\'s. Set it off when recording the payment ("Withheld tax set off"); what is still available is shown per authority.')
   }
   notes.push('Output and input are what was charged and recovered in the period. Tax paid to the authorities (payments recorded here, and entries linked as payments) is left out of them and shown under "Paid for this period"; "Ledger balance at period end" is what the books still owe after every charge and payment up to then.')
   notes.push('Input tax is set off against the same authority\'s output. The one exception (H8, as per SRB eligibility): federal input (1320) on supplier bills for raw materials — stock of the classes ' + CROSS_SETOFF_ELIGIBLE_CLASSES.join(' and ') + ' — may also be set off against a provincial authority\'s output ("Federal input on raw materials claimable against …", and "Net after federal input"). It is one pool per company: what was set off once is never claimed again, for any period or authority, and what FBR is owed takes 1320 first. Set it off when recording the payment ("Federal input set off"). Whether any other input is admissible (e.g. restaurant services at a reduced rate) is for your CA.')
@@ -1390,18 +1384,12 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     period: { from: fmtPktDate(from), to: fmtPktDate(to) },
     outputTax: {
       fbr:  { code: AUTHORITIES.fbr.outputCode,  name: named(AUTHORITIES.fbr.outputCode),  totalCents: of('fbr').output },
-      pra:  { code: AUTHORITIES.pra.outputCode,  name: named(AUTHORITIES.pra.outputCode),  totalCents: of('pra').output },
       srb:  { code: AUTHORITIES.srb.outputCode,  name: named(AUTHORITIES.srb.outputCode),  totalCents: of('srb').output },
-      kpra: { code: AUTHORITIES.kpra.outputCode, name: named(AUTHORITIES.kpra.outputCode), totalCents: of('kpra').output },
-      bra:  { code: AUTHORITIES.bra.outputCode,  name: named(AUTHORITIES.bra.outputCode),  totalCents: of('bra').output },
       totalCents: total('output'),
     },
     inputTax: {
       fbr:  { code: AUTHORITIES.fbr.inputCode,  name: named(AUTHORITIES.fbr.inputCode),  totalCents: of('fbr').input },
-      pra:  { code: AUTHORITIES.pra.inputCode,  name: named(AUTHORITIES.pra.inputCode),  totalCents: of('pra').input },
       srb:  { code: AUTHORITIES.srb.inputCode,  name: named(AUTHORITIES.srb.inputCode),  totalCents: of('srb').input },
-      kpra: { code: AUTHORITIES.kpra.inputCode, name: named(AUTHORITIES.kpra.inputCode), totalCents: of('kpra').input },
-      bra:  { code: AUTHORITIES.bra.inputCode,  name: named(AUTHORITIES.bra.inputCode),  totalCents: of('bra').input },
       totalCents: total('input'),
     },
     byAuthority,

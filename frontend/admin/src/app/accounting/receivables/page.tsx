@@ -16,7 +16,7 @@
 // Tax a client withholds comes in two kinds (H13): income tax (s.153, a credit
 // on our income-tax return, 1330) and SALES tax the client withheld as a
 // withholding agent (1335, netted in the return of the authority the invoice's
-// own tax was charged to — the API tells us which, SRB / PRA / FBR …).
+// own tax was charged to — the API tells us which, SRB or FBR).
 //
 // Bad debt (G12 / H15): finance, management or the owner asks to WRITE OFF
 // part or all of what an invoice still owes — with a reason and 1-5 evidence
@@ -60,7 +60,7 @@ interface Payment {
   id: string; amountCents: number; receivedAt: string; method: string; reference: string | null
   kind: PaymentKind; bankName: string | null; bankAccountCode: string | null
   reversedAt: string | null; reversedReason: string | null
-  /** Sales tax withheld ('st_withheld'): the authority whose return it is netted in (fbr | srb | pra | kpra | bra). */
+  /** Sales tax withheld ('st_withheld'): the authority whose return it is netted in (fbr | srb). */
   taxAuthority?: string | null
   /** Set on money recovered after a write-off. */
   writeOffId?: string | null
@@ -107,7 +107,7 @@ const STATUS: Record<Status, { label: string; color: string }> = {
 const KIND_LABEL: Record<PaymentKind, string> = { payment: 'Payment', withholding: 'Income tax withheld', refund: 'Refund to customer' }
 /** The shared receipt-method words, plus the two withholding rows (a certificate, not money). */
 const METHOD_LABEL: Record<string, string> = { ...RECEIPT_METHOD_LABEL, wht: 'Certificate', st_withheld: 'Certificate' }
-const AUTHORITY_LABEL: Record<string, string> = { fbr: 'FBR', srb: 'SRB', pra: 'PRA', kpra: 'KPRA', bra: 'BRA' }
+const AUTHORITY_LABEL: Record<string, string> = { fbr: 'FBR', srb: 'SRB' }
 const authorityLabel = (a: string | null | undefined) => (a ? AUTHORITY_LABEL[a] ?? a.toUpperCase() : null)
 
 /** How a payment row reads in the list. */
@@ -670,7 +670,7 @@ function Withhold({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
         {option('income_tax', 'Income tax (s.153) → 1330', 'From their withholding certificate. A credit on our income-tax return.')}
         {option('sales_tax', 'Sales tax withheld by the client → 1335',
-          canSalesTax ? 'The client is a sales-tax withholding agent. Netted in the return of the authority this invoice’s tax went to (SRB, PRA, FBR …).'
+          canSalesTax ? 'The client is a sales-tax withholding agent. Netted in the return of the authority this invoice’s tax went to (SRB or FBR).'
             : 'This invoice charged no sales tax, so the client cannot have withheld any.', !canSalesTax)}
       </div>
       {salesTax && (

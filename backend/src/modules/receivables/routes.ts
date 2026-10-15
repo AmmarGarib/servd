@@ -19,7 +19,7 @@
 //   receivable.issue        Dr 1110 (total) / Cr revenue (net) / Cr output tax
 //                           — the brand's authority, the same rule as a sale
 //                           (outputTaxCodeFor: 2032 SRB for a Sindh kitchen,
-//                           2031 PRA, …; 2030 FBR with no brand / province)
+//                           2032 SRB; 2030 FBR with no brand / province)
 //   receivable.payment      Dr the bank / cash / card account the money went
 //                           into (lib/bankAccounts.ts moneyAccountCode) / Cr 1110.
 //                           Method: RECEIPT_METHODS (cash, card, bank transfer,
@@ -550,7 +550,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
   //   kind 'income_tax' (default — ITO 2001 s.153, paid to FBR): a credit on
   //     our income-tax return. Dr 1330 / Cr 1110 ('receivable.wht').
   //   kind 'sales_tax' (H13 — the client is a sales-tax withholding agent of
-  //     SRB / PRA / …): Dr 1335 Sales Tax Withheld by Customers / Cr 1110
+  //     SRB / FBR): Dr 1335 Sales Tax Withheld by Customers / Cr 1110
   //     ('receivable.st_withheld'), netted in the return of the authority the
   //     invoice's own entry credited its tax to (stored on the row as
   //     taxAuthority). An invoice with no output tax → 422 NO_OUTPUT_TAX; never

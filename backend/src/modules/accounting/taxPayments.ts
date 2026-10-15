@@ -99,7 +99,7 @@ export function isStatutoryKey(x: unknown): x is StatutoryKey {
   return typeof x === 'string' && (STATUTORY_KEYS as readonly string[]).includes(x)
 }
 
-export const TAX_PAYMENT_AUTHORITIES = ['fbr', 'pra', 'srb', 'kpra', 'bra', 'wht', 'stwh', 'salary_tax', 'eobi', 'sessi'] as const
+export const TAX_PAYMENT_AUTHORITIES = ['fbr', 'srb', 'wht', 'stwh', 'salary_tax', 'eobi', 'sessi'] as const
 export type TaxPaymentAuthority = AuthorityKey | WithholdingKey | StatutoryKey
 
 /** How a tax payment left the company. */
@@ -293,7 +293,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
   if (crossCents > 0 && !crossSetOffAllowed(input.authority)) {
     throw new AppError(
       'NO_CROSS_SET_OFF',
-      `Federal input on raw materials (1320) is set off only against a provincial authority's output (SRB, PRA, KPRA, BRA) — not against ${acc.label}${input.authority === 'fbr' ? ' (use "Input set off" for FBR\'s own input)' : ''}`,
+      `Federal input on raw materials (1320) is set off only against a provincial authority's output (SRB) — not against ${acc.label}${input.authority === 'fbr' ? ' (use "Input set off" for FBR\'s own input)' : ''}`,
       422,
     )
   }
@@ -368,7 +368,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
       // Customer-withheld set off (H13): never more than 1335 holds (on the
       // day and counting everything after it), and never more than clients
       // withheld for THIS authority less what earlier payments already set
-      // off — so SRB withholding never pays PRA. One writer per company and
+      // off — so SRB withholding never pays FBR. One writer per company and
       // authority.
       if (withheldCents > 0) {
         await lockWithheld(tx, input.tenantId, input.authority)
