@@ -255,15 +255,20 @@ describe('a tax payment is first-class and never lowers the output of a return',
     expect(r2.withholding.find((x) => x.key === 'stwh')).toMatchObject({ account: { totalCents: 0 }, ledgerBalanceAtEndCents: 0 })
   })
 
-  it('who may pay: a role outside finance / the CEO is refused; another company\'s bank is 422', async () => {
-    const fnb = await call('fnbA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'pra', period: M1, paidCents: 100, paidAt: `${M2}-01` })
+  it('who may pay: a role outside finance / the CEO is refused; another company\'s bank is 422; PRA / KPRA / BRA are not authorities', async () => {
+    const before = await prisma.salesTaxPayment.count({ where: { tenantId: tenantA } })
+    const fnb = await call('fnbA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'srb', period: M2, paidCents: 100, paidAt: `${M2}-01` })
     expect(fnb.statusCode).toBe(403)
-    const foreignBank = await call('finA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'pra', period: M1, paidCents: 100, paidAt: `${M2}-01`, bankAccountId: bankB })
+    const foreignBank = await call('finA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'srb', period: M2, paidCents: 100, paidAt: `${M2}-01`, bankAccountId: bankB })
     expect(foreignBank.statusCode).toBe(422)
     expect(foreignBank.json().error.code).toBe('BANK_ACCOUNT_NOT_IN_COMPANY')
-    const future = await call('finA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'pra', period: M1, paidCents: 100, paidAt: '2999-01-01' })
+    const future = await call('finA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'srb', period: M2, paidCents: 100, paidAt: '2999-01-01' })
     expect(future.statusCode).toBe(422)
-    expect(await prisma.salesTaxPayment.count({ where: { tenantId: tenantA, authority: 'pra' } })).toBe(0)
+    // GS Foods is registered only with FBR and SRB (owner, 2026-10-15).
+    for (const gone of ['pra', 'kpra', 'bra']) {
+      expect((await call('finA', 'POST', '/accounting/sales-tax-return/payments', { authority: gone, period: M1, paidCents: 100, paidAt: `${M2}-01`, bankAccountId: bankA })).statusCode).toBe(400)
+    }
+    expect(await prisma.salesTaxPayment.count({ where: { tenantId: tenantA } })).toBe(before)
   })
 
   it('a closed date is refused and nothing is saved', async () => {
@@ -315,47 +320,46 @@ describe('a payment already posted by hand is linked, never posted twice', () =>
   let manualId: string
 
   it('links a manual entry: no second posting, left out of the month\'s output', async () => {
-    // A KPRA brand's tax, paid by a manual journal in M2.
-    const kp = await brand(tenantA, 'A Peshawar', 'KP')
-    await sale(tenantA, kp, '2033', 800, at(`${M1}-08`))
-    const accounts = await prisma.account.findMany({ where: { tenantId: tenantA, code: { in: ['2033', '1020'] } }, select: { id: true, code: true } })
+    // A Sindh brand's tax for this month, paid by a manual journal.
+    await sale(tenantA, sdA, '2032', 800, at(`${M2}-01`))
+    const charged = authorityOf(await salesTaxReturn(tenantA, M2_FROM, M2_TO), 'SRB')!.output.totalCents
+    const accounts = await prisma.account.findMany({ where: { tenantId: tenantA, code: { in: ['2032', '1020'] } }, select: { id: true, code: true } })
     const id = (code: string) => accounts.find((a) => a.code === code)!.id
     const manual = await call('adminA', 'POST', '/accounting/journal', {
-      description: 'KPRA paid', entryDate: at(`${M2}-01`).toISOString(),
-      lines: [{ accountId: id('2033'), type: 'debit', amountCents: 800 }, { accountId: id('1020'), type: 'credit', amountCents: 800 }],
+      description: 'SRB paid', entryDate: at(`${M2}-01`).toISOString(),
+      lines: [{ accountId: id('2032'), type: 'debit', amountCents: 800 }, { accountId: id('1020'), type: 'credit', amountCents: 800 }],
     })
     expect(manual.statusCode).toBe(201)
     manualId = manual.json().id
-    expect(authorityOf(await salesTaxReturn(tenantA, M2_FROM, M2_TO), 'KPRA')!.output.totalCents).toBe(-800) // before linking
+    expect(authorityOf(await salesTaxReturn(tenantA, M2_FROM, M2_TO), 'SRB')!.output.totalCents).toBe(charged - 800) // before linking
 
-    const cands = await call('finA', 'GET', '/accounting/sales-tax-return/payments/candidates?authority=kpra')
+    const cands = await call('finA', 'GET', '/accounting/sales-tax-return/payments/candidates?authority=srb')
     expect(cands.json().entries.map((e: { id: string }) => e.id)).toContain(manualId)
 
     const before = await prisma.journalEntry.count({ where: { tenantId: tenantA } })
-    const res = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'kpra', period: M1, cprNumber: 'KP-1' })
+    const res = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'srb', period: M2, cprNumber: 'SRB-2' })
     expect(res.statusCode).toBe(201)
     expect(res.json()).toMatchObject({ tenantId: tenantA, linked: true, journalEntryId: manualId, paidCents: 800, outputSetOffCents: 800, bankAccountId: bankA })
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA } })).toBe(before)
 
-    const m2 = authorityOf(await salesTaxReturn(tenantA, M2_FROM, M2_TO), 'KPRA')!
-    expect(m2.output.totalCents).toBe(0)
-    expect(authorityOf(await salesTaxReturn(tenantA, M1_FROM, M1_TO), 'KPRA')).toMatchObject({ output: { totalCents: 800 }, paidForPeriodCents: 800 })
+    expect(authorityOf(await salesTaxReturn(tenantA, M2_FROM, M2_TO), 'SRB')).toMatchObject({ output: { totalCents: charged }, paidForPeriodCents: 800 })
   })
 
   it('the same entry twice, an entry that is not a manual / reconciliation one, or one that pays nothing, is refused', async () => {
-    const twice = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'kpra', period: M2 })
+    const twice = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'srb', period: M2 })
     expect(twice.statusCode).toBe(409)
     const saleEntry = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: tenantA, reference: { startsWith: 'test.sale:' } } })
-    const notLinkable = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: saleEntry.id, authority: 'bra', period: M1 })
+    const notLinkable = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: saleEntry.id, authority: 'fbr', period: M2 })
     expect(notLinkable.statusCode).toBe(422)
     expect(notLinkable.json().error.code).toBe('NOT_LINKABLE')
-    const wrongTax = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'bra', period: M1 })
+    // An SRB payment linked as FBR: it never touches 2030.
+    const wrongTax = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'fbr', period: M2 })
     expect(wrongTax.statusCode).toBe(422)
     expect(wrongTax.json().error.code).toBe('NOT_A_TAX_PAYMENT')
   })
 
   it('another company cannot link A\'s entry (404)', async () => {
-    const res = await call('adminB', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'kpra', period: M2 })
+    const res = await call('adminB', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: manualId, authority: 'srb', period: M2 })
     expect(res.statusCode).toBe(404)
     expect(await prisma.salesTaxPayment.count({ where: { tenantId: tenantB, journalEntryId: manualId } })).toBe(0)
   })

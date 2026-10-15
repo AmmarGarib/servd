@@ -377,7 +377,7 @@ describe('LEDGER-R5 — a cancelled ticket\'s Raast money is parked on its bank 
     expect(amt(close, '1110', 'credit')).toBe(11_500)
     const all = await books(o.id, [s1])
     expect(nonZero(all)).toEqual({})
-    expect(all.filter((l) => /^(4|2030|2031|2032|2033|7)/.test(l.code))).toEqual([])
+    expect(all.filter((l) => /^(4|2030|2032|7)/.test(l.code))).toEqual([])
     expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('cancelled')
   })
 

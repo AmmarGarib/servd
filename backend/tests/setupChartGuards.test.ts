@@ -115,8 +115,8 @@ describe('PATCH /setup/chart-of-accounts/:id — switching off', () => {
     expect((await prisma.account.findUniqueOrThrow({ where: { id: own.id } })).isActive).toBe(false)
   })
 
-  it('codes servd posts to that are not on the required list → 422: SRB output 2032, SRB input 1321, bad debts 6160, loyalty 7020 (final gate)', async () => {
-    for (const code of ['2032', '1321', '6160', '7020']) {
+  it('codes servd posts to that are not on the required list → 422: SRB output 2032, SRB input 1322, bad debts 6160, loyalty 7020 (final gate)', async () => {
+    for (const code of ['2032', '1322', '6160', '7020']) {
       const id = await accountId(tenantA, code)
       const res = await off('ceoA', id)
       expect(res.statusCode, `${code} ${res.body}`).toBe(422)

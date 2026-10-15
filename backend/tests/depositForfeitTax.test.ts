@@ -24,7 +24,7 @@ import { captureReservationDeposit } from '../src/modules/reservations/depositCa
 const RUN = Date.now().toString(36)
 let app: FastifyInstance
 let tenantA: string, tenantB: string
-let sindhBrand: string, punjabBrand: string, brandB: string
+let sindhBrand: string, ictBrand: string, brandB: string
 const tokens: Record<string, string> = {}
 const userIds: Record<string, string> = {}
 
@@ -64,8 +64,8 @@ beforeAll(async () => {
   for (const t of [tenantA, tenantB]) await ensureChartOfAccounts(t)
   // Stackd (revenue 4002), a Sindh brand: SRB output 2032, card rate 8 %.
   sindhBrand = (await prisma.concept.create({ data: { name: 'Stackd', slug: 'stackd', type: 'restaurant', tenantId: tenantA, province: 'SD', taxRateCash: 15, taxRateCard: 8 } })).id
-  // A Punjab brand (PRA output 2031) at a 5 % card rate; its slug falls back to 4090.
-  punjabBrand = (await prisma.concept.create({ data: { name: 'Lahore Grill', slug: `lahore-${RUN}`, type: 'restaurant', tenantId: tenantA, province: 'PB', taxRateCash: 16, taxRateCard: 5 } })).id
+  // An Islamabad brand (FBR output 2030) at a 5 % card rate; its slug falls back to 4090.
+  ictBrand = (await prisma.concept.create({ data: { name: 'Islamabad Grill', slug: `islamabad-${RUN}`, type: 'restaurant', tenantId: tenantA, province: 'ICT', taxRateCash: 16, taxRateCard: 5 } })).id
   brandB = (await prisma.concept.create({ data: { name: 'Viva', slug: `viva-${RUN}`, type: 'restaurant', tenantId: tenantB, province: 'SD', taxRateCash: 15, taxRateCard: 8 } })).id
   await mkUser('mgrA', 'manager', tenantA)
   await mkUser('mgrB', 'manager', tenantB)
@@ -110,13 +110,13 @@ describe('a kept no-show deposit is other income (4210), untaxed', () => {
     expect(rel.json().error.code).toBe('NO_DEPOSIT_HELD')
   })
 
-  it('a Punjab brand: the same — 4210, no PRA tax, no brand revenue', async () => {
-    const r = await booking(punjabBrand, 10_000)
+  it('an Islamabad brand: the same — 4210, no FBR tax, no brand revenue', async () => {
+    const r = await booking(ictBrand, 10_000)
     const out = await captureReservationDeposit({ reservationId: r.id, postedBy: userIds['mgrA']! })
     expect(out).toEqual({ captured: true, amountCents: 10_000, reservationId: r.id })
     expect(await captureLines(tenantA, r.id)).toEqual([
-      ['1030', 'debit', 10_000, punjabBrand],
-      ['4210', 'credit', 10_000, punjabBrand],
+      ['1030', 'debit', 10_000, ictBrand],
+      ['4210', 'credit', 10_000, ictBrand],
     ].sort())
   })
 

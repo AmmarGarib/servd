@@ -1,7 +1,7 @@
 // Customer-withheld sales tax set off in a tax payment (finance wave B, H13 —
 // accounting/taxPayments.ts).
 //
-// A client that is a withholding agent keeps part of our SRB / PRA tax and
+// A client that is a withholding agent keeps part of our SRB / FBR tax and
 // pays it to the authority for us; the receivable books it on 1335 'Sales Tax
 // Withheld by Customers' (ReceivablePayment method 'st_withheld',
 // 'receivable.st_withheld:<id>'). Paying that authority's return sets it off:
@@ -9,7 +9,7 @@
 //
 //   • capped at what clients withheld for THAT authority (received on or
 //     before the payment date, reversals left out) less earlier set-offs, and
-//     at what 1335 holds — SRB withholding never pays PRA;
+//     at what 1335 holds — SRB withholding never pays FBR;
 //   • 'wht' / 'stwh' / statutory payments take no withheld set-off (422);
 //   • B can never use A's 1335 (its own available is 0);
 //   • voiding the payment frees what it set off;
@@ -139,14 +139,14 @@ describe('customer-withheld sales tax set off (H13)', () => {
 
   it('what is available: per company and per authority', async () => {
     expect(await customerWithheldAvailable(prisma, tenantA, 'srb', new Date())).toBe(3_200)
-    expect(await customerWithheldAvailable(prisma, tenantA, 'pra', new Date())).toBe(0)
+    expect(await customerWithheldAvailable(prisma, tenantA, 'fbr', new Date())).toBe(0)
     expect(await customerWithheldAvailable(prisma, tenantB, 'srb', new Date())).toBe(0)
     // Not yet received on M1-10.
     expect(await customerWithheldAvailable(prisma, tenantA, 'srb', at(`${M1}-10`))).toBe(0)
   })
 
-  it('SRB withholding never pays PRA (422), though 1335 holds it', async () => {
-    await expect(recordTaxPayment(base({ authority: 'pra', paidCents: 1_000, customerWithheldSetOffCents: 1_000 })))
+  it('SRB withholding never pays FBR (422), though 1335 holds it', async () => {
+    await expect(recordTaxPayment(base({ authority: 'fbr', paidCents: 1_000, customerWithheldSetOffCents: 1_000 })))
       .rejects.toMatchObject({ code: 'WITHHELD_SET_OFF_TOO_LARGE', statusCode: 422 })
     expect(await prisma.salesTaxPayment.count({ where: { tenantId: tenantA } })).toBe(0)
   })
@@ -211,7 +211,7 @@ describe('customer-withheld sales tax set off (H13)', () => {
 
   it('a linked manual entry: its Cr 1335 is withheld set off, never money paid', async () => {
     await withheld(tenantA, 'srb', 2_000, at(`${M1}-25`))
-    const accounts = await prisma.account.findMany({ where: { tenantId: tenantA, code: { in: ['2032', '1335', '1020', '2031'] } }, select: { id: true, code: true } })
+    const accounts = await prisma.account.findMany({ where: { tenantId: tenantA, code: { in: ['2032', '1335', '1020', '2030'] } }, select: { id: true, code: true } })
     const id = (code: string) => accounts.find((a) => a.code === code)!.id
     const manual = await call('adminA', 'POST', '/accounting/journal', {
       description: 'SRB paid for this month, client withholding used', entryDate: at(`${M2}-01`).toISOString(),
@@ -227,21 +227,21 @@ describe('customer-withheld sales tax set off (H13)', () => {
     expect(link.json()).toMatchObject({ tenantId: tenantA, linked: true, outputSetOffCents: 5_000, customerWithheldSetOffCents: 2_000, paidCents: 3_000, bankAccountId: bankA })
     expect(await customerWithheldAvailable(prisma, tenantA, 'srb', new Date())).toBe(0)
 
-    // The same shape for PRA: no PRA withholding exists, so it is refused.
-    const pra = await call('adminA', 'POST', '/accounting/journal', {
-      description: 'PRA paid with withholding that does not exist', entryDate: at(`${M2}-01`).toISOString(),
+    // The same shape for FBR: no FBR withholding exists, so it is refused.
+    const fbr = await call('adminA', 'POST', '/accounting/journal', {
+      description: 'FBR paid with withholding that does not exist', entryDate: at(`${M2}-01`).toISOString(),
       lines: [
-        { accountId: id('2031'), type: 'debit', amountCents: 9_000 },
+        { accountId: id('2030'), type: 'debit', amountCents: 9_000 },
         { accountId: id('1335'), type: 'credit', amountCents: 1_000 },
         { accountId: id('1020'), type: 'credit', amountCents: 8_000 },
       ],
     })
-    expect(pra.statusCode).toBe(201)
-    const refused = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: pra.json().id, authority: 'pra', period: M2 })
+    expect(fbr.statusCode).toBe(201)
+    const refused = await call('finA', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: fbr.json().id, authority: 'fbr', period: M2 })
     expect(refused.statusCode).toBe(422)
     expect(refused.json().error.code).toBe('WITHHELD_SET_OFF_TOO_LARGE')
     // B cannot link A's entry at all.
-    const foreign = await call('adminB', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: pra.json().id, authority: 'pra', period: M2 })
+    const foreign = await call('adminB', 'POST', '/accounting/sales-tax-return/payments/link', { journalEntryId: fbr.json().id, authority: 'fbr', period: M2 })
     expect(foreign.statusCode).toBe(404)
   })
 })

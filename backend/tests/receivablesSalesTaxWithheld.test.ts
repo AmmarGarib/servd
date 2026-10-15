@@ -31,7 +31,7 @@ const today = () => new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 
 
 let app: FastifyInstance
 let tenantA: string, tenantB: string
-let conceptSD: string, conceptPB: string, conceptB: string
+let conceptSD: string, conceptICT: string, conceptB: string
 const staff: Record<string, string> = {}
 const userId: Record<string, string> = {}
 
@@ -87,7 +87,7 @@ beforeAll(async () => {
   tenantB = (await prisma.tenant.create({ data: { name: 'STWH B', slug: `stwh-b-${RUN}` } })).id
   for (const t of [tenantA, tenantB]) await ensureChartOfAccounts(t)
   conceptSD = (await prisma.concept.create({ data: { name: 'Karachi kitchen', slug: `stwh-sd-${RUN}`, type: 'restaurant', tenantId: tenantA, province: 'SD', taxRateCash: 16, taxRateCard: 8 } })).id
-  conceptPB = (await prisma.concept.create({ data: { name: 'Lahore kitchen', slug: `stwh-pb-${RUN}`, type: 'restaurant', tenantId: tenantA, province: 'PB', taxRateCash: 16, taxRateCard: 5 } })).id
+  conceptICT = (await prisma.concept.create({ data: { name: 'Islamabad kitchen', slug: `stwh-ict-${RUN}`, type: 'restaurant', tenantId: tenantA, province: 'ICT', taxRateCash: 16, taxRateCard: 5 } })).id
   conceptB = (await prisma.concept.create({ data: { name: 'Other co', slug: `stwh-b-${RUN}`, type: 'restaurant', tenantId: tenantB, province: 'SD' } })).id
   await mkStaff('finA', 'finance', tenantA)
   await mkStaff('admB', 'admin', tenantB)
@@ -169,12 +169,12 @@ describe('sales tax the client withheld (H13)', () => {
     expect((await withhold('finA', i.id, { kind: 'vat', amountCents: 1_000 })).statusCode).toBe(400)
   })
 
-  it('the authority is the one the invoice\'s tax was credited to (PRA for a Punjab brand)', async () => {
-    const i = await raise('finA', { conceptId: conceptPB })
-    expect(amt((await entry(tenantA, `receivable.issue:${i.id}`))!, '2031', 'credit')).toBe(16_000)
+  it('the authority is the one the invoice\'s tax was credited to (FBR for an Islamabad brand)', async () => {
+    const i = await raise('finA', { conceptId: conceptICT })
+    expect(amt((await entry(tenantA, `receivable.issue:${i.id}`))!, '2030', 'credit')).toBe(16_000)
     const res = await withhold('finA', i.id, { kind: 'sales_tax', amountCents: 1_600 })
     expect(res.statusCode, res.body).toBe(201)
-    expect(res.json().taxAuthority).toBe('pra')
+    expect(res.json().taxAuthority).toBe('fbr')
   })
 
   it('1335 switched off in the chart: 422 and nothing saved', async () => {

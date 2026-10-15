@@ -244,9 +244,11 @@ describe('a gift card spent at checkout is in the books', () => {
 describe('restaurant sales tax goes to the brand\'s authority', () => {
   it('maps province to the output account', () => {
     expect(outputTaxCodeFor({ province: 'SD' })).toBe('2032')
-    expect(outputTaxCodeFor({ province: 'PB' })).toBe('2031')
-    expect(outputTaxCodeFor({ province: 'KP' })).toBe('2033')
-    expect(outputTaxCodeFor({ province: 'BL' })).toBe('2034')
+    // GS Foods is registered only with FBR and SRB (owner, 2026-10-15): a
+    // brand still set to Punjab / KP / Balochistan is refused, never booked to FBR.
+    for (const province of ['PB', 'KP', 'BL', 'pb ']) {
+      expect(() => outputTaxCodeFor({ province })).toThrow(expect.objectContaining({ code: 'PROVINCE_NOT_REGISTERED', statusCode: 422 }))
+    }
     expect(outputTaxCodeFor({ province: 'ICT' })).toBe('2030')
     expect(outputTaxCodeFor({ province: null, srbPosId: 7 })).toBe('2032')
     expect(outputTaxCodeFor({ province: null })).toBe('2030')

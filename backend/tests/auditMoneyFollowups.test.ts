@@ -314,7 +314,7 @@ describe('LEDGER-R5 — handing back money taken on a cancelled ticket', () => {
     // End to end: 1110 nets to zero, nothing ever touched revenue or tax.
     const all = await linesOf(tenantA, [`shift.close:${s1.id}`, `order.refund:${first.id}`, `order.refund:${second.id}`])
     expect(netCredit(all, (c) => c === '1110')).toBe(0)
-    expect(all.filter((l) => /^(4|2030|2031|2032|2033|7)/.test(l.code))).toEqual([])
+    expect(all.filter((l) => /^(4|2030|2032|7)/.test(l.code))).toEqual([])
     expect(await due(o.id)).toBe(0)
     expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('cancelled')
 

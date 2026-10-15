@@ -225,16 +225,20 @@ describe('OpEx payments: input tax by authority + withholding', () => {
     // Plain Co charges no usual authority and the line names none.
     const plain = (await line(securityA, 'Patrol', { supplierId: plainA })).json().id
     expect((await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, inputTaxCents: 1_000, paidAt: '2026-09-09' })).json().error.code).toBe('INPUT_TAX_AUTHORITY_REQUIRED')
-    expect((await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, inputTaxCents: 10_000, inputTaxAuthority: 'pra', paidAt: '2026-09-09' })).json().error.code).toBe('INPUT_TAX_TOO_LARGE')
+    expect((await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, inputTaxCents: 10_000, inputTaxAuthority: 'fbr', paidAt: '2026-09-09' })).json().error.code).toBe('INPUT_TAX_TOO_LARGE')
+    // PRA / KPRA / BRA are not authorities GS Foods is registered with (owner, 2026-10-15).
+    for (const gone of ['pra', 'kpra', 'bra']) {
+      expect((await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, inputTaxCents: 1_000, inputTaxAuthority: gone, paidAt: '2026-09-09' })).statusCode).toBe(400)
+    }
     expect((await call('adminA', 'POST', '/opex/payments', { lineId, ...period(), invoiceCents: 110_000, inputTaxCents: 10_000, whtOverrideCents: 4_000, paidAt: '2026-09-09' })).json().error.code).toBe('WHT_OVERRIDE_REASON_REQUIRED')
     expect(await prisma.opexPayment.count()).toBe(before)
 
     // With a reason: the override is the withholding, and its reason is kept.
     const ov = await call('adminA', 'POST', '/opex/payments', { lineId, ...period(), invoiceCents: 110_000, inputTaxCents: 10_000, whtOverrideCents: 4_000, whtOverrideReason: 'Reduced-rate certificate 2026-14', paidAt: '2026-09-10' })
     expect(ov.json()).toMatchObject({ whtCents: 4_000, actualCents: 106_000, whtOverrideReason: 'Reduced-rate certificate 2026-14' })
-    // Input tax named on the payment wins: PRA → 1321.
-    const pra = await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, inputTaxCents: 1_000, inputTaxAuthority: 'pra', paidAt: '2026-09-10' })
-    expect(amt((await entry(`opex.payment:${pra.json().id}`))!.rows, '1321', 'debit')).toBe(1_000)
+    // Input tax named on the payment wins: SRB → 1322.
+    const srb = await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, inputTaxCents: 1_000, inputTaxAuthority: 'srb', paidAt: '2026-09-10' })
+    expect(amt((await entry(`opex.payment:${srb.json().id}`))!.rows, '1322', 'debit')).toBe(1_000)
     // An unknown filer status: the filer rate, and the ATL check is asked for.
     const unk = await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, whtSection: '153_1_b', paidAt: '2026-09-10' })
     expect(unk.json()).toMatchObject({ whtCents: 900, filerStatus: 'unknown', needsAtlCheck: true })
@@ -253,9 +257,9 @@ describe('OpEx payments: input tax by authority + withholding', () => {
     expect(amt(je.rows, '1020', 'credit')).toBe(106_000)
     expect(amt(je.rows, '2040', 'credit')).toBe(4_000)
 
-    const auth = await call('adminA', 'PATCH', `/opex/payments/${id}`, { inputTaxAuthority: 'pra' })
+    const auth = await call('adminA', 'PATCH', `/opex/payments/${id}`, { inputTaxAuthority: 'fbr' })
     expect(auth.statusCode, auth.body).toBe(200)
-    expect(auth.json()).toMatchObject({ ...kept, inputTaxAuthority: 'pra' })
+    expect(auth.json()).toMatchObject({ ...kept, inputTaxAuthority: 'fbr' })
 
     // The vendor turns non-filer later: an already-paid payment keeps what was withheld.
     const vendor = await prisma.opexLine.findUniqueOrThrow({ where: { id: lineId }, select: { supplierId: true } })

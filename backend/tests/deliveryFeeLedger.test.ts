@@ -73,9 +73,9 @@ beforeAll(async () => {
   await ensureChartOfAccounts(tenantA)
   await ensureChartOfAccounts(tenantB)
   slugA = `dfl-sd-${RUN}`
-  slugB = `dfl-pb-${RUN}`
+  slugB = `dfl-ict-${RUN}`
   conceptA = (await prisma.concept.create({ data: { name: 'Karachi kitchen', slug: slugA, type: 'restaurant', tenantId: tenantA, province: 'SD' } })).id
-  conceptB = (await prisma.concept.create({ data: { name: 'Lahore kitchen', slug: slugB, type: 'restaurant', tenantId: tenantB, province: 'PB' } })).id
+  conceptB = (await prisma.concept.create({ data: { name: 'Islamabad kitchen', slug: slugB, type: 'restaurant', tenantId: tenantB, province: 'ICT' } })).id
 })
 
 describe('computeSaleAccounting — the delivery fee is its own revenue', () => {
@@ -191,14 +191,14 @@ describe('the till', () => {
 
 describe('two companies', () => {
   it("B's delivery order posts to B's 4110 and B's authority; the sales report keeps each company's fees apart", async () => {
-    // Lahore: PRA (2031). Card at 8 %: food 2,000 + 160; fee 200 + 16.
+    // Islamabad: FBR (2030). Card at 8 %: food 2,000 + 160; fee 200 + 16.
     const order = await deliveryOrder(conceptB, { food: 200_000, foodTax: 16_000, fee: 20_000, feeTax: 1_600 })
     expect((await postOrderCompletion(order.id)).posted).toBe(true)
     expect(await entry(tenantA, `order.complete:${order.id}`)).toBeNull()
     const lines = (await entry(tenantB, `order.complete:${order.id}`))!
     expect(lines.every((l) => l.tenantId === tenantB)).toBe(true)
     expect(amt(lines, '4110', 'credit')).toBe(20_000)
-    expect(amt(lines, '2031', 'credit')).toBe(17_600)
+    expect(amt(lines, '2030', 'credit')).toBe(17_600)
     expect(amt(lines, '2032', 'credit')).toBe(0)
     expect(lines.find((l) => l.code === '4110')!.memo).toBe(`Delivery fee on ${slugB} #${orderRefOf(order.id)}`)
 

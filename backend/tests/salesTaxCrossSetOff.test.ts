@@ -147,7 +147,7 @@ beforeAll(async () => {
 describe('eligibility (one switch point)', () => {
   it('food and drinks are eligible; packaging, non-stock lines and another company\'s item are not', async () => {
     expect([...CROSS_SETOFF_ELIGIBLE_CLASSES]).toEqual(['food', 'beverage'])
-    expect([...CROSS_SETOFF_AUTHORITIES]).toEqual(['pra', 'srb', 'kpra', 'bra'])
+    expect([...CROSS_SETOFF_AUTHORITIES]).toEqual(['srb'])
     expect(await eligibleFederalInputCents(prisma, tenantA, FROM, TO)).toBe(12_960)
     expect(await eligibleFederalInputCents(prisma, tenantB, FROM, TO)).toBe(50_000)
   })
@@ -208,8 +208,8 @@ describe('the payment (taxPayments.ts)', () => {
     // Pool now: eligible 12,960 − 10,000 = 2,960; 1320 9,200 − FBR 7,000 = 2,200.
     const pool = await federalCrossSetOffAvailable(prisma, tenantA, new Date())
     expect(pool).toMatchObject({ usedCents: 10_000, ledgerHeldCents: 9_200, availableCents: 2_200 })
-    // Another authority, another period: the same pool.
-    await expectCode(pay(tenantA, userA, 'pra', P2, { paid: 0, cross: 2_201 }), 'CROSS_SETOFF_TOO_LARGE')
+    // Another period: the same pool.
+    await expectCode(pay(tenantA, userA, 'srb', P2, { paid: 0, cross: 2_201 }), 'CROSS_SETOFF_TOO_LARGE')
 
     const r = await salesTaxReturn(tenantA, FROM, TO)
     expect(r.byAuthority.find((a) => a.key === 'srb')).toMatchObject({
@@ -235,13 +235,13 @@ describe('the payment (taxPayments.ts)', () => {
     // eligible 12,960 − 3,000 = 9,960; 1320 16,200 − 7,000 = 9,200.
     expect((await federalCrossSetOffAvailable(prisma, tenantA, new Date())).availableCents).toBe(9_200)
 
-    // 10,000 of 1320 against PRA: more than the eligible input left (9,960).
+    // 10,000 of 1320 against SRB (next period): more than the eligible input left (9,960).
     const big = await post(tenantA, 'manual', randomUUID(), new Date(), [
-      { accountCode: '2031', type: 'debit', amountCents: 20_000 },
+      { accountCode: '2032', type: 'debit', amountCents: 20_000 },
       { accountCode: '1320', type: 'credit', amountCents: 10_000 },
       { accountCode: '1010', type: 'credit', amountCents: 10_000 },
     ])
-    await expectCode(linkTaxPayment({ tenantId: tenantA, journalEntryId: big.entryId, authority: 'pra', ...P1, cprNumber: null, notes: null, userId: userA }), 'CROSS_SETOFF_TOO_LARGE')
+    await expectCode(linkTaxPayment({ tenantId: tenantA, journalEntryId: big.entryId, authority: 'srb', ...P2, cprNumber: null, notes: null, userId: userA }), 'CROSS_SETOFF_TOO_LARGE')
   })
 
   it('two companies: B sets off its own input; A\'s pool does not move, and B cannot use A\'s', async () => {

@@ -286,9 +286,11 @@ export function capitaliseTarget(
   return { conceptId: conceptId ?? null, locationId: locationId ?? null }
 }
 
+// "Not in the future" compares Karachi DAYS: a date-only field parses to noon
+// PKT, so comparing the instant refused today before 12:00.
 function assertDisposalDate(asset: FixedAsset, effective: Date): void {
   const inService = asset.inServiceAt ?? asset.acquiredAt
-  if (pktDay(effective) < pktDay(inService) || effective.getTime() > Date.now()) {
+  if (pktDay(effective) < pktDay(inService) || pktDay(effective) > pktDay(new Date())) {
     throw new AppError(
       'DISPOSAL_DATE',
       `The disposal date must be on or after the day it went into service (${pktDay(inService)}) and not in the future`,
@@ -298,7 +300,7 @@ function assertDisposalDate(asset: FixedAsset, effective: Date): void {
 }
 
 function assertEffectiveDate(effective: Date, inService: Date | null): void {
-  if (effective.getTime() > Date.now() || (inService && pktDay(effective) < pktDay(inService))) {
+  if (pktDay(effective) > pktDay(new Date()) || (inService && pktDay(effective) < pktDay(inService))) {
     throw new AppError('EFFECTIVE_DATE', 'The date must not be in the future, nor before the asset went into service', 422)
   }
 }

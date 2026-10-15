@@ -239,10 +239,14 @@ describe('computeWithholding — the one rule', () => {
 
 describe('the authority table (accounting/taxAuthorities.ts)', () => {
   it('codes per authority; input and output codes map back', () => {
-    expect(TAX_AUTHORITY_KEYS).toEqual(['fbr', 'pra', 'srb', 'kpra', 'bra'])
+    // Only FBR and SRB (owner, 2026-10-15): PRA / KPRA / BRA were removed.
+    expect(TAX_AUTHORITY_KEYS).toEqual(['fbr', 'srb'])
     expect(TAX_AUTHORITY_KEYS.map((k) => [AUTHORITIES[k].outputCode, inputTaxCodeFor(k)])).toEqual([
-      ['2030', '1320'], ['2031', '1321'], ['2032', '1322'], ['2033', '1323'], ['2034', '1324'],
+      ['2030', '1320'], ['2032', '1322'],
     ])
+    for (const gone of ['pra', 'kpra', 'bra']) expect(() => inputTaxCodeFor(gone as never)).toThrow(/Unknown sales tax authority/)
+    for (const code of ['2031', '2033', '2034']) expect(authorityOfOutputCode(code)).toBeNull()
+    for (const code of ['1321', '1323', '1324']) expect(authorityOfInputCode(code)).toBeNull()
     for (const a of AUTHORITY_LIST) {
       expect(authorityOfOutputCode(a.outputCode)).toBe(a.key)
       expect(authorityOfInputCode(a.inputCode)).toBe(a.key)
@@ -254,11 +258,15 @@ describe('the authority table (accounting/taxAuthorities.ts)', () => {
 
   it('the same answers as the order / shift posting (orderPosting.ts re-exports this in W2)', () => {
     const cases = [
-      { province: 'SD', srbPosId: null }, { province: 'sd ', srbPosId: null }, { province: 'PB', srbPosId: null },
-      { province: 'KP', srbPosId: null }, { province: 'BL', srbPosId: null }, { province: 'ICT', srbPosId: 7 },
+      { province: 'SD', srbPosId: null }, { province: 'sd ', srbPosId: null }, { province: 'ICT', srbPosId: 7 },
       { province: null, srbPosId: 7 }, { province: null, srbPosId: null }, { province: '', srbPosId: null },
     ]
     for (const c of cases) expect(outputTaxCodeFor(c)).toBe(legacyOutputTaxCodeFor(c))
+    // An unregistered province is refused by both, never booked to FBR.
+    for (const province of ['PB', 'KP', 'BL']) {
+      expect(() => outputTaxCodeFor({ province, srbPosId: null })).toThrow(expect.objectContaining({ code: 'PROVINCE_NOT_REGISTERED' }))
+      expect(() => legacyOutputTaxCodeFor({ province, srbPosId: null })).toThrow(expect.objectContaining({ code: 'PROVINCE_NOT_REGISTERED' }))
+    }
     expect(outputTaxCodeFor(null)).toBe('2030')
     expect([...TA_OUTPUT_TAX_ACCOUNTS]).toEqual([...OUTPUT_TAX_ACCOUNTS])
   })
