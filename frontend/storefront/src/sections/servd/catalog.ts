@@ -134,9 +134,9 @@ export const specs: SectionSpec[] = [
       backFoot: 'collect all three',
       flipBackText: 'flip back',
       tiles: [
-        { brand: 'stackd', kind: '', tagline: '', highlights: '', photo: '', art: '/brand/stackd-mascot.png', orderText: 'Order from {name}', learnMoreText: 'Visit {name}', hidden: false },
-        { brand: 'simmer', kind: '', tagline: '', highlights: '', photo: '', art: '', orderText: 'Order from {name}', learnMoreText: 'Visit {name}', hidden: false },
-        { brand: 'flipd', kind: '', tagline: '', highlights: '', photo: '', art: '/brand/flipd-badge.png', orderText: 'Order from {name}', learnMoreText: 'Visit {name}', hidden: false },
+        { brand: 'stackd', kind: '', tagline: '', highlights: '', photo: '/brand/stackd-card-photo.webp', art: '/brand/stackd-mascot.png', orderText: 'Order from {name}', learnMoreText: 'Visit {name}', hidden: false },
+        { brand: 'simmer', kind: '', tagline: '', highlights: '', photo: '/brand/simmer-card-photo.webp', art: '', orderText: 'Order from {name}', learnMoreText: 'Visit {name}', hidden: false },
+        { brand: 'flipd', kind: '', tagline: '', highlights: '', photo: '/brand/flipd-card-photo.webp', art: '/brand/flipd-badge.png', orderText: 'Order from {name}', learnMoreText: 'Visit {name}', hidden: false },
       ],
     },
   },
