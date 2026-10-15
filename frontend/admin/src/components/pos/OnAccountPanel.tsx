@@ -52,6 +52,26 @@ function barcodeDetector(): BarcodeDetectorCtor | null {
 
 const CODE_MAX = 40
 
+/** One on-account submission: its idempotency key and what it was sent with. */
+interface Submission {
+  signature: string
+  key: string
+  cardId: string
+  reference: string | null
+  /** Sent, answer lost — the replay after the rescan re-sends this key. */
+  unresolved: boolean
+}
+
+/** Refused in the browser before anything was sent. */
+class NotSentError extends Error {}
+
+/** The charge may have gone through: no answer, or the server failed after (maybe) committing. */
+function outcomeUnknown(e: unknown): boolean {
+  if (e instanceof NotSentError) return false
+  if (!(e instanceof ApiError)) return true
+  return e.status === 0 || e.status >= 500
+}
+
 function blockText(b: { code: string; message: string; details?: unknown }): string {
   return onAccountErrorText(b) ?? b.message
 }
@@ -72,7 +92,12 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
   const [needsRescan, setNeedsRescan] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
   // One idempotency key per submission (client + bill + reference), reused only by its retry.
-  const submission = useRef<{ signature: string; key: string } | null>(null)
+  // `unresolved`: the charge was sent but its answer was lost (network drop, 5xx) — the
+  // server may have billed the client. The key is kept through the rescan and the SAME
+  // key is sent again, so the server's replay (step 2) answers with the charge it made,
+  // or the charge goes through once if it never did. Never a second bill.
+  const submission = useRef<Submission | null>(null)
+  const [replayNote, setReplayNote] = useState(false)
 
   // Forget the code when the panel closes.
   useEffect(() => () => { codeRef.current = null }, [])
@@ -98,7 +123,16 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
       codeRef.current = code
       setFound(r)
       setNeedsRescan(false)
-      submission.current = null
+      const pending = submission.current
+      if (pending?.unresolved && pending.cardId === r.card.id) {
+        // The same card for a charge whose answer was lost: ask again with the SAME key,
+        // even though the lookup now says the bill is closed (it is, if the charge went through).
+        setReference(pending.reference ?? '')
+        charge.mutate({ lookup: r })
+      } else {
+        submission.current = null
+        setReplayNote(false)
+      }
     } catch (e) {
       codeRef.current = null
       setFound(null)
@@ -127,11 +161,14 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
   function scanAnother() {
     codeRef.current = null
     setFound(null)
-    setReference('')
     setNeedsRescan(false)
     setLookupError(null)
     charge.reset()
-    submission.current = null
+    // A charge whose answer was lost keeps its key (and reference) for the replay.
+    if (!submission.current?.unresolved) {
+      submission.current = null
+      setReference('')
+    }
     setTimeout(() => inputRef.current?.focus(), 0)
   }
 
@@ -180,30 +217,51 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
   }, [cameraOn])
 
   // ── The charge ────────────────────────────────────────────────────────────
+  // Variables carry the lookup only — never the code (a mutation keeps its variables in the cache).
   const charge = useMutation({
     meta: { inlineErrors: true },
-    mutationFn: async () => {
+    mutationFn: async ({ lookup }: { lookup: OnAccountLookup }) => {
       const code = codeRef.current
-      if (!found || !code) throw new Error('Scan the client’s card again.')
+      if (!code) throw new NotSentError('Scan the client’s card again.')
+      const pending = submission.current
+      if (pending?.unresolved && pending.cardId === lookup.card.id) {
+        // The replay of a charge whose answer was lost: same key, same reference.
+        return chargeOnAccount(orderId, { shiftId, code, reference: pending.reference, idempotencyKey: pending.key })
+      }
       const ref = reference.trim()
-      const signature = `${orderId}|${found.account.id}|${found.quote.dueCents}|${ref}`
-      if (submission.current?.signature !== signature) submission.current = { signature, key: newOnAccountKey() }
+      const signature = `${orderId}|${lookup.account.id}|${lookup.card.id}|${lookup.quote.dueCents}|${ref}`
+      if (submission.current?.signature !== signature) {
+        submission.current = { signature, key: newOnAccountKey(), cardId: lookup.card.id, reference: ref || null, unresolved: false }
+      }
       return chargeOnAccount(orderId, { shiftId, code, reference: ref || null, idempotencyKey: submission.current.key })
     },
-    onSuccess: (r) => {
+    onSuccess: (r, { lookup }) => {
       const client: OnAccountDone = {
-        number: found!.account.number,
-        name: found!.account.legalName,
-        cardLabel: found!.card.label,
-        reference: reference.trim() || null,
+        number: lookup.account.number,
+        name: lookup.account.legalName,
+        cardLabel: lookup.card.label,
+        reference: submission.current?.reference ?? (reference.trim() || null),
       }
       submission.current = null
+      setReplayNote(false)
       onCharged({ fiscal: r.fiscal, client })
     },
     onError: (e) => {
-      // The bill moved on the server — reload it and look again.
-      if (e instanceof ApiError && (e.code === 'ALREADY_PAID' || e.code === 'AMOUNT_MISMATCH' || e.code === 'ON_ACCOUNT_RATE')) onBillChanged()
-      // The panel never re-sends a code it has let go of; a refusal asks for the card again.
+      if (outcomeUnknown(e)) {
+        // The server may have billed the client: keep the key for the replay after the rescan.
+        if (submission.current) submission.current.unresolved = true
+        setReplayNote(true)
+      } else {
+        // A definite refusal: nothing was charged with this key.
+        submission.current = null
+        setReplayNote(false)
+        // The bill moved on the server — reload it (the modal's and this panel's) and look again.
+        if (e instanceof ApiError && (e.code === 'ALREADY_PAID' || e.code === 'AMOUNT_MISMATCH' || e.code === 'ON_ACCOUNT_RATE')) {
+          onBillChanged()
+          void quote.refetch()
+        }
+      }
+      // The panel never re-sends a code it has let go of; a retry asks for the card again.
       setNeedsRescan(true)
     },
     onSettled: () => {
@@ -334,18 +392,27 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
             </div>
           )}
 
-          {charge.isError && (
-            <p className="text-sm text-kds-red" role="alert">{errorText(charge.error, 'The charge did not go through')}</p>
+          {charge.isPending && found.blocked && (
+            <p className="text-sm text-kds-subtext" role="status">Checking whether the charge went through…</p>
           )}
-          {needsRescan && !found.blocked && (
+          {charge.isError && (
+            replayNote ? (
+              <p className="text-sm text-kds-amber" role="alert">
+                The till lost the server’s answer — the charge may have gone through. Scan the same card again: the till checks with the server before anything is charged, so the client is never billed twice.
+              </p>
+            ) : (
+              <p className="text-sm text-kds-red" role="alert">{errorText(charge.error, 'The charge did not go through')}</p>
+            )
+          )}
+          {needsRescan && (!found.blocked || replayNote) && (
             <button type="button" onClick={scanAnother}
               className="w-full rounded-xl border border-kds-amber py-2.5 text-sm font-bold text-kds-amber">
-              Scan the card again to retry
+              {replayNote ? 'Scan the same card again to check' : 'Scan the card again to retry'}
             </button>
           )}
 
           {!found.blocked && !needsRescan && (
-            <button type="button" onClick={() => charge.mutate()} disabled={!canCharge}
+            <button type="button" onClick={() => charge.mutate({ lookup: found })} disabled={!canCharge}
               className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95">
               {charge.isPending ? 'Charging…' : `Charge ${fmtPkrWhole(due)} to ${found.account.legalName}`}
             </button>

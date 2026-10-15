@@ -59,8 +59,7 @@ already counted the money as in the bank**. Use this table.
 |---|---|---|
 | Who | Approvers (finance, management, owner, CEO) | **CEO only.** Finance, management and owners may **ask** (Void request, with a reason); the CEO voids or turns the ask down. |
 | The bill | Any closed bill whose sale is **on the books** (the till shift is closed and posted, or the order completed) | A **cancelled or rejected** bill, and **no entry ever debited the bank** for this money |
-| Ledger | Posts **Dr a contra account / Cr the bank it should have reached** (the receipt's receiving account). The contra is chosen when you press it: **1115** customer owes / till clearing (the default; **1110** for a company
-that has not been cut over yet), **8010** cash short, or **1350** staff owes | **Posts nothing** |
+| Ledger | Posts **Dr a contra account / Cr the bank it should have reached** (the receipt's receiving account). The contra is chosen when you press it: **1115** customer owes / till clearing (the default; **1110** for a company that has not been cut over yet), **8010** cash short, or **1350** staff owes | **Posts nothing** |
 | The reference | Stays used | Stays used: the same transfer can never pay another bill |
 | Month close | The receipt no longer blocks the close | A voided receipt no longer blocks the close or the daily flag |
 

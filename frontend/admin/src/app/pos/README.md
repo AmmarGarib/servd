@@ -16,7 +16,8 @@ Admin route: **/pos**. Next.js App Router page module — `page.tsx` is the entr
 
 The till's tender picker shows **On account** only when
 `GET /pos/on-account/enabled?orderId` says the order's company has an active
-client, and never offline. Flow: tap On account, scan or type the client's
+client and its till clearing has been cut over to 1115 (enabled requires the
+cut-over), and never offline. Flow: tap On account, scan or type the client's
 card code (`POST /pos/on-account/lookup`), check the client name and
 available credit, enter the client's reference if asked, then confirm
 (`POST /pos/orders/:orderId/on-account`; no manager PIN). The whole bill is

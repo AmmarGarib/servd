@@ -85,6 +85,9 @@ export interface WriteOffInvoice {
   balanceCents: number
   /** 'statement' = an on-account client's statement (server field). */
   kind?: string
+  /** Set when the invoice is raised against an on-account client: ANY approved
+   *  write-off on it suspends that client (not only a statement's). */
+  customerAccountId?: string | null
 }
 
 export const WRITE_OFF_STATUS: Record<WriteOffStatus, { label: string; color: string }> = {
@@ -353,10 +356,11 @@ export function WriteOffDialog({ invoice, onClose, onDone }: {
         <strong className="text-white/90"> The CEO approves every write-off.</strong> Once approved, the amount (sales tax included) comes off what we are owed
         and is booked as a bad debt. The sales tax already declared on the invoice is not refunded.
       </p>
-      {invoice.kind === 'statement' && (
+      {(invoice.customerAccountId || invoice.kind === 'statement') && (
         <p className="text-sm text-white/60 mt-2">
-          This is a client statement: once approved, <strong className="text-white/90">the client is suspended</strong> and the bad-debt expense is
-          split by brand, in proportion to each brand&apos;s share of the bills on the statement.
+          {invoice.customerAccountId && <>This invoice is on an on-account client: once approved, <strong className="text-white/90">the client is suspended</strong>.</>}
+          {invoice.kind === 'statement' && <>{invoice.customerAccountId ? ' ' : ''}It is a client statement, so the bad-debt expense is
+          split by brand, in proportion to each brand&apos;s share of the bills on the statement.</>}
         </p>
       )}
       <div className="grid grid-cols-1 gap-3 mt-4">

@@ -61,10 +61,13 @@ rollback (section 9).
 ## 3. Confirm the books with the CA, and the tax answer
 
 Head office detail -> **Books** tab. Per company pair you see the four
-accounts resolved to names in each chart: "Due from <company>" in the HO
-(first free code 1400-1449, controlled), "Due to <HO>" in the company (2100-2149,
-controlled), "Head office charges" in the company (6200-6249), and the HO's
-recovery account **6990** (the same account the shared-fleet recharge uses). A
+accounts resolved to names in each chart. "Due from <company>" in the HO and
+"Due to <HO>" in the company **are the pair's existing inter-company accounts**
+(1450-1499 / 2150-2199, controlled `intercompany`, the same accounts the
+inter-company transfers use; created if missing). Only two accounts are
+head-office specific: "Head office charges" in the company (6200-6249) and the
+HO's recovery account **6990** (the same account the shared-fleet recharge
+uses). Codes 1400-1449 / 2100-2149 stay reserved and unused. A
 yellow badge says "Confirm with your CA" until you confirm.
 
 The **Confirm** dialog is a checklist: names and codes, the cost pool, the
@@ -142,10 +145,10 @@ in one transaction. Only the monthly **run** is its own record.
   right chart and never controlled (`COUNTER_ACCOUNT_INVALID`).
 - Who: HO and company preparers prepare; the CEO approves (never the
   preparer); only the CEO reverses.
-- The pair balances (Due from / Due to) are tied out on the **Reconciliation**
-  tab and by the daily mismatch check. The head-office accounts are checked
-  separately from the inter-company pair accounts (1450-1499 / 2150-2199).
-  The head-office accounts cannot be edited by hand-posted journals.
+- The pair balances (Due from / Due to) are the ordinary inter-company pair
+  (1450-1499 / 2150-2199): they are tied out on the **Reconciliation** tab and
+  by the daily `intercompany_mismatch` check, like any other company pair.
+  They cannot be edited by hand-posted journals.
 
 ## 7. Hand-over of approvals (grant and revoke)
 

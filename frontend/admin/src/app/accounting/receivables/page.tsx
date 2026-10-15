@@ -96,7 +96,7 @@ interface Invoice {
 }
 interface Ledger { invoices: Invoice[]; aging: Record<string, number>; outstandingCents: number; creditBalanceCents: number }
 interface Concept { id: string; name: string }
-interface ClientOption { id: string; number?: string; legalName?: string; tradeName?: string | null; status?: string }
+interface ClientOption { id: string; tenantId?: string; number?: string; legalName?: string; tradeName?: string | null; status?: string }
 const clientName = (c: ClientOption) => c.tradeName || c.legalName || c.number || c.id
 interface TaxPreview { brandName: string | null; rates: { cashPct: number; cardPct: number } | null; accountCode: string; accountName: string }
 
@@ -337,7 +337,7 @@ function Receivables() {
       {dialog?.kind === 'void' && <Void inv={dialog.inv} onClose={close} />}
       {dialog?.kind === 'writeoff' && (
         <WriteOffDialog
-          invoice={{ id: dialog.inv.id, tenantId: dialog.inv.tenantId, number: dialog.inv.number, customerName: dialog.inv.customerName, totalCents: dialog.inv.totalCents, balanceCents: dialog.inv.balanceCents, kind: dialog.inv.kind }}
+          invoice={{ id: dialog.inv.id, tenantId: dialog.inv.tenantId, number: dialog.inv.number, customerName: dialog.inv.customerName, totalCents: dialog.inv.totalCents, balanceCents: dialog.inv.balanceCents, kind: dialog.inv.kind, customerAccountId: dialog.inv.customerAccountId ?? null }}
           onClose={close}
           onDone={(w) => finished(w.status === 'approved'
             ? `Written off ${fmtPkrWhole(w.amountCents)} on ${dialog.inv.number} as a bad debt — it is booked and out of the aging.`
@@ -537,11 +537,21 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
     queryFn: () => api.get<{ items: ClientOption[] }>('/accounting/customer-accounts'),
     staleTime: 60_000,
   })
-  const clients = (clientList?.items ?? []).filter((c) => c.status !== 'closed')
+  // POST /accounting/receivables binds to the ACTIVE company only, so only its
+  // clients can be picked (the list itself spans the portfolio view).
+  const activeCompanyId = useActiveCompany()?.id ?? null
+  const clients = (clientList?.items ?? []).filter((c) => c.status !== 'closed' && !!activeCompanyId && c.tenantId === activeCompanyId)
+  // Picking a client fills the customer name from it when it is still empty;
+  // the server also falls back to the client's legal name.
+  const pickClient = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value
+    const c = clients.find((x) => x.id === id)
+    setF((p) => ({ ...p, customerAccountId: id, customerName: p.customerName.trim() || !c ? p.customerName : clientName(c) }))
+  }
   const save = useMutation({
     mutationFn: () => api.post('/accounting/receivables', {
       customerAccountId: f.customerAccountId || null,
-      customerName: f.customerName, customerEmail: f.customerEmail || undefined, customerPhone: f.customerPhone || undefined,
+      ...(f.customerName.trim() ? { customerName: f.customerName.trim() } : {}), customerEmail: f.customerEmail || undefined, customerPhone: f.customerPhone || undefined,
       customerNtn: f.customerNtn || undefined, conceptId: f.conceptId || null,
       issueDate: f.issueDate, dueDate: f.dueDate, description: f.description,
       amountCents: toPaisa(f.amount), taxCents: toPaisa(f.tax),
@@ -559,7 +569,7 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
         <L t="Phone"><input className={inp} value={f.customerPhone} onChange={set('customerPhone')} /></L>
         <L t="NTN"><input className={inp} value={f.customerNtn} onChange={set('customerNtn')} /></L>
         {clients.length > 0 && (
-          <div className="sm:col-span-2"><L t="On-account client (optional)"><Select className={inp} value={f.customerAccountId} onChange={set('customerAccountId')}>
+          <div className="sm:col-span-2"><L t="On-account client (optional)"><Select className={inp} value={f.customerAccountId} onChange={pickClient}>
             <option value="">None</option>{clients.map((c) => <option key={c.id} value={c.id}>{clientName(c)}</option>)}</Select></L></div>
         )}
         <L t="Brand"><Select className={inp} value={f.conceptId} onChange={set('conceptId')}>
@@ -586,7 +596,7 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
       </div>
       <p className="text-sm text-white/60 mt-3">Total: <strong className="text-white/90">{fmtPkrWhole(Math.round(total * 100))}</strong></p>
       {err && <p className="text-xs text-s-red mt-2">{err}</p>}
-      <Buttons busy={save.isPending} disabled={!f.customerName || !f.amount || !f.description} label="Raise invoice" busyLabel="Saving…" onGo={() => save.mutate()} onClose={onClose} />
+      <Buttons busy={save.isPending} disabled={!(f.customerName.trim() || f.customerAccountId) || !f.amount || !f.description} label="Raise invoice" busyLabel="Saving…" onGo={() => save.mutate()} onClose={onClose} />
     </Modal>
   )
 }

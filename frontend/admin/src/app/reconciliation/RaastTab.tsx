@@ -83,8 +83,6 @@ interface RaastReceiptRow {
   ageDays: number
   ledgerCode: string
   writeOffEntryId: string | null
-  /** The company's current till-clearing code, when the server sends it. */
-  tillClearingCode?: string | null
   bankAccount: { id: string; name: string; bankName: string | null; last4: string | null }
   statementLine: StatementLineRef | null
   /** A pending (or past) ask for the CEO's void. */
@@ -618,8 +616,9 @@ function UnreceivedPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptR
   const [reason, setReason] = useState('')
   const [contra, setContra] = useState<Contra>('owes')
   const writeOff = useMutation({
-    mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/unreceived`, { reason: reason.trim(), ...(contra === 'owes' ? {} : { contraAccountCode: contra }) }, { tenantId: receipt.tenantId }),
-    onSuccess: () => onDone(`Bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}) written off as not received: Dr ${contra === 'owes' ? (receipt.tillClearingCode ?? 'till clearing') : contra} / Cr ${receipt.ledgerCode}. If the money turns up on a later statement, matching it reverses this.`),
+    mutationFn: () => api.post<{ contraAccountCode?: string | null }>(`/reconciliation/raast/receipts/${receipt.id}/unreceived`, { reason: reason.trim(), ...(contra === 'owes' ? {} : { contraAccountCode: contra }) }, { tenantId: receipt.tenantId }),
+    // The posted contra comes back from the server — never assumed here.
+    onSuccess: (data) => onDone(`Bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}) written off as not received: Dr ${data?.contraAccountCode ?? (contra === 'owes' ? 'till clearing' : contra)} / Cr ${receipt.ledgerCode}. If the money turns up on a later statement, matching it reverses this.`),
   })
   return (
     <div className="space-y-2 text-xs max-w-xl">

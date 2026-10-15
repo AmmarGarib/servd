@@ -1519,8 +1519,10 @@ export function onAccountQuote(orderId: string): Promise<OnAccountQuote> {
 /**
  * POST /pos/orders/:id/on-account — charge the whole bill to the client.
  * `idempotencyKey`: one per submission (newOnAccountKey), reused only by a
- * retry of that same submission, so a double tap or a lost answer never
- * bills the client twice.
+ * retry of that same submission. When the answer is lost (no response, or a
+ * 5xx), OnAccountPanel keeps the key through the card rescan and re-sends it:
+ * the server replays the charge it already made ({ replayed: true }) or makes
+ * it once — a double tap or a lost answer never bills the client twice.
  */
 export function chargeOnAccount(orderId: string, body: {
   shiftId: string

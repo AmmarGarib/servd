@@ -6,7 +6,9 @@ customer owes GS Foods for a sale made on credit and invoiced by finance (a
 catering job, a bulk order, an event).
 
 This page is only about ordinary sales invoices raised by finance. Till clearing
-stays on account 1110, exactly as before.
+stays on account 1110 until the CEO cuts the company over (Finance ->
+Receivables -> Clients, step 1; see `docs/on-account.md` Part 1 section 0);
+after that, new till clearing posts to 1115 Till Clearing.
 
 ## The invoice
 

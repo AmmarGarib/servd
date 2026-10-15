@@ -4,11 +4,12 @@
 //
 // API: /accounting/customer-accounts/:id (receivables/customerAccounts.ts) and
 // its statements (receivables/statements.ts). UI only: every rule is the
-// server's. Approve / reject come from the row's own canApprove / canReject
-// flags; the rest of the actions are offered to everyone the page opens for
-// (the list and the writes share one role set on the server) and a refusal is
-// shown in words — this page keeps no role list. Reactivating a suspended
-// client is the CEO's: the server answers 403 to anyone else.
+// server's. Every action follows the row's own capability flags (canApprove,
+// canReject, canReactivate, and canEdit / canSuspend / canIssueStatement /
+// canRemind when sent; a missing optional flag leaves that action shown and a
+// refusal is shown in words) — this page keeps no role list. Reactivating a
+// suspended client is the CEO's: shown only when the server sends
+// canReactivate. The limit-change notice reads the PATCH response.
 //
 // Cards: issue and rotate show the one-time code in OnAccountCardPrint
 // ("shown once — print now"); the code lives in state only while that dialog
@@ -50,7 +51,10 @@ interface Client {
   unbilledCents: number; invoicesDueCents: number; exposureCents: number; availableCents: number
   overdue: { number: string; dueDate: string; balanceCents: number } | null
   pending: 'new_client' | 'limit_increase' | null; approveBlockedReason: string | null
-  canApprove: boolean; canReject: boolean; lastRemindedAt: string | null; updatedAt: string
+  canApprove: boolean; canReject: boolean
+  /** Server capability flags (CEO-only reactivate). Optional until the API sends them; reactivate is hidden without its flag. */
+  canReactivate?: boolean; canEdit?: boolean; canSuspend?: boolean; canIssueStatement?: boolean; canRemind?: boolean
+  lastRemindedAt: string | null; updatedAt: string
   cards: CardRow[]
   unbilled: { charges: Charge[]; bookedCents: number; notBookedCents: number }
   bills: Bill[]; writeOffs: WriteOff[]
@@ -156,8 +160,9 @@ export default function OnAccountClientPage() {
 
   // Simple one-shot actions.
   const act = useMutation({
-    mutationFn: (a: { path: string; body?: unknown; method?: 'post' | 'patch'; ok: string }) =>
-      (a.method === 'patch' ? api.patch(`${base}${a.path}`, a.body ?? {}) : api.post(`${base}${a.path}`, a.body ?? {})).then(() => a.ok),
+    mutationFn: (a: { path: string; body?: unknown; method?: 'post' | 'patch'; ok: string | ((row: Client) => string) }) =>
+      (a.method === 'patch' ? api.patch<Client>(`${base}${a.path}`, a.body ?? {}) : api.post<Client>(`${base}${a.path}`, a.body ?? {}))
+        .then((row) => (typeof a.ok === 'function' ? a.ok(row) : a.ok)),
     onSuccess: (ok) => done(ok),
     onError: fail,
   })
@@ -209,12 +214,12 @@ export default function OnAccountClientPage() {
           </div>
           {!closed && (
             <div className="flex flex-wrap gap-2">
-              <Btn onClick={() => setDialog({ kind: 'edit' })}>Edit</Btn>
-              <Btn onClick={() => setDialog({ kind: 'limit' })}>Change limit</Btn>
-              {c.status === 'active' && <Btn danger onClick={() => setDialog({ kind: 'suspend' })}>Suspend</Btn>}
-              {c.status === 'suspended' && <Btn onClick={() => act.mutate({ path: '', method: 'patch', body: { status: 'active' }, ok: 'Client reactivated.' })}>Reactivate</Btn>}
-              <Btn onClick={() => setDialog({ kind: 'statement' })}>Issue statement</Btn>
-              <Btn onClick={() => remind.mutate()}>Remind</Btn>
+              {c.canEdit !== false && <Btn onClick={() => setDialog({ kind: 'edit' })}>Edit</Btn>}
+              {c.canEdit !== false && <Btn onClick={() => setDialog({ kind: 'limit' })}>Change limit</Btn>}
+              {c.status === 'active' && c.canSuspend !== false && <Btn danger onClick={() => setDialog({ kind: 'suspend' })}>Suspend</Btn>}
+              {c.status === 'suspended' && c.canReactivate === true && <Btn onClick={() => act.mutate({ path: '', method: 'patch', body: { status: 'active' }, ok: 'Client reactivated.' })}>Reactivate</Btn>}
+              {c.canIssueStatement !== false && <Btn onClick={() => setDialog({ kind: 'statement' })}>Issue statement</Btn>}
+              {c.canRemind !== false && <Btn onClick={() => remind.mutate()}>Remind</Btn>}
             </div>
           )}
         </div>
@@ -384,7 +389,7 @@ export default function OnAccountClientPage() {
       {dialog?.kind === 'edit' && <EditDialog c={c} error={err} busy={act.isPending} onClose={close}
         onSave={(body) => act.mutate({ path: '', method: 'patch', body, ok: 'Details saved.' })} />}
       {dialog?.kind === 'limit' && <LimitDialog c={c} error={err} busy={act.isPending} onClose={close}
-        onSave={(cents) => act.mutate({ path: '', method: 'patch', body: { creditLimitCents: cents }, ok: cents > c.creditLimitCents ? 'Limit increase sent to the CEO.' : 'Limit changed.' })} />}
+        onSave={(cents) => act.mutate({ path: '', method: 'patch', body: { creditLimitCents: cents }, ok: (row) => (row?.requestedCreditLimitCents != null ? 'Limit increase sent to the CEO.' : 'Limit changed.') })} />}
       {dialog?.kind === 'suspend' && <ReasonDialog title="Suspend client" label="Suspend" min={3} error={err} busy={act.isPending} onClose={close}
         onGo={(reason) => act.mutate({ path: '', method: 'patch', body: { status: 'suspended', reason }, ok: 'Client suspended.' })} />}
       {dialog?.kind === 'reject' && <ReasonDialog title="Reject" label="Reject" min={3} error={err} busy={act.isPending} onClose={close}

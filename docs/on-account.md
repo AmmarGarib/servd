@@ -4,8 +4,10 @@ For finance, cashiers and the accountant. A corporate client (a company that
 eats with us and pays later) gets QR cards. A cashier scans a card, the whole
 bill is charged to the client's account, and finance sends a **monthly
 statement**. Everything here is **off per company** until finance has created
-a client and the CEO has approved it: until then the till shows no "On
-account" button, and no statement or reminder is ever sent automatically.
+a client and the CEO has approved it, and the CEO cannot approve a client
+until the company's till clearing has been cut over (section 0): until then
+the till shows no "On account" button, and no statement or reminder is ever
+sent automatically.
 
 Related: `docs/receivables.md` (statements and write-offs),
 `docs/TAX_SETUP.md` section 15 (tax), `docs/raast.md` (till clearing),
@@ -23,9 +25,23 @@ owed back, card tenders that failed after the close, Raast "customer owes"
 write-offs). Clients are going to live on 1110, so till clearing moves to a new
 account, **1115 Till Clearing**.
 
-- It happens **once per company, automatically, at boot**; there is nothing
-  to switch on. A settings marker `ledger.tillClearingCutoverAt:<company>`
-  records it.
+- **The CEO runs it, once per company, after the CA confirms.** Nothing runs
+  it at boot. Finance -> Receivables -> **Clients**
+  (`/accounting/receivables/clients`), step 1 **"the till-clearing
+  cut-over"**. First, `GET /accounting/till-clearing/status` shows finance
+  (admin, owner, management, finance) the preview (what the cut-over would
+  move) and the 1110 tie-out for each company they can see. Then the CEO,
+  working in that company as the **active** company, presses Cut over and
+  gives a **reason** (at least 10 characters, e.g. "CA confirmed on 15 Oct");
+  this calls `POST /accounting/till-clearing/cutover` (CEO only, the active
+  company only) and is audited as `ledger.till_clearing_cutover`. A settings
+  marker `ledger.tillClearingCutoverAt:<company>` is written in the same
+  transaction and records the cut-over; a second press does nothing.
+- **On-account waits for it.** Until the company is cut over, the CEO cannot
+  approve a client (409 `TILL_CLEARING_NOT_SPLIT`; in the approvals inbox the
+  Approve button is disabled with that reason), every charge is refused the
+  same way, and the till shows no "On account" button
+  (`GET /pos/on-account/enabled` stays false).
 - It moves only the net of entries from till sources (shift close, the
   cancelled-ticket hand-back and unwind, card failed after close, Raast
   customer-owes write-off, and their reversals) as one entry
@@ -38,9 +54,10 @@ account, **1115 Till Clearing**.
   neither a receivable nor on-account (`till_clearing_unexpected`). Nothing is
   moved silently.
 - If a period is closed over the date, the split is **refused and flagged**
-  (not lost). Fix it from Reconciliation -> posting failures once the period is
-  open; it posts once.
-- Raast "Not received" write-offs now default to 1115.
+  (not lost) and no marker is written. Fix it from Reconciliation ->
+  **Backfill unposted** once the period is open; it posts once.
+- Raast "Not received" write-offs ("customer owes") default to the company's
+  till-clearing account: **1110 before the cut-over, 1115 after**.
 
 ### 1. Create a client (and the CEO approves it)
 
@@ -56,7 +73,10 @@ NTNs, CNICs or limits.
    `OA-0001` and starts **pending**.
 2. The **CEO approves** in Approvals -> "On-account clients" (or on the client
    page). Not delegable; a CEO's own new client is approved at once. Until
-   approved the client cannot be charged.
+   approved the client cannot be charged. **The CEO cannot approve any client
+   until the company's till clearing has been cut over** (section 0): approve
+   answers 409 `TILL_CLEARING_NOT_SPLIT` and the inbox shows Approve disabled
+   with that reason.
 3. **Limit:** a higher limit is a request the CEO approves; a **lower** limit
    and a **suspension** apply at once. Only the CEO can reactivate a
    suspended client. A client can be **closed** only at zero balance.
@@ -126,7 +146,8 @@ reactivates. Recoveries (and a bounced recovery) work as for invoices.
 ## Part 2 - Cashier
 
 1. On the bill, tap **On account**. (If the button is not there, the company
-   has no active client, or you are offline: it is not available offline.)
+   has no active client, its till clearing has not been cut over yet, or you
+   are offline: it is not available offline.)
 2. **Scan the client's card** (or type its code). The screen shows the
    client's name and the credit still available. You do **not** see their
    limit, NTN or balance.
@@ -166,10 +187,13 @@ statement if one was already issued.
 | **1110** Accounts Receivable | What corporate clients owe: *Dr 1110* per client when the charge is booked, *Cr 1110* on payment, refund, write-off. Also ordinary receivable invoices |
 | **1115** Till Clearing | Everything the till owes or is owed that is not a client: cancelled-ticket money owed back, card tenders failed after the close, Raast "customer owes" write-offs |
 
-Rules: all **new** till-clearing posts go to 1115. Reading old data looks at
+Rules: once a company is cut over, all **new** till-clearing posts go to 1115
+(before that they stay on 1110). Reading old data looks at
 **both** codes. Nothing on 1110 is a till line after the cut-over; any such line
 is flagged, never moved quietly. Raast "customer owes" write-offs default to
-**1115**. The 1110 -> 1115 cut-over moved only till-sourced net; see Part 1.
+the company's till-clearing account: **1110 before the cut-over, 1115 after**.
+The 1110 -> 1115 cut-over (the CEO's, once per company) moved only till-sourced
+net; see Part 1.
 
 ### The sale and the statement (H14)
 
