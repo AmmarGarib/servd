@@ -1,7 +1,7 @@
 'use client'
 import { useId, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { menuApi, api, type Category, type MenuItem } from '../../lib/api'
+import { menuApi, api, deleteWithUndo, type Category, type MenuItem } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
 import Link from 'next/link'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
@@ -63,13 +63,15 @@ export default function MenuPage() {
     onError: (e: Error) => toast.error(e.message || 'Could not change availability'),
   })
 
-  // Delete has no inverse call, so its toast has no Undo — the confirm names
-  // the item first.
+  // Delete parks the item in the Trash: the toast offers Undo (restore) and
+  // a link to the Trash — the confirm names the item first.
   const deleteItem = useMutation({
-    mutationFn: ({ id }: { id: string; name: string }) => menuApi.deleteItem(id),
-    onSuccess: (_d, v) => {
+    mutationFn: ({ id, name }: { id: string; name: string }) => deleteWithUndo(`/menu/items/${id}`, {
+      trashType: 'menu_item', id, label: name,
+      onRestored: () => void qc.invalidateQueries({ queryKey: ['menu', conceptId] }),
+    }),
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['menu', conceptId] })
-      toast(`${v.name} deleted`)
     },
     onError: (e: Error) => toast.error(e.message || 'Could not delete the item'),
   })
@@ -92,7 +94,10 @@ export default function MenuPage() {
     onError: (e: Error) => setCatError(e.message ?? 'Rename failed'),
   })
   const removeCategory = useMutation({
-    mutationFn: (id: string) => menuApi.deleteCategory(id),
+    mutationFn: (id: string) => deleteWithUndo(`/menu/categories/${id}`, {
+      trashType: 'category', id,
+      onRestored: () => void qc.invalidateQueries({ queryKey: ['menu', conceptId] }),
+    }),
     onSuccess: () => {
       setEditingCatId(null); setCatError(null)
       void qc.invalidateQueries({ queryKey: ['menu', conceptId] })

@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 
 interface Report {
@@ -41,7 +41,7 @@ export default function ScheduledReportsPage() {
   const [adding, setAdding] = useState(false)
   const { data = [] } = useQuery<Report[]>({ queryKey: ['scheduled-reports'], queryFn: () => api.get('/setup/scheduled-reports') })
   const { data: concepts = [] } = useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })
-  const del = useMutation({ mutationFn: (id: string) => api.delete(`/setup/scheduled-reports/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['scheduled-reports'] }) })
+  const del = useMutation({ mutationFn: (id: string) => deleteWithUndo(`/setup/scheduled-reports/${id}`, { trashType: 'scheduled_report', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['scheduled-reports'] }) }), onSuccess: () => qc.invalidateQueries({ queryKey: ['scheduled-reports'] }) })
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>

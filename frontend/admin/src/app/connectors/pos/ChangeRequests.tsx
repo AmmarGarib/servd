@@ -9,7 +9,8 @@
 // required" and releasing held sales are not requestable — they stay the CEO's
 // own buttons on the Fiscal setup tab.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   connectorsApi, connectorErrorText, useDrivers,
@@ -43,7 +44,9 @@ function describe(c: ConnectorChangeRequest): string[] {
   return out
 }
 
-export function ChangeRequests({ data, companyName, canSend, isCeo, activeTenantId }: {
+export function ChangeRequests({ data, companyName, canSend, isCeo, activeTenantId, prefill }: {
+  /** Recovered from the Trash: the settings that were requested (secrets are never kept; type them again). */
+  prefill?: Prefill | null
   data: ConnectorsOverview
   companyName: string
   /** CONNECTOR_ADMINS (CEO, IT): may send a request. */
@@ -60,6 +63,7 @@ export function ChangeRequests({ data, companyName, canSend, isCeo, activeTenant
   const [status, setStatus] = useState<'' | ChangeRequestStatus>('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [showForm, setShowForm] = useState(false)
+  useEffect(() => { if (prefill && canSend) setShowForm(true) }, [prefill, canSend])
 
   const list = useQuery({
     queryKey: ['connectors', 'change-requests', status],
@@ -85,6 +89,7 @@ export function ChangeRequests({ data, companyName, canSend, isCeo, activeTenant
         )}
         {showForm && canSend && (
           <RequestForm
+            prefill={prefill}
             data={data}
             companyName={companyName}
             activeTenantId={activeTenantId}
@@ -194,7 +199,8 @@ function RequestRow({ c, canDecide, userId, onDone, onError }: {
 }
 
 /** The request form. Blank = leave as it is; secrets are write-only and cleared as soon as the request is sent. */
-function RequestForm({ data, companyName, activeTenantId, onDone, onCancel }: {
+function RequestForm({ data, companyName, activeTenantId, onDone, onCancel, prefill }: {
+  prefill?: Prefill | null
   data: ConnectorsOverview
   companyName: string
   activeTenantId: string | null
@@ -202,15 +208,28 @@ function RequestForm({ data, companyName, activeTenantId, onDone, onCancel }: {
   onCancel: () => void
 }) {
   const drivers = useDrivers()
-  const [kind, setKind] = useState<ConnectorKind>('fiscal')
-  const [driver, setDriver] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
+  // The requested settings may sit at the top of the payload or under `changes` / `body` / `request`.
+  const body0 = ((): Prefill | null => {
+    for (const k of ['changes', 'body', 'request', 'settings']) {
+      const v = prefill?.[k]
+      if (v && typeof v === 'object' && !Array.isArray(v) && k !== 'settings') return v as Prefill
+    }
+    return prefill ?? null
+  })()
+  const prefKind = pStr(prefill ?? null, 'kind', 'connectorKind')
+  const [kind, setKind] = useState<ConnectorKind>(prefKind === 'terminal' ? 'terminal' : 'fiscal')
+  const [driver, setDriver] = useState(pStr(body0, 'driver') ?? '')
+  const [baseUrl, setBaseUrl] = useState(pStr(body0, 'baseUrl') ?? '')
   const [apiKey, setApiKey] = useState('')
   const [webhookSecret, setWebhookSecret] = useState('')
   const [clearKey, setClearKey] = useState(false)
   const [clearSecret, setClearSecret] = useState(false)
-  const [enabled, setEnabled] = useState<'' | 'on' | 'off'>('')
-  const [timeout, setTimeoutV] = useState('')
+  const [enabled, setEnabled] = useState<'' | 'on' | 'off'>(
+    prefKind === 'terminal' && typeof body0?.enabled === 'boolean' ? (body0.enabled ? 'on' : 'off') : '')
+  const prefSettings = (body0?.settings && typeof body0.settings === 'object' ? body0.settings : null) as Prefill | null
+  const [timeout, setTimeoutV] = useState(
+    pNum(prefSettings, prefKind === 'terminal' ? 'chargeTimeoutSec' : 'syncTimeoutMs') != null
+      ? String(pNum(prefSettings, prefKind === 'terminal' ? 'chargeTimeoutSec' : 'syncTimeoutMs')) : '')
   const [err, setErr] = useState('')
 
   const current = kind === 'fiscal' ? data.fiscal : data.terminal

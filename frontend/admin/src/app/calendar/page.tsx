@@ -1,7 +1,7 @@
 'use client'
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { api, deleteWithUndo } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
 import { isoToPktLocal, pktLocalToIso, localYmd } from '@/lib/money'
 
@@ -366,7 +366,7 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.delete(`/calendar/${event!.id}`),
+    mutationFn: () => deleteWithUndo(`/calendar/${event!.id}`, { trashType: 'calendar_event', id: event!.id, onRestored: onSaved }),
     onSuccess: onSaved,
   })
 

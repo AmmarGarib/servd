@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 
 interface Template {
@@ -30,7 +30,7 @@ export default function TemplatesPage() {
   const [adding, setAdding] = useState(false)
   const { data: templates = [] } = useQuery<Template[]>({ queryKey: ['notification-templates'], queryFn: () => api.get('/setup/notification-templates') })
   const { data: concepts = [] } = useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })
-  const del = useMutation({ mutationFn: (id: string) => api.delete(`/setup/notification-templates/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['notification-templates'] }) })
+  const del = useMutation({ mutationFn: (id: string) => deleteWithUndo(`/setup/notification-templates/${id}`, { trashType: 'notification_template', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['notification-templates'] }) }), onSuccess: () => qc.invalidateQueries({ queryKey: ['notification-templates'] }) })
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>

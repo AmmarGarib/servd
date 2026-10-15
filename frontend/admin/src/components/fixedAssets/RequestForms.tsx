@@ -9,6 +9,7 @@
 // move. Every POST pins the write to the row's own company.
 
 import { useState } from 'react'
+import { pStr, pNum, type Prefill } from '../../lib/trashPrefill'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { MoneyInput } from '../ui/MoneyInput'
@@ -65,7 +66,9 @@ function Footer({ onClose, pending, disabled, label }: { onClose: () => void; pe
 
 // ─── On an asset ────────────────────────────────────────────────────────────
 
-export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onDone }: {
+export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onDone, prefill }: {
+  /** Recovered from the Trash: the reason and the kind's own figures (the CEO's approval and the date start fresh). */
+  prefill?: Prefill | null
   asset: FaAsset
   kind: AssetRequestKind
   lookups: FaLookups
@@ -74,25 +77,26 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
   onClose: () => void
   onDone: (r: RequestResult) => void
 }) {
-  const [reason, setReason] = useState('')
+  const pl = prefill && typeof prefill.payload === 'object' && prefill.payload ? (prefill.payload as Prefill) : (prefill ?? null)
+  const [reason, setReason] = useState(pStr(prefill ?? null, 'reason') ?? '')
   const [date, setDate] = useState(todayIso())
   // disposal
-  const [dKind, setDKind] = useState('sale')
-  const [proceeds, setProceeds] = useState(0)
-  const [method, setMethod] = useState('bank_transfer')
+  const [dKind, setDKind] = useState(pStr(pl, 'kind') ?? 'sale')
+  const [proceeds, setProceeds] = useState(pNum(pl, 'proceedsCents') ?? 0)
+  const [method, setMethod] = useState(pStr(pl, 'method') ?? 'bank_transfer')
   const [paymentRef, setPaymentRef] = useState('')
-  const [bankId, setBankId] = useState('')
+  const [bankId, setBankId] = useState(pStr(pl, 'bankAccountId') ?? '')
   // A sale saved with a reference used before: shown here before the modal closes.
   const [reused, setReused] = useState<RequestResult | null>(null)
   // impairment
-  const [writeDown, setWriteDown] = useState(0)
+  const [writeDown, setWriteDown] = useState(pNum(pl, 'amountCents') ?? 0)
   // change of estimate
-  const [life, setLife] = useState('')
-  const [changeSalvage, setChangeSalvage] = useState(false)
-  const [salvage, setSalvage] = useState(asset.salvageCents)
+  const [life, setLife] = useState(pStr(pl, 'remainingLifeMonths') ?? '')
+  const [changeSalvage, setChangeSalvage] = useState(pNum(pl, 'salvageCents') != null)
+  const [salvage, setSalvage] = useState(pNum(pl, 'salvageCents') ?? asset.salvageCents)
   // transfer
-  const [toConcept, setToConcept] = useState('__keep')
-  const [toLocation, setToLocation] = useState('__keep')
+  const [toConcept, setToConcept] = useState(pl && 'toConceptId' in pl ? (pStr(pl, 'toConceptId') ?? '__shared') : '__keep')
+  const [toLocation, setToLocation] = useState(pStr(pl, 'toLocationId') ?? '__keep')
 
   const brands = forCompany(lookups.brands, asset.tenantId)
   const outlets = forCompany(lookups.locations, asset.tenantId)

@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { deleteWithUndo } from '../../../../lib/api'
 import { Select } from '../../../../components/ui/Select'
 import {
   headOfficeApi, bpsToPct, pctToBps, monthLabel, monthRange, addMonthsTo, currentMonthPkt,
@@ -63,8 +64,8 @@ export default function SplitTab({ hoId, detail, reload }: { hoId: string; detai
   const q = useQuery({ queryKey: ['ho-splits', hoId], queryFn: () => headOfficeApi.splits(hoId) })
   const nameOf = new Map(detail.links.map((l) => [l.companyTenantId, l.companyName]))
   const del = useMutation({
-    mutationFn: (id: string) => headOfficeApi.deleteSplit(hoId, id),
-    onSuccess: () => { toast.success('Version removed'); void q.refetch(); reload() },
+    mutationFn: (id: string) => deleteWithUndo(`/head-offices/${encodeURIComponent(hoId)}/splits/${encodeURIComponent(id)}`, { trashType: 'recharge_split', id, onRestored: () => { void q.refetch(); reload() } }),
+    onSuccess: () => { void q.refetch(); reload() },
     onError: (e) => toast.error(errText(e)),
   })
   const current = q.data?.current ?? detail.currentSplit

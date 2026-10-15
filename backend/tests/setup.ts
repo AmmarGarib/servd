@@ -140,6 +140,13 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Cash vouchers (2026-10-15): cash_vouchers_discount_chk (amount paid = gross − discount).
   for (const statement of migrationSection('20261015140000_petty_cash_expense_vouchers',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // The Trash bin (2026-10-15): one OPEN entry per thing, and promo codes /
+  // allocation rules unique over LIVE rows only (migration 20261015170000).
+  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "trash_entries_open_key" ON "trash_entries"("entityType", "entityId") WHERE "restoredAt" IS NULL AND "purgedAt" IS NULL`)
+  await prisma.$executeRawUnsafe('DROP INDEX IF EXISTS "promo_codes_tenantId_code_key"')
+  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "promo_codes_tenant_code_live_key" ON "promo_codes"("tenantId", "code") WHERE "deletedAt" IS NULL`)
+  await prisma.$executeRawUnsafe('DROP INDEX IF EXISTS "cost_allocation_rules_tenantId_sourceAccountCode_key"')
+  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "cost_allocation_rules_tenant_source_live_key" ON "cost_allocation_rules"("tenantId", "sourceAccountCode") WHERE "deletedAt" IS NULL`)
 }
 
 /**

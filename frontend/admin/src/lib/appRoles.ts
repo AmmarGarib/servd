@@ -78,7 +78,7 @@ export function roleLabel(role: string | undefined | null): string {
 /** Module IDs — must match the `module` tag on every nav item in AppShell. */
 export type ModuleId =
   // Executive (CEO only by default)
-  | 'ceo_overview' | 'approvals' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'accounting_audit' | 'tenants'
+  | 'ceo_overview' | 'approvals' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'accounting_audit' | 'tenants' | 'trash'
   // Management — manager-tier dashboards (Brand Manager, F&B Manager)
   | 'brand_dashboard' | 'fnb_dashboard'
   // Live
@@ -121,6 +121,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'brand_dashboard',    label: 'Marketing dashboard', section: 'Management' },
   { id: 'fnb_dashboard',      label: 'F&B Dashboard',       section: 'Management' },
   { id: 'tenants',            label: 'Tenants / Brands',    section: 'Executive' },
+  { id: 'trash',              label: 'Trash',               section: 'Executive' },
 
   { id: 'dashboard',          label: 'Operations dashboard', section: 'Live' },
   { id: 'ops',                label: 'Prep list',           section: 'Live' },

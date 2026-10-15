@@ -318,14 +318,18 @@ function EvidencePicker({ files, onChange }: { files: PickedFile[]; onChange: (n
 
 // ─── Ask for a write-off ─────────────────────────────────────────────────────
 
-export function WriteOffDialog({ invoice, onClose, onDone }: {
+export function WriteOffDialog({ invoice, onClose, onDone, prefill }: {
   invoice: WriteOffInvoice
+  /** Recovered from the Trash: the amount (capped at the balance) and the reason. Evidence is attached again. */
+  prefill?: { amountCents?: number; reason?: string } | null
   onClose: () => void
   /** Called with the saved write-off ('approved' when the CEO asked: applied at once). */
   onDone: (w: Pick<WriteOffRow, 'id' | 'status' | 'amountCents'>) => void
 }) {
-  const [amount, setAmount] = useState(rupees(invoice.balanceCents))
-  const [reason, setReason] = useState('')
+  const [amount, setAmount] = useState(rupees(
+    prefill?.amountCents != null && prefill.amountCents > 0 ? Math.min(prefill.amountCents, invoice.balanceCents) : invoice.balanceCents,
+  ))
+  const [reason, setReason] = useState(prefill?.reason ?? '')
   const [files, setFiles] = useState<PickedFile[]>([])
   const [err, setErr] = useState('')
 

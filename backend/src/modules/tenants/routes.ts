@@ -402,6 +402,8 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
     tx.receivableInvoice, tx.receivablePayment, tx.receivableWriteOff, tx.receivableWriteOffAttachment,
     // Petty cash and cash requests (the boxes and requests the settlements, spend lines and movements belong to).
     tx.pettyCashBox, tx.cashVoucher, tx.cashVoucherAttachment, tx.cashVoucherSettlement, tx.pettyCashSpendLine, tx.pettyCashMovement,
+    // The Trash bin (2026-10-15): entries and copy log follow their company.
+    tx.trashEntry, tx.trashCopy,
   ]
   for (const model of repoint) {
     await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })

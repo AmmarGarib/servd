@@ -15,6 +15,8 @@ import { useCurrentShift } from '../../hooks/useCurrentShift'
 import { useDialog } from '../../components/ui/Modal'
 import { useConfirm } from '../../components/ui/ConfirmDialog'
 import { fmtPkrWhole } from '../../lib/money'
+import { useTrashPrefill } from '../../lib/trash'
+import { unwrapPrefill, pStr, pNum, pArr, pWarnings, type Prefill } from '../../lib/trashPrefill'
 
 /** Arrow / Home / End move between the tabs of a tablist. `activate` also selects the tab
  *  (categories); brand tabs only move focus, because selecting one can clear the order. */
@@ -119,6 +121,75 @@ export default function PosPage() {
   const activeConcept = concepts.find((c) => c.id === conceptId)
 
   const currentCategory = categories.find((c) => c.id === selectedCategory) ?? categories[0]
+
+  // "Recover as copy" from the Trash (types `order` and `order_item`): the
+  // payload carries the brand, table, customer and lines of the original and
+  // NOTHING money-side (no payments, discounts or numbers). The lines are
+  // re-priced here from today's menu; a dish that is gone or sold out is
+  // dropped with a note. The till has no add-to-ticket route, so a recovered
+  // voided line goes into the cart as a new ring-up (it is never reapplied
+  // to the old ticket).
+  const orderPrefill = unwrapPrefill(useTrashPrefill('order'))
+  const itemPrefill = unwrapPrefill(useTrashPrefill('order_item'))
+  const [pendingPrefill, setPendingPrefill] = useState<{ p: Prefill; replace: boolean } | null>(null)
+  useEffect(() => {
+    if (orderPrefill) setPendingPrefill({ p: orderPrefill, replace: true })
+    else if (itemPrefill) setPendingPrefill({ p: itemPrefill, replace: false })
+  }, [orderPrefill, itemPrefill])
+  useEffect(() => {
+    if (!pendingPrefill || concepts.length === 0) return
+    const { p, replace } = pendingPrefill
+    const target = pStr(p, 'conceptId', 'brandId')
+    if (target && concepts.some((c) => c.id === target) && target !== conceptId) {
+      usePosStore.getState().setConceptId(target) // the menu reloads for that brand
+      return
+    }
+    if (menuLoading || categories.length === 0) return
+    setPendingPrefill(null)
+    const menu = new Map<string, MenuItem>()
+    for (const c of categories) for (const i of c.items ?? []) menu.set(i.id, i)
+    // order: lines in `items`/`lines`; order_item: the line itself or `item`/`items`.
+    let raw = pArr<Prefill>(p, 'items', 'lines')
+    if (raw.length === 0) {
+      const one = p.item && typeof p.item === 'object' ? (p.item as Prefill) : p
+      if (pStr(one, 'menuItemId')) raw = [one]
+    }
+    const dropped: string[] = [...pWarnings(p)]
+    const lines: Array<{ item: MenuItem; qty: number; notes: string; mods: Modifier[] }> = []
+    for (const l of raw) {
+      const id = pStr(l, 'menuItemId', 'itemId')
+      const item = id ? menu.get(id) : undefined
+      const label = pStr(l, 'name') ?? 'A dish'
+      if (!item || !item.isAvailable) { dropped.push(`${label} is no longer on the menu`); continue }
+      const wanted = new Set<string>([
+        ...pArr<unknown>(l, 'modifierIds').filter((m): m is string => typeof m === 'string'),
+        ...pArr<Prefill>(l, 'modifiers').map((m) => pStr(m, 'modifierId', 'id')).filter((m): m is string => !!m),
+      ])
+      const mods = (item.modifierGroups ?? []).flatMap((g: ModifierGroup) => g.modifiers ?? []).filter((m: Modifier) => wanted.has(m.id))
+      lines.push({ item, qty: Math.max(1, Math.round(pNum(l, 'quantity', 'qty') ?? 1)), notes: pStr(l, 'notes') ?? '', mods })
+    }
+    void (async () => {
+      const st = usePosStore.getState()
+      if (replace && st.cart.length > 0) {
+        const ok = await confirm({ title: 'Replace the current cart with the recovered order?', confirmLabel: 'Replace', danger: true })
+        if (!ok) return
+      }
+      if (replace) st.clearCart()
+      const tableId = pStr(p, 'tableId')
+      if (replace && tableId) usePosStore.getState().setTableId(tableId)
+      const customerId = pStr(p, 'customerId')
+      if (replace && customerId) usePosStore.getState().setCustomerId(customerId)
+      for (const l of lines) {
+        usePosStore.getState().addItem(l.item, l.mods)
+        const added = usePosStore.getState().cart.at(-1)
+        if (!added) continue
+        if (l.qty > 1) usePosStore.getState().updateItemQty(added.id, l.qty)
+        if (l.notes) usePosStore.getState().updateItemNotes(added.id, l.notes)
+      }
+      if (dropped.length > 0) setSoldOutNote(`Recovered with changes: ${dropped.join('; ')}`)
+      else if (lines.length > 0) setSoldOutNote('Recovered from Trash. Check the prices, then ring it up.')
+    })()
+  }, [pendingPrefill, concepts, conceptId, menuLoading, categories, confirm])
 
   useEffect(() => {
     if (!soldOutNote) return

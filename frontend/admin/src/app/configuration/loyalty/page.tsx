@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 // /configuration/loyalty — full operator-managed loyalty system.
@@ -327,7 +327,7 @@ function TierEditor({ initial, onCancel, onSaved, onDeleted }: {
     }))) return
     setSaving(true); setErr(null)
     try {
-      await api.delete(`/loyalty/tiers/${initial.id}`)
+      await deleteWithUndo(`/loyalty/tiers/${initial.id}`, { trashType: 'tier_config', id: initial.id, onRestored: () => onDeleted?.() })
       onDeleted?.()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Delete failed') }
     finally { setSaving(false) }

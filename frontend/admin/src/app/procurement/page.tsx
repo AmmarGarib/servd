@@ -19,6 +19,9 @@ import { FormField } from '../../components/ui/FormField'
 import { NumberField } from '../../components/ui/NumberField'
 import { MoneyInput } from '../../components/ui/MoneyInput'
 import { useConfirm } from '../../components/ui/ConfirmDialog'
+import { toast } from 'sonner'
+import { useTrashPrefill } from '../../lib/trash'
+import { unwrapPrefill, pStr, pNum, pArr, type Prefill } from '../../lib/trashPrefill'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
@@ -219,6 +222,14 @@ export default function ProcurementPage() {
   // "Purchase order" button: lands on Purchase Orders with the new-PO form
   // open (and, when an item is given, that item as its first line).
   const [newPo, setNewPo] = useState<{ item: string | null; qty: string | null } | null>(null)
+  // "Recover as copy" from the Trash: a voided supplier bill or payment opens
+  // its own create form pre-filled (the server sends nothing that posts).
+  const billPrefill = unwrapPrefill(useTrashPrefill('supplier_bill'))
+  const paymentPrefill = unwrapPrefill(useTrashPrefill('supplier_payment'))
+  useEffect(() => {
+    if (billPrefill) setTab('bills')
+    else if (paymentPrefill) setTab('payments')
+  }, [billPrefill, paymentPrefill])
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search)
@@ -259,8 +270,8 @@ export default function ProcurementPage() {
 
       <div className="flex-1 overflow-y-auto">
         {tab === 'pos'       && <PoTab       qc={qc} newPo={newPo} />}
-        {tab === 'bills'     && <BillsTab    qc={qc} />}
-        {tab === 'payments'  && <PaymentsTab qc={qc} />}
+        {tab === 'bills'     && <BillsTab    qc={qc} prefill={billPrefill} />}
+        {tab === 'payments'  && <PaymentsTab qc={qc} prefill={paymentPrefill} />}
         {tab === 'suppliers' && <SuppliersTab qc={qc} />}
         {tab === 'aging'     && <AgingTab />}
         {tab === 'reorder'   && <ReorderTab qc={qc} />}
@@ -727,11 +738,22 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
 // BILLS TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
-function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; prefill?: Prefill | null }) {
   const [view, setView] = useState<'bills' | 'credit_notes'>('bills')
   const [statusFilter, setStatusFilter] = useState('')
   const [overdue, setOverdue] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
+  const [formPrefill, setFormPrefill] = useState<Prefill | null>(null)
+  useEffect(() => {
+    if (!prefill) return
+    if (pStr(prefill, 'kind') === 'credit_note') {
+      // A credit note is raised against its bill, not typed from scratch.
+      setView('credit_notes')
+      toast.info('Credit notes are raised from the original bill. Open the bill and use Credit note.')
+      return
+    }
+    setView('bills'); setFormPrefill(prefill); setShowCreate(true)
+  }, [prefill])
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidReason, setVoidReason] = useState('')
   const [voidTried, setVoidTried] = useState(false)
@@ -819,7 +841,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         </p>
       )}
 
-      {showCreate && view === 'bills' && <CreateBillForm qc={qc} onClose={() => setShowCreate(false)} />}
+      {showCreate && view === 'bills' && <CreateBillForm qc={qc} prefill={formPrefill} onClose={() => { setShowCreate(false); setFormPrefill(null) }} />}
 
       {voidMut.error && <p className="text-xs text-s-red">{errText(voidMut.error)}</p>}
 
@@ -1307,15 +1329,31 @@ const blankExpenseLine = (): BillLine => ({
   expenseAccountCode: '', notEquipment: false, notEquipmentReason: '',
 })
 
-function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
+function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; prefill?: Prefill | null }) {
   const { data: me } = usePermissions()
   const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
   const { data: pos = [] } = useQuery({ queryKey: ['procurement', 'pos', ''], queryFn: () => api.get<PurchaseOrder[]>('/procurement/purchase-orders') })
 
-  const [form, setForm] = useState({
-    supplierId: '', poId: '', billNumber: '', billDate: '', dueDate: '', taxPkr: '', taxAuthority: '', whtSection: '', notes: '', attachmentUrl: '',
+  // Recovered bill: supplier, reference, dates, notes and the EXPENSE lines come
+  // back. Stock lines must link an open delivery (or PO) line again, so they are
+  // left for the user to re-choose; the tax / WHT are re-resolved by the server.
+  const [form, setForm] = useState(() => ({
+    supplierId: pStr(prefill ?? null, 'supplierId') ?? '', poId: '',
+    billNumber: pStr(prefill ?? null, 'billNumber', 'reference') ?? '',
+    billDate: '', dueDate: '', taxPkr: '', taxAuthority: '', whtSection: '',
+    notes: pStr(prefill ?? null, 'notes') ?? '', attachmentUrl: '',
+  }))
+  const [lines, setLines] = useState<BillLine[]>(() => {
+    const raw = pArr<Prefill>(prefill ?? null, 'lines', 'items')
+    return raw.filter((l) => !pStr(l, 'inventoryItemId') && !pStr(l, 'receiptLineId') && !pStr(l, 'poLineId')).map<BillLine>((l) => ({
+      key: `bl${++billLineSeq}`, kind: 'expense', description: pStr(l, 'description') ?? '',
+      quantity: String(pNum(l, 'quantity') ?? 1),
+      unitCostPkr: pNum(l, 'unitCostCents') != null ? String((pNum(l, 'unitCostCents') ?? 0) / 100) : '',
+      inventoryItemId: '', receiptLineId: '', poLineId: '', source: 'Recovered from Trash', unit: '', maxQty: null,
+      expenseAccountCode: pStr(l, 'expenseAccountCode') ?? '', notEquipment: false, notEquipmentReason: '',
+    }))
   })
-  const [lines, setLines] = useState<BillLine[]>([])
+  const droppedStock = pArr<Prefill>(prefill ?? null, 'lines', 'items').filter((l) => pStr(l, 'inventoryItemId') || pStr(l, 'receiptLineId') || pStr(l, 'poLineId'))
   const [picker, setPicker] = useState<'receipt' | 'po' | null>(null)
   const [chosen, setChosen] = useState<Record<string, boolean>>({})
   const [tried, setTried] = useState(false)
@@ -1440,6 +1478,12 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
         <p className="font-bold text-s-text">New Supplier Bill</p>
         <button type="button" onClick={onClose} className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11" aria-label="Close">✕</button>
       </div>
+      {prefill && (
+        <p className="rounded-lg bg-s-elevated px-3 py-2 text-xs text-s-muted">
+          Recovered from Trash: check every figure, then save. Pick the bill date again.
+          {droppedStock.length > 0 && ` Stock lines (${droppedStock.map((l) => pStr(l, 'description') ?? 'item').join(', ')}) must be linked to a delivery or PO line again: add them with Fill from a delivery.`}
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Supplier" required error={tried && !form.supplierId ? 'Choose the supplier.' : null}>
           <Select value={form.supplierId} onChange={(e) => changeSupplier(e.target.value)} className={fi}>
@@ -1665,8 +1709,10 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
 // PAYMENTS TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
-function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+function PaymentsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; prefill?: Prefill | null }) {
   const [showCreate, setShowCreate] = useState(false)
+  const [formPrefill, setFormPrefill] = useState<Prefill | null>(null)
+  useEffect(() => { if (prefill) { setFormPrefill(prefill); setShowCreate(true) } }, [prefill])
   const [allocateId, setAllocateId] = useState<string | null>(null)
   const [unapplyId, setUnapplyId] = useState<string | null>(null)
   const [voidId, setVoidId] = useState<string | null>(null)
@@ -1702,7 +1748,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         </button>
       </div>
 
-      {showCreate && <CreatePaymentForm qc={qc} onClose={() => setShowCreate(false)} />}
+      {showCreate && <CreatePaymentForm qc={qc} prefill={formPrefill} onClose={() => { setShowCreate(false); setFormPrefill(null) }} />}
 
       {isLoading ? (
         <p className="text-s-muted text-sm py-8 text-center">Loading…</p>
@@ -1811,10 +1857,20 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   )
 }
 
-function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
+function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; prefill?: Prefill | null }) {
   const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
 
-  const [form, setForm] = useState({ supplierId: '', paymentDate: '', method: 'bank_transfer', bankAccountId: '', reference: '', amountCents: '', notes: '' })
+  // Recovered payment: supplier, amount, method, bank account and memo. The
+  // reference # is typed again and the allocations are made afresh.
+  const [form, setForm] = useState(() => {
+    const amt = pNum(prefill ?? null, 'amountCents')
+    return {
+      supplierId: pStr(prefill ?? null, 'supplierId') ?? '', paymentDate: '',
+      method: pStr(prefill ?? null, 'method') ?? 'bank_transfer',
+      bankAccountId: pStr(prefill ?? null, 'bankAccountId') ?? '', reference: '',
+      amountCents: amt != null ? String(amt / 100) : '', notes: pStr(prefill ?? null, 'notes', 'memo') ?? '',
+    }
+  })
   // The bank list is the SUPPLIER's company's (the server checks the same).
   const supplierTenant = suppliers.find((s) => s.id === form.supplierId)?.tenantId ?? null
   const usesBank = form.method !== 'cash'

@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { api, deleteWithUndo } from '../../lib/api'
 import Link from 'next/link'
 import { fmtPkrWhole, isoToPktLocal, pktLocalToIso } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
@@ -73,7 +73,7 @@ export default function PromosPage() {
   })
 
   const del = useMutation({
-    mutationFn: (id: string) => api.delete(`/promos/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/promos/${id}`, { trashType: 'promo_code', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['promos'] }) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['promos'] }),
   })
 

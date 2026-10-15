@@ -6,7 +6,7 @@
 import { useParams, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../../lib/api'
+import { api, deleteWithUndo } from '../../../../lib/api'
 import { card, btn, btnGhost, inp, rs, human, day, localDate, STATUS_COLOR } from '../../../../lib/hr'
 import { HrShell, Modal, Stat, useHrAccess } from '../../../../components/hr/HrShell'
 import { BankAccountSelect } from '../../../../components/finance/BankAccountSelect'
@@ -52,7 +52,7 @@ export default function PayrollRunPage() {
   const { data, error: loadErr, isLoading } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
   const act = useMutation({
     mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete') =>
-      what === 'delete' ? api.delete(`/hr/payroll/runs/${id}`)
+      what === 'delete' ? deleteWithUndo(`/hr/payroll/runs/${id}`, { trashType: 'hr_payroll_run', id, onRestored: () => void qc.invalidateQueries() })
       : api.post(`/hr/payroll/runs/${id}/${what}`, {}),
     onSuccess: (_r, what) => { setErr(''); if (what === 'delete') router.push('/hr/payroll'); else void qc.invalidateQueries() },
     onError: (e: Error) => setErr(e.message),

@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 
 interface Option {
@@ -33,7 +33,7 @@ export default function ModifiersPage() {
   })
 
   const del = useMutation({
-    mutationFn: (id: string) => api.delete(`/setup/modifier-templates/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/setup/modifier-templates/${id}`, { trashType: 'modifier_template', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['modifier-templates'] }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['modifier-templates'] }),
   })
 

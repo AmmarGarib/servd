@@ -46,6 +46,11 @@ export const MODULE_IDS = [
   // to every login and lists only what that login's existing approve routes
   // would let it act on (modules/approvals). Not gated: it grants nothing.
   'approvals',
+  // CEO → Trash (owner, 2026-10-15): deleted / voided / cancelled items with
+  // Restore and "Recover as copy". Like approvals it grants nothing — /trash
+  // is open to every login and each type is gated by its OWN module + roles
+  // in modules/trash (registry.ts); only the CEO empties it.
+  'trash',
   'brand_dashboard', 'fnb_dashboard',
   'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'chain',
   'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
@@ -252,6 +257,9 @@ export const MODULE_GRANTS: readonly string[] = [
   // boh_management, finance, owner, management, legacy manager) and Emergency
   // overrides (foh_management, boh_management, fnb_manager, management).
   'food_cost', 'emergency_overrides',
+  // The Trash bin (2026-10-15): owner / management / legacy manager defaults
+  // ("every module except …") now hold it.
+  'trash',
 ]
 export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 

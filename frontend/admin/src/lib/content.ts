@@ -4,7 +4,7 @@
 // rejects, rolls back or deletes. Contract: the scratchpad
 // content-module-contract.md the backend and renderers are built against.
 
-import { api } from './api'
+import { api, deleteWithUndo } from './api'
 import { columnsOf, newBlock, type Block } from './blocks'
 import { EDITOR_FRAME_PATH } from './editorProtocol'
 import { pageDefaultBlocks } from './sections'
@@ -225,7 +225,8 @@ export const contentApi = {
   rollback: (slug: string, version: number) => api.post<LayoutEdit>(`/site-layouts/${enc(slug)}/rollback`, { version }),
   stats: (slug: string) => api.get<LayoutStat[]>(`/site-layouts/${enc(slug)}/stats`),
   previewToken: (slug: string) => api.post<{ token: string }>(`/site-layouts/${enc(slug)}/preview-token`, {}),
-  remove: (slug: string) => api.delete<void>(`/site-layouts/${enc(slug)}`),
+  // Moves the page to the Trash (CEO restores it there); toast offers Undo.
+  remove: (slug: string) => deleteWithUndo(`/site-layouts/${enc(slug)}`, { trashType: 'site_layout', id: slug, label: slug }),
   fonts: () => api.get<MediaAssetLite[]>('/media?kind=font'),
 }
 

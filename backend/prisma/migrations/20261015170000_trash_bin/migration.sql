@@ -166,3 +166,28 @@ SELECT gen_random_uuid()::text, x."tenantId", 'location', x."id", x."name", x."d
 -- Status masters already in that state (dismissed exceptions, archived positions,
 -- ended contributions, inactive OpEx lines) are NOT backfilled: their screens show them
 -- today and "previous" is unknown. Only new deletes enter the Trash.
+
+-- ── 5. Row-level security (the guarded wave-A/B pattern) ────────────────────
+-- Company rows only; a company-less entry (servd:* pages, legacy logins) is
+-- visible in service mode only — the Trash service reads entries on
+-- serviceClient with its own explicit scope (CEO only for company-less rows).
+DO $do$
+DECLARE
+  t text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'app_is_service_mode')
+     AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'app_tenant_ids') THEN
+    FOREACH t IN ARRAY ARRAY['trash_entries', 'trash_copies']
+    LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = current_schema() AND tablename = t) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format(
+          'CREATE POLICY %I ON %I FOR ALL '
+          'USING (app_is_service_mode() OR %I."tenantId" = ANY(app_tenant_ids())) '
+          'WITH CHECK (app_is_service_mode() OR %I."tenantId" = ANY(app_tenant_ids()))',
+          t || '_rls', t, t, t);
+      END IF;
+    END LOOP;
+  END IF;
+END
+$do$;

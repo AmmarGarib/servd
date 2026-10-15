@@ -324,6 +324,65 @@ export const api = {
     request<T>(path, { headers: { 'x-servd-portfolio': '1' } }),
 }
 
+// ─── Delete with Undo (Trash bin) ───────────────────────────────────────────────
+//
+// A delete route that moves the row to the Trash (backend `moveToTrash`) still
+// answers 204. This wraps `api.delete` and, on success, shows a toast
+// "Moved to Trash" with Undo (POST /trash/:type/:id/restore) and View in Trash
+// (/trash?type=&id=). Use it ONLY for deletes whose backend route really parks
+// the row in the Trash; `trashType` is the server registry key
+// (backend/src/modules/trash/registry.ts) and `id` the row's id.
+// Behaviour of the delete itself is unchanged: it rejects like api.delete does,
+// so the caller's onError still runs. `onRestored` is where a caller refreshes
+// its list after an Undo. `restorable: false` is for records the Trash keeps for
+// the books (never restorable): the toast says so and has no Undo.
+export interface DeleteWithUndoOptions extends RequestExtra {
+  trashType: string
+  id: string
+  /** Shown under the toast title, e.g. the item's name. */
+  label?: string
+  restorable?: boolean
+  onRestored?: () => void
+}
+
+function trashHref(type: string, id: string): string {
+  return `/trash?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`
+}
+
+export async function deleteWithUndo(path: string, opts: DeleteWithUndoOptions): Promise<void> {
+  const { trashType, id, label, restorable = true, onRestored, tenantId } = opts
+  await request<void>(path, { method: 'DELETE' }, true, tenantId ? { tenantId } : {})
+  if (typeof window === 'undefined') return
+  const view = {
+    label: 'View in Trash',
+    onClick: () => { window.location.assign(trashHref(trashType, id)) },
+  }
+  if (!restorable) {
+    toast.success('Moved to Trash', { description: label ? `${label} (kept for the record)` : 'Kept for the record', action: view, duration: 8000 })
+    return
+  }
+  toast.success('Moved to Trash', {
+    description: label,
+    duration: 10000,
+    action: {
+      label: 'Undo',
+      onClick: () => {
+        request<unknown>(`/trash/${encodeURIComponent(trashType)}/${encodeURIComponent(id)}/restore`, {
+          method: 'POST', body: JSON.stringify({}),
+        }, true, tenantId ? { tenantId } : {})
+          .then(() => { toast.success(label ? `${label} restored` : 'Restored'); onRestored?.() })
+          .catch((e: unknown) => {
+            const err = e as ApiError
+            toast.error(err?.message || 'Could not restore it', {
+              action: { label: 'Open Trash', onClick: () => { window.location.assign(trashHref(trashType, id)) } },
+            })
+          })
+      },
+    },
+    cancel: view,
+  })
+}
+
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
 export const authApi = {

@@ -2,7 +2,7 @@
 import { useState, useEffect, useId, isValidElement, cloneElement } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { BrandKitCard } from '../../../components/storefront/BrandKitCard'
 import { Select } from '@/components/ui/Select'
@@ -355,7 +355,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   // orders and books still resolve the name; the brand leaves every picker,
   // the POS and the storefront.
   const del = useMutation({
-    mutationFn: () => api.delete(`/concepts/${concept.id}`),
+    mutationFn: () => deleteWithUndo(`/concepts/${concept.id}`, { trashType: 'brand', id: concept.id, label: concept.name, onRestored: () => void qc.invalidateQueries({ queryKey: ['concepts'] }) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['concepts'] })
       onDeleted()

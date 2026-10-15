@@ -13,7 +13,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { api } from '../../lib/api'
+import { api, deleteWithUndo } from '../../lib/api'
 import { FloorPlanEditor } from '../../components/floorplan/FloorPlanEditor'
 import type { FloorTable } from '../../components/floorplan/FloorCanvas'
 import { LiveFloor } from './LiveFloor'
@@ -127,7 +127,7 @@ export default function FloorplanPage() {
   })
 
   const deleteTable = useMutation({
-    mutationFn: (id: string) => api.delete(`/tables/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/tables/${id}`, { trashType: 'table', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['floors', conceptId] }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['floors', conceptId] }),
   })
 

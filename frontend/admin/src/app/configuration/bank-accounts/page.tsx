@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api, ApiError } from '../../../lib/api'
+import { api, ApiError, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 
 interface Bank {
@@ -90,7 +90,7 @@ export default function BankAccountsPage() {
   const [adding, setAdding] = useState(false)
   const { data = [] } = useQuery<Bank[]>({ queryKey: ['bank-accounts'], queryFn: () => api.get('/setup/bank-accounts') })
   const del = useMutation({
-    mutationFn: (id: string) => api.delete(`/setup/bank-accounts/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/setup/bank-accounts/${id}`, { trashType: 'bank_account', id, onRestored: () => { void qc.invalidateQueries({ queryKey: ['bank-accounts'] }); void qc.invalidateQueries({ queryKey: ['raast-accounts'] }) } }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-accounts'] }); void qc.invalidateQueries({ queryKey: ['raast-accounts'] }) },
   })
   // The company default Raast account: set (unsets the company's other default) or clear.

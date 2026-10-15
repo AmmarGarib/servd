@@ -52,6 +52,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     sections: [
       { key: 'overview',  title: 'Overview',                    modules: ['ceo_overview'] },
       { key: 'approvals', title: 'Approvals',                   modules: ['approvals'] },
+      { key: 'trash',     title: 'Trash',                       modules: ['trash'] },
       { key: 'companies', title: 'Companies & head offices',    modules: ['tenants', 'business_info', 'onboarding'] },
       { key: 'brands',    title: 'Brands',                      modules: ['brands'] },
       { key: 'access',    title: 'Logins & access',             modules: ['role_management', 'role_modules'] },

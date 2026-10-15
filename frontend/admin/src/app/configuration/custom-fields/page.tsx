@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 
 type Scope = 'customer' | 'order' | 'menu_item' | 'supplier'
@@ -33,7 +33,7 @@ export default function CustomFieldsPage() {
   const [editing, setEditing] = useState<Def | null>(null)
   const [adding, setAdding] = useState(false)
   const { data = [] } = useQuery<Def[]>({ queryKey: ['custom-fields'], queryFn: () => api.get('/setup/custom-fields') })
-  const del = useMutation({ mutationFn: (id: string) => api.delete(`/setup/custom-fields/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['custom-fields'] }) })
+  const del = useMutation({ mutationFn: (id: string) => deleteWithUndo(`/setup/custom-fields/${id}`, { trashType: 'custom_field', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['custom-fields'] }) }), onSuccess: () => qc.invalidateQueries({ queryKey: ['custom-fields'] }) })
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>

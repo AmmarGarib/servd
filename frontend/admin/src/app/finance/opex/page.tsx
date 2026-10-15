@@ -20,7 +20,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api, ApiError } from '../../../lib/api'
+import { api, ApiError, deleteWithUndo } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
 import { useAuthStore } from '../../../store/auth'
@@ -762,7 +762,7 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
     onSuccess: () => onSaved(),
   })
   const del = useMutation({
-    mutationFn: () => api.delete(`/opex/categories/${category!.id}`),
+    mutationFn: () => deleteWithUndo(`/opex/categories/${category!.id}`, { trashType: 'opex_category', id: category!.id, onRestored: () => onSaved() }),
     onSuccess: () => onSaved(),
   })
 
@@ -871,7 +871,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
     onSuccess: () => onSaved(),
   })
   const del = useMutation({
-    mutationFn: () => api.delete(`/opex/lines/${line!.id}`),
+    mutationFn: () => deleteWithUndo(`/opex/lines/${line!.id}`, { trashType: 'opex_line', id: line!.id, onRestored: () => onSaved() }),
     onSuccess: () => onSaved(),
   })
 

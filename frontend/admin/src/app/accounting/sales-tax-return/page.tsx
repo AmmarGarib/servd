@@ -18,6 +18,9 @@
 // (WithholdingRegister.tsx). Every figure is the server's.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
+import { useTrashPrefill } from '../../../lib/trash'
+import { unwrapPrefill, pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
@@ -249,6 +252,32 @@ export default function SalesTaxReturnPage() {
   }
 
   const [paying, setPaying] = useState<PayTarget | null>(null)
+  // "Recover as copy" from the Trash (a voided tax payment, type
+  // `sales_tax_payment`): load that period's return, then open the payment
+  // form with the authority, period, set-offs and amount. The CPR #, the bank
+  // and the posting are never copied: it is a new payment, posted on save.
+  const trashPrefill = unwrapPrefill(useTrashPrefill('sales_tax_payment'))
+  const [payFill, setPayFill] = useState<Prefill | null>(null)
+  const [pendingPay, setPendingPay] = useState<Prefill | null>(null)
+  useEffect(() => {
+    if (!trashPrefill) return
+    setTab('return')
+    const pf = pStr(trashPrefill, 'periodFrom'), pt = pStr(trashPrefill, 'periodTo')
+    if (pf) setFrom(pf)
+    if (pt) setTo(pt)
+    setPendingPay(trashPrefill)
+  }, [trashPrefill])
+  useEffect(() => {
+    if (!pendingPay || !data) return
+    const pf = pStr(pendingPay, 'periodFrom'), pt = pStr(pendingPay, 'periodTo')
+    if ((pf && data.period.from !== pf) || (pt && data.period.to !== pt)) return // that period's return is still loading
+    setPendingPay(null)
+    const key = pStr(pendingPay, 'authority') as PayKey | undefined
+    if (!key || !(key in PAY_LABEL)) { toast.error('Pick the authority and record the payment again.'); return }
+    if (!canPay) { toast.error('You cannot record tax payments.'); return }
+    setPayFill(pendingPay)
+    setPaying({ key, paidCents: pNum(pendingPay, 'paidCents', 'amountCents') ?? 0, inputSetOffCents: pNum(pendingPay, 'inputSetOffCents') ?? 0, withheldAvailableCents: 0, crossAvailableCents: 0 })
+  }, [pendingPay, data, canPay])
   const [linking, setLinking] = useState(false)
   const [voiding, setVoiding] = useState<TaxPayment | null>(null)
   const [reclassMsg, setReclassMsg] = useState<Record<string, string>>({})
@@ -747,7 +776,7 @@ export default function SalesTaxReturnPage() {
               </div>
             )}
 
-            {paying && <PayModal report={data} target={paying} onClose={() => setPaying(null)} />}
+            {paying && <PayModal report={data} target={paying} prefill={payFill} onClose={() => { setPaying(null); setPayFill(null) }} />}
             {linking && <LinkModal report={data} onClose={() => setLinking(false)} />}
             {voiding && <VoidModal payment={voiding} onClose={() => setVoiding(null)} />}
           </>
@@ -761,14 +790,15 @@ interface PayTarget { key: PayKey; paidCents: number; inputSetOffCents: number; 
 /** H8: federal input on raw materials is set off against the provincial authorities only. */
 const PROVINCIAL: ReadonlySet<PayKey> = new Set<PayKey>(['srb'])
 
-function PayModal({ report, target, onClose }: { report: STR; target: PayTarget; onClose: () => void }) {
+function PayModal({ report, target, onClose, prefill }: { report: STR; target: PayTarget; onClose: () => void; prefill?: Prefill | null }) {
   const qc = useQueryClient()
   const salesTax = target.key !== 'wht' && target.key !== 'stwh'
   const provincial = PROVINCIAL.has(target.key)
   const [f, setF] = useState({
-    periodFrom: report.period.from, periodTo: report.period.to,
-    paid: rupees(target.paidCents), input: rupees(target.inputSetOffCents), withheld: '0', cross: '0',
-    paidAt: todayPktIso(), method: 'bank_transfer', bankAccountId: '', cprNumber: '', notes: '',
+    periodFrom: pStr(prefill ?? null, 'periodFrom') ?? report.period.from, periodTo: pStr(prefill ?? null, 'periodTo') ?? report.period.to,
+    paid: rupees(target.paidCents), input: rupees(target.inputSetOffCents),
+    withheld: rupees(pNum(prefill ?? null, 'customerWithheldSetOffCents') ?? 0), cross: rupees(pNum(prefill ?? null, 'crossSetOffCents') ?? 0),
+    paidAt: todayPktIso(), method: pStr(prefill ?? null, 'method') ?? 'bank_transfer', bankAccountId: '', cprNumber: '', notes: '',
   })
   const [err, setErr] = useState('')
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((p) => ({ ...p, [k]: e.target.value }))

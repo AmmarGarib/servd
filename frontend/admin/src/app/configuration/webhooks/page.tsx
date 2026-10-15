@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { Modal } from '../../../components/ui/Modal'
 import { FormField } from '../../../components/ui/FormField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
@@ -53,7 +53,7 @@ export default function WebhooksPage() {
     queryKey: ['webhook-events'], queryFn: () => api.get('/webhooks/events'),
   })
   const del = useMutation({
-    mutationFn: (id: string) => api.delete(`/webhooks/endpoints/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/webhooks/endpoints/${id}`, { trashType: 'webhook', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['webhooks'] }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['webhooks'] }),
   })
   const toggle = useMutation({

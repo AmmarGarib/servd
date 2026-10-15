@@ -28,6 +28,8 @@ import { Modal } from '@/components/ui/Modal'
 import { NumberField } from '@/components/ui/NumberField'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { useTrashPrefill } from '../../lib/trash'
+import { unwrapPrefill, pStr, pNum, pBool } from '../../lib/trashPrefill'
 
 // Small structural icons (currentColor) in place of emoji.
 function Ico({ d, size = 12, className = '' }: { d: string; size?: number; className?: string }) {
@@ -90,6 +92,18 @@ export default function ReservationsPage() {
   const [drawerCustomerId, setDrawerCustomerId] = useState<string | null>(null)
 
   const concepts = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
+
+  // "Recover as copy" from the Trash (type `reservation`): open the booking
+  // form pre-filled, on the original's brand when it is still one of ours.
+  const trashPrefill = unwrapPrefill(useTrashPrefill('reservation'))
+  const [prefill, setPrefill] = useState<ReturnType<typeof unwrapPrefill>>(null)
+  useEffect(() => {
+    if (!trashPrefill) return
+    setPrefill(trashPrefill)
+    const c = pStr(trashPrefill, 'conceptId', 'brandId')
+    if (c) setConceptId(c)
+    setShowNew(true)
+  }, [trashPrefill])
 
   useEffect(() => {
     if (!conceptId && concepts.data && concepts.data.length > 0) {
@@ -244,6 +258,7 @@ export default function ReservationsPage() {
           conceptId={conceptId}
           tables={allTables}
           defaultDate={date}
+          prefill={prefill}
           onClose={() => setShowNew(false)}
           onCreated={() => {
             void qc.invalidateQueries({ queryKey: ['reservations'] })
@@ -399,25 +414,29 @@ function SeatButton({
 // ─── New reservation modal ────────────────────────────────────────────────
 
 function NewReservationModal({
-  conceptId, tables, defaultDate, onClose, onCreated,
+  conceptId, tables, defaultDate, prefill, onClose, onCreated,
 }: {
+  prefill?: ReturnType<typeof unwrapPrefill>
   conceptId: string
   tables: Array<{ id: string; label: string; capacity: number; floorName: string }>
   defaultDate: string
   onClose: () => void
   onCreated: () => void
 }) {
-  const [partySize, setPartySize] = useState<number | null>(2)
+  const [partySize, setPartySize] = useState<number | null>(() => {
+    const n = pNum(prefill ?? null, 'partySize', 'party')
+    return n && n >= 1 && n <= 50 ? Math.round(n) : 2
+  })
   const [startDate, setStartDate] = useState(defaultDate)
   const [startTime, setStartTime] = useState('19:00')
   const [durationMin, setDurationMin] = useState<number | null>(90)
   const [tableId, setTableId] = useState('')
   const [waitlist, setWaitlist] = useState(false)
-  const [guestName, setGuestName] = useState('')
-  const [guestPhone, setGuestPhone] = useState('')
-  const [guestEmail, setGuestEmail] = useState('')
-  const [notes, setNotes] = useState('')
-  const [isVip, setIsVip] = useState(false)
+  const [guestName, setGuestName] = useState(pStr(prefill ?? null, 'guestName', 'name') ?? '')
+  const [guestPhone, setGuestPhone] = useState(pStr(prefill ?? null, 'guestPhone', 'phone') ?? '')
+  const [guestEmail, setGuestEmail] = useState(pStr(prefill ?? null, 'guestEmail', 'email') ?? '')
+  const [notes, setNotes] = useState(pStr(prefill ?? null, 'notes') ?? '')
+  const [isVip, setIsVip] = useState(pBool(prefill ?? null, 'isVip', 'vip') ?? false)
   const [err, setErr] = useState<string | null>(null)
   // ONL-R2-04: the server said no table fits (409 SLOT_FULL) and a manager
   // may book past capacity — ask for the reason (and a manager PIN when the

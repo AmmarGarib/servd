@@ -44,6 +44,7 @@ import { registerConnectorPlugins } from './modules/connectors/index.js'
 import { maskSmsTokenInUrl } from './modules/connectors/webhookRoutes.js'
 import { registerPreBillPlugins } from './modules/prebills/index.js'
 import { registerApprovalsPlugin } from './modules/approvals/index.js'
+import { registerTrashPlugin } from './modules/trash/index.js'
 import { CONNECTOR_ADMINS } from './lib/connectorRoles.js'
 import { startWebhookDeliveryWorker } from './workers/webhookDelivery.js'
 import { startScheduledReportsWorker, carryOverDigestRecipient } from './workers/scheduledReports.js'
@@ -399,6 +400,10 @@ async function build() {
       // (modules/approvals/README.md); approving goes through each module's
       // existing route.
       await registerApprovalsPlugin(api)
+      // The Trash bin (owner, 2026-10-15; modules/trash/README.md): open to
+      // every login, each type gated by its own module + roles; only the CEO
+      // empties it.
+      await registerTrashPlugin(api)
       await api.register(inventoryRoutes, { prefix: '/inventory' })
       await api.register(tableRoutes, { prefix: '/tables' })
       // Reports → Food cost variance (wave B; THE food-cost report — GET

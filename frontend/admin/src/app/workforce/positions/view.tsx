@@ -21,7 +21,7 @@
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { fmtPkrWhole } from '../../../lib/money'
 import { usePermissions } from '../../../hooks/useCan'
@@ -752,7 +752,7 @@ function PositionEditor({
   })
 
   const archive = useMutation({
-    mutationFn: () => api.delete(`/positions/${position.id}`),
+    mutationFn: () => deleteWithUndo(`/positions/${position.id}`, { trashType: 'position', id: position.id, onRestored: () => onChange() }),
     onSuccess: () => { onChange(); onClose() },
   })
 
@@ -995,7 +995,7 @@ function ContributionModal({
 
   const confirm = useConfirm()
   const archive = useMutation({
-    mutationFn: () => api.delete(`/positions/contributions/${existing!.id}`),
+    mutationFn: () => deleteWithUndo(`/positions/contributions/${existing!.id}`, { trashType: 'tenant_contribution', id: existing!.id, onRestored: () => onSaved() }),
     onSuccess: onSaved,
   })
 

@@ -9,7 +9,7 @@
 // R2. If the PUT fails the pre-created row is removed so no dead tile appears.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError } from '../../lib/api'
+import { api, ApiError, deleteWithUndo } from '../../lib/api'
 import { fetchHealth } from '../../lib/connectorsApi'
 import { contentApi, STOREFRONT_BRANDS_KEY } from '../../lib/content'
 import { cleanFontFamily } from './kitCatalog'
@@ -212,7 +212,7 @@ export function LibraryPanel({
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['media'] })
 
   const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`/media/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/media/${id}`, { trashType: 'media_asset', id, onRestored: invalidate }),
     onSuccess: invalidate,
     onError: (e: Error) => alert(e.message || 'Could not delete'),
   })

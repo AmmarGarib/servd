@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { card, inp, btn, btnGhost, day, human } from '../../../lib/hr'
 import { HrShell, Modal, useHrLookups } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
@@ -42,7 +42,7 @@ export default function HrDocumentsPage() {
   const shown = useMemo(() => docs.filter((d) => (!type || d.docType === type) && (!unverified || !d.verifiedAt)), [docs, type, unverified])
   const refresh = () => { setActErr(''); void qc.invalidateQueries({ queryKey: ['hr-documents'] }) }
   const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: refresh, onError: (e: Error) => setActErr(`Could not verify: ${e.message}`) })
-  const del = useMutation({ mutationFn: (id: string) => api.delete(`/hr/documents/${id}`), onSuccess: refresh, onError: (e: Error) => setActErr(`Could not delete: ${e.message}`) })
+  const del = useMutation({ mutationFn: (id: string) => deleteWithUndo(`/hr/documents/${id}`, { trashType: 'hr_document', id, onRestored: refresh }), onSuccess: refresh, onError: (e: Error) => setActErr(`Could not delete: ${e.message}`) })
   const now = Date.now()
 
   return (

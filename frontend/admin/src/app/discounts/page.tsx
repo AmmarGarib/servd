@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { api, deleteWithUndo } from '../../lib/api'
 import Link from 'next/link'
 import { Select } from '@/components/ui/Select'
 
@@ -79,7 +79,7 @@ export default function DiscountsPage() {
   })
 
   const del = useMutation({
-    mutationFn: (id: string) => api.delete(`/discounts/sections/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/discounts/sections/${id}`, { trashType: 'discount', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['discounts'] }) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['discounts'] }),
   })
 

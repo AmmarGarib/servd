@@ -1277,6 +1277,29 @@ till door `/pos/on-account/*`. Docs in the files' headers
   (on-account tender) and H14 (on-account tax invoice) — built on the defaults
   above.
 
+### Trash bin (owner, 2026-10-15)
+
+"Park delete / void / cancelled entries and recover them until deleted from
+the Trash." `/trash` (admin page + API `/api/v1/trash`, contract
+`backend/src/modules/trash/README.md`). Module id `trash` (CEO workspace,
+grants nothing — like `approvals`); every login reaches the page and sees
+only the types its modules + roles allow.
+
+- **Every delete route that parks something calls `moveToTrash`
+  (`lib/trash.ts`) in the SAME transaction as its delete** and still answers
+  204. A new delete route adds a provider (`modules/trash/providers/*`) and a
+  two-company test in the same change. Never a second trash table.
+- Masters are **restored** (soft: clear `deletedAt`; hard-deleted: from the
+  entry's snapshot with the same ids; status flips: `meta.previous`).
+  Voided / cancelled **transactions are never restored — "Recover as copy"**
+  makes a new draft through the module's own create route or form, in the
+  ACTIVE company; the original keeps its status.
+- **Only the CEO empties** ("Delete forever", reason ≥10). Money, tax, stock
+  and anything the books point at is never erasable (409 `NOT_ERASABLE`) —
+  the CEO may archive it from view. Nothing leaves automatically.
+- Promo codes and allocation rules are soft-deleted (partial unique over live
+  rows); every promo redemption read filters `deletedAt: null`.
+
 ### Parked (owner, 2026-10-13)
 
 Delivery and customers, and corporate clients on account, were PARKED on

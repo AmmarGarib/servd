@@ -46,6 +46,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Approvals', href: '/ceo/approvals', icon: '✓', hint: 'Everything waiting on you, from every module' },
     { label: 'Hand-over', href: '/ceo/approvals/hand-over', sub: true, hint: 'Who approves what on your behalf' },
   ],
+  // The Trash (owner, 2026-10-15). The module only puts the CEO-section link
+  // in the sidebar; the page itself is also a personal page (below), and the
+  // API lists per type from the caller's own modules and role.
+  trash:          [{ label: 'Trash', href: '/trash', icon: '▤', hint: 'Restore deleted items, recover voided and cancelled ones' }],
   business_info:  [
     { label: 'Locations', href: '/configuration/locations', icon: '📍', hint: 'Kitchen address and map pin' },
     { label: 'Delivery zones', href: '/configuration/delivery-zones', sub: true, hint: 'Beyond the last zone, delivery is refused' },
@@ -278,6 +282,9 @@ export const PERSONAL_PAGES: ModulePage[] = [
   // The one approvals inbox (decision D3) — the same page the CEO section
   // links; the API lists only what this login can act on.
   { label: 'Approvals', href: '/ceo/approvals', hint: 'Everything waiting on you' },
+  // The Trash: openable by every login without the `trash` module because
+  // GET /trash scopes it per type (module + role) and per company.
+  { label: 'Trash', href: '/trash', hint: 'Restore deleted items, recover voided ones' },
   { label: 'My HR', href: '/hr/me', hint: 'Leave, payslips, requests' },
   // Cash requests (owner, 2026-10-13): anyone who needs cash raises one here
   // and uploads the receipts afterwards; the box's custodian (the cashier)

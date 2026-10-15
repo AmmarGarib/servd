@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { card, inp, btn, btnGhost } from '../../../lib/hr'
 import { HrShell, useHrLookups, useHrSections } from '../../../components/hr/HrShell'
 import { LETTERS_FOR, openPrintable } from '../../../components/hr/RecordDetail'
@@ -67,7 +67,7 @@ function Editor({ letter }: { letter: Letter }) {
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ['hr-letters'] })
   const save = useMutation({ mutationFn: () => api.put(`/hr/letters/${letter.key}`, { title, body }), onSuccess: () => { setMsg('Saved.'); refresh() } })
-  const reset = useMutation({ mutationFn: () => api.delete(`/hr/letters/${letter.key}`), onSuccess: () => { setMsg('Back to the built-in default.'); refresh() } })
+  const reset = useMutation({ mutationFn: () => deleteWithUndo(`/hr/letters/${letter.key}`, { trashType: 'hr_letter', id: letter.key, label: 'Letter override', onRestored: refresh }), onSuccess: () => { setMsg('Back to the built-in default.'); refresh() } })
   const print = useMutation({
     mutationFn: () => api.post<{ title: string; html: string; missing: string[] }>('/hr/letters/render', { key: letter.key, employeeId }),
     onSuccess: (r) => {

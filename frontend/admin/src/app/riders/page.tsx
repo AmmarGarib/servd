@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api, ApiError } from '../../lib/api'
+import { api, ApiError, deleteWithUndo } from '../../lib/api'
 import { formatBrandName } from '../../lib/brandName'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
@@ -382,7 +382,7 @@ export default function RidersPage() {
   }
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/riders/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/riders/${id}`, { trashType: 'rider', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['riders'] }) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['riders'] }),
   })
 

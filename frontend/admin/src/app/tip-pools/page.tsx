@@ -3,7 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import Link from 'next/link'
-import { api, ApiError } from '../../lib/api'
+import { api, ApiError, deleteWithUndo } from '../../lib/api'
 import { fmtPkr, fmtPkrShort } from '../../lib/money'
 import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
@@ -100,7 +100,7 @@ export default function TipPoolsPage() {
   // A draft can be thrown away and computed again (a tip is pooled once, so a
   // second pool over the same hours is refused while the draft exists).
   const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`/tip-pools/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/tip-pools/${id}`, { trashType: 'tip_pool', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['tip-pools'] }) }),
     onSuccess: () => { setOpenId(null); void qc.invalidateQueries({ queryKey: ['tip-pools'] }) },
   })
   // Add someone to the draft — staff with no known role, or anyone missed.

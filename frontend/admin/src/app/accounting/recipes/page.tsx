@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import Link from 'next/link'
 import { RecipeStepsEditor } from '../../../components/recipe/RecipeStepsEditor'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
@@ -233,7 +233,7 @@ export default function RecipesPage() {
     onError:   (e: Error) => setFormErr(e.message),
   })
   const deleteMut = useMutation({
-    mutationFn: (id: string) => api.delete(`/recipes/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/recipes/${id}`, { trashType: 'recipe', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['recipes'] }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['recipes'] }),
   })
   // Submit a testing (iteration) recipe for CEO sign-off — moves it to

@@ -16,6 +16,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { formatPkr } from './amountInWords'
 import { CV_ROOT, errorWords, fmtDate, stageOf, useDashboard, useVouchers, type Dashboard, type ListView } from './data'
 import { VoucherForm } from './VoucherForm'
+import { useTrashPrefill } from '../../../lib/trash'
+import { unwrapPrefill, pStr } from '../../../lib/trashPrefill'
 import { ErrorBanner, StatusBadge } from './ui'
 
 export default function CashVouchersPage() {
@@ -55,6 +57,12 @@ function CashVouchers() {
   const initial = params?.get('view') ?? ''
   const [view, setView] = useState<ListView>(VIEW_IDS.has(initial) ? (initial as ListView) : 'mine')
   const [mode, setMode] = useState<'request' | 'expense' | null>(null)
+  // "Recover as copy" from the Trash: a rejected / cancelled voucher opens the
+  // new-voucher form pre-filled. It is a normal submission (finance, then CEO).
+  const trashPrefill = unwrapPrefill(useTrashPrefill('cash_voucher'))
+  useEffect(() => {
+    if (trashPrefill) setMode(pStr(trashPrefill, 'kind') === 'expense' ? 'expense' : 'request')
+  }, [trashPrefill])
   const { data, isLoading, error } = useVouchers(view)
   const dash = useDashboard()
   const keeper = !!data?.keeper
@@ -202,7 +210,7 @@ function CashVouchers() {
       </div>
 
       {mode && (
-        <VoucherForm mode={mode} isKeeper={keeper} onClose={() => setMode(null)}
+        <VoucherForm mode={mode} isKeeper={keeper} prefill={trashPrefill} onClose={() => setMode(null)}
           onSaved={(v) => {
             setMode(null)
             void qc.invalidateQueries({ queryKey: [CV_ROOT] })

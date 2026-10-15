@@ -17,7 +17,7 @@ import { useState, useMemo, Suspense, useEffect } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { api, deleteWithUndo } from '../../lib/api'
 import { roleLabel, type AppRole } from '../../lib/appRoles'
 import { usePermissions } from '../../hooks/useCan'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
@@ -768,7 +768,7 @@ function InlineEditor({
   // login (PHONE_IN_USE), or a login shared with another company (403).
   const showErr = (e: unknown) => setErr(e instanceof Error ? e.message : 'That did not work')
   const remove = useMutation({
-    mutationFn: () => api.delete(`/auth/users/${user.id}`),
+    mutationFn: () => deleteWithUndo(`/auth/users/${user.id}`, { trashType: 'login', id: user.id, label: user.name, onRestored: () => onChange() }),
     onSuccess:  () => { onChange(); onClose() },
     onError:    showErr,
   })

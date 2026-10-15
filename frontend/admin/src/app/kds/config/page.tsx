@@ -1,7 +1,7 @@
 'use client'
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import Link from 'next/link'
 import { Select } from '@/components/ui/Select'
 
@@ -105,7 +105,7 @@ function StationsTab() {
   })
 
   const deleteStation = useMutation({
-    mutationFn: (id: string) => api.delete(`/stations/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/stations/${id}`, { trashType: 'station', id, onRestored: () => { void qc.invalidateQueries({ queryKey: ['kds-stations'] }); void qc.invalidateQueries({ queryKey: ['nav-stations'] }) } }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['kds-stations'] })
       void qc.invalidateQueries({ queryKey: ['nav-stations'] })

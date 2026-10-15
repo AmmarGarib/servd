@@ -34,6 +34,8 @@ import { FiscalSubmissions } from '../../../components/connectors/FiscalSubmissi
 import { TerminalCharges } from '../../../components/connectors/TerminalCharges'
 import { RaastSetup } from '../../../components/connectors/RaastSetup'
 import { ChangeRequests } from './ChangeRequests'
+import { useTrashPrefill } from '../../../lib/trash'
+import { unwrapPrefill } from '../../../lib/trashPrefill'
 
 type Tab = 'status' | 'fiscal' | 'posids' | 'terminal' | 'raast' | 'submissions' | 'charges' | 'changes'
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -65,6 +67,10 @@ function PosConnector() {
   const { data, error, isLoading } = useConnectorsOverview({ refetchMs: 10_000 })
 
   const [tab, setTab] = useState<Tab>('status')
+  // "Recover as copy" from the Trash (a rejected / withdrawn change request):
+  // open Change requests with the form filled. Secrets are typed again.
+  const changePrefill = unwrapPrefill(useTrashPrefill('pos_connector_change'))
+  useEffect(() => { if (changePrefill) setTab('changes') }, [changePrefill])
   const [docStatus, setDocStatus] = useState<FiscalDocStatus | ''>('')
   // Bumped on every counter click so the same counter re-applies its filter.
   const [docOpen, setDocOpen] = useState<{ status: FiscalDocStatus | ''; day: string; n: number }>({ status: '', day: '', n: 0 })
@@ -167,7 +173,7 @@ function PosConnector() {
             {tab === 'raast' && <RaastSetup companyName={companyName} canEdit={canEdit} isCeo={isCeo} activeTenantId={company?.id ?? null} />}
             {tab === 'submissions' && <FiscalSubmissions key={docOpen.n} data={data} initialStatus={docStatus} initialDay={docOpen.day} canConfigure={canEdit} portfolio={portfolio} />}
             {tab === 'charges' && <TerminalCharges data={data} canConfigure={canEdit} portfolio={portfolio} />}
-            {tab === 'changes' && <ChangeRequests data={data} companyName={companyName} canSend={canEdit} isCeo={isCeo} activeTenantId={company?.id ?? null} />}
+            {tab === 'changes' && <ChangeRequests prefill={changePrefill} data={data} companyName={companyName} canSend={canEdit} isCeo={isCeo} activeTenantId={company?.id ?? null} />}
           </>
         )}
       </main>

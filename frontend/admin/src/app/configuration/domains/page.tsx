@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
 
@@ -154,7 +154,7 @@ function DomainCard({ domain, concepts, expanded, onToggle, onChange }: {
     onSuccess: () => onChange(),
   })
   const remove = useMutation({
-    mutationFn: () => api.delete(`/domains/${domain.id}`),
+    mutationFn: () => deleteWithUndo(`/domains/${domain.id}`, { trashType: 'domain', id: domain.id, onRestored: () => onChange() }),
     onSuccess: () => onChange(),
   })
 

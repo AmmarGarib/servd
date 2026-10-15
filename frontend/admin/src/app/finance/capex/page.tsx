@@ -9,7 +9,7 @@ import { Suspense, useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { PositionsView } from '../../workforce/positions/view'
 import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
@@ -22,6 +22,9 @@ import {
   TREATMENT_OPTIONS, TREATMENT_LABEL, WHT_SECTION_LABEL, AUTHORITY_LABEL,
 } from '../../../components/fixedAssets/CapexForms'
 import { Select } from '@/components/ui/Select'
+import { toast } from 'sonner'
+import { useTrashPrefill } from '../../../lib/trash'
+import { unwrapPrefill, pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
 import { Modal as SharedModal } from '../../../components/ui/Modal'
 import { NumberField } from '../../../components/ui/NumberField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
@@ -105,6 +108,20 @@ function CapexTracker() {
   }, [projects, selectedId, search])
 
   const project = projects.find((p) => p.id === selectedId) ?? null
+
+  // "Recover as copy" from the Trash (a deleted instalment, type
+  // `capex_payment`): select its project, open its line and the "add
+  // instalment" form pre-filled (label, amount, due date). The paid state, the
+  // WHT snapshot and the posting are never copied. Only while the line exists.
+  const trashPrefill = unwrapPrefill(useTrashPrefill('capex_payment'))
+  const [instalmentFill, setInstalmentFill] = useState<Prefill | null>(null)
+  useEffect(() => {
+    if (!trashPrefill || projects.length === 0) return
+    const lineId = pStr(trashPrefill, 'lineId', 'capexLineId')
+    const owner = projects.find((p) => p.id === pStr(trashPrefill, 'projectId')) ?? projects.find((p) => p.lines.some((l) => l.id === lineId))
+    if (!owner || !owner.lines.some((l) => l.id === lineId)) { toast.error('That instalment\'s line no longer exists, so it cannot be recreated.'); return }
+    setSelectedId(owner.id); setInstalmentFill(trashPrefill)
+  }, [trashPrefill, projects])
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -223,7 +240,7 @@ function CapexTracker() {
           {selectedId === 'workforce' ? (
             <PositionsView embedded />
           ) : project ? (
-            <ProjectDetail project={project} qc={qc} />
+            <ProjectDetail project={project} qc={qc} instalmentFill={instalmentFill} onInstalmentFillUsed={() => setInstalmentFill(null)} />
           ) : (
             <div className="rounded-2xl p-10 text-center"
               style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
@@ -254,12 +271,19 @@ function CapexTracker() {
 
 // ─── Project detail ───────────────────────────────────────────────────────
 
-function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeof useQueryClient> }) {
+function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { project: Project; qc: ReturnType<typeof useQueryClient>; instalmentFill?: Prefill | null; onInstalmentFillUsed?: () => void }) {
   const [editingProject, setEditingProject] = useState(false)
+  const [lineFill, setLineFill] = useState<Prefill | null>(null)
   const [addingLineScope, setAddingLineScope] = useState<string | null>(null)
   const [editingLine, setEditingLine] = useState<Line | null>(null)
   const [tab, setTab] = useState<'capex' | 'opex'>('capex')
   const [editingScopes, setEditingScopes] = useState(false)
+  useEffect(() => {
+    if (!instalmentFill) return
+    const line = project.lines.find((l) => l.id === pStr(instalmentFill, 'lineId', 'capexLineId'))
+    if (!line) return
+    setEditingLine(line); setLineFill(instalmentFill); onInstalmentFillUsed?.()
+  }, [instalmentFill, project, onInstalmentFillUsed])
   const overBudget = project.rollups.varianceVsEnvelopeCents > 0
 
   // Use the project's custom scope config if it has one, else the platform
@@ -360,8 +384,8 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
         onClose={() => setAddingLineScope(null)}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setAddingLineScope(null) }} />}
 
-      {editingLine && <LineModal project={project} projectId={project.id} tenantId={project.tenantId} scope={editingLine.scope} line={editingLine}
-        onClose={() => setEditingLine(null)}
+      {editingLine && <LineModal project={project} projectId={project.id} tenantId={project.tenantId} scope={editingLine.scope} line={editingLine} instalmentFill={lineFill}
+        onClose={() => { setEditingLine(null); setLineFill(null) }}
         onSaved={() => { qc.invalidateQueries({ queryKey: ['capex-projects'] }); setEditingLine(null) }} />}
     </div>
   )
@@ -626,7 +650,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
   })
 
   const del = useMutation({
-    mutationFn: () => api.delete(`/opex/lines/${line!.id}`),
+    mutationFn: () => deleteWithUndo(`/opex/lines/${line!.id}`, { trashType: 'opex_line', id: line!.id, onRestored: () => onSaved() }),
     onSuccess: () => onSaved(),
   })
 
@@ -1094,7 +1118,7 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
     onSuccess: () => onSaved(),
   })
   const del = useMutation({
-    mutationFn: () => api.delete(`/finance/capex/${project.id}`),
+    mutationFn: () => deleteWithUndo(`/finance/capex/${project.id}`, { trashType: 'capex_project', id: project.id, onRestored: () => onSaved() }),
     onSuccess: () => onSaved(),
   })
 
@@ -1174,8 +1198,8 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   </ModalShell>
 }
 
-function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved }: {
-  project: Project; projectId: string; tenantId: string | null; scope: string; line?: Line; onClose: () => void; onSaved: () => void
+function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved, instalmentFill }: {
+  project: Project; projectId: string; tenantId: string | null; scope: string; line?: Line; onClose: () => void; onSaved: () => void; instalmentFill?: Prefill | null
 }) {
   const qc = useQueryClient()
   const lookups = useCapexLookups()
@@ -1243,7 +1267,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
   })
 
   const del = useMutation({
-    mutationFn: () => api.delete(`/finance/capex/lines/${line!.id}`),
+    mutationFn: () => deleteWithUndo(`/finance/capex/lines/${line!.id}`, { trashType: 'capex_line', id: line!.id, onRestored: () => onSaved() }),
     onSuccess: () => onSaved(),
   })
 
@@ -1394,7 +1418,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
     {line && <QuotePanel line={line} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {/* Payment schedule */}
-    {line && <PaymentPanel project={project} line={line} tenantId={tenantId} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
+    {line && <PaymentPanel project={project} line={line} tenantId={tenantId} fill={instalmentFill} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {save.error && <ErrorBanner error={save.error} />}
     {del.error && <ErrorBanner error={del.error} />}
@@ -1443,7 +1467,7 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
     onSuccess: () => onChange(),
   })
   const removeQuote = useMutation({
-    mutationFn: (qid: string) => api.delete(`/finance/capex/quotes/${qid}`),
+    mutationFn: (qid: string) => deleteWithUndo(`/finance/capex/quotes/${qid}`, { trashType: 'capex_quote', id: qid, onRestored: () => onChange() }),
     onSuccess: () => onChange(),
   })
 
@@ -1506,12 +1530,14 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
 // books at once: income tax is withheld at the supplier's filer rate (gross,
 // withheld and net are shown), a rent advance must say which months it covers,
 // and a refundable deposit can be returned or partly kept.
-function PaymentPanel({ project, line, tenantId, onChange }: { project: Project; line: Line; tenantId: string | null; onChange: () => void }) {
+function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Project; line: Line; tenantId: string | null; onChange: () => void; fill?: Prefill | null }) {
   const caps = useFaCapabilities()
-  const [adding, setAdding] = useState(false)
-  const [label, setLabel] = useState<'deposit' | 'midpoint' | 'balance' | 'extra'>('deposit')
-  const [amountCents, setAmountCents] = useState(0)
-  const [dueDate, setDueDate] = useState('')
+  const [adding, setAdding] = useState(!!fill)
+  const fillLabel = pStr(fill ?? null, 'label')
+  const [label, setLabel] = useState<'deposit' | 'midpoint' | 'balance' | 'extra'>(
+    fillLabel === 'deposit' || fillLabel === 'midpoint' || fillLabel === 'balance' || fillLabel === 'extra' ? fillLabel : 'deposit')
+  const [amountCents, setAmountCents] = useState(pNum(fill ?? null, 'amountCents') ?? 0)
+  const [dueDate, setDueDate] = useState(pStr(fill ?? null, 'dueDate')?.slice(0, 10) ?? '')
   const [bankAccountId, setBankAccountId] = useState('')
   const [paying, setPaying] = useState<Payment | null>(null)
   const [returning, setReturning] = useState<Payment | null>(null)
@@ -1536,7 +1562,7 @@ function PaymentPanel({ project, line, tenantId, onChange }: { project: Project;
     return true
   })
   const remove = useMutation({
-    mutationFn: (pid: string) => api.delete(`/finance/capex/payments/${pid}`),
+    mutationFn: (pid: string) => deleteWithUndo(`/finance/capex/payments/${pid}`, { trashType: 'capex_payment', id: pid, restorable: false }),
     onSuccess: () => onChange(),
   })
 

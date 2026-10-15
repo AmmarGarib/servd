@@ -26,6 +26,8 @@
 // wrote it.
 
 import { useEffect, useMemo, useState } from 'react'
+import { useTrashPrefill } from '../../../lib/trash'
+import { unwrapPrefill, pStr, pNum } from '../../../lib/trashPrefill'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
@@ -63,6 +65,8 @@ interface Pair {
 }
 
 type TransferKind = 'charge' | 'settlement' | 'netting'
+/** Opens the transfer form: from a pair's balance (a settlement) or recovered from the Trash (any kind). */
+interface TransferPrefill { debtor: string; creditor: string; cents: number; kind?: TransferKind; memo?: string; debtorCode?: string; creditorCode?: string }
 type TransferStatus = 'submitted' | 'posted' | 'rejected' | 'reversed'
 
 interface Transfer {
@@ -227,7 +231,23 @@ function Notice({ msg, onClose }: { msg: Msg | null; onClose: () => void }) {
 export default function IntercompanyPage() {
   const [tab, setTab] = useState<Tab>('balances')
   const [msg, setMsg] = useState<Msg | null>(null)
-  const [settlePrefill, setSettlePrefill] = useState<{ debtor: string; creditor: string; cents: number } | null>(null)
+  const [settlePrefill, setSettlePrefill] = useState<TransferPrefill | null>(null)
+
+  // "Recover as copy" from the Trash (a rejected / reversed manual transfer):
+  // open the Transfers tab with the form filled. A normal submission; the
+  // server re-checks the pair, the accounts and the approval.
+  const trashPrefill = unwrapPrefill(useTrashPrefill('intercompany_transfer'))
+  useEffect(() => {
+    if (!trashPrefill) return
+    const k = pStr(trashPrefill, 'kind')
+    setSettlePrefill({
+      debtor: pStr(trashPrefill, 'debtorTenantId', 'debtor') ?? '', creditor: pStr(trashPrefill, 'creditorTenantId', 'creditor') ?? '',
+      cents: pNum(trashPrefill, 'amountCents', 'cents') ?? 0,
+      kind: k === 'charge' || k === 'settlement' || k === 'netting' ? k : undefined,
+      memo: pStr(trashPrefill, 'memo'), debtorCode: pStr(trashPrefill, 'debtorAccountCode'), creditorCode: pStr(trashPrefill, 'creditorAccountCode'),
+    })
+    setTab('transfers')
+  }, [trashPrefill])
 
   const { headOffices, reach, delegations } = useHeadOfficeMe()
   const hoRuns = useQuery({
@@ -325,7 +345,7 @@ export default function IntercompanyPage() {
 
 // ─── Balances ────────────────────────────────────────────────────────────────
 
-function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: (p: { debtor: string; creditor: string; cents: number }) => void }) {
+function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: (p: TransferPrefill) => void }) {
   const [asOf, setAsOf] = useState('')
   const q = useQuery({
     queryKey: ['ic', 'balances', asOf],
@@ -414,7 +434,7 @@ function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: 
 
 function TransfersTab({ companies, prefill, clearPrefill, setMsg }: {
   companies: Companies | null
-  prefill: { debtor: string; creditor: string; cents: number } | null
+  prefill: TransferPrefill | null
   clearPrefill: () => void
   setMsg: (m: Msg | null) => void
 }) {
@@ -576,7 +596,7 @@ function PairBankSelect({ id, label, banks, value, onChange }: {
 
 function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
   companies: Companies
-  prefill: { debtor: string; creditor: string; cents: number } | null
+  prefill: TransferPrefill | null
   onDone: (text: string, uses?: PaymentRefUse[]) => void
   onCancel: () => void
   onError: (text: string) => void
@@ -596,14 +616,15 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
   }, [own, companies.headOfficePairs])
   const list = useMemo(() => [...own, ...extra], [own, extra])
   const first = companies.activeTenantId ?? list[0]?.id ?? ''
-  const [kind, setKind] = useState<TransferKind>(prefill ? 'settlement' : 'charge')
-  const [debtor, setDebtor] = useState(prefill?.debtor ?? first)
-  const [creditor, setCreditor] = useState(prefill?.creditor ?? (list.find((c) => c.id !== first)?.id ?? ''))
+  const [kind, setKind] = useState<TransferKind>(prefill ? (prefill.kind ?? 'settlement') : 'charge')
+  const known = (id?: string) => !!id && list.some((c) => c.id === id)
+  const [debtor, setDebtor] = useState(known(prefill?.debtor) ? prefill!.debtor : first)
+  const [creditor, setCreditor] = useState(known(prefill?.creditor) ? prefill!.creditor : (list.find((c) => c.id !== first)?.id ?? ''))
   const [amount, setAmount] = useState(prefill?.cents ?? 0)
   const [entryDate, setEntryDate] = useState(todayPktIso())
-  const [memo, setMemo] = useState('')
-  const [debtorCode, setDebtorCode] = useState('')
-  const [creditorCode, setCreditorCode] = useState('6990')
+  const [memo, setMemo] = useState(prefill?.memo ?? '')
+  const [debtorCode, setDebtorCode] = useState(prefill?.debtorCode ?? '')
+  const [creditorCode, setCreditorCode] = useState(prefill?.creditorCode ?? '6990')
   const [method, setMethod] = useState<SettlementMethod>('bank_transfer')
   const [debtorBank, setDebtorBank] = useState('')
   const [creditorBank, setCreditorBank] = useState('')

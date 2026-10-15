@@ -6,7 +6,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigat
 import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../../../lib/api'
+import { api, deleteWithUndo } from '../../../../lib/api'
 import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrRecord, type HrLogin } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
@@ -189,7 +189,7 @@ function DocumentsTab({ p }: { p: Profile }) {
     onError: (e: Error) => setErr(e.message),
   })
   const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: () => void qc.invalidateQueries(), onError: (e: Error) => setErr(`Could not verify: ${e.message}`) })
-  const del = useMutation({ mutationFn: (id: string) => api.delete(`/hr/documents/${id}`), onSuccess: () => void qc.invalidateQueries(), onError: (e: Error) => setErr(`Could not delete: ${e.message}`) })
+  const del = useMutation({ mutationFn: (id: string) => deleteWithUndo(`/hr/documents/${id}`, { trashType: 'hr_document', id, onRestored: () => void qc.invalidateQueries() }), onSuccess: () => void qc.invalidateQueries(), onError: (e: Error) => setErr(`Could not delete: ${e.message}`) })
   const soon = (d: string | null) => d && new Date(d).getTime() - Date.now() < 30 * 86_400_000
   const submit = (ev: React.FormEvent) => {
     ev.preventDefault()

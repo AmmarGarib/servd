@@ -46,6 +46,9 @@
 // money OUT and keeps its own methods.
 
 import { Suspense, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import { useTrashPrefill } from '../../../lib/trash'
+import { unwrapPrefill, pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -223,12 +226,41 @@ function Receivables() {
   const writeOffs = writeOffData?.items ?? []
   const [raising, setRaising] = useState(false)
   const [dialog, setDialog] = useState<Dialog | null>(null)
+
+  // "Recover as copy" from the Trash: an invoice opens the raise form, a
+  // payment / write-off opens its dialog on the invoice it belonged to. All
+  // are normal submissions: the server re-checks, posts and approves as usual.
+  const invoicePrefill = unwrapPrefill(useTrashPrefill('receivable_invoice'))
+  const paymentPrefill = unwrapPrefill(useTrashPrefill('receivable_payment'))
+  const writeOffPrefill = unwrapPrefill(useTrashPrefill('receivable_writeoff'))
+  const [formPrefill, setFormPrefill] = useState<Prefill | null>(null)
+  const [pendingInvoice, setPendingInvoice] = useState<{ p: Prefill; kind: 'pay' | 'writeoff' } | null>(null)
+  useEffect(() => {
+    if (invoicePrefill) {
+      if (pStr(invoicePrefill, 'kind') === 'credit_note') {
+        toast.info('A credit note is raised from its invoice. Open the invoice and use Credit note.')
+        return
+      }
+      setFormPrefill(invoicePrefill); setRaising(true)
+    } else if (paymentPrefill) { setFilter(''); setPendingInvoice({ p: paymentPrefill, kind: 'pay' }) }
+    else if (writeOffPrefill) { setFilter(''); setPendingInvoice({ p: writeOffPrefill, kind: 'writeoff' }) }
+  }, [invoicePrefill, paymentPrefill, writeOffPrefill])
+  useEffect(() => {
+    if (!pendingInvoice || !data) return
+    const inv = data.invoices.find((i) => i.id === pStr(pendingInvoice.p, 'invoiceId'))
+    setPendingInvoice(null)
+    if (!inv) { toast.error('That invoice is not in view. Open it from the list and record it there.'); return }
+    setOpen(inv.id); setFocusId(inv.id)
+    setDialog({ kind: pendingInvoice.kind, inv }); setDialogPrefill(pendingInvoice.p)
+  }, [pendingInvoice, data])
+  const [dialogPrefill, setDialogPrefill] = useState<Prefill | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const close = () => setDialog(null)
+  const close = () => { setDialog(null); setDialogPrefill(null) }
   const finished = (text: string) => {
     setNotice(text)
     setDialog(null)
+    setDialogPrefill(null)
     void qc.invalidateQueries({ queryKey: ['receivables'] })
   }
 
@@ -327,8 +359,8 @@ function Receivables() {
         )}
       </div>
 
-      {raising && <Raise concepts={concepts} onClose={() => setRaising(false)} />}
-      {dialog?.kind === 'pay' && <Pay inv={dialog.inv} onClose={close} />}
+      {raising && <Raise concepts={concepts} prefill={formPrefill} onClose={() => { setRaising(false); setFormPrefill(null) }} />}
+      {dialog?.kind === 'pay' && <Pay inv={dialog.inv} prefill={dialogPrefill} onClose={close} />}
       {dialog?.kind === 'wht' && <Withhold inv={dialog.inv} onClose={close} />}
       {dialog?.kind === 'credit' && <CreditNote inv={dialog.inv} onClose={close} />}
       {dialog?.kind === 'refund' && <Refund inv={dialog.inv} onClose={close} />}
@@ -337,6 +369,7 @@ function Receivables() {
       {dialog?.kind === 'writeoff' && (
         <WriteOffDialog
           invoice={{ id: dialog.inv.id, tenantId: dialog.inv.tenantId, number: dialog.inv.number, customerName: dialog.inv.customerName, totalCents: dialog.inv.totalCents, balanceCents: dialog.inv.balanceCents, kind: dialog.inv.kind, customerAccountId: dialog.inv.customerAccountId ?? null }}
+          prefill={dialogPrefill ? { amountCents: pNum(dialogPrefill, 'amountCents'), reason: pStr(dialogPrefill, 'reason') } : null}
           onClose={close}
           onDone={(w) => finished(w.status === 'approved'
             ? `Written off ${fmtPkrWhole(w.amountCents)} on ${dialog.inv.number} as a bad debt — it is booked and out of the aging.`
@@ -516,12 +549,18 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
   )
 }
 
-function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void }) {
+function Raise({ concepts, onClose, prefill }: { concepts: Concept[]; onClose: () => void; prefill?: Prefill | null }) {
   const done = useDone(onClose)
-  const [f, setF] = useState({
-    customerName: '', customerEmail: '', customerPhone: '', customerNtn: '', conceptId: '', customerAccountId: '',
-    issueDate: today(), dueDate: plusDays(today(), 30), description: '', amount: '', tax: '0',
-  })
+  // Recovered invoice: customer, brand, description and amounts. The number and
+  // the dates are new (issued today, due in 30 days) and nothing is posted yet.
+  const [f, setF] = useState(() => ({
+    customerName: pStr(prefill ?? null, 'customerName') ?? '', customerEmail: pStr(prefill ?? null, 'customerEmail') ?? '',
+    customerPhone: pStr(prefill ?? null, 'customerPhone') ?? '', customerNtn: pStr(prefill ?? null, 'customerNtn') ?? '',
+    conceptId: pStr(prefill ?? null, 'conceptId') ?? '', customerAccountId: pStr(prefill ?? null, 'customerAccountId') ?? '',
+    issueDate: today(), dueDate: plusDays(today(), 30), description: pStr(prefill ?? null, 'description') ?? '',
+    amount: pNum(prefill ?? null, 'amountCents') != null ? rupees(pNum(prefill ?? null, 'amountCents') ?? 0) : '',
+    tax: pNum(prefill ?? null, 'taxCents') != null ? rupees(pNum(prefill ?? null, 'taxCents') ?? 0) : '0',
+  }))
   const [err, setErr] = useState('')
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF((p) => ({ ...p, [k]: e.target.value }))
   // The brand's own rates (cash / card) and where its tax is booked — never
@@ -603,12 +642,15 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
   )
 }
 
-function Pay({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
+function Pay({ inv, onClose, prefill }: { inv: Invoice; onClose: () => void; prefill?: Prefill | null }) {
   const done = useDone(onClose)
-  const [amount, setAmount] = useState(rupees(inv.balanceCents))
+  // Recovered payment: amount (capped at the balance), method and bank account;
+  // the reference # is typed again (it is required, and must be a real one).
+  const prefAmount = pNum(prefill ?? null, 'amountCents')
+  const [amount, setAmount] = useState(rupees(prefAmount != null && prefAmount > 0 ? Math.min(prefAmount, inv.balanceCents) : inv.balanceCents))
   const [date, setDate] = useState(today())
-  const [method, setMethod] = useState('bank_transfer')
-  const [bankAccountId, setBankAccountId] = useState('')
+  const [method, setMethod] = useState(pStr(prefill ?? null, 'method') ?? 'bank_transfer')
+  const [bankAccountId, setBankAccountId] = useState(pStr(prefill ?? null, 'bankAccountId') ?? '')
   const [reference, setReference] = useState('')
   const [err, setErr] = useState('')
   // Saved, but the reference was used before: say so before closing.

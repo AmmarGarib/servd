@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { api, deleteWithUndo } from '../../lib/api'
 import Link from 'next/link'
 import { useBrandFilter } from '../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
@@ -57,7 +57,7 @@ export default function QrCodesPage() {
   })
 
   const del = useMutation({
-    mutationFn: (id: string) => api.delete(`/qrcodes/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/qrcodes/${id}`, { trashType: 'qr_code', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['qrcodes'] }) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['qrcodes'] }),
   })
 

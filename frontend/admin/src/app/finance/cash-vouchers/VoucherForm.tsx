@@ -14,6 +14,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { amountInWords, formatPkr } from './amountInWords'
 import {
@@ -22,7 +23,9 @@ import {
 import { ErrorBanner, Field, Footer, Modal, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
 
-export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSaved }: {
+export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSaved, prefill }: {
+  /** Recovered from the Trash: purpose, category / account, amounts and payee. The date, approvals and attachments start fresh. */
+  prefill?: Prefill | null
   /** 'request' = ask for cash; 'expense' = finance raises a payee voucher. Ignored when editing (the voucher's own kind). */
   mode?: 'request' | 'expense'
   /** Editing this voucher; omitted = a new one. */
@@ -45,13 +48,14 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
   // Finance may also pick the cash box on a voucher it edits — kept from the old form.
   usePettyBoxes()
 
-  const startGross = voucher ? (voucher.grossCents ?? voucher.amountCents + (voucher.discountCents ?? 0)) : 0
+  const pf = voucher ? null : (prefill ?? null)
+  const startGross = voucher ? (voucher.grossCents ?? voucher.amountCents + (voucher.discountCents ?? 0)) : (pNum(pf, 'grossCents', 'amountCents') ?? 0)
   const [grossCents, setGrossCents] = useState(startGross)
-  const [discountCents, setDiscountCents] = useState(voucher?.discountCents ?? 0)
-  const [purpose, setPurpose] = useState(voucher?.purpose ?? '')
-  const [category, setCategory] = useState(voucher?.category ?? '')
+  const [discountCents, setDiscountCents] = useState(voucher?.discountCents ?? (expense ? pNum(pf, 'discountCents') ?? 0 : 0))
+  const [purpose, setPurpose] = useState(voucher?.purpose ?? pStr(pf, 'purpose') ?? '')
+  const [category, setCategory] = useState(voucher?.category ?? pStr(pf, 'category', 'categoryKey', 'accountCode') ?? '')
   const [voucherDate, setVoucherDate] = useState(voucher ? dateInput(voucher.voucherDate) : todayKarachi())
-  const [payeeName, setPayeeName] = useState(expense ? (voucher?.payeeName ?? '') : '')
+  const [payeeName, setPayeeName] = useState(expense ? (voucher?.payeeName ?? pStr(pf, 'payeeName') ?? '') : '')
   const [sendTo, setSendTo] = useState<'ceo' | 'finance'>('ceo')
 
   const tenantId = voucher?.tenantId ?? null

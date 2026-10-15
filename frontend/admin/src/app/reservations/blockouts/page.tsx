@@ -7,7 +7,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { todayPktIso } from '../../../lib/money'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
@@ -36,7 +36,7 @@ export default function BlockoutsPage() {
   })
 
   const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`/reservations/blockouts/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/reservations/blockouts/${id}`, { trashType: 'blockout', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['blockouts', conceptId] }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['blockouts', conceptId] }),
   })
 

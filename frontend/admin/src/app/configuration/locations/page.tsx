@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api, ApiError } from '../../../lib/api'
+import { api, ApiError, deleteWithUndo } from '../../../lib/api'
 import { MapPin } from '../../../components/ui/MapPin'
 import { useViewAllTenants } from '../../../components/ui/TenantSwitcher'
 import { Modal } from '../../../components/ui/Modal'
@@ -55,7 +55,7 @@ export default function LocationsPage() {
   })
 
   const remove = useMutation({
-    mutationFn: (loc: Location) => api.delete<void>(`/locations/${loc.id}`),
+    mutationFn: (loc: Location) => deleteWithUndo(`/locations/${loc.id}`, { trashType: 'location', id: loc.id, onRestored: () => void qc.invalidateQueries({ queryKey: ['locations'] }) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['locations'] })
     },

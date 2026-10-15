@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../../lib/api'
+import { api, deleteWithUndo } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '@/components/ui/Modal'
@@ -43,7 +43,7 @@ export default function DeliveryZonesPage() {
   const { data: concepts = [] } = useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })
 
   const del = useMutation({
-    mutationFn: (id: string) => api.delete(`/setup/delivery-zones/${id}`),
+    mutationFn: (id: string) => deleteWithUndo(`/setup/delivery-zones/${id}`, { trashType: 'delivery_zone', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['delivery-zones'] }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-zones'] }),
   })
 

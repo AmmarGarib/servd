@@ -6,9 +6,11 @@
 // books goes through a request, and the CEO approves it (the approve and
 // reject buttons appear only when the API says canDecide).
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import { useTrashPrefill } from '../../../../lib/trash'
+import { unwrapPrefill, pStr, type Prefill } from '../../../../lib/trashPrefill'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import {
@@ -59,6 +61,14 @@ export default function FixedAssetPage() {
   }
 
   const a = data?.asset
+
+  // "Recover as copy" from the Trash (a rejected / cancelled asset request):
+  // reopen the same request on this asset, pre-filled. It goes through the
+  // normal request route, so the CEO approves it again.
+  const trashPrefill = unwrapPrefill(useTrashPrefill('fixed_asset_request'))
+  const [askPrefill, setAskPrefill] = useState<Prefill | null>(null)
+  const [pendingAsk, setPendingAsk] = useState<Prefill | null>(null)
+  useEffect(() => { if (trashPrefill) setPendingAsk(trashPrefill) }, [trashPrefill])
   const canWrite = !!lookups?.capabilities.canWrite
   const isCeo = !!lookups?.capabilities.canApprove
   const pendingEvents = (data?.events ?? []).filter((e) => e.status === 'pending')
@@ -67,11 +77,22 @@ export default function FixedAssetPage() {
 
   function done(r: RequestResult) {
     setAsking(null)
+    setAskPrefill(null)
     setNotice(r.status === 'pending'
       ? { tone: 'wait', text: `${r.event.kindLabel} sent to the CEO. Nothing posts until it is approved.` }
       : { tone: 'ok', text: `${r.event.kindLabel} done and posted.` })
     refresh()
   }
+
+  useEffect(() => {
+    if (!pendingAsk || !a || !lookups) return
+    const kind = pStr(pendingAsk, 'kind') as AssetRequestKind | undefined
+    setPendingAsk(null)
+    const other = pStr(pendingAsk, 'assetId')
+    if (other && other !== a.id) { setNotice({ tone: 'bad', text: 'That request was on a different asset. Open that asset to recover it.' }); return }
+    if (!kind || !(kind in ASSET_REQUEST_TITLE) || !canWrite || isLayer) { setNotice({ tone: 'bad', text: 'This request cannot be raised again on this asset.' }); return }
+    setAskPrefill(pendingAsk); setAsking(kind)
+  }, [pendingAsk, a, lookups, canWrite, isLayer])
 
   const actions: Array<{ kind: AssetRequestKind; label: string }> = []
   if (a && canWrite && !isLayer) {
@@ -257,7 +278,7 @@ export default function FixedAssetPage() {
       )}
 
       {a && asking && lookups && (
-        <AssetRequestModal asset={a} kind={asking} lookups={lookups} willWait={!isCeo} onClose={() => setAsking(null)} onDone={done} />
+        <AssetRequestModal asset={a} kind={asking} lookups={lookups} willWait={!isCeo} prefill={askPrefill} onClose={() => { setAsking(null); setAskPrefill(null) }} onDone={done} />
       )}
       {a && data && editing && lookups && (
         <EditDetails detail={data} lookups={lookups} onClose={() => setEditing(false)}
