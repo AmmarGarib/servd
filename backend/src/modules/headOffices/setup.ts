@@ -126,11 +126,11 @@ export async function headOfficeSetupRoutes(fastify: FastifyInstance) {
   fastify.post('/setup', ceo, async (req, reply) => {
     const body = zApply.parse(req.body ?? {})
     const su = req.staffUser!
+    if (await alreadyApplied(serviceClient)) throw new AppError('SETUP_ALREADY_DONE', 'The head office has already been set up from today\'s records', 409)
     const companyIds = await companiesFor(req, body.companyIds)
     if (companyIds.length === 0) {
       throw new AppError('NO_COMPANIES', 'There are no head-office records to set up — name the companies the head office serves', 422)
     }
-    if (await alreadyApplied(serviceClient)) throw new AppError('SETUP_ALREADY_DONE', 'The head office has already been set up from today\'s records', 409)
     const name = body.name ?? DEFAULT_HEAD_OFFICE_NAME
     const effectiveFrom = body.effectiveFrom ?? planMonth()
     // The preview the CEO saw (with the split chosen) — its planning is returned and kept.

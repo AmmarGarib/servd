@@ -302,7 +302,7 @@ describe('UI-07 finance does the workspace\'s normal work, bound to its active c
       ['post a tip pool', 'POST', `/tip-pools/${ids.tpA}/post`, {}],
       ['dismiss an exception', 'DELETE', `/crosschecks/exceptions/${ids.flagA}`, undefined],
       ['set headcount', 'POST', '/positions', { title: 'Barista', monthlySalaryCents: 1 }],
-      ['move money between companies', 'POST', '/positions/contributions', { sourceTenantId: tenantA, destinationTenantId: tenantB, monthlyCents: 1, label: 'x' }],
+      ['move money between companies', 'POST', '/positions/contributions', { sourceTenantId: tenantA, destinationTenantId: tenantB, category: 'other', monthlyCents: 1, label: 'x' }],
       ['backfill unposted shifts', 'POST', '/reconciliation/backfill-unposted', {}],
     ]
     for (const [what, method, url, body] of refused) {
@@ -378,7 +378,7 @@ describe('UI-09 HR reads and edits positions, reads staff meals, works tip pools
     expect((await get('hrA', `/tip-pools/${ids.tpA}`)).statusCode).toBe(200)
     expect((await get('hrB', `/tip-pools/${ids.tpA}`)).statusCode).toBe(404)
     expect((await call('hrA', 'POST', `/tip-pools/${ids.tpA}/post`, {})).statusCode).toBe(403)
-    expect((await call('hrA', 'POST', '/positions/contributions', { sourceTenantId: tenantA, destinationTenantId: tenantB, monthlyCents: 1, label: 'x' })).statusCode).toBe(403)
+    expect((await call('hrA', 'POST', '/positions/contributions', { sourceTenantId: tenantA, destinationTenantId: tenantB, category: 'other', monthlyCents: 1, label: 'x' })).statusCode).toBe(403)
   })
 })
 

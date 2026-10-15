@@ -382,7 +382,7 @@ describe('logins and employees', () => {
 
 describe('org masters and budgeted labour', () => {
   it('writes departments in HR only: no duplicates, no archiving one people are still in', async () => {
-    const d = await call('hr', 'POST', '/hr/org/departments', { name: 'Pastry', isHeadOffice: false })
+    const d = await call('hr', 'POST', '/hr/org/departments', { name: 'Pastry' })
     expect(d.statusCode).toBe(201)
     expect((await call('hr', 'POST', '/hr/org/departments', { name: 'pastry' })).statusCode).toBe(409)
     await prisma.hrEmployee.update({ where: { id: emps['Prep']! }, data: { departmentId: d.json().id } })
@@ -400,7 +400,7 @@ describe('org masters and budgeted labour', () => {
     expect(open.statusCode).toBe(200)
     expect(open.json().title).toBe('Chef de Partie')
     expect((await call('boss', 'POST', '/positions', { title: 'chef de partie', monthlySalaryCents: RS(50000), status: 'frozen' })).statusCode).toBe(200)
-    await prisma.tenantContribution.create({ data: { sourceTenantId: otherTenantId, destinationTenantId: tenantId, monthlyCents: RS(30000), label: 'JV head office' } })
+    await prisma.tenantContribution.create({ data: { sourceTenantId: otherTenantId, destinationTenantId: tenantId, category: 'head_office', monthlyCents: RS(30000), label: 'JV head office' } })
     const b = await budgetedLabour([tenantId])
     expect(b.shareMonthlyCents).toBe(RS(100000))
     expect(b.frozenShareMonthlyCents).toBe(RS(50000))

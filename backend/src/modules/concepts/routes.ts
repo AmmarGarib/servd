@@ -10,6 +10,7 @@ import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/ten
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
 import { KIT_CONCEPT_FIELDS, lockKitRowTx, refreshKitSnapshotTx } from '../siteLayouts/service.js'
+import { assertTradingCompany } from '../../lib/headOffice.js'
 
 // Brands may only sit where the company is registered for sales tax (FBR, SRB):
 // Punjab, KP and Balochistan were removed (owner, 2026-10-15) — see
@@ -479,6 +480,8 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     assertNoMovedFields(req.body)
     assertProfileLinks(req.body)
     const body = createConceptSchema.parse(req.body)
+    // A head office never has brands (D1 §6.7): 422 HEAD_OFFICE_HAS_NO_BRANDS.
+    await assertTradingCompany(req.staffUser!.tenantId)
     const concept = await prisma.concept.create({
       data: { ...body, tenantId: req.staffUser!.tenantId! },
     })

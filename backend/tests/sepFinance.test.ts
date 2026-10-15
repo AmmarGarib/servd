@@ -317,7 +317,7 @@ describe('payment gateways are scoped through the brand', () => {
 describe('contributions need both sides to be the operator\'s companies', () => {
   it('a member of A only cannot book a transfer out of B (403)', async () => {
     const r = await call(tokenA, 'POST', '/positions/contributions', {
-      sourceTenantId: tenantB, destinationTenantId: tenantA, monthlyCents: 500_000, label: 'grab',
+      sourceTenantId: tenantB, destinationTenantId: tenantA, category: 'other', monthlyCents: 500_000, label: 'grab',
     })
     expect(r.statusCode).toBe(403)
     expect(r.json().error.code).toBe('NOT_IN_BOTH_COMPANIES')
@@ -325,7 +325,7 @@ describe('contributions need both sides to be the operator\'s companies', () => 
 
   it('a member of both can, and a one-sided member cannot edit or end it', async () => {
     const r = await call(tokenBoth, 'POST', '/positions/contributions', {
-      sourceTenantId: tenantB, destinationTenantId: tenantA, monthlyCents: 500_000, label: 'HO contribution',
+      sourceTenantId: tenantB, destinationTenantId: tenantA, category: 'shared_services', monthlyCents: 500_000, label: 'Shared services',
     })
     expect(r.statusCode).toBe(201)
     const id = r.json().id as string

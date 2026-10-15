@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
@@ -11,6 +12,7 @@ import { assertInt4Fits } from '../../lib/money.js'
 import { invalidateTestTenants } from '../../lib/testCompany.js'
 import { setFiscalReportingRequired, seedFiscalReportingOffTx } from '../connectors/routes.js'
 import { fiscalReportingRequired } from '../../connectors/config.js'
+import { assertTradingCompany } from '../../lib/headOffice.js'
 
 function slugify(s: string): string {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
@@ -59,6 +61,21 @@ type MergeTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
  *                                    then pay two bills)
  *   422 MERGE_HR_CLASH               one login is an HR employee in both, or both
  *                                    ran HR payroll for the same month
+ *   422 MERGE_HAS_HEAD_OFFICE        either is a head office, or has a head-office
+ *                                    link (live or ended), a recharge split / run
+ *                                    line, or an approval hand-over (D1 §6.7) — the
+ *                                    recharge history names both sides and is
+ *                                    never folded into one company
+ *   422 MERGE_HAS_PENDING_REQUESTS   either has a manual journal or POS connector
+ *                                    change waiting for a decision (submitted) —
+ *                                    decide or withdraw it first; the rest move
+ *   422 ON_ACCOUNT_CLIENT_CLASH      both companies hold an on-account client
+ *                                    with the same legal name — two credit
+ *                                    accounts are never auto-joined
+ * Shared-fleet rates are refused under MERGE_HAS_INTERCOMPANY: a rate is tied
+ * to its agreement's (provider, client) pair by the composite FK
+ * fleet_rates_agreement_pair_fkey (no ON UPDATE CASCADE), so with no rates the
+ * agreements themselves can be repointed safely (mergeDeliveryTables).
  */
 async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: string): Promise<void> {
   const pair = [src, dst]
@@ -72,6 +89,37 @@ async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: st
       'One of these is a test company and the other is not. A test company\'s data must never land in a real company\'s books (or the reverse) — they cannot be combined.',
       422,
       { sourceIsTest: testOf(src), targetIsTest: testOf(dst) },
+    )
+  }
+  // Head office (D1 §6.7): never merged, and a company it serves is not either.
+  const [hoTenants, hoLinks, splitLines, runLines, delegations] = await Promise.all([
+    db.tenant.count({ where: { id: { in: pair }, kind: 'head_office' } }),
+    db.headOfficeLink.count({ where: { OR: [{ tenantId: { in: pair } }, { companyTenantId: { in: pair } }] } }),
+    db.rechargeSplitLine.count({ where: { OR: [{ tenantId: { in: pair } }, { companyTenantId: { in: pair } }] } }),
+    db.rechargeRunLine.count({ where: { OR: [{ tenantId: { in: pair } }, { companyTenantId: { in: pair } }] } }),
+    db.approvalDelegation.count({ where: { OR: [{ tenantId: { in: pair } }, { companyTenantId: { in: pair } }] } }),
+  ])
+  if (hoTenants + hoLinks + splitLines + runLines + delegations > 0) {
+    throw new AppError(
+      'MERGE_HAS_HEAD_OFFICE',
+      hoTenants > 0
+        ? 'A head office cannot be combined with another company.'
+        : 'One of these companies is (or was) served by a head office — its links, recharges or approval hand-overs name both sides and cannot be folded into one company.',
+      422,
+      { headOffices: hoTenants, links: hoLinks, rechargeSplitLines: splitLines, rechargeRunLines: runLines, approvalDelegations: delegations },
+    )
+  }
+  // Requests waiting for a decision are bound to their company's approvers.
+  const [pendingJournals, pendingConnectorChanges] = await Promise.all([
+    db.journalRequest.count({ where: { tenantId: { in: pair }, status: 'submitted' } }),
+    db.posConnectorChange.count({ where: { tenantId: { in: pair }, status: 'submitted' } }),
+  ])
+  if (pendingJournals + pendingConnectorChanges > 0) {
+    throw new AppError(
+      'MERGE_HAS_PENDING_REQUESTS',
+      'One of these companies has a manual journal or a POS connector change waiting for approval — approve, return or withdraw it before merging.',
+      422,
+      { journalRequests: pendingJournals, posConnectorChanges: pendingConnectorChanges },
     )
   }
   const [icAccounts, transfers, fleetRates] = await Promise.all([
@@ -206,6 +254,24 @@ async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: st
       { employeesInBoth: logins, payrollMonthsInBoth: months },
     )
   }
+  // On-account clients: one legal client is one credit account per company.
+  const srcClients = await db.customerAccount.findMany({ where: { tenantId: src }, select: { legalName: true } })
+  if (srcClients.length > 0) {
+    const clashes = await db.customerAccount.findMany({
+      where: { tenantId: dst, legalName: { in: srcClients.map((c) => c.legalName) } },
+      select: { legalName: true },
+      orderBy: { legalName: 'asc' },
+    })
+    if (clashes.length > 0) {
+      const names = clashes.map((c) => c.legalName)
+      throw new AppError(
+        'ON_ACCOUNT_CLIENT_CLASH',
+        `Both companies have an on-account client named ${names.join(', ')} — two credit accounts for one client are never joined automatically. Ask finance to close or rename one before merging.`,
+        422,
+        { legalNames: names },
+      )
+    }
+  }
 }
 
 /** `base` made unique against `taken`: base, then base-2, base-3 … (added to `taken`). */
@@ -224,9 +290,13 @@ function freeName(base: string, taken: Set<string>): string {
  * colliding asset tag or receivable-invoice number gets '-<source slug>'; the
  * source's cash requests are renumbered after the target's (seq is per
  * company; the printed number keeps its old digits plus '-<source slug>').
- * PARKED (owner, 2026-10-13): customer_accounts / _cards / _charges and
- * customer_strikes / customer_bans are NOT moved — the on-account and
- * strikes / bans features are parked; the resume adds them here.
+ * On-account clients (customer_accounts) move with their cards and charges: a
+ * client number the target already uses is renumbered after the target's
+ * highest OA number (OA-NNNN); a legal-name clash was refused in
+ * assertMergeable (ON_ACCOUNT_CLIENT_CLASH); a card whose token hash the
+ * target already holds (practically impossible) is revoked and its hash
+ * retired so it can never be scanned again. Strikes, bans, rider job events
+ * and fleet agreements move in mergeDeliveryTables.
  */
 async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug: string) {
   // Fixed assets — classes by key.
@@ -273,6 +343,50 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
     }
   }
 
+  // On-account clients: numbers are unique per company.
+  let onAccountClientsRenumbered = 0
+  const srcClients = await tx.customerAccount.findMany({ where: { tenantId: src }, select: { id: true, number: true }, orderBy: { number: 'asc' } })
+  if (srcClients.length > 0) {
+    const dstNumbers = (await tx.customerAccount.findMany({ where: { tenantId: dst }, select: { number: true } })).map((c) => c.number)
+    const taken = new Set(dstNumbers)
+    let next = Math.max(0, ...dstNumbers.map((n) => { const m = /^OA-(\d+)$/.exec(n); return m ? Number(m[1]) : 0 }))
+    for (const c of srcClients) {
+      if (!taken.has(c.number)) continue
+      let number: string
+      do number = `OA-${String(++next).padStart(4, '0')}`
+      while (taken.has(number) || srcClients.some((o) => o.number === number))
+      taken.add(number)
+      await tx.customerAccount.update({ where: { id: c.id }, data: { number } })
+      onAccountClientsRenumbered++
+    }
+  }
+  // On-account cards: token hashes are unique per company.
+  let onAccountCardsRevoked = 0
+  const srcCards = await tx.customerAccountCard.findMany({ where: { tenantId: src }, select: { id: true, tokenHash: true, revokedAt: true } })
+  if (srcCards.length > 0) {
+    const dstHashes = new Set((await tx.customerAccountCard.findMany({
+      where: { tenantId: dst, tokenHash: { in: srcCards.map((c) => c.tokenHash) } },
+      select: { tokenHash: true },
+    })).map((c) => c.tokenHash))
+    for (const c of srcCards) {
+      if (!dstHashes.has(c.tokenHash)) continue
+      // Not a sha256 hex, so no scanned code can ever match it again.
+      await tx.customerAccountCard.update({
+        where: { id: c.id },
+        data: {
+          tokenHash: `merged:${c.id}`,
+          ...(c.revokedAt ? {} : { revokedAt: new Date(), revokedReason: 'merged: the same code exists in the target company' }),
+        },
+      })
+      if (!c.revokedAt) onAccountCardsRevoked++
+    }
+  }
+  const moved = async (model: { updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<{ count: number }> }) =>
+    (await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })).count
+  const onAccountClientsMoved = await moved(tx.customerAccount)
+  const onAccountCardsMoved = await moved(tx.customerAccountCard)
+  const onAccountChargesMoved = await moved(tx.customerAccountCharge)
+
   const repoint: Array<{
     updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
   }> = [
@@ -292,7 +406,122 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
   for (const model of repoint) {
     await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })
   }
-  return { assetTagsRenamed, invoiceNumbersRenamed, cashRequestsRenumbered }
+  return {
+    assetTagsRenamed, invoiceNumbersRenamed, cashRequestsRenumbered,
+    onAccountClientsMoved, onAccountClientsRenumbered, onAccountCardsMoved, onAccountCardsRevoked, onAccountChargesMoved,
+  }
+}
+
+/**
+ * Delivery and customers (inside the merge transaction). Strikes and bans are
+ * servd-wide in effect (owner, 2026-10-15: a ban blocks the customer at every
+ * brand of every company), but each row still names the company that raised
+ * it, so it moves with that company:
+ *   - customer_strikes: straight repoint;
+ *   - customer_bans: when both companies hold an ACTIVE AUTO ban (bannedById
+ *     null, not lifted) for the same customer, the source's is lifted ('merged
+ *     into <target>') first — the target's stays, so the customer stays
+ *     blocked and customer_bans_one_active_auto_per_company holds; then repoint;
+ *   - rider_job_events: tenantId (the order's company) and riderTenantId (the
+ *     rider's company) both repoint;
+ *   - fleet_agreements: one between the two companies ends (isActive false; a
+ *     company never carries its own orders under an agreement) and stays on the
+ *     soft-deleted source as history; any other is repointed to the target,
+ *     unless the target already has that pair — then the target's is kept and
+ *     the source's ends. Rates were refused in assertMergeable, so no
+ *     fleet_rates_agreement_pair_fkey row can be orphaned.
+ */
+async function mergeDeliveryTables(tx: MergeTx, src: string, dst: string, ctx: { actorId: string; targetName: string }) {
+  const now = new Date()
+  // Bans: twin active auto bans.
+  let bansLifted = 0
+  const srcAuto = await tx.customerBan.findMany({
+    where: { tenantId: src, liftedAt: null, bannedById: null, customerId: { not: null } },
+    select: { id: true, customerId: true },
+  })
+  if (srcAuto.length > 0) {
+    const dstAuto = new Set((await tx.customerBan.findMany({
+      where: { tenantId: dst, liftedAt: null, bannedById: null, customerId: { in: srcAuto.map((b) => b.customerId!) } },
+      select: { customerId: true },
+    })).map((b) => b.customerId))
+    const twins = srcAuto.filter((b) => dstAuto.has(b.customerId)).map((b) => b.id)
+    if (twins.length > 0) {
+      bansLifted = (await tx.customerBan.updateMany({
+        where: { id: { in: twins }, liftedAt: null },
+        data: { liftedAt: now, liftedById: ctx.actorId, liftReason: `merged into ${ctx.targetName}` },
+      })).count
+    }
+  }
+  const strikesMoved = (await tx.customerStrike.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })).count
+  const bansMoved = (await tx.customerBan.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })).count
+  // Rider job events: both company columns.
+  const jobEventsMoved = (await tx.riderJobEvent.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })).count
+  const jobEventRiderSidesMoved = (await tx.riderJobEvent.updateMany({ where: { riderTenantId: src }, data: { riderTenantId: dst } })).count
+  // Fleet agreements.
+  const fleetAgreementsEnded = (await tx.fleetAgreement.updateMany({
+    where: { OR: [{ providerTenantId: src, clientTenantId: dst }, { providerTenantId: dst, clientTenantId: src }], isActive: true },
+    data: { isActive: false },
+  })).count
+  let fleetAgreementsMoved = 0
+  let fleetAgreementsSuperseded = 0
+  const srcAgreements = await tx.fleetAgreement.findMany({
+    where: {
+      OR: [
+        { providerTenantId: src, clientTenantId: { notIn: [src, dst] } },
+        { clientTenantId: src, providerTenantId: { notIn: [src, dst] } },
+      ],
+    },
+    select: { id: true, providerTenantId: true, clientTenantId: true, isActive: true },
+  })
+  for (const a of srcAgreements) {
+    const providerTenantId = a.providerTenantId === src ? dst : a.providerTenantId
+    const clientTenantId = a.clientTenantId === src ? dst : a.clientTenantId
+    const twin = await tx.fleetAgreement.findUnique({
+      where: { providerTenantId_clientTenantId: { providerTenantId, clientTenantId } },
+      select: { id: true },
+    })
+    if (twin) {
+      if (a.isActive) { await tx.fleetAgreement.update({ where: { id: a.id }, data: { isActive: false } }); fleetAgreementsSuperseded++ }
+      continue
+    }
+    await tx.fleetAgreement.update({ where: { id: a.id }, data: { providerTenantId, clientTenantId } })
+    fleetAgreementsMoved++
+  }
+  return {
+    strikesMoved, bansMoved, bansLifted, jobEventsMoved, jobEventRiderSidesMoved,
+    fleetAgreementsMoved, fleetAgreementsEnded, fleetAgreementsSuperseded,
+  }
+}
+
+/**
+ * Head-office module pending state (D3): manual journal requests and POS
+ * connector changes follow their company (submitted ones were refused in
+ * assertMergeable). A draft or returned journal names the source's accounts by
+ * id in its lines; those whose code the target already had were folded into
+ * the target's account, so the lines are remapped to it.
+ */
+async function mergeRequestTables(tx: MergeTx, src: string, dst: string, accountRemap: Map<string, string>) {
+  if (accountRemap.size > 0) {
+    const open = await tx.journalRequest.findMany({
+      where: { tenantId: src, status: { in: ['draft', 'returned'] } },
+      select: { id: true, lines: true },
+    })
+    for (const r of open) {
+      if (!Array.isArray(r.lines)) continue
+      let changed = false
+      const lines = (r.lines as unknown[]).map((l) => {
+        if (l && typeof l === 'object' && typeof (l as { accountId?: unknown }).accountId === 'string') {
+          const to = accountRemap.get((l as { accountId: string }).accountId)
+          if (to) { changed = true; return { ...(l as Record<string, unknown>), accountId: to } }
+        }
+        return l
+      })
+      if (changed) await tx.journalRequest.update({ where: { id: r.id }, data: { lines: lines as Prisma.InputJsonValue } })
+    }
+  }
+  const journalRequestsMoved = (await tx.journalRequest.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })).count
+  const posConnectorChangesMoved = (await tx.posConnectorChange.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })).count
+  return { journalRequestsMoved, posConnectorChangesMoved }
 }
 
 /**
@@ -497,6 +726,19 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
   return { loyaltyAccountsCombined, walletsCombined, taxInvoiceNumbersRenamed, employeeCodesRenamed }
 }
 
+/** 422 TEST_COMPANY_MIX when the tenant has a live head-office link on either side. */
+async function assertNoLiveHeadOfficeLinks(db: typeof prisma | MergeTx, id: string): Promise<void> {
+  const live = await db.headOfficeLink.count({ where: { endedAt: null, OR: [{ tenantId: id }, { companyTenantId: id }] } })
+  if (live > 0) {
+    throw new AppError(
+      'TEST_COMPANY_MIX',
+      'This company is linked to a head office (or is one with linked companies). A head office and the companies it serves are all test or all real — end the links before switching test mode.',
+      422,
+      { liveLinks: live },
+    )
+  }
+}
+
 export async function tenantRoutes(fastify: FastifyInstance) {
   // ── Templates catalogue (public — needed for signup wizard) ─────────────
   fastify.get('/templates', async () => {
@@ -568,6 +810,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       .sort((a, b) => order(a.id) - order(b.id) || a.createdAt.getTime() - b.createdAt.getTime())
       .map((t) => ({
         ...t,
+        kind:     t.kind, // 'company' | 'head_office' (D1). Reach is on /permissions/me, never here.
         role:     membership.get(t.id)?.role ?? 'member',
         isActive: t.id === user?.tenantId,
       }))
@@ -581,7 +824,11 @@ export async function tenantRoutes(fastify: FastifyInstance) {
   // `isTest: true` makes a TEST company (owner, 2026-10-14; lib/testCompany.ts)
   // — the CEO (role admin) only, else 403 TEST_COMPANY_CEO_ONLY. Its fiscal
   // reporting is switched off at once (audited, reason "Test company").
-  fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+  //
+  // Creating a company is the CEO's only (owner, 2026-10-15; D1 §6.7) and it
+  // is always a trading company (kind 'company') — a head office is made on
+  // POST /head-offices.
+  fastify.post('/', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
       name:        z.string().min(1).max(200),
       industry:    z.string().max(40).nullable().optional(),
@@ -605,6 +852,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
           currency:    body.countryCode === 'PK' ? 'PKR' : 'USD',
           timezone:    body.timezone,
           isTest,
+          kind:        'company',
         },
       })
       await tx.tenantMember.create({
@@ -727,6 +975,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       await ensureFifoReady(dst)
     }
     const srcSlug = (await prisma.tenant.findUniqueOrThrow({ where: { id: src }, select: { slug: true } })).slug
+    const dstName = (await prisma.tenant.findUniqueOrThrow({ where: { id: dst }, select: { name: true } })).name
 
     const result = await prisma.$transaction(async (tx) => {
       await assertMergeable(tx, src, dst)
@@ -779,6 +1028,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       await tx.account.deleteMany({
         where: { controlledBy: 'intercompany', OR: [{ tenantId: src }, { tenantId: dst, counterpartyTenantId: src }] },
       })
+      const accountRemap = new Map<string, string>()
       const srcAccounts = await tx.account.findMany({
         where: { tenantId: src }, select: { id: true, code: true },
       })
@@ -793,6 +1043,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
           if (twin) {
             await tx.journalLine.updateMany({ where: { accountId: a.id }, data: { accountId: twin } })
             await tx.account.delete({ where: { id: a.id } })
+            accountRemap.set(a.id, twin)
           } else {
             await tx.account.update({ where: { id: a.id }, data: { tenantId: dst } })
           }
@@ -829,6 +1080,10 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       // Flags, tax payments, payments / references, customer money, tax
       // invoices and the HR back office (see mergeMoneyAndHrTables).
       const money = await mergeMoneyAndHrTables(tx, src, dst, srcSlug)
+      // Strikes, bans, rider job events and fleet agreements (see mergeDeliveryTables).
+      const delivery = await mergeDeliveryTables(tx, src, dst, { actorId: req.staffUser!.id, targetName: dstName })
+      // Journal requests and POS connector changes (see mergeRequestTables).
+      const requests = await mergeRequestTables(tx, src, dst, accountRemap)
 
       // Per-company singleton configs — unique on (tenantId, scope, scopeId).
       // The target's row wins on a clash; the source's duplicate is dropped.
@@ -924,7 +1179,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         where: { id: src },
         data: { deletedAt: new Date(), isActive: false },
       })
-      return { conceptsMoved: conceptsMoved.count, usersMoved: usersMoved.count, systemSuppliersAbsorbed, ...finance, ...money }
+      return { conceptsMoved: conceptsMoved.count, usersMoved: usersMoved.count, systemSuppliersAbsorbed, ...finance, ...money, ...delivery, ...requests }
     }, {
       // Many sequential statements — the default 5s interactive-transaction
       // budget is too tight for a company with real history.
@@ -963,6 +1218,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
     if (existing.isTest === body.isTest && (await fiscalReportingRequired(existing.id)) === wantRequired) {
       return { ...(await prisma.tenant.findUniqueOrThrow({ where: { id: existing.id } })), fiscalReportingRequired: wantRequired }
     }
+    if (existing.isTest !== body.isTest) await assertNoLiveHeadOfficeLinks(prisma, existing.id)
     let wasTest = existing.isTest
     const fiscal = await setFiscalReportingRequired(existing.id, wantRequired, {
       userId: req.staffUser!.id, userEmail: req.staffUser!.email,
@@ -970,6 +1226,9 @@ export async function tenantRoutes(fastify: FastifyInstance) {
     }, {
       underLock: async (tx) => {
         const cur = await tx.tenant.findUniqueOrThrow({ where: { id: existing.id }, select: { isTest: true } })
+        // A head office and the companies it serves are all test or all real
+        // (D1): a tenant with a live link never flips.
+        if (cur.isTest !== body.isTest) await assertNoLiveHeadOfficeLinks(tx, existing.id)
         wasTest = cur.isTest
         if (cur.isTest !== body.isTest) await tx.tenant.update({ where: { id: existing.id }, data: { isTest: body.isTest } })
         // A test company made real files from NOW, even if its switch was
@@ -1094,6 +1353,8 @@ export async function tenantRoutes(fastify: FastifyInstance) {
 
       const tenantId = req.staffUser!.tenantId
       if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before applying a template', 422)
+      // A head office never has brands (D1 §6.7): 422 HEAD_OFFICE_HAS_NO_BRANDS.
+      await assertTradingCompany(tenantId)
 
       const conceptName = body.conceptName ?? tpl.conceptName
       const conceptSlug = await uniqueSlug(conceptName, 'concept')
