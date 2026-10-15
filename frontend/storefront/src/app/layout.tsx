@@ -109,14 +109,17 @@ const fontVariables = [inter, bricolage, syne, amarante, playfair, jetbrainsMono
 // rather than baked in at build (every page here renders dynamically), so
 // setting GOOGLE_SITE_VERIFICATION in the storefront container's environment
 // and restarting it is enough — no image rebuild. Unset: no tag.
-const googleSiteVerification = process.env['GOOGLE_SITE_VERIFICATION']?.trim()
+const googleSiteVerification = process.env['GOOGLE_SITE_VERIFICATION']?.trim() || undefined
 
 // Bing Webmaster Tools meta-tag verification (msvalidate.01), same model as the
-// Google one: NEXT_PUBLIC_BING_SITE_VERIFICATION (build arg) or BING_SITE_VERIFICATION
-// (container env, read at start); unset = no tag. (BingSiteAuth.xml
+// Google one: BING_SITE_VERIFICATION (container env, read at start) wins; the
+// build-time NEXT_PUBLIC_ copy is only a fallback, because the image build bakes
+// it in as '' and an empty value counts as unset. Unset = no tag. (BingSiteAuth.xml
 // or a DNS CNAME also work; the tag is the no-file option.)
 const bingSiteVerification =
-  (process.env['NEXT_PUBLIC_BING_SITE_VERIFICATION'] ?? process.env['BING_SITE_VERIFICATION'])?.trim()
+  process.env['BING_SITE_VERIFICATION']?.trim() ||
+  process.env['NEXT_PUBLIC_BING_SITE_VERIFICATION']?.trim() ||
+  undefined
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one

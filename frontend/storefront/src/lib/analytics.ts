@@ -179,9 +179,23 @@ function ensureGtag(): GtagWindow['gtag'] {
   return w.gtag
 }
 
-/** A path for GA: no query string (tokens, codes) and no order id. */
+/** Public paths whose next segment is a bearer token, code or personal id
+ *  (app/ dynamic segments): order trackers, reservation confirm/claim links,
+ *  group-order codes. Each segment becomes '_'. */
+const SECRET_SEGMENTS: ReadonlyArray<RegExp> = [
+  /\/order\/[^/]+/,            // /<concept>/order/<id>
+  /^\/orders\/[^/]+/,           // /orders/<id>
+  /\/reserve\/(confirm|claim)\/[^/]+/, // reservation manage links (tokens)
+  /^\/group-order\/[^/]+/,      // /group-order/<code>
+]
+
+/** A path for GA: no query string (tokens, codes) and no token/id segments. */
 function maskPath(pathname: string): string {
-  return pathname.replace(/\/order\/[^/]+/, '/order/_')
+  let p = pathname
+  for (const re of SECRET_SEGMENTS) {
+    p = p.replace(re, (m) => m.replace(/[^/]+$/, '_'))
+  }
+  return p
 }
 
 /** Page URL for GA: no query string (tokens, codes) and no order id. */

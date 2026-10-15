@@ -71,10 +71,26 @@ export function Select(props: SelectProps) {
 
 export default Select
 
+const FOCUSABLE = 'a[href],button,input,select,textarea,[tabindex],[contenteditable="true"]'
+
+/** The next (dir 1) or previous (dir -1) tabbable element after `from`, in document order. */
+function neighbourFocusable(from: HTMLElement, dir: 1 | -1): HTMLElement | null {
+  const all = Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) =>
+    el === from || (
+      el.tabIndex >= 0 && !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true' &&
+      !el.closest('[inert],[hidden]') && el.getClientRects().length > 0
+    ))
+  const i = all.indexOf(from)
+  return i < 0 ? null : all[i + dir] ?? null
+}
+
 function SearchSelect({
   options, value, defaultValue, onChange, onBlur, onFocus, name, required, disabled, className, style,
   id, title, autoFocus, 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy,
+  // Everything else the caller passed (onClick, onKeyDown, data-*, aria-*…) belongs to the trigger.
+  children: _children, multiple: _multiple, size: _size, form: _form, ...rest
 }: SelectProps & { options: Opt[] }) {
+  const passThrough = rest as unknown as React.ButtonHTMLAttributes<HTMLButtonElement>
   const controlled = value !== undefined
   const first = options.find((o) => !o.disabled)?.value ?? ''
   const [inner, setInner] = useState(() => String(defaultValue ?? first))
@@ -182,11 +198,19 @@ function SearchSelect({
     else if (e.key === 'End') { e.preventDefault(); setActive(step(shown.length, -1)) }
     else if (e.key === 'Enter') { e.preventDefault(); const o = shown[active]; if (o) choose(o) }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
-    else if (e.key === 'Tab') close(false)
+    else if (e.key === 'Tab') {
+      // The panel lives at the end of <body>, so the browser's own Tab would leave the page.
+      // Close and move on from the trigger instead (the hidden required input is tabIndex -1).
+      e.preventDefault()
+      const trigger = triggerRef.current
+      close(false)
+      if (trigger) (neighbourFocusable(trigger, e.shiftKey ? -1 : 1) ?? trigger).focus()
+    }
   }
 
-  const onTriggerKey = (e: React.KeyboardEvent) => {
-    if (open) return
+  const onTriggerKey = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    passThrough.onKeyDown?.(e)
+    if (e.defaultPrevented || open) return
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ' || e.key === 'F4') {
       e.preventDefault(); openList()
     } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -194,15 +218,23 @@ function SearchSelect({
     }
   }
 
+  // Dark areas (KDS, expo, till) don't redefine --surface/--text, so the panel takes the kds palette.
+  const dark = themeClass.includes('erp-kitchen-dark')
+  const mutedCls = dark ? 'text-kds-subtext' : ''
+  const mutedStyle = dark ? undefined : { color: 'var(--muted)' }
+  // React events bubble through portals to the opener's ancestors (a card's onClick…); stop them here.
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+
   let lastGroup: string | null = null
   const panel = open && pos && createPortal(
-    <div ref={panelRef} className={`${themeClass} fixed z-[1000] flex flex-col rounded-lg overflow-hidden`}
+    <div ref={panelRef} onClick={stop} onPointerDown={stop} onMouseDown={stop} onKeyDown={stop}
+      className={`${themeClass} ${dark ? 'bg-kds-card text-kds-text border-kds-border' : ''} fixed z-[1000] flex flex-col rounded-lg overflow-hidden border`}
       style={{
         left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, maxHeight: Math.max(160, pos.maxHeight),
-        background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)',
+        ...(dark ? {} : { background: 'var(--surface)', color: 'var(--text)', borderColor: 'var(--border)' }),
         boxShadow: '0 12px 32px rgb(var(--ink-rgb) / 0.18)',
       }}>
-      <div className="p-2 border-b" style={{ borderColor: 'var(--border)' }}>
+      <div className={`p-2 border-b ${dark ? 'border-kds-border' : ''}`} style={dark ? undefined : { borderColor: 'var(--border)' }}>
         <input ref={searchRef} value={query} placeholder="Search…" aria-label="Search options"
           role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
           aria-activedescendant={shown[active] ? `${listId}-${active}` : undefined}
@@ -211,23 +243,23 @@ function SearchSelect({
           className="s-input !py-1.5" />
       </div>
       <div ref={listRef} id={listId} role="listbox" aria-label={ariaLabel ?? title ?? 'Options'} className="overflow-y-auto py-1 min-h-0 flex-1">
-        {shown.length === 0 && <p className="px-3 py-2 text-sm" style={{ color: 'var(--muted)' }}>No matches</p>}
+        {shown.length === 0 && <p className={`px-3 py-2 text-sm ${mutedCls}`} style={mutedStyle}>No matches</p>}
         {shown.map((o, i) => {
           const header = o.group !== lastGroup && o.group ? o.group : null
           lastGroup = o.group
           const sel = o.value === current
           return (
             <Fragment key={`${o.group ?? ''}\u0000${o.value}\u0000${i}`}>
-              {header && <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider font-bold" style={{ color: 'var(--muted)' }}>{header}</p>}
+              {header && <p className={`px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider font-bold ${mutedCls}`} style={mutedStyle}>{header}</p>}
               <div id={`${listId}-${i}`} data-idx={i} role="option" aria-selected={sel} aria-disabled={o.disabled || undefined}
                 onPointerMove={() => { if (!o.disabled && active !== i) setActive(i) }}
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={() => choose(o)}
-                className={`flex items-center gap-2 px-3 py-2 text-sm ${o.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${o.group ? 'pl-5' : ''}`}
-                style={{ background: i === active && !o.disabled ? 'var(--elevated)' : undefined }}>
+                className={`flex items-center gap-2 px-3 py-2 text-sm ${i === active && !o.disabled && dark ? 'bg-kds-border' : ''} ${o.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${o.group ? 'pl-5' : ''}`}
+                style={{ background: i === active && !o.disabled ? (dark ? undefined : 'var(--elevated)') : undefined }}>
                 <span className="flex-1 min-w-0 truncate" style={sel ? { fontWeight: 600, color: 'var(--erp-primary-ink)' } : undefined}>{o.label || ' '}</span>
                 {sel && (
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0" style={{ color: 'var(--erp-success)' }}>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0" style={{ color: dark ? 'var(--erp-primary)' : 'var(--erp-success)' }}>
                     <path d="M2.5 6.2l2.3 2.3 4.7-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 )}
@@ -243,9 +275,9 @@ function SearchSelect({
   const triggerStyle: CSSProperties = { backgroundImage: 'none', ...style, display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }
   return (
     <>
-      <button ref={triggerRef} type="button" id={id} title={title} disabled={disabled} autoFocus={autoFocus}
+      <button {...passThrough} ref={triggerRef} type="button" id={id} title={title} disabled={disabled} autoFocus={autoFocus}
         aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} aria-labelledby={ariaLabelledBy}
-        onClick={() => (open ? close() : openList())}
+        onClick={(e) => { passThrough.onClick?.(e); if (!e.defaultPrevented) (open ? close() : openList()) }}
         onKeyDown={onTriggerKey}
         onFocus={onFocus as unknown as React.FocusEventHandler<HTMLButtonElement>}
         onBlur={onBlur as unknown as React.FocusEventHandler<HTMLButtonElement>}
