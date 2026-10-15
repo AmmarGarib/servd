@@ -28,6 +28,7 @@ import { formatBrandName } from '../../lib/brandName'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { useManagerRoles } from '../../lib/roles'
+import { Select } from '@/components/ui/Select'
 
 interface RiderRow {
   id: string; name: string; phone: string
@@ -239,7 +240,7 @@ export default function DispatchPage() {
                 {r.fleetPartner ? (
                   <span className="text-[11px] text-s-muted capitalize">{r.status}</span>
                 ) : (
-                  <select
+                  <Select
                     value={r.status}
                     onChange={(e) => setStatus.mutate({ id: r.id, status: e.target.value as RiderRow['status'] })}
                     className="text-xs bg-s-surface border border-s-border rounded px-2 py-1"
@@ -247,7 +248,7 @@ export default function DispatchPage() {
                     <option value="available">available</option>
                     <option value="busy">busy</option>
                     <option value="offline">offline</option>
-                  </select>
+                  </Select>
                 )}
               </div>
             </div>

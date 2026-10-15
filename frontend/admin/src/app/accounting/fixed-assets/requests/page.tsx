@@ -9,6 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { FA_BASE, FaFrame, Notice, card, inp, errorWords, useFaLookups, type FaRequest } from '../../../../components/fixedAssets/shared'
 import { RequestCard } from '../../../../components/fixedAssets/RequestCard'
+import { Select } from '@/components/ui/Select'
 
 const FILTERS: Array<{ key: string; label: string; status: string }> = [
   { key: 'pending', label: 'Waiting', status: 'pending' },
@@ -74,14 +75,14 @@ export default function RequestsPage() {
           })}
         </div>
         <label className="block ml-auto min-w-[200px]"><span className="text-[11px] font-bold text-white/50">Kind</span>
-          <select className={inp} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <Select className={inp} value={kind} onChange={(e) => setKind(e.target.value)}>
             <option value="">All kinds</option>
             <option value="capitalise">Capitalise from CapEx</option>
             {(lookups?.requestKinds ?? []).map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
             <option value="pool_write_off">Write off smallwares units</option>
             <option value="pool_transfer">Move smallwares units</option>
             <option value="count">Smallwares count</option>
-          </select></label>
+          </Select></label>
       </div>
 
       {error && <Notice tone="bad">{errorWords(error)}</Notice>}

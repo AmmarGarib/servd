@@ -12,6 +12,7 @@ import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, pinRefusal, pkr, primaryBtn, type Box } from './ui'
+import { Select } from '@/components/ui/Select'
 
 export type TopupSource = 'garibsons' | 'safe' | 'bank' | 'till'
 
@@ -60,12 +61,12 @@ export function SourcePicker({ value, onChange, tenantId, boxId, allowTill }: {
     )}
     {value.source === 'till' && (
       <Field label="Open drawer *">
-        <select value={value.shiftId} onChange={(e) => onChange({ ...value, shiftId: e.target.value })} className={fieldCls}>
+        <Select value={value.shiftId} onChange={(e) => onChange({ ...value, shiftId: e.target.value })} className={fieldCls}>
           <option value="">{isError ? 'Drawers unavailable' : drawers.length === 0 ? 'No open drawer in this company' : '— pick the drawer —'}</option>
           {drawers.map((d) => (
             <option key={d.id} value={d.id}>{d.cashierName}{d.locationName ? ` · ${d.locationName}` : ''} · opened {new Date(d.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</option>
           ))}
-        </select>
+        </Select>
         <p className="text-[10px] text-white/35 mt-1">Shown on the drawer as a pay-out; its count expects less cash. Nothing goes to the bank deposit.</p>
       </Field>
     )}

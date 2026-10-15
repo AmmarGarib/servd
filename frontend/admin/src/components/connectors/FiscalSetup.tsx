@@ -21,6 +21,7 @@ import {
   type ConnectorsOverview, type FiscalSettings, type ReportingRequiredResult, type TestResult,
 } from '../../lib/connectorsApi'
 import { Badge, Banner, Card, ConfirmPhrase, ErrorLine, Field, Modal, OkLine, RangeNumberInput, TestBadge, fmtWhen } from './ui'
+import { Select } from '@/components/ui/Select'
 
 const FISCAL_TEST_SCENARIOS = ['ok', 'slow', 'down', 'reject', 'auth', 'processing_then_ok', 'unknown_then_filed'] as const
 
@@ -233,10 +234,10 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Driver" htmlFor="fx-driver" hint={driver === 'test' ? 'Built in. Files TEST numbers — never a real fiscal invoice.' : driver === 'none' ? 'Off. Sales are held until a driver is set and the CEO goes live.' : undefined}>
-          <select id="fx-driver" className="s-select" value={driver} disabled={locked} onChange={(e) => setDriver(e.target.value)}>
+          <Select id="fx-driver" className="s-select" value={driver} disabled={locked} onChange={(e) => setDriver(e.target.value)}>
             {fiscalDrivers.length === 0 && <option value={f.driver}>{f.driver}</option>}
             {fiscalDrivers.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
-          </select>
+          </Select>
         </Field>
         {(needs.baseUrl || f.baseUrl) && (
           <Field label="Base URL" htmlFor="fx-url" hint="The vendor's https:// address. Private and local addresses are refused.">
@@ -310,9 +311,9 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
       </div>
       {driver === 'test' && (
         <Field label="Test driver behaviour" hint="For rehearsing failures before a real vendor is connected.">
-          <select className="s-select max-w-[260px]" disabled={!canEdit} value={s.test?.scenario ?? 'ok'} onChange={(e) => setS({ ...s, test: { scenario: e.target.value } })}>
+          <Select className="s-select max-w-[260px]" disabled={!canEdit} value={s.test?.scenario ?? 'ok'} onChange={(e) => setS({ ...s, test: { scenario: e.target.value } })}>
             {FISCAL_TEST_SCENARIOS.map((x) => <option key={x} value={x}>{x.replace(/_/g, ' ')}</option>)}
-          </select>
+          </Select>
         </Field>
       )}
 
@@ -465,10 +466,10 @@ function ReleaseHeldCard({ data, isCeo }: { data: ConnectorsOverview; isCeo: boo
       {isCeo ? (
         <div className="flex flex-wrap items-end gap-2">
           <Field label="Brand">
-            <select className="s-select min-w-[200px]" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
+            <Select className="s-select min-w-[200px]" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
               <option value="">All brands</option>
               {data.brandPosIds.map((b) => <option key={b.conceptId} value={b.conceptId}>{b.name}</option>)}
-            </select>
+            </Select>
           </Field>
           <button className="s-btn-primary" disabled={held === 0 || !data.fiscal.enabled || !data.fiscalReportingRequired || m.isPending} onClick={() => setOpen(true)}>Release all held…</button>
           {!data.fiscalReportingRequired

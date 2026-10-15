@@ -15,6 +15,7 @@
 // <ReferenceUsedBeforeNotice>. The till keeps its own tenders.
 
 import { BankAccountSelect } from './BankAccountSelect'
+import { Select } from '@/components/ui/Select'
 
 export const RECEIPT_METHODS = ['cash', 'card', 'bank_transfer', 'bank_deposit', 'cheque'] as const
 export type ReceiptMethod = typeof RECEIPT_METHODS[number]
@@ -107,7 +108,7 @@ export function PaymentReceivedFields({
     <div className="space-y-2">
       <label className="block" htmlFor={`${idPrefix}-method`}>
         <span className={labelClassName}>{methodLabel}</span>
-        <select
+        <Select
           id={`${idPrefix}-method`}
           value={method}
           onChange={(e) => {
@@ -120,7 +121,7 @@ export function PaymentReceivedFields({
           {methods.map((m) => (
             <option key={m} value={m}>{receiptMethodLabel(m)}</option>
           ))}
-        </select>
+        </Select>
       </label>
       {hint}
       <label className="block" htmlFor={`${idPrefix}-ref`}>

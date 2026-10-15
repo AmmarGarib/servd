@@ -14,6 +14,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import { useManagerRoles } from '../../../lib/roles'
+import { Select } from '@/components/ui/Select'
 
 // The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts). Forgiving a strike
 // and lifting a ban stay with managers; the marketing roles (who hold the crm
@@ -108,10 +109,10 @@ export default function NaughtyListPage() {
                   className="accent-rose-500" />
                 Banned only
               </label>
-              <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
+              <Select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
                 className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-1.5 text-xs text-white/85">
                 {KIND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.emoji} {o.label}</option>)}
-              </select>
+              </Select>
             </div>
             <OffendersList bannedOnly={bannedOnly} kindFilter={kindFilter} />
           </>

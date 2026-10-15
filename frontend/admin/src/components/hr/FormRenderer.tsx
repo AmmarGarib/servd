@@ -9,6 +9,7 @@
 import { useState } from 'react'
 import { human, inp, type HrField, type Lookups, type OrgData } from '../../lib/hr'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
+import { Select } from '@/components/ui/Select'
 
 type Values = Record<string, unknown>
 
@@ -114,19 +115,19 @@ function FieldInput({ f, v, onSet, ctx }: { f: HrField; v: unknown; onSet: (v: u
       )
     case 'select':
       return (
-        <select className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
+        <Select className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
           <option value="">—</option>
           {(f.options ?? []).map((o) => <option key={o} value={o}>{human(o)}</option>)}
-        </select>
+        </Select>
       )
     case 'multiselect':
       return <ChipPicker options={(f.options ?? []).map((o) => ({ id: o, label: human(o) }))} value={(v as string[]) ?? []} onSet={onSet} disabled={dis} />
     case 'employee':
       return (
-        <select className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
+        <Select className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
           <option value="">—</option>
           {(ctx.lookups?.employees ?? []).map((e) => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
-        </select>
+        </Select>
       )
     case 'employees':
       return <ChipPicker options={(ctx.lookups?.employees ?? []).map((e) => ({ id: e.id, label: e.fullName }))} value={(v as string[]) ?? []} onSet={onSet} disabled={dis} />
@@ -137,10 +138,10 @@ function FieldInput({ f, v, onSet, ctx }: { f: HrField; v: unknown; onSet: (v: u
         : f.type === 'orgunit' ? (ctx.org?.units ?? []).filter((u) => u.kind === f.ref && u.isActive)
         : (ctx.lookups?.records?.[f.ref ?? ''] ?? []).map((r) => ({ id: r.id, name: r.label }))
       return (
-        <select className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
+        <Select className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
           <option value="">{opts.length ? '—' : f.type === 'orgunit' ? `No ${human(f.ref)} set up yet` : '—'}</option>
           {opts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </select>
+        </Select>
       )
     }
     case 'file':

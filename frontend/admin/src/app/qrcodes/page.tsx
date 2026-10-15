@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
 import { useBrandFilter } from '../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface QrCode {
   id: string
@@ -106,17 +107,17 @@ export default function QrCodesPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Concept *</label>
-                <select value={form.conceptId} onChange={(e) => setForm({ ...form, conceptId: e.target.value, tableId: '' })} required className={inp}>
+                <Select value={form.conceptId} onChange={(e) => setForm({ ...form, conceptId: e.target.value, tableId: '' })} required className={inp}>
                   <option value="">Select concept…</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Table (optional)</label>
-                <select value={form.tableId} onChange={(e) => setForm({ ...form, tableId: e.target.value })} className={inp} disabled={!form.conceptId}>
+                <Select value={form.tableId} onChange={(e) => setForm({ ...form, tableId: e.target.value })} className={inp} disabled={!form.conceptId}>
                   <option value="">No specific table</option>
                   {tables.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Label *</label>
@@ -125,10 +126,10 @@ export default function QrCodesPage() {
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Order type *</label>
-                <select value={form.orderType} onChange={(e) => setForm({ ...form, orderType: e.target.value as 'dine-in' | 'pickup' })} className={inp}>
+                <Select value={form.orderType} onChange={(e) => setForm({ ...form, orderType: e.target.value as 'dine-in' | 'pickup' })} className={inp}>
                   <option value="dine-in">Dine-in</option>
                   <option value="pickup">Pickup</option>
-                </select>
+                </Select>
               </div>
             </div>
             <div className="flex gap-3">

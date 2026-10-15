@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface MarketingUser {
   id: string
@@ -74,7 +75,7 @@ export default function MarketingActivityPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <select value={days} onChange={(e) => setDays(parseInt(e.target.value, 10))}
+            <Select value={days} onChange={(e) => setDays(parseInt(e.target.value, 10))}
               className="rounded-lg px-3 py-2 text-xs"
               style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
               <option value={7}>7 days</option>
@@ -82,15 +83,15 @@ export default function MarketingActivityPage() {
               <option value={30}>30 days</option>
               <option value={90}>90 days</option>
               <option value={365}>1 year</option>
-            </select>
-            <select value={userId} onChange={(e) => setUserId(e.target.value)}
+            </Select>
+            <Select value={userId} onChange={(e) => setUserId(e.target.value)}
               className="rounded-lg px-3 py-2 text-xs"
               style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
               <option value="">All users</option>
               {team.map((u) => (
                 <option key={u.id} value={u.id}>{u.name} · {u.email}</option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
       </header>

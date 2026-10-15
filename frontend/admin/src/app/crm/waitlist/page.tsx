@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 // The public link people are sent to. Production storefront on purpose: this
 // is what gets shared, so a dev STOREFRONT_URL (localhost) must never leak in.
@@ -169,11 +170,11 @@ function ShareLink({ sources }: { sources: string[] }) {
         <p className="text-xs font-semibold uppercase tracking-wider text-s-muted mb-1.5">Make a source link</p>
         <p className="text-xs text-s-muted mb-2">Tag the link per place you post it, so the table below shows which one brings sign-ups.</p>
         <div className="flex gap-2 flex-wrap sm:flex-nowrap">
-          <select value={pick} onChange={(e) => setPick(e.target.value)} className="s-select sm:max-w-[12rem]">
+          <Select value={pick} onChange={(e) => setPick(e.target.value)} className="s-select sm:max-w-[12rem]">
             <option value="">Pick a source…</option>
             {options.map((o) => <option key={o} value={o}>{o}</option>)}
             <option value="__custom">Other…</option>
-          </select>
+          </Select>
           {pick === '__custom' && (
             <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="e.g. lums_flyer" className="s-input sm:max-w-[14rem]" />
           )}
@@ -301,10 +302,10 @@ function SignupsTable({ sources }: { sources: string[] }) {
         </p>
         <input value={q} onChange={(e) => resetPage(setQ)(e.target.value)} placeholder="Search name, phone, email"
           className="s-input !w-56" />
-        <select value={source} onChange={(e) => resetPage(setSource)(e.target.value)} className="s-select !w-40">
+        <Select value={source} onChange={(e) => resetPage(setSource)(e.target.value)} className="s-select !w-40">
           <option value="">All sources</option>
           {[...new Set(sources)].map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        </Select>
         <label className="text-xs text-s-muted">From
           <input type="date" value={from} onChange={(e) => resetPage(setFrom)(e.target.value)} className="s-input !w-36 mt-0.5" />
         </label>

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
+import { Select } from '@/components/ui/Select'
 
 // Withholding RATES live on Accounting → Sales tax return → Withholding rates
 // (PUT /accounting/withholding/rates is their one writer); only the on/off
@@ -111,11 +112,11 @@ export default function OperationsPage() {
         <Section title="Tip pool">
           <Toggle label="Enable tip pooling" checked={!!form.tipPoolEnabled} onChange={(v) => patch('tipPoolEnabled', v)} />
           <Field label="Distribution method">
-            <select value={form.tipPoolDistribution ?? 'equal'} onChange={(e) => patch('tipPoolDistribution', e.target.value as Cfg['tipPoolDistribution'])} className={fieldCls}>
+            <Select value={form.tipPoolDistribution ?? 'equal'} onChange={(e) => patch('tipPoolDistribution', e.target.value as Cfg['tipPoolDistribution'])} className={fieldCls}>
               <option value="equal">Equal split among everyone clocked in</option>
               <option value="by_hours">Weighted by hours worked</option>
               <option value="by_role_weight">Weighted by role (kitchen vs cashier)</option>
-            </select>
+            </Select>
           </Field>
           <div>
             <label className="text-xs text-white/55">Who is in the pool, and their weight</label>
@@ -146,11 +147,11 @@ export default function OperationsPage() {
 
         <Section title="Tax invoice numbering">
           <Field label="Sequence reset">
-            <select value={form.invoiceSequenceReset ?? 'yearly'} onChange={(e) => patch('invoiceSequenceReset', e.target.value as Cfg['invoiceSequenceReset'])} className={fieldCls}>
+            <Select value={form.invoiceSequenceReset ?? 'yearly'} onChange={(e) => patch('invoiceSequenceReset', e.target.value as Cfg['invoiceSequenceReset'])} className={fieldCls}>
               <option value="yearly">Reset every fiscal year</option>
               <option value="monthly">Reset every month</option>
               <option value="never">Never reset (continuous)</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Credit-note prefix">
             <input value={form.invoiceCreditNotePrefix ?? ''} onChange={(e) => patch('invoiceCreditNotePrefix', e.target.value || null)} placeholder="CN-" className={fieldCls} />

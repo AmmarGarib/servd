@@ -12,6 +12,7 @@ import { api } from '../../lib/api'
 import { MapPin } from '../../components/ui/MapPin'
 import { MoneyInput } from '../../components/ui/MoneyInput'
 import { usePermissions } from '../../hooks/useCan'
+import { Select } from '@/components/ui/Select'
 
 type StepKey = 'company' | 'brand' | 'location' | 'hours' | 'menu' | 'done'
 
@@ -343,14 +344,14 @@ function CompanyForm({ tenant, onSaved, onCancel }: {
         <Hint>Where critical alerts go: refund threshold breaches, fiscal POS (FBR / SRB) filing problems, daily digests.</Hint>
       </Field>
       <Field label="What you run">
-        <select value={industry} onChange={(e) => setIndustry(e.target.value)} className={selectCls}>
+        <Select value={industry} onChange={(e) => setIndustry(e.target.value)} className={selectCls}>
           {INDUSTRY_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-        </select>
+        </Select>
       </Field>
       <Field label="Timezone">
-        <select value={timezone} onChange={(e) => setTimezone(e.target.value)} className={selectCls}>
+        <Select value={timezone} onChange={(e) => setTimezone(e.target.value)} className={selectCls}>
           {TIMEZONE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-        </select>
+        </Select>
       </Field>
 
       {isCeo && !isEditing && (
@@ -471,25 +472,25 @@ function MergeCompaniesForm({ tenants, onDone }: { tenants: Tenant[]; onDone: ()
       </div>
 
       <Field label="Source company (will be merged in & closed) *">
-        <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} className={selectCls}>
+        <Select value={sourceId} onChange={(e) => setSourceId(e.target.value)} className={selectCls}>
           <option value="">Pick a company…</option>
           {tenants.map((t) => (
             <option key={t.id} value={t.id} disabled={t.id === targetId}>
               {t.name}{t.isActive ? ' (active)' : ''}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       <Field label="Target company (everything moves here) *">
-        <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={selectCls}>
+        <Select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={selectCls}>
           <option value="">Pick a company…</option>
           {tenants.map((t) => (
             <option key={t.id} value={t.id} disabled={t.id === sourceId}>
               {t.name}{t.isActive ? ' (active)' : ''}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       {source && target && (
@@ -883,14 +884,14 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
 
       <Section heading="Tax jurisdiction">
         <Field label="Province *">
-          <select value={province} onChange={(e) => { setProvince(e.target.value as ProvinceCode | ''); setProvinceTouched(true) }} className={selectCls}>
+          <Select value={province} onChange={(e) => { setProvince(e.target.value as ProvinceCode | ''); setProvinceTouched(true) }} className={selectCls}>
             {province === '' && <option value="">Not set — pick the province</option>}
             {PROVINCES.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.name} — {p.authority} · {p.rate}%{p.cardRate ? ` (card ${p.cardRate}%)` : ''}
               </option>
             ))}
-          </select>
+          </Select>
           <Hint>
             Sets the brand's starting GST rates for cash and for card / digital payments; the till charges by tender automatically. Change them later in Brands → Tax registration.
           </Hint>
@@ -978,12 +979,12 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
             </Hint>
           </Field>
           <Field label="Venue type">
-            <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className={selectCls}>
+            <Select value={type} onChange={(e) => setType(e.target.value as typeof type)} className={selectCls}>
               <option value="restaurant">Dine-in restaurant</option>
               <option value="cafe">Café</option>
               <option value="cloud_kitchen">Cloud kitchen (delivery only)</option>
               <option value="food_truck">Food truck</option>
-            </select>
+            </Select>
           </Field>
         </div>
       )}

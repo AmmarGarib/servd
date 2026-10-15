@@ -23,6 +23,7 @@ import {
   terminalPaymentFor, terminalRefundText, uploadEvidencePhoto,
   type RefundPayment, type RefundResult, type RefundTender,
 } from './refundEngine'
+import { Select } from '@/components/ui/Select'
 
 export interface RefundChoice {
   /** '' = the server's default (the sale's tender) — offered only when the order took more than one tender. */
@@ -112,7 +113,7 @@ export function RefundOptions({ payments, source, amountCents, value, onChange, 
         {tenders.length === 0 ? (
           <p className="text-xs text-s-amber">Nothing was paid on this order — there is nothing to refund.</p>
         ) : (
-          <select id={`${idPrefix}-method`} value={value.method}
+          <Select id={`${idPrefix}-method`} value={value.method}
             onChange={(e) => {
               const m = e.target.value as RefundTender | ''
               onChange({ ...value, method: m, viaMachine: isManager && m === 'card' && payments.some((p) => p.gateway === 'card_terminal' && p.status === 'paid') })
@@ -120,7 +121,7 @@ export function RefundOptions({ payments, source, amountCents, value, onChange, 
             className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text">
             {sameAsPaidOk && <option value="">Same as paid</option>}
             {tenders.map((t) => <option key={t} value={t}>{TENDER_LABEL[t]}</option>)}
-          </select>
+          </Select>
         )}
       </div>
 

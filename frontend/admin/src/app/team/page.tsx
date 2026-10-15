@@ -14,6 +14,7 @@ import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
 import { useTeam, treeOrder, isInToday, TODAY_META } from '../../hooks/useTeam'
 import { roleLabel } from '../../lib/appRoles'
+import { Select } from '@/components/ui/Select'
 
 interface Invite {
   id: string
@@ -176,10 +177,10 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
         {employees.length > 0 && (
           <label className="block">
             <span className="text-[11px] text-white/45">Someone on your team (optional)</span>
-            <select value={employeeId} onChange={(e) => pickEmployee(e.target.value)} className={input}>
+            <Select value={employeeId} onChange={(e) => pickEmployee(e.target.value)} className={input}>
               <option value="">— not linked to an HR record —</option>
               {employees.map((e) => <option key={e.id} value={e.id}>{e.fullName} · {e.employeeCode}</option>)}
-            </select>
+            </Select>
           </label>
         )}
         <label className="block">
@@ -198,9 +199,9 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
         </label>
         <label className="block">
           <span className="text-[11px] text-white/45">Role</span>
-          <select value={role} onChange={(e) => setRole(e.target.value)} className={input}>
+          <Select value={role} onChange={(e) => setRole(e.target.value)} className={input}>
             {childRoles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
-          </select>
+          </Select>
         </label>
         {err && <p className="text-xs font-bold text-red-700">{err}</p>}
         {done && <p className="text-xs font-bold text-success">{done}</p>}

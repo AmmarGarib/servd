@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface ConceptRow {
   id:               string
@@ -287,7 +288,7 @@ function SelectField({
       <span style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
         {label}
       </span>
-      <select
+      <Select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
@@ -301,7 +302,7 @@ function SelectField({
         }}
       >
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      </Select>
       {hint && <span style={{ fontSize: '0.7rem', color: 'var(--muted)', lineHeight: 1.35 }}>{hint}</span>}
     </label>
   )

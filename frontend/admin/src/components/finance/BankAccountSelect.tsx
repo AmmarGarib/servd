@@ -10,6 +10,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 export interface BankAccountOption {
   id: string
@@ -50,7 +51,7 @@ export function BankAccountSelect({
   onChange: (bankAccountId: string) => void
   id?: string
   label?: string
-  /** Class for the <select> (the page's field style). */
+  /** Class for the <Select> (the page's field style). */
   className?: string
 }) {
   const { data = [], isLoading, isError } = useBankAccounts()
@@ -62,7 +63,7 @@ export function BankAccountSelect({
       <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">
         {label}{required ? ' *' : ''}
       </span>
-      <select
+      <Select
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -76,7 +77,7 @@ export function BankAccountSelect({
         {banks.map((b) => (
           <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>
         ))}
-      </select>
+      </Select>
     </label>
   )
 }

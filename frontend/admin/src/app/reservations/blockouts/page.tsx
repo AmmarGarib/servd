@@ -9,6 +9,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 interface Blockout {
@@ -50,9 +51,9 @@ export default function BlockoutsPage() {
           <h1 className="text-xl font-bold text-s-text">Closures & blockouts</h1>
         </div>
         <div className="flex items-center gap-2">
-          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
           <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ New blockout</button>
         </div>
       </header>
@@ -138,12 +139,12 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
         <div className="p-5 space-y-3 text-sm">
           <label className="block">
             <span className="text-xs text-s-muted">Kind</span>
-            <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
+            <Select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
               <option value="closure">Closure (no bookings)</option>
               <option value="private_event">Private event</option>
               <option value="reduced_capacity">Reduced capacity</option>
               <option value="custom">Custom note</option>
-            </select>
+            </Select>
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">

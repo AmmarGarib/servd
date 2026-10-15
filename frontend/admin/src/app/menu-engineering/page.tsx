@@ -19,6 +19,7 @@ import { recipeStatusMeta } from '../accounting/recipes/RecipeForm'
 import { useBrandFilter } from '../../store/brandFilter'
 import { fmtPkrWhole } from '../../lib/money'
 import { useKitchenView } from '../inventory/kitchenView'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 interface EngRecipe {
@@ -143,11 +144,11 @@ export default function MenuEngineeringPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <input value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search plates…" className="s-input text-sm h-9 w-52" />
-            <select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)}
+            <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)}
               className="s-select text-sm h-9 w-44">
               <option value="">All Concepts</option>
               {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
       </header>

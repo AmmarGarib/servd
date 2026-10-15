@@ -17,6 +17,7 @@ import { fmtPkr } from '../../lib/money'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { Badge, Banner, Card, DocChip, ErrorLine, Field, Modal, OkLine, fmtWhen } from './ui'
+import { Select } from '@/components/ui/Select'
 
 const RETRYABLE: FiscalDocStatus[] = ['failed', 'rejected', 'pending']
 const MANUAL_FILABLE: FiscalDocStatus[] = ['held', 'waiting', 'pending', 'failed', 'rejected', 'manual_required']
@@ -83,23 +84,23 @@ export function FiscalSubmissions({ data, initialStatus, initialDay = '', canCon
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <Field label="Status">
-            <select className="s-select text-xs" value={status} onChange={(e) => setStatus(e.target.value as FiscalDocStatus | '')}>
+            <Select className="s-select text-xs" value={status} onChange={(e) => setStatus(e.target.value as FiscalDocStatus | '')}>
               <option value="">All</option>
               {FISCAL_DOC_STATUSES.map((s) => <option key={s} value={s}>{DOC_STATUS_LABEL[s]}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Kind">
-            <select className="s-select text-xs" value={kind} onChange={(e) => setKind(e.target.value as '' | 'sale' | 'refund')}>
+            <Select className="s-select text-xs" value={kind} onChange={(e) => setKind(e.target.value as '' | 'sale' | 'refund')}>
               <option value="">Sales and refunds</option>
               <option value="sale">Sales</option>
               <option value="refund">Refunds</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Brand">
-            <select className="s-select text-xs" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
+            <Select className="s-select text-xs" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
               <option value="">All brands</option>
               {data.brandPosIds.map((b) => <option key={b.conceptId} value={b.conceptId}>{b.name}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="From"><input type="date" className="s-input text-xs" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
           <Field label="To"><input type="date" className="s-input text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
@@ -284,9 +285,9 @@ function ManualFilingDialog({ doc, onClose, onDone }: { doc: FiscalDocRow; onClo
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Fiscal invoice number"><input className="s-input font-mono" value={fiscalNumber} onChange={(e) => setFiscalNumber(e.target.value)} maxLength={64} /></Field>
         <Field label="Authority">
-          <select className="s-select" value={authority} onChange={(e) => setAuthority(e.target.value as Authority)}>
+          <Select className="s-select" value={authority} onChange={(e) => setAuthority(e.target.value as Authority)}>
             {AUTHORITIES.map((a) => <option key={a} value={a}>{authorityLabel(a)}</option>)}
-          </select>
+          </Select>
         </Field>
       </div>
       <Field label="Verify link (optional)"><input className="s-input text-xs" value={verifyUrl} onChange={(e) => setVerifyUrl(e.target.value)} placeholder="https://…" /></Field>

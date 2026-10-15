@@ -14,6 +14,7 @@ import { SectionFields } from './SectionFields'
 import { MotionPicker, type MotionPreviewControl } from './MotionPicker'
 import { sectionSpec } from '../../lib/sections'
 import { AlignSelect, Check, ColorInput, CopyInput, Field, FontSelect, MediaInput, NumberInput, Section } from './fields'
+import { Select } from '@/components/ui/Select'
 
 interface Props {
   block: Block
@@ -101,11 +102,11 @@ export function BlockInspector({ block, onChange, fonts, noStyle = false, kind, 
               <Field label="Background"><ColorInput value={block.background} onChange={(v) => set({ background: v })} placeholder="#ffffff or var(--servd-ink)" /></Field>
               <Field label="Text colour"><ColorInput value={block.textColor} onChange={(v) => set({ textColor: v })} placeholder="#000000" /></Field>
               <Field label="Top/bottom padding">
-                <select value={block.paddingY ?? ''} onChange={(e) => set({ paddingY: (e.target.value || undefined) as SectionPad | undefined })} className="s-select">
+                <Select value={block.paddingY ?? ''} onChange={(e) => set({ paddingY: (e.target.value || undefined) as SectionPad | undefined })} className="s-select">
                   <option value="">Default</option>
                   <option value="none">None</option><option value="sm">Small</option><option value="md">Medium</option>
                   <option value="lg">Large</option><option value="xl">X-large</option>
-                </select>
+                </Select>
               </Field>
               <Field label="Font"><FontSelect value={block.fontFamily} onChange={(v) => set({ fontFamily: v })} fonts={fonts} emptyLabel="Page default" /></Field>
               <Check checked={!!block.fullBleed} onChange={(v) => set({ fullBleed: v || undefined })}>Full bleed (edge to edge)</Check>
@@ -113,9 +114,9 @@ export function BlockInspector({ block, onChange, fonts, noStyle = false, kind, 
 
             <Section title="Entrance (plays once)">
               <Field label="Entrance">
-                <select value={block.animation ?? 'none'} onChange={(e) => set({ animation: e.target.value === 'none' ? undefined : e.target.value as Animation })} className="s-select">
+                <Select value={block.animation ?? 'none'} onChange={(e) => set({ animation: e.target.value === 'none' ? undefined : e.target.value as Animation })} className="s-select">
                   {ANIMATIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
-                </select>
+                </Select>
               </Field>
               {block.animation && block.animation !== 'none' && (
                 <>
@@ -196,9 +197,9 @@ function HeroFields({ block, set }: FP) {
       <Field label="Image overlay (0 to 1)"><NumberInput value={block.imageOverlay ?? 0.45} min={0} max={1} step={0.05} onChange={(v) => set({ imageOverlay: v })} /></Field>
       <Field label="Alignment"><AlignSelect value={block.align ?? 'left'} onChange={(v) => set({ align: v })} /></Field>
       <Field label="Height">
-        <select value={block.height ?? 'lg'} onChange={(e) => set({ height: e.target.value })} className="s-select">
+        <Select value={block.height ?? 'lg'} onChange={(e) => set({ height: e.target.value })} className="s-select">
           {(['sm', 'md', 'lg', 'xl', 'screen'] as const).map((h) => <option key={h} value={h}>{h}</option>)}
-        </select>
+        </Select>
       </Field>
       <CtaPair label="Primary button" value={block.primaryCta} onChange={(v) => set({ primaryCta: v })} onRemove={() => set({ primaryCta: undefined })} />
       <CtaPair label="Secondary button (optional)" value={block.secondaryCta} onChange={(v) => set({ secondaryCta: v })} onRemove={() => set({ secondaryCta: undefined })} />
@@ -212,16 +213,16 @@ function CtaFields({ block, set }: FP) {
       <Field label="Button text"><CopyInput value={block.text} onChange={(v) => set({ text: v })} /></Field>
       <Field label="Link"><input value={block.href ?? ''} onChange={(e) => set({ href: e.target.value })} placeholder="/home" className="s-input" /></Field>
       <Field label="Style">
-        <select value={block.style ?? 'primary'} onChange={(e) => set({ style: e.target.value as ButtonStyle })} className="s-select">
+        <Select value={block.style ?? 'primary'} onChange={(e) => set({ style: e.target.value as ButtonStyle })} className="s-select">
           <option value="primary">Primary</option><option value="secondary">Secondary (outlined)</option>
           <option value="dark">Dark</option><option value="ghost">Ghost (transparent)</option>
-        </select>
+        </Select>
       </Field>
       <Field label="Size">
-        <select value={block.size ?? 'lg'} onChange={(e) => set({ size: e.target.value as ButtonSize })} className="s-select">
+        <Select value={block.size ?? 'lg'} onChange={(e) => set({ size: e.target.value as ButtonSize })} className="s-select">
           <option value="sm">Small</option><option value="md">Medium</option><option value="lg">Large</option>
           <option value="xl">X-large</option><option value="huge">Huge</option>
-        </select>
+        </Select>
       </Field>
       <Field label="Alignment"><AlignSelect value={block.align ?? 'center'} onChange={(v) => set({ align: v })} /></Field>
       <Check checked={!!block.fullWidth} onChange={(v) => set({ fullWidth: v })}>Stretch to full width</Check>
@@ -239,9 +240,9 @@ function BannerFields({ block, set }: FP) {
       <Field label="Band colour"><ColorInput value={block.backgroundColor} onChange={(v) => set({ backgroundColor: v })} /></Field>
       <Field label="Alignment"><AlignSelect value={block.align ?? 'center'} onChange={(v) => set({ align: v })} /></Field>
       <Field label="Height">
-        <select value={block.height ?? 'md'} onChange={(e) => set({ height: e.target.value })} className="s-select">
+        <Select value={block.height ?? 'md'} onChange={(e) => set({ height: e.target.value })} className="s-select">
           <option value="sm">Small</option><option value="md">Medium</option><option value="lg">Large</option>
-        </select>
+        </Select>
       </Field>
     </>
   )
@@ -253,14 +254,14 @@ function TextFields({ block, set }: FP) {
       <Field label="Body"><CopyInput rows={6} value={block.body} onChange={(v) => set({ body: v })} /></Field>
       <Field label="Alignment"><AlignSelect value={block.align ?? 'left'} onChange={(v) => set({ align: v })} /></Field>
       <Field label="Size">
-        <select value={block.size ?? 'md'} onChange={(e) => set({ size: e.target.value })} className="s-select">
+        <Select value={block.size ?? 'md'} onChange={(e) => set({ size: e.target.value })} className="s-select">
           <option value="sm">Small</option><option value="md">Medium</option><option value="lg">Large</option><option value="xl">X-large (display)</option>
-        </select>
+        </Select>
       </Field>
       <Field label="Width">
-        <select value={block.maxWidth ?? 'narrow'} onChange={(e) => set({ maxWidth: e.target.value })} className="s-select">
+        <Select value={block.maxWidth ?? 'narrow'} onChange={(e) => set({ maxWidth: e.target.value })} className="s-select">
           <option value="narrow">Narrow (reading column)</option><option value="wide">Wide</option><option value="full">Full</option>
-        </select>
+        </Select>
       </Field>
       <Check checked={!!block.emphasized} onChange={(v) => set({ emphasized: v })}>Emphasized weight</Check>
     </>
@@ -274,10 +275,10 @@ function ImageFields({ block, set }: FP) {
       <Field label="Alt text"><input value={block.alt ?? ''} onChange={(e) => set({ alt: e.target.value })} className="s-input" /></Field>
       <Field label="Caption"><CopyInput value={block.caption} onChange={(v) => set({ caption: v })} /></Field>
       <Field label="Aspect ratio">
-        <select value={block.aspect ?? '16/9'} onChange={(e) => set({ aspect: e.target.value })} className="s-select">
+        <Select value={block.aspect ?? '16/9'} onChange={(e) => set({ aspect: e.target.value })} className="s-select">
           <option value="16/9">16/9</option><option value="4/3">4/3</option><option value="1/1">1/1 (square)</option>
           <option value="3/4">3/4 (portrait)</option><option value="21/9">21/9 (cinematic)</option>
-        </select>
+        </Select>
       </Field>
       <Check checked={!!block.rounded} onChange={(v) => set({ rounded: v })}>Rounded corners</Check>
     </>
@@ -289,9 +290,9 @@ function GalleryFields({ block, set }: FP) {
   return (
     <>
       <Field label="Columns">
-        <select value={block.columns ?? 3} onChange={(e) => set({ columns: parseInt(e.target.value, 10) })} className="s-select">
+        <Select value={block.columns ?? 3} onChange={(e) => set({ columns: parseInt(e.target.value, 10) })} className="s-select">
           <option value={2}>2</option><option value={3}>3</option><option value={4}>4</option>
-        </select>
+        </Select>
       </Field>
       {images.map((img, i) => (
         <div key={i} className="border border-s-border rounded-lg p-2 space-y-1">
@@ -382,9 +383,9 @@ function QuoteFields({ block, set }: FP) {
       <Field label="Quote"><CopyInput rows={3} value={block.text} onChange={(v) => set({ text: v })} /></Field>
       <Field label="Attribution"><CopyInput value={block.attribution} onChange={(v) => set({ attribution: v })} /></Field>
       <Field label="Size">
-        <select value={block.size ?? 'lg'} onChange={(e) => set({ size: e.target.value })} className="s-select">
+        <Select value={block.size ?? 'lg'} onChange={(e) => set({ size: e.target.value })} className="s-select">
           <option value="md">Medium</option><option value="lg">Large</option><option value="xl">X-large</option>
-        </select>
+        </Select>
       </Field>
     </>
   )
@@ -393,9 +394,9 @@ function QuoteFields({ block, set }: FP) {
 function SpacerFields({ block, set }: FP) {
   return (
     <Field label="Size">
-      <select value={block.size ?? 'md'} onChange={(e) => set({ size: e.target.value as SectionPad })} className="s-select">
+      <Select value={block.size ?? 'md'} onChange={(e) => set({ size: e.target.value as SectionPad })} className="s-select">
         <option value="none">None</option><option value="sm">Small</option><option value="md">Medium</option><option value="lg">Large</option><option value="xl">X-large</option>
-      </select>
+      </Select>
     </Field>
   )
 }
@@ -406,14 +407,14 @@ function ColumnsFields({ block, onChange }: { block: Block; onChange: (b: Block)
   return (
     <>
       <Field label="Columns" hint="Removing a column moves its elements into the last remaining one.">
-        <select value={cols.length} onChange={(e) => onChange(setColumnCount(block, parseInt(e.target.value, 10)))} className="s-select">
+        <Select value={cols.length} onChange={(e) => onChange(setColumnCount(block, parseInt(e.target.value, 10)))} className="s-select">
           <option value={2}>2</option><option value={3}>3</option><option value={4}>4</option>
-        </select>
+        </Select>
       </Field>
       <Field label="Gap">
-        <select value={b.gap ?? 'md'} onChange={(e) => onChange({ ...block, gap: e.target.value })} className="s-select">
+        <Select value={b.gap ?? 'md'} onChange={(e) => onChange({ ...block, gap: e.target.value })} className="s-select">
           <option value="sm">Small</option><option value="md">Medium</option><option value="lg">Large</option>
-        </select>
+        </Select>
       </Field>
       <Check checked={b.stackOnMobile !== false} onChange={(v) => onChange({ ...block, stackOnMobile: v })}>Stack columns on phones</Check>
       <p className="text-[11px] text-s-dim">Drag elements from Add or Layers into a column.</p>
@@ -427,9 +428,9 @@ function VideoFields({ block, set }: FP) {
       <Field label="Video" hint="Upload to the library, or paste an MP4/WebM link."><MediaInput kind="video" value={block.url} onChange={(v) => set({ url: v })} /></Field>
       <Field label="Poster image (optional)"><MediaInput kind="image" value={block.posterUrl} onChange={(v) => set({ posterUrl: v || undefined })} /></Field>
       <Field label="Aspect ratio">
-        <select value={block.aspectRatio ?? '16:9'} onChange={(e) => set({ aspectRatio: e.target.value })} className="s-select">
+        <Select value={block.aspectRatio ?? '16:9'} onChange={(e) => set({ aspectRatio: e.target.value })} className="s-select">
           <option value="16:9">16:9</option><option value="9:16">9:16 (vertical)</option><option value="1:1">1:1</option><option value="4:5">4:5</option>
-        </select>
+        </Select>
       </Field>
       <Check checked={block.autoplay !== false} onChange={(v) => set({ autoplay: v })}>Autoplay</Check>
       <Check checked={block.loop !== false} onChange={(v) => set({ loop: v })}>Loop</Check>
@@ -442,9 +443,9 @@ function SignupFields({ block, set }: FP) {
   return (
     <>
       <Field label="Mode">
-        <select value={block.mode ?? 'signup'} onChange={(e) => set({ mode: e.target.value })} className="s-select">
+        <Select value={block.mode ?? 'signup'} onChange={(e) => set({ mode: e.target.value })} className="s-select">
           <option value="signup">Sign up</option><option value="login">Log in</option>
-        </select>
+        </Select>
       </Field>
       <Field label="Title"><CopyInput value={block.title} onChange={(v) => set({ title: v || undefined })} /></Field>
       <Field label="Subtitle"><CopyInput rows={2} value={block.subtitle} onChange={(v) => set({ subtitle: v || undefined })} /></Field>

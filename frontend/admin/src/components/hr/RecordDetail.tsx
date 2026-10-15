@@ -13,6 +13,7 @@ import { FormRenderer, BANK_ACCOUNT_REF } from './FormRenderer'
 import { useHrAccess } from './HrShell'
 import { RecordMoney, BankAccountName } from './RecordMoney'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
+import { Select } from '@/components/ui/Select'
 
 // Letters that make sense from a record — spec §26.
 export const LETTERS_FOR: Record<string, string[]> = {
@@ -149,12 +150,12 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
         {record.employee && <span className="text-sm text-white/70">· {record.employee.fullName} ({record.employee.employeeCode})</span>}
         {format.stages.length > 0 && (
           admin
-            ? <select value={record.stage ?? ''} onChange={(e) => { if (e.target.value) stage.mutate(e.target.value) }} className="ml-auto rounded-lg px-2 py-1 text-xs bg-white/[0.04] border border-white/10 text-white/80">
+            ? <Select value={record.stage ?? ''} onChange={(e) => { if (e.target.value) stage.mutate(e.target.value) }} className="ml-auto rounded-lg px-2 py-1 text-xs bg-white/[0.04] border border-white/10 text-white/80">
                 {/* A record saved before the format had stages has none yet —
                     shown as such, so picking the first stage is a change. */}
                 {!record.stage && <option value="">No stage</option>}
                 {format.stages.map((s) => <option key={s} value={s}>{human(s)}</option>)}
-              </select>
+              </Select>
             : <span className="ml-auto text-xs text-white/50">{human(record.stage)}</span>
         )}
       </div>
@@ -250,11 +251,11 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">Paid out from</span>
-                <select className={inp} value={payFrom} onChange={(e) => setPayFrom(e.target.value)}>
+                <Select className={inp} value={payFrom} onChange={(e) => setPayFrom(e.target.value)}>
                   <option value="">The way the employee is paid</option>
                   <option value="bank">Bank</option>
                   <option value="cash">Cash (the safe)</option>
-                </select>
+                </Select>
               </label>
               {payFrom !== 'cash' && (
                 <BankAccountSelect id={`loan-bank-${record.id}`} tenantId={record.tenantId} value={payBank} onChange={setPayBank} className={inp} />

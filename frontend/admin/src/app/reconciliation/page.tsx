@@ -11,6 +11,7 @@ import { CardPayouts, CardPayoutChip, CardPayoutSuggest, cardPayoutErrorText, us
 import { OpenTicketsCloseConfirm } from '../../components/pos/OpenTicketsCloseConfirm'
 import { closeDrawer, isOpenTicketsError, type ZReportExtras } from '../../components/pos/tillApi'
 import { useAuthStore } from '../../store/auth'
+import { Select } from '@/components/ui/Select'
 
 // Who may do what on this page — the API decides; these only hide buttons the
 // API would refuse (wave 3: finance reads and works reconciliation, but a
@@ -377,10 +378,10 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
   return (
     <div className="p-4 border-b border-s-border space-y-2 text-sm">
       <div className="grid grid-cols-2 gap-2">
-        <select value={picked} onChange={(e) => setTarget(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text">
+        <Select value={picked} onChange={(e) => setTarget(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text">
           {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
           <option value={GATEWAY}>Card / gateway settlement (1030)</option>
-        </select>
+        </Select>
         <input type="date" value={statementDate} onChange={(e) => setStatementDate(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text" />
         <input type="number" value={opening} onChange={(e) => setOpening(parseFloat(e.target.value) || 0)} placeholder="opening (PKR)" className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text" />
         <input type="number" value={closing} onChange={(e) => setClosing(parseFloat(e.target.value) || 0)} placeholder="closing (PKR)" className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text" />
@@ -458,10 +459,10 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
           {rows.map((r, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2">
               <input value={r.code} onChange={(e) => setRow(i, { code: e.target.value })} placeholder="code" className={`${inp} w-20 font-mono`} />
-              <select value={r.type} onChange={(e) => setRow(i, { type: e.target.value as 'debit' | 'credit' })} className={inp}>
+              <Select value={r.type} onChange={(e) => setRow(i, { type: e.target.value as 'debit' | 'credit' })} className={inp}>
                 <option value="debit">Dr</option>
                 <option value="credit">Cr</option>
-              </select>
+              </Select>
               <input type="number" min="0" step="0.01" value={r.amount} onChange={(e) => setRow(i, { amount: e.target.value })} placeholder="PKR" className={`${inp} w-28 text-right`} />
               {rows.length > 1 && <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-s-muted hover:text-s-text">Remove</button>}
             </div>

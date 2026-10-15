@@ -12,6 +12,7 @@ import { usePermissions } from '../../hooks/useCan'
 import { useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryLabel, categoryValueOf, stockErrorText } from '../../lib/stockUi'
+import { Select } from '@/components/ui/Select'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
@@ -454,19 +455,19 @@ export default function InventoryPage() {
                     placeholder="Chicken breast" className={fi} autoFocus />
                 </F>
                 <F label="Unit">
-                  <select value={addForm.unit} onChange={(e) => setAddForm({ ...addForm, unit: e.target.value })} className={fi}>
+                  <Select value={addForm.unit} onChange={(e) => setAddForm({ ...addForm, unit: e.target.value })} className={fi}>
                     {['kg', 'g', 'L', 'ml', 'pcs', 'box', 'bag', 'bottle'].map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
+                  </Select>
                 </F>
                 <F label="Par level">
                   <input type="number" value={addForm.parLevel} onChange={(e) => setAddForm({ ...addForm, parLevel: e.target.value })}
                     placeholder="5" className={fi} />
                 </F>
                 <F label="Category">
-                  <select value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} className={fi}>
+                  <Select value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} className={fi}>
                     <option value="">— pick a category —</option>
                     {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
-                  </select>
+                  </Select>
                 </F>
                 <F label="Notes (optional)">
                   <input value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
@@ -509,10 +510,10 @@ export default function InventoryPage() {
               <p className="font-bold text-s-text text-sm">Edit — {editItem.name}</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <F label="Category">
-                  <select value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })} className={fi}>
+                  <Select value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })} className={fi}>
                     <option value="">— none —</option>
                     {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
-                  </select>
+                  </Select>
                 </F>
                 <F label={editItem.costSource === 'deliveries' ? 'Cost (price actually paid)' : 'Opening cost (PKR per unit)'}>
                   {editItem.costSource === 'deliveries' ? (
@@ -561,10 +562,10 @@ export default function InventoryPage() {
               <p className="font-bold text-s-text text-sm">Assign a company — {assignItem.name}</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <F label="Company">
-                  <select value={assignForm.tenantId} onChange={(e) => setAssignForm({ ...assignForm, tenantId: e.target.value })} className={fi}>
+                  <Select value={assignForm.tenantId} onChange={(e) => setAssignForm({ ...assignForm, tenantId: e.target.value })} className={fi}>
                     <option value="">— pick a company —</option>
                     {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
+                  </Select>
                 </F>
                 {assignItem.currentStock > 0 && (
                   <F label={`Opening unit cost (PKR per ${assignItem.unit})`}>
@@ -607,9 +608,9 @@ export default function InventoryPage() {
                   <input value={wasteForm.unit} readOnly className={fi + ' opacity-70'} />
                 </F>
                 <F label="Reason">
-                  <select value={wasteForm.reason} onChange={(e) => setWasteForm({ ...wasteForm, reason: e.target.value as typeof WASTE_REASONS[number] })} className={fi}>
+                  <Select value={wasteForm.reason} onChange={(e) => setWasteForm({ ...wasteForm, reason: e.target.value as typeof WASTE_REASONS[number] })} className={fi}>
                     {WASTE_REASONS.map((r) => <option key={r} value={r}>{r.replace('_', ' ')}</option>)}
-                  </select>
+                  </Select>
                 </F>
                 <F label="Notes (optional)">
                   <input value={wasteForm.notes} onChange={(e) => setWasteForm({ ...wasteForm, notes: e.target.value })}
@@ -622,16 +623,16 @@ export default function InventoryPage() {
                   the brands by how much each uses the item. */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <F label="Brand (optional)">
-                  <select value={wasteForm.conceptId} onChange={(e) => setWasteForm({ ...wasteForm, conceptId: e.target.value })} className={fi}>
+                  <Select value={wasteForm.conceptId} onChange={(e) => setWasteForm({ ...wasteForm, conceptId: e.target.value })} className={fi}>
                     <option value="">Not sure — split by recipe use</option>
                     {wasteBrands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
+                  </Select>
                 </F>
                 <F label="Outlet (optional)">
-                  <select value={wasteForm.locationId} onChange={(e) => setWasteForm({ ...wasteForm, locationId: e.target.value })} className={fi}>
+                  <Select value={wasteForm.locationId} onChange={(e) => setWasteForm({ ...wasteForm, locationId: e.target.value })} className={fi}>
                     <option value="">No particular outlet</option>
                     {wasteOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </select>
+                  </Select>
                 </F>
               </div>
 

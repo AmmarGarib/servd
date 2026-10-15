@@ -26,6 +26,7 @@ import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { fmtPkrWhole } from '../../../lib/money'
 import { usePermissions } from '../../../hooks/useCan'
 import { useManagerRoles } from '../../../lib/roles'
+import { Select } from '@/components/ui/Select'
 
 // Who may change what on this page — the same rules the API enforces
 // (backend/src/modules/positions/routes.ts + contributions.ts), so no one is
@@ -680,34 +681,34 @@ function PositionEditor({
     <div className="bg-s-bg/30 border-t border-s-border px-4 py-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Designation" hint={current ? undefined : `"${position.title}" is not an HR designation — pick one (add it in HR → Org setup if it is missing).`}>
-          <select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls}>
+          <Select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls}>
             <option value="">{current ? current.name : `— ${position.title} —`}</option>
             {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Status">
-          <select value={status} onChange={(e) => setStatus(e.target.value as Position['status'])} className={inputCls}>
+          <Select value={status} onChange={(e) => setStatus(e.target.value as Position['status'])} className={inputCls}>
             <option value="open">Open</option>
             <option value="filled">Filled</option>
             <option value="frozen">Frozen</option>
             <option value="archived">Archived</option>
-          </select>
+          </Select>
         </Field>
         <Field label="Department">
-          <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={inputCls}>
+          <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={inputCls}>
             <option value="">— No department —</option>
             {departments.map((d) => (
               <option key={d.id} value={d.id}>{d.emoji ? `${d.emoji} ` : ''}{d.name}</option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field label="Shift band">
-          <select value={shiftBandId} onChange={(e) => setShiftBandId(e.target.value)} className={inputCls}>
+          <Select value={shiftBandId} onChange={(e) => setShiftBandId(e.target.value)} className={inputCls}>
             <option value="">— Any shift —</option>
             {shiftBands.map((s) => (
               <option key={s.id} value={s.id}>{s.name} ({s.startTime}–{s.endTime})</option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field label="Gross monthly salary" hint="What the person earns (full salary).">
           <MoneyInput value={gross} onChange={setGross} />
@@ -794,26 +795,26 @@ function AddPositionModal({
         <h2 className="text-lg font-black mb-4">New position</h2>
         <div className="space-y-3">
           <Field label="Designation" hint={designations.length ? undefined : 'No designations yet — add them in HR → Org setup.'}>
-            <select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls} autoFocus>
+            <Select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls} autoFocus>
               <option value="">Choose the HR designation…</option>
               {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Department">
-            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={inputCls}>
+            <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={inputCls}>
               <option value="">— None —</option>
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>{d.emoji ? `${d.emoji} ` : ''}{d.name}</option>
               ))}
-            </select>
+            </Select>
           </Field>
           <Field label="Shift band">
-            <select value={shiftBandId} onChange={(e) => setShiftBandId(e.target.value)} className={inputCls}>
+            <Select value={shiftBandId} onChange={(e) => setShiftBandId(e.target.value)} className={inputCls}>
               <option value="">— Any —</option>
               {shiftBands.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
-            </select>
+            </Select>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Gross / month">
@@ -937,18 +938,18 @@ function ContributionModal({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="From (source)">
-              <select value={sourceTenantId} onChange={(e) => setSourceTenantId(e.target.value)} className={inputCls}>
+              <Select value={sourceTenantId} onChange={(e) => setSourceTenantId(e.target.value)} className={inputCls}>
                 <option value="">— Pick a tenant —</option>
                 {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+              </Select>
             </Field>
             <Field label="To (destination)">
-              <select value={destinationTenantId} onChange={(e) => setDestinationTenantId(e.target.value)} className={inputCls}>
+              <Select value={destinationTenantId} onChange={(e) => setDestinationTenantId(e.target.value)} className={inputCls}>
                 <option value="">— Pick a tenant —</option>
                 {tenants.map((t) => (
                   <option key={t.id} value={t.id} disabled={t.id === sourceTenantId}>{t.name}</option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
           {sourceTenantId && destinationTenantId && sourceTenantId === destinationTenantId && (
@@ -956,9 +957,9 @@ function ContributionModal({
           )}
 
           <Field label="Category">
-            <select value={category} onChange={(e) => setCategory(e.target.value as CategoryOption['value'])} className={inputCls}>
+            <Select value={category} onChange={(e) => setCategory(e.target.value as CategoryOption['value'])} className={inputCls}>
               {CONTRIB_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
+            </Select>
           </Field>
 
           <Field label="Label" hint="Short name shown on the positions/opex/projections views.">

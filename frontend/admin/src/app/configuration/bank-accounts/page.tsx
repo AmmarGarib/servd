@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Bank {
   id: string
@@ -347,12 +348,12 @@ function RaastByBrand() {
                   <tr key={b.conceptId} className="border-t border-white/[0.06] align-top">
                     <td className="py-2 pr-3 font-semibold text-white/85">{b.name}</td>
                     <td className="py-2 pr-3">
-                      <select value={value} onChange={(e) => setDraft((d) => ({ ...d, [b.conceptId]: e.target.value }))}
+                      <Select value={value} onChange={(e) => setDraft((d) => ({ ...d, [b.conceptId]: e.target.value }))}
                         className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-2 py-1.5 text-sm text-white/85">
                         <option value="">Company default</option>
                         {v.accounts.map((a) => <option key={a.bankAccountId} value={a.bankAccountId}>{acctLabel(a)}</option>)}
                         {overrideUnusable && value === b.overrideBankAccountId && <option value={b.overrideBankAccountId!}>(an account that can no longer receive Raast)</option>}
-                      </select>
+                      </Select>
                       {overrideUnusable && <p className="text-[10px] text-s-amber mt-1">Its own account is archived, inactive or unlinked — payments fall back to the company default.</p>}
                     </td>
                     <td className="py-2 text-xs">

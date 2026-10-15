@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
+import { Select } from '@/components/ui/Select'
 
 // The zone fee is the price BEFORE sales tax: checkout adds GST on top at the
 // order's tender rate (backend lib/pricing.ts) — the page never works it out.
@@ -151,10 +152,10 @@ function Modal({ zone, concepts, onClose, onSaved }: { zone: Zone | null; concep
         <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
           <Field label="Zone name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="DHA Phase 5" className={fieldCls} autoFocus /></Field>
           <Field label="Concept">
-            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
               <option value="">All brands</option>
               {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            </Select>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="From (km)"><input type="number" step="0.1" value={radiusKmMin} onChange={(e) => setRadiusKmMin(parseFloat(e.target.value) || 0)} className={fieldCls} /></Field>

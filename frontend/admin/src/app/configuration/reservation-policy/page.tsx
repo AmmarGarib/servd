@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Daypart {
   label: string
@@ -81,19 +82,19 @@ export default function ReservationPolicyPage() {
         <Section title="Time slots" desc="What the public booking widget shows when a guest picks a time">
           <div>
             <label className="text-xs text-white/55">Slot interval</label>
-            <select
+            <Select
               value={form.slotIntervalMin ?? 30}
               onChange={(e) => patch('slotIntervalMin', parseInt(e.target.value, 10))}
               className={fieldCls + ' mt-1'}>
               <option value={15}>Every 15 minutes</option>
               <option value={30}>Every 30 minutes</option>
               <option value={60}>Every 60 minutes</option>
-            </select>
+            </Select>
             <p className="text-[10px] text-white/30 mt-1">Granularity of the time picker.</p>
           </div>
           <div>
             <label className="text-xs text-white/55">Default sitting duration</label>
-            <select
+            <Select
               value={form.defaultDurationMin ?? 90}
               onChange={(e) => patch('defaultDurationMin', parseInt(e.target.value, 10))}
               className={fieldCls + ' mt-1'}>
@@ -103,7 +104,7 @@ export default function ReservationPolicyPage() {
               <option value={120}>120 min</option>
               <option value={150}>150 min</option>
               <option value={180}>180 min (long tasting)</option>
-            </select>
+            </Select>
             <p className="text-[10px] text-white/30 mt-1">How long each booking holds a table.</p>
           </div>
         </Section>
@@ -217,22 +218,22 @@ function DaypartsEditor({ value, onChange }: { value: Daypart[]; onChange: (d: D
               maxLength={40}
               placeholder="e.g. Brunch"
               className={fieldCls + ' col-span-5'} />
-            <select
+            <Select
               value={d.startHour}
               onChange={(e) => update(i, { startHour: parseInt(e.target.value, 10) })}
               className={fieldCls + ' col-span-3'}>
               {Array.from({ length: 24 }, (_, h) => (
                 <option key={h} value={h}>{h.toString().padStart(2, '0')}:00</option>
               ))}
-            </select>
-            <select
+            </Select>
+            <Select
               value={d.endHour}
               onChange={(e) => update(i, { endHour: parseInt(e.target.value, 10) })}
               className={fieldCls + ' col-span-3'}>
               {Array.from({ length: 24 }, (_, h) => h + 1).map((h) => (
                 <option key={h} value={h}>{h === 24 ? '24:00 (end of day)' : `${h.toString().padStart(2, '0')}:00`}</option>
               ))}
-            </select>
+            </Select>
             <button
               onClick={() => remove(i)}
               disabled={value.length <= 1}

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Device { id: string; name: string; stationId: string | null; conceptId: string | null; deviceFingerprint: string | null; lastSeenAt: string | null; isActive: boolean; notes: string | null }
 interface Station { id: string; name: string }
@@ -102,16 +103,16 @@ function Modal({ device, stations, concepts, onClose, onSaved }: { device: Devic
         <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
           <Field label="Device name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Grill Tablet" className={fieldCls} autoFocus /></Field>
           <Field label="Station">
-            <select value={stationId} onChange={(e) => setStationId(e.target.value)} className={fieldCls}>
+            <Select value={stationId} onChange={(e) => setStationId(e.target.value)} className={fieldCls}>
               <option value="">Any</option>
               {stations.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Concept">
-            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
               <option value="">All brands</option>
               {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} placeholder="Location, asset tag, etc" /></Field>
         </div>

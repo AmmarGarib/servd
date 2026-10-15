@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
 import { fmtPkrWhole } from '../../lib/money'
+import { Select } from '@/components/ui/Select'
 
 interface PromoCode {
   id: string
@@ -145,10 +146,10 @@ export default function PromosPage() {
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Type *</label>
-                <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as 'percentage' | 'fixed' })} className={`${inp}`}>
+                <Select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as 'percentage' | 'fixed' })} className={`${inp}`}>
                   <option value="percentage">Percentage (%)</option>
                   <option value="fixed">Fixed amount (PKR)</option>
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">
@@ -178,10 +179,10 @@ export default function PromosPage() {
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Concept (optional)</label>
-                <select value={form.conceptId} onChange={(e) => setForm({ ...form, conceptId: e.target.value })} className={`${inp}`}>
+                <Select value={form.conceptId} onChange={(e) => setForm({ ...form, conceptId: e.target.value })} className={`${inp}`}>
                   <option value="">All concepts</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Starts at</label>

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 type Scope = 'customer' | 'order' | 'menu_item' | 'supplier'
 type FieldType = 'text' | 'number' | 'date' | 'select' | 'boolean'
@@ -126,18 +127,18 @@ function Modal({ field, onClose, onSaved }: { field: Def | null; onClose: () => 
           {!field && (
             <div className="grid grid-cols-2 gap-3">
               <Field label="Scope">
-                <select value={scope} onChange={(e) => setScope(e.target.value as Scope)} className={fieldCls}>
+                <Select value={scope} onChange={(e) => setScope(e.target.value as Scope)} className={fieldCls}>
                   {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
+                </Select>
               </Field>
               <Field label="Type">
-                <select value={type} onChange={(e) => setType(e.target.value as FieldType)} className={fieldCls}>
+                <Select value={type} onChange={(e) => setType(e.target.value as FieldType)} className={fieldCls}>
                   <option value="text">Text</option>
                   <option value="number">Number</option>
                   <option value="date">Date</option>
                   <option value="select">Select</option>
                   <option value="boolean">Boolean</option>
-                </select>
+                </Select>
               </Field>
             </div>
           )}

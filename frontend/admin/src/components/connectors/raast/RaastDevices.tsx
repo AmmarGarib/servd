@@ -16,6 +16,7 @@ import {
 } from '../../../lib/connectorsApi'
 import { useCompanyLocations } from '../PosIdsTable'
 import { Badge, Card, ErrorLine, Field, Modal, fmtAge, fmtWhen } from '../ui'
+import { Select } from '@/components/ui/Select'
 
 export const PATH_TOKEN_WARNING =
   'The token will sit in the web address. Proxies, Cloudflare and the forwarder app may keep web addresses in their logs, and anyone who reads such a log can send fake bank SMS for this company. servd masks it in its own logs. Use this only when the forwarder app cannot set an Authorization header, and rotate the token if the phone is lost or replaced.'
@@ -165,10 +166,10 @@ function DeviceForm({ title, device, locations, onClose, onSaved }: {
         <input id="rd-label" className="s-input" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} />
       </Field>
       <Field label="Outlet" htmlFor="rd-loc" hint="The till shows this phone's unmatched bank SMS only on that outlet's drawers. Leave it on every outlet when one SIM serves them all.">
-        <select id="rd-loc" className="s-select" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+        <Select id="rd-loc" className="s-select" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
           <option value="">Every outlet</option>
           {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
+        </Select>
       </Field>
       <div className="space-y-1">
         <label className="flex items-start gap-2 text-sm">

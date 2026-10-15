@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string; slug: string }
 interface ServiceHour {
@@ -114,9 +115,9 @@ export default function HoursPage() {
           <>
             <div>
               <label className="text-xs text-white/55">Brand</label>
-              <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls + ' mt-1 max-w-sm'}>
+              <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls + ' mt-1 max-w-sm'}>
                 {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              </Select>
             </div>
 
             {isLoading && <p className="text-xs text-white/40">Loading hours…</p>}

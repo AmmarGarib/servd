@@ -18,6 +18,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
+import { Select } from '@/components/ui/Select'
 
 type SchemeKey = 'salary_tax' | 'eobi' | 'sessi'
 const SCHEMES: SchemeKey[] = ['salary_tax', 'eobi', 'sessi']
@@ -321,12 +322,12 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
         <Field label="Paid (PKR)"><input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.paid} onChange={set('paid')} /></Field>
         <Field label="Paid on"><input type="date" className="s-input" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} /></Field>
         <Field label="How">
-          <select className="s-input" value={f.method} onChange={set('method')}>
+          <Select className="s-input" value={f.method} onChange={set('method')}>
             <option value="bank_transfer">Bank transfer / e-payment</option>
             <option value="cheque">Cheque</option>
             <option value="online">Online banking</option>
             <option value="cash">Cash at the bank counter</option>
-          </select>
+          </Select>
         </Field>
         {f.method !== 'cash' && (
           <div className="sm:col-span-2">
@@ -374,9 +375,9 @@ function LinkModal({ initial, schemes, onClose, onDone }: {
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Scheme">
-          <select className="s-input" value={key} onChange={(e) => { setKey(e.target.value as SchemeKey); setEntryId('') }}>
+          <Select className="s-input" value={key} onChange={(e) => { setKey(e.target.value as SchemeKey); setEntryId('') }}>
             {schemes.map((s) => <option key={s.key} value={s.key}>{s.label} ({s.account})</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="For the month"><input type="month" className="s-input" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>
         <Field label="CPR / challan number"><input className="s-input" value={cprNumber} onChange={(e) => setCpr(e.target.value)} /></Field>

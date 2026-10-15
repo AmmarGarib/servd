@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 // The shape GET /reports/menu-engineering returns (backend
@@ -75,11 +76,11 @@ export default function MenuEngineeringPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        <select value={conceptId} onChange={e => setConceptId(e.target.value)}
+        <Select value={conceptId} onChange={e => setConceptId(e.target.value)}
           className="s-input text-sm px-3 py-2 rounded-xl min-w-[180px]">
           <option value="">Select concept…</option>
           {concepts?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        </Select>
         <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="s-input text-sm px-3 py-2 rounded-xl" />
         <input type="date" value={dateTo}   onChange={e => setDateTo(e.target.value)}   className="s-input text-sm px-3 py-2 rounded-xl" />
       </div>

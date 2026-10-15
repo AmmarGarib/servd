@@ -12,6 +12,7 @@ import { api, ApiError } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
 import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from '../../../components/pos/pinErrors'
 import { orderRef } from '../../../lib/orderRef'
+import { Select } from '@/components/ui/Select'
 
 interface PayoutCategory { key: string; label: string; code: string }
 interface CodDue {
@@ -69,10 +70,10 @@ export function VendorPayoutPanel({ shiftId }: { shiftId: string }) {
         </div>
         <div>
           <label htmlFor="payout-category" className="mb-1 block text-xs text-kds-subtext">For</label>
-          <select id="payout-category" value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
+          <Select id="payout-category" value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
             <option value="">Pick one</option>
             {(data?.categories ?? []).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-          </select>
+          </Select>
         </div>
       </div>
       <label htmlFor="payout-reason" className="block text-xs text-kds-subtext">What was bought</label>

@@ -22,6 +22,7 @@ import { fmtPkr } from '../../../../lib/money'
 import {
   KEENU_QR_CUTOVER_NOTE, RAAST_COUNTER_WARNING, normalizeRaastRef, raastRefProblem, settlePortion, tenderLabel, tillErrorMessage, useRaastConfig,
 } from '../../../../components/pos/tillApi'
+import { Select } from '@/components/ui/Select'
 
 interface Order {
   id: string; totalCents: number; conceptId?: string; concept: { name: string }
@@ -237,10 +238,10 @@ export default function SplitPage() {
             </label>
             <label className="block">
               <span className="text-xs text-s-muted">Payment method</span>
-              <select value={method} onChange={(e) => setMethod(e.target.value as typeof METHODS[number])}
+              <Select value={method} onChange={(e) => setMethod(e.target.value as typeof METHODS[number])}
                 className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm">
                 {METHODS.map((m) => <option key={m} value={m}>{tenderLabel(m)}</option>)}
-              </select>
+              </Select>
             </label>
             <p className="text-xs text-s-muted">
               Each diner pays <strong>{fmtPkr(Math.floor(order.totalCents / ways))}</strong> (residue to first {order.totalCents % ways} splits).
@@ -260,11 +261,11 @@ export default function SplitPage() {
                 <input type="number" value={d.amountCents / 100}
                   onChange={(e) => setDrafts(prev => prev.map((x, j) => j === i ? { ...x, amountCents: Math.round(parseFloat(e.target.value || '0') * 100) } : x))}
                   className="bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm font-mono" />
-                <select value={d.method}
+                <Select value={d.method}
                   onChange={(e) => setDrafts(prev => prev.map((x, j) => j === i ? { ...x, method: e.target.value } : x))}
                   className="bg-s-surface border border-s-border rounded px-2 py-1.5 text-xs">
                   {METHODS.map((m) => <option key={m} value={m}>{tenderLabel(m)}</option>)}
-                </select>
+                </Select>
                 <button onClick={() => setDrafts(prev => prev.filter((_, j) => j !== i))}
                   className="text-s-red text-xs">Remove</button>
               </div>

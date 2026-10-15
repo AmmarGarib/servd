@@ -28,6 +28,7 @@ import {
   ErrorBanner, Field, Footer, Modal, fieldCls, pinRefusal, pkr, primaryBtn, sourceLabel, TYPE_LABEL,
   type Box, type Movement,
 } from './ui'
+import { Select } from '@/components/ui/Select'
 
 interface User { id: string; name: string }
 
@@ -205,10 +206,10 @@ function CreateBoxModal({ users, onClose, onSaved }: { users: User[]; onClose: (
   return <Modal title="New petty cash box" onClose={onClose}>
     <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Head office — Jamil sb" className={fieldCls} autoFocus /></Field>
     <Field label="Custodian *">
-      <select value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
+      <Select value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
         <option value="">— pick a user —</option>
         {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-      </select>
+      </Select>
     </Field>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <Field label="Opening float (PKR)">
@@ -258,9 +259,9 @@ function EditBoxModal({ box, users, onClose, onSaved }: { box: Box; users: User[
   return <Modal title={`Edit ${box.name}`} onClose={onClose}>
     <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
     <Field label="Custodian *">
-      <select value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
+      <Select value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
         {options.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-      </select>
+      </Select>
     </Field>
     <Field label="Top-up limit (PKR)">
       <MoneyInput value={topUpLimitCents} onChange={setTopUpLimitCents} className={fieldCls} ariaLabel="Top-up limit in rupees" />
@@ -289,9 +290,9 @@ function TransferModal({ from, boxes, onClose, onSaved }: { from: Box; boxes: Bo
   const over = amountCents > from.floatCents
   return <Modal title={`Move cash from ${from.name}`} onClose={onClose}>
     <Field label="To box *">
-      <select value={toBoxId} onChange={(e) => setToBoxId(e.target.value)} className={fieldCls}>
+      <Select value={toBoxId} onChange={(e) => setToBoxId(e.target.value)} className={fieldCls}>
         {targets.map((b) => <option key={b.id} value={b.id}>{b.name} · {pkr(b.floatCents)}</option>)}
-      </select>
+      </Select>
     </Field>
     <Field label="Amount (PKR) *">
       <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />

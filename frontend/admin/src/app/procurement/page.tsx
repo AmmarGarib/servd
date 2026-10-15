@@ -13,6 +13,7 @@ import { useManagerRoles } from '../../lib/roles'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { stockErrorText } from '../../lib/stockUi'
+import { Select } from '@/components/ui/Select'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
@@ -462,12 +463,12 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
             <p className="font-bold text-s-text">Mark PO as sent</p>
             <p className="text-xs text-s-muted">Only if you have already given this order to the supplier yourself.</p>
             <Field label="How was it sent?">
-              <select value={markSentChannel} onChange={(e) => setMarkSentChannel(e.target.value as typeof markSentChannel)} className={fi}>
+              <Select value={markSentChannel} onChange={(e) => setMarkSentChannel(e.target.value as typeof markSentChannel)} className={fi}>
                 <option value="phone">Phone call</option>
                 <option value="whatsapp">WhatsApp (my phone)</option>
                 <option value="in_person">In person</option>
                 <option value="email">Email (my inbox)</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Note (optional)">
               <input value={markSentNote} onChange={(e) => setMarkSentNote(e.target.value)} placeholder="e.g. spoke to Imran, delivery Tuesday" className={fi} />
@@ -612,10 +613,10 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Field label="Supplier *">
-          <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fi}>
+          <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fi}>
             <option value="">Select supplier</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Reference">
           <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="PO-2024-001" className={fi} />
@@ -634,10 +635,10 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
         {lines.map((line, i) => (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
             <div className="col-span-5">
-              <select value={line.inventoryItemId} onChange={(e) => updateLine(i, 'inventoryItemId', e.target.value)} className={fi}>
+              <Select value={line.inventoryItemId} onChange={(e) => updateLine(i, 'inventoryItemId', e.target.value)} className={fi}>
                 <option value="">Select item</option>
                 {invItems.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>)}
-              </select>
+              </Select>
             </div>
             <div className="col-span-2">
               <input type="number" placeholder="Qty" value={line.quantityOrdered}
@@ -1015,9 +1016,9 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={fi} />
               </Field>
               <Field label="Why *">
-                <select value={reason} onChange={(e) => { setReason(e.target.value as typeof reason); setPicked({}) }} className={fi}>
+                <Select value={reason} onChange={(e) => { setReason(e.target.value as typeof reason); setPicked({}) }} className={fi}>
                   {CREDIT_REASONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-                </select>
+                </Select>
               </Field>
             </div>
             <p className="text-xs text-s-muted">{CREDIT_REASONS.find((r) => r.id === reason)?.hint}</p>
@@ -1389,18 +1390,18 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Supplier *">
-          <select value={form.supplierId} onChange={(e) => changeSupplier(e.target.value)} className={fi}>
+          <Select value={form.supplierId} onChange={(e) => changeSupplier(e.target.value)} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Link to PO">
-          <select value={form.poId} onChange={(e) => setForm({ ...form, poId: e.target.value })} className={fi}>
+          <Select value={form.poId} onChange={(e) => setForm({ ...form, poId: e.target.value })} className={fi}>
             <option value="">None</option>
             {pos.filter((p) => !form.supplierId || p.supplierId === form.supplierId).map((p) => (
               <option key={p.id} value={p.id}>{p.reference ?? p.id.slice(-8)}</option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field label="Bill number *">
           <input value={form.billNumber} onChange={(e) => setForm({ ...form, billNumber: e.target.value })} className={fi} />
@@ -1415,16 +1416,16 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
           <input type="number" min={0} step="any" value={form.taxPkr} onChange={(e) => setForm({ ...form, taxPkr: e.target.value })} placeholder="0" className={fi} />
         </Field>
         <Field label="Tax charged by">
-          <select value={form.taxAuthority} onChange={(e) => setForm({ ...form, taxAuthority: e.target.value })} className={fi}>
+          <Select value={form.taxAuthority} onChange={(e) => setForm({ ...form, taxAuthority: e.target.value })} className={fi}>
             <option value="">{`Supplier's usual (${authorityShort(supplierAuthority) || 'FBR'})`}</option>
             {TAX_AUTHORITIES.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Withholding section">
-          <select value={form.whtSection} onChange={(e) => setForm({ ...form, whtSection: e.target.value })} className={fi}>
+          <Select value={form.whtSection} onChange={(e) => setForm({ ...form, whtSection: e.target.value })} className={fi}>
             <option value="">{`Supplier's usual (${whtLabel(supplierSection) || 's.153(1)(a) — goods'})`}</option>
             {WHT_SECTION_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Notes">
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
@@ -1475,10 +1476,10 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
                   <input placeholder="Expense account code (6xxx) *" inputMode="numeric" maxLength={4} value={l.expenseAccountCode}
                     onChange={(e) => patchLine(l.key, { expenseAccountCode: e.target.value.replace(/\D/g, '') })} className={fi} aria-label="Expense account code" />
                 ) : (
-                  <select value={l.expenseAccountCode} onChange={(e) => patchLine(l.key, { expenseAccountCode: e.target.value })} className={fi} aria-label="Expense account">
+                  <Select value={l.expenseAccountCode} onChange={(e) => patchLine(l.key, { expenseAccountCode: e.target.value })} className={fi} aria-label="Expense account">
                     <option value="">— expense account * —</option>
                     {expenseAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-                  </select>
+                  </Select>
                 )}
               </div>
             )}
@@ -1786,18 +1787,18 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field label="Supplier *">
-          <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value, bankAccountId: '' })} className={fi}>
+          <Select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value, bankAccountId: '' })} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Date *">
           <input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} className={fi} />
         </Field>
         <Field label="Method *">
-          <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value, bankAccountId: '' })} className={fi}>
+          <Select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value, bankAccountId: '' })} className={fi}>
             {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
+          </Select>
         </Field>
         {usesBank && form.supplierId && (
           <div>
@@ -2133,10 +2134,10 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
             keep audit logging on the dedicated transfer surface). */}
         {!supplier && tenants.length > 1 && (
           <Field label="Company *">
-            <select value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} className={fi}>
+            <Select value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} className={fi}>
               {viewAll && <option value="">— pick a company —</option>}
               {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            </Select>
           </Field>
         )}
         <Field label="Phone">
@@ -2170,24 +2171,24 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Tax</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Filer status">
-            <select value={form.filerStatus} onChange={(e) => setForm({ ...form, filerStatus: e.target.value as typeof form.filerStatus })} className={fi}>
+            <Select value={form.filerStatus} onChange={(e) => setForm({ ...form, filerStatus: e.target.value as typeof form.filerStatus })} className={fi}>
               <option value="filer">Filer (active taxpayer)</option>
               <option value="non_filer">Non-filer (higher withholding)</option>
               <option value="exempt">Exempt (holds a certificate)</option>
               <option value="unknown">Not known yet (higher withholding)</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Sales tax usually charged by">
-            <select value={form.defaultTaxAuthority} onChange={(e) => setForm({ ...form, defaultTaxAuthority: e.target.value })} className={fi}>
+            <Select value={form.defaultTaxAuthority} onChange={(e) => setForm({ ...form, defaultTaxAuthority: e.target.value })} className={fi}>
               <option value="">FBR (default)</option>
               {TAX_AUTHORITIES.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Usual withholding section">
-            <select value={form.defaultWhtSection} onChange={(e) => setForm({ ...form, defaultWhtSection: e.target.value })} className={fi}>
+            <Select value={form.defaultWhtSection} onChange={(e) => setForm({ ...form, defaultWhtSection: e.target.value })} className={fi}>
               <option value="">s.153(1)(a) — goods (default)</option>
               {WHT_SECTION_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-            </select>
+            </Select>
           </Field>
           {form.filerStatus === 'exempt' && (
             <>
@@ -2471,19 +2472,19 @@ function PriceHistoryTab() {
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <label className="text-xs text-s-muted">Item:</label>
-          <select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}
+          <Select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}
             className="rounded-lg bg-s-surface border border-s-border px-3 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none">
             <option value="">All items</option>
             {invItems.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-          </select>
+          </Select>
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs text-s-muted">Supplier:</label>
-          <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}
+          <Select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}
             className="rounded-lg bg-s-surface border border-s-border px-3 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none">
             <option value="">All suppliers</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          </Select>
         </div>
       </div>
 

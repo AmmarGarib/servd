@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Template {
   id: string
@@ -121,30 +122,30 @@ function Modal({ template, concepts, onClose, onSaved }: { template: Template | 
             <>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="Channel">
-                  <select value={channel} onChange={(e) => setChannel(e.target.value as Template['channel'])} className={fieldCls}>
+                  <Select value={channel} onChange={(e) => setChannel(e.target.value as Template['channel'])} className={fieldCls}>
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
                     <option value="whatsapp">WhatsApp</option>
                     <option value="push">Push</option>
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="Event">
-                  <select value={event} onChange={(e) => setEvent(e.target.value)} className={fieldCls}>
+                  <Select value={event} onChange={(e) => setEvent(e.target.value)} className={fieldCls}>
                     {EVENTS.map((e) => <option key={e} value={e}>{e}</option>)}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label="Language">
-                  <select value={language} onChange={(e) => setLanguage(e.target.value as Template['language'])} className={fieldCls}>
+                  <Select value={language} onChange={(e) => setLanguage(e.target.value as Template['language'])} className={fieldCls}>
                     <option value="en">English</option>
                     <option value="ur">Urdu</option>
-                  </select>
+                  </Select>
                 </Field>
               </div>
               <Field label="Concept (blank = all)">
-                <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+                <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
                   <option value="">All</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </Field>
             </>
           )}

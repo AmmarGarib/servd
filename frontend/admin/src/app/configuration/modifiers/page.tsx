@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Option {
   id?: string
@@ -152,9 +153,9 @@ function AddOnIngredients() {
           </p>
         </div>
         {brands.length > 1 && (
-          <select value={activeBrand} onChange={(e) => setBrandId(e.target.value)} className={fieldCls + ' w-auto'}>
+          <Select value={activeBrand} onChange={(e) => setBrandId(e.target.value)} className={fieldCls + ' w-auto'}>
             {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          </Select>
         )}
       </div>
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}

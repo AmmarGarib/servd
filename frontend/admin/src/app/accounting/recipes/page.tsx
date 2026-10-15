@@ -13,6 +13,7 @@ import { useBrandFilter } from '../../../store/brandFilter'
 import { fmtPkr } from '../../../lib/money'
 import { useKitchenView } from '../../inventory/kitchenView'
 import { KitchenMethod, KitchenSections, KitchenServiceSteps, KIND_META, measureUnit, type KitchenIngredient, type MethodStep } from './KitchenRecipe'
+import { Select } from '@/components/ui/Select'
 
 const Q_FACTOR = 0.05
 
@@ -449,11 +450,11 @@ export default function RecipesPage() {
           <input type="text" placeholder="Search recipes…"
             value={search} onChange={(e) => setSearch(e.target.value)}
             className="s-input text-sm h-9 w-56" />
-          <select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)}
+          <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)}
             className="s-select text-sm h-9 w-44">
             <option value="">All Concepts</option>
             {concepts?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
           {/* Kind filter — plates vs components, next to the brand filter. */}
           <div className="flex rounded-lg overflow-hidden text-xs font-bold border border-s-border">
             {([
@@ -902,13 +903,13 @@ export default function RecipesPage() {
                   {isEditing ? (
                     <p className="text-sm font-semibold text-s-text">{(modal as Recipe).menuItem?.name ?? '—'}</p>
                   ) : (
-                    <select value={menuItemId} onChange={(e) => setMenuItemId(e.target.value)}
+                    <Select value={menuItemId} onChange={(e) => setMenuItemId(e.target.value)}
                       required className="s-select w-full">
                       <option value="">Select menu item…</option>
                       {menuItems?.map((m) => (
                         <option key={m.id} value={m.id}>{m.name} — {m.concept.name}</option>
                       ))}
-                    </select>
+                    </Select>
                   )}
                 </div>
               ) : (
@@ -1079,19 +1080,19 @@ export default function RecipesPage() {
                           shown on plate recipes (components can't compose other
                           components to keep costing recursion bounded). */}
                       {kind === 'plate' ? (
-                        <select value={ing.source}
+                        <Select value={ing.source}
                           onChange={(e) => toggleIngSource(idx, e.target.value as 'raw' | 'prep')}
                           className="s-select text-[10px]"
                           title="Raw inventory item, or a component recipe used as a sub-ingredient">
                           <option value="raw">Raw</option>
                           <option value="prep">Component</option>
-                        </select>
+                        </Select>
                       ) : (
                         <span className="text-[10px] text-s-dim font-semibold px-2 py-1.5">Raw</span>
                       )}
 
                       {ing.source === 'prep' ? (
-                        <select value={ing.prepRecipeId} onChange={(e) => pickPrep(idx, e.target.value)}
+                        <Select value={ing.prepRecipeId} onChange={(e) => pickPrep(idx, e.target.value)}
                           className="s-select text-xs" required={idx === 0}>
                           <option value="">Select component…</option>
                           {prepOptions.map((p) => (
@@ -1099,9 +1100,9 @@ export default function RecipesPage() {
                               {p.name} (PKR {(p.costPerGramCents / 100).toFixed(2)}/g)
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       ) : (
-                        <select value={ing.inventoryItemId} onChange={(e) => pickIng(idx, e.target.value)}
+                        <Select value={ing.inventoryItemId} onChange={(e) => pickIng(idx, e.target.value)}
                           className="s-select text-xs" required={idx === 0}>
                           <option value="">Select…</option>
                           {invItems?.map((i) => (
@@ -1109,7 +1110,7 @@ export default function RecipesPage() {
                               {i.name}{i.unitCostCents ? ` (PKR ${(i.unitCostCents / 100).toFixed(2)}/${i.unit})` : ''}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       )}
                       <input type="number" min={0.001} step="any"
                         placeholder={ing.source === 'prep' ? 'g' : 'Qty'} value={ing.quantity}

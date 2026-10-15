@@ -21,6 +21,7 @@ import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useViewAllTenants } from './TenantSwitcher'
+import { Select } from '@/components/ui/Select'
 
 export interface TenantLite {
   id: string
@@ -87,7 +88,7 @@ export function TenantField({
         </span>
         <span className="text-[10px] text-s-muted/70">{hint}</span>
       </div>
-      <select
+      <Select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none">
@@ -95,7 +96,7 @@ export function TenantField({
         {tenants.map((t) => (
           <option key={t.id} value={t.id}>{t.name}</option>
         ))}
-      </select>
+      </Select>
     </label>
   )
 }

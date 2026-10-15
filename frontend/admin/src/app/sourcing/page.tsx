@@ -26,6 +26,7 @@ import { useKitchenView } from '../inventory/kitchenView'
 import { useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryValueOf, stockErrorText } from '../../lib/stockUi'
+import { Select } from '@/components/ui/Select'
 
 interface Item {
   id: string; name: string; unit: string
@@ -202,19 +203,19 @@ export default function SourcingPage() {
                 placeholder="e.g. Beef Tenderloin" className={fi + ' w-full mt-1'} autoFocus />
             </label>
             <label className="text-xs text-s-muted">Unit
-              <select value={addForm.unit} onChange={(e) => setAddForm({ ...addForm, unit: e.target.value })} className={fi + ' w-full mt-1'}>
+              <Select value={addForm.unit} onChange={(e) => setAddForm({ ...addForm, unit: e.target.value })} className={fi + ' w-full mt-1'}>
                 {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select>
+              </Select>
             </label>
             <label className="text-xs text-s-muted">Opening cost (PKR/unit)
               <input type="number" step="any" min={0} value={addForm.pricePkr} onChange={(e) => setAddForm({ ...addForm, pricePkr: e.target.value })}
                 placeholder="1.5" className={fi + ' w-full mt-1'} />
             </label>
             <label className="text-xs text-s-muted col-span-2 md:col-span-1">Category
-              <select value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} className={fi + ' w-full mt-1'}>
+              <Select value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} className={fi + ' w-full mt-1'}>
                 <option value="">— pick a category —</option>
                 {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
-              </select>
+              </Select>
             </label>
             <label className="text-xs text-s-muted">Source / notes
               <input value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
@@ -270,10 +271,10 @@ export default function SourcingPage() {
                         onBlur={(e) => saveField(it, 'name', e.target.value)} className={fi + ' w-full min-w-[180px]'} />
                     </td>
                     <td className="px-3 py-1.5">
-                      <select key={`u${it.id}${it.unit}`} defaultValue={it.unit}
+                      <Select key={`u${it.id}${it.unit}`} defaultValue={it.unit}
                         onChange={(e) => saveField(it, 'unit', e.target.value)} className={fi + ' w-full'}>
                         {(UNITS.includes(it.unit) ? UNITS : [it.unit, ...UNITS]).map((u) => <option key={u} value={u}>{u}</option>)}
-                      </select>
+                      </Select>
                     </td>
                     <td className="px-3 py-1.5">
                       {it.costSource === 'deliveries' ? (
@@ -289,11 +290,11 @@ export default function SourcingPage() {
                       )}
                     </td>
                     <td className="px-3 py-1.5">
-                      <select key={`c${it.id}${it.category}`} defaultValue={categoryValueOf(it.category)}
+                      <Select key={`c${it.id}${it.category}`} defaultValue={categoryValueOf(it.category)}
                         onChange={(e) => saveCategory(it, e.target.value)} className={fi + ' w-full'} aria-label={`${it.name} category`}>
                         <option value="">— none —</option>
                         {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
-                      </select>
+                      </Select>
                     </td>
                     {canSetIssueOnReceipt && (
                       <td className="px-3 py-1.5">
@@ -314,11 +315,11 @@ export default function SourcingPage() {
                       {it.tenantId
                         ? <TenantChip tenant={it.tenant} tenantId={it.tenantId} tenants={tenants} />
                         : (
-                          <select defaultValue="" className={fi + ' w-full'}
+                          <Select defaultValue="" className={fi + ' w-full'}
                             onChange={(e) => pickCompany(it, e.target.value)}>
                             <option value="">No company — assign…</option>
                             {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                          </select>
+                          </Select>
                         )}
                     </td>
                   </tr>

@@ -28,6 +28,7 @@ import {
   PaymentReceivedFields, ReferenceUsedBeforeNotice, receiptFieldsValid, receiptMethodLabel, isBankMethod,
   PAYMENT_REFERENCE_ERROR_TEXT, type PaymentRefUse,
 } from '../../components/finance/PaymentReceivedFields'
+import { Select } from '@/components/ui/Select'
 
 type Status = 'active' | 'redeemed_full' | 'expired' | 'voided'
 /** How a void refund pays the balance back (money out — its own list, no bank deposit). */
@@ -233,10 +234,10 @@ export default function GiftCardsPage() {
             </span>
             <label className="flex items-center gap-2 text-xs text-s-muted">
               Status
-              <select value={status} onChange={(e) => { setStatus(e.target.value as Status | ''); setOpenId(null) }} className="s-select py-1 text-xs w-auto">
+              <Select value={status} onChange={(e) => { setStatus(e.target.value as Status | ''); setOpenId(null) }} className="s-select py-1 text-xs w-auto">
                 <option value="">All</option>
                 {(Object.keys(STATUS_LABEL) as Status[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-              </select>
+              </Select>
             </label>
           </div>
           <div className="overflow-x-auto">
@@ -654,11 +655,11 @@ function VoidModal({ target, canForfeitSold, onClose, onDone }: { target: VoidTa
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="block">
                 <span className="block text-xs text-s-muted mb-1">Paid back by</span>
-                <select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as RefundMethod)} className="s-select">
+                <Select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as RefundMethod)} className="s-select">
                   <option value="cash">Cash (from the safe)</option>
                   <option value="card">Card</option>
                   <option value="bank_transfer">Bank transfer</option>
-                </select>
+                </Select>
               </label>
               {refundMethod === 'bank_transfer' && (
                 <BankAccountSelect id="void-bank" tenantId={target.tenantId} value={bankAccountId} onChange={setBankAccountId} className="s-select" />

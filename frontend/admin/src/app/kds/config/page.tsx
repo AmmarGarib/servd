@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
+import { Select } from '@/components/ui/Select'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -144,7 +145,7 @@ function StationsTab() {
       {/* Concept filter */}
       <div className="flex items-center gap-3">
         <label className="text-sm text-kds-subtext">Concept</label>
-        <select
+        <Select
           value={conceptId}
           onChange={(e) => setConceptId(e.target.value)}
           className={sel}
@@ -155,7 +156,7 @@ function StationsTab() {
               {c.name}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
 
       {isLoading ? (

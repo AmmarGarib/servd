@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 interface Analytics {
@@ -37,9 +38,9 @@ export default function ReservationAnalyticsPage() {
           <h1 className="text-xl font-bold text-s-text">Reservation analytics</h1>
         </div>
         <div className="flex items-center gap-2">
-          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           <span className="text-xs text-s-muted">→</span>
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />

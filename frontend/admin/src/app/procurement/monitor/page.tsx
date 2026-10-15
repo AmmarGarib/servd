@@ -7,6 +7,7 @@ import { useViewAllTenants } from '../../../components/ui/TenantSwitcher'
 import { fmtPkrWhole } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { useManagerRoles } from '../../../lib/roles'
+import { Select } from '@/components/ui/Select'
 
 // Who may read the staff directory (GET /auth/users: management + HR). Any
 // other holder of the procurement module (the buyer) gets the staff already
@@ -168,7 +169,7 @@ export default function ProcurementMonitorPage() {
 
       {/* Filters */}
       <div className="mb-6 flex gap-3 flex-wrap">
-        <select value={selectedStaff} onChange={(e) => setSelectedStaff(e.target.value)}
+        <Select value={selectedStaff} onChange={(e) => setSelectedStaff(e.target.value)}
           className="rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text">
           <option value="all">All Staff</option>
           {/* Roles that plausibly own supplier accounts. Procurement, the
@@ -182,12 +183,12 @@ export default function ProcurementMonitorPage() {
           ].includes(u.role)).map((u) => (
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}
-        </select>
-        <select value={selectedCat} onChange={(e) => setSelectedCat(e.target.value)}
+        </Select>
+        <Select value={selectedCat} onChange={(e) => setSelectedCat(e.target.value)}
           className="rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text">
           <option value="all">All Categories</option>
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
+        </Select>
       </div>
 
       {/* Staff cards */}
@@ -364,22 +365,22 @@ function SupplierEditDrawer({
           </div>
           <div>
             <label className="text-xs text-s-muted">Assigned Procurement Staff</label>
-            <select value={assignedStaffId} onChange={(e) => setAssignedStaff(e.target.value)}
+            <Select value={assignedStaffId} onChange={(e) => setAssignedStaff(e.target.value)}
               className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
               <option value="">— Unassigned —</option>
               {staff.map((u) => <option key={u.id} value={u.id}>{u.name}{u.role ? ` (${u.role})` : ''}</option>)}
-            </select>
+            </Select>
           </div>
           {tenants.length > 0 && (
             <div>
               <label className="text-xs text-s-muted">
                 Company {!supplier.tenantId && <span className="text-s-red">— orphan, pick one</span>}
               </label>
-              <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
+              <Select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
                 className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                 {!supplier.tenantId && <option value="">— pick a company —</option>}
                 {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+              </Select>
             </div>
           )}
           <div>

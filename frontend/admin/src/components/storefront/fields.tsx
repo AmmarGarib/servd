@@ -10,6 +10,7 @@ import { X } from 'lucide-react'
 import { LibraryPanel, type LibraryAsset } from './LibraryPanel'
 import { contentApi, type MediaAssetLite } from '../../lib/content'
 import { BUILTIN_FONTS, type Align } from '../../lib/blocks'
+import { Select } from '@/components/ui/Select'
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -191,7 +192,7 @@ export function FontSelect({ value, onChange, fonts, emptyLabel }: {
   const known = new Set([...library, ...BUILTIN_FONTS.map((f) => f.value)])
   return (
     <div className="space-y-1">
-      <select value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)} className="s-select">
+      <Select value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)} className="s-select">
         <option value="">{emptyLabel}</option>
         {library.length > 0 && (
           <optgroup label="Library fonts">
@@ -202,7 +203,7 @@ export function FontSelect({ value, onChange, fonts, emptyLabel }: {
           {BUILTIN_FONTS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
         </optgroup>
         {value && !known.has(value) && <option value={value}>{value} (not in library)</option>}
-      </select>
+      </Select>
       {value && <p className="text-sm text-s-text truncate" style={{ fontFamily: value }}>The quick brown fox, 0123</p>}
     </div>
   )

@@ -9,6 +9,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 type Outcome = 'promising' | 'needs_work' | 'rejected'
 
@@ -90,16 +91,16 @@ export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
           placeholder="What you changed and how it came out — e.g. 'Cut salt 10%, char 30s longer. Better crust, still dry.'"
           className="s-input w-full text-sm resize-none" />
         <div className="flex items-center gap-2 flex-wrap">
-          <select value={outcome} onChange={(e) => setOutcome(e.target.value as '' | Outcome)} className="s-select text-xs">
+          <Select value={outcome} onChange={(e) => setOutcome(e.target.value as '' | Outcome)} className="s-select text-xs">
             <option value="">Outcome…</option>
             <option value="promising">Promising</option>
             <option value="needs_work">Needs work</option>
             <option value="rejected">Rejected</option>
-          </select>
-          <select value={rating} onChange={(e) => setRating(e.target.value ? Number(e.target.value) : '')} className="s-select text-xs">
+          </Select>
+          <Select value={rating} onChange={(e) => setRating(e.target.value ? Number(e.target.value) : '')} className="s-select text-xs">
             <option value="">Rating…</option>
             {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{'★'.repeat(n)} ({n})</option>)}
-          </select>
+          </Select>
           <button type="button" onClick={submit} disabled={add.isPending}
             className="ml-auto rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
             {add.isPending ? 'Logging…' : 'Log attempt'}

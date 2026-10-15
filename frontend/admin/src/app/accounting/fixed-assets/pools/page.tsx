@@ -15,6 +15,7 @@ import {
   FA_BASE, FaFrame, Stat, Notice, card, inp, btnPrimary, btnGhost, money, fmtDay, fmtLife, errorWords, useFaLookups,
 } from '../../../../components/fixedAssets/shared'
 import { PoolRequestModal, type PoolRequestKind, type PoolRow } from '../../../../components/fixedAssets/RequestForms'
+import { Select } from '@/components/ui/Select'
 
 interface Layer {
   id: string; assetTag: string | null; name: string; quantity: number; originalQuantity: number
@@ -102,14 +103,14 @@ export default function PoolsPage() {
 
       <div className="rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3" style={card}>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Outlet</span>
-          <select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">All outlets</option>{outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+          <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+            <option value="">All outlets</option>{outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Brand</span>
-          <select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
-            <option value="">All brands</option>{brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+          <Select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
+            <option value="">All brands</option>{brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Type</span>
-          <select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
-            <option value="">All types</option>{(lookups?.smallwareTypes ?? []).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></label>
+          <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
+            <option value="">All types</option>{(lookups?.smallwareTypes ?? []).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</Select></label>
       </div>
 
       {error && <Notice tone="bad">{errorWords(error)}</Notice>}

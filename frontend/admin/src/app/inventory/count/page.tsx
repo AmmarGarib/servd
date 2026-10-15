@@ -27,6 +27,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
 import { stockErrorText, errorCode } from '../../../lib/stockUi'
+import { Select } from '@/components/ui/Select'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number
@@ -229,10 +230,10 @@ export default function PhysicalCountPage() {
           <input value={search} onChange={(e) => { setSearch(e.target.value); if (suggested) setShowAll(true) }}
             placeholder="Search items…" className={fi} aria-label="Search items" />
           {outlets.length > 0 && (
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fi} aria-label="Outlet counted">
+            <Select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fi} aria-label="Outlet counted">
               <option value="">Outlet: whole company</option>
               {outlets.map((l) => <option key={l.id} value={l.id}>{l.name}{l.tenant?.name ? ` — ${l.tenant.name}` : ''}</option>)}
-            </select>
+            </Select>
           )}
         </div>
 

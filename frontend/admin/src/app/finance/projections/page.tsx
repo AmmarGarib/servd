@@ -18,6 +18,7 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string; slug: string; primaryColor: string | null }
 interface BrandInput {
@@ -194,10 +195,10 @@ export default function ProjectionsPage() {
             </div>
             <div className="flex items-center gap-2">
               {scenarios.length > 1 && (
-                <select value={activeId ?? ''} onChange={(e) => setActiveId(e.target.value)}
+                <Select value={activeId ?? ''} onChange={(e) => setActiveId(e.target.value)}
                   className="rounded-lg bg-s-surface border border-s-border text-xs px-2 py-1.5">
                   {scenarios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                </Select>
               )}
               <span className="text-[10px] text-s-dim">Updated {new Date(projection.updatedAt).toLocaleString()}</span>
             </div>

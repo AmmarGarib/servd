@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { card, inp, btn, btnGhost, day, human } from '../../../lib/hr'
 import { HrShell, Modal, useHrLookups } from '../../../components/hr/HrShell'
+import { Select } from '@/components/ui/Select'
 
 interface Doc {
   id: string; employeeId: string; docType: string; title: string | null; fileUrl: string | null
@@ -46,17 +47,17 @@ export default function HrDocumentsPage() {
       actions={<button className={btn} onClick={() => setAdding(true)}>Add document</button>}>
       {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
       <div className="flex flex-wrap gap-3 mb-4">
-        <select className={`${inp} max-w-[200px]`} value={win} onChange={(e) => setWin(e.target.value)}>
+        <Select className={`${inp} max-w-[200px]`} value={win} onChange={(e) => setWin(e.target.value)}>
           {WINDOWS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
-        </select>
-        <select className={`${inp} max-w-[240px]`} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+        </Select>
+        <Select className={`${inp} max-w-[240px]`} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
           <option value="">Every employee</option>
           {(lookups?.employees ?? []).map((e) => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
-        </select>
-        <select className={`${inp} max-w-[220px]`} value={type} onChange={(e) => setType(e.target.value)}>
+        </Select>
+        <Select className={`${inp} max-w-[220px]`} value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">Every type</option>
           {types.map((t) => <option key={t} value={t}>{human(t)}</option>)}
-        </select>
+        </Select>
         <label className="flex items-center gap-2 text-sm text-white/70">
           <input type="checkbox" checked={unverified} onChange={(e) => setUnverified(e.target.checked)} className="h-4 w-4 accent-primary" />
           Unverified only
@@ -114,15 +115,15 @@ function AddDocument({ types, employees, defaultEmployee, onClose, onSaved }: {
     <Modal title="Add document" onClose={onClose}>
       <div className="space-y-3">
         <L label="Employee">
-          <select className={inp} value={f.employeeId} onChange={(e) => setF({ ...f, employeeId: e.target.value })}>
+          <Select className={inp} value={f.employeeId} onChange={(e) => setF({ ...f, employeeId: e.target.value })}>
             <option value="">Pick an employee</option>
             {employees.map((e) => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
-          </select>
+          </Select>
         </L>
         <L label="Type">
-          <select className={inp} value={f.docType} onChange={(e) => setF({ ...f, docType: e.target.value })}>
+          <Select className={inp} value={f.docType} onChange={(e) => setF({ ...f, docType: e.target.value })}>
             {types.map((t) => <option key={t} value={t}>{human(t)}</option>)}
-          </select>
+          </Select>
         </L>
         <L label="Title (optional)"><input className={inp} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></L>
         <L label="Link to the file"><input type="url" className={inp} placeholder="https://…" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} /></L>

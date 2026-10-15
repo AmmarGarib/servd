@@ -24,6 +24,7 @@ import { BankAccountSelect } from '../../../components/finance/BankAccountSelect
 import Link from 'next/link'
 import WithholdingRates from './WithholdingRates'
 import WithholdingRegister from './WithholdingRegister'
+import { Select } from '@/components/ui/Select'
 
 interface AccountTotal { code: string; name: string; totalCents: number }
 type AuthorityKey = 'fbr' | 'pra' | 'srb' | 'kpra' | 'bra'
@@ -845,12 +846,12 @@ function PayModal({ report, target, onClose }: { report: STR; target: PayTarget;
         )}
         <Field label="Paid on"><input type="date" className="s-input" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} /></Field>
         <Field label="How">
-          <select className="s-input" value={f.method} onChange={set('method')}>
+          <Select className="s-input" value={f.method} onChange={set('method')}>
             <option value="bank_transfer">Bank transfer / e-payment</option>
             <option value="cheque">Cheque</option>
             <option value="online">Online banking</option>
             <option value="cash">Cash at the bank counter</option>
-          </select>
+          </Select>
         </Field>
         {f.method !== 'cash' && (
           <div className="sm:col-span-2">
@@ -898,9 +899,9 @@ function LinkModal({ report, onClose }: { report: STR; onClose: () => void }) {
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Tax">
-          <select className="s-input" value={authority} onChange={(e) => { setAuthority(e.target.value as PayKey); setEntryId('') }}>
+          <Select className="s-input" value={authority} onChange={(e) => { setAuthority(e.target.value as PayKey); setEntryId('') }}>
             {(Object.keys(PAY_LABEL) as PayKey[]).map((k) => <option key={k} value={k}>{PAY_LABEL[k]}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="CPR / challan number"><input className="s-input" value={cprNumber} onChange={(e) => setCpr(e.target.value)} /></Field>
         <Field label="Period from"><input type="date" className="s-input" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} /></Field>

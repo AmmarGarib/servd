@@ -18,6 +18,7 @@ import {
   type CashVoucher,
 } from './data'
 import { ErrorBanner, Field, Footer, Modal, fieldCls, primaryBtn } from './ui'
+import { Select } from '@/components/ui/Select'
 
 export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
   /** Editing this request; omitted = a new one. */
@@ -116,7 +117,7 @@ export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
       )}
 
       <Field label="Expense category *" hint="The cash is booked to this when it is paid. Receipts that show something else (stock, equipment, another category) move it there.">
-        <select value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
+        <Select value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
           <option value="">— pick a category —</option>
           {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
           {isKeeper && expenseAccounts.length > 0 && (
@@ -124,17 +125,17 @@ export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
               {expenseAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
             </optgroup>
           )}
-        </select>
+        </Select>
       </Field>
 
       {!categoryOnly && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Brand">
-              <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+              <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
                 <option value="">— company-wide —</option>
                 {companyBrands.map((b) => <option key={b.id} value={b.id}>{formatBrandName(b.name)}</option>)}
-              </select>
+              </Select>
             </Field>
             <Field label="Department">
               <input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Optional" className={fieldCls} />
@@ -143,12 +144,12 @@ export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
 
           {isKeeper && staff.length > 0 ? (
             <Field label="Who takes the cash" hint="They bring the receipts back. Their HOD signs the request.">
-              <select value={holderUserId} onChange={(e) => setHolderUserId(e.target.value)} className={fieldCls}>
+              <Select value={holderUserId} onChange={(e) => setHolderUserId(e.target.value)} className={fieldCls}>
                 {me && <option value={me.id}>Me</option>}
                 {staff.filter((u) => u.id !== me?.id && (!tenantId || !u.tenantId || u.tenantId === tenantId)).map((u) => (
                   <option key={u.id} value={u.id}>{u.name}</option>
                 ))}
-              </select>
+              </Select>
             </Field>
           ) : (
             <p className="text-xs text-white/50">You take the cash and bring the receipts back.</p>
@@ -161,12 +162,12 @@ export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
 
       {isKeeper && (
         <Field label="Paid from (cash box)" hint="Optional — otherwise the cashier picks the box when paying.">
-          <select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
+          <Select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
             <option value="">— the cashier picks —</option>
             {companyBoxes.map((b) => (
               <option key={b.id} value={b.id}>{b.name}{b.custodianName ? ` — ${b.custodianName}` : ''} · PKR {formatPkr(b.floatCents)}</option>
             ))}
-          </select>
+          </Select>
         </Field>
       )}
 

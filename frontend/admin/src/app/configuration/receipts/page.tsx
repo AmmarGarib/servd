@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Cfg {
   id: string
@@ -48,10 +49,10 @@ export default function ReceiptsPage() {
       <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         <Section title="Layout">
           <Field label="Paper width">
-            <select value={form.paperWidthMm ?? 80} onChange={(e) => patch('paperWidthMm', parseInt(e.target.value))} className={fieldCls}>
+            <Select value={form.paperWidthMm ?? 80} onChange={(e) => patch('paperWidthMm', parseInt(e.target.value))} className={fieldCls}>
               <option value={58}>58 mm</option>
               <option value={80}>80 mm</option>
-            </select>
+            </Select>
           </Field>
           <Toggle label="Show logo" checked={!!form.showLogo} onChange={(v) => patch('showLogo', v)} />
           <Field label="Logo URL">

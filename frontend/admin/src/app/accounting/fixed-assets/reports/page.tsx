@@ -15,6 +15,7 @@ import { api } from '../../../../lib/api'
 import {
   FA_BASE, FaFrame, Notice, Stat, card, inp, btnPrimary, btnGhost, money, moneyExact, fmtDay, fmtMonth, pct, todayIso, errorWords, useFaLookups,
 } from '../../../../components/fixedAssets/shared'
+import { Select } from '@/components/ui/Select'
 
 type ReportKey = 'schedule' | 'roll' | 'nbv' | 'tie' | 'advances' | 'tax'
 const REPORTS: Array<{ key: ReportKey; label: string; about: string }> = [
@@ -113,9 +114,9 @@ function ScheduleReport({ onError }: { onError: (m: string) => void }) {
         <label className="block"><span className="text-[11px] font-bold text-white/50">From month</span><input type="month" className={inp} value={from} onChange={(e) => setFrom(e.target.value)} /></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">To month</span><input type="month" className={inp} value={to} onChange={(e) => setTo(e.target.value)} /></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Group by</span>
-          <select className={inp} value={by} onChange={(e) => setBy(e.target.value)}>
+          <Select className={inp} value={by} onChange={(e) => setBy(e.target.value)}>
             <option value="class">Class</option><option value="brand">Brand</option><option value="location">Outlet</option><option value="pool">Smallwares pool</option><option value="asset">Asset</option>
-          </select></label>
+          </Select></label>
         <div>{csvButton(`${FA_BASE}/reports/schedule?${qs}&format=csv`, 'depreciation-schedule.csv', onError)}</div>
       </div>
       <Loading q={q} />
@@ -274,9 +275,9 @@ function NbvReport({ onError }: { onError: (m: string) => void }) {
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
         <label className="block"><span className="text-[11px] font-bold text-white/50">As of</span><input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Group by</span>
-          <select className={inp} value={by} onChange={(e) => setBy(e.target.value)}>
+          <Select className={inp} value={by} onChange={(e) => setBy(e.target.value)}>
             <option value="class">Class</option><option value="brand">Brand</option><option value="location">Outlet</option><option value="pool">Smallwares pool</option><option value="company">Company</option><option value="asset">Asset</option>
-          </select></label>
+          </Select></label>
         <p className="text-[11px] text-white/40">Brand and outlet are where each asset was on that day.</p>
         <div>{csvButton(`${FA_BASE}/reports/nbv?${qs}&format=csv`, `fixed-asset-nbv.csv`, onError)}</div>
       </div>

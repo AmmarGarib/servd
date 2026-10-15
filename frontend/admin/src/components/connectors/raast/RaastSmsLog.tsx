@@ -17,6 +17,7 @@ import { orderRef } from '../../../lib/orderRef'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
 import { Badge, Card, ErrorLine, Field, fmtWhen, type Tone } from '../ui'
+import { Select } from '@/components/ui/Select'
 
 function smsTone(s: BankSmsStatus): Tone {
   switch (s) {
@@ -51,10 +52,10 @@ export function RaastSmsLog({ data }: { data: RaastSettingsPage }) {
     <Card title="Bank SMS log" subtitle="Every bank SMS servd stored, newest first. Texts are cleared after 90 days (30 for SMS it could not read).">
       <div className="max-w-[260px]">
         <Field label="Status">
-          <select className="s-select text-xs" value={status} onChange={(e) => setStatus(e.target.value as BankSmsStatus | '')}>
+          <Select className="s-select text-xs" value={status} onChange={(e) => setStatus(e.target.value as BankSmsStatus | '')}>
             <option value="">All</option>
             {BANK_SMS_STATUSES.map((s) => <option key={s} value={s}>{BANK_SMS_STATUS_LABEL[s]}</option>)}
-          </select>
+          </Select>
         </Field>
       </div>
       {list.isLoading && <p className="text-xs text-s-muted">Loading…</p>}

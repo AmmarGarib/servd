@@ -21,6 +21,7 @@ import {
   useAdvanceFlags, useCapexLookups, useWithholdingPreview, quickBuyMessage,
   TREATMENT_OPTIONS, TREATMENT_LABEL, WHT_SECTION_LABEL, AUTHORITY_LABEL,
 } from '../../../components/fixedAssets/CapexForms'
+import { Select } from '@/components/ui/Select'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 // The shapes of GET /finance/capex live in components/fixedAssets/capexTypes.ts.
@@ -638,10 +639,10 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
           <div>
             <label className="text-xs text-white/55">Category *</label>
             <div className="flex gap-2 mt-1">
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={fieldCls + ' flex-1'}>
+              <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={fieldCls + ' flex-1'}>
                 <option value="">— pick —</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
-              </select>
+              </Select>
               <button type="button" onClick={() => setCreatingCategory(!creatingCategory)}
                 className="rounded-lg border border-white/10 px-3 text-xs text-white/55 hover:text-white">+ New</button>
             </div>
@@ -682,12 +683,12 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
             </div>
             <div>
               <label className="text-xs text-white/55">Cadence</label>
-              <select value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)} className={fieldCls + ' mt-1'}>
+              <Select value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)} className={fieldCls + ' mt-1'}>
                 <option value="monthly">Monthly</option>
                 <option value="quarterly">Quarterly</option>
                 <option value="annual">Annual</option>
                 <option value="per_use">Per use</option>
-              </select>
+              </Select>
             </div>
           </div>
           <div>
@@ -959,13 +960,13 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="42C Kitchen — Phase 1 build" className={fieldCls} autoFocus />
     </Field>
     <Field label="Project type">
-      <select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} className={fieldCls}>
+      <Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} className={fieldCls}>
         <option value="kitchen_buildout">Kitchen build-out (new from shell)</option>
         <option value="refurb">Refurb / refresh of existing space</option>
         <option value="expansion">Expansion / second site</option>
         <option value="new_brand">New brand launch</option>
         <option value="equipment_only">Equipment refresh only</option>
-      </select>
+      </Select>
     </Field>
     <Field label="Address (optional)">
       <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="MM Alam Road, Lahore" className={fieldCls} />
@@ -1080,9 +1081,9 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
     <div className="grid grid-cols-2 gap-3">
       <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
       <Field label="Phase">
-        <select value={phase} onChange={(e) => setPhase(e.target.value as Phase)} className={fieldCls}>
+        <Select value={phase} onChange={(e) => setPhase(e.target.value as Phase)} className={fieldCls}>
           {Object.entries(PHASE_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
-        </select>
+        </Select>
       </Field>
     </div>
     <div className="grid grid-cols-2 gap-3">
@@ -1222,11 +1223,11 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
         <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(+e.target.value || 1)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
       </Field>
       <Field label="Priority">
-        <select value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)} className={fieldCls}>
+        <Select value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)} className={fieldCls}>
           <option value="must_have">Must have</option>
           <option value="nice_to_have">Nice to have</option>
           <option value="future">Future / phase 2</option>
-        </select>
+        </Select>
       </Field>
     </div>
 
@@ -1248,7 +1249,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
     <Section heading="Supplier">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Supplier on file">
-          <select value={supplierId} onChange={(e) => {
+          <Select value={supplierId} onChange={(e) => {
             const id = e.target.value
             setSupplierId(id)
             const picked = suppliers.find((x) => x.id === id)
@@ -1257,7 +1258,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
           }} className={fieldCls}>
             <option value="">Not on file</option>
             {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-          </select>
+          </Select>
           <Hint>Pick a supplier so income tax can be withheld at their filer rate.</Hint>
         </Field>
         <Field label="Vendor name"><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
@@ -1268,25 +1269,25 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
     <Section heading="How it is booked">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Book as">
-          <select value={treatment} onChange={(e) => setTreatment(e.target.value as Treatment | '')} disabled={treatmentLocked} className={fieldCls + ' disabled:opacity-60'}>
+          <Select value={treatment} onChange={(e) => setTreatment(e.target.value as Treatment | '')} disabled={treatmentLocked} className={fieldCls + ' disabled:opacity-60'}>
             {TREATMENT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </select>
+          </Select>
           <Hint>{treatmentLocked ? 'An instalment is already on the books as it is, so this can no longer change.' : TREATMENT_OPTIONS.find((o) => o.key === treatment)?.hint}</Hint>
         </Field>
         <Field label="Income tax withholding">
-          <select value={whtSection} onChange={(e) => setWhtSection(e.target.value)} className={fieldCls}>
+          <Select value={whtSection} onChange={(e) => setWhtSection(e.target.value)} className={fieldCls}>
             <option value="">Automatic (the supplier&rsquo;s default)</option>
             {whtSections.map((x) => <option key={x} value={x}>{WHT_SECTION_LABEL[x] ?? x}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Sales tax in the price (PKR)">
           <MoneyInput value={inputTaxCents} onChange={setInputTaxCents} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
         </Field>
         <Field label="Sales tax charged by">
-          <select value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value)} disabled={onRegister || inputTaxCents === 0} className={fieldCls + ' disabled:opacity-60'}>
+          <Select value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value)} disabled={onRegister || inputTaxCents === 0} className={fieldCls + ' disabled:opacity-60'}>
             <option value="">{inputTaxCents === 0 ? 'Not needed' : 'Pick the authority'}</option>
             {authorities.map((x) => <option key={x} value={x}>{AUTHORITY_LABEL[x] ?? x.toUpperCase()}</option>)}
-          </select>
+          </Select>
           {inputTaxCents > 0 && !inputTaxAuthority && <Hint>Say which authority charged it (required to claim it).</Hint>}
         </Field>
       </div>
@@ -1296,9 +1297,9 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
     <Section heading="Status & schedule">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Status">
-          <select value={status} onChange={(e) => setStatus(e.target.value as Status)} className={fieldCls}>
+          <Select value={status} onChange={(e) => setStatus(e.target.value as Status)} className={fieldCls}>
             {Object.entries(STATUS_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Lead time (days)">
           <input type="number" value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value === '' ? '' : +e.target.value)} className={fieldCls} />
@@ -1520,12 +1521,12 @@ function PaymentPanel({ project, line, tenantId, onChange }: { project: Project;
       <div className="rounded-xl p-3 mt-2"
         style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <select value={label} onChange={(e) => setLabel(e.target.value as typeof label)} className={fieldCls}>
+          <Select value={label} onChange={(e) => setLabel(e.target.value as typeof label)} className={fieldCls}>
             <option value="deposit">Deposit</option>
             <option value="midpoint">Midpoint</option>
             <option value="balance">Balance</option>
             <option value="extra">Extra</option>
-          </select>
+          </Select>
           <MoneyInput value={amountCents} onChange={setAmountCents} placeholder="Amount (PKR)" className={fieldCls} />
           <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} aria-label="Due date" />
         </div>

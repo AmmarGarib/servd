@@ -13,6 +13,7 @@ import {
   PaymentReceivedFields, ReferenceUsedBeforeNotice, receiptFieldsValid, receiptMethodLabel, isBankMethod,
   PAYMENT_REFERENCE_ERROR_TEXT, type PaymentRefUse,
 } from '../../components/finance/PaymentReceivedFields'
+import { Select } from '@/components/ui/Select'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -222,12 +223,12 @@ export default function CRMPage() {
             </div>
             <div>
               <label htmlFor="wallet-kind" className="text-xs text-s-muted mb-1 block">What is it?</label>
-              <select id="wallet-kind" value={walletKind}
+              <Select id="wallet-kind" value={walletKind}
                 onChange={(e) => { const k = e.target.value as typeof walletKind; setWalletKind(k); if (k === 'goodwill') { setWalletRef(''); setWalletBank('') } }}
                 className={inp}>
                 <option value="goodwill">Goodwill credit (our cost)</option>
                 <option value="paid">Customer paid</option>
-              </select>
+              </Select>
               <p className="text-xs text-s-muted mt-1">
                 Credited to the customer&apos;s wallet at the company below, and spendable only at its brands.
               </p>
@@ -235,9 +236,9 @@ export default function CRMPage() {
             {myCompanies.length > 1 && (
               <div>
                 <label htmlFor="wallet-company" className="text-xs text-s-muted mb-1 block">Company</label>
-                <select id="wallet-company" value={walletTenantId} onChange={(e) => { setWalletCompany(e.target.value); setWalletBank('') }} className={inp}>
+                <Select id="wallet-company" value={walletTenantId} onChange={(e) => { setWalletCompany(e.target.value); setWalletBank('') }} className={inp}>
                   {myCompanies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </div>
             )}
             {walletKind === 'paid' && (

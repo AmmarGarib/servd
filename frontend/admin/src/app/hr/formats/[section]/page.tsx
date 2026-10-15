@@ -13,6 +13,7 @@ import { api } from '../../../../lib/api'
 import { card, btn, btnGhost, inp, human, day, FIELD_TYPES, RECORD_SLOTS, ROLE_LABEL, type HrField, type HrFormat, type WorkflowStep } from '../../../../lib/hr'
 import { HrShell, Modal, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
+import { Select } from '@/components/ui/Select'
 
 interface FormInfo {
   section: { key: string; title: string; requires: string[]; effect: string | null }
@@ -132,19 +133,19 @@ export default function FormatEditorPage() {
                       <td className="px-1 py-1.5 min-w-[120px]"><input className={`${inp} font-mono`} value={f.key} disabled={sys} onChange={(e) => upd(i, { key: e.target.value })} aria-label="Key" /></td>
                       <td className="px-1 py-1.5">
                         {/* An org-list field must say which list; it starts on the first. */}
-                        <select className={inp} value={f.type} disabled={sys} aria-label="Type"
+                        <Select className={inp} value={f.type} disabled={sys} aria-label="Type"
                           onChange={(e) => { const type = e.target.value as HrField['type']; upd(i, { type, ...(type === 'orgunit' && !f.ref && org?.kinds[0] && { ref: org.kinds[0] }) }) }}>
                           {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                        </select>
+                        </Select>
                       </td>
                       <td className="px-1 py-1.5 text-center"><input type="checkbox" checked={!!f.required} onChange={(e) => upd(i, { required: e.target.checked })} className="accent-primary" aria-label="Required" /></td>
                       <td className="px-1 py-1.5 min-w-[180px]">
                         {(f.type === 'select' || f.type === 'multiselect') && <OptionsInput options={f.options ?? []} onSet={(options) => upd(i, { options })} />}
                         {f.type === 'orgunit' && (
-                          <select className={inp} value={f.ref ?? ''} onChange={(e) => upd(i, { ref: e.target.value || undefined })} aria-label="Org list">
+                          <Select className={inp} value={f.ref ?? ''} onChange={(e) => upd(i, { ref: e.target.value || undefined })} aria-label="Org list">
                             {!f.ref && <option value="">Choose a list…</option>}
                             {(org?.kinds ?? []).map((k) => <option key={k} value={k}>{human(k)}</option>)}
-                          </select>
+                          </Select>
                         )}
                         {f.type === 'record' && <input className={inp} placeholder="section key, e.g. leave_type" value={f.ref ?? ''} onChange={(e) => upd(i, { ref: e.target.value })} aria-label="Points to section" />}
                         {f.type === 'table' && <span className="text-white/40">{f.columns?.length ?? 0} columns (edit in JSON)</span>}
@@ -153,10 +154,10 @@ export default function FormatEditorPage() {
                         {isEmployees ? (
                           <span className="text-white/45">{f.bind ? f.bind.replace('employee.', 'column ') : 'extra details'}</span>
                         ) : (
-                          <select className={inp} value={f.bind ?? ''} disabled={!!locked} onChange={(e) => upd(i, { bind: e.target.value || undefined })} aria-label="Binding">
+                          <Select className={inp} value={f.bind ?? ''} disabled={!!locked} onChange={(e) => upd(i, { bind: e.target.value || undefined })} aria-label="Binding">
                             <option value="">— not used —</option>
                             {RECORD_SLOTS.map((s) => <option key={s} value={s}>{s}{requiredBinds.has(s) ? ' (required)' : ''}</option>)}
-                          </select>
+                          </Select>
                         )}
                         {sys && <p className="text-[10px] text-amber-700 mt-0.5">used by calculations</p>}
                       </td>
@@ -189,9 +190,9 @@ export default function FormatEditorPage() {
               {workflow.map((w, i) => (
                 <div key={i} className="flex gap-1 mb-1.5">
                   <input className={inp} value={w.label} onChange={(e) => { setWorkflow(workflow.map((x, j) => (j === i ? { ...x, label: e.target.value } : x))); setDirty(true) }} aria-label="Step label" />
-                  <select className={inp} value={w.role} onChange={(e) => { setWorkflow(workflow.map((x, j) => (j === i ? { ...x, role: e.target.value as WorkflowStep['role'] } : x))); setDirty(true) }} aria-label="Who approves">
+                  <Select className={inp} value={w.role} onChange={(e) => { setWorkflow(workflow.map((x, j) => (j === i ? { ...x, role: e.target.value as WorkflowStep['role'] } : x))); setDirty(true) }} aria-label="Who approves">
                     {Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                  </select>
+                  </Select>
                   <button onClick={() => { setWorkflow(workflow.filter((_, j) => j !== i)); setDirty(true) }} className="text-white/35 hover:text-red-700 px-1" aria-label="Remove step">✕</button>
                 </div>
               ))}

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import { roleLabel } from '../../../lib/appRoles'
+import { Select } from '@/components/ui/Select'
 
 // User audit log — the Dev workspace's IDENTITY trail (decision 47): who signed
 // in (and who failed to), who exists, what access they hold, and what they did
@@ -150,11 +151,11 @@ export default function UserAuditLogPage() {
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] uppercase tracking-wider text-white/35 font-bold">User</span>
-          <select value={userId} onChange={(e) => setUserId(e.target.value)} className={field}>
+          <Select value={userId} onChange={(e) => setUserId(e.target.value)} className={field}>
             <option value="">Everyone</option>
             {userId && !people.some(([id]) => id === userId) && <option value={userId}>{userId.slice(0, 8)}</option>}
             {people.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-          </select>
+          </Select>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[10px] uppercase tracking-wider text-white/35 font-bold">Action starts with</span>

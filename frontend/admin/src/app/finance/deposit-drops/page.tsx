@@ -19,6 +19,7 @@ import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import { ReferenceUsedBeforeNotice, type PaymentRefUse } from '../../../components/finance/PaymentReceivedFields'
 import { useActiveCompany } from '../../../lib/connectorsApi'
+import { Select } from '@/components/ui/Select'
 
 interface Drop {
   id: string
@@ -162,14 +163,14 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
       <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
         <Field label="Shift (optional — for the variance check)">
           {shifts.length > 0 ? (
-            <select value={shiftId} onChange={(e) => setShiftId(e.target.value)} className={fieldCls}>
+            <Select value={shiftId} onChange={(e) => setShiftId(e.target.value)} className={fieldCls}>
               <option value="">— not from one shift —</option>
               {shifts.map((s) => (
                 <option key={s.shiftId} value={s.shiftId}>
                   {s.cashier} · {new Date(s.openedAt).toLocaleString()}{s.status === 'open' ? ' (open)' : ''}
                 </option>
               ))}
-            </select>
+            </Select>
           ) : (
             <input value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
           )}

@@ -8,6 +8,7 @@ import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
+import { Select } from '@/components/ui/Select'
 
 interface Complaint {
   id: string
@@ -226,22 +227,22 @@ export default function ComplaintsPage() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-s-muted">Concept</label>
-              <select value={newForm.conceptId} onChange={(e) => setNewForm({ ...newForm, conceptId: e.target.value })} className={inp}>
+              <Select value={newForm.conceptId} onChange={(e) => setNewForm({ ...newForm, conceptId: e.target.value })} className={inp}>
                 <option value="">Select…</option>
                 {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs text-s-muted">Category</label>
-              <select value={newForm.category} onChange={(e) => setNewForm({ ...newForm, category: e.target.value })} className={inp}>
+              <Select value={newForm.category} onChange={(e) => setNewForm({ ...newForm, category: e.target.value })} className={inp}>
                 {CATEGORIES.map((c) => <option key={c} value={c}>{c.replace('_', ' ')}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs text-s-muted">Priority</label>
-              <select value={newForm.priority} onChange={(e) => setNewForm({ ...newForm, priority: e.target.value })} className={inp}>
+              <Select value={newForm.priority} onChange={(e) => setNewForm({ ...newForm, priority: e.target.value })} className={inp}>
                 {['low', 'medium', 'high', 'urgent'].map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs text-s-muted">Order ID (optional)</label>
@@ -275,18 +276,18 @@ export default function ComplaintsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
-        <select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)} className={`${inp} w-auto`}>
+        <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All concepts</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={`${inp} w-auto`}>
+        </Select>
+        <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All statuses</option>
           {['open', 'in_progress', 'resolved', 'closed'].map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-        </select>
-        <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className={`${inp} w-auto`}>
+        </Select>
+        <Select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All priorities</option>
           {['urgent', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
+        </Select>
         {selectedIds.size > 0 && (
           <button onClick={() => setSelectedIds(new Set())}
             className="rounded-lg border border-s-border text-s-muted px-3 py-2 text-xs hover:text-s-red hover:border-s-red transition-colors">

@@ -25,6 +25,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { MoneyInput } from '../ui/MoneyInput'
+import { Select } from '@/components/ui/Select'
 
 export type SpendLineKind = 'expense' | 'stock' | 'capex'
 /** Every line kind this editor knows. */
@@ -184,11 +185,11 @@ export function SpendLinesEditor({
               <span className="text-[11px] font-bold uppercase tracking-wider text-white/40">Line {i + 1}</span>
               <div className="flex items-center gap-2">
                 {offered.length > 1 && (
-                  <select value={l.kind} onChange={(e) => switchKind(i, e.target.value as SpendLineKind)}
+                  <Select value={l.kind} onChange={(e) => switchKind(i, e.target.value as SpendLineKind)}
                     className="rounded-md px-2 py-1 text-[11px] font-bold" aria-label={`Line ${i + 1} kind`}
                     style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
                     {offered.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
-                  </select>
+                  </Select>
                 )}
                 {lines.length > 1 && (
                   <button type="button" onClick={() => onChange(lines.filter((_, j) => j !== i))} className="text-[11px] text-white/45 hover:text-white">Remove</button>
@@ -198,14 +199,14 @@ export function SpendLinesEditor({
 
             {l.kind === 'stock' ? (
               <>
-                <select value={l.inventoryItemId ?? ''} className={fieldClassName} aria-label={`Line ${i + 1} stock item`}
+                <Select value={l.inventoryItemId ?? ''} className={fieldClassName} aria-label={`Line ${i + 1} stock item`}
                   onChange={(e) => {
                     const it = items.find((x) => x.id === e.target.value)
                     set(i, { inventoryItemId: e.target.value, unit: it?.unit ?? '', description: l.description || (it?.name ?? '') })
                   }}>
                   <option value="">— which stock item —</option>
                   {items.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>)}
-                </select>
+                </Select>
                 <div className="grid grid-cols-3 gap-2">
                   <input value={l.quantity ?? ''} onChange={(e) => set(i, { quantity: e.target.value })} inputMode="decimal"
                     placeholder="Quantity" className={fieldClassName} aria-label={`Line ${i + 1} quantity`} />
@@ -221,10 +222,10 @@ export function SpendLinesEditor({
                 <input value={l.description} onChange={(e) => set(i, { description: e.target.value })} maxLength={200}
                   placeholder="What was bought (e.g. Blender)" className={fieldClassName} aria-label={`Line ${i + 1} description`} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <select value={l.capexLineId ?? ''} onChange={(e) => set(i, { capexLineId: e.target.value })} className={fieldClassName} aria-label={`Line ${i + 1} CapEx line`}>
+                  <Select value={l.capexLineId ?? ''} onChange={(e) => set(i, { capexLineId: e.target.value })} className={fieldClassName} aria-label={`Line ${i + 1} CapEx line`}>
                     <option value="">— which CapEx item —</option>
                     {capexLines.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-                  </select>
+                  </Select>
                   <MoneyInput value={l.amountCents} onChange={(v) => set(i, { amountCents: v })} className={fieldClassName} ariaLabel={`Line ${i + 1} amount in rupees`} />
                 </div>
               </>
@@ -233,7 +234,7 @@ export function SpendLinesEditor({
                 <input value={l.description} onChange={(e) => set(i, { description: e.target.value })} maxLength={200}
                   placeholder="What was bought (e.g. Printer paper)" className={fieldClassName} aria-label={`Line ${i + 1} description`} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <select value={l.categoryKey || (l.accountCode ? `acct:${l.accountCode}` : '')}
+                  <Select value={l.categoryKey || (l.accountCode ? `acct:${l.accountCode}` : '')}
                     onChange={(e) => {
                       const v = e.target.value
                       if (v.startsWith('acct:')) set(i, { categoryKey: '', accountCode: v.slice(5) })
@@ -247,17 +248,17 @@ export function SpendLinesEditor({
                         {expenseAccounts.map((a) => <option key={a.code} value={`acct:${a.code}`}>{a.code} {a.name}</option>)}
                       </optgroup>
                     )}
-                  </select>
+                  </Select>
                   <MoneyInput value={l.amountCents} onChange={(v) => set(i, { amountCents: v })} className={fieldClassName} ariaLabel={`Line ${i + 1} amount in rupees`} />
                 </div>
               </>
             )}
 
             {companyBrands.length > 1 && (
-              <select value={l.conceptId} onChange={(e) => set(i, { conceptId: e.target.value })} className={fieldClassName} aria-label={`Line ${i + 1} brand`}>
+              <Select value={l.conceptId} onChange={(e) => set(i, { conceptId: e.target.value })} className={fieldClassName} aria-label={`Line ${i + 1} brand`}>
                 <option value="">Brand: the box&apos;s / request&apos;s own</option>
                 {companyBrands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+              </Select>
             )}
             {l.kind === 'expense' && l.notEquipment !== undefined && (
               <div className="space-y-1">

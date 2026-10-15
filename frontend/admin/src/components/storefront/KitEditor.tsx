@@ -32,6 +32,7 @@ import { brandCatalog, cleanFontFamily, resolveKitImage, useBrandKitCatalog, typ
 import { LiveCanvas, type FrameStatus, type LiveCanvasHandle } from './LiveCanvas'
 import { StatusBadge } from './panels'
 import { VersionsDrawer } from './VersionsDrawer'
+import { Select } from '@/components/ui/Select'
 
 const ROLES: Array<{ key: KitRoleKey; label: string; hint: string }> = [
   { key: 'accent', label: 'Website signal colour', hint: 'The one accent colour on the brand\'s website.' },
@@ -490,7 +491,7 @@ function KitFontSelect({ value, def, catalog, company, onChange }: {
       : builtin.find((f) => f.id === value)?.stack
   return (
     <div className="space-y-1">
-      <select value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)} className="s-select">
+      <Select value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)} className="s-select">
         <option value="">{def ? `Brand default (${label(def)})` : 'Brand default'}</option>
         {builtin.length > 0 && (
           <optgroup label="Built-in">
@@ -503,7 +504,7 @@ function KitFontSelect({ value, def, catalog, company, onChange }: {
           </optgroup>
         )}
         {value && !known && <option value={value}>{value} (not available)</option>}
-      </select>
+      </Select>
       {preview && <p className="text-sm text-s-text truncate" style={{ fontFamily: preview }}>The quick brown fox, 0123</p>}
     </div>
   )

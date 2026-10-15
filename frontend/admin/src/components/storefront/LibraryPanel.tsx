@@ -13,6 +13,7 @@ import { api, ApiError } from '../../lib/api'
 import { fetchHealth } from '../../lib/connectorsApi'
 import { contentApi, STOREFRONT_BRANDS_KEY } from '../../lib/content'
 import { cleanFontFamily } from './kitCatalog'
+import { Select } from '@/components/ui/Select'
 
 export type LibraryAsset = {
   id: string
@@ -256,14 +257,14 @@ export function LibraryPanel({
             {k === 'all' ? 'All' : KIND_LABEL[k]}
           </button>
         ))}
-        <select
+        <Select
           value={brand}
           onChange={(e) => setBrand(e.target.value)}
           className="rounded-lg border border-s-border bg-s-surface px-2 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none"
         >
           <option value="">All brands</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        </Select>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -493,12 +494,12 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
         {busy ?? label}
         <input ref={inputRef} type="file" multiple accept={acceptFor(kinds)} className="sr-only" disabled={storageMissing} onChange={(e) => void handleFiles(e)} />
       </label>
-      <select value={brand} onChange={(e) => setBrand(e.target.value)}
+      <Select value={brand} onChange={(e) => setBrand(e.target.value)}
         className="rounded-lg border border-s-border bg-s-bg px-2 py-2 text-xs text-s-text focus:border-primary focus:outline-none"
         title="Brand the upload is for">
         <option value="">For any brand</option>
         {concepts.map((c) => <option key={c.id} value={c.id}>For {c.name}</option>)}
-      </select>
+      </Select>
       <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated"
         className="min-w-[10rem] flex-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-xs text-s-text focus:border-primary focus:outline-none" />
       <span className="text-[10px] text-s-muted">
@@ -531,10 +532,10 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 function BrandSelect({ value, onChange, concepts }: { value: string; onChange: (v: string) => void; concepts: ConceptLite[] }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
+    <Select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
       <option value="">Any brand</option>
       {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-    </select>
+    </Select>
   )
 }
 

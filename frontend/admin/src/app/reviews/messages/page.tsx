@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface FeedbackRow {
   id: string
@@ -73,23 +74,23 @@ export default function MessagesPage() {
       </header>
 
       <div className="flex flex-wrap gap-3 mb-4">
-        <select value={kind} onChange={(e) => { setKind(e.target.value); setTopic('') }} className={`${inp} w-auto`} aria-label="Type">
+        <Select value={kind} onChange={(e) => { setKind(e.target.value); setTopic('') }} className={`${inp} w-auto`} aria-label="Type">
           <option value="contact">Contact messages</option>
           <option value="">All feedback</option>
           <option value="open">Suggestions</option>
           <option value="nps">NPS</option>
           <option value="csat">Ratings</option>
-        </select>
+        </Select>
         {kind === 'contact' && (
-          <select value={topic} onChange={(e) => setTopic(e.target.value)} className={`${inp} w-auto`} aria-label="Topic">
+          <Select value={topic} onChange={(e) => setTopic(e.target.value)} className={`${inp} w-auto`} aria-label="Topic">
             <option value="">All topics</option>
             {TOPICS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
+          </Select>
         )}
-        <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={`${inp} w-auto`} aria-label="Brand">
+        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={`${inp} w-auto`} aria-label="Brand">
           <option value="">All brands</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        </Select>
       </div>
 
       <div className="rounded-xl border border-s-border overflow-hidden">

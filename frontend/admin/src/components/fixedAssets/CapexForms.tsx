@@ -23,6 +23,7 @@ import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { FA_BASE, L, Modal, ErrorLine, Notice, errorWords, inp, btnPrimary, btnGhost, money, fmtDay, fmtLife, todayIso, useFaCapabilities } from './shared'
 import type { CapexLookups, CapexSupplier, Line, Orphan, Payment, Project } from './capexTypes'
+import { Select } from '@/components/ui/Select'
 
 // ─── Words ──────────────────────────────────────────────────────────────────
 
@@ -311,9 +312,9 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
         <L t="Class">
-          <select className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife('') }}>
+          <Select className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife('') }}>
             {classes.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-          </select>
+          </Select>
         </L>
         <L t="Name on the register"><input className={inp} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></L>
         <L t="In service from"><input type="date" className={inp} value={inService} onChange={(e) => setInService(e.target.value)} /></L>
@@ -326,34 +327,34 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
         </L>
         {cls && !cls.pooled && (
           <L t="Brand">
-            <select className={inp} value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+            <Select className={inp} value={brandId} onChange={(e) => setBrandId(e.target.value)}>
               <option value="">Shared across brands</option>
               {project.conceptId && !brands.some((b) => b.id === project.conceptId) && <option value={project.conceptId}>The project&rsquo;s brand</option>}
               {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            </Select>
           </L>
         )}
         <L t="Asset location (outlet)" hint={sharedNeedsLocation ? 'Shared equipment needs its location' : undefined}>
-          <select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+          <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
             {project.locationId
               ? <option value="">The project&rsquo;s outlet</option>
               : <option value="" disabled={shared || !!cls?.pooled}>{shared || cls?.pooled ? 'Pick the outlet it is at' : 'No outlet'}</option>}
             {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
+          </Select>
         </L>
         {cls?.pooled && (
           <>
             <L t="Smallwares type">
-              <select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
+              <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
                 <option value="">Pick a type</option>
                 {project.lookups.smallwareTypes.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-              </select>
+              </Select>
             </L>
             <L t="Brand using them">
-              <select className={inp} value={poolConcept} onChange={(e) => setPoolConcept(e.target.value)}>
+              <Select className={inp} value={poolConcept} onChange={(e) => setPoolConcept(e.target.value)}>
                 <option value="">Shared across brands</option>
                 {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+              </Select>
             </L>
           </>
         )}
@@ -472,40 +473,40 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <L t="Outlet it is for">
-              <select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+              <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
                 <option value="">Pick an outlet</option>
                 {L0.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
+              </Select>
             </L>
             <L t="What did you buy"><input className={inp} value={item} onChange={(e) => setItem(e.target.value)} maxLength={200} placeholder="Rational combi oven" /></L>
             <L t="Class">
-              <select className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife(''); setTypeKey('') }}>
+              <Select className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife(''); setTypeKey('') }}>
                 {L0.assetClasses.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-              </select>
+              </Select>
             </L>
             {cls?.pooled ? (
               <L t="Smallwares type">
-                <select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
+                <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
                   <option value="">Pick a type</option>
                   {L0.lookups.smallwareTypes.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-                </select>
+                </Select>
               </L>
             ) : <div />}
             {cls?.pooled && (
               <L t="Brand using them">
-                <select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
+                <Select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
                   <option value="">Shared across brands</option>
                   {L0.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
+                </Select>
               </L>
             )}
             <L t="Quantity"><input type="number" min={1} max={100000} className={inp} value={quantity} onChange={(e) => setQuantity(e.target.value)} /></L>
             <L t="Unit cost, sales tax included (PKR)"><MoneyInput value={unitCost} onChange={setUnitCost} className={inp} /></L>
             <L t="Supplier">
-              <select className={inp} value={supplierId} onChange={(e) => { setSupplierId(e.target.value); const s = L0.lookups.suppliers.find((x) => x.id === e.target.value); if (s?.defaultTaxAuthority && !authority) setAuthority(s.defaultTaxAuthority) }}>
+              <Select className={inp} value={supplierId} onChange={(e) => { setSupplierId(e.target.value); const s = L0.lookups.suppliers.find((x) => x.id === e.target.value); if (s?.defaultTaxAuthority && !authority) setAuthority(s.defaultTaxAuthority) }}>
                 <option value="">No supplier on file</option>
                 {L0.lookups.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              </Select>
             </L>
             <L t="Paid on"><input type="date" className={inp} value={paidAt} max={todayIso()} onChange={(e) => setPaidAt(e.target.value)} /></L>
             <BankAccountSelect tenantId={L0.tenantId} value={bankId} onChange={setBankId} id="quickbuy-bank" label="Paid from (bank)" className={inp} />
@@ -517,16 +518,16 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <L t="Sales tax inside the price (PKR)"><MoneyInput value={tax} onChange={setTax} className={inp} /></L>
             <L t="Charged by">
-              <select className={inp} value={authority} onChange={(e) => setAuthority(e.target.value)} disabled={tax === 0}>
+              <Select className={inp} value={authority} onChange={(e) => setAuthority(e.target.value)} disabled={tax === 0}>
                 <option value="">{tax === 0 ? 'Not needed' : 'Pick the authority'}</option>
                 {L0.taxAuthorities.map((a) => <option key={a} value={a}>{AUTHORITY_LABEL[a] ?? a.toUpperCase()}</option>)}
-              </select>
+              </Select>
             </L>
             <L t="Income tax withholding">
-              <select className={inp} value={section} onChange={(e) => setSection(e.target.value)}>
+              <Select className={inp} value={section} onChange={(e) => setSection(e.target.value)}>
                 <option value="">Automatic (the supplier&rsquo;s default)</option>
                 {L0.whtSections.map((s) => <option key={s} value={s}>{WHT_SECTION_LABEL[s] ?? s}</option>)}
-              </select>
+              </Select>
             </L>
             <label className="flex items-center gap-2 text-sm text-white/70 self-end pb-2">
               <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />

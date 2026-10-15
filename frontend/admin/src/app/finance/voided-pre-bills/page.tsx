@@ -17,6 +17,7 @@ import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
+import { Select } from '@/components/ui/Select'
 
 // A pre-bill is priced for cash or the digital rate. 'card' is the digital tax
 // group — Card – Keenu and Raast QR share it (backend lib/pricing.ts).
@@ -232,22 +233,22 @@ export default function VoidedPreBillsPage() {
             <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={fieldCls} />
           </Filter>
           <Filter label="Brand">
-            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
               <option value="">All brands</option>
               {(data?.facets.concepts ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            </Select>
           </Filter>
           <Filter label="Printed by">
-            <select value={printedById} onChange={(e) => setPrintedById(e.target.value)} className={fieldCls}>
+            <Select value={printedById} onChange={(e) => setPrintedById(e.target.value)} className={fieldCls}>
               <option value="">Everyone</option>
               {(data?.facets.printers ?? []).map((p) => <option key={p.id} value={p.id}>{p.name ?? 'Unnamed'}</option>)}
-            </select>
+            </Select>
           </Filter>
           <Filter label="Status">
-            <select value={status} onChange={(e) => setStatus(e.target.value as '' | Status)} className={fieldCls}>
+            <Select value={status} onChange={(e) => setStatus(e.target.value as '' | Status)} className={fieldCls}>
               <option value="">Any status</option>
               {(Object.keys(STATUS_LABEL) as Status[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-            </select>
+            </Select>
           </Filter>
           <label className="flex cursor-pointer items-center gap-2 pb-2 text-sm text-white/70">
             <input type="checkbox" checked={flagged} onChange={(e) => setFlagged(e.target.checked)} />

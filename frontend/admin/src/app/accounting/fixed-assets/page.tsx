@@ -19,6 +19,7 @@ import {
   FA_BASE, FaFrame, Stat, Notice, AssetStatusBadge, card, inp, btnPrimary, btnGhost, money, fmtDay, fmtMonth, errorWords, useFaLookups,
   type FaAsset,
 } from '../../../components/fixedAssets/shared'
+import { Select } from '@/components/ui/Select'
 
 interface CompanyTotals { tenantId: string; companyName: string; assets: number; costCents: number; accumulatedCents: number; nbvCents: number; monthlyCents: number }
 interface LastRun {
@@ -231,24 +232,24 @@ export default function FixedAssetsPage() {
       {/* Filters */}
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-6 gap-3 items-end" style={card}>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Show</span>
-          <select className={inp} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <Select className={inp} value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUS_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </select></label>
+          </Select></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Class</span>
-          <select className={inp} value={classKey} onChange={(e) => setClassKey(e.target.value)}>
+          <Select className={inp} value={classKey} onChange={(e) => setClassKey(e.target.value)}>
             <option value="">All classes</option>
             {classOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select></label>
+          </Select></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Brand</span>
-          <select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
+          <Select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
             <option value="">All brands</option>
             {brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select></label>
+          </Select></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Outlet</span>
-          <select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+          <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
             <option value="">All outlets</option>
             {outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select></label>
+          </Select></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Values as of</span>
           <input type="date" className={inp} value={asOf} onChange={(e) => setAsOf(e.target.value)} /></label>
         <label className="flex items-center gap-2 text-sm text-white/70 pb-2">

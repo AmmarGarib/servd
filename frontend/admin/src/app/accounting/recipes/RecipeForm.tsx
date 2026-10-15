@@ -25,6 +25,7 @@ import { RecipeTestLog, type DraftAttempt } from '../../../components/recipe/Rec
 import { fmtPkrWhole } from '../../../lib/money'
 import { useKitchenRole } from '../../inventory/kitchenView'
 import { PACKAGING_USED_WHEN } from './KitchenRecipe'
+import { Select } from '@/components/ui/Select'
 
 type Kind = 'plate' | 'component' | 'modifier'
 type LineSection = 'ingredients' | 'packaging'
@@ -557,38 +558,38 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                       {/* Raw vs Component source (ingredients only). Both plates
                           and components can pull in a finished component. */}
                       {!isPack && (
-                        <select value={row.source}
+                        <Select value={row.source}
                           onChange={(e) => updateRow(row.key, { source: e.target.value as 'raw' | 'component', inventoryItemId: '', prepRecipeId: '' })}
                           className={inputCls + ' w-[5.5rem]'} title="Raw inventory item, or a finished component sub-recipe">
                           <option value="raw">Raw</option>
                           <option value="component">Component</option>
-                        </select>
+                        </Select>
                       )}
                       {isComp ? (
-                        <select value={row.prepRecipeId}
+                        <Select value={row.prepRecipeId}
                           onChange={(e) => updateRow(row.key, { prepRecipeId: e.target.value })}
                           className={inputCls + ' min-w-[150px]'}>
                           <option value="">— Pick component —</option>
                           {availablePreps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
+                        </Select>
                       ) : (
-                        <select value={row.inventoryItemId}
+                        <Select value={row.inventoryItemId}
                           onChange={(e) => updateRow(row.key, { inventoryItemId: e.target.value })}
                           className={inputCls + ' min-w-[150px]'}>
                           <option value="">{isPack ? '— Pick packaging —' : '— Pick ingredient —'}</option>
                           {options.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-                        </select>
+                        </Select>
                       )}
                     </div>
                   </td>
                   {kind === 'modifier' && (
                     <td className="px-2 py-1.5">
-                      <select value={row.removes ? 'removes' : 'adds'}
+                      <Select value={row.removes ? 'removes' : 'adds'}
                         onChange={(e) => updateRow(row.key, { removes: e.target.value === 'removes' })}
                         className={inputCls + ' w-[6.5rem]'}>
                         <option value="adds">Adds</option>
                         <option value="removes">Removes</option>
-                      </select>
+                      </Select>
                     </td>
                   )}
                   {!isPack && (
@@ -708,10 +709,10 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* Brand always first — it scopes everything below. */}
               <Field label="Brand *" hint={kind === 'plate' && activeConcept?.serviceVessel === 'packaging' ? 'This brand serves in packaging — every order uses the dish\'s Packaging section.' : undefined}>
-                <select value={brandId} onChange={(e) => { setBrandId(e.target.value); if (!isEdit) { setMenuItemId(''); setNewItemCategoryId(''); setModMenuItemId(''); setModGroupId(''); setModifierId('') } }} className={inputCls} disabled={isEdit}>
+                <Select value={brandId} onChange={(e) => { setBrandId(e.target.value); if (!isEdit) { setMenuItemId(''); setNewItemCategoryId(''); setModMenuItemId(''); setModGroupId(''); setModifierId('') } }} className={inputCls} disabled={isEdit}>
                   <option value="">— Pick brand —</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </Field>
 
               {/* Plate recipes always create their own menu item (opened on
@@ -734,11 +735,11 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                   </Field>
                 ) : (
                   <Field label="Dish *" hint={brandId ? 'The menu item the add-on belongs to' : 'Pick a brand first'}>
-                    <select value={modMenuItemId} disabled={!brandId}
+                    <Select value={modMenuItemId} disabled={!brandId}
                       onChange={(e) => { setModMenuItemId(e.target.value); setModGroupId(''); setModifierId('') }} className={inputCls}>
                       <option value="">{brandId ? '— Pick dish —' : '— Pick brand first —'}</option>
                       {brandDishes.filter((d) => (d.modifierGroups ?? []).length > 0).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                 )
               ) : (
@@ -751,17 +752,17 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
               {kind === 'modifier' && !isEdit && (
                 <>
                   <Field label="Add-on group *">
-                    <select value={modGroupId} disabled={!modMenuItemId}
+                    <Select value={modGroupId} disabled={!modMenuItemId}
                       onChange={(e) => { setModGroupId(e.target.value); setModifierId('') }} className={inputCls}>
                       <option value="">{modMenuItemId ? '— Pick group —' : '— Pick dish first —'}</option>
                       {modGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                   <Field label="Add-on *" hint="One recipe per add-on: what one of it adds to the dish, or takes off it">
-                    <select value={modifierId} disabled={!modGroupId} onChange={(e) => setModifierId(e.target.value)} className={inputCls}>
+                    <Select value={modifierId} disabled={!modGroupId} onChange={(e) => setModifierId(e.target.value)} className={inputCls}>
                       <option value="">{modGroupId ? '— Pick add-on —' : '— Pick group first —'}</option>
                       {modOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                 </>
               )}
@@ -770,11 +771,11 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
               {kind === 'plate' && !isEdit && (
                 <>
                   <Field label="Menu category *" hint={brandId ? '' : 'Pick a brand first'}>
-                    <select value={newItemCategoryId} onChange={(e) => setNewItemCategoryId(e.target.value)}
+                    <Select value={newItemCategoryId} onChange={(e) => setNewItemCategoryId(e.target.value)}
                       className={inputCls} disabled={!brandId}>
                       <option value="">{brandId ? '— Pick category —' : '— Pick brand first —'}</option>
                       {brandCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                   <div className="md:col-span-2">
                     <Field label="Menu description (optional)" hint="Shows under the item on the customer menu">

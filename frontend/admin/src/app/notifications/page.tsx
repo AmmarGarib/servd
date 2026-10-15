@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { formatDistanceToNowStrict } from 'date-fns'
+import { Select } from '@/components/ui/Select'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -387,7 +388,7 @@ function SendBroadcast({
                 <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">
                   Location
                 </p>
-                <select
+                <Select
                   value={locationId}
                   onChange={(e) => setLocationId(e.target.value)}
                   className={sel + ' w-full'}
@@ -398,7 +399,7 @@ function SendBroadcast({
                       {l.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
             )}
 

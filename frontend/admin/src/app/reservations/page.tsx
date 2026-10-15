@@ -22,6 +22,7 @@ import {
   bookedLine, overbookFields, overbookReady, overbookRefusalText, policyRefusalText, slotFullPrompt,
   OVERBOOK_REASON_MAX, type CreatedBooking, type SlotFull,
 } from './overbook'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 
@@ -136,10 +137,10 @@ export default function ReservationsPage() {
           <h1 className="text-xl font-bold text-s-text">Reservations</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
+          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
             className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
             className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           <button onClick={() => setDate(todayPktIso())} className="s-btn-secondary text-xs">Today</button>
@@ -468,12 +469,12 @@ function NewReservationModal({
               <input type="number" min={15} max={480} value={durationMin} onChange={(e) => setDurationMin(parseInt(e.target.value, 10) || 90)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Table">
-              <select value={tableId} onChange={(e) => setTableId(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5">
+              <Select value={tableId} onChange={(e) => setTableId(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5">
                 <option value="">— Waitlist (assign later) —</option>
                 {tables.map((t) => (
                   <option key={t.id} value={t.id}>{t.label} ({t.capacity}p · {t.floorName})</option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
           <Field label="Notes (allergies, occasion, requests)">

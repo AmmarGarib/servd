@@ -15,6 +15,7 @@ import { ChevronDown, ChevronUp, Copy, CornerLeftUp, Eye, EyeOff, GripVertical, 
 import { blockSpec, blockSummary, canNest, columnsOf, MOTION_UI, motionPresetOf, type Block } from '../../lib/blocks'
 import { makeBlock, sectionSpec, sectionSummary, type PaletteItem } from '../../lib/sections'
 import { duplicate, findBlock, insertAt, moveOut, moveTo, nudge, removeBlock, updateBlock, type Slot } from './tree'
+import { Select } from '@/components/ui/Select'
 
 // ─── Drag payload (one drag at a time; dataTransfer is unreadable on dragover) ──
 
@@ -318,13 +319,13 @@ function ElementCard({ block, first, last, nested, view, ops, onDrop, items }: {
 
 function AddInto({ items, column, onAdd, compact }: { items: PaletteItem[]; column: number; onAdd: (key: string) => void; compact?: boolean }) {
   return (
-    <select value="" onClick={(e) => e.stopPropagation()}
+    <Select value="" onClick={(e) => e.stopPropagation()}
       onChange={(e) => { if (e.target.value) onAdd(e.target.value) }}
       className={`s-select ${compact ? 'text-[10px] py-0.5' : 'text-[11px] py-1'} mt-1`} aria-label={`Add element to column ${column + 1}`}>
       <option value="">+ Add element</option>
       {items.filter((s) => canNest(s.key)).map((s) => (
         <option key={s.key} value={s.key}>{s.label}</option>
       ))}
-    </select>
+    </Select>
   )
 }

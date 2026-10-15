@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Report {
   id: string
@@ -134,15 +135,15 @@ function Modal({ report, concepts, onClose, onSaved }: { report: Report | null; 
           {!report && (
             <>
               <Field label="Report type">
-                <select value={reportType} onChange={(e) => setReportType(e.target.value as Report['reportType'])} className={fieldCls}>
+                <Select value={reportType} onChange={(e) => setReportType(e.target.value as Report['reportType'])} className={fieldCls}>
                   {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
+                </Select>
               </Field>
               <Field label="Concept (blank = all)">
-                <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+                <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
                   <option value="">All</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </Field>
             </>
           )}

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 interface ForecastPoint { date: string; predictedQty: number }
@@ -56,21 +57,21 @@ export default function ForecastPage() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <select value={conceptId} onChange={e => setConceptId(e.target.value)}
+        <Select value={conceptId} onChange={e => setConceptId(e.target.value)}
           className="s-input text-sm px-3 py-2 rounded-xl min-w-[180px]">
           <option value="">Select concept…</option>
           {concepts?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={days} onChange={e => setDays(Number(e.target.value))}
+        </Select>
+        <Select value={days} onChange={e => setDays(Number(e.target.value))}
           className="s-input text-sm px-3 py-2 rounded-xl">
           <option value={7}>7-day forecast</option>
           <option value={14}>14-day forecast</option>
-        </select>
-        <select value={sortBy} onChange={e => setSortBy(e.target.value as 'total' | 'name')}
+        </Select>
+        <Select value={sortBy} onChange={e => setSortBy(e.target.value as 'total' | 'name')}
           className="s-input text-sm px-3 py-2 rounded-xl">
           <option value="total">Sort by total demand</option>
           <option value="name">Sort by name</option>
-        </select>
+        </Select>
       </div>
 
       {!conceptId && (

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { BrandKitCard } from '../../../components/storefront/BrandKitCard'
+import { Select } from '@/components/ui/Select'
 
 interface Concept {
   id: string
@@ -191,7 +192,7 @@ export default function BrandEditorPage() {
         {/* Brand picker — compact dropdown below lg so the editor stays reachable
             on phone/tablet where the 288px sidebar would overflow the viewport. */}
         <div className="lg:hidden shrink-0 border-b border-white/[0.05] p-3">
-          <select
+          <Select
             value={selectedId ?? ''}
             onChange={(e) => setSelectedId(e.target.value)}
             className="s-input w-full">
@@ -201,7 +202,7 @@ export default function BrandEditorPage() {
                 {c.name}{!c.isActive ? ' (retired)' : ''} · {c.slug}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
 
         {/* Brand list */}
@@ -450,12 +451,12 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           <Section title="Primary service vessel" subtitle="How this brand serves its food: on plates, or in packaging.">
             <Field label="Primary service vessel *"
               hint="Packaging counts on takeaway and delivery always. With Plate, dine-in counts packaging only when staff tap Box given. With Packaging (the packaging is the serving vessel, e.g. Stackd), it counts on every order.">
-              <select value={serviceVessel} onChange={(e) => setServiceVessel(e.target.value as 'plate' | 'packaging')}
+              <Select value={serviceVessel} onChange={(e) => setServiceVessel(e.target.value as 'plate' | 'packaging')}
                 className="s-input w-full max-w-md" aria-label="Primary service vessel">
                 {serviceVessel === '' && <option value="" disabled>— choose —</option>}
                 <option value="plate">Plate</option>
                 <option value="packaging">Packaging (the packaging is the serving vessel)</option>
-              </select>
+              </Select>
             </Field>
             {concept.serviceVessel && serviceVessel !== concept.serviceVessel && (
               <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>
@@ -544,9 +545,9 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               <input value={cuisine} onChange={(e) => setCuisine(e.target.value)} maxLength={60} className="s-input w-full" />
             </Field>
             <Field label="Price tier" hint="schema.org priceRange.">
-              <select value={priceTier} onChange={(e) => setPriceTier(e.target.value)} className="s-input w-full">
+              <Select value={priceTier} onChange={(e) => setPriceTier(e.target.value)} className="s-input w-full">
                 {PRICE_TIERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
+              </Select>
             </Field>
             <Field label="Hero product">
               <input value={heroProduct} onChange={(e) => setHeroProduct(e.target.value)} maxLength={120} className="s-input w-full" />
@@ -649,11 +650,11 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             </Field>
           </div>
           <Field label="Province" hint="Required for Sindh tax routing (the ledger books SRB tax by province).">
-            <select value={province} onChange={(e) => setProvince(e.target.value)}
+            <Select value={province} onChange={(e) => setProvince(e.target.value)}
               className="s-input w-full max-w-md">
               <option value="">Select province…</option>
               {PROVINCES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Invoice legal name" hint="Registered entity name printed on tax invoices.">
             <input value={invoiceLegalName} onChange={(e) => setInvoiceLegalName(e.target.value)}

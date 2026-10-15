@@ -11,6 +11,7 @@ import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrRecord, 
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
+import { Select } from '@/components/ui/Select'
 
 interface Profile {
   employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
@@ -115,7 +116,7 @@ function DocumentsTab({ p }: { p: Profile }) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-6 gap-2 items-end" style={card}>
-        <select className={inp} value={f.docType} onChange={(e) => setF({ ...f, docType: e.target.value })} aria-label="Document type">{types.map((t) => <option key={t} value={t}>{human(t)}</option>)}</select>
+        <Select className={inp} value={f.docType} onChange={(e) => setF({ ...f, docType: e.target.value })} aria-label="Document type">{types.map((t) => <option key={t} value={t}>{human(t)}</option>)}</Select>
         <input className={inp} placeholder="Title (optional)" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
         <input className={`${inp} md:col-span-2`} placeholder="Link to the file" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} />
         <input type="date" className={inp} title="Expiry date" value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} aria-label="Expiry date" />
@@ -248,10 +249,10 @@ function LoginTab({ p }: { p: Profile }) {
           <p className="text-xs text-amber-700">{(error as Error).message}</p>
         ) : (
           <div className="flex gap-2">
-            <select className={inp} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Login to link">
+            <Select className={inp} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Login to link">
               <option value="">Choose a login…</option>
               {free.map((u) => <option key={u.id} value={u.id}>{u.name} — {u.email ?? human(u.role)}{u.isActive ? '' : ' (inactive)'}</option>)}
-            </select>
+            </Select>
             <button className={btn} disabled={!pick || link.isPending} onClick={() => link.mutate(pick)}>Link</button>
           </div>
         )}

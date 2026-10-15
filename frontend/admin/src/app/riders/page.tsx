@@ -6,6 +6,7 @@ import { formatBrandName } from '../../lib/brandName'
 import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { useManagerRoles } from '../../lib/roles'
+import { Select } from '@/components/ui/Select'
 
 // Rider portal: the dispatch board (delivery orders awaiting a rider / with a
 // rider), the roster, and the shared-fleet agreements (docs/rider-app.md).
@@ -413,12 +414,12 @@ export default function RidersPage() {
             </div>
             <div>
               <label className="text-xs text-s-muted">Vehicle</label>
-              <select value={addForm.vehicleType} onChange={(e) => setAddForm({ ...addForm, vehicleType: e.target.value })} className={inp}>
+              <Select value={addForm.vehicleType} onChange={(e) => setAddForm({ ...addForm, vehicleType: e.target.value })} className={inp}>
                 <option value="bike">Bike</option>
                 <option value="car">Car</option>
                 <option value="bicycle">Bicycle</option>
                 <option value="foot">On foot</option>
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs text-s-muted">Notes (optional)</label>

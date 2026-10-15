@@ -15,6 +15,7 @@ import { fmtPkr } from '../../lib/money'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { Banner, Card, ChargeChip, ErrorLine, Field, TestBadge, fmtWhen } from './ui'
+import { Select } from '@/components/ui/Select'
 
 const dayStart = (d: string) => (d ? `${d}T00:00:00+05:00` : undefined)
 const dayEnd = (d: string) => (d ? `${d}T23:59:59.999+05:00` : undefined)
@@ -57,10 +58,10 @@ export function TerminalCharges({ data, canConfigure, portfolio = false }: {
       <Card title="Card charges" subtitle="Every charge and refund pushed to a card machine, newest first." actions={isTest ? <TestBadge /> : undefined}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <Field label="Status">
-            <select className="s-select text-xs" value={status} onChange={(e) => setStatus(e.target.value as TerminalChargeStatus | '')}>
+            <Select className="s-select text-xs" value={status} onChange={(e) => setStatus(e.target.value as TerminalChargeStatus | '')}>
               <option value="">All</option>
               {TERMINAL_CHARGE_STATUSES.map((s) => <option key={s} value={s}>{CHARGE_STATUS_LABEL[s]}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="From"><input type="date" className="s-input text-xs" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
           <Field label="To"><input type="date" className="s-input text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></Field>

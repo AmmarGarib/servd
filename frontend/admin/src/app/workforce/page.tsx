@@ -22,6 +22,7 @@ import { roleLabel, type AppRole } from '../../lib/appRoles'
 import { usePermissions } from '../../hooks/useCan'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { PositionsView } from './positions/view'
+import { Select } from '@/components/ui/Select'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -837,14 +838,14 @@ function InlineEditor({
             placeholder="03XX-XXXXXXX" className={inputCls} />
         </Field>
         <Field label="Category">
-          <select value={category} onChange={(e) => pickCategory(e.target.value)} className={inputCls}>
+          <Select value={category} onChange={(e) => pickCategory(e.target.value)} className={inputCls}>
             {/* A role in no category (legacy 'manager') keeps its own entry so
                 opening the row never changes it. */}
             {!categoryOf(user.role) && <option value="">{roleLabel(user.role)} (unchanged)</option>}
             {assignableCategories(assignable).map((c) => (
               <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
             ))}
-          </select>
+          </Select>
         </Field>
         {/* Manager-override PIN: typed at the till to approve an over-cap
             discount, void, comp, refund, petty-cash top-up or staff meal. Only
@@ -889,13 +890,13 @@ function InlineEditor({
             {tenantIds.length > 1 && (
               <div className="mt-2 flex items-center gap-2 text-[11px] text-s-muted">
                 <span>Primary company:</span>
-                <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
+                <Select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
                   className="rounded-md border border-s-border bg-s-bg px-2 py-1 text-xs focus:border-primary focus:outline-none">
                   {tenantIds.map((id) => {
                     const t = tenants.find((tt) => tt.id === id)
                     return t ? <option key={id} value={id}>{t.name}</option> : null
                   })}
-                </select>
+                </Select>
               </div>
             )}
           </div>
@@ -1218,11 +1219,11 @@ function AddStaffModal({
             </div>
           )}
           <Field label="Category">
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
+            <Select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
               {assignableCategories(assignable).map((c) => (
                 <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
               ))}
-            </select>
+            </Select>
           </Field>
           <Field label={needsPhone ? 'Mobile number' : 'Mobile number (optional)'}
             hint={needsPhone ? 'Required — they sign in with a code sent here' : 'One number per login'}>

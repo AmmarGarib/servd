@@ -21,6 +21,7 @@ import { api } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
 import { useManagerRoles } from '../../../lib/roles'
 import { stockErrorText } from '../../../lib/stockUi'
+import { Select } from '@/components/ui/Select'
 
 // The API's MANAGERS take a delivery in (owner decision 27) — the list comes
 // from the server (lib/roles.ts useManagerRoles).
@@ -297,10 +298,10 @@ export default function ReceivingPage() {
               </div>
               <div className="mt-3">
                 <label className="text-xs text-white/55">Or a delivery without a PO (market run, ad-hoc) from</label>
-                <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls + ' mt-1'}>
+                <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls + ' mt-1'}>
                   <option value="">— choose supplier —</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                </Select>
               </div>
             </>
           )}
@@ -322,10 +323,10 @@ export default function ReceivingPage() {
                   {l.poLineId ? (
                     <p className="text-sm font-bold text-white/85">{l.description}</p>
                   ) : (
-                    <select value={l.inventoryItemId ?? ''} onChange={(e) => pickItem(l.key, e.target.value)} className={fieldCls}>
+                    <Select value={l.inventoryItemId ?? ''} onChange={(e) => pickItem(l.key, e.target.value)} className={fieldCls}>
                       <option value="">— inventory item —</option>
                       {items.map((i) => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
-                    </select>
+                    </Select>
                   )}
                   {l.outstanding != null && <span className="text-xs text-white/45 font-mono whitespace-nowrap">Due: {l.outstanding} {l.unit}</span>}
                   <input type="number" step="0.01" min="0" value={l.receivedQty} onChange={(e) => patchLine(l.key, { receivedQty: e.target.value })}
@@ -361,10 +362,10 @@ export default function ReceivingPage() {
           {activeOutlets.length > 0 && (
             <div className="mb-3">
               <label htmlFor="recv-outlet" className="text-xs text-white/55">Outlet it arrived at (optional)</label>
-              <select id="recv-outlet" value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls + ' mt-1'}>
+              <Select id="recv-outlet" value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls + ' mt-1'}>
                 <option value="">No particular outlet</option>
                 {activeOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
+              </Select>
               <p className="text-[11px] text-white/35 mt-1">Stock is still one pool per company; the outlet is recorded for when per-outlet stock arrives.</p>
             </div>
           )}

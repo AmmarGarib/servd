@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface DnsRecord {
   type: string
@@ -277,18 +278,18 @@ function ConceptAssignment({ domain, concepts, onChange }: { domain: Domain; con
     <div>
       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-white/55 mb-2">Routing</p>
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_max-content] gap-2">
-        <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
+        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
           className="rounded-lg px-3 py-2 text-sm"
           style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
           <option value="">Tenant landing (no specific brand)</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={purpose} onChange={(e) => setPurpose(e.target.value as Domain['purpose'])}
+        </Select>
+        <Select value={purpose} onChange={(e) => setPurpose(e.target.value as Domain['purpose'])}
           className="rounded-lg px-3 py-2 text-sm"
           style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
           <option value="order">Order flow (customers place orders)</option>
           <option value="brand_microsite">Brand microsite (about / story / contact)</option>
-        </select>
+        </Select>
         <button onClick={() => save.mutate()} disabled={!dirty || save.isPending}
           className="rounded-lg bg-primary text-primary-on px-4 py-2 text-xs font-black hover:opacity-90 disabled:opacity-40">
           {save.isPending ? 'Saving…' : 'Save'}
@@ -340,12 +341,12 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
 
           <div>
             <label className="text-xs text-white/55 block mb-1">Routes to</label>
-            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
+            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
               className="w-full rounded-lg px-3 py-2.5 text-sm"
               style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.9)' }}>
               <option value="">No specific brand (tenant landing)</option>
               {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            </Select>
           </div>
 
           <div>

@@ -19,6 +19,7 @@ import type { FloorTable } from '../../components/floorplan/FloorCanvas'
 import { LiveFloor } from './LiveFloor'
 import { LayoutsGallery } from '../../components/floorplan/LayoutsGallery'
 import { useBrandFilter } from '../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string; slug: string }
 interface BrandTable { id: string; label: string; capacity: number | null; floorId: string | null }
@@ -140,10 +141,10 @@ export default function FloorplanPage() {
           <h1 className="text-xl font-bold text-s-text">Floor plan</h1>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          <select value={conceptId} onChange={(e) => { setConceptId(e.target.value); setFloorId('') }}
+          <Select value={conceptId} onChange={(e) => { setConceptId(e.target.value); setFloorId('') }}
             className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
 
           <div className="rounded-full border border-s-border bg-s-surface p-0.5 flex">
             <button onClick={() => setMode('live')}  aria-pressed={mode === 'live'}

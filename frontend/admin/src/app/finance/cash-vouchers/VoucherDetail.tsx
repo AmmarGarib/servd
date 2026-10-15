@@ -22,6 +22,7 @@ import { PrintPortal, VoucherSheet } from './VoucherPrint'
 import { VoucherForm } from './VoucherForm'
 import { SettlePanel, Thumbs } from './SettlePanel'
 import { ErrorBanner, StatusBadge, dangerOutlineBtn, fieldCls, primaryBtn, secondaryBtn } from './ui'
+import { Select } from '@/components/ui/Select'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
@@ -293,10 +294,10 @@ function PayPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean; 
       {fixed ? (
         <p className="text-xs text-white/70">From <span className="font-bold">{v.boxName}</span></p>
       ) : (
-        <select value={chosen} onChange={(e) => setBoxId(e.target.value)} className={fieldCls} aria-label="Pay from which box">
+        <Select value={chosen} onChange={(e) => setBoxId(e.target.value)} className={fieldCls} aria-label="Pay from which box">
           {boxes.length !== 1 && <option value="">— pay from which box —</option>}
           {boxes.map((b) => <option key={b.id} value={b.id}>{b.name} · PKR {formatPkr(b.floatCents)}</option>)}
-        </select>
+        </Select>
       )}
       {!fixed && boxes.length === 0 && <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>You hold no open cash box of this company.</p>}
       {short && <p className="text-xs text-s-red font-bold">{box!.name} holds PKR {formatPkr(box!.floatCents)} — less than this request. Top it up first.</p>}
@@ -322,10 +323,10 @@ function NameHolder({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
     <div className="rounded-2xl p-5 space-y-3 bg-s-red-dim border border-s-red/30">
       <p className="text-sm font-black text-s-red">Needs review — nobody is named as holding this cash</p>
       <p className="text-xs text-white/65">Paid under the old voucher flow. Name the person who took the cash; they then bring the receipts.</p>
-      <select value={who} onChange={(e) => setWho(e.target.value)} className={fieldCls} aria-label="Who took the cash">
+      <Select value={who} onChange={(e) => setWho(e.target.value)} className={fieldCls} aria-label="Who took the cash">
         <option value="">— who took the cash —</option>
         {staff.filter((u) => !u.tenantId || u.tenantId === v.tenantId).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-      </select>
+      </Select>
       {save.error && <ErrorBanner message={errorWords(save.error)} />}
       <button disabled={!who || save.isPending} onClick={() => save.mutate()} className={primaryBtn}>Name the holder</button>
     </div>

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
 interface Account {
@@ -111,13 +112,13 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
               <input value={code} onChange={(e) => setCode(e.target.value)} disabled={!!account} placeholder="6210" className={fieldCls + ' font-mono'} autoFocus />
             </Field>
             <Field label="Type *">
-              <select value={type} onChange={(e) => setType(e.target.value as AccountType)} disabled={!!account} className={fieldCls}>
+              <Select value={type} onChange={(e) => setType(e.target.value as AccountType)} disabled={!!account} className={fieldCls}>
                 <option value="asset">Asset</option>
                 <option value="liability">Liability</option>
                 <option value="equity">Equity</option>
                 <option value="revenue">Revenue</option>
                 <option value="expense">Expense</option>
-              </select>
+              </Select>
             </Field>
           </div>
           <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Marketing software" className={fieldCls} /></Field>

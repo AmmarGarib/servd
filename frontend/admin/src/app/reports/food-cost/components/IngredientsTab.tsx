@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { ErrorNote, Section, pkr, qtyText } from './ui'
 import type { IngredientRow, IngredientsResponse, MovementsResponse } from './types'
+import { Select } from '@/components/ui/Select'
 
 const CLASSES: Array<{ key: string; label: string }> = [
   { key: '', label: 'All classes' }, { key: 'food', label: 'Food' }, { key: 'beverage', label: 'Drinks' }, { key: 'packaging', label: 'Packaging' },
@@ -108,16 +109,16 @@ export function IngredientsTab({ tenantId, range, brands, locationId }: {
   return (
     <Section title="Ingredients" hint="Opening + received − used = closing, at the lot cost. Unexplained = count differences and food cooked before its delivery was entered.">
       <div className="mb-3 flex flex-wrap gap-2">
-        <select className="s-select w-auto" value={costClass} onChange={(e) => setCostClass(e.target.value)} aria-label="Class">
+        <Select className="s-select w-auto" value={costClass} onChange={(e) => setCostClass(e.target.value)} aria-label="Class">
           {CLASSES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </select>
-        <select className="s-select w-auto" value={conceptId} onChange={(e) => setConceptId(e.target.value)} aria-label="Brand">
+        </Select>
+        <Select className="s-select w-auto" value={conceptId} onChange={(e) => setConceptId(e.target.value)} aria-label="Brand">
           <option value="">All brands</option>
           {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-        <select className="s-select w-auto" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort">
+        </Select>
+        <Select className="s-select w-auto" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort">
           {SORTS.map((s) => <option key={s.key} value={s.key}>Sort: {s.label}</option>)}
-        </select>
+        </Select>
       </div>
       <ErrorNote error={error} />
       {isLoading ? <p className="py-6 text-center text-sm text-s-dim">Loading…</p> : (

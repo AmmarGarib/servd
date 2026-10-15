@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation'
 import { api } from '../../../lib/api'
 import { todayPktIso } from '../../../lib/money'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 interface Reservation {
@@ -73,10 +74,10 @@ export default function ReservationsWeekPage() {
           <h1 className="text-xl font-bold text-s-text">Reservations · week</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
+          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
             className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
           <button onClick={() => setAnchor(new Date(weekStart.getTime() - 7 * 86_400_000).toISOString().slice(0, 10))}
             className="s-btn-secondary text-xs">← Prev</button>
           <span className="text-xs text-s-muted whitespace-nowrap">

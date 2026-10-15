@@ -7,6 +7,7 @@ import { api, ApiError } from '../../lib/api'
 import { fmtPkr, fmtPkrShort } from '../../lib/money'
 import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
+import { Select } from '@/components/ui/Select'
 
 interface PoolSummary {
   id: string; name: string
@@ -314,7 +315,7 @@ function AddMember({ poolId, pending, onAdd }: { poolId: string; pending: boolea
   return (
     <div className="px-4 py-3 border-t border-s-border space-y-2 text-xs">
       <p className="font-bold">Add someone</p>
-      <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} aria-label="Employee"
+      <Select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} aria-label="Employee"
         className="w-full bg-s-surface border border-s-border rounded px-2 py-1">
         <option value="">Choose an employee…</option>
         {candidates.data?.map((c) => (
@@ -322,7 +323,7 @@ function AddMember({ poolId, pending, onAdd }: { poolId: string; pending: boolea
             {c.name} · {c.employeeCode}{c.designation ? ` · ${c.designation}` : ''}{c.hasLogin ? '' : ' · no login'}
           </option>
         ))}
-      </select>
+      </Select>
       <div className="flex gap-2">
         <input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" placeholder="hours worked" aria-label="Hours worked"
           className="flex-1 bg-s-surface border border-s-border rounded px-2 py-1" />
@@ -371,10 +372,10 @@ function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         <div className="p-5 space-y-3 text-sm">
           <label className="block">
             <span className="text-xs text-s-muted">Brand</span>
-            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
+            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
               <option value="">Choose the brand whose tips these are…</option>
               {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            </Select>
           </label>
           <label className="block">
             <span className="text-xs text-s-muted">Name</span>

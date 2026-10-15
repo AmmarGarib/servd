@@ -16,6 +16,7 @@ import {
 } from '../../../lib/connectorsApi'
 import { Badge, Card, ErrorLine, Field, OkLine, RangeNumberInput } from '../ui'
 import { ParseResultView } from './RaastTester'
+import { Select } from '@/components/ui/Select'
 
 const PLACEHOLDER_HELP: Array<[string, string]> = [
   ['{amount}', 'The amount: 1188, 1,188.00, PKR 1,188, Rs.1,188/- (required in every template)'],
@@ -160,10 +161,10 @@ function TemplateEditor({ row, canEdit, problem, usedBy, onChange, onRemove }: {
           <input className="s-input w-[200px] text-xs" disabled={!canEdit} maxLength={80} value={row.label} onChange={(e) => onChange({ label: e.target.value })} placeholder="Meezan Raast credit" />
         </Field>
         <Field label="Kind">
-          <select className="s-select w-[150px] text-xs" disabled={!canEdit} value={row.kind} onChange={(e) => onChange({ kind: e.target.value as RaastTemplateKind })}>
+          <Select className="s-select w-[150px] text-xs" disabled={!canEdit} value={row.kind} onChange={(e) => onChange({ kind: e.target.value as RaastTemplateKind })}>
             <option value="credit">Money in (credit)</option>
             <option value="debit">Money out (debit)</option>
-          </select>
+          </Select>
         </Field>
         <Field label="Date format" hint="Optional, e.g. DD-MM-YYYY">
           <input className="s-input w-[130px] font-mono text-xs" disabled={!canEdit} maxLength={20} value={row.dateFormat} onChange={(e) => onChange({ dateFormat: e.target.value })} placeholder="DD-MM-YYYY" />
@@ -282,11 +283,11 @@ function Senders({ data, canEdit }: { data: RaastSettingsPage; canEdit: boolean 
                   </td>
                   <td>
                     {canEdit ? (
-                      <select aria-label="Bank account" className="s-select min-w-[180px] text-xs" value={r.bankAccountId} onChange={(e) => setRow(i, { bankAccountId: e.target.value })}>
+                      <Select aria-label="Bank account" className="s-select min-w-[180px] text-xs" value={r.bankAccountId} onChange={(e) => setRow(i, { bankAccountId: e.target.value })}>
                         <option value="">Pick an account…</option>
                         {r.bankAccountId && !accounts.some((a) => a.id === r.bankAccountId) && <option value={r.bankAccountId}>{accountLabel(r.bankAccountId)}</option>}
                         {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.bankName ? ` — ${a.bankName}` : ''}{a.last4 ? ` ·${a.last4}` : ''}</option>)}
-                      </select>
+                      </Select>
                     ) : <span className="text-xs">{accountLabel(r.bankAccountId)}</span>}
                   </td>
                   <td>

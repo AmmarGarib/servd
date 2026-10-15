@@ -9,6 +9,7 @@ import { api } from '../../../lib/api'
 import { card, inp, btn, btnGhost } from '../../../lib/hr'
 import { HrShell, useHrLookups, useHrSections } from '../../../components/hr/HrShell'
 import { LETTERS_FOR, openPrintable } from '../../../components/hr/RecordDetail'
+import { Select } from '@/components/ui/Select'
 
 interface Letter { key: string; title: string; body: string; isDefault: boolean; version: number; placeholders: string[] }
 
@@ -128,10 +129,10 @@ function Editor({ letter }: { letter: Letter }) {
           <div className="rounded-2xl p-4 flex flex-wrap items-end gap-3" style={card}>
             <label className="block flex-1 min-w-[200px]">
               <span className="block text-[11px] font-bold text-white/55 mb-1">Print for an employee</span>
-              <select className={inp} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+              <Select className={inp} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
                 <option value="">Pick an employee</option>
                 {(lookups?.employees ?? []).map((e) => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
-              </select>
+              </Select>
             </label>
             <button className={btnGhost} disabled={!employeeId || dirty || print.isPending} onClick={() => print.mutate()} title={dirty ? 'Save first' : undefined}>Print</button>
           </div>

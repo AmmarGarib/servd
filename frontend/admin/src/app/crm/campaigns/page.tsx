@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
+import { Select } from '@/components/ui/Select'
 
 type Channel = 'email' | 'whatsapp'
 
@@ -196,10 +197,10 @@ export default function CampaignsPage() {
                 </div>
                 <div>
                   <label className="text-xs text-s-muted mb-1 block">Channel *</label>
-                  <select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value as Channel })} className={inp}>
+                  <Select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value as Channel })} className={inp}>
                     <option value="whatsapp">WhatsApp</option>
                     <option value="email">Email</option>
-                  </select>
+                  </Select>
                 </div>
                 {form.channel === 'email' && (
                   <div className="col-span-2">
@@ -219,7 +220,7 @@ export default function CampaignsPage() {
                 </div>
                 <div className="col-span-2">
                   <label className="text-xs text-s-muted mb-1 block">Segment</label>
-                  <select value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} className={inp}>
+                  <Select value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} className={inp}>
                     <option value="">Everyone reachable in the brands below</option>
                     {segments.map((s) => (
                       <option key={s.slug} value={s.slug}>{s.name} — {s.memberCount.toLocaleString()}</option>
@@ -227,7 +228,7 @@ export default function CampaignsPage() {
                     <option value={WAITLIST}>
                       {WAITLIST_LABEL} (all of servd){waitlistAudience ? ` — ${waitlistAudience.total.toLocaleString()}` : ''}
                     </option>
-                  </select>
+                  </Select>
                   <p className="text-xs text-s-muted mt-1">
                     {isWaitlist
                       ? <>Everyone who joined the <Link href="/crm/waitlist" className="underline">new-brand waitlist</Link> and hasn&apos;t unsubscribed — across all of servd, not only this company&apos;s customers.</>

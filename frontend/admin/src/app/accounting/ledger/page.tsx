@@ -12,6 +12,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
+import { Select } from '@/components/ui/Select'
 
 interface LedgerLine {
   id: string
@@ -138,11 +139,11 @@ function LedgerView() {
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <Link href="/accounting/journal" className="s-btn-secondary text-sm">Journal entry</Link>
-            <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+            <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}
               className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text max-w-[16rem]">
               <option value="">All accounts</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}{a.isActive ? '' : ' (inactive)'}</option>)}
-            </select>
+            </Select>
             <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
               className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
             <span className="text-s-muted text-xs">→</span>

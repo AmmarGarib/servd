@@ -14,6 +14,7 @@ import {
   type Authority, type ConnectorsOverview, type FiscalOutlet, type FiscalSettings,
 } from '../../lib/connectorsApi'
 import { Card, ErrorLine, OkLine } from './ui'
+import { Select } from '@/components/ui/Select'
 
 interface LocationLite { id: string; name: string; tenantId?: string | null }
 
@@ -142,21 +143,21 @@ function OutletOverrides({ data, canEdit, activeTenantId }: { data: ConnectorsOv
               {rows.map((r, i) => (
                 <tr key={i}>
                   <td>
-                    <select aria-label="Outlet" className="s-select min-w-[150px] text-xs" disabled={!canEdit} value={r.locationId} onChange={(e) => set(i, { locationId: e.target.value })}>
+                    <Select aria-label="Outlet" className="s-select min-w-[150px] text-xs" disabled={!canEdit} value={r.locationId} onChange={(e) => set(i, { locationId: e.target.value })}>
                       <option value="">Pick an outlet…</option>
                       {locations.data.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                    </select>
+                    </Select>
                   </td>
                   <td>
-                    <select aria-label="Brand" className="s-select min-w-[130px] text-xs" disabled={!canEdit} value={r.conceptId} onChange={(e) => set(i, { conceptId: e.target.value })}>
+                    <Select aria-label="Brand" className="s-select min-w-[130px] text-xs" disabled={!canEdit} value={r.conceptId} onChange={(e) => set(i, { conceptId: e.target.value })}>
                       <option value="">All brands</option>
                       {data.brandPosIds.map((b) => <option key={b.conceptId} value={b.conceptId}>{b.name}</option>)}
-                    </select>
+                    </Select>
                   </td>
                   <td>
-                    <select aria-label="Authority" className="s-select w-[90px] text-xs" disabled={!canEdit} value={r.authority} onChange={(e) => set(i, { authority: e.target.value as Authority })}>
+                    <Select aria-label="Authority" className="s-select w-[90px] text-xs" disabled={!canEdit} value={r.authority} onChange={(e) => set(i, { authority: e.target.value as Authority })}>
                       {AUTHORITIES.map((a) => <option key={a} value={a}>{authorityLabel(a)}</option>)}
-                    </select>
+                    </Select>
                   </td>
                   <td><input aria-label="POS ID" className="s-input w-[120px] font-mono text-xs" disabled={!canEdit} value={r.posId} maxLength={64} onChange={(e) => set(i, { posId: e.target.value })} /></td>
                   <td><input aria-label="Store ID" className="s-input w-[110px] font-mono text-xs" disabled={!canEdit} value={r.storeId} maxLength={64} onChange={(e) => set(i, { storeId: e.target.value })} placeholder="optional" /></td>

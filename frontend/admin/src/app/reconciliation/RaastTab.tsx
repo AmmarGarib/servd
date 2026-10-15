@@ -39,6 +39,7 @@ import { format } from 'date-fns'
 import Link from 'next/link'
 import { api, ApiError, RAAST_STATUS_LABEL, RAAST_STATUS_SHORT, type RaastReceiptStatus } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
+import { Select } from '@/components/ui/Select'
 
 /** The server's statuses (lib/api.ts lists 'voided', wave B). */
 type ReceiptStatus = RaastReceiptStatus
@@ -334,16 +335,16 @@ export function RaastTab() {
           <div className="flex flex-wrap items-end gap-2">
             <label className="text-xs text-s-muted">
               <span className="block mb-0.5">Status</span>
-              <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className={inputCls}>
+              <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className={inputCls}>
                 {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
+              </Select>
             </label>
             <label className="text-xs text-s-muted">
               <span className="block mb-0.5">Receiving account</span>
-              <select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={inputCls}>
+              <Select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={inputCls}>
                 <option value="">All accounts</option>
                 {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.raastDefault ? ' (default Raast)' : ''}</option>)}
-              </select>
+              </Select>
             </label>
             <label className="text-xs text-s-muted">
               <span className="block mb-0.5">From</span>
@@ -623,9 +624,9 @@ function UnreceivedPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptR
         <span className="font-mono">{receipt.ledgerCode}</span> and booked to the account you pick, dated today. Only once the sale is on the books
         (its shift closed).
       </p>
-      <select value={contra} onChange={(e) => setContra(e.target.value as Contra)} className={`${inputCls} w-full`}>
+      <Select value={contra} onChange={(e) => setContra(e.target.value as Contra)} className={`${inputCls} w-full`}>
         {(Object.keys(CONTRA_LABEL) as Array<keyof typeof CONTRA_LABEL>).map((c) => <option key={c} value={c}>{CONTRA_LABEL[c]}</option>)}
-      </select>
+      </Select>
       <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="what happened (required)" className={`${inputCls} w-full`} />
       {writeOff.error && <p className="text-s-red">{errorText(writeOff.error)}</p>}
       <div className="flex gap-3">
@@ -691,9 +692,9 @@ function ResolvePanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow;
         A bank transfer reached this bill but servd could not book it, and the bill is now closed. Nothing is posted here — the transfer was never
         booked as a sale. Book the money on its statement line (Bank Imports → Adjust). Its bank SMS is closed and its reference can never pay a bill.
       </p>
-      <select value={outcome} onChange={(e) => setOutcome(e.target.value as ResolveOutcome)} className={`${inputCls} w-full`}>
+      <Select value={outcome} onChange={(e) => setOutcome(e.target.value as ResolveOutcome)} className={`${inputCls} w-full`}>
         {(Object.keys(RESOLVE_LABEL) as ResolveOutcome[]).map((o) => <option key={o} value={o}>{RESOLVE_LABEL[o]}</option>)}
-      </select>
+      </Select>
       {outcome === 'refunded_to_customer' && (
         <input value={refundRef} onChange={(e) => setRefundRef(e.target.value)} placeholder="reference of the transfer sent back (optional)" autoComplete="off" spellCheck={false}
           className={`${inputCls} w-full font-mono uppercase`} />
@@ -808,10 +809,10 @@ function SmsLog() {
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-xs text-s-muted">
           <span className="block mb-0.5">Status</span>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls}>
+          <Select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls}>
             <option value="">Every bank SMS</option>
             {Object.entries(ALERT_STATUS_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
+          </Select>
         </label>
         <p className="text-[11px] text-s-dim pb-1">
           Read only. A bank SMS with no bill is attached at the till (Bank alerts); a manager marks one that is not a sale. Only SMS from the

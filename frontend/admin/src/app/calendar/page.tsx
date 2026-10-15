@@ -2,6 +2,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -130,20 +131,20 @@ export default function CalendarPage() {
         </div>
         <div className="flex items-center gap-3">
           {/* Filters */}
-          <select value={filterDept} onChange={(e) => setFilterDept(e.target.value)}
+          <Select value={filterDept} onChange={(e) => setFilterDept(e.target.value)}
             className="rounded-lg border border-s-border bg-s-bg px-2 py-1 text-xs text-s-text">
             <option value="">All Departments</option>
             {DEPT_OPTIONS.filter(Boolean).map((d) => (
               <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>
             ))}
-          </select>
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value as EventType | '')}
+          </Select>
+          <Select value={filterType} onChange={(e) => setFilterType(e.target.value as EventType | '')}
             className="rounded-lg border border-s-border bg-s-bg px-2 py-1 text-xs text-s-text">
             <option value="">All Types</option>
             {Object.entries(TYPE_CONFIG).map(([k, v]) => (
               <option key={k} value={k}>{v.emoji} {v.label}</option>
             ))}
-          </select>
+          </Select>
           <button
             onClick={() => setCreateOnDay(today)}
             className="rounded-lg bg-primary px-4 py-1.5 text-sm font-bold text-primary-on hover:opacity-90"
@@ -405,19 +406,19 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-s-muted">Type</label>
-                <select value={type} onChange={(e) => setType(e.target.value as EventType)}
+                <Select value={type} onChange={(e) => setType(e.target.value as EventType)}
                   className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   {Object.entries(TYPE_CONFIG).map(([k, v]) => (
                     <option key={k} value={k}>{v.emoji} {v.label}</option>
                   ))}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted">Status</label>
-                <select value={status} onChange={(e) => setStatus(e.target.value as EventStatus)}
+                <Select value={status} onChange={(e) => setStatus(e.target.value as EventStatus)}
                   className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted">Date</label>
@@ -431,10 +432,10 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
               </div>
               <div>
                 <label className="text-xs text-s-muted">Department</label>
-                <select value={department} onChange={(e) => setDept(e.target.value)}
+                <Select value={department} onChange={(e) => setDept(e.target.value)}
                   className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   {DEPT_OPTIONS.map((d) => <option key={d} value={d}>{d || 'None'}</option>)}
-                </select>
+                </Select>
               </div>
             </div>
             <div>
@@ -450,12 +451,12 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-s-muted">Platform</label>
-                <select value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}
+                <Select value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}
                   className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   <option value="instagram">📸 Instagram</option>
                   <option value="facebook">🤝 Facebook</option>
                   <option value="tiktok">🎵 TikTok</option>
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted">Publish Time</label>

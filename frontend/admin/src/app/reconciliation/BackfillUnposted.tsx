@@ -19,6 +19,7 @@ import { fmtPkr } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
 import { useAuthStore } from '../../store/auth'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
+import { Select } from '@/components/ui/Select'
 
 interface Row { shiftId: string; closedAt: string | null; outcome: string; detail: string }
 // BOOKS-R2-01: order completions, loyalty earns / redemptions and refund
@@ -412,13 +413,13 @@ function PettyCashHistory() {
               <p className="text-sm font-semibold text-s-text">{nameOf.get(t) ?? 'Company'}</p>
               <label className="block text-xs">
                 <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">Money already in the boxes came from</span>
-                <select
+                <Select
                   className="s-input"
                   value={sourceOf(t)}
                   onChange={(e) => { setStale(true); setSources((m) => ({ ...m, [t]: e.target.value as HistSource })) }}
                 >
                   {(Object.keys(SOURCE_LABEL) as HistSource[]).map((k) => <option key={k} value={k}>{SOURCE_LABEL[k]}</option>)}
-                </select>
+                </Select>
               </label>
             </div>
             {cash && (
@@ -496,14 +497,14 @@ function NeedPick({ row, pick, categories, onChange }: { row: PettyRow; pick: Pi
       <p className="text-s-muted break-words">{row.detail}</p>
       {row.outcome === 'needs_category' ? (
         <div className="flex flex-wrap items-center gap-2">
-          <select
+          <Select
             className="s-input max-w-full"
             value={p.categoryKey ?? ''}
             onChange={(e) => onChange({ categoryKey: e.target.value || undefined, accountCode: undefined })}
           >
             <option value="">Pick a category…</option>
             {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
-          </select>
+          </Select>
           <span className="text-s-muted">or account</span>
           <input
             className="s-input w-24 font-mono"
@@ -518,10 +519,10 @@ function NeedPick({ row, pick, categories, onChange }: { row: PettyRow; pick: Pi
         <div className="flex flex-wrap items-end gap-2">
           <label className="block">
             <span className="block text-[11px] text-s-muted mb-0.5">{inflow ? 'The cash came from' : 'The cash went to'}</span>
-            <select className="s-input" value={side ?? ''} onChange={(e) => onChange({ [sideKey]: (e.target.value || undefined) as CashSide | undefined })}>
+            <Select className="s-input" value={side ?? ''} onChange={(e) => onChange({ [sideKey]: (e.target.value || undefined) as CashSide | undefined })}>
               <option value="">Pick…</option>
               {(Object.keys(SIDE_LABEL) as CashSide[]).map((k) => <option key={k} value={k}>{SIDE_LABEL[k]}</option>)}
-            </select>
+            </Select>
           </label>
           {side === 'bank' && (
             <div className="min-w-[12rem]">

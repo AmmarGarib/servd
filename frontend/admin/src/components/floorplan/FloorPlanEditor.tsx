@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { FloorCanvas } from './FloorCanvas'
 import type { FloorTable, FloorViewport } from './FloorCanvas'
+import { Select } from '@/components/ui/Select'
 
 const SHAPES = ['rectangle', 'square', 'round', 'banquette', 'counter', 'barstool'] as const
 
@@ -167,12 +168,12 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
         <div className="s-card p-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-s-muted mb-2">Layout</h3>
           <label className="block text-xs text-s-muted mb-1">Snap to grid</label>
-          <select value={snap} onChange={(e) => setSnap(parseInt(e.target.value, 10))} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm text-s-text">
+          <Select value={snap} onChange={(e) => setSnap(parseInt(e.target.value, 10))} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm text-s-text">
             <option value="0">Off (1px)</option>
             <option value="10">10px</option>
             <option value="20">20px</option>
             <option value="40">40px</option>
-          </select>
+          </Select>
           <div className="mt-3 flex gap-2">
             <button
               onClick={handleSave}
@@ -190,9 +191,9 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
           <div className="s-card p-3">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-s-muted mb-2">{selected.label}</h3>
             <Field label="Shape">
-              <select value={selected.shape} onChange={(e) => patchSelected({ shape: e.target.value as FloorTable['shape'] })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+              <Select value={selected.shape} onChange={(e) => patchSelected({ shape: e.target.value as FloorTable['shape'] })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
                 {SHAPES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+              </Select>
             </Field>
             <div className="grid grid-cols-2 gap-2">
               <Field label="Width">
@@ -238,9 +239,9 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
             <input type="number" min={1} max={50} value={newCapacity} onChange={(e) => setNewCapacity(parseInt(e.target.value, 10) || 1)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           </Field>
           <Field label="Shape">
-            <select value={newShape} onChange={(e) => setNewShape(e.target.value as FloorTable['shape'])} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+            <Select value={newShape} onChange={(e) => setNewShape(e.target.value as FloorTable['shape'])} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
               {SHAPES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
           </Field>
           <button onClick={handleAddTable} className="mt-2 w-full py-1.5 rounded font-bold text-xs bg-secondary text-secondary-on">
             + Add to {floor.name}

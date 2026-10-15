@@ -18,6 +18,7 @@ import {
 import { AssetRequestModal, ASSET_REQUEST_TITLE, type AssetRequestKind, type RequestResult } from '../../../../components/fixedAssets/RequestForms'
 import { RequestCard } from '../../../../components/fixedAssets/RequestCard'
 import { ScheduleTable, type PostedMonth, type UpcomingMonth } from '../../../../components/fixedAssets/ScheduleTable'
+import { Select } from '@/components/ui/Select'
 
 interface DocLink { label?: string; url: string }
 interface TaxYear {
@@ -323,10 +324,10 @@ function EditDetails({ detail, lookups, onClose, onSaved }: {
           <L t="Warranty until"><input type="date" className={inp} value={warranty} onChange={(e) => setWarranty(e.target.value)} /></L>
         </div>
         <L t="Supplier">
-          <select className={inp} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+          <Select className={inp} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
             <option value="">None</option>
             {forCompany(lookups.suppliers, a.tenantId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          </Select>
         </L>
         <L t="Notes"><textarea className={inp} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></L>
         <LinkListEditor title="Documents (invoice, warranty card)" value={docs} onChange={setDocs} />

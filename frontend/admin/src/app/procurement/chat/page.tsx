@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -757,7 +758,7 @@ function SupplierOnboardingWizard({
               {mode === 'existing' ? (
                 <div>
                   <label className="text-xs text-s-muted">Supplier *</label>
-                  <select
+                  <Select
                     value={supplierId}
                     onChange={(e) => setSupplierId(e.target.value)}
                     className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2.5 text-s-text focus:border-primary focus:outline-none text-sm"
@@ -768,7 +769,7 @@ function SupplierOnboardingWizard({
                         {s.name}{s.category ? ` (${s.category})` : ''}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               ) : (
                 <>

@@ -18,6 +18,7 @@ import { api, ApiError } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import Link from 'next/link'
+import { Select } from '@/components/ui/Select'
 
 // The latest day that can be closed is YESTERDAY, Pakistan time — today is
 // still trading, and POST /accounting/period-close refuses it with 422
@@ -238,10 +239,10 @@ export default function PeriodClosePage() {
               <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
                 <div className="flex-1">
                   <label htmlFor="fy-month" className="block text-xs text-s-muted">Year-end month</label>
-                  <select id="fy-month" value={fyMonth ?? state.fiscalYear.endMonth} onChange={(e) => setFyMonth(Number(e.target.value))}
+                  <Select id="fy-month" value={fyMonth ?? state.fiscalYear.endMonth} onChange={(e) => setFyMonth(Number(e.target.value))}
                     className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text">
                     {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 {fyNeedsReason && (
                   <div className="flex-[2]">

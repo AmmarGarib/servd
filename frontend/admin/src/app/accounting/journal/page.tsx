@@ -20,6 +20,7 @@ import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
+import { Select } from '@/components/ui/Select'
 
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
 interface Brand { id: string; name: string; tenantId: string | null }
@@ -187,10 +188,10 @@ export default function JournalEntryPage() {
               {companyIds.length > 1 && (
                 <label className="block sm:col-span-4">
                   <span className="block text-xs text-s-muted mb-1">Company (whose books)</span>
-                  <select value={pickedCompany} onChange={(e) => { setPickedCompany(e.target.value); setLines([blankLine(), blankLine()]) }} className="s-select py-1.5">
+                  <Select value={pickedCompany} onChange={(e) => { setPickedCompany(e.target.value); setLines([blankLine(), blankLine()]) }} className="s-select py-1.5">
                     <option value="">— pick a company —</option>
                     {companyIds.map((id) => <option key={id} value={id}>{companyName(id)}</option>)}
-                  </select>
+                  </Select>
                 </label>
               )}
               <label className="block">
@@ -230,19 +231,19 @@ export default function JournalEntryPage() {
                   {parsed.map(({ line, error }, i) => (
                     <tr key={line.key} className="align-top border-t border-s-border">
                       <td className="py-1.5 pr-2">
-                        <select aria-label={`Line ${i + 1} account`} value={line.accountId} disabled={!company}
+                        <Select aria-label={`Line ${i + 1} account`} value={line.accountId} disabled={!company}
                           onChange={(e) => patchLine(line.key, { accountId: e.target.value })} className="s-select py-1.5">
                           <option value="">— account —</option>
                           {companyAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
-                        </select>
+                        </Select>
                         {error && <p className="text-[11px] text-s-red mt-1">{error}</p>}
                       </td>
                       <td className="py-1.5 pr-2">
-                        <select aria-label={`Line ${i + 1} brand`} value={line.conceptId}
+                        <Select aria-label={`Line ${i + 1} brand`} value={line.conceptId}
                           onChange={(e) => patchLine(line.key, { conceptId: e.target.value })} className="s-select py-1.5">
                           <option value="">Shared</option>
                           {companyBrands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                        </select>
+                        </Select>
                       </td>
                       <td className="py-1.5 pr-2">
                         <input aria-label={`Line ${i + 1} memo`} type="text" value={line.memo} maxLength={200}

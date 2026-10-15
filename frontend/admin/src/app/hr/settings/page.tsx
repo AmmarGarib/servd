@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { card, inp, btn } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
+import { Select } from '@/components/ui/Select'
 
 interface HrSettings {
   workingDaysPerMonth: number
@@ -65,10 +66,10 @@ export default function HrSettingsPage() {
             <Num label="Employer share %" v={s.eobi.employerPct} step="0.1" onSet={(v) => setS({ ...s, eobi: { ...s.eobi, employerPct: v } })} />
             <label className="block">
               <span className="block text-[11px] font-bold text-white/55 mb-1">Calculated on</span>
-              <select className={inp} value={s.eobi.base} onChange={(e) => setS({ ...s, eobi: { ...s.eobi, base: e.target.value as 'fixed' | 'gross' } })}>
+              <Select className={inp} value={s.eobi.base} onChange={(e) => setS({ ...s, eobi: { ...s.eobi, base: e.target.value as 'fixed' | 'gross' } })}>
                 <option value="fixed">A fixed wage (the notified minimum wage)</option>
                 <option value="gross">Each employee&apos;s gross salary</option>
-              </select>
+              </Select>
             </label>
             {s.eobi.base === 'fixed' && (
               <Money label="EOBI wage base (Rs / month)" v={s.eobi.fixedWageCents} onSet={(v) => setS({ ...s, eobi: { ...s.eobi, fixedWageCents: v } })}
@@ -91,9 +92,9 @@ export default function HrSettingsPage() {
           <Panel title="Leave">
             <label className="block">
               <span className="block text-[11px] font-bold text-white/55 mb-1">Leave year starts in</span>
-              <select className={inp} value={s.leaveYearStartMonth} onChange={(e) => setS({ ...s, leaveYearStartMonth: Number(e.target.value) })}>
+              <Select className={inp} value={s.leaveYearStartMonth} onChange={(e) => setS({ ...s, leaveYearStartMonth: Number(e.target.value) })}>
                 {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-              </select>
+              </Select>
             </label>
             <Check label="Pay out unused leave in final settlement" v={s.encashLeaveOnExit} onSet={(v) => setS({ ...s, encashLeaveOnExit: v })} />
           </Panel>

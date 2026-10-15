@@ -10,6 +10,7 @@ import {
   type ConceptLite, type DraftStatus, type LayoutKind, type MediaAssetLite, type PageSettings, type PopupRules, type Variant,
 } from '../../lib/content'
 import { Check, Field, FontSelect, NumberInput, Section } from './fields'
+import { Select } from '@/components/ui/Select'
 
 const TONE: Record<string, string> = {
   teal: 's-badge-teal', amber: 's-badge-amber', blue: 's-badge-blue', red: 's-badge-red', muted: 's-badge-muted',
@@ -166,26 +167,26 @@ export function PopupRulesPanel({ rules, onChange, concepts }: { rules: PopupRul
     <div className="p-4 space-y-3 max-h-[calc(100vh-14rem)] overflow-y-auto">
       <Section title="What">
         <Field label="Pop-up type">
-          <select value={rules.popupKind} onChange={(e) => set({ popupKind: e.target.value as PopupRules['popupKind'] })} className="s-select">
+          <Select value={rules.popupKind} onChange={(e) => set({ popupKind: e.target.value as PopupRules['popupKind'] })} className="s-select">
             <option value="signup">Sign-up</option><option value="login">Log-in</option>
             <option value="offer">Offer</option><option value="announcement">Announcement</option>
-          </select>
+          </Select>
         </Field>
         <Field label="Display">
-          <select value={rules.display} onChange={(e) => set({ display: e.target.value as PopupRules['display'] })} className="s-select">
+          <Select value={rules.display} onChange={(e) => set({ display: e.target.value as PopupRules['display'] })} className="s-select">
             <option value="modal">Modal (centre of screen)</option><option value="bar">Bar (top of page)</option><option value="corner">Corner card</option>
-          </select>
+          </Select>
         </Field>
       </Section>
 
       <Section title="When">
         <Field label="Trigger">
-          <select value={rules.trigger} onChange={(e) => set({ trigger: e.target.value as PopupRules['trigger'] })} className="s-select">
+          <Select value={rules.trigger} onChange={(e) => set({ trigger: e.target.value as PopupRules['trigger'] })} className="s-select">
             <option value="before_page">Before the page shows</option>
             <option value="after_seconds">After a delay</option>
             <option value="exit_intent">When the visitor is about to leave</option>
             <option value="scroll">After scrolling</option>
-          </select>
+          </Select>
         </Field>
         {rules.trigger === 'after_seconds' && (
           <Field label="Delay (seconds)"><NumberInput value={rules.delaySeconds ?? 5} min={0} max={600} onChange={(v) => set({ delaySeconds: v })} /></Field>
@@ -194,9 +195,9 @@ export function PopupRulesPanel({ rules, onChange, concepts }: { rules: PopupRul
           <Field label="Scrolled (% of page)"><NumberInput value={rules.scrollPct ?? 50} min={0} max={100} onChange={(v) => set({ scrollPct: v })} /></Field>
         )}
         <Field label="Frequency">
-          <select value={rules.frequency} onChange={(e) => set({ frequency: e.target.value as PopupRules['frequency'] })} className="s-select">
+          <Select value={rules.frequency} onChange={(e) => set({ frequency: e.target.value as PopupRules['frequency'] })} className="s-select">
             <option value="once">Once per visitor</option><option value="daily">At most once a day</option><option value="every_visit">Every visit</option>
-          </select>
+          </Select>
         </Field>
         <div className="grid grid-cols-1 gap-2">
           <Field label="Starts (optional)">
@@ -228,10 +229,10 @@ export function PopupRulesPanel({ rules, onChange, concepts }: { rules: PopupRul
 
       <Section title="Who">
         <Field label="Audience">
-          <select value={rules.audience} onChange={(e) => set({ audience: e.target.value as PopupRules['audience'] })} className="s-select">
+          <Select value={rules.audience} onChange={(e) => set({ audience: e.target.value as PopupRules['audience'] })} className="s-select">
             <option value="everyone">Everyone</option><option value="signed_out">Signed-out visitors</option>
             <option value="signed_in">Signed-in customers</option><option value="never_ordered">Customers who have never ordered</option>
-          </select>
+          </Select>
         </Field>
       </Section>
     </div>

@@ -25,6 +25,7 @@ import {
 } from './data'
 import { attachmentPath, fetchAttachmentUrl, kb } from './photo'
 import { ErrorBanner, fieldCls, primaryBtn, secondaryBtn } from './ui'
+import { Select } from '@/components/ui/Select'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 const MAX_RECEIPTS = 20
@@ -164,10 +165,10 @@ function SettlementCard({ v, s, onChanged }: { v: CashVoucher; s: Settlement; on
             </span>
             {editing === l.id && (
               <span className="w-full flex items-center gap-2">
-                <select value={pick} onChange={(e) => setPick(e.target.value)} className={`${fieldCls} !py-1`}>
+                <Select value={pick} onChange={(e) => setPick(e.target.value)} className={`${fieldCls} !py-1`}>
                   <option value="">— another category —</option>
                   {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
-                </select>
+                </Select>
                 <button disabled={!pick || reclass.isPending} onClick={() => reclass.mutate({ lineId: l.id, categoryKey: pick })}
                   className="rounded-lg px-3 py-1.5 text-xs font-black bg-primary text-primary-on disabled:opacity-50">Move</button>
                 <button onClick={() => setEditing(null)} className="text-xs text-white/50 px-1">Keep</button>
@@ -201,10 +202,10 @@ function ChangePanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolea
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} ariaLabel="Change in rupees" />
         {boxes.length > 0 && (
-          <select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls} aria-label="Into which box">
+          <Select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls} aria-label="Into which box">
             {!v.boxId && <option value="">— into which box —</option>}
             {boxes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          </Select>
         )}
       </div>
       {back.error && <ErrorBanner message={errorWords(back.error)} />}

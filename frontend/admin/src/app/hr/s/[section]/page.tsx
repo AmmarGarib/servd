@@ -12,6 +12,7 @@ import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, S
 import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
+import { Select } from '@/components/ui/Select'
 
 export default function HrSectionPage() {
   const { section } = useParams<{ section: string }>()
@@ -86,10 +87,10 @@ export default function HrSectionPage() {
           </button>
         ))}
         {fmt && fmt.stages.length > 0 && (
-          <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="rounded-full px-3 py-1 text-xs bg-white/[0.04] border border-white/10 text-white/70">
+          <Select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="rounded-full px-3 py-1 text-xs bg-white/[0.04] border border-white/10 text-white/70">
             <option value="">All stages</option>
             {fmt.stages.map((s) => <option key={s} value={s}>{human(s)}</option>)}
-          </select>
+          </Select>
         )}
         {fmt && !fmt.isDefault && <span className="ml-auto text-[11px] text-primary-ink self-center">Using HR format v{fmt.version}</span>}
       </div>

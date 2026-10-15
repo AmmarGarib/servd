@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 /**
  * Recipe step editor — phase tabs, station picker, dependency picker, duration.
@@ -259,14 +260,14 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="block text-[9px] uppercase tracking-wider font-black text-white/45 mb-1">Station</label>
-          <select value={draft.stationId ?? ''} onChange={(e) => setDraft({ ...draft, stationId: e.target.value || null })}
+          <Select value={draft.stationId ?? ''} onChange={(e) => setDraft({ ...draft, stationId: e.target.value || null })}
             className="w-full rounded-md px-2.5 py-1.5 text-xs font-semibold cursor-pointer focus:outline-none"
             style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
             <option value="">— pick a station —</option>
             {stations.map((s) => (
               <option key={s.id} value={s.id}>{s.name}{s.concept?.slug ? ` (${s.concept.slug})` : ''}</option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <label className="block text-[9px] uppercase tracking-wider font-black text-white/45 mb-1">Duration (sec)</label>

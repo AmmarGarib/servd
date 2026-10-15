@@ -17,6 +17,7 @@ import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
 import { fmtPkrWhole } from '../../../lib/money'
 import { stockErrorText } from '../../../lib/stockUi'
+import { Select } from '@/components/ui/Select'
 
 interface InventoryItem { id: string; name: string; unit: string; currentStock: number }
 interface DraftInput { inventoryItemId: string; qtyDrawn: number; unit: string }
@@ -174,7 +175,7 @@ export default function PrepBatchPage() {
         <Section title="What did you make?">
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-3">
             <Field label="Sub-recipe *">
-              <select value={recipeId} className={fieldCls}
+              <Select value={recipeId} className={fieldCls}
                 onChange={(e) => {
                   const id = e.target.value
                   setRecipeId(id)
@@ -184,7 +185,7 @@ export default function PrepBatchPage() {
                 <option value="">— pick from the recipe library —</option>
                 {preps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 <option value={AD_HOC}>Other (not in the recipe library)</option>
-              </select>
+              </Select>
             </Field>
             {!adHoc && (
               <Field label="Batches">
@@ -211,10 +212,10 @@ export default function PrepBatchPage() {
           {activeOutlets.length > 0 && (
             <div className="mt-3">
               <Field label="Outlet (optional)">
-                <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls}>
+                <Select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls}>
                   <option value="">No particular outlet</option>
                   {activeOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
+                </Select>
               </Field>
             </div>
           )}
@@ -252,12 +253,12 @@ export default function PrepBatchPage() {
           {inputs.length === 0 && <p className="text-xs text-white/35 italic">No ingredients yet. Add at least one.</p>}
           {inputs.map((inp, i) => (
             <div key={i} className="grid grid-cols-[minmax(0,1fr)_84px_44px_auto] gap-2 items-center mt-2">
-              <select value={inp.inventoryItemId}
+              <Select value={inp.inventoryItemId}
                 onChange={(e) => patchInput(i, { inventoryItemId: e.target.value, unit: itemById.get(e.target.value)?.unit ?? '' })}
                 className={fieldCls}>
                 <option value="">— ingredient —</option>
                 {ingredients.map((it) => <option key={it.id} value={it.id}>{it.label}</option>)}
-              </select>
+              </Select>
               <input type="number" step="0.001" value={inp.qtyDrawn} onChange={(e) => patchInput(i, { qtyDrawn: parseFloat(e.target.value) || 0 })} placeholder="Qty" className={fieldCls} />
               {/* The draw is taken off stock as-is, so it is always in the item's own stock unit. */}
               <span className="text-xs text-white/55">{itemById.get(inp.inventoryItemId)?.unit ?? inp.unit}</span>

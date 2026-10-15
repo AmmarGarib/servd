@@ -32,6 +32,7 @@ import {
 } from '../../refunds/refundEngine'
 import { ApiError } from '../../../lib/api'
 import { orderRef } from '../../../lib/orderRef'
+import { Select } from '@/components/ui/Select'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -436,13 +437,13 @@ function MoneyTakenModal({
         {taken.byTender.length > 1 && (
           <div>
             <label htmlFor="due-method" className="text-xs text-s-muted block mb-1">Hand it back by</label>
-            <select id="due-method" value={method} disabled={!!following || cardRefund.isPending}
+            <Select id="due-method" value={method} disabled={!!following || cardRefund.isPending}
               onChange={(e) => changeWay({ method: e.target.value as RefundTender })}
               className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none disabled:opacity-60">
               {taken.byTender.map((t) => (
                 <option key={t.method} value={t.method}>{HAND_BACK_LABEL[t.method]} — {fmtPkr(Math.min(t.leftCents, taken.dueCents))} taken</option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
         {taken.byTender.length === 1 && (
@@ -451,14 +452,14 @@ function MoneyTakenModal({
         {method === 'cash' && (
           <div>
             <label htmlFor="due-drawer" className="text-xs text-s-muted block mb-1">The cash leaves from</label>
-            <select id="due-drawer" value={shiftId} onChange={(e) => setDrawerPick(e.target.value)}
+            <Select id="due-drawer" value={shiftId} onChange={(e) => setDrawerPick(e.target.value)}
               className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none">
               {drawers.choices.map((c) => (
                 <option key={c.value || 'own'} value={c.value} disabled={c.closed}>
                   {c.label}{c.closed ? ' — closed' : ''}
                 </option>
               ))}
-            </select>
+            </Select>
             <p className="text-xs text-s-muted mt-1">
               {shiftId === OWN_DRAWER
                 ? 'The drawer you have open at the till pays it out.'

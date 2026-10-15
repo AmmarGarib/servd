@@ -21,6 +21,7 @@ import { fmtPkrWhole } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { stockErrorText } from '../../../lib/stockUi'
+import { Select } from '@/components/ui/Select'
 
 interface GrniLine {
   receiptLineId: string; receiptId: string; tenantId: string | null
@@ -150,26 +151,26 @@ export default function GrniPage() {
         <div className="flex flex-wrap items-end gap-3">
           {multi && (
             <label className="text-xs text-s-muted">Company
-              <select value={tenantId} onChange={(e) => { setTenantId(e.target.value); setSupplierId('') }} className={fi + ' mt-1 min-w-[10rem]'}>
+              <Select value={tenantId} onChange={(e) => { setTenantId(e.target.value); setSupplierId('') }} className={fi + ' mt-1 min-w-[10rem]'}>
                 <option value="">All my companies</option>
                 {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+              </Select>
             </label>
           )}
           <label className="text-xs text-s-muted">Supplier
-            <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fi + ' mt-1 min-w-[10rem]'}>
+            <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fi + ' mt-1 min-w-[10rem]'}>
               <option value="">All suppliers</option>
               {suppliers.filter((s) => !tenantId || s.tenantId === tenantId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            </Select>
           </label>
           <label className="text-xs text-s-muted">Waiting for
-            <select value={olderThan} onChange={(e) => setOlderThan(e.target.value)} className={fi + ' mt-1'}>
+            <Select value={olderThan} onChange={(e) => setOlderThan(e.target.value)} className={fi + ' mt-1'}>
               <option value="">Any time</option>
               <option value="7">over 7 days</option>
               <option value="30">over 30 days</option>
               <option value="60">over 60 days</option>
               <option value="90">over 90 days</option>
-            </select>
+            </Select>
           </label>
           <label className="flex items-center gap-2 text-xs text-s-text pb-2 cursor-pointer">
             <input type="checkbox" className="accent-accent" checked={requestedOnly} onChange={(e) => setRequestedOnly(e.target.checked)} />

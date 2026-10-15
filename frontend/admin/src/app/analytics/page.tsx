@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { Select } from '@/components/ui/Select'
 
 interface FunnelStep {
   event: string
@@ -128,7 +129,7 @@ export default function AnalyticsPage() {
             ))}
           </div>
           {/* Concept filter */}
-          <select
+          <Select
             value={conceptId}
             onChange={(e) => setConceptId(e.target.value)}
             className="border border-s-border rounded-lg px-3 py-1.5 text-sm bg-s-surface text-s-text"
@@ -137,7 +138,7 @@ export default function AnalyticsPage() {
             {concepts.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
 

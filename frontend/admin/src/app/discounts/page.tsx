@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
+import { Select } from '@/components/ui/Select'
 
 interface SectionDiscount {
   id: string
@@ -153,17 +154,17 @@ export default function DiscountsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Concept</label>
-                <select value={form.conceptId} onChange={(e) => setForm({ ...form, conceptId: e.target.value, categoryId: '' })} className={inp}>
+                <Select value={form.conceptId} onChange={(e) => setForm({ ...form, conceptId: e.target.value, categoryId: '' })} className={inp}>
                   <option value="">All concepts</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Category</label>
-                <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} className={inp} disabled={!form.conceptId}>
+                <Select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} className={inp} disabled={!form.conceptId}>
                   <option value="">Whole menu</option>
                   {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Discount % *</label>

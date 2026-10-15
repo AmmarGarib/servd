@@ -13,6 +13,7 @@ import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { SpendLinesEditor, emptyLine, lineBody, linesReady, type SpendLine } from '../../../components/finance/SpendLinesEditor'
 import { ReceiptUploader, type UploadedReceipt } from '../../../components/finance/ReceiptUploader'
 import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, pkr, primaryBtn, type Box } from './ui'
+import { Select } from '@/components/ui/Select'
 
 interface OpenBill { id: string; billNumber: string; status: string; totalCents: number; whtCents: number; paidCents: number; creditedCents?: number; supplier: { name: string } }
 
@@ -89,12 +90,12 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
       </Field>
     ) : (
       <Field label="Supplier bill *">
-        <select value={supplierBillId} onChange={(e) => setSupplierBillId(e.target.value)} className={fieldCls}>
+        <Select value={supplierBillId} onChange={(e) => setSupplierBillId(e.target.value)} className={fieldCls}>
           <option value="">— pick the bill —</option>
           {openBills.map((b) => (
             <option key={b.id} value={b.id}>{b.supplier.name} · {b.billNumber} · {pkr(b.totalCents - (b.whtCents ?? 0) - b.paidCents - (b.creditedCents ?? 0))} due</option>
           ))}
-        </select>
+        </Select>
         <p className="text-[10px] text-white/35 mt-1">Recorded as a cash payment against the bill, so it is not expensed twice.</p>
       </Field>
     )}

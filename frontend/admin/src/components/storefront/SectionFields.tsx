@@ -10,6 +10,7 @@ import { useState } from 'react'
 import type { Block } from '../../lib/blocks'
 import { fieldValue, isCatalogLoaded, sectionSpec, type FieldSpec } from '../../lib/sections'
 import { Check, ColorInput, CopyInput, Field, MediaInput, NumberInput } from './fields'
+import { Select } from '@/components/ui/Select'
 
 type Obj = Record<string, unknown>
 
@@ -105,10 +106,10 @@ function FieldInput({ spec, value, onChange }: { spec: FieldSpec; value: unknown
       const unset = text === '' && !spec.options.some((o) => o.value === '')
       return (
         <Field label={spec.label} {...(spec.hint && { hint: spec.hint })}>
-          <select value={text} onChange={(e) => onChange(e.target.value)} className="s-select">
+          <Select value={text} onChange={(e) => onChange(e.target.value)} className="s-select">
             {unset && <option value="" disabled>Choose…</option>}
             {spec.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          </Select>
         </Field>
       )
     }

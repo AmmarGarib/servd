@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
+import { Select } from '@/components/ui/Select'
 
 // ─── Types (the API's shapes) ────────────────────────────────────────────────
 
@@ -407,9 +408,9 @@ function SettingsCard() {
           {q.data.payoutBank && !q.data.payoutBank.live && <p className="text-[11px] text-s-red mt-1">That bank account is no longer active — pick another.</p>}
         </div>
         <Field label="How Keenu pays">
-          <select className="s-input" value={f.unitMode} disabled={!edit} onChange={set('unitMode')}>
+          <Select className="s-input" value={f.unitMode} disabled={!edit} onChange={set('unitMode')}>
             {(Object.keys(UNIT_MODE_LABEL) as UnitMode[]).map((k) => <option key={k} value={k}>{UNIT_MODE_LABEL[k]}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label="Matching starts on" hint="Card days before it were cleared by hand. Set automatically the first time matching is switched on.">
           <input type="date" className="s-input" value={f.startDay} disabled={!edit} onChange={set('startDay')} />

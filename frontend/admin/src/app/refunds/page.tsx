@@ -25,6 +25,7 @@ import {
 import { approvalErrorMessage, cancelOrderWithApproval, keepFollowingTerminalRefund, terminalRefundFinal, terminalRefundText } from './refundEngine'
 import { useIsManager } from '../../components/pos/managerRole'
 import { orderRef } from '../../lib/orderRef'
+import { Select } from '@/components/ui/Select'
 
 interface Order {
   id: string
@@ -267,14 +268,14 @@ export default function RefundsPage() {
 
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-s-muted">Reason (required)</label>
-                  <select
+                  <Select
                     value={REASON_PRESETS.includes(reason as never) ? reason : ''}
                     onChange={(e) => setReason(e.target.value)}
                     className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text"
                   >
                     <option value="">— Select preset or type below —</option>
                     {REASON_PRESETS.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
+                  </Select>
                   <textarea
                     rows={3}
                     value={reason}

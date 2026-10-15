@@ -35,6 +35,7 @@ import { banksOf, type BankAccountOption } from '../../../components/finance/Ban
 import {
   PAYMENT_REFERENCE_ERROR_TEXT, ReferenceUsedBeforeNotice, receiptMethodLabel, type PaymentRefUse,
 } from '../../../components/finance/PaymentReceivedFields'
+import { Select } from '@/components/ui/Select'
 
 // ─── API shapes ──────────────────────────────────────────────────────────────
 
@@ -400,13 +401,13 @@ function TransfersTab({ companies, prefill, clearPrefill, setMsg }: {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <label className="block">
           <span className={labelCls}>Show</span>
-          <select value={status} onChange={(e) => setStatus(e.target.value as '' | TransferStatus)} className="s-select">
+          <Select value={status} onChange={(e) => setStatus(e.target.value as '' | TransferStatus)} className="s-select">
             <option value="">All transfers</option>
             <option value="submitted">Waiting for the CEO</option>
             <option value="posted">Posted</option>
             <option value="rejected">Rejected</option>
             <option value="reversed">Reversed</option>
-          </select>
+          </Select>
         </label>
         {companies?.can.prepare && !showForm && (
           <button type="button" className="s-btn-primary text-sm" onClick={() => setShowForm(true)}>New transfer</button>
@@ -532,10 +533,10 @@ function PairBankSelect({ id, label, banks, value, onChange }: {
   return (
     <label className="block" htmlFor={id}>
       <span className={labelCls}>{label}{banks.length > 1 ? ' *' : ''}</span>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="s-select" required={banks.length > 1}>
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="s-select" required={banks.length > 1}>
         <option value="">{banks.length === 1 ? `${banks[0]!.name} (only bank)` : banks.length === 0 ? 'Operating account (1020)' : '— pick the bank —'}</option>
         {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
-      </select>
+      </Select>
     </label>
   )
 }
@@ -605,23 +606,23 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label className="block">
           <span className={labelCls}>Type</span>
-          <select value={kind} onChange={(e) => setKind(e.target.value as TransferKind)} className="s-select">
+          <Select value={kind} onChange={(e) => setKind(e.target.value as TransferKind)} className="s-select">
             <option value="charge">Charge — one company bore a cost for the other</option>
             <option value="settlement">Settlement — money paid between them</option>
             <option value="netting">Netting — offset what each owes the other</option>
-          </select>
+          </Select>
         </label>
         <label className="block">
           <span className={labelCls}>{words.debtor}</span>
-          <select value={debtor} onChange={(e) => setDebtor(e.target.value)} className="s-select">
+          <Select value={debtor} onChange={(e) => setDebtor(e.target.value)} className="s-select">
             {list.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
         </label>
         <label className="block">
           <span className={labelCls}>{words.creditor}</span>
-          <select value={creditor} onChange={(e) => setCreditor(e.target.value)} className="s-select">
+          <Select value={creditor} onChange={(e) => setCreditor(e.target.value)} className="s-select">
             {list.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </Select>
         </label>
         <label className="block">
           <span className={labelCls}>Amount (PKR)</span>
@@ -651,9 +652,9 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
           <>
             <label className="block" htmlFor="ic-method">
               <span className={labelCls}>Paid by</span>
-              <select id="ic-method" value={method} onChange={(e) => setMethod(e.target.value as SettlementMethod)} className="s-select">
+              <Select id="ic-method" value={method} onChange={(e) => setMethod(e.target.value as SettlementMethod)} className="s-select">
                 {SETTLEMENT_METHODS.map((m) => <option key={m} value={m}>{receiptMethodLabel(m)}</option>)}
-              </select>
+              </Select>
             </label>
             <label className="block" htmlFor="ic-ref">
               <span className={labelCls}>Payment reference # *</span>

@@ -53,6 +53,7 @@ import {
   EvidenceFiles, RecoveryDialog, WRITE_OFF_STATUS, WriteOffDecisionDialog, WriteOffDialog, receivablesErrorMessage,
   type DecisionMode, type WriteOffRow,
 } from '../../../components/finance/WriteOffDialog'
+import { Select } from '@/components/ui/Select'
 
 type PaymentKind = 'payment' | 'withholding' | 'refund'
 interface Payment {
@@ -528,8 +529,8 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
         <L t="Email"><input className={inp} value={f.customerEmail} onChange={set('customerEmail')} /></L>
         <L t="Phone"><input className={inp} value={f.customerPhone} onChange={set('customerPhone')} /></L>
         <L t="NTN"><input className={inp} value={f.customerNtn} onChange={set('customerNtn')} /></L>
-        <L t="Brand"><select className={inp} value={f.conceptId} onChange={set('conceptId')}>
-          <option value="">—</option>{concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></L>
+        <L t="Brand"><Select className={inp} value={f.conceptId} onChange={set('conceptId')}>
+          <option value="">—</option>{concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></L>
         <L t="Issued"><input type="date" className={inp} value={f.issueDate} onChange={set('issueDate')} /></L>
         <L t="Due"><input type="date" className={inp} value={f.dueDate} onChange={set('dueDate')} /></L>
         <div className="sm:col-span-2"><L t="What for"><input className={inp} value={f.description} onChange={set('description')} placeholder="Office lunch, 40 covers, 12 Sep" /></L></div>
@@ -779,8 +780,8 @@ function Refund({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <L t="Refund (PKR)"><input type="number" min={0} className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} /></L>
         <L t="Paid on"><input type="date" className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
-        <L t="Method"><select className={inp} value={method} onChange={(e) => setMethod(e.target.value)}>
-          {REFUND_METHODS.map((m) => <option key={m} value={m}>{receiptMethodLabel(m)}</option>)}</select></L>
+        <L t="Method"><Select className={inp} value={method} onChange={(e) => setMethod(e.target.value)}>
+          {REFUND_METHODS.map((m) => <option key={m} value={m}>{receiptMethodLabel(m)}</option>)}</Select></L>
         <L t="Reference"><input className={inp} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Cheque / txn no." /></L>
         {usesBank && (
           <div className="sm:col-span-2">

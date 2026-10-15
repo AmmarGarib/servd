@@ -13,6 +13,7 @@ import {
 } from '../../components/pos/tillApi'
 import { useCanPrintBill } from '../../components/pos/useCanPrintBill'
 import { orderRef } from '../../lib/orderRef'
+import { Select } from '@/components/ui/Select'
 
 // The full & final bill exists only once an order reached it (spec §17.1):
 // completed, or since refunded / cancelled / rejected (bannered so), or paid
@@ -356,18 +357,18 @@ export default function OrdersPage() {
             {tab === 'history' && (
               <div className="space-y-4">
                 <div className="flex flex-wrap gap-3">
-                  <select value={source} onChange={(e) => setSource(e.target.value)} className={sel}>
+                  <Select value={source} onChange={(e) => setSource(e.target.value)} className={sel}>
                     <option value="">All sources</option>
                     {['pos','servd','cart','manual'].map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
-                  </select>
-                  <select value={status} onChange={(e) => setStatus(e.target.value)} className={sel}>
+                  </Select>
+                  <Select value={status} onChange={(e) => setStatus(e.target.value)} className={sel}>
                     <option value="">All statuses</option>
                     {['received','confirmed','preparing','ready','completed','refunded','cancelled','rejected'].map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
-                  </select>
+                  </Select>
                   <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={sel} />
                   {(source || status || dateFrom) && (
                     <button onClick={() => { setSource(''); setStatus(''); setDateFrom('') }}

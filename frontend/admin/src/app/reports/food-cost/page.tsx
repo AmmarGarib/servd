@@ -19,6 +19,7 @@ import { ValuationTab } from './components/ValuationTab'
 import { FlagsTab } from './components/FlagsTab'
 import { ErrorNote } from './components/ui'
 import type { SummaryResponse } from './components/types'
+import { Select } from '@/components/ui/Select'
 
 type Tab = 'summary' | 'ingredients' | 'valuation' | 'flags'
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -102,18 +103,18 @@ export default function FoodCostReportPage() {
           {tab === 'summary' && (
             <label className="text-xs text-s-muted">
               <span className="block">Brand</span>
-              <select className="s-select w-auto" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
+              <Select className="s-select w-auto" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
                 <option value="">All brands</option>
                 {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+              </Select>
             </label>
           )}
           {tab !== 'summary' && companies.length > 1 && (
             <label className="text-xs text-s-muted">
               <span className="block">Company</span>
-              <select className="s-select w-auto" value={company?.tenantId ?? ''} onChange={(e) => setCompanyId(e.target.value)}>
+              <Select className="s-select w-auto" value={company?.tenantId ?? ''} onChange={(e) => setCompanyId(e.target.value)}>
                 {companies.map((c) => <option key={c.tenantId} value={c.tenantId}>{c.companyName}</option>)}
-              </select>
+              </Select>
             </label>
           )}
         </div>

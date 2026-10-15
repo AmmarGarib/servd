@@ -13,6 +13,7 @@ import {
 } from '../../lib/connectorsApi'
 import { useCompanyLocations } from './PosIdsTable'
 import { Badge, Card, ErrorLine, Field, OkLine, RangeNumberInput, TestBadge, fmtWhen } from './ui'
+import { Select } from '@/components/ui/Select'
 
 const TERMINAL_TEST_SCENARIOS = ['approve', 'decline', 'never', 'unknown_start', 'late_approve', 'void_fails', 'offline', 'by_amount'] as const
 
@@ -87,10 +88,10 @@ export function TerminalSetup({ data, canEdit, activeTenantId }: { data: Connect
         {!canEdit && <p className="text-xs text-s-muted">Read-only — the CEO and IT configure the card machine.</p>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Driver" htmlFor="tm-driver" hint={driver === 'test' ? 'Built in — no money moves. For rehearsing the till flow.' : undefined}>
-            <select id="tm-driver" className="s-select" disabled={!canEdit} value={driver} onChange={(e) => { setDriver(e.target.value); if (e.target.value === 'none') { setEnabled(false); setS({ ...s, allowManualRef: true }) } }}>
+            <Select id="tm-driver" className="s-select" disabled={!canEdit} value={driver} onChange={(e) => { setDriver(e.target.value); if (e.target.value === 'none') { setEnabled(false); setS({ ...s, allowManualRef: true }) } }}>
               {termDrivers.length === 0 && <option value={t.driver}>{t.driver}</option>}
               {termDrivers.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Shown at the till" hint="When on, cashiers see “Charge on card machine”.">
             <label className="flex items-center gap-2 text-sm">
@@ -162,9 +163,9 @@ export function TerminalSetup({ data, canEdit, activeTenantId }: { data: Connect
         </label>
         {driver === 'test' && (
           <Field label="Test driver behaviour">
-            <select className="s-select max-w-[260px]" disabled={!canEdit} value={s.test?.scenario ?? 'approve'} onChange={(e) => setS({ ...s, test: { scenario: e.target.value } })}>
+            <Select className="s-select max-w-[260px]" disabled={!canEdit} value={s.test?.scenario ?? 'approve'} onChange={(e) => setS({ ...s, test: { scenario: e.target.value } })}>
               {TERMINAL_TEST_SCENARIOS.map((x) => <option key={x} value={x}>{x.replace(/_/g, ' ')}</option>)}
-            </select>
+            </Select>
           </Field>
         )}
       </Card>
@@ -181,10 +182,10 @@ export function TerminalSetup({ data, canEdit, activeTenantId }: { data: Connect
                     <td><input aria-label="Label" className="s-input w-[150px] text-xs" disabled={!canEdit} value={r.label} maxLength={80} onChange={(e) => setRow(i, { label: e.target.value })} placeholder="Counter 1" /></td>
                     <td>
                       {canEdit ? (
-                        <select aria-label="Outlet" className="s-select min-w-[150px] text-xs" value={r.locationId} onChange={(e) => setRow(i, { locationId: e.target.value })}>
+                        <Select aria-label="Outlet" className="s-select min-w-[150px] text-xs" value={r.locationId} onChange={(e) => setRow(i, { locationId: e.target.value })}>
                           <option value="">Pick an outlet…</option>
                           {locations.data.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                        </select>
+                        </Select>
                       ) : locName(r.locationId)}
                     </td>
                     <td><input aria-label="Vendor terminal ID" className="s-input w-[150px] font-mono text-xs" disabled={!canEdit} value={r.terminalId} maxLength={64} onChange={(e) => setRow(i, { terminalId: e.target.value })} /></td>
@@ -220,10 +221,10 @@ export function TerminalSetup({ data, canEdit, activeTenantId }: { data: Connect
       <Card title="Test card machine" subtitle="Asks the processor whether the machine is online. No money moves.">
         <div className="flex flex-wrap items-end gap-2">
           <Field label="Machine">
-            <select className="s-select min-w-[180px]" value={testTerminal} onChange={(e) => setTestTerminal(e.target.value)}>
+            <Select className="s-select min-w-[180px]" value={testTerminal} onChange={(e) => setTestTerminal(e.target.value)}>
               <option value="">First machine</option>
               {t.settings.terminals.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-            </select>
+            </Select>
           </Field>
           <button className="s-btn-secondary" disabled={!canEdit || test.isPending || t.driver === 'none'} onClick={() => { setTestResult(null); test.mutate() }}>
             {test.isPending ? 'Testing…' : 'Test card machine'}

@@ -19,6 +19,7 @@ import {
   FA_BASE, L, Modal, ErrorLine, inp, btnPrimary, btnGhost, money, todayIso, fmtLife, forCompany,
   type FaAsset, type FaLookups, type FaRequest,
 } from './shared'
+import { Select } from '@/components/ui/Select'
 
 export interface RequestResult {
   status: 'pending' | 'posted'
@@ -170,9 +171,9 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
             <>
               <div className="grid grid-cols-2 gap-3">
                 <L t="What happened">
-                  <select className={inp} value={dKind} onChange={(e) => setDKind(e.target.value)}>
+                  <Select className={inp} value={dKind} onChange={(e) => setDKind(e.target.value)}>
                     {lookups.disposalKinds.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
-                  </select>
+                  </Select>
                 </L>
                 <L t="Date"><input type="date" className={inp} value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} /></L>
               </div>
@@ -245,17 +246,17 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
           {kind === 'transfer' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <L t="Outlet">
-                <select className={inp} value={toLocation} onChange={(e) => setToLocation(e.target.value)}>
+                <Select className={inp} value={toLocation} onChange={(e) => setToLocation(e.target.value)}>
                   <option value="__keep">{asset.locationName ? `Stay at ${asset.locationName}` : 'No change'}</option>
                   {outlets.filter((o) => o.id !== asset.locationId).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
+                </Select>
               </L>
               <L t="Brand">
-                <select className={inp} value={toConcept} onChange={(e) => setToConcept(e.target.value)}>
+                <Select className={inp} value={toConcept} onChange={(e) => setToConcept(e.target.value)}>
                   <option value="__keep">{asset.conceptName ? `Stay with ${asset.conceptName}` : 'No change (shared)'}</option>
                   {asset.conceptId && <option value="__shared">Shared across brands</option>}
                   {brands.filter((b) => b.id !== asset.conceptId).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
+                </Select>
               </L>
               {sharedWithoutLocation && (
                 <p className="sm:col-span-2 text-xs" style={{ color: 'var(--erp-warning)' }}>Shared equipment needs its location. Pick the outlet it is at.</p>
@@ -379,35 +380,35 @@ export function PoolRequestModal({ pool, kind, lookups, willWait, initialUnits, 
 
           {kind === 'write_off' && (
             <L t="Cause">
-              <select className={inp} value={cause} onChange={(e) => setCause(e.target.value)}>
+              <Select className={inp} value={cause} onChange={(e) => setCause(e.target.value)}>
                 {lookups.writeOffCauses.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-              </select>
+              </Select>
             </L>
           )}
 
           {kind === 'transfer_units' && (
             <>
               <L t="Move to">
-                <select className={inp} value={dest} onChange={(e) => setDest(e.target.value)}>
+                <Select className={inp} value={dest} onChange={(e) => setDest(e.target.value)}>
                   <option value="">Pick where the units go</option>
                   {sameTypePools.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                   <option value="__other">Another outlet (new pool if needed)</option>
-                </select>
+                </Select>
               </L>
               {dest === '__other' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <L t="Outlet">
-                    <select className={inp} value={toLocation} onChange={(e) => setToLocation(e.target.value)}>
+                    <Select className={inp} value={toLocation} onChange={(e) => setToLocation(e.target.value)}>
                       <option value="">Pick an outlet</option>
                       {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
+                    </Select>
                   </L>
                   <L t="Brand">
-                    <select className={inp} value={toConcept} onChange={(e) => setToConcept(e.target.value)}>
+                    <Select className={inp} value={toConcept} onChange={(e) => setToConcept(e.target.value)}>
                       <option value="__same">Same brand as this pool</option>
                       <option value="__shared">Shared across brands</option>
                       {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                    </select>
+                    </Select>
                   </L>
                 </div>
               )}

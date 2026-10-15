@@ -16,6 +16,7 @@ import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
 import { fmtPkrWhole } from '../../lib/money'
 import { useManagerRoles } from '../../lib/roles'
+import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 interface StaffMember { id: string; name: string; employeeCode: string; designation: string | null; canHaveExceptions: boolean }
@@ -100,10 +101,10 @@ export default function SchedulingPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="s-input text-sm px-3 py-2 rounded-xl min-w-[180px]" aria-label="Brand">
+        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="s-input text-sm px-3 py-2 rounded-xl min-w-[180px]" aria-label="Brand">
           <option value="">Select brand…</option>
           {concepts?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        </Select>
         <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Previous week">‹</button>
         <span className="text-sm font-semibold px-2" style={{ color: 'rgb(var(--fg-rgb) / 0.7)' }}>{fmtDay(dates[0]!)} – {fmtDay(dates[6]!)}</span>
         <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Next week">›</button>
@@ -241,10 +242,10 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
         <div className="space-y-3">
           {shifts.length > 0 && (
             <div className="flex gap-2">
-              <select value={shiftId} onChange={(e) => setShiftId(e.target.value)} className="s-input flex-1 text-sm px-3 py-2 rounded-xl" aria-label="Shift">
+              <Select value={shiftId} onChange={(e) => setShiftId(e.target.value)} className="s-input flex-1 text-sm px-3 py-2 rounded-xl" aria-label="Shift">
                 <option value="">Work a shift from the shift master…</option>
                 {shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.start}–{s.end})</option>)}
-              </select>
+              </Select>
               <button disabled={!shiftId || add.isPending} onClick={() => add.mutate({ shiftId, ...(notes && { notes }) })}
                 className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.12)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)', color: 'var(--erp-primary-ink)' }}>Set</button>
             </div>

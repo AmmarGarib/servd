@@ -7,6 +7,7 @@ import { ReachOutModal } from '../../components/crm/ReachOutModal'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { useBrandFilter } from '../../store/brandFilter'
 import { orderRef } from '../../lib/orderRef'
+import { Select } from '@/components/ui/Select'
 
 interface Review {
   id: string
@@ -117,18 +118,18 @@ export default function ReviewsPage() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-s-muted">Concept</label>
-              <select value={manualForm.conceptId} onChange={(e) => setManualForm({ ...manualForm, conceptId: e.target.value })}
+              <Select value={manualForm.conceptId} onChange={(e) => setManualForm({ ...manualForm, conceptId: e.target.value })}
                 className={inp}>
                 <option value="">Select…</option>
                 {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs text-s-muted">Rating</label>
-              <select value={manualForm.rating} onChange={(e) => setManualForm({ ...manualForm, rating: Number(e.target.value) })}
+              <Select value={manualForm.rating} onChange={(e) => setManualForm({ ...manualForm, rating: Number(e.target.value) })}
                 className={inp}>
                 {STARS.map((s) => <option key={s} value={s}>{s} star{s > 1 ? 's' : ''}</option>)}
-              </select>
+              </Select>
             </div>
             <div className="col-span-2">
               <label className="text-xs text-s-muted">Comment (optional)</label>
@@ -179,14 +180,14 @@ export default function ReviewsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
-        <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={`${inp} w-auto`}>
+        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All concepts</option>
           {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={ratingFilter} onChange={(e) => setRatingFilter(e.target.value)} className={`${inp} w-auto`}>
+        </Select>
+        <Select value={ratingFilter} onChange={(e) => setRatingFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All ratings</option>
           {STARS.map((s) => <option key={s} value={s}>{s} star{s > 1 ? 's' : ''}</option>)}
-        </select>
+        </Select>
       </div>
 
       {/* Reviews list */}

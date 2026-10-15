@@ -12,6 +12,7 @@ import {
 } from '../../lib/content'
 import { StatusBadge } from './panels'
 import { useSectionCatalog } from '../../lib/sections'
+import { Select } from '@/components/ui/Select'
 
 const pageHref = (slug: string) => `/storefront/pages/${encodeURIComponent(slug)}`
 const popupHref = (slug: string) => `/storefront/popups/${encodeURIComponent(slug.slice('popup:'.length))}`
@@ -122,10 +123,10 @@ export function PagesPanel() {
     <div className="s-card p-4 flex flex-wrap items-end gap-3">
       <label className="min-w-[160px]">
         <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Site</span>
-        <select value={owner} onChange={(e) => setOwner(e.target.value)} className="s-select">
+        <Select value={owner} onChange={(e) => setOwner(e.target.value)} className="s-select">
           <option value="servd">servd.pk</option>
           {brandList.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
-        </select>
+        </Select>
       </label>
       <label className="flex-1 min-w-[180px]">
         <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Address</span>
@@ -235,10 +236,10 @@ export function PopupsPanel() {
           </label>
           <label className="min-w-[160px]">
             <span className="block text-[11px] text-s-muted font-semibold mb-1 uppercase tracking-wider">Type</span>
-            <select value={popupKind} onChange={(e) => setPopupKind(e.target.value as PopupRules['popupKind'])} className="s-select">
+            <Select value={popupKind} onChange={(e) => setPopupKind(e.target.value as PopupRules['popupKind'])} className="s-select">
               <option value="signup">Sign-up</option><option value="login">Log-in</option>
               <option value="offer">Offer</option><option value="announcement">Announcement</option>
-            </select>
+            </Select>
           </label>
           <button type="button" onClick={create} disabled={busy} className="s-btn-primary text-xs">{busy ? 'Creating...' : 'Create draft'}</button>
           {err && <p className="w-full text-xs text-s-red">{err}</p>}

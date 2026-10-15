@@ -26,6 +26,7 @@ import { BankAccountSelect, useBankAccounts } from '../../../components/finance/
 import { useAuthStore } from '../../../store/auth'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
+import { Select } from '@/components/ui/Select'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
 
@@ -254,11 +255,11 @@ function ExpenseAccountSelect({ tenantId, value, onChange, id, emptyLabel = '—
 }) {
   const { accounts, isLoading, isError } = useExpenseAccounts(tenantId)
   return (
-    <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={fieldCls} disabled={isLoading || isError}>
+    <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={fieldCls} disabled={isLoading || isError}>
       <option value="">{isError ? 'Chart of accounts unavailable' : emptyLabel}</option>
       {value && !accounts.some((a) => a.code === value) && <option value={value}>{value}</option>}
       {accounts.map((a) => <option key={a.id} value={a.code}>{a.code} · {a.name}</option>)}
-    </select>
+    </Select>
   )
 }
 
@@ -831,10 +832,10 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         <div>
           <label htmlFor={`opex-vendor-${line?.id ?? 'new'}`} className="text-xs text-white/55">Vendor (supplier)</label>
           <div className="mt-1">
-            <select id={`opex-vendor-${line?.id ?? 'new'}`} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls} disabled={vendors.isLoading}>
+            <Select id={`opex-vendor-${line?.id ?? 'new'}`} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls} disabled={vendors.isLoading}>
               <option value="">{vendors.isError ? 'Suppliers unavailable' : '— no supplier picked —'}</option>
               {(vendors.data ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
+            </Select>
           </div>
           {picked && (
             <Hint>
@@ -862,25 +863,25 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         <Hint>{PKR(amountCents)}{CADENCE_LABELS[cadence]} — the invoice you expect, sales tax included</Hint>
       </Field>
       <Field label="Cadence">
-        <select value={cadence} onChange={(e) => setCadence(e.target.value as Cadence)} className={fieldCls}>
+        <Select value={cadence} onChange={(e) => setCadence(e.target.value as Cadence)} className={fieldCls}>
           <option value="monthly">Monthly</option>
           <option value="quarterly">Quarterly</option>
           <option value="annual">Annual</option>
           <option value="per_use">Per use</option>
-        </select>
+        </Select>
       </Field>
     </div>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <Field label="Next due"><input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls} /></Field>
       <Field label="Payment method">
-        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={fieldCls}>
+        <Select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={fieldCls}>
           <option value="">—</option>
           <option value="bank_transfer">Bank transfer</option>
           <option value="card">Card</option>
           <option value="cash">Cash</option>
           <option value="auto_debit">Auto-debit</option>
           <option value="cheque">Cheque</option>
-        </select>
+        </Select>
       </Field>
     </div>
     {!paidInCash && (
@@ -894,16 +895,16 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
       <Section heading="Tax">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Income tax withheld (section)">
-            <select value={whtSection} onChange={(e) => setWhtSection(e.target.value as WhtSection | '')} className={fieldCls}>
+            <Select value={whtSection} onChange={(e) => setWhtSection(e.target.value as WhtSection | '')} className={fieldCls}>
               <option value="">None</option>
               {(Object.keys(WHT_SECTION_LABEL) as WhtSection[]).map((k) => <option key={k} value={k}>{WHT_SECTION_LABEL[k]}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Sales tax usually charged by">
-            <select value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value as Authority | '')} className={fieldCls}>
+            <Select value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value as Authority | '')} className={fieldCls}>
               <option value="">— not usually charged —</option>
               {(Object.keys(AUTHORITY_LABEL) as Authority[]).map((k) => <option key={k} value={k}>{AUTHORITY_LABEL[k]}</option>)}
-            </select>
+            </Select>
           </Field>
         </div>
         <Hint>
@@ -1228,18 +1229,18 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
             </div>
             <div>
               <label htmlFor={`auth-${idp}`} className="text-[11px] text-white/55">Charged by</label>
-              <select id={`auth-${idp}`} value={authority} onChange={(e) => setAuthority(e.target.value as Authority | '')} className={fieldCls}>
+              <Select id={`auth-${idp}`} value={authority} onChange={(e) => setAuthority(e.target.value as Authority | '')} className={fieldCls}>
                 <option value="">{inputTaxCents > 0 ? '— pick who charged it —' : '— no sales tax —'}</option>
                 {(Object.keys(AUTHORITY_LABEL) as Authority[]).map((k) => <option key={k} value={k}>{AUTHORITY_LABEL[k]}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label htmlFor={`sec-${idp}`} className="text-[11px] text-white/55">Income tax withheld</label>
-              <select id={`sec-${idp}`} value={section} onChange={(e) => setSection(e.target.value as SectionChoice)} className={fieldCls}>
+              <Select id={`sec-${idp}`} value={section} onChange={(e) => setSection(e.target.value as SectionChoice)} className={fieldCls}>
                 {!wasPaid && <option value="usual">{usualSection ? `The line's usual — ${WHT_SECTION_LABEL[usualSection]}` : 'The line\'s usual — none'}</option>}
                 <option value="none">None</option>
                 {(Object.keys(WHT_SECTION_LABEL) as WhtSection[]).map((k) => <option key={k} value={k}>{WHT_SECTION_LABEL[k]}</option>)}
-              </select>
+              </Select>
             </div>
           </div>
           {inputTaxCents > 0 && <p className="text-[11px] text-white/45">The sales tax is input tax, set off only against {authority ? AUTHORITY_LABEL[authority] : 'the authority that charged it'}.</p>}
@@ -1292,10 +1293,10 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
             <div>
               <label htmlFor={`tr-${idp}`} className="text-[11px] text-white/55">This payment is</label>
-              <select id={`tr-${idp}`} value={treatment} onChange={(e) => setTreatment(e.target.value as 'expense' | 'prepaid')} className={fieldCls}>
+              <Select id={`tr-${idp}`} value={treatment} onChange={(e) => setTreatment(e.target.value as 'expense' | 'prepaid')} className={fieldCls}>
                 <option value="expense">An expense of this period</option>
                 <option value="prepaid">Paid ahead (e.g. a rent advance)</option>
-              </select>
+              </Select>
             </div>
             {treatment === 'prepaid' && (
               <>
