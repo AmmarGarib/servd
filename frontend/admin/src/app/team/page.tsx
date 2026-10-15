@@ -15,6 +15,7 @@ import { usePermissions } from '../../hooks/useCan'
 import { useTeam, treeOrder, isInToday, TODAY_META } from '../../hooks/useTeam'
 import { roleLabel } from '../../lib/appRoles'
 import { Select } from '@/components/ui/Select'
+import { useIsPracticeCopy } from '@/components/SandboxBanner'
 
 interface Invite {
   id: string
@@ -133,18 +134,27 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
   const [employeeId, setEmployeeId] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
-  const needsPhone = CODE_LOGIN_ROLES.has(role)
+  // Practice copy (owner, 2026-10-15): a name and a role only, active at once,
+  // and the sign-in (generated email + password) shown here once.
+  const practice = useIsPracticeCopy()
+  const [issued, setIssued] = useState<{ name: string; email: string; password: string } | null>(null)
+  const needsPhone = !practice && CODE_LOGIN_ROLES.has(role)
 
   const invite = useMutation({
-    mutationFn: () => api.post('/auth/staff/invite', {
+    mutationFn: () => api.post<{ name: string; email: string; temporaryPassword?: string }>('/auth/staff/invite', {
       name: name.trim(),
-      email: email.trim().toLowerCase(),
-      ...(phone.trim() ? { phone: phone.trim() } : {}),
+      ...(practice ? {} : { email: email.trim().toLowerCase() }),
+      ...(!practice && phone.trim() ? { phone: phone.trim() } : {}),
       role,
-      ...(employeeId ? { employeeId } : {}),
+      ...(!practice && employeeId ? { employeeId } : {}),
     }),
-    onSuccess: () => {
-      setDone(`${name.trim()} is waiting for the CEO's approval.`)
+    onSuccess: (created) => {
+      if (practice && created?.temporaryPassword) {
+        setIssued({ name: created.name, email: created.email, password: created.temporaryPassword })
+        setDone(null)
+      } else {
+        setDone(`${name.trim()} is waiting for the CEO's approval.`)
+      }
       setName(''); setEmail(''); setPhone(''); setEmployeeId('')
       void qc.invalidateQueries({ queryKey: ['staff', 'invites'] })
     },
@@ -159,9 +169,9 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    setErr(null); setDone(null)
+    setErr(null); setDone(null); setIssued(null)
     if (!name.trim()) return setErr('Type their name.')
-    if (!email.trim()) return setErr('An email is required — it is how they sign in.')
+    if (!practice && !email.trim()) return setErr('An email is required — it is how they sign in.')
     if (!role || !childRoles.includes(role)) return setErr('Pick a role.')
     if (needsPhone && phone.replace(/\D/g, '').length < 10) {
       return setErr('Add their mobile number — cashiers, servers and kitchen staff sign in with a code sent to it.')
@@ -172,9 +182,22 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
   return (
     <section id="add-login" className="rounded-2xl p-4" style={card}>
       <p className="text-sm font-black text-white/85">Add a login</p>
-      <p className="text-xs text-white/45 mt-1">The CEO approves each one before it can sign in. Once approved they get a link to set their own password, or the CEO gives them one.</p>
+      <p className="text-xs text-white/45 mt-1">
+        {practice
+          ? 'Practice copy: just a name and a role. The login works straight away — no approval — and you get its sign-in to hand over.'
+          : 'The CEO approves each one before it can sign in. Once approved they get a link to set their own password, or the CEO gives them one.'}
+      </p>
+      {issued && (
+        <div className="mt-3 rounded-lg p-3 space-y-1.5" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
+          <p className="text-xs font-bold text-success">{issued.name} can sign in now. The password is shown once.</p>
+          <p className="text-[11px] text-white/45">Email</p>
+          <p className="font-mono text-sm text-white/85 break-all select-all">{issued.email}</p>
+          <p className="text-[11px] text-white/45">Password</p>
+          <p className="font-mono text-sm font-bold text-white/85 break-all select-all">{issued.password}</p>
+        </div>
+      )}
       <form onSubmit={submit} className="mt-3 space-y-2.5">
-        {employees.length > 0 && (
+        {!practice && employees.length > 0 && (
           <label className="block">
             <span className="text-[11px] text-white/45">Someone on your team (optional)</span>
             <Select value={employeeId} onChange={(e) => pickEmployee(e.target.value)} className={input}>
@@ -187,6 +210,7 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
           <span className="text-[11px] text-white/45">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} name="login-name" autoComplete="off" className={input} />
         </label>
+        {!practice && (<>
         <label className="block">
           <span className="text-[11px] text-white/45">Email</span>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} name="login-email"
@@ -198,6 +222,7 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
           </span>
           <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="login-phone" autoComplete="off" required={needsPhone} className={input} />
         </label>
+        </>)}
         <label className="block">
           <span className="text-[11px] text-white/45">Role</span>
           <Select value={role} onChange={(e) => setRole(e.target.value)} className={input}>
@@ -208,7 +233,7 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
         {done && <p className="text-xs font-bold text-success">{done}</p>}
         <button type="submit" disabled={invite.isPending}
           className="rounded-lg px-3 py-2 text-xs font-black disabled:opacity-50" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
-          {invite.isPending ? 'Sending…' : 'Send for approval'}
+          {invite.isPending ? (practice ? 'Adding…' : 'Sending…') : (practice ? 'Add login' : 'Send for approval')}
         </button>
       </form>
     </section>
@@ -216,6 +241,7 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
 }
 
 function MyInvites() {
+  const practice = useIsPracticeCopy()
   const { data: invites = [], isLoading } = useQuery<Invite[]>({
     queryKey: ['staff', 'invites'],
     queryFn: () => api.get<Invite[]>('/auth/staff/invites'),
@@ -224,7 +250,7 @@ function MyInvites() {
   return (
     <section className="rounded-2xl overflow-hidden" style={card}>
       <p className="px-4 pt-4 text-sm font-black text-white/85">Logins I&rsquo;ve added</p>
-      <p className="px-4 pb-2 text-[11px] text-white/40">The CEO approves each one.</p>
+      <p className="px-4 pb-2 text-[11px] text-white/40">{practice ? 'Practice copy: they work straight away.' : 'The CEO approves each one.'}</p>
       {isLoading && <p className="px-4 pb-4 text-xs text-white/40">Loading…</p>}
       {!isLoading && invites.length === 0 && <p className="px-4 pb-4 text-xs text-white/40">None yet.</p>}
       {invites.map((i) => {

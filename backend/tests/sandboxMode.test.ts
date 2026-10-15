@@ -952,3 +952,64 @@ describe('scrub of the copied live data', () => {
     }
   })
 })
+
+// ── Staff logins from a name and a role (owner, 2026-10-15) ─────────────────
+
+describe('adding staff logins', () => {
+  let fnbAuth: Record<string, string> = {}
+  beforeAll(async () => {
+    const f = await makeUser({ role: 'fnb_manager', tenantId: tenantA, email: `${PREFIX}.fnb@gsfoods.pk` })
+    fnbAuth = { authorization: `Bearer ${issueStaffSession({ id: f.id, name: f.name ?? '', email: f.email, role: f.role }).accessToken}` }
+  })
+  async function track(email: string) {
+    const u = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+    if (u) users.push(u.id)
+    return u
+  }
+
+  it('live: an invite still needs an email (and a phone for floor roles), waits for the CEO and returns no password', async () => {
+    const noEmail = await inject('POST', '/api/v1/auth/staff/invite', { name: 'Live Nameonly', role: 'cashier' }, fnbAuth)
+    expect(noEmail.status).toBe(400)
+    const noPhone = await inject('POST', '/api/v1/auth/staff/invite', { name: 'Live Nophone', role: 'cashier', email: `${PREFIX}.live1@gsfoods.pk` }, fnbAuth)
+    expect(noPhone.status).toBe(400)
+    expect(noPhone.body.error.code).toBe('PHONE_REQUIRED')
+    const ok = await inject('POST', '/api/v1/auth/staff/invite', { name: 'Live Invite', role: 'kitchen', email: `${PREFIX}.live2@gsfoods.pk`, phone: `0301${String(STAMP).slice(-7)}` }, fnbAuth)
+    expect(ok.status).toBe(201)
+    await track(ok.body.email)
+    expect(ok.body.status).toBe('pending')
+    expect('temporaryPassword' in ok.body).toBe(false)
+  })
+
+  it('practice copy: a name and a role make an ACTIVE login that signs in with the password shown once', async () => {
+    practice(true)
+    const r = await inject('POST', '/api/v1/auth/staff/invite', { name: 'Practice Cashier', role: 'cashier' }, fnbAuth)
+    expect(r.status).toBe(201)
+    await track(r.body.email)
+    expect(r.body.status).toBe('active')
+    expect(r.body.email).toMatch(/^practice\.practice\.cashier\.[0-9a-f]{6}@gsfoods\.pk$/)
+    expect(r.body.temporaryPassword).toBeTruthy()
+    const login = await inject('POST', '/api/v1/auth/login', { email: r.body.email, password: r.body.temporaryPassword })
+    expect(login.status).toBe(200)
+    expect(login.body.accessToken).toBeTruthy()
+
+    // The same floor login on live servd still cannot use a password.
+    practice(false)
+    const live = await inject('POST', '/api/v1/auth/login', { email: r.body.email, password: r.body.temporaryPassword })
+    expect(live.status).toBe(403)
+    expect(live.body.error.code).toBe('USE_CODE_LOGIN')
+  })
+
+  it('practice copy: the CEO adds staff from a name and a role too', async () => {
+    practice(true)
+    const r = await inject('POST', '/api/v1/auth/users', { name: 'Practice Cook', role: 'kitchen', tenantId: tenantA }, adminA)
+    expect(r.status).toBe(201)
+    await track(r.body.email)
+    expect(r.body.email).toMatch(/^practice\.practice\.cook\.[0-9a-f]{6}@gsfoods\.pk$/)
+    expect(r.body.accountStatus).toBe('active')
+    expect(r.body.temporaryPassword).toBeTruthy()
+    // Live: the CEO still has to give an email.
+    practice(false)
+    const live = await inject('POST', '/api/v1/auth/users', { name: 'Live Cook', role: 'kitchen', tenantId: tenantA }, adminA)
+    expect(live.status).toBe(400)
+  })
+})

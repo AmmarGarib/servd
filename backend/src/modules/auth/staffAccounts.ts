@@ -5,6 +5,9 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { normalisePhone } from './otp.js'
 import { usesOtpLogin, OTP_LOGIN_ROLES } from './middleware.js'
 import { approvalInputOf, approvalSubject, assertCanApprove, type ApprovalGrant } from '../../lib/approvalRights.js'
+import { randomBytes } from 'node:crypto'
+import { STAFF_EMAIL_DOMAIN } from '../../lib/staffEmail.js'
+import { isSandbox } from '../../lib/sandbox.js'
 
 /**
  * Staff-account rules shared by every route that creates, edits, approves or
@@ -48,6 +51,9 @@ export function normaliseStaffPhoneLenient(raw: string | null | undefined): stri
  * than discovered at the till.
  */
 export function assertPhoneForRole(role: UserRole | string, phone: string | null): void {
+  // The practice copy sends no codes: its floor logins sign in with a password
+  // (POST /auth/login lets them there), so a phone is optional.
+  if (isSandbox()) return
   if (usesOtpLogin(role) && !phone) {
     throw new AppError(
       'PHONE_REQUIRED',
@@ -55,6 +61,24 @@ export function assertPhoneForRole(role: UserRole | string, phone: string | null
       400,
     )
   }
+}
+
+// ─── Practice copy: logins from a name and a role ───────────────────────────
+
+/**
+ * Practice copy only (owner, 2026-10-15): a login is made from a NAME and a
+ * ROLE, active at once (no CEO approval), and signs in with the generated
+ * email + the password shown once to whoever made it. Email and phone are
+ * optional there; when no email is typed this makes a unique sign-in address
+ * on the company domain. Nothing is ever sent to it (lib/sandbox.ts).
+ */
+export async function practiceStaffEmail(name: string): Promise<string> {
+  const slug = name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 30) || 'staff'
+  for (let i = 0; i < 5; i++) {
+    const email = `practice.${slug}.${randomBytes(3).toString('hex')}@${STAFF_EMAIL_DOMAIN}`
+    if (!await prisma.user.findUnique({ where: { email }, select: { id: true } })) return email
+  }
+  throw new AppError('EMAIL_TAKEN', 'Could not make a free sign-in address. Try again.', 409)
 }
 
 /** Every company a login belongs to: primary + memberships. */

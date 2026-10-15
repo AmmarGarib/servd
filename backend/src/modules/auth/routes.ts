@@ -15,10 +15,10 @@ import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin } from './managerPin.j
 import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
 import {
   normaliseStaffPhone, normaliseStaffPhoneLenient, assertPhoneForRole, assertPhoneFree, withStaffPhoneLock, findManagedStaff,
-  assertCompaniesInScope, staffInCompaniesWhere, auditCompanyOf, loginDecisionRight,
+  assertCompaniesInScope, staffInCompaniesWhere, auditCompanyOf, loginDecisionRight, practiceStaffEmail,
 } from './staffAccounts.js'
 import { maskPhoneForLog } from '../../lib/notify.js'
-import { PRACTICE_NOTE, practiceCodeField, sandboxBlocks, refuseCodeRequestInPractice } from '../../lib/sandbox.js'
+import { PRACTICE_NOTE, practiceCodeField, sandboxBlocks, refuseCodeRequestInPractice, isSandbox } from '../../lib/sandbox.js'
 import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover } from '../../lib/roles.js'
 import type { UserRole } from '@prisma/client'
 import { sendText, whatsappSettingsView, saveWhatsappSettings } from '../../lib/whatsapp.js'
@@ -196,7 +196,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       // written on a sticker or kept after leaving does not open a till.
       // Checked AFTER the password so this cannot be used to find out which
       // addresses are floor staff.
-      if (!result.twoFactorRequired && usesOtpLogin(result.user?.role)) {
+      // The practice copy sends no codes, so its floor logins (made from a
+      // name and a role, below) sign in with the password they were given.
+      if (!result.twoFactorRequired && usesOtpLogin(result.user?.role) && !isSandbox()) {
         throw new AppError(
           'USE_CODE_LOGIN',
           'This account signs in with a code sent to WhatsApp. Tap "Sign in with a code".',
@@ -1011,9 +1013,13 @@ export async function authRoutes(fastify: FastifyInstance) {
   // through (User.viaHeadOfficeId, A3), so it is decided by the CEO or that
   // head office's Operations approver, never the company's own staff.
   fastify.post('/staff/invite', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    // Practice copy (owner, 2026-10-15): a name and a role are enough, and the
+    // login is ACTIVE at once — no CEO approval. Email and phone are optional
+    // there (an address is generated); the password is shown once in the reply.
+    const practice = isSandbox()
     const body = z.object({
       name:       z.string().trim().min(1).max(120),
-      email:      z.string().email().max(200),
+      email:      practice ? z.string().email().max(200).optional().or(z.literal('')) : z.string().email().max(200),
       phone:      z.string().min(7).max(20).optional().or(z.literal('')),
       role:       z.string().min(1),
       employeeId: z.string().min(1).optional(),
@@ -1032,10 +1038,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     if (!tenantId) {
       throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a new login belongs to one company.', 422)
     }
-    if (!isStaffEmail(body.email)) {
+    const typedEmail = body.email || (practice ? await practiceStaffEmail(body.name) : '')
+    if (!isStaffEmail(typedEmail)) {
       throw new AppError('EMAIL_NOT_COMPANY_DOMAIN', STAFF_EMAIL_MESSAGE, 400)
     }
-    const email = normaliseStaffEmail(body.email)
+    const email = normaliseStaffEmail(typedEmail)
     const taken = await prisma.user.findUnique({ where: { email }, select: { id: true } })
     if (taken) throw new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
 
@@ -1055,9 +1062,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     const phone = normaliseStaffPhone(body.phone)
     assertPhoneForRole(body.role, phone)
 
-    // Nobody signs in with this: the invitee sets their own password from the
-    // link sent on approval (or the CEO issues one from Workforce).
-    const password = await hashPassword(generateStaffPassword())
+    // Live: nobody signs in with this — the invitee sets their own password
+    // from the link sent on approval (or the CEO issues one from Workforce).
+    // Practice copy: it is THE sign-in, shown once to the person who added it.
+    const temporaryPassword = generateStaffPassword()
+    const password = await hashPassword(temporaryPassword)
     // Check and write under one per-number lock (AUTH-R5).
     const viaHeadOfficeId = await viaHeadOfficeForSubmit(req, tenantId)
     const user = await withStaffPhoneLock(phone, async (tx) => {
@@ -1070,13 +1079,13 @@ export async function authRoutes(fastify: FastifyInstance) {
           password,
           role: body.role as UserRole,
           tenantId,
-          accountStatus: 'pending',
-          isActive: true,
+          ...(practice ? approveData() : { accountStatus: 'pending' as const, isActive: true }),
           mustChangePassword: true,
           invitedById: req.staffUser!.id,
           ...(viaHeadOfficeId ? { viaHeadOfficeId } : {}),
-          // Linked to the HrEmployee on approval (validated above, re-checked then).
-          ...(body.employeeId ? { inviteEmployeeId: body.employeeId } : {}),
+          // Linked to the HrEmployee on approval (validated above, re-checked
+          // then) — or at once in the practice copy, below.
+          ...(body.employeeId && !practice ? { inviteEmployeeId: body.employeeId } : {}),
           tenantMemberships: { create: [{ tenant: { connect: { id: tenantId } }, role: 'member' }] },
         },
         select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true, createdAt: true, tenantId: true },
@@ -1090,9 +1099,16 @@ export async function authRoutes(fastify: FastifyInstance) {
       userId: req.staffUser!.id,
       userEmail: req.staffUser!.email,
       tenantId,
-      after: { name: user.name, email: user.email, role: user.role, tenantId, employeeId: body.employeeId ?? null },
-      ...(viaHeadOfficeId ? { metadata: { viaHeadOfficeId } } : {}),
+      after: { name: user.name, email: user.email, role: user.role, tenantId, employeeId: body.employeeId ?? null, accountStatus: user.accountStatus },
+      ...(viaHeadOfficeId || practice ? { metadata: { ...(viaHeadOfficeId ? { viaHeadOfficeId } : {}), ...(practice ? { practiceNoApproval: true } : {}) } } : {}),
     })
+    if (practice) {
+      if (body.employeeId) {
+        await prisma.hrEmployee.updateMany({ where: { id: body.employeeId, tenantId, userId: null }, data: { userId: user.id } })
+          .catch((err) => req.log.warn({ err, employeeId: body.employeeId, userId: user.id }, 'practice invite: employee link failed'))
+      }
+      return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined, temporaryPassword })
+    }
     return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined })
   })
 
@@ -1837,7 +1853,10 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     // Email is now mandatory and must be on the company domain: it is the ONLY
     // way to sign in, so creating a staff row without one creates an account
-    // nobody can ever use.
+    // nobody can ever use. Practice copy: a name and a role are enough — an
+    // address is generated when none is typed (owner, 2026-10-15).
+    const practice = isSandbox()
+    if (practice && !body.email) body.email = await practiceStaffEmail(body.name?.trim() || 'staff')
     if (!isStaffEmail(body.email)) {
       return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
     }

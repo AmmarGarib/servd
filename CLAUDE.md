@@ -1075,6 +1075,14 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   reads `SERVD_SANDBOX` exactly as `isSandbox()` does (no trimming) and runs
   in `backend/entrypoint.sh` BEFORE any migration — never move a migration
   step above it.
+- **Practice logins need only a name and a role (owner, 2026-10-15).** With
+  `SERVD_SANDBOX=1`, `POST /auth/staff/invite` and `POST /auth/users` take a
+  name + role (email / phone optional; `practiceStaffEmail` makes
+  `practice.<name>.<hex>@gsfoods.pk`), the login is ACTIVE at once (no CEO
+  approval) and the reply carries `temporaryPassword` once. Floor roles may
+  sign in with that password there (`POST /auth/login`), and
+  `assertPhoneForRole` is a no-op. Live is unchanged (tested both ways in
+  `tests/sandboxMode.test.ts`).
 
 ### Head office and approval hand-over (D1/D3, 2026-10-15)
 

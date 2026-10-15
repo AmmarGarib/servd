@@ -25,6 +25,7 @@ import { PositionsView } from './positions/view'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '@/components/ui/Modal'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { useIsPracticeCopy } from '@/components/SandboxBanner'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -1075,7 +1076,10 @@ function AddStaffModal({
   const [email, setEmail]       = useState('')
   const [phone, setPhone]       = useState('')
   const [category, setCategory] = useState<string>('management')
-  const needsPhone = CODE_LOGIN_CATEGORIES.has(category)
+  // Practice copy (owner, 2026-10-15): a name and a role are enough; the
+  // server generates the sign-in email and every login gets a password.
+  const practice = useIsPracticeCopy()
+  const needsPhone = !practice && CODE_LOGIN_CATEGORIES.has(category)
   const [jobTitle, setJobTitle] = useState('')
   // The generated password, shown ONCE after creation. It is never
   // retrievable again — only the bcrypt hash is stored — so if this screen
@@ -1108,8 +1112,8 @@ function AddStaffModal({
   const create = useMutation({
     mutationFn: () => api.post<StaffUser & { temporaryPassword?: string }>('/auth/users', {
       ...(name.trim() ? { name: name.trim() } : {}),
-      email: email.trim().toLowerCase(),
-      ...(phone.trim() ? { phone: phone.trim() } : {}),
+      ...(practice ? {} : { email: email.trim().toLowerCase() }),
+      ...(!practice && phone.trim() ? { phone: phone.trim() } : {}),
       role: primaryRole,
       ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
       ...(primaryTenantId ? { tenantId: primaryTenantId } : {}),
@@ -1133,11 +1137,15 @@ function AddStaffModal({
   function submit() {
     if (create.isPending) return
     setErr(null)
+    if (practice) {
+      if (!name.trim()) return setErr('Type their name.')
+    } else {
     if (!jobTitle.trim()) return setErr('Type a role / job title so you remember who this is.')
     if (!email.trim()) return setErr('An email is required — it is how they sign in.')
     if (!/@gsfoods\.pk$/i.test(email.trim())) return setErr('Staff sign in with an @gsfoods.pk address.')
     if (needsPhone && phone.replace(/\D/g, '').length < 10) {
       return setErr('Add their mobile number — till and kitchen staff sign in with a code sent to it.')
+    }
     }
     if (tenants.length > 0 && tenantIds.length === 0) return setErr('Pick at least one company this hire works for.')
     create.mutate()
@@ -1185,12 +1193,19 @@ function AddStaffModal({
         ) : (
         <form onSubmit={(e) => { e.preventDefault(); submit() }} autoComplete="off">
         <p className="text-xs text-s-muted mb-4">
-          Their email is how they sign in, so it is required and must be
-          @gsfoods.pk. We generate a password and show it once on the next
-          screen for you to hand over.
+          {practice
+            ? 'Practice copy: just a name and a role. We make their sign-in email and password and show them once on the next screen.'
+            : 'Their email is how they sign in, so it is required and must be @gsfoods.pk. We generate a password and show it once on the next screen for you to hand over.'}
         </p>
 
         <div className="space-y-2.5">
+          {practice && (
+            <Field label="Name">
+              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus name="new-staff-name" autoComplete="off"
+                placeholder="e.g. Ahmad Khan" className={inputCls} />
+            </Field>
+          )}
+          {!practice && (
           <Field label="Email" hint="Required — this is their sign-in">
             <input
               value={email}
@@ -1204,6 +1219,7 @@ function AddStaffModal({
               className={inputCls}
             />
           </Field>
+          )}
 
           {/* Multi-tenant picker. Head-office staff (procurement, finance,
               HR, marketing) typically work for every company — pick more than
@@ -1241,13 +1257,14 @@ function AddStaffModal({
               </div>
             </div>
           )}
-          <Field label="Category">
+          <Field label={practice ? 'Role' : 'Category'}>
             <Select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
               {assignableCategories(assignable).map((c) => (
                 <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
               ))}
             </Select>
           </Field>
+          {!practice && (<>
           <Field label={needsPhone ? 'Mobile number' : 'Mobile number (optional)'}
             hint={needsPhone ? 'Required — they sign in with a code sent here' : 'One number per login'}>
             <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="new-staff-phone" autoComplete="off"
@@ -1262,6 +1279,7 @@ function AddStaffModal({
             <input value={name} onChange={(e) => setName(e.target.value)} name="new-staff-name" autoComplete="off"
               placeholder="e.g. Ahmad Khan" className={inputCls} />
           </Field>
+          </>)}
         </div>
 
         <p className="mt-3 text-[11px] text-s-muted">
