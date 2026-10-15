@@ -11,7 +11,9 @@
 // asks for it and resends).
 // Light admin page: colour tokens only.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { useDialog } from '../ui/Modal'
+import { PasswordInput } from '../ui/PasswordInput'
 import { useMutation } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
@@ -53,6 +55,8 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
   onClose: () => void
   onVoided: (r: VoidLineResult) => void
 }) {
+  const panelRef = useRef<HTMLFormElement>(null)
+  useDialog(panelRef, { onClose })
   const [reason, setReason] = useState('')
   const [pin, setPin] = useState('')
   // A manager whose session the server did not accept as approver still gets the PIN box.
@@ -85,9 +89,11 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" role="dialog" aria-modal="true" aria-label={`Void ${item.name}`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" role="presentation">
       <form
-        className="w-full max-w-sm space-y-4 rounded-2xl border border-s-border bg-s-surface p-6"
+        ref={panelRef} role="dialog" aria-modal="true" aria-label={`Void ${item.name}`}
+        className="max-h-[90dvh] w-full max-w-sm space-y-4 overflow-y-auto rounded-2xl outline-none border border-s-border bg-s-surface p-6"
+        style={{ overscrollBehavior: 'contain' }}
         onSubmit={(e) => { e.preventDefault(); if (!send.isPending) send.mutate() }}
       >
         <div>
@@ -103,7 +109,7 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
         {askPin ? (
           <div>
             <label htmlFor="void-pin" className="mb-1 block text-xs text-s-muted">Manager PIN</label>
-            <input id="void-pin" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)}
+            <PasswordInput id="void-pin" numeric maxLength={8} autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)}
               className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none" />
             <p className="mt-1 text-[11px] text-s-muted">The manager who enters their PIN is recorded as approving this void.</p>
           </div>
@@ -127,10 +133,10 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
         )}
         <div className="flex gap-3">
           <button type="submit" disabled={send.isPending || !reason.trim() || (askPin && !pin.trim()) || (!!raastRefund && !refundReference.trim())}
-            className="flex-1 rounded-xl bg-s-red py-2 text-sm font-bold text-bone hover:opacity-90 disabled:opacity-40">
+            className="min-h-11 flex-1 rounded-xl bg-s-red py-2 text-sm font-bold text-bone hover:opacity-90 disabled:opacity-40">
             {send.isPending ? 'Voiding…' : 'Void item'}
           </button>
-          <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-s-border py-2 text-sm text-s-muted hover:border-s-text">
+          <button type="button" onClick={onClose} className="min-h-11 flex-1 rounded-xl border border-s-border py-2 text-sm text-s-muted hover:border-s-text">
             Keep it
           </button>
         </div>

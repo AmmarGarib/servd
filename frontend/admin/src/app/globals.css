@@ -137,14 +137,31 @@
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Data text is selectable and copyable (order refs, phones, addresses,
+       bank references). Only controls and drag surfaces opt out, below. */
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  button, [role="button"], nav a, .no-select, canvas, svg, .kds-btn, .s-btn {
     -webkit-user-select: none;
     user-select: none;
   }
-
   input, textarea, [contenteditable] {
     -webkit-user-select: text;
     user-select: text;
   }
+
+  /* Rapid taps on + / - and tiles must not double-tap-zoom on iPad Safari. */
+  button, a, input, select, textarea, [role="button"] {
+    touch-action: manipulation;
+  }
+
+  /* Number fields: no spinner arrows (they overlap values in narrow cells and
+     the wheel is blocked globally in Providers). */
+  input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
   /* Custom scrollbar */
   ::-webkit-scrollbar        { width: 4px; height: 4px; }
@@ -478,4 +495,23 @@
 @media (prefers-reduced-motion: reduce) {
   /* Respect reduced-motion: hold cells faintly visible instead of pulsing. */
   .servd-loader-cell { animation: none; background-color: var(--cell-color); opacity: 0.35; }
+}
+
+/* ── Touch screens: shared buttons reach the 44px tap target. Desktop sizing is
+   unchanged. (Page-local chips / row links size themselves.) */
+@media (pointer: coarse) {
+  .s-btn, .s-btn-primary, .s-btn-secondary, .s-btn-ghost, .s-btn-danger {
+    min-height: 44px;
+  }
+}
+
+/* ── Reduced motion, everywhere (the storefront has the same guard): pulsing
+   dots, glows, fades, sidebar width and bar transitions all stop. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

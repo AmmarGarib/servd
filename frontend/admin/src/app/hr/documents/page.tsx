@@ -10,6 +10,7 @@ import { api } from '../../../lib/api'
 import { card, inp, btn, btnGhost, day, human } from '../../../lib/hr'
 import { HrShell, Modal, useHrLookups } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Doc {
   id: string; employeeId: string; docType: string; title: string | null; fileUrl: string | null
@@ -26,6 +27,8 @@ const WINDOWS = [
 
 export default function HrDocumentsPage() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
+  const [actErr, setActErr] = useState('')
   const [win, setWin] = useState('')
   const [employeeId, setEmployeeId] = useState('')
   const [type, setType] = useState('')
@@ -34,18 +37,19 @@ export default function HrDocumentsPage() {
   const { data: lookups } = useHrLookups()
   const { data: types = [] } = useQuery({ queryKey: ['hr-doc-types'], queryFn: () => api.get<string[]>('/hr/documents/types') })
   const qs = new URLSearchParams({ ...(win && { expiringDays: win }), ...(employeeId && { employeeId }) }).toString()
-  const { data: docs = [], error } = useQuery({ queryKey: ['hr-documents', qs], queryFn: () => api.get<Doc[]>(`/hr/documents${qs ? `?${qs}` : ''}`) })
+  const { data: docs = [], error, isLoading, refetch } = useQuery({ queryKey: ['hr-documents', qs], queryFn: () => api.get<Doc[]>(`/hr/documents${qs ? `?${qs}` : ''}`) })
 
   const shown = useMemo(() => docs.filter((d) => (!type || d.docType === type) && (!unverified || !d.verifiedAt)), [docs, type, unverified])
-  const refresh = () => void qc.invalidateQueries({ queryKey: ['hr-documents'] })
-  const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: refresh })
-  const del = useMutation({ mutationFn: (id: string) => api.delete(`/hr/documents/${id}`), onSuccess: refresh })
+  const refresh = () => { setActErr(''); void qc.invalidateQueries({ queryKey: ['hr-documents'] }) }
+  const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: refresh, onError: (e: Error) => setActErr(`Could not verify: ${e.message}`) })
+  const del = useMutation({ mutationFn: (id: string) => api.delete(`/hr/documents/${id}`), onSuccess: refresh, onError: (e: Error) => setActErr(`Could not delete: ${e.message}`) })
   const now = Date.now()
 
   return (
     <HrShell title="Documents" subtitle="CNICs, contracts, certificates and everything else on file — with expiry and verification."
       actions={<button className={btn} onClick={() => setAdding(true)}>Add document</button>}>
-      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
+      {actErr && <p className="text-sm text-red-700 mb-4" role="alert">{actErr}</p>}
       <div className="flex flex-wrap gap-3 mb-4">
         <Select className={`${inp} max-w-[200px]`} value={win} onChange={(e) => setWin(e.target.value)}>
           {WINDOWS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
@@ -65,7 +69,7 @@ export default function HrDocumentsPage() {
       </div>
 
       <div className="rounded-2xl overflow-x-auto" style={card}>
-        {shown.length === 0 ? <p className="p-8 text-center text-sm text-white/40">No documents match.</p> : (
+        {isLoading ? <p className="p-8 text-center text-sm text-white/40" role="status">Loading documents…</p> : shown.length === 0 ? <p className="p-8 text-center text-sm text-white/40">{docs.length === 0 && !win && !employeeId ? 'No documents on file yet. Add the first one.' : 'No documents match.'}</p> : (
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-white/40">
@@ -76,7 +80,7 @@ export default function HrDocumentsPage() {
             <tbody>
               {shown.map((d) => {
                 const exp = d.expiryDate ? new Date(d.expiryDate).getTime() : null
-                const tone = exp == null ? 'rgb(var(--fg-rgb) / 0.6)' : exp < now ? '#b42318' : exp < now + 30 * 86_400_000 ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.6)'
+                const tone = exp == null ? 'rgb(var(--fg-rgb) / 0.6)' : exp < now ? 'var(--erp-danger)' : exp < now + 30 * 86_400_000 ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.6)'
                 return (
                   <tr key={d.id} className="border-t border-white/[0.05]">
                     <td className="px-4 py-2"><Link href={`/hr/employees/${d.employeeId}`} className="font-bold text-white/85 hover:underline">{d.employee.fullName}</Link> <span className="text-white/35 text-xs">{d.employee.employeeCode}</span></td>
@@ -86,8 +90,11 @@ export default function HrDocumentsPage() {
                     </td>
                     <td className="px-4 py-2 text-white/60">{day(d.issueDate)}</td>
                     <td className="px-4 py-2" style={{ color: tone }}>{day(d.expiryDate)}</td>
-                    <td className="px-4 py-2 text-white/60">{d.verifiedAt ? day(d.verifiedAt) : <button className="text-xs font-bold text-primary-ink" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Verify</button>}</td>
-                    <td className="px-4 py-2 text-right"><button className="text-xs text-white/35 hover:text-red-700" onClick={() => { if (confirm('Delete this document?')) del.mutate(d.id) }}>Delete</button></td>
+                    <td className="px-4 py-2 text-white/60">{d.verifiedAt ? day(d.verifiedAt) : <button className="text-xs font-bold text-primary-ink px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Verify</button>}</td>
+                    <td className="px-4 py-2 text-right"><button className="text-xs text-white/50 hover:text-red-700 px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
+                      const ok = await confirm({ title: 'Delete this document?', body: `${d.title || human(d.docType)} for ${d.employee.fullName} will be removed.`, confirmLabel: 'Delete', danger: true })
+                      if (ok) del.mutate(d.id)
+                    }}>Delete</button></td>
                   </tr>
                 )
               })}
@@ -104,16 +111,27 @@ function AddDocument({ types, employees, defaultEmployee, onClose, onSaved }: {
   types: string[]; employees: Array<{ id: string; fullName: string; employeeCode: string }>; defaultEmployee: string; onClose: () => void; onSaved: () => void
 }) {
   const [f, setF] = useState({ employeeId: defaultEmployee, docType: types[0] ?? '', title: '', fileUrl: '', issueDate: '', expiryDate: '' })
+  const [formErr, setFormErr] = useState('')
   const save = useMutation({
     mutationFn: () => api.post('/hr/documents', {
-      employeeId: f.employeeId, docType: f.docType, title: f.title || undefined, fileUrl: f.fileUrl || undefined,
+      employeeId: f.employeeId, docType: f.docType, title: f.title.trim() || undefined, fileUrl: f.fileUrl.trim() || undefined,
       issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined,
     }),
     onSuccess: onSaved,
   })
+  const dirty = !!(f.title || f.fileUrl || f.issueDate || f.expiryDate)
+  const submit = (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (save.isPending) return
+    if (!f.employeeId) { setFormErr('Pick an employee.'); return }
+    if (!f.title.trim() && !f.fileUrl.trim()) { setFormErr('Give the document a title or a link to the file.'); return }
+    if (f.issueDate && f.expiryDate && f.expiryDate < f.issueDate) { setFormErr('The expiry date is before the issue date.'); return }
+    setFormErr('')
+    save.mutate()
+  }
   return (
-    <Modal title="Add document" onClose={onClose}>
-      <div className="space-y-3">
+    <Modal title="Add document" onClose={onClose} dirty={dirty}>
+      <form className="space-y-3" onSubmit={submit} noValidate>
         <L label="Employee">
           <Select className={inp} value={f.employeeId} onChange={(e) => setF({ ...f, employeeId: e.target.value })}>
             <option value="">Pick an employee</option>
@@ -125,18 +143,19 @@ function AddDocument({ types, employees, defaultEmployee, onClose, onSaved }: {
             {types.map((t) => <option key={t} value={t}>{human(t)}</option>)}
           </Select>
         </L>
-        <L label="Title (optional)"><input className={inp} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></L>
-        <L label="Link to the file"><input type="url" className={inp} placeholder="https://…" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} /></L>
+        <L label="Title"><input className={inp} value={f.title} autoComplete="off" onChange={(e) => setF({ ...f, title: e.target.value })} /></L>
+        <L label="Link to the file"><input type="url" className={inp} placeholder="https://…" autoComplete="off" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} /></L>
+        <p className="text-xs text-white/55 -mt-1">A title or a link is needed.</p>
         <div className="grid grid-cols-2 gap-3">
           <L label="Issued"><input type="date" className={inp} value={f.issueDate} onChange={(e) => setF({ ...f, issueDate: e.target.value })} /></L>
           <L label="Expires"><input type="date" className={inp} value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} /></L>
         </div>
-        {save.error && <p className="text-xs text-red-700">{(save.error as Error).message}</p>}
+        {(formErr || save.error) && <p className="text-xs text-red-700" role="alert">{formErr || (save.error as Error).message}</p>}
         <div className="flex justify-end gap-2">
-          <button className={btnGhost} onClick={onClose}>Cancel</button>
-          <button className={btn} disabled={!f.employeeId || !f.docType || save.isPending} onClick={() => save.mutate()}>Save</button>
+          <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
+          <button type="submit" className={btn} disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</button>
         </div>
-      </div>
+      </form>
     </Modal>
   )
 }

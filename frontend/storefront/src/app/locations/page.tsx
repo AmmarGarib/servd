@@ -83,10 +83,10 @@ export default async function LocationsHubPage() {
                     <a href={`tel:${phone.replace(/[^+\d]/g, '')}`} style={{ color: 'inherit' }}>{phone}</a>
                   </p>
                 )}
-                <p style={{ margin: '0.5rem 0 0', display: 'flex', gap: '1rem', flexWrap: 'wrap', fontWeight: 700 }}>
-                  <Link href={`/locations/${loc.locationSlug}`} style={{ color: 'var(--servd-ink)' }}>Directions and hours</Link>
-                  <Link href={`/${loc.slug}`} style={{ color: 'var(--servd-ink)' }}>Order</Link>
-                </p>
+                <div style={{ margin: '0.5rem 0 0', display: 'flex', gap: '0.5rem 1.25rem', flexWrap: 'wrap', fontWeight: 700 }}>
+                  <Link href={`/locations/${loc.locationSlug}`} className="sv-tap-link" style={{ color: 'var(--servd-ink)' }}>Directions and hours</Link>
+                  <Link href={`/${loc.slug}`} className="sv-tap-link" style={{ color: 'var(--servd-ink)' }}>Order</Link>
+                </div>
               </li>
             )
           })}

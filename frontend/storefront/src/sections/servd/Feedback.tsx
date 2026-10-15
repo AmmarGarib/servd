@@ -34,12 +34,13 @@
 // shows, the footer does not push it aside, and Send goes straight to the
 // thank-you screen: nothing is posted and no cooldown is stored.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import type { SectionProps } from '../types'
 import { list, safeSrc, str } from '../safe'
 import { FEEDBACK_DEFAULTS } from './feedbackDefaults'
 import { isEditorFramePath } from '../../lib/editorFrame'
+import { useDialog } from '../../lib/useDialog'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 const STORAGE_KEY = 'servd-feedback-cooldown'
@@ -231,6 +232,14 @@ export function Feedback({ fields }: SectionProps) {
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone]     = useState(false)
   const [hidden, setHidden] = useState(true)  // SSR-safe — render nothing until client mount
+  const [sendError, setSendError] = useState('')
+  const sheetRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const reset = () => {
+    setOpen(false); setMode('menu'); setScore(null); setComment(''); setDone(false); setSendError('')
+  }
+  // Escape, focus in / trap / restore to the trigger, no scroll behind.
+  useDialog({ open: open && !hidden, ref: sheetRef, onClose: reset, restoreTo: () => triggerRef.current })
 
   useEffect(() => {
     if (isPreviewPath(pathname)) {
@@ -272,6 +281,7 @@ export function Feedback({ fields }: SectionProps) {
     if (mode === 'menu') return
     if (previewing) { setDone(true); return }
     setSubmitting(true)
+    setSendError('')
     try {
       const token = typeof window !== 'undefined'
         ? JSON.parse(localStorage.getItem('servd-customer-auth') ?? '{}')?.state?.token
@@ -292,19 +302,17 @@ export function Feedback({ fields }: SectionProps) {
       if (res.ok) {
         setDone(true)
         // Hide widget for cooldownDays so we don't keep prompting.
-        localStorage.setItem(STORAGE_KEY, String(Date.now() + cooldownDays * 86_400_000))
+        try { localStorage.setItem(STORAGE_KEY, String(Date.now() + cooldownDays * 86_400_000)) } catch { /* storage blocked */ }
+      } else {
+        setSendError('We could not send that. Please try again.')
       }
-    } catch { /* swallow — non-blocking feedback */ }
+    } catch { setSendError('Could not reach servd. Check your connection and try again.') }
     finally { setSubmitting(false) }
-  }
-
-  function reset() {
-    setOpen(false); setMode('menu'); setScore(null); setComment(''); setDone(false)
   }
 
   // Back clears the score too: an NPS 9 carried into the 1–5 rating would be
   // sent as a rating the visitor never picked (or refused by the API).
-  const back = () => { setMode('menu'); setScore(null) }
+  const back = () => { setMode('menu'); setScore(null); setSendError('') }
   const textareaStyle = { width: '100%', border: '1px solid var(--servd-line)', borderRadius: '0.5rem', fontSize: '0.9rem', fontFamily: 'inherit', resize: 'vertical', marginBottom: '1rem' } as const
   const placeholderOf = (v: unknown) => {
     const p = str(v)
@@ -316,6 +324,7 @@ export function Feedback({ fields }: SectionProps) {
       {/* Floating trigger */}
       {!open && (
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setOpen(true)}
           aria-label={triggerName}
@@ -338,8 +347,10 @@ export function Feedback({ fields }: SectionProps) {
             background: 'rgba(0,0,0,0.4)',
           }}>
           <div
+            ref={sheetRef} role="dialog" aria-modal="true" aria-label={required(fields.menuTitle, D.menuTitle)} tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
             style={{
+              maxHeight: '100dvh', overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none',
               background: '#fff', width: '100%', maxWidth: '32rem',
               borderRadius: '1.5rem 1.5rem 0 0', padding: '1.5rem 1.5rem 2rem',
               boxShadow: '0 -8px 32px rgba(0,0,0,0.18)',
@@ -406,10 +417,10 @@ export function Feedback({ fields }: SectionProps) {
                 )}
                 <textarea
                   value={comment} onChange={(e) => setComment(e.target.value)}
-                  rows={2} maxLength={1000}
+                  rows={2} maxLength={1000} aria-label={required(fields.npsQuestion, D.npsQuestion)}
                   {...placeholderOf(score != null && score <= 6 ? fields.npsPlaceholderLow : fields.npsPlaceholder)}
                   style={{ ...textareaStyle, padding: '0.6rem' }} />
-                <SubmitRow onBack={back} canSubmit={score != null} submit={submit} submitting={submitting} labels={labels} />
+                <SubmitRow onBack={back} canSubmit={score != null} submit={submit} submitting={submitting} labels={labels} error={sendError} />
               </>
             ) : mode === 'csat' ? (
               <>
@@ -447,10 +458,10 @@ export function Feedback({ fields }: SectionProps) {
                 </div>
                 <textarea
                   value={comment} onChange={(e) => setComment(e.target.value)}
-                  rows={2} maxLength={1000}
+                  rows={2} maxLength={1000} aria-label={required(fields.csatQuestion, D.csatQuestion)}
                   {...placeholderOf(fields.csatPlaceholder)}
                   style={{ ...textareaStyle, padding: '0.6rem' }} />
-                <SubmitRow onBack={back} canSubmit={score != null} submit={submit} submitting={submitting} labels={labels} />
+                <SubmitRow onBack={back} canSubmit={score != null} submit={submit} submitting={submitting} labels={labels} error={sendError} />
               </>
             ) : (
               <>
@@ -460,10 +471,10 @@ export function Feedback({ fields }: SectionProps) {
                 )}
                 <textarea
                   value={comment} onChange={(e) => setComment(e.target.value)}
-                  rows={5} maxLength={2000}
+                  rows={5} maxLength={2000} aria-label={required(fields.openTitle, D.openTitle)}
                   {...placeholderOf(fields.openPlaceholder)}
                   style={{ ...textareaStyle, padding: '0.75rem' }} />
-                <SubmitRow onBack={back} canSubmit={comment.trim().length > 0} submit={submit} submitting={submitting} labels={labels} />
+                <SubmitRow onBack={back} canSubmit={comment.trim().length > 0} submit={submit} submitting={submitting} labels={labels} error={sendError} />
               </>
             )}
           </div>
@@ -495,11 +506,18 @@ function ModeButton({ icon, label, sub, onClick }: { icon: string; label: string
   )
 }
 
-function SubmitRow({ onBack, canSubmit, submit, submitting, labels }: {
+function SubmitRow({ onBack, canSubmit, submit, submitting, labels, error }: {
   onBack: () => void; canSubmit: boolean; submit: () => void; submitting: boolean
-  labels: { back: string; send: string; sending: string }
+  labels: { back: string; send: string; sending: string }; error?: string
 }) {
   return (
+    <>
+    {error && (
+      <p role="alert" style={{ margin: '0 0 0.75rem', padding: '0.6rem 0.8rem', borderRadius: '0.6rem', background: '#fff1f1', color: 'var(--servd-danger)', fontSize: '0.85rem', fontWeight: 600 }}>
+        {error} <button type="button" onClick={submit} disabled={submitting}
+          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 800, textDecoration: 'underline', cursor: 'pointer', color: 'inherit' }}>Retry</button>
+      </p>
+    )}
     <div style={{ display: 'flex', gap: '0.5rem' }}>
       <button onClick={onBack} type="button"
         style={{
@@ -515,5 +533,6 @@ function SubmitRow({ onBack, canSubmit, submit, submitting, labels }: {
         {submitting ? labels.sending : labels.send}
       </button>
     </div>
+    </>
   )
 }

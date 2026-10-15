@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCustomerAuth } from '../../store/customerAuth'
 
@@ -13,6 +13,17 @@ interface BrandCard {
   accent: string
   heroImage: string | null
 }
+
+// The host's typed name survives the sign-in bounce (the bounce keeps only
+// ?brand= in ?next). Per tab; storage can be blocked, so every access is guarded.
+const NAME_KEY = 'servd:group-host-name'
+const readSavedName = (): string => { try { return sessionStorage.getItem(NAME_KEY) ?? '' } catch { return '' } }
+const saveName = (v: string) => { try { sessionStorage.setItem(NAME_KEY, v) } catch { /* storage blocked */ } }
+const forgetName = () => { try { sessionStorage.removeItem(NAME_KEY) } catch { /* storage blocked */ } }
+
+// A group code is exactly 6 characters of this alphabet (the backend's
+// genShareCode: no 0/1/I/O). Anything else cannot exist, so say so here.
+const CODE_RE = /^[2-9A-HJ-NP-Z]{6}$/
 
 interface Props {
   brands: BrandCard[]
@@ -33,22 +44,32 @@ export function GroupOrderEntryClient({ brands }: Props) {
   // Join
   const [code, setCode] = useState((params.get('code') ?? '').toUpperCase())
   const [joinName, setJoinName] = useState('')
+  const [joinErr, setJoinErr] = useState<string | null>(null)
+  const [joinBusy, setJoinBusy] = useState(false)
+
+  // Back from the sign-in bounce: put the typed name back.
+  useEffect(() => {
+    const saved = readSavedName()
+    if (saved) setName((n) => n || saved)
+  }, [])
 
   const start = async () => {
-    if (!conceptSlug || !name) return
+    if (!conceptSlug || !name.trim()) return
     // Group orders now require a logged-in customer (anonymous group submit
     // was an unpaid-kitchen-ticket primitive). Bounce to login first.
     if (!token) {
+      saveName(name.trim())
       const next = encodeURIComponent(`/group-order?brand=${conceptSlug}`)
       router.push(`/login?next=${next}`)
       return
     }
+    if (busy) return
     setBusy(true); setErr(null)
     try {
       const res = await fetch(`${API_URL}/api/v1/group-orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ conceptSlug, initiatorName: name }),
+        body: JSON.stringify({ conceptSlug, initiatorName: name.trim() }),
       })
       if (!res.ok) {
         // 409 BRAND_CLOSED carries "<Brand> is closed right now. Opens at …".
@@ -56,15 +77,48 @@ export function GroupOrderEntryClient({ brands }: Props) {
         throw new Error(body?.error?.code === 'BRAND_CLOSED' && body.error.message ? body.error.message : 'Could not start group')
       }
       const go = await res.json() as { shareCode: string }
-      router.push(`/group-order/${go.shareCode}?me=${encodeURIComponent(name)}`)
+      forgetName()
+      router.push(`/group-order/${go.shareCode}?me=${encodeURIComponent(name.trim())}`)
     } catch (e) {
       setErr((e as Error).message)
     } finally { setBusy(false) }
   }
 
-  const join = () => {
-    if (!code || !joinName) return
-    router.push(`/group-order/${code.toUpperCase()}?me=${encodeURIComponent(joinName)}`)
+  const join = async () => {
+    const c = code.trim().toUpperCase()
+    if (!c || !joinName.trim() || joinBusy) return
+    if (!CODE_RE.test(c)) {
+      setJoinErr('Group codes are 6 letters and numbers (no 0, 1, I or O). Check the code and try again.')
+      return
+    }
+    setJoinErr(null)
+    // The lookup endpoint needs a signed-in customer. When we have one, check
+    // the group exists before leaving the page; any other answer (offline,
+    // rate limit) just goes on — the group page does its own check.
+    if (token) {
+      setJoinBusy(true)
+      try {
+        const res = await fetch(`${API_URL}/api/v1/group-orders/${encodeURIComponent(c)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.status === 404) {
+          setJoinErr('No group with that code. Ask the host to send it again.')
+          return
+        }
+      } catch { /* the group page will say */ } finally { setJoinBusy(false) }
+    }
+    router.push(`/group-order/${c}?me=${encodeURIComponent(joinName.trim())}`)
+  }
+
+  // Arrow keys move through the kitchens like a radio group.
+  const onPickerKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
+    if (!dir || brands.length === 0) return
+    e.preventDefault()
+    const i = brands.findIndex((b) => b.slug === conceptSlug)
+    const next = brands[(i + dir + brands.length) % brands.length]!
+    setConceptSlug(next.slug)
+    requestAnimationFrame(() => document.getElementById(`kitchen-${next.id}`)?.focus())
   }
 
   return (
@@ -80,15 +134,15 @@ export function GroupOrderEntryClient({ brands }: Props) {
 
       {/* Mode tabs */}
       <div className="flex gap-2 mb-6">
-        <button onClick={() => setMode('start')} aria-pressed={mode === 'start'}
-          className="px-4 py-2 rounded-full font-bold text-sm transition-colors"
+        <button type="button" onClick={() => setMode('start')} aria-pressed={mode === 'start'}
+          className="px-4 py-2 min-h-11 rounded-full font-bold text-sm transition-colors"
           style={mode === 'start'
             ? { background: 'var(--servd-green)', color: 'var(--servd-on-green)', border: '1px solid var(--servd-green)' }
             : { background: 'white', color: 'var(--servd-mute)', border: '1px solid var(--servd-line)' }}>
           Start a group
         </button>
-        <button onClick={() => setMode('join')} aria-pressed={mode === 'join'}
-          className="px-4 py-2 rounded-full font-bold text-sm transition-colors"
+        <button type="button" onClick={() => setMode('join')} aria-pressed={mode === 'join'}
+          className="px-4 py-2 min-h-11 rounded-full font-bold text-sm transition-colors"
           style={mode === 'join'
             ? { background: 'var(--servd-green)', color: 'var(--servd-on-green)', border: '1px solid var(--servd-green)' }
             : { background: 'white', color: 'var(--servd-mute)', border: '1px solid var(--servd-line)' }}>
@@ -97,24 +151,31 @@ export function GroupOrderEntryClient({ brands }: Props) {
       </div>
 
       {mode === 'start' && (
-        <div className="servd-card" style={{ padding: '1.5rem' }}>
+        <form className="servd-card" style={{ padding: '1.5rem' }} noValidate
+          onSubmit={(e) => { e.preventDefault(); void start() }}>
           {/* Brand picker — grid of actual brand cards. Replaces the
               dev-facing 'type a slug' input. */}
-          <p className="text-xs uppercase tracking-widest font-bold mb-3" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em' }}>
+          <p id="kitchen-label" className="text-xs uppercase tracking-widest font-bold mb-3" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em' }}>
             Pick a kitchen
           </p>
           {brands.length === 0 ? (
             <p style={{ color: 'var(--servd-mute)', marginBottom: '1rem' }}>No kitchens are open right now.</p>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-              {brands.map((b) => {
+            <div role="radiogroup" aria-labelledby="kitchen-label" onKeyDown={onPickerKey}
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+              {brands.map((b, idx) => {
                 const selected = conceptSlug === b.slug
+                // One tab stop: the chosen kitchen, or the first when none is.
+                const stop = selected || (!conceptSlug && idx === 0)
                 return (
                   <button
                     key={b.id}
+                    id={`kitchen-${b.id}`}
                     type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    tabIndex={stop ? 0 : -1}
                     onClick={() => setConceptSlug(b.slug)}
-                    aria-pressed={selected}
                     style={{
                       display: 'flex', flexDirection: 'column', alignItems: 'stretch',
                       padding: 0, borderRadius: '0.85rem', overflow: 'hidden', cursor: 'pointer',
@@ -171,30 +232,38 @@ export function GroupOrderEntryClient({ brands }: Props) {
 
           <label className="block mb-3">
             <span className="block text-xs font-bold mb-1" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>Your name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="servd-input" placeholder="e.g. Sara K." />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="servd-input servd-field" placeholder="e.g. Sara K."
+              name="name" autoComplete="given-name" maxLength={120} enterKeyHint="go" />
           </label>
-          {err && <p className="text-sm" style={{ color: 'var(--servd-danger)' }}>{err}</p>}
-          <button onClick={start} disabled={busy || !conceptSlug || !name} className="servd-btn-primary w-full mt-2">
+          {err && <p role="alert" className="text-sm" style={{ color: 'var(--servd-danger)' }}>{err}</p>}
+          <button type="submit" disabled={busy || !conceptSlug || !name.trim()} className="servd-btn-primary w-full mt-2">
             {busy ? 'Creating…' : conceptSlug ? `Start group at ${brands.find((b) => b.slug === conceptSlug)?.name ?? conceptSlug}` : 'Pick a kitchen first'}
           </button>
-        </div>
+        </form>
       )}
 
       {mode === 'join' && (
-        <div className="servd-card" style={{ padding: '1.5rem' }}>
+        <form className="servd-card" style={{ padding: '1.5rem' }} noValidate
+          onSubmit={(e) => { e.preventDefault(); void join() }}>
           <label className="block mb-3">
             <span className="block text-xs font-bold mb-1" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>Group code</span>
-            <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="6 chars"
-              className="servd-input font-mono uppercase tracking-widest" maxLength={8} />
+            <input value={code}
+              onChange={(e) => { setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')); setJoinErr(null) }}
+              placeholder="6 characters" name="code" id="group-code"
+              autoComplete="off" autoCapitalize="characters" spellCheck={false} enterKeyHint="next"
+              aria-invalid={joinErr ? true : undefined} aria-describedby={joinErr ? 'group-code-err' : undefined}
+              className="servd-input servd-field font-mono uppercase tracking-widest" maxLength={6} />
           </label>
           <label className="block mb-3">
             <span className="block text-xs font-bold mb-1" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>Your name</span>
-            <input value={joinName} onChange={(e) => setJoinName(e.target.value)} className="servd-input" placeholder="e.g. Imran R." />
+            <input value={joinName} onChange={(e) => setJoinName(e.target.value)} className="servd-input servd-field" placeholder="e.g. Imran R."
+              name="name" autoComplete="given-name" maxLength={120} enterKeyHint="go" />
           </label>
-          <button onClick={join} disabled={!code || !joinName} className="servd-btn-primary w-full mt-2">
-            Join group
+          {joinErr && <p id="group-code-err" role="alert" className="text-sm" style={{ color: 'var(--servd-danger)' }}>{joinErr}</p>}
+          <button type="submit" disabled={joinBusy || !code || !joinName.trim()} className="servd-btn-primary w-full mt-2">
+            {joinBusy ? 'Checking…' : 'Join group'}
           </button>
-        </div>
+        </form>
       )}
 
       <p className="mt-6 text-xs" style={{ color: 'var(--servd-mute)' }}>

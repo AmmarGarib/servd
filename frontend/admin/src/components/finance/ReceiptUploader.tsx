@@ -11,7 +11,19 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
-import { fetchEvidenceUrl, kb, prepareReceiptFile } from '../../lib/photoPrep'
+import { EVIDENCE_MAX_BYTES, fetchEvidenceUrl, kb, prepareReceiptFile } from '../../lib/photoPrep'
+
+const MAX_PHOTO_BYTES = 30 * 1024 * 1024 // photos are compressed in the browser first
+
+/** Type and size, checked on select — the same list and limits the server takes (images, PDF ≤ 3 MB). */
+export function checkReceiptFile(file: File): string | null {
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+  const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic)$/i.test(file.name)
+  if (!isPdf && !isImage) return `${file.name || 'That file'}: only photos and PDFs are accepted here.`
+  if (isPdf && file.size > EVIDENCE_MAX_BYTES) return `${file.name}: ${kb(file.size)} is over the 3 MB limit for a PDF. Scan it at a lower resolution or take a photo.`
+  if (!isPdf && file.size > MAX_PHOTO_BYTES) return `${file.name}: ${kb(file.size)} is too large for a photo.`
+  return null
+}
 
 export interface UploadedReceipt {
   id: string
@@ -46,6 +58,7 @@ export function ReceiptUploader({
 }) {
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Revoke local previews when the uploader goes away.
@@ -55,11 +68,17 @@ export function ReceiptUploader({
   async function add(files: FileList | null) {
     if (!files || files.length === 0) return
     setError(null)
+    const picked = Array.from(files)
+    const refused = picked.map(checkReceiptFile).filter((m): m is string => !!m)
+    const okFiles = picked.filter((f) => !checkReceiptFile(f))
+    if (refused.length > 0) setError(refused.join(' '))
+    if (okFiles.length === 0) { if (input.current) input.current.value = ''; return }
     setBusy(true)
     let next = [...receipts]
     try {
-      for (const file of Array.from(files)) {
+      for (const [i, file] of okFiles.entries()) {
         if (next.length >= max) { setError(`At most ${max} receipts here.`); break }
+        setUploading(`Uploading ${file.name || 'photo'}${okFiles.length > 1 ? ` (${i + 1} of ${okFiles.length})` : ''}…`)
         const prepared = await prepareReceiptFile(file)
         const row = await api.post<{ id: string; mime: string; sizeBytes: number }>(uploadPath, { ...extraBody, photo: prepared.base64, mime: prepared.mime })
         if (prepared.previewUrl) previews.current.push(prepared.previewUrl)
@@ -70,6 +89,7 @@ export function ReceiptUploader({
       setError(e instanceof Error ? e.message : 'The receipt could not be added.')
     } finally {
       setBusy(false)
+      setUploading(null)
       if (input.current) input.current.value = ''
     }
   }
@@ -124,7 +144,8 @@ export function ReceiptUploader({
       </div>
       <input ref={input} type="file" accept="image/*,application/pdf" capture="environment" multiple className="hidden"
         onChange={(e) => void add(e.target.files)} />
-      {error && <p className="text-[11px] mt-1" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+      {uploading && <p role="status" className="text-[11px] mt-1 text-white/70">{uploading}</p>}
+      {error && <p role="alert" className="text-[11px] mt-1" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
     </div>
   )
 }

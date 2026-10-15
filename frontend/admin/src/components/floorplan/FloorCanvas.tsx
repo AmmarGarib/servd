@@ -36,12 +36,17 @@ interface Props {
   // Decorations layered above the SVG (e.g. resize handles for selected table)
   overlay?: ReactNode
   ariaLabel?: string
+  /** Edit mode only: a table is being dragged right now (the page may not scroll under the finger). */
+  dragging?: boolean
 }
 
 export function FloorCanvas({
   floor, tables, selectedId, colorFor,
-  onTablePointerDown, onTableClick, gridSize = 0, overlay, ariaLabel,
+  onTablePointerDown, onTableClick, gridSize = 0, overlay, ariaLabel, dragging = false,
 }: Props) {
+  // Live view (no drag handler) must let a finger swipe scroll the page; the
+  // edit view takes the touch only while a table is being dragged.
+  const editing = !!onTablePointerDown
   // Container resize observer to compute the viewport scale (so the floor
   // canvas always fits inside the column without distortion).
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -71,8 +76,8 @@ export function FloorCanvas({
           background: floor.backgroundUrl ? `url(${floor.backgroundUrl}) center/cover` : '#fafafa',
           border: '1px solid rgba(0,0,0,0.08)',
           borderRadius: '0.75rem',
-          touchAction: 'none',
-          userSelect: 'none',
+          touchAction: editing && dragging ? 'none' : 'pan-y',
+          userSelect: editing ? 'none' : 'auto',
         }}
         role="application"
       >
@@ -87,7 +92,11 @@ export function FloorCanvas({
               transform={`translate(${t.x} ${t.y}) rotate(${t.rotation} ${t.width / 2} ${t.height / 2})`}
               onPointerDown={(e) => onTablePointerDown?.(t, e)}
               onClick={() => onTableClick?.(t)}
-              style={{ cursor: onTablePointerDown || onTableClick ? 'pointer' : 'default' }}
+              style={{
+                cursor: onTablePointerDown || onTableClick ? 'pointer' : 'default',
+                // A touch that starts ON a table in the editor is a drag, not a scroll.
+                ...(editing ? { touchAction: 'none' as const } : {}),
+              }}
             >
               {renderShape(t, colors, isSel)}
               <text

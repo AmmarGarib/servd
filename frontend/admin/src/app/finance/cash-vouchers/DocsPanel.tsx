@@ -18,8 +18,9 @@ import { SpendLinesEditor, emptyLine, lineBody, linesReady, type SpendLine } fro
 import { formatPkr } from './amountInWords'
 import { CV_BASE, CV_ROOT, errorWords, fmtDateTime, usePettyBoxes, type CashVoucher, type SupportingDoc } from './data'
 import { attachmentPath, kb, preparePhoto } from './photo'
-import { ErrorBanner, fieldCls, primaryBtn, secondaryBtn } from './ui'
+import { ErrorBanner, fieldCls, primaryBtn, secondaryBtn, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 export const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt'
@@ -56,10 +57,22 @@ async function prepareDocument(file: File): Promise<{ fileName: string; mime: st
   return { fileName: file.name, mime: MIME_BY_EXT[ext]!, dataBase64: await fileToBase64(file) }
 }
 
+/** Size and type, checked on select (the same list the server takes — evidenceFile allowOffice). Photos are compressed before upload, so only other files carry the 5 MB cap. */
+export function checkDocument(file: File): string | null {
+  const ext = extOf(file.name)
+  if (!MIME_BY_EXT[ext]) return `${file.name}: not accepted. Use PDF, photos, Excel, Word, PowerPoint, CSV or TXT.`
+  const isPhoto = ['jpg', 'jpeg', 'png', 'webp'].includes(ext)
+  if (!isPhoto && file.size > MAX_BYTES) return `${file.name}: ${kb(file.size)} is over the 5 MB limit.`
+  if (file.size === 0) return `${file.name}: the file is empty.`
+  return null
+}
+
 export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean }) {
   const qc = useQueryClient()
   const input = useRef<HTMLInputElement>(null)
+  const confirm = useConfirm()
   const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const docs: SupportingDoc[] = v.documents ?? []
   const refresh = () => void qc.invalidateQueries({ queryKey: [CV_ROOT] })
@@ -67,11 +80,18 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
 
   async function add(files: FileList | null) {
     if (!files || files.length === 0) return
-    setError(null); setBusy(true)
+    setError(null)
+    const picked = Array.from(files)
+    const refused = picked.map(checkDocument).filter((m): m is string => !!m)
+    const okFiles = picked.filter((f) => !checkDocument(f))
+    if (refused.length > 0) setError(refused.join('\n'))
+    if (okFiles.length === 0) { if (input.current) input.current.value = ''; return }
+    setBusy(true)
     try {
       let count = docs.length
-      for (const f of Array.from(files)) {
+      for (const [i, f] of okFiles.entries()) {
         if (count >= MAX_DOCS) { setError(`A voucher takes at most ${MAX_DOCS} documents.`); break }
+        setUploading(`Uploading ${f.name}${okFiles.length > 1 ? ` (${i + 1} of ${okFiles.length})` : ''}…`)
         try {
           const body = await prepareDocument(f)
           await api.post(`${CV_BASE}/${v.id}/documents`, body, { tenantId: v.tenantId })
@@ -79,7 +99,7 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
         } catch (e) { setError(e instanceof Error && !('code' in e) ? e.message : errorWords(e)); break }
       }
     } finally {
-      setBusy(false); if (input.current) input.current.value = ''; refresh()
+      setBusy(false); setUploading(null); if (input.current) input.current.value = ''; refresh()
     }
   }
 
@@ -107,13 +127,14 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
         {v.canUpload && !locked && (
           <>
             <input ref={input} type="file" multiple accept={DOC_ACCEPT} className="hidden" onChange={(e) => void add(e.target.files)} />
-            <button onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={secondaryBtn}>
+            <button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={secondaryBtn}>
               {busy ? 'Uploading…' : '+ Add documents'}
             </button>
           </>
         )}
       </div>
 
+      {uploading && <p role="status" className="text-xs font-bold text-white/70">{uploading}</p>}
       {docs.length === 0 && (
         <p className="text-xs font-bold" style={{ color: v.status === 'disbursed' ? 'var(--erp-warning)' : undefined }}>
           {v.status === 'disbursed' ? 'No documents yet — they are missing.' : 'No documents.'}
@@ -128,9 +149,12 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
                 <span className="text-white/45"> · {kb(d.sizeBytes)} · {d.uploadedByName ?? '—'} · {fmtDateTime(d.createdAt)}</span>
               </span>
               <span className="flex items-center gap-3 shrink-0">
-                <button onClick={() => void download(d)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>Download</button>
+                <button type="button" onClick={() => void download(d)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>Download</button>
                 {!locked && (v.canUpload || isKeeper) && (
-                  <button onClick={() => { if (window.confirm('Remove this document?')) del.mutate(d.id) }} disabled={del.isPending}
+                  <button type="button" onClick={async () => {
+                    const name = d.fileName || `Document ${d.id.slice(0, 6)}`
+                    if (await confirm({ title: `Remove ${name}?`, body: `It is taken off ${v.number}. Finance will not see it when verifying.`, confirmLabel: 'Remove', danger: true })) del.mutate(d.id)
+                  }} disabled={del.isPending}
                     className="font-bold text-s-red">Remove</button>
                 )}
               </span>
@@ -138,7 +162,7 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
           ))}
         </ul>
       )}
-      {error && <ErrorBanner message={error} />}
+      {error && <div className="whitespace-pre-line"><ErrorBanner message={error} /></div>}
       {del.error && <ErrorBanner message={errorWords(del.error)} />}
     </div>
   )
@@ -175,9 +199,10 @@ export function SpentPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean 
     onSuccess: () => { toast.success('Saved — finance will check it against your documents.'); void qc.invalidateQueries({ queryKey: [CV_ROOT] }) },
   })
   const ready = lines.length > 0 && linesReady(lines, Math.max(spent, 1), 'atMost')
+  const submit = useSubmitOnce(save.isPending)(() => { if (!ready) return false; save.reset(); save.mutate(); return true })
   const change = v.amountCents - spent
   return (
-    <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
+    <form onSubmit={submit} className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">What was spent</p>
       <p className="text-xs text-white/50">
         Cash paid PKR {formatPkr(v.amountCents)}. List what you spent it on. Nothing is booked until finance verifies the documents.
@@ -188,18 +213,20 @@ export function SpentPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean 
         Spent PKR {formatPkr(spent)}
         {change > 0 ? ` — PKR ${formatPkr(change)} change to hand back` : change < 0 ? ` — PKR ${formatPkr(-change)} more than was paid; finance pays the difference` : ''}
       </p>
-      <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Note (optional)" className={fieldCls} />
+      <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Note (optional)" aria-label="Note (optional)" className={fieldCls} />
       {save.error && <ErrorBanner message={errorWords(save.error)} />}
-      <button onClick={() => { save.reset(); save.mutate() }} disabled={!ready || save.isPending} className={primaryBtn}>
+      {!ready && <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>Every line needs a category and an amount before this can be saved.</p>}
+      <button type="submit" disabled={!ready || save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : 'Save what was spent'}
       </button>
-    </div>
+    </form>
   )
 }
 
 /** Finance: confirm the lines, then verify the documents and book the expense. Change / difference move through a box. */
 export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: boxes = [] } = usePettyBoxes()
   const companyBoxes = boxes.filter((b) => b.isActive && b.tenantId === v.tenantId)
   const [lines, setLines] = useState<SpendLine[]>(() => defaultLines(v))
@@ -235,9 +262,9 @@ export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
       </p>
       {(change > 0 || topUp > 0) && companyBoxes.length > 0 && (
         <div>
-          <label className="text-xs text-white/55">{change > 0 ? 'Change goes into' : 'Difference paid from'} (default: the box it was paid from)</label>
+          <label htmlFor="vf-box" className="text-xs text-white/55">{change > 0 ? 'Change goes into' : 'Difference paid from'} (default: the box it was paid from)</label>
           <div className="mt-1">
-            <Select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
+            <Select id="vf-box" value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
               {!v.boxId && <option value="">— pick a box —</option>}
               {companyBoxes.map((b) => <option key={b.id} value={b.id}>{b.name} · PKR {formatPkr(b.floatCents)}</option>)}
             </Select>
@@ -247,7 +274,9 @@ export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
       {noDocs && <p className="text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>Upload at least one supporting document first.</p>}
       {verify.error && <ErrorBanner message={errorWords(verify.error)} />}
       <button disabled={!ready || verify.isPending} className={primaryBtn}
-        onClick={() => { if (window.confirm(`Verify the documents of ${v.number} and book PKR ${formatPkr(spent)} as expense?`)) { verify.reset(); verify.mutate() } }}>
+        onClick={async () => {
+          if (await confirm({ title: `Verify the documents of ${v.number}?`, body: `This books PKR ${formatPkr(spent)} as expense. It cannot be undone from here.`, confirmLabel: 'Verify and book' })) { verify.reset(); verify.mutate() }
+        }}>
         {verify.isPending ? 'Booking…' : 'Verify documents & book'}
       </button>
     </div>

@@ -28,6 +28,9 @@ import { usePermissions } from '../../../hooks/useCan'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { useManagerRoles } from '../../../lib/roles'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '@/components/ui/Modal'
+import { NumberField } from '@/components/ui/NumberField'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 // Who may change what on this page — the same rules the API enforces
 // (backend/src/modules/positions/routes.ts + contributions.ts), so no one is
@@ -868,9 +871,9 @@ function AddPositionModal({
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50" onClick={onClose}>
-      <div className="bg-s-surface border border-s-border rounded-xl p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-black mb-4">New position</h2>
+    <Modal title="New position" onClose={onClose} wide
+      dirty={!!designationId || gross > 0 || !!departmentId || !!shiftBandId || headcount !== 1}>
+      <form className="space-y-0" onSubmit={(e) => { e.preventDefault(); if (designationId && gross > 0 && !create.isPending) create.mutate() }}>
         <div className="space-y-3">
           <Field label="Designation" hint={designations.length ? undefined : 'No designations yet — add them in HR → Org setup.'}>
             <Select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls} autoFocus>
@@ -903,22 +906,22 @@ function AddPositionModal({
             </Field>
           </div>
           <Field label="Headcount" hint="Number of identical seats.">
-            <input type="number" min={1} value={headcount}
-              onChange={(e) => setHeadcount(parseInt(e.target.value) || 1)} className={inputCls} />
+            <NumberField value={headcount} min={1} max={500}
+              onValueChange={(v) => setHeadcount(v ?? 1)} className={inputCls} />
           </Field>
         </div>
         {create.error && <p className="text-xs text-red-700 mt-3">{(create.error as Error).message}</p>}
         <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs font-bold text-s-muted border border-s-border hover:text-s-text">
+          <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-xs font-bold text-s-muted border border-s-border hover:text-s-text">
             Cancel
           </button>
-          <button onClick={() => create.mutate()} disabled={!designationId || gross <= 0 || create.isPending}
+          <button type="submit" disabled={!designationId || gross <= 0 || create.isPending}
             className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
             {create.isPending ? 'Creating…' : 'Create position'}
           </button>
         </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -990,6 +993,7 @@ function ContributionModal({
     onSuccess: onSaved,
   })
 
+  const confirm = useConfirm()
   const archive = useMutation({
     mutationFn: () => api.delete(`/positions/contributions/${existing!.id}`),
     onSuccess: onSaved,
@@ -1001,12 +1005,9 @@ function ContributionModal({
     && label.trim().length > 0
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" onClick={onClose}>
-      <div className="bg-s-surface border border-s-border rounded-xl p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-black mb-1">
-          {existing ? 'Edit contribution' : 'New inter-tenant contribution'}
-        </h2>
+    <Modal title={existing ? 'Edit contribution' : 'New inter-tenant contribution'} onClose={onClose} wide
+      dirty={!!label || monthlyCents > 0 || splitRows.length > 0 || !!description}>
+      <form onSubmit={(e) => { e.preventDefault(); if (canSave && !save.isPending) save.mutate() }}>
         <p className="text-xs text-s-muted mb-4">
           {existing
             ? 'Update the agreed monthly transfer or its internal split.'
@@ -1085,7 +1086,8 @@ function ContributionModal({
                   </div>
                   <button type="button"
                     onClick={() => setSplitRows(splitRows.filter((_, j) => j !== i))}
-                    className="text-red-700 hover:bg-red-400/10 rounded-md px-2 text-sm">
+                    aria-label={`Remove split line ${i + 1}`}
+                    className="text-red-700 hover:bg-red-400/10 rounded-md px-2 text-sm min-h-[44px] min-w-[44px]">
                     &times;
                   </button>
                 </div>
@@ -1107,23 +1109,25 @@ function ContributionModal({
 
         <div className="flex justify-between items-center gap-2 mt-5">
           {existing ? (
-            <button onClick={() => archive.mutate()} disabled={archive.isPending}
+            <button type="button" onClick={async () => {
+                if (await confirm({ title: 'Archive this contribution?', confirmLabel: 'Archive', danger: true })) archive.mutate()
+              }} disabled={archive.isPending}
               className="rounded-lg px-3 py-2 text-xs font-bold text-red-700 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
               {archive.isPending ? 'Archiving…' : 'Archive'}
             </button>
           ) : <div />}
           <div className="flex gap-2">
-            <button onClick={onClose}
+            <button type="button" onClick={onClose}
               className="rounded-lg px-3 py-2 text-xs font-bold text-s-muted border border-s-border hover:text-s-text">
               Cancel
             </button>
-            <button onClick={() => save.mutate()} disabled={!canSave || save.isPending}
+            <button type="submit" disabled={!canSave || save.isPending}
               className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
               {save.isPending ? 'Saving…' : existing ? 'Save changes' : 'Create contribution'}
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   )
 }

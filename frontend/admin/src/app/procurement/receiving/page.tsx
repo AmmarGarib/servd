@@ -14,7 +14,7 @@
 // is MANAGERS only. Non-managers see it read-only: what is due at the dock and
 // what has come in, with the note "A manager takes the delivery in".
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -22,6 +22,9 @@ import { useAuthStore } from '../../../store/auth'
 import { useManagerRoles } from '../../../lib/roles'
 import { stockErrorText } from '../../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
+import { FormField } from '../../../components/ui/FormField'
+import { NumberField } from '../../../components/ui/NumberField'
+import { MoneyInput } from '../../../components/ui/MoneyInput'
 
 // The API's MANAGERS take a delivery in (owner decision 27) — the list comes
 // from the server (lib/roles.ts useManagerRoles).
@@ -66,6 +69,12 @@ interface DraftLine {
 const poLabel = (po: Pick<OpenPo, 'id' | 'reference'>) => po.reference ? `PO ${po.reference}` : `PO ${po.id.slice(0, 8).toUpperCase()}`
 let keySeq = 0
 const nextKey = () => `l${++keySeq}`
+// Draft lines keep numbers as typed text ('' = empty); the fields want number | null.
+const numOf = (t: string): number | null => (t.trim() === '' || !Number.isFinite(Number(t)) ? null : Number(t))
+const textOf = (n: number | null): string => (n == null ? '' : String(n))
+// Unit cost is typed in rupees; MoneyInput works in cents, the API still gets cents.
+const centsOf = (pkr: string): number => Math.round((numOf(pkr) ?? 0) * 100)
+const pkrOf = (cents: number): string => (cents > 0 ? String(cents / 100) : '')
 
 export default function ReceivingPage() {
   const qc = useQueryClient()
@@ -92,6 +101,8 @@ export default function ReceivingPage() {
   const [lines, setLines] = useState<DraftLine[]>([])
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null)
   const [wantedPo, setWantedPo] = useState<string | null>(null)
+  const [tried, setTried] = useState(false)
+  const stepTwoRef = useRef<HTMLDivElement>(null)
 
   const supplierName = useMemo(() => {
     const m = new Map<string, string>()
@@ -154,6 +165,28 @@ export default function ReceivingPage() {
 
   const adHocInvalid = !poId && lines.some((l) => !l.inventoryItemId || l.unitCostPkr.trim() === '' || !(Number(l.unitCostPkr) >= 0))
   const nothingArrived = !lines.some((l) => Number(l.receivedQty) > 0)
+  // Why Accept can't go through yet — shown once it is pressed (the button stays live).
+  const problem = lines.length === 0 ? (poId ? 'Nothing is outstanding on this PO.' : 'Pick a PO or a supplier and add the lines that arrived.')
+    : (!supplierId && !poId) ? 'Choose the supplier this delivery came from.'
+    : adHocInvalid ? 'Pick an inventory item and enter the unit cost paid on every line.'
+    : nothingArrived ? 'Enter the quantity received on at least one line (0 for what did not come).'
+    : null
+
+  // Enter / the phone's Next key moves down the received-quantity boxes.
+  useEffect(() => {
+    stepTwoRef.current?.querySelectorAll('input').forEach((i) => { i.enterKeyHint = 'next' })
+  })
+  function onStepTwoKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+    if (!(e.target instanceof HTMLInputElement)) return
+    e.preventDefault()
+    const all = Array.from(e.currentTarget.querySelectorAll<HTMLInputElement>('input:not([disabled])'))
+    const next = all[all.indexOf(e.target) + 1]
+    if (next) next.focus()
+    else document.getElementById('recv-photo')?.focus()
+  }
+  // Every PO line to what is still due (nothing is saved until Accept delivery).
+  const fillAllAsOrdered = () => setLines((prev) => prev.map((l) => (l.outstanding != null ? { ...l, receivedQty: String(l.outstanding) } : l)))
 
   const submit = useMutation({
     mutationFn: () => api.post<{ varianceFlag?: boolean; poStatus?: string | null }>('/crosschecks/receiving', {
@@ -211,7 +244,7 @@ export default function ReceivingPage() {
 
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-5">
         {feedback && (
-          <div className="rounded-xl px-4 py-3 text-sm font-bold"
+          <div role="status" className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
               background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-accent-rgb) / 0.14)',
               color: feedback.tone === 'warn' ? 'var(--erp-warning)' : 'var(--erp-success)',
@@ -262,7 +295,12 @@ export default function ReceivingPage() {
           </>
         )}
 
-        {canReceive && (<>
+        {canReceive && (<form noValidate className="space-y-5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            setTried(true)
+            if (!problem && !submit.isPending) submit.mutate()
+          }}>
         <Section title="Step 1 — Match to a PO (or take a delivery without one)">
           {selectedPo ? (
             <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.12)', border: '1px solid var(--erp-accent)' }}>
@@ -270,7 +308,7 @@ export default function ReceivingPage() {
                 <p className="text-sm font-bold text-white/90">{poLabel(selectedPo)} · {selectedPo.supplier.name}</p>
                 <p className="text-xs text-white/45">{selectedPo.status === 'partial' ? 'Part-received — showing what is still outstanding' : 'Sent'}</p>
               </div>
-              <button onClick={clearPo} className="text-xs text-white/50 hover:text-white/80">Change</button>
+              <button type="button" onClick={clearPo} className="text-xs text-white/50 hover:text-white/80">Change</button>
             </div>
           ) : (
             <>
@@ -285,7 +323,7 @@ export default function ReceivingPage() {
                 {pos.map((po) => {
                   const own = raisedByMe(po, me)
                   return (
-                    <button key={po.id} onClick={() => { if (!own) loadFromPo(po) }} disabled={own}
+                    <button type="button" key={po.id} onClick={() => { if (!own) loadFromPo(po) }} disabled={own}
                       title={own ? 'You raised this PO, so a colleague receives it' : undefined}
                       className="rounded-lg p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                       style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
@@ -296,19 +334,26 @@ export default function ReceivingPage() {
                   )
                 })}
               </div>
-              <div className="mt-3">
-                <label className="text-xs text-white/55">Or a delivery without a PO (market run, ad-hoc) from</label>
-                <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls + ' mt-1'}>
+              <FormField className="mt-3" label="Or a delivery without a PO (market run, ad-hoc) from"
+                error={tried && !poId && !supplierId ? 'Pick a PO above, or choose the supplier.' : undefined}>
+                <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls}>
                   <option value="">— choose supplier —</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </Select>
-              </div>
+              </FormField>
             </>
           )}
         </Section>
 
         <Section title="Step 2 — Mark received quantities">
           {lines.length === 0 && <p className="text-xs text-white/35 italic">{poId ? 'Nothing outstanding on this PO.' : 'Pick a PO above or add lines.'}</p>}
+          {poId && lines.length > 0 && (
+            <button type="button" onClick={fillAllAsOrdered}
+              className="rounded-lg border border-white/[0.12] px-3 py-2 text-xs font-bold text-white/80 hover:border-primary hover:text-primary-ink [@media(pointer:coarse)]:min-h-11">
+              Fill all as ordered
+            </button>
+          )}
+          <div ref={stepTwoRef} onKeyDown={onStepTwoKey}>
           {lines.map((l) => {
             const qty = Number(l.receivedQty) || 0
             const variance = l.outstanding != null && l.outstanding > 0 ? ((qty - l.outstanding) / l.outstanding) * 100 : null
@@ -329,17 +374,18 @@ export default function ReceivingPage() {
                     </Select>
                   )}
                   {l.outstanding != null && <span className="text-xs text-white/45 font-mono whitespace-nowrap">Due: {l.outstanding} {l.unit}</span>}
-                  <input type="number" step="0.01" min="0" value={l.receivedQty} onChange={(e) => patchLine(l.key, { receivedQty: e.target.value })}
+                  <NumberField decimals={3} min={0} value={numOf(l.receivedQty)} onValueChange={(v) => patchLine(l.key, { receivedQty: textOf(v) })}
+                    aria-label={`Received quantity${l.description ? ` of ${l.description}` : ''}`}
                     className={fieldCls + ' w-24'} placeholder="Recv" />
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-white/45 w-10">{l.unit}</span>
-                    {!poId && <button onClick={() => rmLine(l.key)} className="text-white/30 hover:text-s-red text-sm px-2" aria-label="Remove line">×</button>}
+                    {!poId && <button type="button" onClick={() => rmLine(l.key)} className="text-white/30 hover:text-s-red text-sm px-2 [@media(pointer:coarse)]:min-h-11" aria-label="Remove line">×</button>}
                   </div>
                 </div>
                 {!l.poLineId && (
                   <div className="flex items-center gap-2">
-                    <label className="text-xs text-white/55 whitespace-nowrap">Unit cost paid (PKR per {l.unit || 'unit'})</label>
-                    <input type="number" step="0.01" min="0" value={l.unitCostPkr} onChange={(e) => patchLine(l.key, { unitCostPkr: e.target.value })}
+                    <label htmlFor={`cost-${l.key}`} className="text-xs text-white/55 whitespace-nowrap">Unit cost paid (PKR per {l.unit || 'unit'})</label>
+                    <MoneyInput id={`cost-${l.key}`} value={centsOf(l.unitCostPkr)} onChange={(c) => patchLine(l.key, { unitCostPkr: pkrOf(c) })}
                       className={fieldCls + ' w-32'} placeholder="0.00" />
                   </div>
                 )}
@@ -349,12 +395,14 @@ export default function ReceivingPage() {
                   </p>
                 )}
                 <input value={l.notes} onChange={(e) => patchLine(l.key, { notes: e.target.value })}
+                  aria-label={`Note for ${l.description || 'this line'}`}
                   placeholder="Note (damaged, wrong cut, expiry near…)" className={fieldCls + ' text-xs'} />
               </div>
             )
           })}
+          </div>
           {!poId && supplierId && (
-            <button onClick={addBlankLine} className="text-xs text-primary-ink hover:underline mt-2">+ Add line</button>
+            <button type="button" onClick={addBlankLine} className="text-xs text-primary-ink hover:underline mt-2">+ Add line</button>
           )}
         </Section>
 
@@ -369,31 +417,28 @@ export default function ReceivingPage() {
               <p className="text-[11px] text-white/35 mt-1">Stock is still one pool per company; the outlet is recorded for when per-outlet stock arrives.</p>
             </div>
           )}
-          <div>
-            <label className="text-xs text-white/55">Dock-door photo URL</label>
-            <input value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://… (snap with phone, paste link)" className={fieldCls + ' mt-1'} />
-            <p className="text-[11px] text-white/35 mt-1">Required above your company&apos;s photo threshold. Settles supplier disputes later.</p>
-          </div>
-          <div className="mt-3">
-            <label className="text-xs text-white/55">Notes</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Driver name, time, anything off about the delivery." className={fieldCls + ' mt-1'} />
-          </div>
+          <FormField label="Dock-door photo URL" hint="Required above your company's photo threshold. Settles supplier disputes later.">
+            <input id="recv-photo" type="url" inputMode="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://… (snap with phone, paste link)" className={fieldCls} />
+          </FormField>
+          <FormField className="mt-3" label="Notes">
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Driver name, time, anything off about the delivery." className={fieldCls} />
+          </FormField>
         </Section>
 
         {submit.error && <ErrorBanner label="Save failed:" error={submit.error} />}
+        {tried && problem && <p role="alert" className="text-xs font-bold text-right" style={{ color: 'var(--erp-warning)' }}>{problem}</p>}
 
         <p className="text-xs text-white/50 text-right">
           Booked to Goods received not invoiced until the bill arrives.
         </p>
 
         <div className="flex justify-end gap-3 pt-2">
-          <button onClick={() => submit.mutate()}
-            disabled={submit.isPending || lines.length === 0 || (!supplierId && !poId) || adHocInvalid || nothingArrived}
+          <button type="submit" disabled={submit.isPending}
             className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {submit.isPending ? 'Saving…' : 'Accept delivery →'}
           </button>
         </div>
-        </>)}
+        </form>)}
 
         <div className="pt-6 mt-6 border-t border-white/[0.05]">
           <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">Recent deliveries{receiptsError ? '' : ` · ${receipts.length}`}</h2>

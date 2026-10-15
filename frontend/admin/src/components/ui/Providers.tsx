@@ -1,8 +1,9 @@
 'use client'
 import { QueryCache, QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Toaster, toast } from 'sonner'
 import { ApiError } from '../../lib/api'
+import { ConfirmProvider } from './ConfirmDialog'
 
 // The API host, for the "couldn't reach it" toast.
 function apiHost(): string {
@@ -71,9 +72,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }),
   )
 
+  // A mouse wheel / trackpad scroll over a focused number field silently changes
+  // its value (quantities, prices, percentages). One capture-phase listener
+  // blurs it first, so the page scrolls instead — covers every raw
+  // <input type="number"> in the admin at once.
+  useEffect(() => {
+    const onWheel = () => {
+      const a = document.activeElement
+      if (a instanceof HTMLInputElement && a.type === 'number') a.blur()
+    }
+    document.addEventListener('wheel', onWheel, { capture: true, passive: true })
+    return () => document.removeEventListener('wheel', onWheel, { capture: true })
+  }, [])
+
   return (
     <QueryClientProvider client={queryClient}>
-      {children}
+      <ConfirmProvider>{children}</ConfirmProvider>
       <Toaster position="top-right" theme="dark" richColors closeButton />
     </QueryClientProvider>
   )

@@ -15,7 +15,9 @@
 //
 // Dark till styling (kds tokens); text labels, no emoji.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDialog } from '../ui/Modal'
+import { PasswordInput } from '../ui/PasswordInput'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
@@ -124,22 +126,22 @@ export function RaastAlerts({ shiftId, brand, tickets, isManager, onBillPaid }: 
         <div className="erp-kitchen-dark fixed bottom-5 left-5 z-[60] max-w-sm rounded-xl border border-kds-green bg-kds-card px-4 py-3 shadow-lg" role="status">
           <div className="flex items-start gap-3">
             <p className="text-sm font-semibold text-kds-green">{toast}</p>
-            <button type="button" onClick={() => setToast(null)} aria-label="Dismiss" className="text-kds-subtext">✕</button>
+            <button type="button" onClick={() => setToast(null)} aria-label="Dismiss"
+              className="-mr-2 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center text-kds-subtext">✕</button>
           </div>
           <p className="mt-1 text-xs text-kds-subtext">Provisional until the bank statement.</p>
         </div>
       )}
 
       {open && (
-        <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-end justify-center bg-black/80 sm:items-center"
-          role="dialog" aria-modal="true" aria-label="Bank alerts">
-          <div className="flex max-h-[90dvh] w-full max-w-lg flex-col rounded-t-2xl bg-kds-card sm:rounded-2xl">
-            <div className="flex items-center justify-between border-b border-kds-border px-5 py-4">
+        <BankAlertsDialog onClose={() => setOpen(false)}>
+            <div className="flex items-center justify-between border-b border-kds-border py-2 pl-5 pr-1">
               <div>
                 <h2 className="text-lg font-bold text-kds-text">Bank alerts</h2>
                 <p className="text-xs text-kds-subtext">Raast transfers no bill claimed on its own · last 48 hours</p>
               </div>
-              <button onClick={() => setOpen(false)} aria-label="Close" className="text-xl text-kds-subtext">✕</button>
+              <button type="button" data-dialog-close onClick={() => setOpen(false)} aria-label="Close"
+                className="flex h-11 w-11 shrink-0 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
             </div>
             <p className="border-b border-kds-border px-5 py-2 text-xs text-kds-amber">{RAAST_COUNTER_WARNING}</p>
             <div className="flex-1 overflow-y-auto">
@@ -160,10 +162,23 @@ export function RaastAlerts({ shiftId, brand, tickets, isManager, onBillPaid }: 
                 </ul>
               )}
             </div>
-          </div>
-        </div>
+        </BankAlertsDialog>
       )}
     </>
+  )
+}
+
+function BankAlertsDialog({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDialog(panelRef, { onClose })
+  return (
+    <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-end justify-center bg-black/80 sm:items-center" role="presentation">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Bank alerts"
+        className="flex max-h-[90dvh] w-full max-w-lg flex-col rounded-t-2xl bg-kds-card outline-none sm:rounded-2xl"
+        style={{ overscrollBehavior: 'contain' }}>
+        {children}
+      </div>
+    </div>
   )
 }
 
@@ -294,11 +309,15 @@ function AlertRow({ alert, shiftId, brand, tickets, isManager, onDone }: {
           <p className="text-xs text-kds-subtext">
             Not a customer’s payment (a supplier refund, an owner transfer). The money stays for finance to book, and this reference can never pay a bill.
           </p>
-          <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Why it is not a sale (required)"
+          <label htmlFor={`raast-dismiss-reason-${alert.id}`} className="sr-only">Why it is not a sale</label>
+          <input id={`raast-dismiss-reason-${alert.id}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Why it is not a sale (required)"
             className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text" />
           {!isManager && (
-            <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="Manager PIN"
-              className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text" />
+            <>
+              <label htmlFor={`raast-dismiss-pin-${alert.id}`} className="sr-only">Manager PIN</label>
+              <PasswordInput id={`raast-dismiss-pin-${alert.id}`} numeric maxLength={8} autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="Manager PIN"
+                className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text" />
+            </>
           )}
           {dismiss.isError && <p className="text-sm text-kds-red" role="alert">{approvalError(dismiss.error, 'Could not mark it not a sale')}</p>}
           <button type="submit" disabled={busy || reason.trim().length < 3 || (!isManager && !pin.trim())}
@@ -410,8 +429,12 @@ function FixReference({ alert, brand, isManager, onDone }: {
         </label>
       ))}
       {!isManager && (
-        <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="Manager PIN"
-          className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text" />
+        <>
+          <label htmlFor={`raast-fix-pin-${alert.id}`} className="sr-only">Manager PIN</label>
+          <PasswordInput id={`raast-fix-pin-${alert.id}`} numeric maxLength={8} autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && pick && !fix.isPending && pin.trim()) { e.preventDefault(); fix.mutate(pick) } }} placeholder="Manager PIN"
+            className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text" />
+        </>
       )}
       {fix.isError && <p className="text-sm text-kds-red" role="alert">{approvalError(fix.error, 'Could not fix the reference')}</p>}
       <button type="button" onClick={() => pick && fix.mutate(pick)} disabled={!pick || fix.isPending || (!isManager && !pin.trim())}

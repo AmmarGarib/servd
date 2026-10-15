@@ -27,6 +27,7 @@ import { TieOutBanner } from './TieOutBanner'
 import {
   ErrorBanner, Field, Footer, Modal, fieldCls, pinRefusal, pkr, primaryBtn, sourceLabel, TYPE_LABEL,
   type Box, type Movement,
+  firstMissing, focusField, useSubmitOnce,
 } from './ui'
 import { Select } from '@/components/ui/Select'
 
@@ -203,10 +204,26 @@ function CreateBoxModal({ users, onClose, onSaved }: { users: User[]; onClose: (
     }),
     onSuccess: () => onSaved(),
   })
-  return <Modal title="New petty cash box" onClose={onClose}>
-    <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Head office — Jamil sb" className={fieldCls} autoFocus /></Field>
-    <Field label="Custodian *">
-      <Select value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'pb-name': name.trim() ? '' : 'Give the box a name.',
+    'pb-custodian': custodianId ? '' : 'Pick who keeps the box.',
+    'pb-source': floatCents > 0 && !sourceReady(src) ? 'Pick the open drawer.' : '',
+    'pb-pin': overLimit && !managerOverridePin ? 'A manager PIN is needed above the limit.' : '',
+  }
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const submit = useSubmitOnce(save.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    save.mutate()
+    return true
+  })
+  return <Modal title="New petty cash box" onClose={onClose} dirty={!save.isPending && (!!name.trim() || !!custodianId)}>
+    <form onSubmit={submit} className="space-y-3" noValidate>
+    <Field label="Name *" error={shown('pb-name')}><input id="pb-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Head office — Jamil sb" className={fieldCls} autoFocus /></Field>
+    <Field label="Custodian *" error={shown('pb-custodian')}>
+      <Select id="pb-custodian" value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
         <option value="">— pick a user —</option>
         {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
       </Select>
@@ -220,19 +237,20 @@ function CreateBoxModal({ users, onClose, onSaved }: { users: User[]; onClose: (
       </Field>
     </div>
     {floatCents > 0 && (
-      <Field label="Opening float comes from *">
+      <Field label="Opening float comes from *" error={shown('pb-source')}>
         {/* A new box binds to the active company; the server refuses another company's bank (422). */}
         <SourcePicker value={src} onChange={setSrc} tenantId={null} boxId={null} allowTill={false} />
       </Field>
     )}
     {overLimit && (
-      <Field label="Manager PIN *">
-        <input type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Opening float above the limit" className={fieldCls} />
+      <Field label="Manager PIN *" error={shown('pb-pin')}>
+        <input id="pb-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Opening float above the limit" className={fieldCls} />
       </Field>
     )}
     <p className="text-[10px] text-white/30">The opening float is the box&apos;s first top-up and is booked from the source you pick. To fill a new box from a till drawer, create it empty and top it up.</p>
     {save.error && <ErrorBanner error={pinRefusal(save.error) ?? save.error} />}
-    <Footer onCancel={onClose} primary={<button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || !custodianId || (floatCents > 0 && !sourceReady(src)) || (overLimit && !managerOverridePin)} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Create box'}</button>} />
+    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Create box'}</button>} />
+    </form>
   </Modal>
 }
 
@@ -256,10 +274,25 @@ function EditBoxModal({ box, users, onClose, onSaved }: { box: Box; users: User[
     onSuccess: () => onSaved(),
   })
   const unchanged = name.trim() === box.name && custodianId === box.custodianId && topUpLimitCents === box.topUpLimitCents
-  return <Modal title={`Edit ${box.name}`} onClose={onClose}>
-    <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'eb-name': name.trim() ? '' : 'The box needs a name.',
+    'eb-pin': raising && !managerOverridePin ? 'Raising the limit needs a manager PIN.' : '',
+  }
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const submit = useSubmitOnce(save.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    if (unchanged) { onClose(); return false }
+    save.mutate()
+    return true
+  })
+  return <Modal title={`Edit ${box.name}`} onClose={onClose} dirty={!save.isPending && !unchanged}>
+    <form onSubmit={submit} className="space-y-3" noValidate>
+    <Field label="Name *" error={shown('eb-name')}><input id="eb-name" value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
     <Field label="Custodian *">
-      <Select value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
+      <Select id="eb-custodian" value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
         {options.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
       </Select>
     </Field>
@@ -268,12 +301,13 @@ function EditBoxModal({ box, users, onClose, onSaved }: { box: Box; users: User[
       <p className="text-[10px] text-white/30 mt-1">Now {pkr(box.topUpLimitCents)}. A top-up above the limit needs a manager PIN.</p>
     </Field>
     {raising && (
-      <Field label="Manager PIN *">
-        <input type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Raising the limit needs a manager" className={fieldCls} />
+      <Field label="Manager PIN *" error={shown('eb-pin')}>
+        <input id="eb-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Raising the limit needs a manager" className={fieldCls} />
       </Field>
     )}
     {save.error && <ErrorBanner error={pinRefusal(save.error) ?? save.error} />}
-    <Footer onCancel={onClose} primary={<button onClick={() => save.mutate()} disabled={save.isPending || unchanged || !name.trim() || (raising && !managerOverridePin)} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Save'}</button>} />
+    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Save'}</button>} />
+    </form>
   </Modal>
 }
 
@@ -288,23 +322,39 @@ function TransferModal({ from, boxes, onClose, onSaved }: { from: Box; boxes: Bo
     onSuccess: () => onSaved(),
   })
   const over = amountCents > from.floatCents
-  return <Modal title={`Move cash from ${from.name}`} onClose={onClose}>
-    <Field label="To box *">
-      <Select value={toBoxId} onChange={(e) => setToBoxId(e.target.value)} className={fieldCls}>
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'tr-to': toBoxId ? '' : 'There is no other box in this company to move cash to.',
+    'tr-amount': amountCents <= 0 ? 'Enter an amount above zero.' : over ? `More than the ${pkr(from.floatCents)} in ${from.name}.` : '',
+    'tr-reason': reason.trim() ? '' : 'Say why the cash is moving.',
+  }
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const submit = useSubmitOnce(save.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    save.mutate()
+    return true
+  })
+  return <Modal title={`Move cash from ${from.name}`} onClose={onClose} dirty={!save.isPending && (amountCents > 0 || !!reason.trim())}>
+    <form onSubmit={submit} className="space-y-3" noValidate>
+    <Field label="To box *" error={shown('tr-to')}>
+      <Select id="tr-to" value={toBoxId} onChange={(e) => setToBoxId(e.target.value)} className={fieldCls}>
         {targets.map((b) => <option key={b.id} value={b.id}>{b.name} · {pkr(b.floatCents)}</option>)}
       </Select>
     </Field>
-    <Field label="Amount (PKR) *">
-      <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
+    <Field label="Amount (PKR) *" error={shown('tr-amount')}>
+      <MoneyInput id="tr-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
       <p className="text-[10px] mt-1" style={{ color: over ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
         {over ? `More than the ${pkr(from.floatCents)} in ${from.name}` : `In ${from.name} now: ${pkr(from.floatCents)}`}
       </p>
     </Field>
-    <Field label="Reason *">
-      <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={160} placeholder="Weekend float for the kitchen box" className={fieldCls} />
+    <Field label="Reason *" error={shown('tr-reason')}>
+      <input id="tr-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={160} placeholder="Weekend float for the kitchen box" className={fieldCls} />
     </Field>
     {save.error && <ErrorBanner error={save.error} />}
-    <Footer onCancel={onClose} primary={<button onClick={() => save.mutate()} disabled={save.isPending || !toBoxId || amountCents <= 0 || over || !reason.trim()} className={primaryBtn}>{save.isPending ? 'Moving…' : 'Move cash'}</button>} />
+    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Moving…' : 'Move cash'}</button>} />
+    </form>
   </Modal>
 }
 
@@ -318,13 +368,15 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
   })
   const tone = Math.abs(variance) >= 20000 ? 'var(--erp-warning)' : 'var(--erp-success)'
 
-  return <Modal title={`Reconcile ${box.name}`} onClose={onClose}>
+  const submit = useSubmitOnce(save.isPending)(() => { save.mutate(); return true })
+  return <Modal title={`Reconcile ${box.name}`} onClose={onClose} dirty={!save.isPending && (counted !== box.floatCents || !!notes.trim())}>
+    <form onSubmit={submit} className="space-y-3">
     <div className="rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <p className="text-xs text-white/55">System float</p>
       <p className="text-2xl font-black text-white/90">{pkr(box.floatCents)}</p>
     </div>
     <Field label="Physical count (PKR) *">
-      <MoneyInput value={counted} onChange={setCounted} className={fieldCls} autoFocus ariaLabel="Counted cash in rupees" />
+      <MoneyInput id="rc-counted" value={counted} onChange={setCounted} className={fieldCls} autoFocus ariaLabel="Counted cash in rupees" />
     </Field>
     {Math.abs(variance) > 0 && (
       <div className="rounded-lg p-3 text-sm font-bold" style={{ background: `color-mix(in srgb, ${tone} 10%, transparent)`, color: tone, border: `1px solid color-mix(in srgb, ${tone} 35%, transparent)` }}>
@@ -334,6 +386,7 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
     )}
     <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Anything noteworthy" className={fieldCls} /></Field>
     {save.error && <ErrorBanner error={save.error} />}
-    <Footer onCancel={onClose} primary={<button onClick={() => save.mutate()} disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Save count'}</button>} />
+    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Save count'}</button>} />
+    </form>
   </Modal>
 }

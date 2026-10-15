@@ -10,6 +10,8 @@ import { useEffect, useRef, useState } from 'react'
 import { FloorCanvas } from './FloorCanvas'
 import type { FloorTable, FloorViewport } from './FloorCanvas'
 import { Select } from '@/components/ui/Select'
+import { NumberField } from '@/components/ui/NumberField'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 const SHAPES = ['rectangle', 'square', 'round', 'banquette', 'counter', 'barstool'] as const
 
@@ -23,6 +25,8 @@ interface Props {
 }
 
 export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAddTable, onDeleteTable }: Props) {
+  const confirm = useConfirm()
+  const [dragging, setDragging] = useState(false)
   const [tables, setTables] = useState(initialTables)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [snap, setSnap] = useState(20)
@@ -32,7 +36,7 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
 
   // New-table form
   const [newLabel, setNewLabel] = useState('T')
-  const [newCapacity, setNewCapacity] = useState(4)
+  const [newCapacity, setNewCapacity] = useState<number | null>(4)
   const [newShape, setNewShape] = useState<FloorTable['shape']>('rectangle')
 
   // Drag state held in ref (we don't want React re-renders on every pointer move).
@@ -64,6 +68,7 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
     setSelectedId(t.id)
     const { x, y } = pointerToFloorCoords(e)
     dragRef.current = { id: t.id, offsetX: x - t.x, offsetY: y - t.y }
+    setDragging(true)
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
@@ -82,9 +87,41 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
 
   function onPointerUp() {
     dragRef.current = null
+    setDragging(false)
   }
 
   const selected = tables.find((t) => t.id === selectedId) ?? null
+
+  // Unsaved layout: the browser asks before the tab closes or the page reloads.
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  // Arrow keys nudge the selected table (Shift = 10). Ignored while typing in a field.
+  useEffect(() => {
+    if (!selectedId) return
+    const onKey = (e: KeyboardEvent) => {
+      const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
+      const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0
+      if (!dx && !dy) return
+      if (e.altKey || e.ctrlKey || e.metaKey) return
+      const el = e.target as HTMLElement | null
+      if (el && (el.closest('input,textarea,select,button,[contenteditable="true"],[role="dialog"],[role="listbox"],[role="combobox"]'))) return
+      e.preventDefault()
+      const step = e.shiftKey ? 10 : 1
+      setTables((prev) => prev.map((t) => t.id !== selectedId ? t : {
+        ...t,
+        x: clamp(t.x + dx * step, 0, Math.max(0, floor.width - t.width)),
+        y: clamp(t.y + dy * step, 0, Math.max(0, floor.height - t.height)),
+      }))
+      setDirty(true)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedId, floor.width, floor.height])
 
   function patchSelected(patch: Partial<FloorTable>) {
     if (!selected) return
@@ -112,7 +149,7 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
     try {
       const created = await onAddTable({
         label: newLabel.trim(),
-        capacity: newCapacity,
+        capacity: newCapacity ?? 1,
         shape: newShape,
         x: snapTo(40 + (tables.length * 30) % (floor.width  - 200)),
         y: snapTo(40 + (tables.length * 20) % (floor.height - 200)),
@@ -129,7 +166,8 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
 
   async function handleDelete() {
     if (!selected || !onDeleteTable) return
-    if (!confirm(`Delete table "${selected.label}"? This cannot be undone.`)) return
+    const ok = await confirm({ title: `Delete table "${selected.label}"?`, body: 'This cannot be undone.', confirmLabel: 'Delete table', danger: true })
+    if (!ok) return
     try {
       await onDeleteTable(selected.id)
       setTables((prev) => prev.filter((t) => t.id !== selected.id))
@@ -153,12 +191,13 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
           tables={tables}
           selectedId={selectedId}
           gridSize={snap > 0 ? snap : 0}
+          dragging={dragging}
           onTablePointerDown={onTableDown}
           colorFor={() => ({ fill: 'rgba(34,197,94,0.18)', stroke: 'rgba(22,163,74,0.6)', text: 'var(--bg)' })}
           ariaLabel={`Editing ${floor.name}`}
         />
         <div className="mt-2 flex items-center justify-between text-xs text-s-muted flex-wrap gap-2">
-          <span>Drag tables to move · click to select · Tab key cycles selection</span>
+          <span>Drag tables to move · click to select · arrow keys nudge (Shift = 10)</span>
           <span>{tables.length} table{tables.length === 1 ? '' : 's'} · {floor.width}×{floor.height}px</span>
         </div>
       </div>
@@ -197,24 +236,24 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
             </Field>
             <div className="grid grid-cols-2 gap-2">
               <Field label="Width">
-                <input type="number" min={20} max={800} value={selected.width} onChange={(e) => patchSelected({ width: snapTo(parseInt(e.target.value, 10) || 20) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+                <CommitNumber key={`${selected.id}-w`} normalize={snapTo} value={selected.width} min={20} max={800} onCommit={(v) => patchSelected({ width: snapTo(v) })} />
               </Field>
               <Field label="Height">
-                <input type="number" min={20} max={800} value={selected.height} onChange={(e) => patchSelected({ height: snapTo(parseInt(e.target.value, 10) || 20) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+                <CommitNumber key={`${selected.id}-h`} normalize={snapTo} value={selected.height} min={20} max={800} onCommit={(v) => patchSelected({ height: snapTo(v) })} />
               </Field>
               <Field label="Rotation°">
-                <input type="number" min={0} max={359} value={selected.rotation} onChange={(e) => patchSelected({ rotation: ((parseInt(e.target.value, 10) || 0) % 360 + 360) % 360 })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+                <CommitNumber key={`${selected.id}-r`} value={selected.rotation} min={0} max={359} onCommit={(v) => patchSelected({ rotation: ((v % 360) + 360) % 360 })} />
               </Field>
               <Field label="Capacity">
-                <input type="number" min={1} max={50} value={selected.capacity} onChange={(e) => patchSelected({ capacity: parseInt(e.target.value, 10) || 1 })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+                <CommitNumber key={`${selected.id}-c`} value={selected.capacity} min={1} max={50} onCommit={(v) => patchSelected({ capacity: v })} />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-1">
               <Field label="X">
-                <input type="number" value={selected.x} onChange={(e) => patchSelected({ x: snapTo(parseInt(e.target.value, 10) || 0) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+                <CommitNumber key={`${selected.id}-x`} normalize={snapTo} value={selected.x} min={0} onCommit={(v) => patchSelected({ x: snapTo(v) })} />
               </Field>
               <Field label="Y">
-                <input type="number" value={selected.y} onChange={(e) => patchSelected({ y: snapTo(parseInt(e.target.value, 10) || 0) })} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+                <CommitNumber key={`${selected.id}-y`} normalize={snapTo} value={selected.y} min={0} onCommit={(v) => patchSelected({ y: snapTo(v) })} />
               </Field>
             </div>
             {onDeleteTable && (
@@ -236,7 +275,7 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
             <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           </Field>
           <Field label="Capacity">
-            <input type="number" min={1} max={50} value={newCapacity} onChange={(e) => setNewCapacity(parseInt(e.target.value, 10) || 1)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+            <NumberField min={1} max={50} value={newCapacity} onValueChange={setNewCapacity} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           </Field>
           <Field label="Shape">
             <Select value={newShape} onChange={(e) => setNewShape(e.target.value as FloorTable['shape'])} className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
@@ -249,6 +288,28 @@ export function FloorPlanEditor({ floor, initialTables, conceptId, onSave, onAdd
         </div>
       </aside>
     </div>
+  )
+}
+
+/** A number box that holds what is typed (Backspace can empty it) and applies it when the field loses focus or Enter is pressed. */
+function CommitNumber({ value, min, max, normalize, onCommit }: { value: number; min?: number; max?: number; normalize?: (v: number) => number; onCommit: (v: number) => void }) {
+  const [draft, setDraft] = useState<number | null>(value)
+  useEffect(() => setDraft(value), [value])
+  return (
+    <NumberField
+      value={draft} onValueChange={setDraft} min={min} max={max}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+      onBlur={() => {
+        if (draft == null) { setDraft(value); return }
+        let v = draft
+        if (min != null && v < min) v = min
+        if (max != null && v > max) v = max
+        if (normalize) v = normalize(v)
+        setDraft(v)
+        if (v !== value) onCommit(v)
+      }}
+      className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-sm"
+    />
   )
 }
 

@@ -14,7 +14,11 @@
 // never a block: show `referenceUsedBefore` from the API response with
 // <ReferenceUsedBeforeNotice>. The till keeps its own tenders.
 
-import { BankAccountSelect } from './BankAccountSelect'
+import { useRef, useState } from 'react'
+import { BankAccountSelect, FIELD_LABEL_CLASS } from './BankAccountSelect'
+import { MoneyInput } from '../ui/MoneyInput'
+import { fmtPkrWhole } from '../../lib/money'
+import { useSubmitOnce } from '../../app/finance/cash-vouchers/ui'
 import { Select } from '@/components/ui/Select'
 
 export const RECEIPT_METHODS = ['cash', 'card', 'bank_transfer', 'bank_deposit', 'cheque'] as const
@@ -81,7 +85,7 @@ export function PaymentReceivedFields({
   idPrefix = 'pay',
   selectClassName = 's-select',
   inputClassName = 's-input',
-  labelClassName = 'block text-xs text-s-muted mb-1',
+  labelClassName = FIELD_LABEL_CLASS,
   hint,
 }: {
   /** The company the money belongs to (the document's company). */
@@ -106,8 +110,8 @@ export function PaymentReceivedFields({
   const required = referenceRequired(method)
   return (
     <div className="space-y-2">
-      <label className="block" htmlFor={`${idPrefix}-method`}>
-        <span className={labelClassName}>{methodLabel}</span>
+      <div>
+        <label htmlFor={`${idPrefix}-method`} className={labelClassName}>{methodLabel}</label>
         <Select
           id={`${idPrefix}-method`}
           value={method}
@@ -122,10 +126,10 @@ export function PaymentReceivedFields({
             <option key={m} value={m}>{receiptMethodLabel(m)}</option>
           ))}
         </Select>
-      </label>
+      </div>
       {hint}
-      <label className="block" htmlFor={`${idPrefix}-ref`}>
-        <span className={labelClassName}>Payment reference #{required ? ' *' : ''}</span>
+      <div>
+        <label htmlFor={`${idPrefix}-ref`} className={labelClassName}>Payment reference #{required ? ' *' : ''}</label>
         <input
           id={`${idPrefix}-ref`}
           value={reference}
@@ -136,9 +140,9 @@ export function PaymentReceivedFields({
           className={inputClassName}
           autoComplete="off"
         />
-      </label>
+      </div>
       {isBankMethod(method) && (
-        <BankAccountSelect id={`${idPrefix}-bank`} tenantId={tenantId} value={bankAccountId} onChange={onBank} label={bankLabel} className={selectClassName} />
+        <BankAccountSelect id={`${idPrefix}-bank`} tenantId={tenantId} value={bankAccountId} onChange={onBank} label={bankLabel} className={selectClassName} labelClassName={labelClassName} />
       )}
     </div>
   )
@@ -157,5 +161,58 @@ export function ReferenceUsedBeforeNotice({ uses }: { uses: PaymentRefUse[] | nu
       </ul>
       <p className="mt-1 text-s-muted">That can be right (one transfer paying several invoices). If not, correct the entry.</p>
     </div>
+  )
+}
+
+// ─── Dialog helpers shared by the money dialogs (receivables, write-offs, …) ──
+
+/** Rupees typed (a string) → paisa, exactly as the dialogs always sent it. */
+export const rupeesToPaisa = (rupees: string) => Math.round((Number(rupees) || 0) * 100)
+export const paisaToRupees = (paisa: number) => String(paisa / 100)
+
+/**
+ * A PKR amount held as a rupee string — what these dialogs keep in state and
+ * send (via rupeesToPaisa, unchanged) — typed with the comma-grouped
+ * MoneyInput. Large amounts get a grouped preview line under the field.
+ */
+export function RupeeField({ id, value, onChange, label, invalid, className = 's-input', allowNegative }: {
+  id?: string; value: string; onChange: (v: string) => void; label: string; invalid?: boolean; className?: string; allowNegative?: boolean
+}) {
+  const cents = rupeesToPaisa(value)
+  return (
+    <>
+      <MoneyInput id={id} ariaLabel={label} value={cents} allowNegative={allowNegative} onChange={(c) => onChange(c === 0 ? '' : paisaToRupees(c))}
+        className={className} aria-invalid={invalid ? true : undefined} />
+      {Math.abs(cents) >= 10_000_000 && <span className="block text-[11px] text-s-muted mt-1" aria-live="polite">{fmtPkrWhole(cents)}</span>}
+    </>
+  )
+}
+
+/**
+ * A dialog's <form>: Enter submits, the primary stays enabled, a double submit is
+ * ignored, and pressing it with something missing says what (role=alert) and
+ * focuses the first invalid field. `missing` is the message while something
+ * required is empty, else null.
+ */
+export function DialogForm({ onSubmit, missing, busy, children }: { onSubmit: () => void; missing: string | null; busy: boolean; children: React.ReactNode }) {
+  const [tried, setTried] = useState(false)
+  const ref = useRef<HTMLFormElement>(null)
+  const handler = useSubmitOnce(busy)(() => {
+    if (missing) {
+      setTried(true)
+      const f = ref.current
+      const el = f?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? f?.querySelector<HTMLElement>('input:not([disabled]):not([type="hidden"]), textarea')
+      el?.focus()
+      return false
+    }
+    setTried(false)
+    onSubmit()
+    return true
+  })
+  return (
+    <form ref={ref} onSubmit={handler} noValidate>
+      {children}
+      {tried && missing && <p role="alert" className="text-xs font-bold mt-3" style={{ color: 'var(--erp-danger)' }}>{missing}</p>}
+    </form>
   )
 }

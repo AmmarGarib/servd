@@ -13,6 +13,12 @@ import { OpenTicketsCloseConfirm } from '../../components/pos/OpenTicketsCloseCo
 import { closeDrawer, isOpenTicketsError, type ZReportExtras } from '../../components/pos/tillApi'
 import { useAuthStore } from '../../store/auth'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '../../components/ui/Modal'
+import { MoneyInput } from '../../components/ui/MoneyInput'
+import { NumberField } from '../../components/ui/NumberField'
+import { useConfirm } from '../../components/ui/ConfirmDialog'
+import { DialogForm, RupeeField } from '../../components/finance/PaymentReceivedFields'
+import { dateBounds } from '../finance/cash-vouchers/ui'
 
 // Who may do what on this page — the API decides; these only hide buttons the
 // API would refuse (wave 3: finance reads and works reconciliation, but a
@@ -127,7 +133,8 @@ function ShiftDetailPanel({
   onClose,
 }: { shiftId: string; onClose: () => void }) {
   const qc = useQueryClient()
-  const [closingFloat, setClosingFloat] = useState('')
+  // The counted cash: null = not entered yet (0 is a real count).
+  const [closingFloat, setClosingFloat] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
 
   const { data, isLoading, error } = useQuery<ZReport & ZReportExtras>({
@@ -142,7 +149,7 @@ function ShiftDetailPanel({
   const canCloseDrawer = useAuthStore((s) => s.isRole(...DRAWER_CLOSERS))
   const complete = useMutation({
     mutationFn: (confirmOpenTickets: boolean) =>
-      closeDrawer<ZReport>(shiftId, Math.round(parseFloat(closingFloat) * 100), { notes: notes || undefined, confirmOpenTickets }),
+      closeDrawer<ZReport>(shiftId, Math.round((closingFloat ?? 0) * 100), { notes: notes || undefined, confirmOpenTickets }),
     onSuccess: () => {
       setOpenTicketsBlock(null)
       void qc.invalidateQueries({ queryKey: ['recon-shift', shiftId] })
@@ -159,13 +166,8 @@ function ShiftDetailPanel({
   const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-s-teal focus:outline-none w-full'
 
   return (
-    <div className="fixed inset-0 bg-secondary/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-s-bg border border-s-border rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-s-bg border-b border-s-border px-5 py-4 flex items-center justify-between">
-          <p className="font-bold text-s-text">Shift Reconciliation</p>
-          <button onClick={onClose} className="text-s-muted hover:text-s-text text-xl leading-none">✕</button>
-        </div>
-
+    <Modal title="Shift Reconciliation" onClose={onClose} wide dirty={closingFloat !== null && !complete.isSuccess && !complete.isPending}>
+      <div>
         {isLoading && <p className="p-6 text-s-muted">Loading…</p>}
         {error && <p className="p-6 text-s-red text-sm">{(error as Error).message}</p>}
 
@@ -280,28 +282,43 @@ function ShiftDetailPanel({
                 <p className="text-xs text-s-muted">
                   Count the cash in the drawer and enter the total. This is the same close the till uses — it posts the shift to the books.
                 </p>
+                <DialogForm busy={complete.isPending} onSubmit={() => complete.mutate(false)} missing={closingFloat == null ? 'Enter the cash counted in the drawer (0 if it is empty).' : null}>
                 <div>
-                  <label className="text-xs text-s-muted block mb-1">Closing float (PKR)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
+                  <label htmlFor="sh-closing" className="text-xs text-s-muted block mb-1">Closing float (PKR)</label>
+                  <NumberField
+                    id="sh-closing"
+                    decimals={2}
+                    min={0}
                     value={closingFloat}
-                    onChange={(e) => setClosingFloat(e.target.value)}
+                    onValueChange={setClosingFloat}
                     placeholder="e.g. 5000"
                     className={inp}
                   />
+                  {closingFloat != null && closingFloat >= 100000 && <p className="text-[11px] text-s-muted mt-1" aria-live="polite">{fmtPkr(Math.round(closingFloat * 100))}</p>}
                 </div>
-                <div>
-                  <label className="text-xs text-s-muted block mb-1">Notes (optional)</label>
+                <div className="mt-3">
+                  <label htmlFor="sh-notes" className="text-xs text-s-muted block mb-1">Notes (optional)</label>
                   <input
+                    id="sh-notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Any discrepancy explanations…"
                     className={inp}
                   />
                 </div>
-                {openTicketsBlock ? (
+                {!openTicketsBlock && closeError && (
+                  <p role="alert" className="text-sm text-s-red mt-3">{closeError}</p>
+                )}
+                {!openTicketsBlock && (
+                  <button
+                    type="submit"
+                    disabled={complete.isPending}
+                    className="w-full mt-3 rounded-xl bg-primary text-primary-on font-bold py-2.5 text-sm hover:opacity-90 disabled:opacity-40">
+                    {complete.isPending ? 'Closing…' : 'Close shift'}
+                  </button>
+                )}
+                </DialogForm>
+                {openTicketsBlock && (
                   <OpenTicketsCloseConfirm
                     tone="admin"
                     openTickets={data.openTickets ?? null}
@@ -311,18 +328,6 @@ function ShiftDetailPanel({
                     onBack={() => { setOpenTicketsBlock(null); complete.reset() }}
                     onConfirm={() => complete.mutate(true)}
                   />
-                ) : (
-                  <>
-                    {closeError && (
-                      <p className="text-sm text-s-red">{closeError}</p>
-                    )}
-                    <button
-                      onClick={() => complete.mutate(false)}
-                      disabled={complete.isPending || !closingFloat}
-                      className="w-full rounded-xl bg-primary text-primary-on font-bold py-2.5 text-sm hover:opacity-90 disabled:opacity-40">
-                      {complete.isPending ? 'Closing…' : 'Close shift'}
-                    </button>
-                  </>
                 )}
               </div>
             )}
@@ -336,7 +341,7 @@ function ShiftDetailPanel({
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -352,6 +357,7 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
   const { data: banks = [] } = useQuery<BankAccountOpt[]>({ queryKey: ['bank-accounts'], queryFn: () => api.get('/setup/bank-accounts') })
   const [target, setTarget] = useState('')
   const [statementDate, setStatementDate] = useState(todayPktIso())
+  // MoneyInput holds paisa (a negative balance is allowed); it is sent as typed.
   const [opening, setOpening] = useState(0)
   const [closing, setClosing] = useState(0)
   const [csv, setCsv] = useState('')
@@ -366,8 +372,8 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
     mutationFn: () => api.post('/reconciliation/bank/imports', {
       ...(picked === GATEWAY ? { source: 'keenu', accountCode: '1030' } : { bankAccountId: picked }),
       statementDate,
-      // Whole paisa: 100.10 * 100 is 10009.999…, which the API refuses.
-      openingBalanceCents: Math.round(opening * 100), closingBalanceCents: Math.round(closing * 100),
+      // Whole paisa (MoneyInput already rounds: 100.10 * 100 is 10009.999…, which the API refuses).
+      openingBalanceCents: opening, closingBalanceCents: closing,
       csv,
       filename: `${label}-${statementDate}.csv`,
       fileUrl: `data:text/csv;base64,${btoa(csv)}`,
@@ -376,23 +382,57 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
     onError: (e: { message?: string }) => setErr(e.message ?? 'Import failed'),
   })
 
+  // Rows in the pasted CSV: non-empty lines, less a header line when there is one.
+  const csvLines = csv.split(/\r?\n/).filter((l) => l.trim())
+  const hasHeader = csvLines.length > 0 && /date/i.test(csvLines[0]!) && /amount/i.test(csvLines[0]!)
+  const parsedRows = Math.max(0, csvLines.length - (hasHeader ? 1 : 0))
+  const bounds = dateBounds()
+  const fieldCls = 'w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text'
+  const labelCls = 'block text-[11px] font-bold text-s-muted mb-0.5'
+  const missing = !picked ? 'Pick the bank account the statement is for.'
+    : !statementDate || statementDate < bounds.min || statementDate > bounds.max ? `Pick a statement date between ${bounds.min} and ${bounds.max}.`
+    : parsedRows === 0 ? 'Paste the statement CSV (date, description, amount, reference).'
+    : null
+
   return (
-    <div className="p-4 border-b border-s-border space-y-2 text-sm">
-      <div className="grid grid-cols-2 gap-2">
-        <Select value={picked} onChange={(e) => setTarget(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text">
-          {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
-          <option value={GATEWAY}>Card / gateway settlement (1030)</option>
-        </Select>
-        <input type="date" value={statementDate} onChange={(e) => setStatementDate(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text" />
-        <input type="number" value={opening} onChange={(e) => setOpening(parseFloat(e.target.value) || 0)} placeholder="opening (PKR)" className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text" />
-        <input type="number" value={closing} onChange={(e) => setClosing(parseFloat(e.target.value) || 0)} placeholder="closing (PKR)" className="bg-s-card border border-s-border rounded px-2 py-1 text-s-text" />
+    <div className="p-4 border-b border-s-border text-sm">
+      <DialogForm busy={submit.isPending} onSubmit={() => { setErr(null); submit.mutate() }} missing={missing}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <label htmlFor="bi-bank" className={labelCls}>Statement is for</label>
+          <Select id="bi-bank" value={picked} onChange={(e) => setTarget(e.target.value)} className={fieldCls}>
+            {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
+            <option value={GATEWAY}>Card / gateway settlement (1030)</option>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="bi-date" className={labelCls}>Statement date</label>
+          <input id="bi-date" type="date" min={bounds.min} max={bounds.max} value={statementDate} onChange={(e) => setStatementDate(e.target.value)} className={fieldCls}
+            aria-invalid={!statementDate || statementDate < bounds.min || statementDate > bounds.max ? true : undefined} />
+        </div>
+        <div>
+          <label htmlFor="bi-opening" className={labelCls}>Opening balance (PKR)</label>
+          <MoneyInput id="bi-opening" allowNegative value={opening} onChange={setOpening} placeholder="0 — a minus sign is fine for an overdrawn account" className={fieldCls} />
+        </div>
+        <div>
+          <label htmlFor="bi-closing" className={labelCls}>Closing balance (PKR)</label>
+          <MoneyInput id="bi-closing" allowNegative value={closing} onChange={setClosing} placeholder="0" className={fieldCls} />
+        </div>
       </div>
-      {banks.length === 0 && <p className="text-xs text-s-muted">No bank accounts yet — add one in Configuration → Bank accounts.</p>}
-      <textarea value={csv} onChange={(e) => setCsv(e.target.value)} rows={6} placeholder="Paste CSV (date,description,amount,reference)" className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text font-mono text-xs" />
-      {err && <p className="text-s-red text-xs">{err}</p>}
-      <button onClick={() => submit.mutate()} disabled={submit.isPending || !picked} className="s-btn-primary text-xs">
+      {banks.length === 0 && <p className="text-xs text-s-muted mt-2">No bank accounts yet — add one in Configuration → Bank accounts.</p>}
+      <div className="mt-2">
+        <label htmlFor="bi-csv" className={labelCls}>Statement CSV</label>
+        <textarea id="bi-csv" value={csv} onChange={(e) => setCsv(e.target.value)} rows={6} placeholder="Paste CSV (date,description,amount,reference)"
+          className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text font-mono text-xs" />
+        <p className="text-[11px] text-s-muted mt-1" aria-live="polite">
+          {parsedRows === 0 ? 'No rows yet.' : `${parsedRows} row${parsedRows === 1 ? '' : 's'} parsed${hasHeader ? ' (header line skipped)' : ''}.`}
+        </p>
+      </div>
+      {err && <p role="alert" className="text-s-red text-xs mt-2">{err}</p>}
+      <button type="submit" disabled={submit.isPending} className="s-btn-primary text-xs mt-2">
         {submit.isPending ? 'Importing…' : 'Import'}
       </button>
+      </DialogForm>
     </div>
   )
 }
@@ -437,6 +477,8 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
   const inp = 'bg-s-card border border-s-border rounded px-1.5 py-0.5 text-s-text'
 
   return (
+    <DialogForm busy={adjust.isPending} onSubmit={() => adjust.mutate()}
+      missing={!memo.trim() ? 'Add a memo — what this is.' : split ? (splitReady ? null : 'Every line needs a code and an amount, and the lines must balance.') : (!contra.trim() ? 'Enter the account code to book it to.' : null)}>
     <div className="px-4 py-3 space-y-2 text-xs">
       {inflow && raastAccount && (
         <p role="alert" className="rounded-lg border border-s-amber/40 bg-s-amber-dim px-3 py-2 text-s-text">
@@ -450,7 +492,7 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
       </div>
       {!split ? (
         <div className="flex flex-wrap gap-2">
-          <input value={contra} onChange={(e) => setContra(e.target.value)} placeholder="account code (6080)" className={`${inp} w-36`} />
+          <input value={contra} onChange={(e) => setContra(e.target.value)} aria-label="Account code" placeholder="account code (6080)" className={`${inp} w-36`} />
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -459,17 +501,17 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
           </p>
           {rows.map((r, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2">
-              <input value={r.code} onChange={(e) => setRow(i, { code: e.target.value })} placeholder="code" className={`${inp} w-20 font-mono`} />
+              <input value={r.code} onChange={(e) => setRow(i, { code: e.target.value })} aria-label={`Line ${i + 1} account code`} placeholder="code" className={`${inp} w-20 font-mono`} />
               <Select value={r.type} onChange={(e) => setRow(i, { type: e.target.value as 'debit' | 'credit' })} className={inp}>
                 <option value="debit">Dr</option>
                 <option value="credit">Cr</option>
               </Select>
-              <input type="number" min="0" step="0.01" value={r.amount} onChange={(e) => setRow(i, { amount: e.target.value })} placeholder="PKR" className={`${inp} w-28 text-right`} />
-              {rows.length > 1 && <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-s-muted hover:text-s-text">Remove</button>}
+              <span className="w-28"><RupeeField label={`Line ${i + 1} amount (PKR)`} value={r.amount} onChange={(v) => setRow(i, { amount: v })} className={`${inp} w-full text-right`} /></span>
+              {rows.length > 1 && <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-s-muted hover:text-s-text">Remove</button>}
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
-            <button onClick={() => setRows((rs) => [...rs, { code: '', type: otherSide, amount: '' }])} className="text-primary-ink">+ Add line</button>
+            <button type="button" onClick={() => setRows((rs) => [...rs, { code: '', type: otherSide, amount: '' }])} className="text-primary-ink">+ Add line</button>
             <span className={off === 0 ? 'text-success' : 'text-s-red'}>
               {off === 0 ? 'Balanced' : `Off by ${fmtPkr(Math.abs(off))} (${off > 0 ? 'more debits' : 'more credits'})`}
             </span>
@@ -477,23 +519,24 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="memo (what this is)" className={`${inp} flex-1 min-w-[10rem]`} />
+        <input value={memo} onChange={(e) => setMemo(e.target.value)} aria-label="Memo" placeholder="memo (what this is)" className={`${inp} flex-1 min-w-[10rem]`} />
         <button
-          onClick={() => adjust.mutate()}
-          disabled={!memo.trim() || adjust.isPending || (split ? !splitReady : !contra.trim())}
+          type="submit"
+          disabled={adjust.isPending}
           className="text-primary-ink font-semibold disabled:opacity-40">
           {adjust.isPending ? 'Booking…' : 'Book'}
         </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        <button type="button" onClick={onCancel} className="text-s-muted">Cancel</button>
       </div>
       {adjust.error && (
-        <p className="text-s-red">
+        <p role="alert" className="text-s-red">
           {adjust.error instanceof ApiError && adjust.error.code === 'USE_CARD_PAYOUT_CONFIRM'
             ? cardPayoutErrorText(adjust.error)
             : (adjust.error as Error).message}
         </p>
       )}
     </div>
+    </DialogForm>
   )
 }
 
@@ -506,6 +549,7 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
   onOpenCards: () => void
 }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [adjusting, setAdjusting] = useState<string | null>(null)
   const [cardLine, setCardLine] = useState<string | null>(null)
   const canBook = useAuthStore((s) => s.isRole(...ADJUSTMENT_BOOKERS))
@@ -559,7 +603,7 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
                   ) : l.matchStatus === 'matched' && !l.raastReceipt && canUnmatch ? (
                     <span className="inline-flex gap-3">
                       <span className="text-s-muted">matched</span>
-                      <button onClick={() => { if (confirm('Undo this match? The line goes back to unmatched and its journal line is free again.')) unmatch.mutate(l.id) }}
+                      <button onClick={async () => { if (await confirm({ title: `Undo the match on ${fmtPkr(l.amountCents)}?`, body: `${l.description || 'This statement line'} goes back to unmatched and its journal line is free again.`, confirmLabel: 'Undo match', danger: true })) unmatch.mutate(l.id) }}
                         disabled={unmatch.isPending} className="text-s-muted underline hover:text-s-text">Unmatch</button>
                     </span>
                   ) : l.matchStatus !== 'unmatched' ? (

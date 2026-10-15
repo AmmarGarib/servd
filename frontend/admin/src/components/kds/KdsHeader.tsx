@@ -1,13 +1,17 @@
 'use client'
 import { useKdsStore } from '../../store/kds'
 import { useKdsVoice } from '../../hooks/useKdsVoice'
+import { enableKdsSound, useKdsAudioState } from '../../hooks/useKdsSocket'
 
 interface KdsHeaderProps {
   title: string
   stationId?: string
+  /** The page's own queue count; when given it replaces the socket-store count so the two can never disagree. */
+  count?: number
 }
 
-export function KdsHeader({ title, stationId }: KdsHeaderProps) {
+export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
+  const audio = useKdsAudioState()
   const orders = useKdsStore((s) => s.orders)
   const lang = useKdsStore((s) => s.lang)
   const showImages = useKdsStore((s) => s.showImages)
@@ -33,11 +37,18 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
     : orders.filter((o) => !['completed', 'cancelled'].includes(o.status))
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-kds-border bg-kds-card px-4">
+    <>
+    {soundEnabled && audio === 'suspended' && (
+      <button type="button" onClick={enableKdsSound}
+        className="flex min-h-11 w-full items-center justify-center gap-2 border-b border-kds-amber/40 bg-kds-amber/15 px-4 text-sm font-bold text-kds-amber">
+        Tap to enable sound. New-order chimes stay silent until you do.
+      </button>
+    )}
+    <header className="flex min-h-14 items-center justify-between border-b border-kds-border bg-kds-card px-4">
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-bold tracking-wide text-kds-text">{title}</h1>
         <span className="rounded-full bg-kds-red px-2.5 py-0.5 text-sm font-bold text-white">
-          {activeOrders.length}
+          {count ?? activeOrders.length}
         </span>
         {/* F05: WS health pill — green dot + "Live" when connected, pulsing red
             + "Reconnecting…" when the socket has dropped. Right of the count
@@ -67,14 +78,14 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
         {/* Language toggle */}
         <div className="flex rounded-lg border border-kds-border overflow-hidden text-xs font-bold">
           <button
-            onClick={() => setLang('en')}
-            className={`px-3 py-1.5 transition-colors ${lang === 'en' ? 'bg-kds-green text-black' : 'text-kds-subtext hover:text-kds-text'}`}
+            onClick={() => setLang('en')} aria-pressed={lang === 'en'} aria-label="English"
+            className={`min-h-11 min-w-11 px-3 transition-colors ${lang === 'en' ? 'bg-kds-green text-black' : 'text-kds-subtext hover:text-kds-text'}`}
           >
             EN
           </button>
           <button
-            onClick={() => setLang('ur')}
-            className={`px-3 py-1.5 transition-colors border-l border-kds-border ${lang === 'ur' ? 'bg-kds-green text-black' : 'text-kds-subtext hover:text-kds-text'}`}
+            onClick={() => setLang('ur')} aria-pressed={lang === 'ur'} aria-label="Urdu"
+            className={`min-h-11 min-w-11 px-3 transition-colors border-l border-kds-border ${lang === 'ur' ? 'bg-kds-green text-black' : 'text-kds-subtext hover:text-kds-text'}`}
             style={{ fontFamily: 'sans-serif' }}
           >
             اردو
@@ -85,7 +96,8 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
         <button
           onClick={() => setShowImages(!showImages)}
           title={showImages ? 'Hide item images' : 'Show item images'}
-          className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
+          aria-label="Show item images" aria-pressed={showImages}
+          className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
             showImages
               ? 'border-kds-green bg-kds-green text-black'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
@@ -98,7 +110,8 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
         <button
           onClick={() => setSoundEnabled(!soundEnabled)}
           title={soundEnabled ? 'Mute new-order chime' : 'Unmute new-order chime'}
-          className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
+          aria-label="New-order chime" aria-pressed={soundEnabled}
+          className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
             soundEnabled
               ? 'border-kds-green bg-kds-green text-black'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
@@ -111,7 +124,8 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
         <button
           onClick={() => setVoiceEnabled(!voiceEnabled)}
           title={voiceEnabled ? 'Disable voice control' : 'Enable voice control (say "bump 47", "hold 23", "fire 12")'}
-          className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
+          aria-label="Voice control" aria-pressed={voiceEnabled}
+          className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
             voiceEnabled
               ? 'border-kds-amber bg-kds-amber text-black'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
@@ -126,5 +140,6 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
         </div>
       </div>
     </header>
+    </>
   )
 }

@@ -3,6 +3,9 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { Modal } from '../../../components/ui/Modal'
+import { FormField } from '../../../components/ui/FormField'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 // Outbound webhooks — the ONE editor, over /webhooks/endpoints (company-
 // scoped; https-only with a private-address block on create, edit and test).
@@ -38,6 +41,7 @@ const FIRING = new Set(['order.confirmed', 'order.dispatched', 'order.delivered'
 
 export default function WebhooksPage() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Hook | null>(null)
   const [logFor, setLogFor] = useState<string | null>(null)
@@ -116,23 +120,23 @@ export default function WebhooksPage() {
                 {pingResult[h.id] && <p className={`text-xs font-mono mt-1 ${pingResult[h.id]!.startsWith('✓') ? 'text-success' : 'text-white/60'}`}>Test ping: {pingResult[h.id]}</p>}
               </div>
               <div className="flex flex-col gap-2 shrink-0">
-                <button onClick={() => ping.mutate(h.id)} disabled={ping.isPending}
+                <button type="button" onClick={() => ping.mutate(h.id)} disabled={ping.isPending}
                   className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white disabled:opacity-50">
                   Send test
                 </button>
-                <button onClick={() => setLogFor(logFor === h.id ? null : h.id)}
+                <button type="button" onClick={() => setLogFor(logFor === h.id ? null : h.id)}
                   className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">
                   {logFor === h.id ? 'Hide log' : 'Delivery log'}
                 </button>
-                <button onClick={() => setEditing(h)}
+                <button type="button" onClick={() => setEditing(h)}
                   className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">
                   Edit
                 </button>
-                <button onClick={() => toggle.mutate({ id: h.id, isActive: !h.isActive })}
+                <button type="button" onClick={() => toggle.mutate({ id: h.id, isActive: !h.isActive })}
                   className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">
                   {h.isActive ? 'Pause' : 'Resume'}
                 </button>
-                <button onClick={() => { if (confirm('Delete webhook?')) del.mutate(h.id) }} className="rounded-lg border border-red-500/20 text-red-700/70 px-3 py-1.5 text-xs">Delete</button>
+                <button type="button" onClick={async () => { if (await confirm({ title: 'Delete this webhook?', body: h.url, confirmLabel: 'Delete', danger: true })) del.mutate(h.id) }} className="rounded-lg border border-red-500/20 text-red-700/70 px-3 py-1.5 text-xs">Delete</button>
               </div>
             </div>
             {logFor === h.id && <DeliveryLog subscriptionId={h.id} />}
@@ -154,20 +158,15 @@ export default function WebhooksPage() {
       )}
 
       {showSecret && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={() => setShowSecret(null)}>
-          <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgba(245,158,11,0.4)' }} onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-white/[0.05]">
-              <h2 className="font-black text-amber-700">⚠ Save this signing secret now</h2>
-              <p className="text-xs text-white/55 mt-1">It won't be shown again.</p>
+        <Modal title="Save this signing secret now" onClose={() => setShowSecret(null)} dismissible={false}
+          footer={
+            <div className="flex justify-end">
+              <button type="button" onClick={() => setShowSecret(null)} className="rounded-xl bg-amber-400 px-4 py-2 text-xs font-black text-black">I&apos;ve saved it</button>
             </div>
-            <div className="p-5">
-              <code className="block bg-white/[0.04] rounded-lg p-3 text-xs font-mono break-all text-primary-ink">{showSecret}</code>
-            </div>
-            <div className="flex justify-end p-4 border-t border-white/[0.05]">
-              <button onClick={() => setShowSecret(null)} className="rounded-xl bg-amber-400 px-4 py-2 text-xs font-black text-black">I've saved it</button>
-            </div>
-          </div>
-        </div>
+          }>
+          <p className="text-xs text-white/55">It won&apos;t be shown again.</p>
+          <code className="block bg-white/[0.04] rounded-lg p-3 text-xs font-mono break-all text-primary-ink select-all">{showSecret}</code>
+        </Modal>
       )}
     </div>
   )
@@ -227,49 +226,51 @@ function EndpointModal({ existing, allEvents, onClose, onSaved }: {
   })
   function toggle(e: string) { setEvents((p) => p.includes(e) ? p.filter((x) => x !== e) : [...p, e]) }
   const list = allEvents.length > 0 ? allEvents : Array.from(FIRING)
+  const dirty = url !== (existing?.url ?? '') || notes !== (existing?.notes ?? '')
+    || events.slice().sort().join(',') !== (existing?.events ?? []).slice().sort().join(',')
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-          <h2 className="font-black text-white/90">{existing ? 'Edit webhook' : 'New webhook'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-        </div>
-        <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-          <div>
-            <label className="text-xs text-white/55">Endpoint URL * (https, public host)</label>
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://hooks.example.com/servd" className={fieldCls + ' mt-1'} autoFocus />
-          </div>
-          <div>
-            <label className="text-xs text-white/55">Events *</label>
-            <div className="grid grid-cols-2 gap-1.5 mt-2">
-              {list.map((e) => {
-                const live = FIRING.has(e)
-                const on = events.includes(e)
-                return (
-                  <button key={e} type="button" onClick={() => toggle(e)} disabled={!live && !on}
-                    title={live ? undefined : 'servd does not send this event yet'}
-                    className="text-xs font-semibold px-2 py-1.5 rounded-lg text-left disabled:opacity-35 disabled:cursor-not-allowed"
-                    style={on
-                      ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' }
-                      : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-                    {e}{live ? '' : ' · not sent yet'}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <div><label className="text-xs text-white/55">Notes</label><input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={200} placeholder="Why this exists" className={fieldCls + ' mt-1'} /></div>
-          {error && <p className="text-xs text-red-700">{error}</p>}
-        </div>
-        <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-          <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending || !url || events.length === 0}
+    <Modal title={existing ? 'Edit webhook' : 'New webhook'} onClose={onClose} wide dirty={dirty}
+      footer={
+        <div className="flex justify-between gap-3">
+          <button type="button" onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
+          <button type="submit" form="webhook-form" disabled={save.isPending || !url || events.length === 0}
             className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : existing ? 'Save' : 'Create webhook'}
           </button>
         </div>
-      </div>
-    </div>
+      }>
+      <form id="webhook-form" className="space-y-3"
+        onSubmit={(e) => { e.preventDefault(); if (url && events.length > 0 && !save.isPending) { setError(''); save.mutate() } }}>
+        <FormField label="Endpoint URL (https, public host)" required>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} type="url" inputMode="url" name="webhook-url"
+            autoComplete="off" autoCapitalize="none" spellCheck={false}
+            placeholder="https://hooks.example.com/servd" className={fieldCls} autoFocus />
+        </FormField>
+        <fieldset>
+          <legend className="text-xs text-white/55">Events <span aria-hidden style={{ color: 'var(--erp-danger)' }}>*</span></legend>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
+            {list.map((e) => {
+              const live = FIRING.has(e)
+              const on = events.includes(e)
+              return (
+                <button key={e} type="button" onClick={() => toggle(e)} disabled={!live && !on} aria-pressed={on}
+                  title={live ? undefined : 'servd does not send this event yet'}
+                  className="text-xs font-semibold px-2 py-1.5 rounded-lg text-left disabled:opacity-35 disabled:cursor-not-allowed"
+                  style={on
+                    ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' }
+                    : { background: 'rgb(var(--fg-rgb) / 0.025)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
+                  {e}{live ? '' : ' · not sent yet'}
+                </button>
+              )
+            })}
+          </div>
+        </fieldset>
+        <FormField label="Notes">
+          <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={200} name="webhook-notes" autoComplete="off" placeholder="Why this exists" className={fieldCls} />
+        </FormField>
+        {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
+      </form>
+    </Modal>
   )
 }
 

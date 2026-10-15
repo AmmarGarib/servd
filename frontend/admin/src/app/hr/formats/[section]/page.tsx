@@ -14,6 +14,7 @@ import { card, btn, btnGhost, inp, human, day, FIELD_TYPES, RECORD_SLOTS, ROLE_L
 import { HrShell, Modal, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface FormInfo {
   section: { key: string; title: string; requires: string[]; effect: string | null }
@@ -49,6 +50,7 @@ function parseQuickLine(line: string): HrField | null {
 export default function FormatEditorPage() {
   const { section } = useParams<{ section: string }>()
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: org } = useHrOrg()
   const { data: info } = useQuery({ queryKey: ['hr-form', section], queryFn: () => api.get<FormInfo>(`/hr/forms/${section}`) })
   const [fields, setFields] = useState<HrField[]>([])
@@ -62,6 +64,32 @@ export default function FormatEditorPage() {
   const [importing, setImporting] = useState(false)
   const [preview, setPreview] = useState(false)
 
+  // Leaving with an unsaved format asks first.
+  useEffect(() => {
+    if (!dirty) return
+    const h = (ev: BeforeUnloadEvent) => { ev.preventDefault(); ev.returnValue = '' }
+    window.addEventListener('beforeunload', h)
+    return () => window.removeEventListener('beforeunload', h)
+  }, [dirty])
+  const removeField = async (i: number) => {
+    const f = fields[i]
+    if (!f) return
+    const ok = await confirm({ title: `Remove "${f.label}"?`, body: 'It disappears from the live form once you save a new version. Records already saved keep what was typed.', confirmLabel: 'Remove field', danger: true })
+    if (ok) touch(fields.filter((_, j) => j !== i))
+  }
+  const removeStep = async (i: number) => {
+    const w = workflow[i]
+    if (!w) return
+    const ok = await confirm({ title: `Remove the "${w.label}" step?`, body: 'Requests will no longer wait on it once you save a new version.', confirmLabel: 'Remove step', danger: true })
+    if (ok) { setWorkflow(workflow.filter((_, j) => j !== i)); setDirty(true) }
+  }
+  const goVersion = async (v: number) => {
+    if (dirty) {
+      const ok = await confirm({ title: 'Discard your unsaved edits?', body: 'Making another version live replaces what is in the editor.', confirmLabel: 'Discard and switch', cancelLabel: 'Keep editing', danger: true })
+      if (!ok) return
+    }
+    activate.mutate(v)
+  }
   const load = (f: HrFormat) => { setFields(f.fields); setWorkflow(f.workflow); setStages(f.stages.join(', ')); setDirty(false) }
   useEffect(() => { if (info) load(info.current) }, [info])
 
@@ -99,7 +127,7 @@ export default function FormatEditorPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `hr-format-${section}.json`; a.click()
   }
 
-  if (!info) return <HrShell title="Format"><p className="text-sm text-white/40">Loading…</p></HrShell>
+  if (!info) return <HrShell title="Format"><p className="text-sm text-white/40" role="status">Loading…</p></HrShell>
   return (
     <HrShell title={`Format — ${info.section.title}`}
       subtitle={`Live: ${info.current.isDefault ? 'built-in default' : `version ${info.current.version}`}. ${info.section.effect ?? ''}`}
@@ -109,8 +137,8 @@ export default function FormatEditorPage() {
         <button className={btnGhost} onClick={exportJson}>Export JSON</button>
         <button className={btn} disabled={save.isPending || !dirty} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save new version'}</button>
       </>}>
-      {err && <div className="rounded-xl p-3 mb-4 text-sm text-red-700" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)' }}>{err.split(' · ').map((e) => <p key={e}>• {e}</p>)}</div>}
-      {ok && <p className="text-sm text-primary-ink mb-4">{ok}</p>}
+      {err && <div role="alert" className="rounded-xl p-3 mb-4 text-sm text-red-700" style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{err.split(' · ').map((e) => <p key={e}>• {e}</p>)}</div>}
+      {ok && <p className="text-sm text-primary-ink mb-4" role="status">{ok}</p>}
 
       <div className="grid xl:grid-cols-[1fr_320px] gap-5">
         <div className="space-y-3">
@@ -126,8 +154,8 @@ export default function FormatEditorPage() {
                   return (
                     <tr key={i} className="border-t border-white/[0.05] align-top">
                       <td className="px-1 py-1.5 whitespace-nowrap">
-                        <button disabled={i === 0} onClick={() => move(i, -1)} className="text-white/35 hover:text-white disabled:opacity-20 px-1" aria-label="Move up">↑</button>
-                        <button disabled={i === fields.length - 1} onClick={() => move(i, 1)} className="text-white/35 hover:text-white disabled:opacity-20 px-1" aria-label="Move down">↓</button>
+                        <button type="button" disabled={i === 0} onClick={() => move(i, -1)} className="text-white/45 hover:text-white disabled:opacity-20 px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Move up">↑</button>
+                        <button type="button" disabled={i === fields.length - 1} onClick={() => move(i, 1)} className="text-white/45 hover:text-white disabled:opacity-20 px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Move down">↓</button>
                       </td>
                       <td className="px-1 py-1.5 min-w-[160px]"><input className={inp} value={f.label} onChange={(e) => upd(i, { label: e.target.value })} aria-label="Label" /></td>
                       <td className="px-1 py-1.5 min-w-[120px]"><input className={`${inp} font-mono`} value={f.key} disabled={sys} onChange={(e) => upd(i, { key: e.target.value })} aria-label="Key" /></td>
@@ -163,7 +191,7 @@ export default function FormatEditorPage() {
                       </td>
                       <td className="px-1 py-1.5 min-w-[110px]"><input className={inp} value={f.group ?? ''} onChange={(e) => upd(i, { group: e.target.value || undefined })} aria-label="Group" /></td>
                       <td className="px-1 py-1.5">
-                        <button disabled={!!locked} onClick={() => touch(fields.filter((_, j) => j !== i))} className="text-white/35 hover:text-red-700 disabled:opacity-20 px-1" aria-label="Remove field" title={locked ? 'Needed by calculations — relabel instead' : 'Remove'}>✕</button>
+                        <button type="button" disabled={!!locked} onClick={() => void removeField(i)} className="text-white/45 hover:text-red-700 disabled:opacity-20 px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Remove field" title={locked ? 'Needed by calculations — relabel instead' : 'Remove'}>✕</button>
                       </td>
                     </tr>
                   )
@@ -193,7 +221,7 @@ export default function FormatEditorPage() {
                   <Select className={inp} value={w.role} onChange={(e) => { setWorkflow(workflow.map((x, j) => (j === i ? { ...x, role: e.target.value as WorkflowStep['role'] } : x))); setDirty(true) }} aria-label="Who approves">
                     {Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </Select>
-                  <button onClick={() => { setWorkflow(workflow.filter((_, j) => j !== i)); setDirty(true) }} className="text-white/35 hover:text-red-700 px-1" aria-label="Remove step">✕</button>
+                  <button type="button" onClick={() => void removeStep(i)} className="text-white/45 hover:text-red-700 px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Remove step">✕</button>
                 </div>
               ))}
               {workflow.length < 6 && <button className="text-xs font-bold text-white/50 hover:text-white" onClick={() => { setWorkflow([...workflow, { key: nextStepKey(workflow), label: 'HR approval', role: 'hr' }]); setDirty(true) }}>+ Add step</button>}
@@ -203,7 +231,7 @@ export default function FormatEditorPage() {
             <div className="rounded-2xl p-4" style={card}>
               <p className="text-sm font-black text-white/85 mb-2">Stages</p>
               <textarea className={inp} rows={3} value={stages} onChange={(e) => { setStages(e.target.value); setDirty(true) }} aria-label="Stages" />
-              <p className="text-[10px] text-white/35 mt-1">Comma separated, in order.</p>
+              <p className="text-xs text-white/55 mt-1">Comma separated, in order.</p>
             </div>
           )}
           <div className="rounded-2xl p-4" style={card}>
@@ -212,9 +240,9 @@ export default function FormatEditorPage() {
           </div>
           <div className="rounded-2xl p-4" style={card}>
             <p className="text-sm font-black text-white/85 mb-2">Versions</p>
-            <button className="w-full text-left text-xs py-1 text-white/60 hover:text-white" onClick={() => activate.mutate(0)}>Built-in default {info.current.isDefault && <span className="text-primary-ink">· live</span>}</button>
+            <button className="w-full text-left text-xs py-2 text-white/60 hover:text-white" onClick={() => void goVersion(0)}>Built-in default {info.current.isDefault && <span className="text-primary-ink">· live</span>}</button>
             {info.versions.map((v) => (
-              <button key={v.version} className="w-full text-left text-xs py-1 text-white/60 hover:text-white" onClick={() => activate.mutate(v.version)}>
+              <button key={v.version} className="w-full text-left text-xs py-2 text-white/60 hover:text-white" onClick={() => void goVersion(v.version)}>
                 v{v.version} · {day(v.createdAt)}{v.note ? ` · ${v.note}` : ''} {v.isActive && <span className="text-primary-ink">· live</span>}
               </button>
             ))}

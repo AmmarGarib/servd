@@ -10,6 +10,7 @@ import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPr
 import DeliveryPin, { type LatLng } from '../../../components/checkout/DeliveryPin'
 import { BlockedNotice } from '../../../components/account/BlockedNotice'
 import { fulfilmentFor, type FulfilmentOption } from '../../../lib/fulfilment'
+import { smoothScrollTo, prefersReducedMotion } from '../../../lib/scroll'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -220,6 +221,42 @@ export default function CheckoutPage() {
   const [customTip, setCustomTip] = useState('')
   const [giftCard,  setGiftCard]  = useState('')
   const _orderPlaced = useRef(false)
+  // Re-entry guard: Enter held down or a double tap must never place two orders.
+  const placingRef = useRef(false)
+  // Which field the last failed submit blamed (aria-invalid + a message right
+  // under it). The banner above the button stays as the summary.
+  const [fieldErr, setFieldErr] = useState<{ address?: string; table?: string; giftCard?: string }>({})
+  const clearFieldErr = (k: 'address' | 'table' | 'giftCard') =>
+    setFieldErr((f) => (f[k] ? { ...f, [k]: undefined } : f))
+  // The order list animates in once, not every time it re-renders.
+  const [animateList, setAnimateList] = useState(true)
+  useEffect(() => {
+    const t = setTimeout(() => setAnimateList(false), 900)
+    return () => clearTimeout(t)
+  }, [])
+  // On a phone the on-screen keyboard pushes a fixed bar over the field being
+  // typed in: hide the Place Order bar while a text field has focus. (Enter
+  // still submits — the button stays in the form.)
+  const [fieldFocused, setFieldFocused] = useState(false)
+  useEffect(() => {
+    const small = () => typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 640px)').matches
+    const isField = (t: EventTarget | null) =>
+      t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') &&
+      !['checkbox', 'radio', 'button', 'submit'].includes((t as HTMLInputElement).type)
+    const onIn = (e: FocusEvent) => { if (small() && isField(e.target)) setFieldFocused(true) }
+    const onOut = () => setFieldFocused(false)
+    document.addEventListener('focusin', onIn)
+    document.addEventListener('focusout', onOut)
+    const vv = window.visualViewport
+    // A keyboard that closes without a blur (Android back) shows the bar again.
+    const onVv = () => { if (vv && vv.height >= window.innerHeight - 80) setFieldFocused(false) }
+    vv?.addEventListener('resize', onVv)
+    return () => {
+      document.removeEventListener('focusin', onIn)
+      document.removeEventListener('focusout', onOut)
+      vv?.removeEventListener('resize', onVv)
+    }
+  }, [])
 
   // Payment method — only what the API accepts (starts as cash, the one
   // method always offered).
@@ -517,6 +554,41 @@ export default function CheckoutPage() {
     setAppliedPromo(code)
   }
 
+  const clearPromo = () => {
+    setPromoCode('')
+    setPromoStatus('idle')
+    setAppliedPromo('')
+    setPromoMessage('')
+  }
+  const clearGiftCard = () => {
+    setGiftCard('')
+    setGiftCardStatus('idle')
+    setGiftCardBalance(0)
+    setGiftCardMessage('')
+    setAppliedGiftCard('')
+    clearFieldErr('giftCard')
+  }
+  // Enter in the promo / gift-card box applies it and never places the order.
+  const applyOnEnter = (apply: () => void) => (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+    e.preventDefault()
+    apply()
+  }
+
+  // Say which field a failed submit is about: message under it, aria-invalid,
+  // focus and scroll to it. The banner keeps the same text as a summary.
+  const failField = (k: 'address' | 'table' | 'giftCard', id: string, msg: string) => {
+    setFieldErr((f) => ({ ...f, [k]: msg }))
+    setError(msg)
+    const el = document.getElementById(id)
+    if (el) {
+      smoothScrollTo(el, { block: 'center' })
+      ;(el as HTMLElement).focus({ preventScroll: true })
+    } else {
+      smoothScrollTo(pinBlockRef.current, { block: 'center' })
+    }
+  }
+
   // Check = ask the quote whether this card pays HERE (the same check
   // checkout makes). The balance lookup is only for showing the balance.
   const checkGiftCardBalance = async () => {
@@ -537,24 +609,25 @@ export default function CheckoutPage() {
 
   const handlePlaceOrder = async () => {
     setError('')
+    setFieldErr({})
     if (fulfilmentType === 'delivery' && !deliveryAddress.trim()) {
-      setError('Please enter your delivery address')
+      failField('address', 'co-address', 'Please enter your delivery address')
       return
     }
     // No pin → the server can't price or dispatch the delivery. Say so by
     // the map (and bring it into view) instead of letting the order bounce.
     if (fulfilmentType === 'delivery' && (deliveryLat == null || deliveryLng == null)) {
       setPinPrompt(true)
-      pinBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      smoothScrollTo(pinBlockRef.current, { block: 'center' })
       return
     }
     if (fulfilmentType === 'delivery' && deliveryAreaError) {
       setError(deliveryAreaError)
-      pinBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      smoothScrollTo(pinBlockRef.current, { block: 'center' })
       return
     }
     if (fulfilmentType === 'dine-in' && !tableLabel.trim()) {
-      setError('Please enter your table number (printed on the QR card at your seat).')
+      failField('table', 'co-table', 'Please enter your table number (printed on the QR card at your seat).')
       return
     }
     if (brandClosed) {
@@ -562,7 +635,7 @@ export default function CheckoutPage() {
       return
     }
     if (appliedGiftCard && giftCardStatus === 'invalid') {
-      setError(giftCardMessage || 'That gift card can’t be used here. Remove it to continue.')
+      failField('giftCard', 'co-gift', giftCardMessage || 'That gift card can’t be used here. Remove it to continue.')
       return
     }
     setLoading(true)
@@ -650,6 +723,17 @@ export default function CheckoutPage() {
     }
   }
 
+  // The one submit path (Place Order button, Enter in a name / address field).
+  // The ref makes a second submit in the same tick a no-op.
+  const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    // A submit from a form nested in this one (none today) is not ours.
+    if (e.target !== e.currentTarget) return
+    if (placingRef.current || _orderPlaced.current || loading) return
+    placingRef.current = true
+    void handlePlaceOrder().finally(() => { placingRef.current = false })
+  }
+
   // CTA label that reflects payment method
   // (Delivery without a pin can't be placed yet — the button says what's missing.)
   const ctaLabel = loading
@@ -688,6 +772,7 @@ export default function CheckoutPage() {
         )}
       </div>
 
+      <form id="checkout" noValidate onSubmit={onSubmit}>
       <div className="relative z-10 max-w-lg mx-auto px-4 py-5 space-y-3">
 
         {/* ── Order summary ── */}
@@ -695,7 +780,7 @@ export default function CheckoutPage() {
           <div className="space-y-3 mb-4">
             {items.map((item, i) => (
               <div key={item.lineId} className="flex items-start justify-between gap-3"
-                style={{ animation: `revealUp 0.4s ${i * 0.05}s both` }}>
+                style={animateList && !prefersReducedMotion() ? { animation: `revealUp 0.4s ${i * 0.05}s both` } : undefined}>
                 <div className="flex items-start gap-3 min-w-0 flex-1">
                   <div className="h-9 w-9 rounded-xl shrink-0 flex items-center justify-center text-sm font-black"
                     style={{ background: 'var(--servd-surface)', color: 'var(--servd-mute)' }}>
@@ -766,14 +851,23 @@ export default function CheckoutPage() {
                   What table are you at? The number is on the QR card at your seat (e.g. T-7, 12).
                 </p>
                 <input
-                  value={tableLabel} onChange={(e) => setTableLabel(e.target.value)}
+                  id="co-table" name="tableLabel"
+                  value={tableLabel} onChange={(e) => { setTableLabel(e.target.value); clearFieldErr('table') }}
                   placeholder="Table number"
+                  aria-label="Table number"
+                  aria-invalid={fieldErr.table ? true : undefined}
+                  aria-describedby={fieldErr.table ? 'co-table-err' : undefined}
                   maxLength={20}
                   inputMode="text"
+                  autoComplete="off"
                   autoCapitalize="characters"
-                  className="w-full rounded-lg px-3 py-2 text-sm uppercase tracking-wider"
-                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}
+                  spellCheck={false}
+                  className="servd-field w-full rounded-lg px-3 py-2 text-sm uppercase tracking-wider"
+                  style={{ background: '#fff', border: `1px solid ${fieldErr.table ? 'var(--servd-danger)' : 'rgba(0,0,0,0.08)'}` }}
                 />
+                {fieldErr.table && (
+                  <p id="co-table-err" role="alert" className="text-xs font-semibold" style={{ color: 'var(--servd-danger)' }}>{fieldErr.table}</p>
+                )}
               </div>
             )}
             {fulfilmentType === 'curbside' && (
@@ -782,16 +876,22 @@ export default function CheckoutPage() {
                   Tell us about your car so we can find you. Tap &ldquo;I&rsquo;m here&rdquo; on the order page when you arrive.
                 </p>
                 <input
+                  id="co-vehicle" name="vehicle" aria-label="Vehicle"
                   value={curbsideVehicle} onChange={(e) => setCurbsideVehicle(e.target.value)}
                   placeholder="e.g. Blue Honda Civic"
                   maxLength={80}
-                  className="w-full rounded-lg px-3 py-2 text-sm"
+                  autoComplete="off"
+                  className="servd-field w-full rounded-lg px-3 py-2 text-sm"
                   style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
                 <input
+                  id="co-plate" name="plate" aria-label="License plate (optional)"
                   value={curbsidePlate} onChange={(e) => setCurbsidePlate(e.target.value)}
                   placeholder="License plate (optional)"
                   maxLength={20}
-                  className="w-full rounded-lg px-3 py-2 text-sm"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  className="servd-field w-full rounded-lg px-3 py-2 text-sm"
                   style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
               </div>
             )}
@@ -871,13 +971,22 @@ export default function CheckoutPage() {
 
                 {/* Show text input when "new address" is selected or no saved addresses exist. */}
                 {usingNewAddress && (
-                  <input
-                    value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
-                    placeholder="Full delivery address"
-                    aria-label="Delivery address"
-                    maxLength={200}
-                    className="w-full rounded-lg px-3 py-2 text-sm"
-                    style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+                  <>
+                    <input
+                      id="co-address" name="address"
+                      value={deliveryAddress} onChange={(e) => { setDeliveryAddress(e.target.value); clearFieldErr('address') }}
+                      placeholder="Full delivery address"
+                      aria-label="Delivery address"
+                      aria-invalid={fieldErr.address ? true : undefined}
+                      aria-describedby={fieldErr.address ? 'co-address-err' : undefined}
+                      autoComplete="street-address"
+                      maxLength={200}
+                      className="servd-field w-full rounded-lg px-3 py-2 text-sm"
+                      style={{ background: '#fff', border: `1px solid ${fieldErr.address ? 'var(--servd-danger)' : 'rgba(0,0,0,0.08)'}` }} />
+                    {fieldErr.address && (
+                      <p id="co-address-err" role="alert" className="text-xs font-semibold" style={{ color: 'var(--servd-danger)' }}>{fieldErr.address}</p>
+                    )}
+                  </>
                 )}
 
                 {/* The drop point. The address text tells the rider which
@@ -925,10 +1034,12 @@ export default function CheckoutPage() {
                 </div>
 
                 <input
+                  id="co-delivery-notes" name="deliveryNotes" aria-label="Delivery notes (optional)"
                   value={deliveryNotes} onChange={(e) => setDeliveryNotes(e.target.value)}
                   placeholder="Gate code, floor, landmark… (optional)"
                   maxLength={120}
-                  className="w-full rounded-lg px-3 py-2 text-sm"
+                  autoComplete="off"
+                  className="servd-field w-full rounded-lg px-3 py-2 text-sm"
                   style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
               </div>
             )}
@@ -944,10 +1055,12 @@ export default function CheckoutPage() {
               {(['none', '5', '10', '15', '20', 'custom'] as const).map((m) => (
                 <button
                   key={m}
+                  type="button"
                   onClick={() => setTipMode(m)}
                   aria-pressed={tipMode === m}
                   className="px-3 py-1.5 rounded-full text-xs font-bold border"
                   style={{
+                    minHeight: 44, minWidth: 44,
                     background: tipMode === m ? '#0a0a0a' : 'white',
                     color:      tipMode === m ? '#fff' : '#0a0a0a',
                     borderColor: tipMode === m ? '#0a0a0a' : 'rgba(0,0,0,0.1)',
@@ -959,11 +1072,16 @@ export default function CheckoutPage() {
             </div>
             {tipMode === 'custom' && (
               <input
-                type="number" min={0} step={50}
+                id="co-tip" name="tip" aria-label="Tip amount in PKR"
+                type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="off"
                 value={customTip}
-                onChange={(e) => setCustomTip(e.target.value)}
+                onChange={(e) => {
+                  // Whole rupees only, capped at PKR 100,000.
+                  const digits = e.target.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 6)
+                  setCustomTip(digits !== '' && Number(digits) > 100000 ? '100000' : digits)
+                }}
                 placeholder="Tip amount (PKR)"
-                className="w-full text-sm rounded-lg px-3 py-1.5 border"
+                className="servd-field w-full text-sm rounded-lg px-3 py-1.5 border"
                 style={{ borderColor: 'rgba(0,0,0,0.1)' }}
               />
             )}
@@ -977,11 +1095,17 @@ export default function CheckoutPage() {
 
           {/* Gift card */}
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)' }}>
-            <label className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-mute)] block mb-2">Gift card</label>
+            <label htmlFor="co-gift" className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-mute)] block mb-2">Gift card</label>
             <div className="flex gap-2">
               <input
+                id="co-gift" name="giftCard"
                 value={giftCard}
+                autoComplete="off" autoCapitalize="characters" spellCheck={false} enterKeyHint="go"
+                aria-invalid={giftCardStatus === 'invalid' || fieldErr.giftCard ? true : undefined}
+                aria-describedby={giftCardStatus === 'invalid' ? 'co-gift-msg' : undefined}
+                onKeyDown={applyOnEnter(() => { if (giftCard.trim() && giftCardStatus !== 'checking' && giftCardStatus !== 'valid') void checkGiftCardBalance() })}
                 onChange={(e) => {
+                  clearFieldErr('giftCard')
                   setGiftCard(e.target.value.toUpperCase())
                   // Editing the code takes it off the bill until checked again.
                   if (giftCardStatus !== 'idle' || appliedGiftCard) {
@@ -992,20 +1116,23 @@ export default function CheckoutPage() {
                   }
                 }}
                 placeholder="GS-XXXX-XXXX"
-                className="flex-1 text-sm rounded-lg px-3 py-1.5 border font-mono uppercase tracking-wider"
+                className="servd-field flex-1 text-sm rounded-lg px-3 py-1.5 border font-mono uppercase tracking-wider"
                 style={{ borderColor: 'rgba(0,0,0,0.1)' }}
               />
               <button
                 type="button"
-                onClick={() => { void checkGiftCardBalance() }}
-                disabled={giftCardStatus === 'checking' || !giftCard.trim()}
+                onClick={() => { if (giftCardStatus === 'valid') clearGiftCard(); else void checkGiftCardBalance() }}
+                disabled={giftCardStatus === 'checking' || (giftCardStatus !== 'valid' && !giftCard.trim())}
+                aria-label={giftCardStatus === 'valid' ? 'Remove gift card' : 'Check gift card'}
                 className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition-all disabled:opacity-40"
+
                 style={{
+                  minHeight: 44,
                   background: giftCardStatus === 'valid' ? 'var(--servd-green-dark)' : 'rgba(0,0,0,0.07)',
                   color: giftCardStatus === 'valid' ? 'var(--servd-on-green)' : 'var(--servd-ink)',
                   border: '1px solid rgba(0,0,0,0.08)',
                 }}>
-                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? 'Applied' : 'Check'}
+                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? 'Remove' : 'Check'}
               </button>
             </div>
             {giftCardStatus === 'valid' && (
@@ -1015,8 +1142,9 @@ export default function CheckoutPage() {
               </p>
             )}
             {giftCardStatus === 'invalid' && (
-              <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }} role="alert">
-                {giftCardMessage || 'This gift card can’t be used here'}
+              <p id="co-gift-msg" className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }} role="alert">
+                {giftCardMessage || 'This gift card can’t be used here'}{' '}
+                <button type="button" onClick={clearGiftCard} className="underline underline-offset-2 font-black">Remove</button>
               </p>
             )}
           </div>
@@ -1084,6 +1212,11 @@ export default function CheckoutPage() {
               <div className="flex gap-2">
                 <div className="flex-1">
                   <ServdInput
+                    id="co-promo" name="promo" ariaLabel="Promo code"
+                    autoComplete="off" autoCapitalize="characters" spellCheck={false} enterKeyHint="go"
+                    ariaInvalid={promoStatus === 'invalid'}
+                    ariaDescribedBy={promoStatus === 'invalid' ? 'co-promo-msg' : undefined}
+                    onKeyDown={applyOnEnter(() => { if (promoCode.trim() && promoStatus !== 'checking' && promoStatus !== 'valid') applyPromo() })}
                     type="text" value={promoCode}
                     onChange={e => {
                       setPromoCode(e.target.value.toUpperCase())
@@ -1099,22 +1232,24 @@ export default function CheckoutPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => { void applyPromo() }}
-                  disabled={promoStatus === 'checking' || !promoCode.trim()}
+                  onClick={() => { if (promoStatus === 'valid') clearPromo(); else applyPromo() }}
+                  disabled={promoStatus === 'checking' || (promoStatus !== 'valid' && !promoCode.trim())}
+                  aria-label={promoStatus === 'valid' ? 'Remove promo code' : 'Apply promo code'}
                   className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
                   style={{ background: 'var(--servd-green-dark)', color: '#fff' }}
                 >
-                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? '✓' : 'Apply'}
+                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? 'Remove' : 'Apply'}
                 </button>
               </div>
               {promoStatus === 'valid' && promoMessage && (
-                <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
+                <p role="status" className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
                   ✓ {promoMessage} · saving {fmt(promoDiscountCents)}
                 </p>
               )}
               {promoStatus === 'invalid' && promoMessage && (
-                <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }}>
-                  {promoMessage}
+                <p id="co-promo-msg" role="alert" className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-danger)' }}>
+                  {promoMessage}{' '}
+                  <button type="button" onClick={clearPromo} className="underline underline-offset-2 font-black">Remove</button>
                 </p>
               )}
             </Panel>
@@ -1122,6 +1257,9 @@ export default function CheckoutPage() {
             {/* Wallet toggle */}
             {walletBalance > 0 && (
               <button
+                type="button"
+                role="switch"
+                aria-checked={useWallet}
                 onClick={() => setUseWallet(v => !v)}
                 className="flex items-center justify-between w-full rounded-2xl p-4 transition-all duration-200 active:scale-[0.99]"
                 style={{
@@ -1161,9 +1299,9 @@ export default function CheckoutPage() {
                     {loyaltyBalance} pts available · <span style={{ color: 'var(--servd-ink)' }}>{loyaltyPts} selected</span>
                   </p>
                   <div className="flex items-center gap-2">
-                    <StepBtn onClick={() => setLoyaltyPts(p => (p - 10 < Math.max(minRedeemPts, 1) ? 0 : p - 10))}>−</StepBtn>
+                    <StepBtn label="Decrease points" onClick={() => setLoyaltyPts(p => (p - 10 < Math.max(minRedeemPts, 1) ? 0 : p - 10))}>−</StepBtn>
                     <span className="font-black text-sm w-10 text-center" style={{ color: 'var(--servd-ink)' }}>{loyaltyPts}</span>
-                    <StepBtn onClick={() => setLoyaltyPts(p => Math.min(loyaltyBalance, p === 0 ? Math.max(minRedeemPts, 10) : p + 10))}>+</StepBtn>
+                    <StepBtn label="Increase points" onClick={() => setLoyaltyPts(p => Math.min(loyaltyBalance, p === 0 ? Math.max(minRedeemPts, 10) : p + 10))}>+</StepBtn>
                   </div>
                 </div>
               </Panel>
@@ -1171,7 +1309,7 @@ export default function CheckoutPage() {
 
             {/* Notes */}
             <Panel icon="" label="Special Instructions for Kitchen">
-              <ServdTextarea value={notes} onChange={e => setNotes(e.target.value)}
+              <ServdTextarea id="co-notes" name="notes" ariaLabel="Special instructions for the kitchen" value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder="Allergies, spice level, extras…" rows={2} />
             </Panel>
           </>
@@ -1187,16 +1325,16 @@ export default function CheckoutPage() {
             </Link>
           }>
             <div className="space-y-3">
-              <FormField label="Name *">
-                <ServdInput type="text" value={name} onChange={e => setName(e.target.value)}
+              <FormField label="Name *" htmlFor="co-name">
+                <ServdInput id="co-name" name="name" autoComplete="name" type="text" value={name} onChange={e => setName(e.target.value)}
                   placeholder="Your name" autoFocus />
               </FormField>
-              <FormField label="Phone (optional)">
-                <ServdInput type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+              <FormField label="Phone (optional)" htmlFor="co-phone">
+                <ServdInput id="co-phone" name="phone" autoComplete="tel" inputMode="tel" type="tel" value={phone} onChange={e => setPhone(e.target.value)}
                   placeholder="03xx-xxxxxxx" />
               </FormField>
-              <FormField label="Special instructions (optional)">
-                <ServdTextarea value={notes} onChange={e => setNotes(e.target.value)}
+              <FormField label="Special instructions (optional)" htmlFor="co-guest-notes">
+                <ServdTextarea id="co-guest-notes" name="notes" value={notes} onChange={e => setNotes(e.target.value)}
                   placeholder="Allergies, preferences…" rows={2} />
               </FormField>
             </div>
@@ -1254,7 +1392,6 @@ export default function CheckoutPage() {
             <span>{error}</span>
           </div>
         )}
-        {banned && <BlockedNotice conceptSlug={slug} />}
 
         {/* ── Trust strip — per the CRO skill: address the three top
               objections ("will this work for me / what if it doesn't /
@@ -1283,12 +1420,20 @@ export default function CheckoutPage() {
           </ul>
         </div>
       </div>
+      </form>
+      {/* Outside the form: BlockedNotice has a form of its own. */}
+      {banned && (
+        <div className="relative z-10 max-w-lg mx-auto px-4 pb-5">
+          <BlockedNotice conceptSlug={slug} />
+        </div>
+      )}
 
       {/* ── Fixed CTA ── */}
       <div className="fixed bottom-0 left-0 right-0 px-4 pt-4 z-40"
-        style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
+        aria-hidden={fieldFocused ? true : undefined}
+        style={{ ...(fieldFocused && { visibility: 'hidden', transform: 'translateY(100%)' }), background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         <button
-          onClick={() => { void handlePlaceOrder() }} disabled={loading || brandClosed}
+          type="submit" form="checkout" disabled={loading || brandClosed}
           className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
           style={{
             background: loading || brandClosed ? 'var(--servd-line)' : 'var(--servd-green)',
@@ -1336,65 +1481,71 @@ function PriceLine({ label, value, accent, note }: { label: string; value: strin
   )
 }
 
-function FormField({ label, children }: { label: string; children: React.ReactNode }) {
+function FormField({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
+      <label htmlFor={htmlFor} className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
         style={{ color: 'var(--servd-mute)' }}>{label}</label>
       {children}
     </div>
   )
 }
 
-function ServdInput({ type, value, onChange, placeholder, autoFocus }: {
+// Focus ring comes from the shared .servd-field rule (:focus-visible), not
+// from JS handlers, so keyboard users get it on every field.
+function ServdInput({
+  type, value, onChange, placeholder, autoFocus, id, name, autoComplete, inputMode, autoCapitalize,
+  spellCheck, enterKeyHint, ariaInvalid, ariaDescribedBy, ariaLabel, onKeyDown,
+}: {
   type: string; value: string
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   placeholder?: string; autoFocus?: boolean
+  id?: string; name?: string; autoComplete?: string
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode']
+  autoCapitalize?: string; spellCheck?: boolean
+  enterKeyHint?: React.HTMLAttributes<HTMLInputElement>['enterKeyHint']
+  ariaInvalid?: boolean; ariaDescribedBy?: string; ariaLabel?: string
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
 }) {
   return (
     <input
       type={type} value={value} onChange={onChange} placeholder={placeholder} autoFocus={autoFocus}
-      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all placeholder:text-black/25"
-      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
-      onFocus={e => {
-        e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(61,31,59,0.28)'
-      }}
-      onBlur={e => {
-        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
-        e.currentTarget.style.boxShadow   = 'none'
+      id={id} name={name} autoComplete={autoComplete} inputMode={inputMode}
+      autoCapitalize={autoCapitalize} spellCheck={spellCheck} enterKeyHint={enterKeyHint}
+      aria-invalid={ariaInvalid ? true : undefined} aria-describedby={ariaDescribedBy} aria-label={ariaLabel}
+      onKeyDown={onKeyDown}
+      className="servd-field w-full rounded-xl px-4 py-3 text-sm transition-all placeholder:text-black/25"
+      style={{
+        background: '#fff', color: 'var(--servd-ink)',
+        border: `1.5px solid ${ariaInvalid ? 'var(--servd-danger)' : 'rgba(0,0,0,0.1)'}`,
       }}
     />
   )
 }
 
-function ServdTextarea({ value, onChange, placeholder, rows }: {
+function ServdTextarea({ value, onChange, placeholder, rows, id, name, ariaLabel }: {
   value: string
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   placeholder?: string; rows?: number
+  id?: string; name?: string; ariaLabel?: string
 }) {
   return (
     <textarea
       value={value} onChange={onChange} placeholder={placeholder} rows={rows}
-      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all resize-none placeholder:text-black/25"
+      id={id} name={name} aria-label={ariaLabel} autoComplete="off"
+      className="servd-field w-full rounded-xl px-4 py-3 text-sm transition-all resize-none placeholder:text-black/25"
       style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
-      onFocus={e => {
-        e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(61,31,59,0.28)'
-      }}
-      onBlur={e => {
-        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
-        e.currentTarget.style.boxShadow   = 'none'
-      }}
     />
   )
 }
 
-function StepBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function StepBtn({ onClick, label, children }: { onClick: () => void; label: string; children: React.ReactNode }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="h-8 w-8 rounded-xl flex items-center justify-center font-black transition-all active:scale-90"
+      aria-label={label}
+      className="h-11 w-11 rounded-xl flex items-center justify-center font-black transition-all active:scale-90"
       style={{ background: 'rgba(0,0,0,0.07)', color: 'var(--servd-mute)', border: '1px solid rgba(0,0,0,0.08)' }}
       onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
       onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-mute)')}>

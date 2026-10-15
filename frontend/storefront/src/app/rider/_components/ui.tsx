@@ -32,11 +32,13 @@ const BUTTON_CLASS =
 
 function buttonStyle(intent: Intent, size: Size, dimmed: boolean): CSSProperties {
   return {
-    ...intentStyle(intent),
+    ...(dimmed
+      // Flat and readable in sunlight: tokens, not half-transparent colour.
+      ? { background: 'var(--servd-surface)', color: 'var(--servd-mute)', border: '2px solid var(--servd-line)' }
+      : intentStyle(intent)),
     minHeight: HEIGHT[size],
     fontSize: FONT[size],
     fontFamily: 'var(--font-display)',
-    opacity: dimmed ? 0.5 : 1,
     cursor: dimmed ? 'not-allowed' : 'pointer',
     WebkitTapHighlightColor: 'transparent',
   }

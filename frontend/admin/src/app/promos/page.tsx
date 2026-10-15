@@ -5,6 +5,7 @@ import { api } from '../../lib/api'
 import Link from 'next/link'
 import { fmtPkrWhole, isoToPktLocal, pktLocalToIso } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface PromoCode {
   id: string
@@ -29,6 +30,7 @@ const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-
 const sel = 'rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none'
 
 export default function PromosPage() {
+  const confirm = useConfirm()
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -137,7 +139,7 @@ export default function PromosPage() {
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Code *</label>
                 <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
-                  placeholder="SAVE20" required className={inp} />
+                  placeholder="SAVE20" required name="promo-code" autoComplete="off" autoCapitalize="characters" spellCheck={false} className={inp} />
               </div>
               <div>
                 <label className="text-xs text-s-muted mb-1 block">Description</label>
@@ -274,7 +276,7 @@ export default function PromosPage() {
                       <div className="flex gap-2">
                         <button onClick={() => openEdit(p)}
                           className="text-xs text-s-muted hover:text-primary-ink transition-colors">Edit</button>
-                        <button onClick={() => { if (confirm('Delete this promo?')) del.mutate(p.id) }}
+                        <button type="button" onClick={async () => { if (await confirm({ title: `Delete promo ${p.code}?`, confirmLabel: 'Delete', danger: true })) del.mutate(p.id) }}
                           className="text-xs text-s-muted hover:text-s-red transition-colors">Del</button>
                       </div>
                     </td>

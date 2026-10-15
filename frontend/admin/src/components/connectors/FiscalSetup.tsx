@@ -22,6 +22,8 @@ import {
 } from '../../lib/connectorsApi'
 import { Badge, Banner, Card, ConfirmPhrase, ErrorLine, Field, Modal, OkLine, RangeNumberInput, TestBadge, fmtWhen } from './ui'
 import { Select } from '@/components/ui/Select'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 const FISCAL_TEST_SCENARIOS = ['ok', 'slow', 'down', 'reject', 'auth', 'processing_then_ok', 'unknown_then_filed'] as const
 
@@ -171,6 +173,7 @@ function ReportingSwitch({ data, companyName, isCeo }: { data: ConnectorsOvervie
 
 function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: boolean }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const f = data.fiscal
   const drivers = useDrivers()
   const fiscalDrivers = (drivers.data ?? []).filter((d) => d.kind === 'fiscal')
@@ -255,7 +258,7 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <input type="password" autoComplete="new-password" className="s-input font-mono text-xs flex-1 min-w-[200px]" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Paste the key from the vendor" />
+              <PasswordInput name="fiscal-api-key" autoComplete="new-password" autoCapitalize="none" spellCheck={false} wrapperClassName="flex-1 min-w-[200px]" className="s-input font-mono text-xs" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Paste the key from the vendor" />
               <button className="s-btn-ghost px-2 py-1 text-xs" onClick={() => setApiKey(null)}>Keep current</button>
               {f.apiKeyHint && <span className="text-[11px] text-s-muted">Saving it empty removes the key.</span>}
             </div>
@@ -267,12 +270,12 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
         <div className="flex flex-wrap items-center gap-2">
           <code className="text-[11px] break-all rounded bg-s-bg px-2 py-1 text-s-text">{f.webhookUrl}</code>
           <button className="s-btn-ghost px-2 py-1 text-xs" onClick={() => void copy(f.webhookUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy'}</button>
-          {canEdit && <button className="s-btn-ghost px-2 py-1 text-xs" disabled={rotate.isPending} onClick={() => { if (confirm('Issue a new webhook address? The old one stops working at once — give the vendor the new one.')) rotate.mutate() }}>New address</button>}
+          {canEdit && <button className="s-btn-ghost px-2 py-1 text-xs" disabled={rotate.isPending} onClick={async () => { if (await confirm({ title: 'Issue a new webhook address?', body: 'The old one stops working at once — give the vendor the new one.', confirmLabel: 'Issue new address', danger: true })) rotate.mutate() }}>New address</button>}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
           <span className="text-s-muted">Secret:</span>
           <span className="font-mono text-s-text">{f.webhookSecretHint ?? 'Not set'}</span>
-          {canEdit && <button className="s-btn-secondary px-2 py-1 text-xs" disabled={regen.isPending} onClick={() => { if (!f.webhookSecretHint || confirm('Generate a new webhook secret? The vendor must switch to it — the old one stops verifying.')) regen.mutate() }}>{regen.isPending ? 'Generating…' : 'Regenerate'}</button>}
+          {canEdit && <button className="s-btn-secondary px-2 py-1 text-xs" disabled={regen.isPending} onClick={async () => { if (!f.webhookSecretHint || await confirm({ title: 'Generate a new webhook secret?', body: 'The vendor must switch to it — the old one stops verifying.', confirmLabel: 'Generate', danger: true })) regen.mutate() }}>{regen.isPending ? 'Generating…' : 'Regenerate'}</button>}
         </div>
         {newSecret && (
           <div className="mt-2 rounded-lg border border-s-amber/40 bg-s-amber-dim p-3 text-xs space-y-1">

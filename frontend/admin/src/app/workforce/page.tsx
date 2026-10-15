@@ -23,6 +23,8 @@ import { usePermissions } from '../../hooks/useCan'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { PositionsView } from './positions/view'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '@/components/ui/Modal'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -663,6 +665,7 @@ function InlineEditor({
   onClose: () => void
 }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [name, setName]         = useState(user.name === 'Unnamed staff' ? '' : user.name)
   const [email, setEmail]       = useState(user.email ?? '')
   const [phone, setPhone]       = useState(user.phone ?? '')
@@ -783,6 +786,7 @@ function InlineEditor({
   // new password comes back once and is held on screen until dismissed —
   // closing without copying means issuing another.
   const [reissued, setReissued] = useState<string | null>(null)
+  const [reissuedCopied, setReissuedCopied] = useState(false)
   const reissue = useMutation({
     mutationFn: () => api.post<{ temporaryPassword: string }>(`/auth/users/${user.id}/reissue-password`, {}),
     onSuccess: (r) => setReissued(r?.temporaryPassword ?? null),
@@ -795,17 +799,20 @@ function InlineEditor({
     onError:    showErr,
   })
 
-  function suspend() {
+  async function suspend() {
     // Switching a login off does not stop pay — HR payroll reads only the
     // employee record. Say so at the moment it matters.
-    if (user.payroll && !window.confirm(
-      `${user.name} is still on payroll in HR. Suspending this login stops them signing in, but they will keep being paid until HR records a separation.\n\nSuspend the login anyway?`,
-    )) return
+    if (user.payroll && !(await confirm({
+      title: 'Suspend this login?',
+      body: `${user.name} is still on payroll in HR. Suspending this login stops them signing in, but they will keep being paid until HR records a separation.`,
+      confirmLabel: 'Suspend login', danger: true,
+    }))) return
     toggleActive.mutate()
   }
 
   return (
-    <div className="bg-s-bg/30 border-t border-s-border px-4 py-4 space-y-3">
+    <form className="bg-s-bg/30 border-t border-s-border px-4 py-4 space-y-3"
+      onSubmit={(e) => { e.preventDefault(); if (!save.isPending) save.mutate() }}>
       {user.inOtherCompanies && (
         <p className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-800">
           This login also works for a company you are not part of. Its role, status and password apply there too,
@@ -822,7 +829,7 @@ function InlineEditor({
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Name">
-          <input value={name} onChange={(e) => setName(e.target.value)}
+          <input value={name} onChange={(e) => setName(e.target.value)} name="staff-name" autoComplete="off"
             placeholder="e.g. Ahmad Khan" className={inputCls} />
         </Field>
         <Field label="Job title" hint="What the role is called day-to-day.">
@@ -830,12 +837,13 @@ function InlineEditor({
             placeholder="e.g. Sous Chef — Bukhari" className={inputCls} />
         </Field>
         <Field label="Email">
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email"
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" name="staff-email"
+            autoComplete="off" autoCapitalize="none" spellCheck={false}
             placeholder="staff@gsfoods.pk" className={inputCls} />
         </Field>
         <Field label="Phone" hint={user.usesCodeLogin ? 'Required — they sign in with a code sent here.' : 'One number per login.'}>
-          <input value={phone} onChange={(e) => setPhone(e.target.value)}
-            placeholder="03XX-XXXXXXX" className={inputCls} />
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="staff-phone"
+            autoComplete="off" placeholder="03XX-XXXXXXX" className={inputCls} />
         </Field>
         <Field label="Category">
           <Select value={category} onChange={(e) => pickCategory(e.target.value)} className={inputCls}>
@@ -853,7 +861,7 @@ function InlineEditor({
             the phone number — the last four digits of a phone are public. */}
         <Field label="Override PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : '4–8 digits, not guessable.'}>
           <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-            maxLength={8} placeholder={user.hasPin ? '• • • •' : '4–8 digit PIN'}
+            maxLength={8} inputMode="numeric" autoComplete="off" name="override-pin" placeholder={user.hasPin ? '• • • •' : '4–8 digit PIN'}
             className={inputCls} />
         </Field>
         {tenants.length > 0 && (
@@ -959,11 +967,11 @@ function InlineEditor({
       {err && <p className="text-xs font-bold text-red-700">{err}</p>}
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        <button onClick={() => save.mutate()} disabled={save.isPending}
+        <button type="submit" disabled={save.isPending}
           className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
           {save.isPending ? 'Saving…' : 'Save changes'}
         </button>
-        <button onClick={onClose}
+        <button type="button" onClick={onClose}
           className="rounded-lg px-3 py-2 text-xs font-bold border border-s-border text-s-muted hover:text-s-text">
           Cancel
         </button>
@@ -975,37 +983,45 @@ function InlineEditor({
               {!user.tenantId && (
                 <span className="text-[10px] text-amber-700">Tick a company and save before approving.</span>
               )}
-              <button onClick={() => approve.mutate()} disabled={approve.isPending || !user.tenantId}
+              <button type="button" onClick={() => approve.mutate()} disabled={approve.isPending || !user.tenantId}
                 title='They are sent a link to set their password when email or WhatsApp is set up; otherwise use "New password" afterwards.'
                 className="rounded-md px-2 py-1.5 text-[11px] font-bold bg-amber-400/15 border border-amber-400/30 text-amber-700 hover:bg-amber-400/25">
                 Approve
               </button>
-              <button onClick={() => reject.mutate()} disabled={reject.isPending}
+              <button type="button" onClick={() => reject.mutate()} disabled={reject.isPending}
                 className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-red-700 hover:border-red-400/40">
                 Reject
               </button>
             </>
           )}
           {status === 'active' && (
-            <button onClick={suspend} disabled={toggleActive.isPending}
+            <button type="button" onClick={suspend} disabled={toggleActive.isPending}
               className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-amber-700 hover:border-amber-400/40">
               Suspend
             </button>
           )}
           {status === 'suspended' && (
-            <button onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
+            <button type="button" onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
               className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-primary-ink hover:border-primary/40">
               Reactivate
             </button>
           )}
-          <button onClick={() => {
-              if (window.confirm(`Issue a new password for ${user.name}? Their current one stops working immediately and they will be signed out everywhere.`)) reissue.mutate()
+          <button type="button" onClick={async () => {
+              if (await confirm({
+                title: `Issue a new password for ${user.name}?`,
+                body: 'Their current one stops working immediately and they will be signed out everywhere.',
+                confirmLabel: 'Issue new password', danger: true,
+              })) reissue.mutate()
             }} disabled={reissue.isPending}
             className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-primary-ink hover:border-primary/40">
             {reissue.isPending ? 'Issuing…' : 'New password'}
           </button>
-          <button onClick={() => {
-              if (window.confirm(`Delete ${user.name}? This soft-deletes — history is preserved.`)) remove.mutate()
+          <button type="button" onClick={async () => {
+              if (await confirm({
+                title: `Delete ${user.name}?`,
+                body: 'This soft-deletes — history is preserved.',
+                confirmLabel: 'Delete', danger: true,
+              })) remove.mutate()
             }} disabled={remove.isPending}
             className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-red-700 hover:border-red-400/40">
             🗑 Delete
@@ -1019,15 +1035,20 @@ function InlineEditor({
             <div className="text-[10px] uppercase tracking-wider text-success mb-1">
               New password for {user.name} — shown once
             </div>
-            <div className="font-mono text-sm font-bold text-success break-all mb-2">{reissued}</div>
+            <div className="font-mono text-sm font-bold text-success break-all mb-2 select-all cursor-text"
+              onClick={(e) => selectText(e.currentTarget)}>{reissued}</div>
             <div className="flex gap-2">
               <button
-                onClick={() => { void navigator.clipboard?.writeText(reissued).catch(() => undefined) }}
-                className="rounded-md px-2 py-1 text-[11px] font-bold border border-s-border text-s-text hover:border-primary/40">
-                Copy
+                type="button"
+                onClick={() => {
+                  void copyText(reissued).then((ok) => setReissuedCopied(ok))
+                }}
+                className={`rounded-md px-2 py-1 text-[11px] font-bold border hover:border-primary/40 ${reissuedCopied ? 'border-accent text-success' : 'border-s-border text-s-text'}`}>
+                {reissuedCopied ? 'Copied' : 'Copy'}
               </button>
               <button
-                onClick={() => setReissued(null)}
+                type="button"
+                onClick={() => { setReissued(null); setReissuedCopied(false) }}
                 className="rounded-md px-2 py-1 text-[11px] font-bold text-s-muted hover:text-s-text">
                 Done
               </button>
@@ -1038,7 +1059,7 @@ function InlineEditor({
           </div>
         )}
       </div>
-    </div>
+    </form>
   )
 }
 
@@ -1110,6 +1131,7 @@ function AddStaffModal({
   })
 
   function submit() {
+    if (create.isPending) return
     setErr(null)
     if (!jobTitle.trim()) return setErr('Type a role / job title so you remember who this is.')
     if (!email.trim()) return setErr('An email is required — it is how they sign in.')
@@ -1121,13 +1143,12 @@ function AddStaffModal({
     create.mutate()
   }
 
+  const dirty = !issued && !!(name || email || phone || jobTitle)
   return (
-    <div className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-s-surface border border-s-border rounded-2xl p-5 w-full max-w-md"
-        onClick={(e) => e.stopPropagation()}>
+    <Modal title={issued ? `${issued.name} is set up` : 'Add staff'} onClose={onClose}
+      dirty={dirty} dismissible={!issued && !create.isPending}>
         {issued ? (
           <>
-            <h2 className="font-black text-lg mb-1">{issued.name} is set up</h2>
             <p className="text-xs text-s-muted mb-4">
               Give them these two things. The password is shown <strong>once</strong> — we
               store only a hash, so nobody can look it up later. If you lose it, issue a new one.
@@ -1139,19 +1160,19 @@ function AddStaffModal({
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-s-muted mb-0.5">Password</div>
-                <div className="font-mono text-base font-bold text-success break-all">{issued.password}</div>
+                <div className="font-mono text-base font-bold text-success break-all select-all cursor-text"
+                  onClick={(e) => selectText(e.currentTarget)}>{issued.password}</div>
               </div>
             </div>
             <div className="flex gap-2">
-              <button
+              <button type="button"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(`${issued.email}\n${issued.password}`)
-                    .then(() => setCopied(true)).catch(() => undefined)
+                  void copyText(`${issued.email}\n${issued.password}`).then((ok) => setCopied(ok))
                 }}
                 className={`flex-1 rounded-lg py-2 text-xs font-bold border hover:border-primary/40 ${copied ? 'border-accent text-success' : 'border-s-border text-s-text'}`}>
                 {copied ? 'Copied' : 'Copy both'}
               </button>
-              <button
+              <button type="button"
                 onClick={() => onCreated(null)}
                 className="flex-1 rounded-lg py-2 text-xs font-black bg-primary text-primary-on">
                 Done
@@ -1162,8 +1183,7 @@ function AddStaffModal({
             </p>
           </>
         ) : (
-        <>
-        <h2 className="font-black text-lg mb-1">Add staff</h2>
+        <form onSubmit={(e) => { e.preventDefault(); submit() }} autoComplete="off">
         <p className="text-xs text-s-muted mb-4">
           Their email is how they sign in, so it is required and must be
           @gsfoods.pk. We generate a password and show it once on the next
@@ -1177,7 +1197,10 @@ function AddStaffModal({
               onChange={(e) => setEmail(e.target.value)}
               placeholder="firstname.lastname@gsfoods.pk"
               type="email"
+              name="new-staff-email"
+              autoComplete="off"
               autoCapitalize="none"
+              spellCheck={false}
               className={inputCls}
             />
           </Field>
@@ -1227,16 +1250,16 @@ function AddStaffModal({
           </Field>
           <Field label={needsPhone ? 'Mobile number' : 'Mobile number (optional)'}
             hint={needsPhone ? 'Required — they sign in with a code sent here' : 'One number per login'}>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel"
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="new-staff-phone" autoComplete="off"
               placeholder="03XX-XXXXXXX" className={inputCls} />
           </Field>
           <Field label="Role / job title" hint="Free text — what you actually call this role.">
-            <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} autoFocus
+            <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} autoFocus name="new-staff-title" autoComplete="off"
               placeholder="e.g. Sous Chef — Bukhari, Floor Manager — Clifton, Procurement Officer"
               className={inputCls} />
           </Field>
           <Field label="Name (optional)" hint="Skip for now — fill in when you know who's joining.">
-            <input value={name} onChange={(e) => setName(e.target.value)}
+            <input value={name} onChange={(e) => setName(e.target.value)} name="new-staff-name" autoComplete="off"
               placeholder="e.g. Ahmad Khan" className={inputCls} />
           </Field>
         </div>
@@ -1249,19 +1272,18 @@ function AddStaffModal({
         {err && <p className="mt-2 text-xs font-bold text-red-700">{err}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onClose}
+          <button type="button" onClick={onClose}
             className="rounded-lg px-3 py-2 text-xs font-bold border border-s-border text-s-muted hover:text-s-text">
             Cancel
           </button>
-          <button onClick={submit} disabled={create.isPending}
+          <button type="submit" disabled={create.isPending}
             className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
             {create.isPending ? 'Adding…' : 'Add staff →'}
           </button>
         </div>
-        </>
+        </form>
         )}
-      </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -1290,10 +1312,7 @@ function SignInCodeModal({ user, onClose }: { user: StaffUser; onClose: () => vo
   const left = result ? Math.max(0, Math.floor((new Date(result.expiresAt).getTime() - now) / 1000)) : 0
 
   return (
-    <div className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-s-surface border border-s-border rounded-2xl p-5 w-full max-w-sm"
-        onClick={(e) => e.stopPropagation()}>
-        <h2 className="font-black text-lg mb-1">Sign-in code for {user.name}</h2>
+    <Modal title={`Sign-in code for ${user.name}`} onClose={onClose}>
         {!result ? (
           <>
             <p className="text-xs text-s-muted mb-4">
@@ -1302,11 +1321,11 @@ function SignInCodeModal({ user, onClose }: { user: StaffUser; onClose: () => vo
             </p>
             {err && <p className="mb-3 text-xs font-bold text-red-700">{err}</p>}
             <div className="flex justify-end gap-2">
-              <button onClick={onClose}
+              <button type="button" onClick={onClose}
                 className="rounded-lg px-3 py-2 text-xs font-bold border border-s-border text-s-muted hover:text-s-text">
                 Cancel
               </button>
-              <button onClick={() => issue.mutate()} disabled={issue.isPending}
+              <button type="button" onClick={() => issue.mutate()} disabled={issue.isPending}
                 className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
                 {issue.isPending ? 'Getting code…' : 'Get a code'}
               </button>
@@ -1325,19 +1344,38 @@ function SignInCodeModal({ user, onClose }: { user: StaffUser; onClose: () => vo
               </div>
             </div>
             <div className="flex justify-end">
-              <button onClick={onClose}
+              <button type="button" onClick={onClose}
                 className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
                 Done
               </button>
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   )
 }
 
 // ─── Small UI bits ───────────────────────────────────────────────────────────
+
+/** Select a node's text so the person can copy by hand when the clipboard is blocked. */
+function selectText(el: HTMLElement) {
+  try {
+    const r = document.createRange()
+    r.selectNodeContents(el)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(r)
+  } catch { /* selection unavailable */ }
+}
+
+/** Copy with the Clipboard API; false when it is missing or denied (non-HTTPS, permission). */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (!navigator.clipboard?.writeText) return false
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch { return false }
+}
 
 const inputCls =
   'w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-primary focus:outline-none'

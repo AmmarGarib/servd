@@ -23,7 +23,7 @@
 // the customer adds an item here while it holds another kitchen's items do we
 // ask — keep that basket, or start a new one for this kitchen.
 
-import { Fragment, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
@@ -41,6 +41,8 @@ import { brandCanonical, SERVD_LINK_ORIGIN } from '../../../lib/brandDomains'
 import { takesTableOrdersOnly } from '../../../lib/fulfilment'
 // GA4 events (no-op without GA4 / consent) — the shared contract in lib/analytics.
 import { track } from '../../../lib/analytics'
+import { useDialog } from '../../../lib/useDialog'
+import { smoothScrollTo, prefersReducedMotion } from '../../../lib/scroll'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -357,21 +359,71 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
     setOpenItem(null)
   }
 
-  // Track active category as the user scrolls
+  // Sticky header = the 60px site bar + the category nav. Measured, so the
+  // scroll-spy band and every section's scroll-margin follow the real height
+  // (the nav grows on touch screens, where chips are 44px tall).
+  const navRef = useRef<HTMLElement>(null)
+  const chipsRef = useRef<HTMLDivElement>(null)
+  const [stickyH, setStickyH] = useState(120)
+  const [chipFade, setChipFade] = useState(false)
+  // Set by a chip tap: the observer ignores the sections it passes on the way.
+  const spyPausedUntil = useRef(0)
+  const hasCategories = (categories?.length ?? 0) > 0
   useEffect(() => {
-    if (!categories) return
-    const handler = () => {
-      const offset = 180  // sticky header height
-      let current: string | null = null
-      for (const c of categories) {
-        const el = document.getElementById(`cat-${c.id}`)
-        if (el && el.getBoundingClientRect().top < offset) current = c.id
-      }
-      if (current) setActiveCategory(current)
+    const nav = navRef.current
+    if (!nav) return
+    const measure = () => {
+      const top = parseFloat(getComputedStyle(nav).top) || 60
+      setStickyH(Math.round(top + nav.getBoundingClientRect().height))
+      const bar = chipsRef.current
+      if (bar) setChipFade(bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4)
     }
-    window.addEventListener('scroll', handler, { passive: true })
-    return () => window.removeEventListener('scroll', handler)
-  }, [categories])
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(nav)
+    return () => ro.disconnect()
+  }, [hasCategories])
+
+  // Track the active category as the user scrolls: an IntersectionObserver on
+  // the sections (no scroll listener, no layout reads per frame). The "reading
+  // band" runs from just under the sticky header to 45% down the viewport; the
+  // active category is the last one touching it.
+  useEffect(() => {
+    if (!categories || typeof IntersectionObserver === 'undefined') return
+    const order = categories.map((c) => c.id)
+    const inBand = new Set<string>()
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const id = e.target.id.replace(/^cat-/, '')
+        if (e.isIntersecting) inBand.add(id); else inBand.delete(id)
+      }
+      if (Date.now() < spyPausedUntil.current) return
+      let current: string | null = null
+      for (const id of order) if (inBand.has(id)) current = id
+      if (current) setActiveCategory(current)
+    }, { rootMargin: `-${stickyH + 4}px 0px -55% 0px`, threshold: 0 })
+    for (const c of categories) {
+      const el = document.getElementById(`cat-${c.id}`)
+      if (el) io.observe(el)
+    }
+    return () => io.disconnect()
+  }, [categories, stickyH])
+
+  // Keep the highlighted chip on screen inside the horizontal chip bar.
+  useEffect(() => {
+    const bar = chipsRef.current
+    if (!bar || !activeCategory) return
+    const chip = bar.querySelector<HTMLElement>(`[data-chip="${activeCategory}"]`)
+    if (!chip) return
+    const left = chip.offsetLeft - (bar.clientWidth - chip.offsetWidth) / 2
+    bar.scrollTo({ left: Math.max(0, left), behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+  }, [activeCategory])
+
+  const onChipsScroll = useCallback(() => {
+    const bar = chipsRef.current
+    if (bar) setChipFade(bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4)
+  }, [])
 
   // The states below (error / skeleton / menu) carry distinct keys so React
   // mounts each fresh instead of morphing the skeleton's DOM into the next
@@ -436,6 +488,18 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
   return (
     <div key="screen" className={brandSkinClass}
       style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
+      <style>{`
+        .sv-oc-chip, .sv-oc-link { display: inline-flex; align-items: center; }
+        /* Stackd forces cream headings (!important) for its dark page; the
+           cream sheet needs its own ink back. */
+        .stackd-ordering .sv-sheet-panel h1, .stackd-ordering .sv-sheet-panel h2, .stackd-ordering .sv-sheet-panel h3 {
+          color: var(--servd-sheet-ink) !important;
+        }
+        @media (pointer: coarse) {
+          .sv-oc-chip, .sv-oc-link { min-height: 44px; }
+          .sv-oc-add { min-height: 44px; }
+        }
+      `}</style>
       <TestCompanyStripe show={isTestBrand} />
       {/* Hero */}
       <section
@@ -453,10 +517,10 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
             {/* The brand's microsite is its own domain; the kitchens list
                 is servd's (absolute, for the brand-domain copy). */}
-            <Link href={brandCanonical(concept.slug)} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
+            <Link href={brandCanonical(concept.slug)} className="sv-oc-link" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               ← {formatBrandName(concept.name)}
             </Link>
-            <Link href={`${SERVD_LINK_ORIGIN}/home#kitchens`} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
+            <Link href={`${SERVD_LINK_ORIGIN}/home#kitchens`} className="sv-oc-link" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               Other brands →
             </Link>
           </div>
@@ -569,8 +633,8 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
           {/* Sticky category nav */}
           {categories.length > 0 && (
             <nav
+              ref={navRef}
               aria-label="Menu sections"
-              className="no-scrollbar"
               style={{
                 position: 'sticky',
                 top: '60px',
@@ -579,38 +643,57 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
                 backdropFilter: 'blur(14px)',
                 WebkitBackdropFilter: 'blur(14px)',
                 borderBottom: '1px solid var(--servd-line)',
-                display: 'flex',
-                gap: '0.25rem',
-                overflowX: 'auto',
-                padding: '0.5rem clamp(1rem, 4vw, 2rem)',
               }}
             >
-              {categories.map((c) => {
-                const active = activeCategory === c.id
-                return (
-                  <a
-                    key={c.id}
-                    href={`#cat-${c.id}`}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      document.getElementById(`cat-${c.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                      setActiveCategory(c.id)
-                    }}
-                    style={{
-                      whiteSpace: 'nowrap',
-                      padding: '0.45rem 0.95rem',
-                      fontWeight: active ? 800 : 500,
-                      fontSize: '0.875rem',
-                      color: active ? '#0a0a0a' : 'var(--servd-mute)',
-                      textDecoration: 'none',
-                      borderRadius: '999px',
-                      background: active ? 'var(--servd-green-soft)' : 'transparent',
-                    }}
-                  >
-                    {c.name}
-                  </a>
-                )
-              })}
+              {/* The scroller sits inside the nav so the right-edge fade masks
+                  only the chips, not the nav's own background and border. */}
+              <div
+                ref={chipsRef}
+                onScroll={onChipsScroll}
+                className="no-scrollbar"
+                style={{
+                  display: 'flex',
+                  gap: '0.25rem',
+                  overflowX: 'auto',
+                  overscrollBehaviorX: 'contain',
+                  padding: '0.5rem clamp(1rem, 4vw, 2rem)',
+                  ...(chipFade && {
+                    WebkitMaskImage: 'linear-gradient(to right, #000 calc(100% - 2rem), transparent)',
+                    maskImage: 'linear-gradient(to right, #000 calc(100% - 2rem), transparent)',
+                  }),
+                }}
+              >
+                {categories.map((c) => {
+                  const active = activeCategory === c.id
+                  return (
+                    <a
+                      key={c.id}
+                      href={`#cat-${c.id}`}
+                      data-chip={c.id}
+                      aria-current={active ? 'true' : undefined}
+                      className="sv-oc-chip"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        spyPausedUntil.current = Date.now() + 900
+                        smoothScrollTo(document.getElementById(`cat-${c.id}`))
+                        setActiveCategory(c.id)
+                      }}
+                      style={{
+                        whiteSpace: 'nowrap',
+                        padding: '0.45rem 0.95rem',
+                        fontWeight: active ? 800 : 500,
+                        fontSize: '0.875rem',
+                        color: active ? '#0a0a0a' : 'var(--servd-mute)',
+                        textDecoration: 'none',
+                        borderRadius: '999px',
+                        background: active ? 'var(--servd-green-soft)' : 'transparent',
+                      }}
+                    >
+                      {c.name}
+                    </a>
+                  )
+                })}
+              </div>
             </nav>
           )}
 
@@ -625,7 +708,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
             )}
 
             {categories.map((cat) => (
-              <section key={cat.id} id={`cat-${cat.id}`} style={{ scrollMarginTop: '120px' }}>
+              <section key={cat.id} id={`cat-${cat.id}`} style={{ scrollMarginTop: `${stickyH + 8}px` }}>
                 <h2 style={{ fontSize: 'clamp(1.4rem, 3vw, 1.85rem)', marginBottom: '1.25rem' }}>{cat.name}</h2>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))', gap: '1rem' }}>
                   {cat.items.map((item) => <ItemCard key={item.id} item={item} onClick={() => openDish(item)} accent={accent} fmt={fmt} />)}
@@ -635,7 +718,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
           </div>
 
           {/* Item modal */}
-          {openItem && (
+          {openItem && !pendingAdd && (
             <ItemDetailModal
               item={openItem}
               conceptSlug={concept.slug}
@@ -652,6 +735,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
               it. Keep = leave it as it is (this item isn't added). */}
           {pendingAdd?.reason === 'switch' && (
             <ChoiceSheet
+              stackd={slug === 'stackd'}
               title="Start a new basket?"
               body={<>Your basket has items from {basketBrand ?? 'another kitchen'}. Start a new basket for {brandName}?</>}
               onDismiss={dismissPendingAdd}
@@ -669,6 +753,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
           {/* Table-only brand, customer hasn't said they're seated. */}
           {pendingAdd?.reason === 'table' && (
             <ChoiceSheet
+              stackd={slug === 'stackd'}
               title={`${brandName} takes orders at the table`}
               body={<>There&rsquo;s no pickup or delivery from {brandName}. If you&rsquo;re seated now, carry on &mdash; you&rsquo;ll add your table number at checkout.</>}
               onDismiss={dismissPendingAdd}
@@ -684,8 +769,9 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
           )}
 
           {/* Cart drawer */}
-          {hasItems && (
+          {mounted && (itemTotal > 0 || cartOpen) && (
             <CartDrawer
+              stackd={slug === 'stackd'}
               open={cartOpen}
               onOpen={() => setCartOpen(true)}
               onClose={() => setCartOpen(false)}
@@ -827,7 +913,7 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
           {disabled ? (
             <span style={SOLD_OUT_TAG}>Sold out</span>
           ) : (
-            <span aria-hidden="true" style={{
+            <span aria-hidden="true" className="sv-oc-add" style={{
               display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
               padding: '0.3rem 0.85rem', borderRadius: '999px',
               border: '1.5px solid currentColor', color: 'var(--servd-green-dark)',
@@ -896,8 +982,87 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
   )
 }
 
+// The one modal wrapper for the item sheet, the basket and the choice sheet:
+// Escape closes, focus moves in and comes back, Tab stays inside, the page
+// behind is inert and does not scroll (useDialog), and the panel wears the
+// sheet surface. On Stackd --servd-ink / --servd-mute are cream, which is
+// unreadable on a sheet, so inside the panel they follow the sheet's own ink.
+function Sheet({
+  onClose, stackd, z = 60, role = 'dialog', label, labelledBy, describedBy, panelStyle, children,
+}: {
+  onClose: () => void
+  stackd: boolean
+  z?: number
+  role?: 'dialog' | 'alertdialog'
+  label?: string
+  labelledBy?: string
+  describedBy?: string
+  panelStyle?: React.CSSProperties
+  children: React.ReactNode
+}) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDialog({
+    open: true,
+    ref: panelRef,
+    onClose,
+    initialFocus: () => panelRef.current?.querySelector<HTMLElement>('[data-autofocus]') ?? undefined,
+  })
+  const vars = stackd
+    ? ({
+        '--servd-ink': 'var(--servd-sheet-ink)',
+        '--servd-mute': 'color-mix(in srgb, var(--servd-sheet-ink) 68%, transparent)',
+        '--servd-line': 'color-mix(in srgb, var(--servd-sheet-ink) 18%, transparent)',
+        // Stackd's green is cream (for the dark page): on the cream sheet the
+        // primary button, the Required pill and the prices turn plum.
+        '--servd-green': 'var(--stackd-plum)',
+        '--servd-green-hover': 'var(--stackd-plum-dark)',
+        '--servd-green-dark': 'var(--stackd-plum)',
+        '--servd-on-green': 'var(--stackd-cream)',
+      } as React.CSSProperties)
+    : {}
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: z,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        overscrollBehavior: 'contain',
+      }}
+    >
+      <div
+        ref={panelRef}
+        className="sv-sheet-panel"
+        role={role}
+        aria-modal="true"
+        {...(label ? { 'aria-label': label } : {})}
+        {...(labelledBy ? { 'aria-labelledby': labelledBy } : {})}
+        {...(describedBy ? { 'aria-describedby': describedBy } : {})}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          ...vars,
+          background: 'var(--servd-sheet-bg)',
+          color: 'var(--servd-ink)',
+          width: '100%', maxWidth: '34rem',
+          borderRadius: '1.25rem 1.25rem 0 0',
+          maxHeight: '92dvh',
+          display: 'flex', flexDirection: 'column',
+          outline: 'none',
+          animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
+          ...panelStyle,
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
+const MAX_QTY = 20
+
 function ItemDetailModal({
-  item, accent, onClose, onAdd, fmt,
+  item, accent, onClose, onAdd, fmt, conceptSlug,
 }: {
   item: MenuItem
   conceptSlug: string
@@ -914,6 +1079,13 @@ function ItemDetailModal({
 }) {
   const [qty, setQty] = useState(1)
   const [notes, setNotes] = useState('')
+  // Set once Add was tapped with a required group unmet: the groups that are
+  // still unmet say "Choose one" until they are filled.
+  const [showUnmet, setShowUnmet] = useState(false)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current) }, [])
+  const uid = useId()
 
   // selections[groupId] = Set of selected modifier ids. Seeded with the
   // group's isDefault picks so a "must pick exactly one" group lands on
@@ -961,35 +1133,44 @@ function ItemDetailModal({
   )
   const lineUnitPriceCents = item.priceCents + pickedModifiers.reduce((s, m) => s + m.priceDeltaCents, 0)
 
+  // Add with a group still unmet: take the customer to it (the button stays
+  // enabled and says what is missing instead of looking broken).
+  function onAddTap() {
+    if (canAdd) {
+      onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim())
+      return
+    }
+    setShowUnmet(true)
+    const first = unmet[0]
+    if (!first) return
+    const el = document.getElementById(`${uid}-grp-${first.id}`)
+    smoothScrollTo(el, { block: 'center' })
+    setFlashId(first.id)
+    if (flashTimer.current) clearTimeout(flashTimer.current)
+    flashTimer.current = setTimeout(() => setFlashId(null), 1400)
+    el?.querySelector<HTMLElement>('input')?.focus({ preventScroll: true })
+  }
+
+  const closeBtn = (photo: boolean): React.CSSProperties => photo
+    ? {
+        position: 'absolute', top: '0.6rem', right: '0.6rem',
+        background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '999px', color: '#261038',
+        width: '2.75rem', height: '2.75rem', fontSize: '1.3rem', cursor: 'pointer',
+      }
+    : {
+        background: 'transparent', border: 'none', borderRadius: '999px', color: 'var(--servd-mute)',
+        width: '2.75rem', height: '2.75rem', fontSize: '1.4rem', cursor: 'pointer',
+      }
+
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={item.name}
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 60,
-        background: 'rgba(0,0,0,0.45)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-        padding: '0',
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#fff', width: '100%', maxWidth: '34rem',
-          borderRadius: '1.25rem 1.25rem 0 0',
-          maxHeight: '92dvh', overflow: 'hidden',
-          display: 'flex', flexDirection: 'column',
-          animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
-        }}
-      >
+    <Sheet onClose={onClose} stackd={conceptSlug === 'stackd'} label={item.name} panelStyle={{ overflow: 'hidden' }}>
         {item.imageUrl || item.videoUrl ? (
           <div style={{
             aspectRatio: '16/10',
             background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${tintColor(accent, '22')} 0%, white 200%)`,
             position: 'relative',
             overflow: 'hidden',
+            flex: 'none',
           }}>
             {item.videoUrl && (
               <video
@@ -1000,23 +1181,16 @@ function ItemDetailModal({
                 style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
               />
             )}
-            <button type="button" onClick={onClose} aria-label="Close" style={{
-              position: 'absolute', top: '0.6rem', right: '0.6rem',
-              background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '999px',
-              width: '2.5rem', height: '2.5rem', fontSize: '1.2rem', cursor: 'pointer',
-            }}>×</button>
+            <button type="button" onClick={onClose} aria-label="Close" style={closeBtn(true)}>×</button>
           </div>
         ) : (
           // No photo: no picture box, just the close button above the name.
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.5rem 0.5rem 0' }}>
-            <button type="button" onClick={onClose} aria-label="Close" style={{
-              background: 'transparent', border: 'none', borderRadius: '999px', color: 'var(--servd-mute)',
-              width: '2.75rem', height: '2.75rem', fontSize: '1.4rem', cursor: 'pointer',
-            }}>×</button>
+            <button type="button" onClick={onClose} aria-label="Close" style={closeBtn(false)}>×</button>
           </div>
         )}
 
-        <div style={{ overflowY: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div style={{ overflowY: 'auto', overscrollBehavior: 'contain', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <h2 style={{ fontSize: '1.4rem', fontWeight: 800 }}>{item.name}</h2>
           {item.description && (
             <p style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.5 }}>{item.description}</p>
@@ -1029,6 +1203,8 @@ function ItemDetailModal({
           {groups.map((g) => {
             const picked = selections[g.id] ?? new Set<string>()
             const radio = g.maxSelect <= 1
+            const isUnmet = unmet.some((u) => u.id === g.id)
+            const flashing = flashId === g.id
             const caption =
               g.isRequired
                 ? `Required · pick ${g.minSelect === g.maxSelect ? g.minSelect : `${g.minSelect}–${g.maxSelect}`}`
@@ -1036,7 +1212,17 @@ function ItemDetailModal({
                   ? `Pick up to ${g.maxSelect}`
                   : 'Optional'
             return (
-              <fieldset key={g.id} style={{ border: '1px solid var(--servd-line)', borderRadius: '0.75rem', padding: '0.85rem 1rem 0.6rem', margin: 0 }}>
+              <fieldset
+                key={g.id}
+                id={`${uid}-grp-${g.id}`}
+                style={{
+                  border: '1px solid var(--servd-line)', borderRadius: '0.75rem', padding: '0.85rem 1rem 0.6rem', margin: 0,
+                  scrollMarginTop: '1rem',
+                  ...(flashing && { outline: '3px solid var(--servd-danger)', outlineOffset: '2px' }),
+                  ...(showUnmet && isUnmet && !flashing && { borderColor: 'var(--servd-danger)' }),
+                  transition: prefersReducedMotion() ? 'none' : 'outline-color 200ms',
+                }}
+              >
                 <legend style={{ padding: '0 0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <span style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--servd-ink)' }}>{g.name}</span>
                   {g.isRequired && (
@@ -1047,7 +1233,14 @@ function ItemDetailModal({
                     }}>Required</span>
                   )}
                 </legend>
-                <p style={{ fontSize: '0.75rem', color: 'var(--servd-mute)', marginBottom: '0.5rem' }}>{caption}</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--servd-mute)', marginBottom: '0.5rem' }}>
+                  {caption}
+                  {showUnmet && isUnmet && (
+                    <span role="alert" style={{ marginLeft: '0.5rem', color: 'var(--servd-danger)', fontWeight: 800 }}>
+                      {g.minSelect > 1 ? `Choose at least ${g.minSelect}` : 'Choose one'}
+                    </span>
+                  )}
+                </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                   {g.modifiers.map((m) => {
                     const checked = picked.has(m.id)
@@ -1068,7 +1261,7 @@ function ItemDetailModal({
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.92rem' }}>
                           <input
                             type={radio ? 'radio' : 'checkbox'}
-                            name={radio ? g.id : undefined}
+                            name={radio ? `${uid}-${g.id}` : undefined}
                             checked={checked}
                             disabled={reachedMax}
                             onChange={() => togglePick(g, m.id)}
@@ -1090,55 +1283,70 @@ function ItemDetailModal({
           })}
 
           <label style={{ display: 'block' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--servd-mute)' }}>Notes for the kitchen (optional)</span>
+            <span style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--servd-mute)' }}>
+              <span>Notes for the kitchen (optional)</span>
+              <span aria-live="polite" style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{notes.length}/200</span>
+            </span>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
               maxLength={200}
+              enterKeyHint="done"
+              autoComplete="off"
               placeholder="e.g. no onions, extra spicy"
               style={{
                 marginTop: '0.4rem', width: '100%', padding: '0.65rem 0.85rem',
-                border: '1px solid var(--servd-line)', borderRadius: '0.6rem', fontFamily: 'inherit', fontSize: '0.9rem',
+                border: '1px solid var(--servd-line)', borderRadius: '0.6rem', fontFamily: 'inherit',
+                // 16px: below that iOS Safari zooms the page when it is focused.
+                fontSize: '16px',
+                background: 'transparent', color: 'inherit',
               }}
             />
           </label>
         </div>
 
         <div style={{ padding: '1rem 1.5rem 1.25rem', borderTop: '1px solid var(--servd-line)', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.1rem' }}>
-            <button type="button" onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease quantity"
-              style={QTY_BTN}>−</button>
-            <span aria-live="polite" style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700 }}>{qty}</span>
-            <button type="button" onClick={() => setQty(Math.min(20, qty + 1))} aria-label="Increase quantity"
-              style={QTY_BTN}>+</button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.15rem' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.1rem' }}>
+              <button type="button" onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease quantity"
+                style={QTY_BTN}>−</button>
+              <span aria-live="polite" style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700 }}>{qty}</span>
+              <button type="button" onClick={() => setQty(Math.min(MAX_QTY, qty + 1))} aria-label="Increase quantity"
+                aria-disabled={qty >= MAX_QTY}
+                style={{ ...QTY_BTN, opacity: qty >= MAX_QTY ? 0.4 : 1 }}>+</button>
+            </div>
+            {qty >= MAX_QTY && (
+              <span role="status" style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--servd-mute)' }}>Max {MAX_QTY}</span>
+            )}
           </div>
           <button
-            onClick={() => canAdd && onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim())}
-            disabled={!canAdd}
+            type="button"
+            onClick={onAddTap}
             className="servd-btn-primary"
-            style={{ flex: 1, padding: '0.85rem 1rem', opacity: canAdd ? 1 : 0.5, cursor: canAdd ? 'pointer' : 'not-allowed' }}
+            style={{ flex: 1, padding: '0.85rem 1rem', minHeight: '2.75rem' }}
           >
             {canAdd
               ? `Add ${qty} · ${fmt(lineUnitPriceCents * qty)}`
               : `Pick ${unmet[0]?.name}`}
           </button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
 }
 
-// Quantity steppers (item modal + basket): 40px tap targets; the visible
+// Quantity steppers (item modal + basket): 44px tap targets; the visible
 // pill around them stays slim.
 const QTY_BTN: React.CSSProperties = {
-  width: '2.5rem', height: '2.5rem', borderRadius: '999px', border: 'none',
+  width: '2.75rem', height: '2.75rem', borderRadius: '999px', border: 'none',
   background: 'transparent', color: 'inherit', fontSize: '1.1rem', cursor: 'pointer',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
 }
 
+type CartLine = ReturnType<typeof useCart.getState>['items'][number]
+
 function CartDrawer({
-  open, onOpen, onClose, onCheckout, fmt, basketBrand,
+  open, onOpen, onClose, onCheckout, fmt, basketBrand, stackd,
 }: {
   open: boolean
   onOpen: () => void
@@ -1148,6 +1356,7 @@ function CartDrawer({
   /** The basket's kitchen when it isn't the one on screen (the customer kept
    *  a basket from there); null when it's this kitchen's. */
   basketBrand: string | null
+  stackd: boolean
 }) {
   // Tax is computed at checkout (payment-method aware), not here.
   // The basket just shows subtotal.
@@ -1155,7 +1364,36 @@ function CartDrawer({
   const subtotal = cart.subtotalCents()
   const itemCount = cart.itemCount()
 
+  // A removed line, held for a few seconds so Undo can put it back through
+  // the cart's own addItem (same menu item + modifiers = the same line).
+  const [undo, setUndo] = useState<CartLine | null>(null)
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current) }, [])
+
+  function removeLine(line: CartLine) {
+    useCart.getState().removeItem(line.lineId)
+    setUndo(line)
+    if (undoTimer.current) clearTimeout(undoTimer.current)
+    undoTimer.current = setTimeout(() => setUndo(null), 5000)
+  }
+  function undoRemove() {
+    if (!undo) return
+    const store = useCart.getState()
+    for (let i = 0; i < undo.quantity; i++) {
+      store.addItem({
+        menuItemId: undo.menuItemId,
+        name: undo.name,
+        priceCents: undo.priceCents,
+        ...(undo.modifiers && undo.modifiers.length > 0 && { modifiers: undo.modifiers }),
+        ...(undo.notes && { notes: undo.notes }),
+      })
+    }
+    setUndo(null)
+    if (undoTimer.current) clearTimeout(undoTimer.current)
+  }
+
   if (!open) {
+    if (itemCount === 0) return null
     // Floating CTA pill anchored to bottom of screen — the primary action, so
     // the house primary: green fill, purple ink (never white on green). The
     // count chip inverts it.
@@ -1188,23 +1426,7 @@ function CartDrawer({
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Basket"
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 60,
-        background: 'rgba(0,0,0,0.45)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#fff', width: '100%', maxWidth: '34rem',
-          borderRadius: '1.25rem 1.25rem 0 0',
-          maxHeight: '92dvh', display: 'flex', flexDirection: 'column',
-          animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
-        }}
-      >
+    <Sheet onClose={onClose} stackd={stackd} label="Basket">
         <header style={{ padding: '0.75rem 0.75rem 0.75rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <div>
             <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Your basket</h2>
@@ -1218,22 +1440,29 @@ function CartDrawer({
             style={{ background: 'transparent', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--servd-mute)', width: '2.75rem', height: '2.75rem', borderRadius: '999px', flex: 'none' }}>×</button>
         </header>
 
-        <div style={{ overflowY: 'auto', flex: 1 }}>
+        <div style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1 }}>
           {cart.items.length === 0 && (
             <p style={{ padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--servd-mute)' }}>Basket&rsquo;s empty.</p>
           )}
           {cart.items.map((line) => (
             <div key={line.lineId} style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{line.name}</p>
                 {line.modifiers && line.modifiers.length > 0 && (
                   <p style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', lineHeight: 1.4, marginBottom: '0.2rem' }}>
                     {line.modifiers.map((m) => m.name).join(' · ')}
                   </p>
                 )}
-                <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>{fmt(line.priceCents)} · qty {line.quantity}</p>
+                {line.notes && (
+                  <p style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', lineHeight: 1.4, marginBottom: '0.2rem', fontStyle: 'italic', overflowWrap: 'anywhere' }}>
+                    Note: {line.notes}
+                  </p>
+                )}
+                <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>{fmt(line.priceCents)}</p>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', marginTop: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.1rem' }}>
-                  <button type="button" onClick={() => cart.updateQty(line.lineId, line.quantity - 1)} aria-label={`Decrease ${line.name}`}
+                  <button type="button"
+                    onClick={() => (line.quantity <= 1 ? removeLine(line) : cart.updateQty(line.lineId, line.quantity - 1))}
+                    aria-label={line.quantity <= 1 ? `Remove ${line.name}` : `Decrease ${line.name}`}
                     style={QTY_BTN}>−</button>
                   <span style={{ minWidth: '1.2rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem' }}>{line.quantity}</span>
                   <button type="button" onClick={() => cart.updateQty(line.lineId, line.quantity + 1)} aria-label={`Increase ${line.name}`}
@@ -1242,15 +1471,29 @@ function CartDrawer({
               </div>
               <div style={{ textAlign: 'right' }}>
                 <p style={{ fontWeight: 700 }}>{fmt(line.priceCents * line.quantity)}</p>
-                <button type="button" onClick={() => cart.removeItem(line.lineId)} aria-label={`Remove ${line.name}`}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--servd-mute)', fontSize: '0.75rem', marginTop: '0.15rem', minHeight: '2.5rem', padding: '0 0 0 0.75rem', cursor: 'pointer' }}>Remove</button>
+                <button type="button" onClick={() => removeLine(line)} aria-label={`Remove ${line.name}`}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--servd-mute)', fontSize: '0.75rem', marginTop: '0.15rem', minHeight: '2.75rem', padding: '0 0 0 0.75rem', cursor: 'pointer' }}>Remove</button>
               </div>
             </div>
           ))}
         </div>
 
+        {undo && (
+          <div role="status" style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
+            margin: '0.5rem 1rem 0', padding: '0 0.5rem 0 1rem', minHeight: '2.75rem', borderRadius: '0.75rem',
+            background: 'var(--servd-sheet-ink)', color: 'var(--servd-sheet-bg)', fontSize: '0.9rem', fontWeight: 600,
+          }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Removed · {undo.name}</span>
+            <button type="button" onClick={undoRemove}
+              style={{ background: 'transparent', border: 'none', color: 'inherit', fontWeight: 800, textDecoration: 'underline', minHeight: '2.75rem', padding: '0 0.75rem', cursor: 'pointer' }}>
+              Undo
+            </button>
+          </div>
+        )}
+
         {cart.items.length > 0 && (
-          <footer style={{ padding: '1rem 1.5rem calc(1.25rem + env(safe-area-inset-bottom))', borderTop: '1px solid var(--servd-line)' }}>
+          <footer style={{ padding: '1rem 1.5rem calc(1.25rem + env(safe-area-inset-bottom))', borderTop: '1px solid var(--servd-line)', marginTop: undo ? '0.5rem' : 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
               {/* Tax/GST is computed at checkout once the customer picks
                   a payment method (8% on card-rails, 15% on cash), so
@@ -1275,8 +1518,7 @@ function CartDrawer({
             </MagneticButton>
           </footer>
         )}
-      </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -1284,58 +1526,32 @@ function CartDrawer({
 // (start a new basket? / are you at a table?). Not window.confirm: it wears
 // the brand skin, and Escape or a tap outside means "no change". Focus moves
 // to the button marked data-autofocus and returns where it was on close.
-function ChoiceSheet({ title, body, onDismiss, children }: {
+function ChoiceSheet({ title, body, onDismiss, stackd, children }: {
   title: string
   body: React.ReactNode
   onDismiss: () => void
+  stackd: boolean
   children: React.ReactNode
 }) {
   const id = useId()
-  const panelRef = useRef<HTMLDivElement>(null)
-  const dismissRef = useRef(onDismiss)
-  dismissRef.current = onDismiss
-
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null
-    panelRef.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus()
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismissRef.current() }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      previous?.focus?.()
-    }
-  }, [])
-
   return (
-    <div
-      onClick={onDismiss}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 70,
-        background: 'rgba(0,0,0,0.45)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+    <Sheet
+      onClose={onDismiss}
+      stackd={stackd}
+      z={70}
+      role="alertdialog"
+      labelledBy={`${id}-title`}
+      describedBy={`${id}-body`}
+      panelStyle={{
+        padding: '1.5rem 1.5rem calc(1.25rem + env(safe-area-inset-bottom))',
+        display: 'grid', gap: '0.6rem', maxHeight: 'none',
       }}
     >
-      <div
-        ref={panelRef}
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby={`${id}-title`}
-        aria-describedby={`${id}-body`}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#fff', width: '100%', maxWidth: '34rem',
-          borderRadius: '1.25rem 1.25rem 0 0',
-          padding: '1.5rem 1.5rem calc(1.25rem + env(safe-area-inset-bottom))',
-          display: 'grid', gap: '0.6rem',
-          animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
-        }}
-      >
-        <h2 id={`${id}-title`} style={{ fontSize: '1.2rem', fontWeight: 800, lineHeight: 1.3 }}>{title}</h2>
-        <p id={`${id}-body`} style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.5 }}>{body}</p>
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
-          {children}
-        </div>
+      <h2 id={`${id}-title`} style={{ fontSize: '1.2rem', fontWeight: 800, lineHeight: 1.3 }}>{title}</h2>
+      <p id={`${id}-body`} style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.5 }}>{body}</p>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
+        {children}
       </div>
-    </div>
+    </Sheet>
   )
 }

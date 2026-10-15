@@ -2,7 +2,7 @@
 
 // Dispatch board — every active rider, their assigned orders (with the job
 // stage from the rider app), last GPS fix age, and a stale indicator. Polls
-// every 8s.
+// every 8s (the header shows how long ago it last updated).
 //
 // The board is our own fleet plus another company's rider while — and only
 // while — they carry one of our orders under a fleet agreement (the API marks
@@ -20,7 +20,7 @@
 // "Delivered" is a manager's override, not a routine button: the rider closes
 // a rider-app job with the customer's code at the door (deliverGate below).
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError } from '../../lib/api'
@@ -31,6 +31,7 @@ import { orderRef } from '../../lib/orderRef'
 import { useManagerRoles } from '../../lib/roles'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface RiderRow {
   id: string; name: string; phone: string
@@ -155,21 +156,22 @@ function EnterCode({ orderId, onDone }: { orderId: string; onDone: () => void })
   })
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="text-[11px] text-primary-ink hover:underline">Enter customer's code</button>
+      <button onClick={() => setOpen(true)} className="s-btn-secondary min-h-11 px-4 text-xs">Enter customer's code</button>
     )
   }
   return (
-    <div className="w-full space-y-1">
+    <form className="w-full space-y-1" onSubmit={(e) => { e.preventDefault(); if (code.length === 4 && !verify.isPending) verify.mutate() }}>
       <div className="flex gap-2 items-center">
-        <input inputMode="numeric" autoComplete="off" maxLength={4} aria-label="Customer's 4-digit code"
+        <input inputMode="numeric" autoComplete="off" maxLength={4} aria-label="Customer's 4-digit code" autoFocus
+          onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); setMsg(null) } }}
           value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
-          className="s-input w-24 text-center tracking-widest" placeholder="0000" />
-        <button disabled={code.length !== 4 || verify.isPending} onClick={() => verify.mutate()}
-          className="s-btn-primary text-xs disabled:opacity-50">{verify.isPending ? 'Checking…' : 'Check'}</button>
-        <button onClick={() => { setOpen(false); setMsg(null) }} className="text-[11px] text-s-muted hover:underline">Cancel</button>
+          className="s-input min-h-11 w-24 text-center tracking-widest" placeholder="0000" />
+        <button type="submit" disabled={code.length !== 4 || verify.isPending}
+          className="s-btn-primary min-h-11 px-4 text-xs disabled:opacity-50">{verify.isPending ? 'Checking…' : 'Check'}</button>
+        <button type="button" onClick={() => { setOpen(false); setMsg(null) }} className="s-btn-secondary min-h-11 px-4 text-xs">Cancel</button>
       </div>
       {msg && <p role="alert" className={`text-[11px] ${msg.tone === 'bad' ? 'text-s-red' : 'text-s-muted'}`}>{msg.text}</p>}
-    </div>
+    </form>
   )
 }
 
@@ -200,23 +202,34 @@ export default function DispatchPage() {
   const isManager = managerRoles.has(me?.role ?? '')
   const canOverrides = canOpenPath('/emergency-overrides', me?.role, me?.modules ?? [])
 
-  const { data, isLoading, refetch } = useQuery({
+  const confirm = useConfirm()
+  const [boardError, setBoardError] = useState<string | null>(null)
+  const { data, isLoading, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['dispatch-board'],
     queryFn: () => api.get<RiderRow[]>('/dispatch/board'),
     refetchInterval: 8000,
   })
+  // "Updated Ns ago" from the last successful fetch, ticking once a second.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const updatedAgo = dataUpdatedAt ? Math.max(0, Math.round((now - dataUpdatedAt) / 1000)) : null
 
   const setStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: RiderRow['status'] }) =>
       api.post(`/dispatch/riders/${id}/status`, { status }),
+    onMutate: () => setBoardError(null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dispatch-board'] }),
-    onError: (err: Error) => alert(err.message),
+    onError: (err: Error) => setBoardError(err.message),
   })
 
   const unassign = useMutation({
     mutationFn: (orderId: string) => api.post(`/dispatch/orders/${orderId}/unassign`, {}),
+    onMutate: () => setBoardError(null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dispatch-board'] }),
-    onError: (err: Error) => alert(err.message),
+    onError: (err: Error) => setBoardError(err.message),
   })
 
   // The API's refusal (e.g. 409 RIDER_CLOSES_WITH_CODE once the rider has
@@ -241,19 +254,31 @@ export default function DispatchPage() {
   })
 
   // A manager closing a delivery without the customer's code (deliverGate).
-  function markDelivered(o: BoardOrder) {
-    if (!window.confirm(
-      `Mark ${o.customerName ? `${o.customerName}'s order` : 'this order'} delivered without the customer's code?\n\n` +
-      'Only do this once you have confirmed with the customer that they have the food.',
-    )) return
+  async function markDelivered(o: BoardOrder) {
+    const ok = await confirm({
+      title: `Mark ${o.customerName ? `${o.customerName}'s order` : 'this order'} delivered without the customer's code?`,
+      body: 'Only do this once you have confirmed with the customer that they have the food.',
+      confirmLabel: 'Mark delivered',
+    })
+    if (!ok) return
     delivered.mutate(o.id)
+  }
+
+  async function unassignOrder(o: BoardOrder) {
+    const ok = await confirm({
+      title: `Unassign the rider from #${orderRef(o.id)}?`,
+      body: 'The order goes back to waiting for a rider. Do this only if the rider no longer has the food.',
+      confirmLabel: 'Unassign', danger: true,
+    })
+    if (!ok) return
+    unassign.mutate(o.id)
   }
 
   const isDelivery = (o: BoardOrder) => !o.fulfilmentType || o.fulfilmentType === 'delivery'
   const deliveriesOut = (data ?? []).reduce((n, r) => n + r.orders.filter(isDelivery).length, 0)
 
   return (
-    <div className="min-h-screen bg-s-bg">
+    <div className="min-h-full bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between">
         <div>
           <p className="text-xs text-s-muted">Operations</p>
@@ -263,18 +288,24 @@ export default function DispatchPage() {
           {data && <span>{deliveriesOut} {deliveriesOut === 1 ? 'delivery' : 'deliveries'} with riders</span>}
           <span className="inline-flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-s-teal animate-pulse" />
-            polling every 8s
+            {updatedAgo == null ? 'Updating…' : `Updated ${updatedAgo}s ago`}
           </span>
           <button onClick={() => refetch()} className="s-btn-secondary text-xs">Refresh</button>
         </div>
       </header>
 
       <div className="p-6 max-w-6xl mx-auto space-y-3">
+        {boardError && (
+          <div role="alert" className="flex items-start justify-between gap-3 rounded-lg border border-s-red/40 bg-s-red/10 px-3 py-2 text-sm text-s-red">
+            <span>{boardError}</span>
+            <button onClick={() => setBoardError(null)} aria-label="Dismiss" className="shrink-0 px-1">✕</button>
+          </div>
+        )}
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data && data.length === 0 && (
           <div className="s-card p-12 text-center">
             <h3 className="text-lg font-semibold mb-2">No riders configured.</h3>
-            <p className="text-s-muted text-sm">Add a rider via /riders to get started.</p>
+            <p className="text-s-muted text-sm">Add a rider on the <Link href="/riders" className="text-primary-ink underline">Riders page</Link> to get started.</p>
           </div>
         )}
         {data?.map((r) => (
@@ -366,16 +397,16 @@ export default function DispatchPage() {
                             Open Emergency overrides
                           </Link>
                         )}
-                        <div className="mt-2 flex gap-3 flex-wrap items-start">
+                        <div className="mt-2 flex gap-3 flex-wrap items-center">
                           {gate && onTheRoad(o) && o.codeOnly === true && (
                             <EnterCode orderId={o.id} onDone={() => qc.invalidateQueries({ queryKey: ['dispatch-board'] })} />
                           )}
                           {gate?.canMark && (
-                            <button onClick={() => markDelivered(o)} disabled={delivered.isPending}
-                              className="text-[11px] text-primary-ink hover:underline disabled:opacity-50">Delivered</button>
+                            <button onClick={() => void markDelivered(o)} disabled={delivered.isPending}
+                              className="s-btn-secondary min-h-11 px-4 text-xs disabled:opacity-50">Delivered</button>
                           )}
-                          <button onClick={() => unassign.mutate(o.id)} disabled={unassign.isPending}
-                            className="text-[11px] text-s-red hover:underline disabled:opacity-50">Unassign</button>
+                          <button onClick={() => void unassignOrder(o)} disabled={unassign.isPending}
+                            className="ml-auto min-h-11 rounded-lg border border-s-red/40 px-4 text-xs font-semibold text-s-red hover:bg-s-red/10 disabled:opacity-50">Unassign</button>
                         </div>
                       </div>
                     )

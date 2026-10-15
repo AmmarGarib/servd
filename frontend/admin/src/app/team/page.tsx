@@ -185,17 +185,18 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
         )}
         <label className="block">
           <span className="text-[11px] text-white/45">Name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
+          <input value={name} onChange={(e) => setName(e.target.value)} name="login-name" autoComplete="off" className={input} />
         </label>
         <label className="block">
           <span className="text-[11px] text-white/45">Email</span>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={input} />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} name="login-email"
+            autoComplete="off" autoCapitalize="none" spellCheck={false} className={input} />
         </label>
         <label className="block">
           <span className="text-[11px] text-white/45">
             {needsPhone ? 'Mobile number (required — they sign in with a code sent here)' : 'Mobile number (optional for this role; required for cashiers, servers and kitchen staff)'}
           </span>
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" required={needsPhone} className={input} />
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="login-phone" autoComplete="off" required={needsPhone} className={input} />
         </label>
         <label className="block">
           <span className="text-[11px] text-white/45">Role</span>

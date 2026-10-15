@@ -14,6 +14,8 @@ import { fmtPkr } from '../../../lib/money'
 import { useKitchenView } from '../../inventory/kitchenView'
 import { KitchenMethod, KitchenSections, KitchenServiceSteps, KIND_META, measureUnit, type KitchenIngredient, type MethodStep } from './KitchenRecipe'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { toast } from 'sonner'
 
 const Q_FACTOR = 0.05
 
@@ -126,6 +128,7 @@ const BLANK_ING: IngRow = {
 }
 
 export default function RecipesPage() {
+  const confirm = useConfirm()
   const qc = useQueryClient()
   const router = useRouter()
   const { data: tenants = [] } = useMyTenants()
@@ -251,7 +254,7 @@ export default function RecipesPage() {
       }
       return qc.invalidateQueries({ queryKey: ['recipes'] })
     },
-    onError: (e: Error) => alert(e.message),
+    onError: (e: Error) => { toast.error(e.message) },
   })
 
   function openCreate() {
@@ -639,9 +642,9 @@ export default function RecipesPage() {
                             Edit
                           </button>
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               const label = r.menuItem?.name ?? r.name ?? 'this recipe'
-                              if (confirm(`Delete recipe for "${label}"?`)) deleteMut.mutate(r.id)
+                              if (await confirm({ title: `Delete the recipe for "${label}"?`, body: 'The recipe and its costing are removed.', confirmLabel: 'Delete recipe', danger: true })) deleteMut.mutate(r.id)
                             }}
                             className="text-xs px-2 py-1 rounded text-s-dim hover:text-s-red hover:bg-s-red-dim transition-colors">
                             Del

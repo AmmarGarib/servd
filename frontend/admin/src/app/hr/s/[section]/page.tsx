@@ -5,12 +5,12 @@
 
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../../lib/hr'
 import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
-import { FormRenderer } from '../../../../components/hr/FormRenderer'
+import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
 import { Select } from '@/components/ui/Select'
 
@@ -31,7 +31,7 @@ export default function HrSectionPage() {
   const moved = info?.movedTo ?? null
   const { data: lookups } = useHrLookups()
   const { data: org } = useHrOrg()
-  const { data, error } = useQuery({
+  const { data, error, isLoading, refetch } = useQuery({
     queryKey: ['hr-records', section, status, stageFilter],
     queryFn: () => api.get<{ format: HrFormat; formatTenantId: string; records: HrRecord[] }>(`/hr/records/${section}?${new URLSearchParams({ ...(status && { status }), ...(stageFilter && { stage: stageFilter }) })}`),
   })
@@ -76,13 +76,13 @@ export default function HrSectionPage() {
           <Link href={moved.path} className={`${btn} inline-block mt-3`}>Open {moved.label}</Link>
         </div>
       )}
-      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
       {csvErr && <p className="text-sm text-red-700 mb-4">Export failed: {csvErr}</p>}
       {backfillMsg && <p className="text-sm text-white/70 mb-4">{backfillMsg}</p>}
       <div className="flex flex-wrap gap-2 mb-4">
         {['', 'draft', 'submitted', 'approved', 'rejected', 'cancelled'].map((s) => (
-          <button key={s || 'all'} onClick={() => setStatus(s)}
-            className={`rounded-full px-3 py-1 text-xs font-bold border ${status === s ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>
+          <button key={s || 'all'} type="button" aria-pressed={status === s} onClick={() => setStatus(s)}
+            className={`rounded-full px-3 py-1 text-xs font-bold border [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-4 ${status === s ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>
             {s ? human(s) : 'All'}
           </button>
         ))}
@@ -95,6 +95,7 @@ export default function HrSectionPage() {
         {fmt && !fmt.isDefault && <span className="ml-auto text-[11px] text-primary-ink self-center">Using HR format v{fmt.version}</span>}
       </div>
 
+      {isLoading && <p className="text-sm text-white/40 py-6 text-center" role="status">Loading…</p>}
       {data && data.records.length === 0 && (
         <div className="rounded-2xl p-10 text-center" style={card}>
           <p className="font-bold text-white/85">Nothing here yet</p>
@@ -167,23 +168,39 @@ function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: s
   const { data: org } = useHrOrg()
   const [value, setValue] = useState<Record<string, unknown>>({})
   const [err, setErr] = useState('')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const formRef = useRef<HTMLFormElement>(null)
   const save = useMutation({
     mutationFn: (submit: boolean) => api.post(`/hr/records/${section}`, { data: value, submit }),
     onSuccess: onSaved,
     onError: (e: Error) => setErr(e.message),
   })
   const hasWorkflow = format.workflow.length > 0
+  const fields = leaveFields(section, format.fields, value)
+  // Enter (and the primary button) submit; "Save as draft" skips the required check.
+  const run = (submit: boolean) => {
+    if (save.isPending) return
+    if (submit) {
+      const found = validate(fields, value)
+      setErrors(found)
+      if (Object.keys(found).length > 0) { setErr(''); focusFirstInvalid(formRef.current); return }
+    }
+    setErr('')
+    save.mutate(submit)
+  }
   return (
-    <Modal title={`New — ${format.title}`} wide onClose={onClose}>
-      <FormRenderer fields={leaveFields(section, format.fields, value)} value={value}
-        onChange={(x) => setValue(withLeaveDays(section, format.fields, value, x))} ctx={{ lookups, org, tenantId }} />
-      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
-      <div className="flex gap-2 mt-5">
-        <button className={btn} disabled={save.isPending} onClick={() => save.mutate(true)}>{hasWorkflow ? 'Submit for approval' : 'Save'}</button>
-        {hasWorkflow && <button className={btnGhost} disabled={save.isPending} onClick={() => save.mutate(false)}>Save as draft</button>}
-        <button className={btnGhost} onClick={onClose}>Cancel</button>
-      </div>
-      {hasWorkflow && <p className="text-[11px] text-white/40 mt-3">Approval: {format.workflow.map((w) => w.label).join(' → ')}</p>}
+    <Modal title={`New — ${format.title}`} wide onClose={onClose} dirty={Object.keys(value).length > 0}>
+      <form ref={formRef} noValidate onSubmit={(ev) => { ev.preventDefault(); run(true) }}>
+        <FormRenderer fields={fields} value={value} errors={errors}
+          onChange={(x) => { const nv = withLeaveDays(section, format.fields, value, x); setValue(nv); if (Object.keys(errors).length) setErrors(validate(leaveFields(section, format.fields, nv), nv)) }} ctx={{ lookups, org, tenantId }} />
+        <div className="flex flex-wrap items-center gap-2 mt-5">
+          <button type="submit" className={btn} disabled={save.isPending}>{save.isPending ? 'Saving…' : hasWorkflow ? 'Submit for approval' : 'Save'}</button>
+          {hasWorkflow && <button type="button" className={btnGhost} disabled={save.isPending} onClick={() => run(false)}>Save as draft</button>}
+          <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
+        </div>
+        {err && <p className="text-xs text-red-700 mt-3" role="alert">{err}</p>}
+        {hasWorkflow && <p className="text-xs text-white/50 mt-3">Approval: {format.workflow.map((w) => w.label).join(' → ')}</p>}
+      </form>
     </Modal>
   )
 }

@@ -1,9 +1,10 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { STOREFRONT_URL } from '../../lib/content'
 import { PracticeCode } from '../../components/SandboxBanner'
+import { PasswordInput } from '../../components/ui/PasswordInput'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 
@@ -84,7 +85,20 @@ export default function StaffLoginPage() {
   const [error,   setError]   = useState('')
   const [loading, setLoading] = useState(false)
 
+  // One error style, cleared as soon as anything in the form is edited.
+  useEffect(() => { setError('') }, [pwEmail, pwPassword, cpCurrent, cpNew, cpNew2, codePhone, codeValue, mfaCode])
+
+  // A code is submitted once per value: the sixth digit auto-submits, and the
+  // ref stops a paste + the form's own submit from sending it twice.
+  const codeBusy = useRef(false)
+  const mfaRef  = useRef<HTMLInputElement>(null)
+  const codeRef = useRef<HTMLInputElement>(null)
+  const digits6 = (v: string) => v.replace(/\D/g, '').slice(0, 6)
+
   const field = 'w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none'
+  const pwField = 'w-full rounded-xl px-4 py-3 text-s-text outline-none'
+  const emailProps = { type: 'email', inputMode: 'email', autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, autoComplete: 'username', 'aria-label': 'Email', placeholder: 'Email' } as const
+  const linkCls = 'py-2.5 text-xs text-s-dim hover:text-s-muted transition-colors'
   const fieldStyle = { background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }
   const cta = 'w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40'
   const ctaStyle = {
@@ -95,6 +109,8 @@ export default function StaffLoginPage() {
 
   async function submitPassword(e: React.FormEvent) {
     e.preventDefault()
+    if (!pwEmail.trim()) { setError('Enter your email'); return }
+    if (!pwPassword) { setError('Enter your password'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/login`, {
@@ -130,15 +146,19 @@ export default function StaffLoginPage() {
     }
   }
 
-  async function submitTwoFactor(e: React.FormEvent) {
-    e.preventDefault()
+  async function submitTwoFactor(e?: React.FormEvent, value?: string) {
+    e?.preventDefault()
+    const code = (value ?? mfaCode).trim()
+    if (code.length < 6) { setError('Enter the 6-digit code'); return }
+    if (codeBusy.current) return
+    codeBusy.current = true
     setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/2fa/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ challengeToken: mfaChallenge, code: mfaCode.trim() }),
+        body: JSON.stringify({ challengeToken: mfaChallenge, code }),
       })
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
@@ -146,13 +166,16 @@ export default function StaffLoginPage() {
       router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : '/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That code did not work')
+      setTimeout(() => mfaRef.current?.select(), 0)
     } finally {
+      codeBusy.current = false
       setLoading(false)
     }
   }
 
   async function submitForgot(e: React.FormEvent) {
     e.preventDefault()
+    if (!pwEmail.trim()) { setError('Enter your email'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/password/forgot`, {
@@ -182,6 +205,9 @@ export default function StaffLoginPage() {
 
   async function submitChangePassword(e: React.FormEvent) {
     e.preventDefault()
+    if (!pwEmail.trim()) { setError('Enter your email'); return }
+    if (!cpCurrent) { setError('Enter your current password'); return }
+    if (cpNew.length < 12) { setError('At least 12 characters'); return }
     if (cpNew !== cpNew2) { setError('The two new passwords do not match'); return }
     setError(''); setLoading(true)
     try {
@@ -217,6 +243,7 @@ export default function StaffLoginPage() {
 
   async function requestStaffCode(e?: React.FormEvent) {
     e?.preventDefault()
+    if (codePhone.replace(/\D/g, '').length < 10) { setError('Enter your 10-digit mobile number'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/staff/otp/request`, {
@@ -236,15 +263,19 @@ export default function StaffLoginPage() {
     }
   }
 
-  async function submitStaffCode(e: React.FormEvent) {
-    e.preventDefault()
+  async function submitStaffCode(e?: React.FormEvent, value?: string) {
+    e?.preventDefault()
+    const code = (value ?? codeValue).trim()
+    if (code.length < 6) { setError('Enter the 6-digit code'); return }
+    if (codeBusy.current) return
+    codeBusy.current = true
     setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/staff/otp/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ phone: codePhone.trim(), code: codeValue.trim() }),
+        body: JSON.stringify({ phone: codePhone.trim(), code }),
       })
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
@@ -252,7 +283,9 @@ export default function StaffLoginPage() {
       router.replace('/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That code did not work')
+      setTimeout(() => codeRef.current?.select(), 0)
     } finally {
+      codeBusy.current = false
       setLoading(false)
     }
   }
@@ -286,6 +319,7 @@ export default function StaffLoginPage() {
               {mode === 'password'  ? 'Sign in'
                 : mode === 'code' ? 'Sign in with a code'
                 : mode === 'twofactor' ? 'Enter your code'
+                : mode === 'forgot' ? 'Reset your password'
                 : 'Change your password'}
             </h1>
             <p className="text-xs text-s-dim mt-1">
@@ -294,6 +328,7 @@ export default function StaffLoginPage() {
                     ? (codeFromManager ? 'Enter the code your manager gave you' : 'Same code sent to your WhatsApp and email — use whichever arrives first')
                     : 'For cashiers, servers and kitchen staff')
                 : mode === 'twofactor' ? `We sent the same 6-digit code to your WhatsApp (${mfaHint || 'your number'}) and your email — use whichever arrives first`
+                : mode === 'forgot' ? 'We will email you a link to set a new one'
                 : 'You need your current password to set a new one'}
             </p>
           </div>
@@ -303,30 +338,36 @@ export default function StaffLoginPage() {
               <form onSubmit={requestStaffCode}>
                 <input type="tel" inputMode="tel" autoComplete="tel" value={codePhone} autoFocus
                   onChange={(e) => setCodePhone(e.target.value)} placeholder="Your mobile number, e.g. 0300 1234567"
-                  aria-label="Mobile number" className={field} style={fieldStyle} />
-                {error && <p className="text-xs text-red-700 mb-3 text-center">{error}</p>}
-                <button type="submit" disabled={loading || codePhone.replace(/\D/g, '').length < 10} className={cta} style={ctaStyle}>
+                  aria-label="Mobile number" autoCapitalize="none" autoCorrect="off" spellCheck={false} className={field} style={fieldStyle} />
+                {error && <p role="alert" className="text-xs mb-3 text-center" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+                <button type="submit" disabled={loading} className={cta} style={ctaStyle}>
                   {loading ? 'Sending…' : 'Send me a code'}
                 </button>
                 <button type="button"
-                  disabled={loading || codePhone.replace(/\D/g, '').length < 10}
-                  onClick={() => { setError(''); setCodeFromManager(true); setCodeSent(true) }}
-                  className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors disabled:opacity-40">
+                  disabled={loading}
+                  onClick={() => {
+                    if (codePhone.replace(/\D/g, '').length < 10) { setError('Enter your 10-digit mobile number'); return }
+                    setError(''); setCodeFromManager(true); setCodeSent(true)
+                  }}
+                  className={`w-full ${linkCls} disabled:opacity-40`}>
                   I have a code from my manager
                 </button>
-                <button type="button" onClick={backToSignIn} className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
+                <button type="button" onClick={backToSignIn} className={`w-full mt-1 ${linkCls}`}>
                   ← Sign in with a password instead
                 </button>
               </form>
             ) : (
               <form onSubmit={submitStaffCode}>
-                <input type="text" inputMode="numeric" autoComplete="one-time-code" value={codeValue} autoFocus
-                  onChange={(e) => setCodeValue(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"
-                  aria-label="Sign-in code"
+                <input ref={codeRef} type="text" inputMode="numeric" autoComplete="one-time-code" value={codeValue} autoFocus
+                  maxLength={6} spellCheck={false} autoCorrect="off"
+                  onChange={(e) => { const v = digits6(e.target.value); setCodeValue(v); if (v.length === 6) void submitStaffCode(undefined, v) }}
+                  onPaste={(e) => { e.preventDefault(); const v = digits6(e.clipboardData.getData('text')); setCodeValue(v); if (v.length === 6) void submitStaffCode(undefined, v) }}
+                  placeholder="000000"
+                  aria-label="6-digit code"
                   className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
                   style={fieldStyle} />
-                {error && <p className="text-xs text-red-700 mb-3 text-center">{error}</p>}
-                <button type="submit" disabled={loading || codeValue.length < 6} className={cta} style={ctaStyle}>
+                {error && <p role="alert" className="text-xs mb-3 text-center" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+                <button type="submit" disabled={loading} className={cta} style={ctaStyle}>
                   {loading ? 'Checking…' : 'Sign in'}
                 </button>
                 <div className="mt-3 flex items-center justify-between text-xs">
@@ -337,6 +378,7 @@ export default function StaffLoginPage() {
                 </div>
                 {!codeFromManager && (
                   <p className="text-[10px] text-s-dim mt-4 text-center leading-relaxed">
+                    The code works for 5 minutes.<br />
                     No code arriving? A manager can give you one from Workforce (&ldquo;Sign-in code&rdquo; next to your name).
                   </p>
                 )}
@@ -347,25 +389,32 @@ export default function StaffLoginPage() {
             <form onSubmit={submitTwoFactor}>
               {mfaPractice && <PracticeCode code={mfaPractice} />}
               <input
+                ref={mfaRef}
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                maxLength={6}
+                spellCheck={false}
+                autoCorrect="off"
+                aria-label="6-digit code"
+                onChange={(e) => { const v = digits6(e.target.value); setMfaCode(v); if (v.length === 6) void submitTwoFactor(undefined, v) }}
+                onPaste={(e) => { e.preventDefault(); const v = digits6(e.clipboardData.getData('text')); setMfaCode(v); if (v.length === 6) void submitTwoFactor(undefined, v) }}
                 placeholder="000000"
                 autoFocus
                 className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
                 style={fieldStyle}
               />
-              {error && <p className="text-xs text-red-700 mb-3 text-center">{error}</p>}
-              <button type="submit" disabled={loading || mfaCode.length < 6} className={cta} style={ctaStyle}>
+              {error && <p role="alert" className="text-xs mb-3 text-center" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+              <button type="submit" disabled={loading} className={cta} style={ctaStyle}>
                 {loading ? 'Checking…' : 'Sign in'}
               </button>
               <button type="button" onClick={backToSignIn}
-                className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
+                className={`w-full mt-1 ${linkCls}`}>
                 ← Start over
               </button>
-              <p className="text-[10px] text-s-dim mt-4 text-center leading-relaxed">
+              <p className="text-[10px] text-s-dim mt-3 text-center leading-relaxed">
+                The code works for 5 minutes. To get a new one, start over.<br />
                 Didn&rsquo;t ask to sign in? Someone has your password. Change it as soon as you&rsquo;re in.
               </p>
             </form>
@@ -390,17 +439,16 @@ export default function StaffLoginPage() {
                   to set a new password.
                 </p>
                 <input
-                  type="email" value={pwEmail} onChange={(e) => setPwEmail(e.target.value)}
-                  placeholder="Email" autoComplete="username" autoFocus
+                  {...emailProps} value={pwEmail} onChange={(e) => setPwEmail(e.target.value)} autoFocus
                   className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
                 />
-                {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+                {error && <p role="alert" className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
                 <button type="submit" className={cta} style={ctaStyle}
-                  disabled={loading || !pwEmail.trim()}>
+                  disabled={loading}>
                   {loading ? 'Sending…' : 'Send reset link'}
                 </button>
                 <button type="button" onClick={backToSignIn}
-                  className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
+                  className={`w-full mt-1 ${linkCls}`}>
                   &larr; Back to sign in
                 </button>
               </form>
@@ -420,33 +468,32 @@ export default function StaffLoginPage() {
             ) : (
               <form onSubmit={submitChangePassword}>
                 <input
-                  type="email" value={pwEmail} onChange={(e) => setPwEmail(e.target.value)}
-                  placeholder="Email" autoComplete="username" autoFocus
+                  {...emailProps} value={pwEmail} onChange={(e) => setPwEmail(e.target.value)} autoFocus
                   className={field} style={fieldStyle}
                 />
-                <input
-                  type="password" value={cpCurrent} onChange={(e) => setCpCurrent(e.target.value)}
-                  placeholder="Current password" autoComplete="current-password"
-                  className={field} style={fieldStyle}
+                <PasswordInput
+                  value={cpCurrent} onChange={(e) => setCpCurrent(e.target.value)}
+                  placeholder="Current password" aria-label="Current password" autoComplete="current-password"
+                  wrapperClassName="mb-3" className={pwField} style={fieldStyle}
                 />
-                <input
-                  type="password" value={cpNew} onChange={(e) => setCpNew(e.target.value)}
-                  placeholder="New password" autoComplete="new-password"
-                  className={field} style={fieldStyle}
+                <PasswordInput
+                  value={cpNew} onChange={(e) => setCpNew(e.target.value)}
+                  placeholder="New password" aria-label="New password" autoComplete="new-password"
+                  wrapperClassName="mb-3" className={pwField} style={fieldStyle}
                 />
-                <input
-                  type="password" value={cpNew2} onChange={(e) => setCpNew2(e.target.value)}
-                  placeholder="Repeat new password" autoComplete="new-password"
-                  className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
+                <PasswordInput
+                  value={cpNew2} onChange={(e) => setCpNew2(e.target.value)}
+                  placeholder="Repeat new password" aria-label="Repeat new password" autoComplete="new-password"
+                  wrapperClassName="mb-4" className={pwField} style={fieldStyle}
                 />
                 <p className="text-[10px] text-s-dim mb-3 text-center">At least 12 characters.</p>
-                {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+                {error && <p role="alert" className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
                 <button type="submit" className={cta} style={ctaStyle}
-                  disabled={loading || !pwEmail.trim() || !cpCurrent || cpNew.length < 12}>
+                  disabled={loading}>
                   {loading ? 'Changing…' : 'Change password'}
                 </button>
                 <button type="button" onClick={backToSignIn}
-                  className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
+                  className={`w-full mt-1 ${linkCls}`}>
                   ← Back to sign in
                 </button>
               </form>
@@ -455,25 +502,24 @@ export default function StaffLoginPage() {
           ) : (
             <form onSubmit={submitPassword}>
               <input
-                type="email" value={pwEmail} onChange={(e) => setPwEmail(e.target.value)}
-                placeholder="Email" autoComplete="username" autoFocus
+                {...emailProps} value={pwEmail} onChange={(e) => setPwEmail(e.target.value)} autoFocus
                 className={field} style={fieldStyle}
               />
-              <input
-                type="password" value={pwPassword} onChange={(e) => setPwPassword(e.target.value)}
-                placeholder="Password" autoComplete="current-password"
-                className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
+              <PasswordInput
+                value={pwPassword} onChange={(e) => setPwPassword(e.target.value)}
+                placeholder="Password" aria-label="Password" autoComplete="current-password"
+                wrapperClassName="mb-4" className={pwField} style={fieldStyle}
               />
-              {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+              {error && <p role="alert" className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
               <button type="submit" className={cta} style={ctaStyle}
-                disabled={loading || !pwEmail.trim() || pwPassword.length < 8}>
+                disabled={loading}>
                 {loading ? 'Signing in…' : 'Sign in'}
               </button>
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4">
                 <button
                   type="button"
                   onClick={() => { setMode('forgot'); setError(''); setFgDone(false) }}
-                  className="text-xs text-s-dim hover:text-s-muted transition-colors"
+                  className={linkCls}
                 >
                   Forgot my password
                 </button>
@@ -481,7 +527,7 @@ export default function StaffLoginPage() {
                 <button
                   type="button"
                   onClick={() => { setMode('code'); setError(''); setCodeSent(false) }}
-                  className="text-xs text-s-dim hover:text-s-muted transition-colors"
+                  className={linkCls}
                 >
                   Sign in with a code
                 </button>
@@ -489,7 +535,7 @@ export default function StaffLoginPage() {
                 <button
                   type="button"
                   onClick={() => { setMode('changepw'); setError(''); setCpDone(false) }}
-                  className="text-xs text-s-dim hover:text-s-muted transition-colors"
+                  className={linkCls}
                 >
                   Change my password
                 </button>

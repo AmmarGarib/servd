@@ -13,6 +13,7 @@ import { MapPin } from '../../components/ui/MapPin'
 import { MoneyInput } from '../../components/ui/MoneyInput'
 import { usePermissions } from '../../hooks/useCan'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 type StepKey = 'company' | 'brand' | 'location' | 'hours' | 'menu' | 'done'
 
@@ -555,6 +556,7 @@ function SingleBrandStep({ onDone }: { onDone: () => void }) {
 
 function MultiBrandStep({ onDone }: { onDone: () => void }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: existingBrands = [] } = useQuery<Concept[]>({
     queryKey: ['wizard-concepts'], queryFn: () => api.get<Concept[]>('/concepts'),
   })
@@ -585,7 +587,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
                 className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white shrink-0">
                 Edit
               </Link>
-              <button onClick={() => { if (confirm(`Delete brand "${b.name}"? You can re-create it later.`)) del.mutate(b.id) }}
+              <button type="button" onClick={async () => { if (await confirm({ title: `Delete brand "${b.name}"?`, body: 'You can re-create it later.', confirmLabel: 'Delete', danger: true })) del.mutate(b.id) }}
                 className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-700/70 hover:text-red-700 shrink-0">
                 Delete
               </button>
@@ -687,6 +689,7 @@ interface BrandBriefFormProps {
 
 function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor, showContinueAfterCreate, existingBrand }: BrandBriefFormProps) {
   const isEdit = !!existingBrand
+  const confirm = useConfirm()
 
   // How the brand serves — a REQUIRED choice on a new brand, with no default
   // (POST /concepts answers 400 without it); on an existing brand it opens on
@@ -992,10 +995,18 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
 
       <Footer>
         {onCancel && <button onClick={onCancel} className="text-xs text-white/55 hover:text-white mr-auto">Cancel</button>}
-        <button onClick={() => {
-          if (ratesWillChange && currentRates && nextRates && !confirm(
-            `Change ${name.trim() || 'this brand'}'s GST?\n\nCash ${currentRates.taxRateCash}% → ${nextRates.taxRateCash}%\nCard / digital ${currentRates.taxRateCard}% → ${nextRates.taxRateCard}%\n\nEvery order from now on is charged at the new rates.`,
-          )) return
+        <button onClick={async () => {
+          if (ratesWillChange && currentRates && nextRates && !(await confirm({
+            title: `Change ${name.trim() || 'this brand'}'s GST?`,
+            body: (
+              <>
+                <p>Cash {currentRates.taxRateCash}% → {nextRates.taxRateCash}%</p>
+                <p>Card / digital {currentRates.taxRateCard}% → {nextRates.taxRateCard}%</p>
+                <p className="mt-2">Every order from now on is charged at the new rates.</p>
+              </>
+            ),
+            confirmLabel: 'Change GST', danger: true,
+          }))) return
           save.mutate()
         }} disabled={save.isPending || !name.trim() || !conceptStatement.trim() || (!isEdit && (province === '' || serviceVessel === ''))}
           className={primaryBtn}>

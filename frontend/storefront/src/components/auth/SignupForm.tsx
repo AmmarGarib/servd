@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Eye, EyeOff } from 'lucide-react'
@@ -7,6 +7,7 @@ import { useCustomerAuth } from '../../store/customerAuth'
 import { BlockedNotice, fetchBlocks, type AccountBlock } from '../account/BlockedNotice'
 import { ErrorToast } from '../ui/ErrorToast'
 import { MagneticButton } from '../ui/MagneticButton'
+import { isPkMobile, normalisePhone } from '../../lib/phone'
 import { NETWORK_ERROR, customerErrorMessage, postAuthDest, useAuthReturnPath, withReturnPath, type ApiErrorBody } from './authFlow'
 
 // The storefront's one-code sign-up (details → code). ONE code is sent to
@@ -59,7 +60,16 @@ export function SignupForm({
   const [password, setPassword] = useState('')
   const [confirm,  setConfirm]  = useState('')
 
-  const [otp,             setOtp]             = useState('')   // WhatsApp code
+  // The one code (6 fixed slots; never joined or trimmed, so a gap stays a gap).
+  const [codes,           setCodesRaw]        = useState<string[]>(() => Array(6).fill(''))
+  const otp = codes.join('')
+  const codeRefs = useRef<Array<HTMLInputElement | null>>([])
+  const autoSent = useRef(false)
+  const [codeError,       setCodeError]       = useState('')
+  const [resending,       setResending]       = useState(false)
+  const [resendNote,      setResendNote]      = useState('')
+  const setCodes = useCallback((next: string[]) => { autoSent.current = false; setCodeError(''); setCodesRaw(next) }, [])
+  const focusBox = (i: number) => setTimeout(() => codeRefs.current[i]?.focus(), 0)
   type ChannelStatus = 'sent' | 'cooldown' | 'failed'
   const [channels,        setChannels]        = useState<{ phone: ChannelStatus; email: ChannelStatus } | null>(null)
   const [resendCooldown,  setResendCooldown]  = useState(0)
@@ -81,7 +91,7 @@ export function SignupForm({
     return () => clearTimeout(t)
   }, [resendCooldown])
 
-  async function requestCodes(): Promise<boolean> {
+  async function requestCodes(onError: (m: string) => void = setError): Promise<boolean> {
     let res: Response
     try {
       res = await fetch(`${API_URL}/api/v1/auth/customer/request-signup-codes`, {
@@ -90,14 +100,14 @@ export function SignupForm({
         body: JSON.stringify({ phone: phone.trim(), email: email.trim() }),
       })
     } catch {
-      setError(NETWORK_ERROR)
+      onError(NETWORK_ERROR)
       return false
     }
     const data = await res.json().catch(() => null) as ({
       phone?: { status: ChannelStatus }; email?: { status: ChannelStatus }
     } & ApiErrorBody) | null
     if (!res.ok || !data?.phone || !data.email) {
-      setError(customerErrorMessage(res.ok ? 500 : res.status, data, 'We couldn’t send your code. Please check your details and try again.'))
+      onError(customerErrorMessage(res.ok ? 500 : res.status, data, 'We couldn’t send your code. Please check your details and try again.'))
       return false
     }
     setChannels({ phone: data.phone.status, email: data.email.status })
@@ -105,30 +115,48 @@ export function SignupForm({
     return true
   }
 
+  // One rule per field, shared by blur, live re-check and submit.
+  const rules: Record<string, (v: string) => string> = {
+    name:     (v) => v.trim().length < 2 ? 'Please enter your full name' : '',
+    email:    (v) => /\S+@\S+\.\S+/.test(v.trim()) ? '' : 'Please enter a valid email',
+    phone:    (v) => isPkMobile(normalisePhone(v)) ? '' : 'Use a Pakistani mobile like 0300 1234567',
+    password: (v) => v.length < 8 ? 'At least 8 characters'
+      : (!/[a-zA-Z]/.test(v) || !/[0-9]/.test(v)) ? 'Use a letter and a number as well' : '',
+    confirm:  (v) => v !== password ? "Passwords don't match" : '',
+  }
+  const values: Record<string, string> = { name, email, phone, password, confirm }
+  const check = (k: string, v: string, pw = password) => {
+    const msg = k === 'confirm' ? (!v ? 'Repeat your password' : v !== pw ? "Passwords don't match" : '') : rules[k]!(v)
+    if (msg) setFieldError(k, msg); else clearFieldError(k)
+    return msg
+  }
+  // Once a field shows an error, re-check it as the customer types so it clears
+  // the moment it is valid.
+  const live = (k: string, v: string) => { if (fieldErrors[k]) check(k, v) }
+  const formatPhoneOnBlur = () => {
+    const n = normalisePhone(phone)
+    if (isPkMobile(n)) setPhone(`0${n.slice(2, 5)} ${n.slice(5)}`)
+  }
+
   async function handleStep1(e: React.FormEvent) {
     e.preventDefault()
     setEmailTaken(false)
     setError('')
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return }
-    // The API's own rules (POST /auth/customer/register) — checked here, before
-    // a code is sent, not after the customer has typed it in.
-    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
-      setError('Password must contain a letter and a number'); return
-    }
-    if (password !== confirm) { setError('Passwords do not match'); return }
-    const digits = phone.replace(/\D/g, '')
-    if (digits.length < 10) { setError('Enter a valid mobile number'); return }
-    if (!/\S+@\S+\.\S+/.test(email.trim())) { setError('Enter a valid email'); return }
+    // Every field, in screen order; all inline errors at once, focus on the first.
+    const order = ['name', 'email', 'phone', 'password', 'confirm']
+    const bad = order.filter((k) => check(k, values[k]!))
+    if (bad.length) { document.getElementById(`${idPrefix}-${bad[0]}`)?.focus(); return }
     setLoading(true)
     const sent = await requestCodes()
     setLoading(false)
     if (sent) setStep('otp')
   }
 
-  async function handleStep2(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleStep2(e?: React.FormEvent) {
+    e?.preventDefault()
     setError('')
-    if (otp.length < 6) { setError('Enter the 6-digit code'); return }
+    setResendNote('')
+    if (otp.length < 6) { setCodeError('Enter the 6-digit code'); focusBox(Math.max(0, codes.findIndex((c) => !c))); return }
     setLoading(true)
     let res: Response
     try {
@@ -157,7 +185,10 @@ export function SignupForm({
           setError('An account with this email already exists.')
           setStep('details')
         } else if (data?.error?.code?.includes('OTP') || data?.error?.code?.endsWith('CODE_REQUIRED')) {
-          setError(customerErrorMessage(res.status, data, 'Invalid or expired code'))
+          setCodeError(customerErrorMessage(res.status, data, 'Invalid or expired code'))
+          autoSent.current = false
+          setCodesRaw(Array(6).fill(''))
+          focusBox(0)
         } else {
           setError(customerErrorMessage(res.status, data, 'We couldn’t create your account. Please try again.'))
         }
@@ -186,7 +217,7 @@ export function SignupForm({
 
   // ── Glass styling shared with the field helpers ──
   const inp = (extra = '') =>
-    `w-full rounded-2xl px-4 py-3.5 text-sm font-semibold text-white placeholder:text-white/35 focus:outline-none transition-all ${extra}`
+    `servd-field w-full rounded-2xl px-4 py-3.5 text-base sm:text-sm font-semibold text-white placeholder:text-white/35 focus:outline-none transition-all ${extra}`
   const inpStyle: React.CSSProperties = { background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.20)', color: 'white' }
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
     e.currentTarget.style.borderColor = 'rgba(255,255,255,0.6)'
@@ -201,6 +232,27 @@ export function SignupForm({
     color: busy ? 'rgba(255,255,255,0.6)' : 'var(--servd-on-green)',
     boxShadow: busy ? 'none' : '0 8px 24px rgba(0,0,0,0.25)',
   })
+
+  // Fill in the 6th digit and it goes — once per attempt.
+  useEffect(() => {
+    if (step !== 'otp') return
+    if (codes.some((c) => !c)) { autoSent.current = false; return }
+    if (autoSent.current || loading) return
+    autoSent.current = true
+    void handleStep2()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codes, step])
+
+  async function resend() {
+    setResending(true); setResendNote(''); setCodeError('')
+    const ok = await requestCodes(setCodeError)
+    setResending(false)
+    if (ok) {
+      setCodes(Array(6).fill(''))
+      setResendNote('New code sent to WhatsApp and email')
+      focusBox(0)
+    }
+  }
 
   if (blocked) {
     return (
@@ -226,34 +278,35 @@ export function SignupForm({
 
           <form onSubmit={e => { void handleStep1(e) }} className="space-y-3" noValidate>
             <Field id={`${idPrefix}-name`} label="Full name" type="text" autoComplete="name"
-              value={name} onChange={(v) => { setName(v); clearFieldError('name') }}
-              onValidate={() => name.trim().length < 2 ? setFieldError('name', 'Please enter your full name') : clearFieldError('name')}
+              value={name} onChange={(v) => { setName(v); live('name', v) }}
+              onValidate={() => { check('name', name) }}
               placeholder="Your name" autoFocus={autoFocus} error={fieldErrors['name']}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
             <Field id={`${idPrefix}-email`} label="Email" type="email" autoComplete="email"
-              value={email} onChange={(v) => { setEmail(v); clearFieldError('email') }}
-              onValidate={() => /\S+@\S+\.\S+/.test(email.trim()) ? clearFieldError('email') : setFieldError('email', 'Please enter a valid email')}
+              value={email} onChange={(v) => { setEmail(v); live('email', v) }}
+              onValidate={() => { check('email', email) }}
               placeholder="you@example.com" error={fieldErrors['email']}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
             <Field id={`${idPrefix}-phone`} label="Mobile (WhatsApp)" type="tel" autoComplete="tel"
               inputMode="tel"
-              value={phone} onChange={(v) => { setPhone(v); clearFieldError('phone') }}
-              onValidate={() => phone.replace(/\D/g, '').length < 10 ? setFieldError('phone', 'Phone needs at least 10 digits') : clearFieldError('phone')}
+              value={phone} onChange={(v) => { setPhone(v); live('phone', v) }}
+              onValidate={() => { if (!check('phone', phone)) formatPhoneOnBlur() }}
               placeholder="0300 1234567" error={fieldErrors['phone']}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
             <PasswordField id={`${idPrefix}-password`} label="Password" autoComplete="new-password"
-              value={password} onChange={(v) => { setPassword(v); clearFieldError('password') }}
-              onValidate={() => password.length < 8 ? setFieldError('password', 'At least 8 characters') : clearFieldError('password')}
+              value={password} onChange={(v) => { setPassword(v); live('password', v); if (confirm) check('confirm', confirm, v) }}
+              onValidate={() => { check('password', password) }}
+              hint={<PasswordHint value={password} />}
               placeholder="8+ characters" error={fieldErrors['password']}
               show={showPassword} onToggle={() => setShowPassword(v => !v)}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
             <PasswordField id={`${idPrefix}-confirm`} label="Confirm password" autoComplete="new-password"
-              value={confirm} onChange={(v) => { setConfirm(v); clearFieldError('confirm') }}
-              onValidate={() => confirm !== password ? setFieldError('confirm', "Passwords don't match") : clearFieldError('confirm')}
+              value={confirm} onChange={(v) => { setConfirm(v); live('confirm', v) }}
+              onValidate={() => { check('confirm', confirm) }}
               placeholder="Repeat password" error={fieldErrors['confirm']}
               show={showPassword} onToggle={() => setShowPassword(v => !v)}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
@@ -283,7 +336,8 @@ export function SignupForm({
             <CodeBoxes
               label="Your code"
               sublabel={[phoneLive && 'WhatsApp', emailLive && 'email'].filter(Boolean).join(' and ') + ' — same code, use whichever arrives first'}
-              value={otp} onChange={setOtp}
+              value={codes} onChange={setCodes} refs={codeRefs}
+              error={codeError} note={resendNote}
               autoFocus inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
             {channels?.phone === 'failed' && (
               <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
@@ -303,14 +357,14 @@ export function SignupForm({
             </MagneticButton>
 
             <div className="flex items-center justify-between text-xs -mx-2">
-              <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
+              <button type="button" onClick={() => { setStep('details'); setCodes(Array(6).fill('')); setError(''); setResendNote('') }}
                 className="inline-flex items-center min-h-[44px] px-2 font-bold text-white/55 hover:text-white transition-colors">
                 ← Change details
               </button>
-              <button type="button" disabled={resendCooldown > 0 || loading}
-                onClick={() => { void requestCodes() }}
+              <button type="button" disabled={resendCooldown > 0 || loading || resending}
+                onClick={() => { void resend() }}
                 className="inline-flex items-center min-h-[44px] px-2 font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
-                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+                {resending ? 'Sending…' : resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
               </button>
             </div>
           </form>
@@ -344,65 +398,92 @@ export function SignupForm({
 }
 
 // ─── Six-box code input ────────────────────────────────────────────────────
-// One per channel. Own refs, so two of them on the page don't fight over focus.
+// A fixed 6-slot array: clearing a slot leaves a gap, nothing shifts. Focus
+// selects the digit so typing replaces it; a multi-digit value (one-time-code
+// autofill, paste) fills forward from the box it landed in.
 function CodeBoxes(p: {
   label: string
   sublabel: string
-  value: string
-  onChange: (v: string) => void
+  value: string[]
+  onChange: (v: string[]) => void
+  refs: React.MutableRefObject<Array<HTMLInputElement | null>>
+  error?: string
+  note?: string
   autoFocus?: boolean
   inpStyle: React.CSSProperties
   onFocus: (e: React.FocusEvent<HTMLInputElement>) => void
   onBlur: (e: React.FocusEvent<HTMLInputElement>) => void
 }) {
-  const refs = useRef<Array<HTMLInputElement | null>>([])
-  const set = (idx: number, raw: string) => {
-    const digits = raw.replace(/\D/g, '')
-    const cur = p.value.padEnd(6, ' ').split('')
-    if (!digits) { cur[idx] = ' '; p.onChange(cur.join('').trimEnd()); return }
-    if (digits.length > 1) {
-      const merged = (p.value.slice(0, idx) + digits).slice(0, 6)
-      p.onChange(merged)
-      refs.current[Math.min(merged.length, 5)]?.focus()
-      return
-    }
-    cur[idx] = digits
-    p.onChange(cur.join('').replace(/ /g, '').slice(0, 6))
-    if (idx < 5) refs.current[idx + 1]?.focus()
+  const go = (i: number) => p.refs.current[Math.max(0, Math.min(5, i))]?.focus()
+  const fill = (from: number, digits: string) => {
+    const next = [...p.value]
+    let k = 0
+    for (; k < digits.length && from + k < 6; k++) next[from + k] = digits[k]!
+    p.onChange(next)
+    go(from + k)
   }
+  const clear = (i: number) => { const next = [...p.value]; next[i] = ''; p.onChange(next) }
   return (
     <div>
-      <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-0.5 text-white/55">{p.label}</label>
+      <label id="signup-code-label" className="block text-[10px] font-black uppercase tracking-[0.22em] mb-0.5 text-white/55">{p.label}</label>
       <p className="text-[11px] mb-1.5 text-white/45 truncate">{p.sublabel}</p>
-      <div className="flex gap-1.5 sm:gap-2">
+      <div className="flex gap-1.5 sm:gap-2" role="group" aria-labelledby="signup-code-label">
         {Array.from({ length: 6 }).map((_, i) => (
           <input
             key={i}
-            ref={(el) => { refs.current[i] = el }}
-            type="text" inputMode="numeric" pattern="[0-9]*" maxLength={1}
+            ref={(el) => { p.refs.current[i] = el }}
+            type="text" inputMode="numeric" pattern="[0-9]*"
             autoComplete={i === 0 ? 'one-time-code' : 'off'}
             value={p.value[i] ?? ''}
-            onChange={(e) => set(i, e.target.value)}
+            onChange={(e) => {
+              let raw = e.target.value.replace(/\D/g, '')
+              const old = p.value[i] ?? ''
+              // Caret left of an existing digit: two characters, keep the new one.
+              if (old && raw.length === 2) raw = raw.replace(old, '') || raw.slice(-1)
+              if (!raw) { clear(i); return }
+              if (raw.length === 1) {
+                const next = [...p.value]; next[i] = raw; p.onChange(next); go(i + 1)
+              } else fill(i, raw.slice(0, 6))
+            }}
             onKeyDown={(e) => {
-              if (e.key === 'Backspace' && !p.value[i] && i > 0) refs.current[i - 1]?.focus()
-              if (e.key === 'ArrowLeft' && i > 0) refs.current[i - 1]?.focus()
-              if (e.key === 'ArrowRight' && i < 5) refs.current[i + 1]?.focus()
+              if (e.key === 'Backspace') {
+                e.preventDefault()
+                if (p.value[i]) clear(i)
+                else if (i > 0) { const next = [...p.value]; next[i - 1] = ''; p.onChange(next); go(i - 1) }
+              } else if (e.key === 'Delete') { e.preventDefault(); clear(i) }
+              else if (e.key === 'ArrowLeft') { e.preventDefault(); go(i - 1) }
+              else if (e.key === 'ArrowRight') { e.preventDefault(); go(i + 1) }
             }}
             onPaste={(e) => {
               e.preventDefault()
               const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
-              if (pasted) { p.onChange(pasted); setTimeout(() => refs.current[Math.min(pasted.length, 5)]?.focus(), 0) }
+              if (pasted) fill(i, pasted)
             }}
             autoFocus={p.autoFocus && i === 0}
             aria-label={`${p.label}, digit ${i + 1} of 6`}
-            className="flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
-            style={p.inpStyle}
-            onFocus={p.onFocus}
+            aria-invalid={!!p.error}
+            className="servd-field flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
+            style={p.error ? { ...p.inpStyle, border: '1px solid #ffb4ab' } : p.inpStyle}
+            onFocus={(e) => { e.currentTarget.select(); p.onFocus(e) }}
             onBlur={p.onBlur}
           />
         ))}
       </div>
+      {p.error && <p role="alert" className="mt-1.5 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>}
+      <p aria-live="polite" className="mt-1.5 text-[11px] font-semibold text-white/70 empty:hidden">{p.note}</p>
     </div>
+  )
+}
+
+/** Password rules, each turning green as it is met. */
+function PasswordHint({ value }: { value: string }) {
+  const part = (ok: boolean, text: string) => (
+    <span style={{ color: ok ? 'var(--servd-green)' : undefined }} className={ok ? 'font-bold' : ''}>{text}</span>
+  )
+  return (
+    <p className="mt-1 text-[11px] text-white/55">
+      {part(value.length >= 8, '8+ characters')} with {part(/[a-zA-Z]/.test(value), 'a letter')} and {part(/[0-9]/.test(value), 'a number')}
+    </p>
   )
 }
 
@@ -444,6 +525,7 @@ function Field(p: FieldProps) {
 }
 
 interface PasswordFieldProps extends Omit<FieldProps, 'type' | 'inputMode'> {
+  hint?: React.ReactNode
   show: boolean
   onToggle: () => void
 }
@@ -466,6 +548,7 @@ function PasswordField(p: PasswordFieldProps) {
           {p.show ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
       </div>
+      {p.hint}
       {p.error && (
         <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>
       )}

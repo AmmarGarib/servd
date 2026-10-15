@@ -112,11 +112,25 @@ export default function StationKdsPage() {
   // - lang  = 'en' | 'ur'  → swaps instruction text + recipe steps to Urdu
   // - showImages           → renders MenuItem.imageUrl in the expanded panel
   //                          when on; pure-text otherwise (older iPad screens)
+  // The toggles live in KdsHeader only (one set of controls).
   const lang        = useKdsStore((s) => s.lang)
-  const setLang     = useKdsStore((s) => s.setLang)
   const showImages  = useKdsStore((s) => s.showImages)
-  const setShowImg  = useKdsStore((s) => s.setShowImages)
   const isUrdu      = lang === 'ur'
+
+  // The station's real name (same list the KDS home reads).
+  const { data: myStations } = useQuery<{ stations: Array<{ id: string; name: string; concept: { name: string } }> }>({
+    queryKey: ['kds-my-stations'],
+    queryFn:  () => api.get('/kds/my-stations'),
+    staleTime: 30_000,
+  })
+  const stationName = myStations?.stations.find((s) => s.id === station)?.name
+
+  // ONE interval ticks every elapsed-time label once a second.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   // Which card is currently expanded for full instructions. Only one card can
   // be open at a time so the cook can focus.
@@ -180,29 +194,6 @@ export default function StationKdsPage() {
           ← Expo
         </Link>
         <div className="flex items-center gap-2">
-          {/* Display toggles — global to the KDS, persisted. The cook picks
-              their preferred language (EN / Urdu) and whether picture mode
-              shows photos in the expanded instruction panel. */}
-          <div className="flex items-center gap-0.5 rounded-lg p-0.5"
-            style={{ background: 'rgba(255,255,255,0.05)' }}>
-            {(['en', 'ur'] as const).map((opt) => (
-              <button key={opt} onClick={() => setLang(opt)}
-                className="px-2 py-1 text-[11px] font-bold rounded-md transition-colors"
-                style={lang === opt
-                  ? { background: 'rgba(0,212,177,0.18)', color: '#00D4B1' }
-                  : { color: 'rgba(255,255,255,0.55)' }}>
-                {opt === 'en' ? 'EN' : 'اردو'}
-              </button>
-            ))}
-          </div>
-          <button onClick={() => setShowImg(!showImages)}
-            title={showImages ? 'Hide photos' : 'Show photos'}
-            className="px-2 py-1 text-[11px] font-bold rounded-md transition-colors"
-            style={showImages
-              ? { background: 'rgba(99,102,241,0.18)', color: '#A5B4FC' }
-              : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.55)' }}>
-            {showImages ? '🖼 Pics on' : '🖼 Pics off'}
-          </button>
           {waitingCount > 0 && (
             <span className="text-xs font-bold rounded-full px-2.5 py-1"
               style={{ background: 'rgba(99,102,241,0.12)', color: '#A5B4FC' }}>
@@ -211,7 +202,7 @@ export default function StationKdsPage() {
           )}
         </div>
       </div>
-      <KdsHeader title={`Station: ${station.slice(0, 8)}`} stationId={station} />
+      <KdsHeader title={stationName ?? 'Station'} stationId={station} count={total} />
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         {/* Cooking right now */}

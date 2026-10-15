@@ -2409,3 +2409,50 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 @media (prefers-reduced-motion: reduce) {
   .sv-feedback, .sv-feedback[data-concealed] { transition: none; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   UX pass (owner, 2026-10-15): smooth anchors, sheet tokens, field focus,
+   44px touch targets. Colours are tokens only.
+   ───────────────────────────────────────────────────────────────────────── */
+/* Smooth anchor scrolling unless the visitor asked for less motion. The home
+   hero sets scroll-behavior:auto inline on <html> while it is still collapsed
+   (a far jump such as Order → #kitchens must land at once and finish the
+   expansion), and removes it once expanded. */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+/* Every anchor target clears the sticky header. */
+[id] { scroll-margin-top: calc(var(--sv-nav-h, 54px) + 12px); }
+
+/* Bottom sheets (feedback, ordering sheets): white on servd, the brand's own
+   pairing on Stackd where --servd-ink is cream (cream on white was unreadable).
+   Simmer and Flipd keep today's look. */
+:root {
+  --servd-sheet-bg: #ffffff;
+  --servd-sheet-ink: var(--servd-ink);
+}
+.stackd-ordering {
+  --servd-sheet-bg: var(--stackd-cream);
+  --servd-sheet-ink: var(--stackd-plum-dark);
+}
+
+/* A visible ring on every storefront text field a keyboard user lands on. */
+.servd-field:focus-visible {
+  outline: 3px solid var(--servd-green);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--servd-green) 22%, transparent);
+}
+
+/* Search row under the arrow keys. */
+.sv-search-row[data-active] { background: color-mix(in srgb, var(--servd-ink) 7%, transparent); border-radius: 10px; }
+.sv-search-sheet { overscroll-behavior: contain; }
+
+/* Link rows that need a finger-sized target without looking bigger. */
+.sv-tap-link { display: inline-block; padding: 4px 0; }
+
+/* Touch screens: 44px minimum targets (padding, so desktop is unchanged). */
+@media (pointer: coarse) {
+  .sv-nav-cta { height: 44px; min-height: 44px; padding: 0 18px; }
+  .sv-faq-q { display: block; min-height: 44px; padding: 10px 0; }
+  .sv-tap-link { min-height: 44px; display: inline-flex; align-items: center; }
+}

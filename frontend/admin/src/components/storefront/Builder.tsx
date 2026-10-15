@@ -25,6 +25,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePermissions } from '../../hooks/useCan'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { BLOCK_CATALOG, blockLabel, canNest, type Block } from '../../lib/blocks'
 import { isCatalogLoaded, makeBlock, SECTION_KEY, sectionPaletteItems, sectionSpec, storefrontHost, useSectionCatalog, type PaletteItem } from '../../lib/sections'
 import {
@@ -57,6 +58,7 @@ function defaultTitle(slug: string): string {
 export function Builder({ slug }: { slug: string }) {
   const router = useRouter()
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: me } = usePermissions()
   const isAdmin = me?.role === 'admin'
   const kind = kindForSlug(slug)
@@ -124,6 +126,55 @@ export function Builder({ slug }: { slug: string }) {
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
+  // Unsaved edits: a client-side link click (the back link, the sidebar) and the
+  // browser Back button both ask first. Tab close is the beforeunload above.
+  const leaveOk = useRef(false)
+  useEffect(() => {
+    if (!dirty) return
+    const ask = () => confirm({
+      title: 'Leave without saving?', body: 'You have unsaved changes on this page. They will be lost.',
+      confirmLabel: 'Leave', cancelLabel: 'Stay', danger: true,
+    })
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download')) return
+      const url = new URL(a.href, window.location.href)
+      if (url.origin !== window.location.origin) return
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return
+      e.preventDefault(); e.stopPropagation()
+      void ask().then((ok) => { if (ok) { leaveOk.current = true; router.push(url.pathname + url.search + url.hash) } })
+    }
+    document.addEventListener('click', onClick, true)
+    // Back button: a sentinel entry on top of this page's own, so Back lands on the same URL first.
+    let sentinel = false
+    try {
+      window.history.pushState({ ...(window.history.state ?? {}), sfGuard: true }, '', window.location.href)
+      sentinel = true
+    } catch { /* history unavailable: the link and tab-close guards still apply */ }
+    const onPop = () => {
+      if (leaveOk.current) return
+      void ask().then((ok) => {
+        if (ok) { leaveOk.current = true; window.history.back() } else {
+          try { window.history.pushState({ ...(window.history.state ?? {}), sfGuard: true }, '', window.location.href) } catch { /* ignore */ }
+        }
+      })
+    }
+    window.addEventListener('popstate', onPop)
+    return () => {
+      document.removeEventListener('click', onClick, true)
+      window.removeEventListener('popstate', onPop)
+      if (sentinel && !leaveOk.current && window.history.state?.sfGuard) {
+        try { window.history.back() } catch { /* ignore */ }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty])
+
+  // Screen-reader announcements for add / move (a polite live region).
+  const [announce, setAnnounce] = useState('')
+  const say = (text: string) => setAnnounce((prev) => (prev === text ? `${text}\u00a0` : text))
+
   const change = (fn: (d: Doc) => Doc) => {
     seq.current += 1
     setDoc((d) => (d ? fn(d) : d))
@@ -174,6 +225,8 @@ export function Builder({ slug }: { slug: string }) {
     }
     setActive(insertAt(activeBlocks, slot, b))
     select(b.id)
+    const added = paletteItems.find((i) => i.key === key)?.label ?? blockLabel(b.type)
+    say(`${added} added at position ${slot.index + 1}${slot.parentId ? ' in columns' : ''}.`)
   }
 
   // ─── What the live frame is sent ─────────────────────────────────────────
@@ -242,8 +295,12 @@ export function Builder({ slug }: { slug: string }) {
   const onLayersHover = (id: string | null) => {
     setHover((h) => (h.id === id ? h : { id, source: 'admin' }))
   }
-  const openContext = (target: string) => {
-    if (dirty && !confirm('You have unsaved changes on this page. Leave without saving them?')) return
+  const openContext = async (target: string) => {
+    if (dirty) {
+      const ok = await confirm({ title: 'Leave without saving?', body: 'You have unsaved changes on this page. They will be lost.', confirmLabel: 'Leave', cancelLabel: 'Stay', danger: true })
+      if (!ok) return
+      leaveOk.current = true
+    }
     router.push(`/storefront/pages/${encodeURIComponent(target)}`)
   }
 
@@ -307,6 +364,20 @@ export function Builder({ slug }: { slug: string }) {
 
   const onSave = () => run('save', () => save.mutateAsync(), 'Draft saved.')
 
+  // Ctrl/Cmd+S saves the draft (same path as the button).
+  const saveRef = useRef<() => void>(() => {})
+  saveRef.current = () => { if (doc && dirty && !busy) void onSave() }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        saveRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const onPreview = async () => {
     const w = window.open('', '_blank')
     const okRun = await run('preview', async () => {
@@ -320,8 +391,8 @@ export function Builder({ slug }: { slug: string }) {
 
   const onSubmit = () => run('submit', async () => { await ensureSaved(); await contentApi.submit(slug) }, 'Sent to the CEO for approval.')
 
-  const onDiscard = () => {
-    if (!confirm('Discard the draft? The editor goes back to what is live now.')) return
+  const onDiscard = async () => {
+    if (!await confirm({ title: 'Discard the draft?', body: 'The editor goes back to what is live now.', confirmLabel: 'Discard', danger: true })) return
     void run('discard', async () => {
       if (hasDraft) await contentApi.discardDraft(slug)
       await reloadFromServer()
@@ -342,12 +413,17 @@ export function Builder({ slug }: { slug: string }) {
     setDialog(null)
   }, 'Sent back with your note.')
 
-  const onDelete = () => {
-    if (!confirm(isPopup
-      ? 'Delete this pop-up entirely? It stops showing and its history is removed.'
-      : 'Delete this page entirely? The storefront falls back to the built-in design and the history is removed.')) return
+  const onDelete = async () => {
+    if (!await confirm({
+      title: isPopup ? 'Delete this pop-up entirely?' : 'Delete this page entirely?',
+      body: isPopup
+        ? 'It stops showing and its history is removed.'
+        : 'The storefront falls back to the built-in design and the history is removed.',
+      confirmLabel: 'Delete', danger: true,
+    })) return
     void run('delete', async () => {
       await contentApi.remove(slug)
+      leaveOk.current = true
       setDirty(false)
       router.push(backHref)
     })
@@ -418,6 +494,7 @@ export function Builder({ slug }: { slug: string }) {
   return (
     <div ref={rootRef} className="min-h-full bg-s-bg text-s-text">
       <FontFaces fonts={fonts} />
+      <div role="status" aria-live="polite" className="sr-only">{announce}</div>
 
       <header ref={headerRef} className="sticky top-0 z-20 bg-s-bg/95 backdrop-blur border-b border-s-border px-6 py-3">
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -530,7 +607,7 @@ export function Builder({ slug }: { slug: string }) {
                     <p className="mb-2 rounded-lg bg-s-bg-soft px-2 py-1.5 text-[11px] text-s-muted">With no elements, the site shows this page&apos;s built-in design.</p>
                   )}
                   <Canvas compact blocks={activeBlocks} onChange={setActive} selectedId={selectedId} onSelect={(id) => select(id)} items={paletteItems}
-                    hoverId={hover.id} onHover={onLayersHover} reveal={reveal} missingIds={missingIds} />
+                    hoverId={hover.id} onHover={onLayersHover} reveal={reveal} missingIds={missingIds} onAnnounce={say} />
                 </div>
               )}
               {doc && (

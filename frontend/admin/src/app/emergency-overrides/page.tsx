@@ -6,6 +6,8 @@
 // the API (send the code to the rider once per order, "Food came back").
 // Polls every 8 s. Hidden until the module is granted (see moduleCatalog).
 
+import { Modal as SharedModal } from '../../components/ui/Modal'
+import { PasswordInput } from '../../components/ui/PasswordInput'
 import { useState } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -93,19 +95,8 @@ function fmtWhen(iso: string): string {
   return new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 bg-secondary/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
-        className="s-card w-full sm:max-w-lg max-h-[90vh] overflow-y-auto p-5 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <h2 className="text-lg font-bold text-s-text">{title}</h2>
-          <button onClick={onClose} className="s-btn-secondary text-xs">Close</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
+function Modal({ title, onClose, children, dirty }: { title: string; onClose: () => void; children: React.ReactNode; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} dirty={dirty}>{children}</SharedModal>
 }
 
 export default function EmergencyOverridesPage() {
@@ -274,16 +265,18 @@ function SwitchDialog({ company, onClose }: { company: Company; onClose: () => v
   })
   const ok = reason.trim().length >= 10
   return (
-    <Modal title={`${turnOn ? 'Switch on' : 'Switch off'} code-only delivery · ${company.name}`} onClose={onClose}>
+    <Modal title={`${turnOn ? 'Switch on' : 'Switch off'} code-only delivery · ${company.name}`} onClose={onClose} dirty={reason.trim().length > 0}>
+      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (ok && !m.isPending) m.mutate() }}>
       <p className="text-xs text-s-muted">{CODE_ONLY_EXPLAIN}</p>
       <label className="block text-xs font-medium text-s-text">
         Reason (required, 10 to 500 characters)
         <textarea className="s-input mt-1 w-full" rows={3} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
       </label>
       {m.error && <p role="alert" className="text-xs text-s-red">{words(m.error)}</p>}
-      <button disabled={!ok || m.isPending} onClick={() => m.mutate()} className="s-btn-primary w-full disabled:opacity-50">
+      <button type="submit" disabled={!ok || m.isPending} className="s-btn-primary w-full disabled:opacity-50">
         {m.isPending ? 'Saving…' : turnOn ? 'Switch on' : 'Switch off'}
       </button>
+      </form>
     </Modal>
   )
 }
@@ -306,21 +299,21 @@ function SendCodeDialog({ row, onClose }: { row: RoadRow; onClose: () => void })
   const already = !!row.rerouted || send.isSuccess
   const len = reason.trim().length
   return (
-    <Modal title={`Send code to rider · #${row.ref}`} onClose={onClose}>
+    <Modal title={`Send code to rider · #${row.ref}`} onClose={onClose} dirty={!already && len > 0}>
       <p className="text-xs text-s-muted">
         This makes a new code, so the customer's old one stops working, and sends it by WhatsApp to {row.rider.name}'s own phone.
         Once per order. Every send is reviewed.
       </p>
       {!already && (
-        <>
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (len >= 10 && !send.isPending) send.mutate() }}>
           <label className="block text-xs font-medium text-s-text">
             Reason (10 to 300 characters)
             <textarea className="s-input mt-1 w-full" rows={3} maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} />
           </label>
-          <button disabled={len < 10 || send.isPending} onClick={() => send.mutate()} className="s-btn-primary w-full disabled:opacity-50">
+          <button type="submit" disabled={len < 10 || send.isPending} className="s-btn-primary w-full disabled:opacity-50">
             {send.isPending ? 'Sending…' : 'Send code to rider'}
           </button>
-        </>
+        </form>
       )}
       {send.error && <p role="alert" className="text-xs text-s-red">{words(send.error)}</p>}
       {already && (
@@ -334,7 +327,7 @@ function SendCodeDialog({ row, onClose }: { row: RoadRow; onClose: () => void })
               Code sent to {row.rider.name}{hint ? ` (${hint})` : ''}.
             </p>
           )}
-          <button disabled={resend.isPending} onClick={() => resend.mutate()} className="s-btn-secondary w-full disabled:opacity-50">
+          <button type="button" disabled={resend.isPending} onClick={() => resend.mutate()} className="s-btn-secondary w-full disabled:opacity-50">
             {resend.isPending ? 'Resending…' : 'Resend the same code'}
           </button>
           {resentOk === true && <p className="text-xs text-success">Sent again.</p>}
@@ -365,7 +358,7 @@ function ReturnDialog({ row, onClose }: { row: RoadRow; onClose: () => void }) {
   })
   const res = m.data
   return (
-    <Modal title={`Food came back · #${row.ref}`} onClose={onClose}>
+    <Modal title={`Food came back · #${row.ref}`} onClose={onClose} dirty={!res && reason.trim().length > 0}>
       {res ? (
         <div className="space-y-2 text-sm">
           <p className="text-success font-medium">Logged as returned.</p>
@@ -378,10 +371,10 @@ function ReturnDialog({ row, onClose }: { row: RoadRow; onClose: () => void }) {
               <Link href={`/orders/${row.orderId}`} className="text-primary-ink underline">Open the order to hand it back</Link>
             </p>
           )}
-          <button onClick={onClose} className="s-btn-primary w-full">Done</button>
+          <button type="button" onClick={onClose} className="s-btn-primary w-full">Done</button>
         </div>
       ) : (
-        <>
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (reason.trim().length >= 5 && !m.isPending && !(needPin && !pin.trim())) m.mutate() }}>
           <fieldset className="space-y-1.5">
             <legend className="text-xs font-medium text-s-text mb-1">Why did it come back?</legend>
             {CAUSES.map((c) => (
@@ -417,16 +410,16 @@ function ReturnDialog({ row, onClose }: { row: RoadRow; onClose: () => void }) {
           {needPin && (
             <label className="block text-xs font-medium text-s-text">
               Manager PIN
-              <input type="password" inputMode="numeric" autoComplete="off" className="s-input mt-1 w-full" maxLength={12}
+              <PasswordInput numeric autoComplete="off" name="manager-pin" wrapperClassName="mt-1" className="s-input w-full" maxLength={12}
                 value={pin} onChange={(e) => setPin(e.target.value)} />
             </label>
           )}
           {m.error && <p role="alert" className="text-xs text-s-red">{words(m.error)}</p>}
-          <button disabled={reason.trim().length < 5 || m.isPending || (needPin && !pin.trim())} onClick={() => m.mutate()}
+          <button type="submit" disabled={reason.trim().length < 5 || m.isPending || (needPin && !pin.trim())}
             className="s-btn-primary w-full disabled:opacity-50">
             {m.isPending ? 'Saving…' : 'Log food as returned'}
           </button>
-        </>
+        </form>
       )}
     </Modal>
   )

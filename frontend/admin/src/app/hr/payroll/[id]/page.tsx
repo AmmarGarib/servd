@@ -10,6 +10,8 @@ import { api } from '../../../../lib/api'
 import { card, btn, btnGhost, inp, rs, human, day, localDate, STATUS_COLOR } from '../../../../lib/hr'
 import { HrShell, Modal, Stat, useHrAccess } from '../../../../components/hr/HrShell'
 import { BankAccountSelect } from '../../../../components/finance/BankAccountSelect'
+import { NumberField } from '@/components/ui/NumberField'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
 interface Slip {
@@ -46,7 +48,8 @@ export default function PayrollRunPage() {
   const [paying, setPaying] = useState(false)
   const [err, setErr] = useState('')
   const { userId, role, isPayrollApprover } = useHrAccess()
-  const { data } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
+  const confirm = useConfirm()
+  const { data, error: loadErr, isLoading } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
   const act = useMutation({
     mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete') =>
       what === 'delete' ? api.delete(`/hr/payroll/runs/${id}`)
@@ -62,12 +65,23 @@ export default function PayrollRunPage() {
   // The API's rules: only admin, owner or management approve, reopen and lock,
   // and nobody approves a payroll they created, recalculated or edited — the
   // CEO (admin) excepted.
+  const ask = async (what: 'approve' | 'lock' | 'delete') => {
+    if (!run) return
+    const facts = `${run.period} · ${t['employees'] ?? 0} employees · net pay ${rs(t['netCents'])}.`
+    const ok = await confirm(
+      what === 'lock' ? { title: `Lock payroll for ${run.period}?`, body: `${facts} It is posted to the books and cannot be undone.`, confirmLabel: 'Lock payroll', danger: true }
+      : what === 'approve' ? { title: `Approve payroll for ${run.period}?`, body: `${facts} After approval it can be reopened until it is locked.`, confirmLabel: 'Approve' }
+      : { title: `Delete the draft payroll for ${run.period}?`, body: `${facts} The calculation is discarded; you can calculate the month again.`, confirmLabel: 'Delete draft', danger: true })
+    if (ok) act.mutate(what)
+  }
   const prepared = !!run && !!userId && (run.createdById === userId || (run.preparedByIds ?? []).includes(userId))
   const canApprove = isPayrollApprover && (!prepared || role === 'admin')
 
   return (
     <HrShell title={run ? `Payroll ${run.period}` : 'Payroll'}
       actions={run && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[run.status] ?? '#a15c00' }}>{human(run.status)}</span>}>
+      {isLoading && <p className="text-sm text-white/40" role="status">Loading payroll…</p>}
+      {loadErr && <p className="text-sm text-red-700" role="alert">{(loadErr as Error).message}</p>}
       {run && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -86,12 +100,12 @@ export default function PayrollRunPage() {
           <div className="flex flex-wrap gap-2">
             {run.status === 'draft' && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('recalculate')}>Recalculate from records</button>
-              {canApprove && <button className={btn} disabled={act.isPending} onClick={() => act.mutate('approve')}>Approve</button>}
-              <button className="text-xs text-white/35 hover:text-red-700 ml-2" onClick={() => { if (confirm('Delete this draft payroll?')) act.mutate('delete') }}>Delete draft</button>
+              {canApprove && <button className={btn} disabled={act.isPending} onClick={() => void ask('approve')}>Approve</button>}
+              <button className="text-xs text-white/50 hover:text-red-700 ml-2 px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={act.isPending} onClick={() => void ask('delete')}>Delete draft</button>
             </>}
             {run.status === 'approved' && isPayrollApprover && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
-              <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Lock payroll? It cannot be changed afterwards, and it is posted to the books.')) act.mutate('lock') }}>Lock</button>
+              <button className={btn} disabled={act.isPending} onClick={() => void ask('lock')}>Lock</button>
             </>}
             {run.status === 'locked' && !run.paidAt && isPayrollApprover && (
               <button className={btn} onClick={() => { setErr(''); setPaying(true) }}>Mark paid</button>
@@ -108,7 +122,7 @@ export default function PayrollRunPage() {
               <button className={btnGhost} onClick={() => dl('deductions')}>Deduction report</button>
             </span>
           </div>
-          {err && <p className="text-xs text-red-700">{err}</p>}
+          {err && <p className="text-xs text-red-700" role="alert">{err}</p>}
           {run.status === 'draft' && <p className="text-[11px] text-white/40">Approval must come from someone other than whoever created, recalculated or edited it (the CEO excepted){isPayrollApprover ? '' : ', and from the CEO, a co-owner or management'}.</p>}
 
           <div className="rounded-2xl overflow-x-auto" style={card}>
@@ -126,7 +140,7 @@ export default function PayrollRunPage() {
                       <td className="px-4 py-3 text-white/70">{rs(s.earningsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
-                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? '#b42318' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-amber-700" title={w.join('\n')}>⚠</span>}</td>
+                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-amber-700" title={w.join('\n')}>⚠</span>}</td>
                       <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditing(s)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
                     </tr>
                   )
@@ -191,15 +205,26 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
 
 function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: string; draft: boolean; onClose: () => void }) {
   const qc = useQueryClient()
-  const [vals, setVals] = useState<Record<string, number>>(Object.fromEntries(INPUTS.map(([k]) => [k, Number(slip.inputs[k] ?? 0)])))
+  const initial = Object.fromEntries(INPUTS.map(([k]) => [k, Number(slip.inputs[k] ?? 0)])) as Record<string, number>
+  // null = the box was emptied. It is never turned into 0 behind the user's back.
+  const [vals, setVals] = useState<Record<string, number | null>>(initial)
   const [err, setErr] = useState('')
+  const changed = Object.entries(vals).filter(([k, v]) => v !== initial[k])
+  const emptied = INPUTS.filter(([k]) => vals[k] == null)
   // Only what was changed: new OT hours are priced at the OT rate unless the
   // amount was changed too, and an untouched loan total keeps its split.
   const save = useMutation({
-    mutationFn: () => api.patch(`/hr/payroll/payslips/${slip.id}`, Object.fromEntries(Object.entries(vals).filter(([k, v]) => v !== Number(slip.inputs[k] ?? 0)))),
+    mutationFn: () => api.patch(`/hr/payroll/payslips/${slip.id}`, Object.fromEntries(changed)),
     onSuccess: () => { void qc.invalidateQueries(); onClose() },
     onError: (e: Error) => setErr(e.message),
   })
+  const submit = (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (!draft || save.isPending) return
+    if (emptied.length > 0) { setErr(`Fill in ${emptied.map(([, l]) => l).join(', ')} — type 0 if there is none.`); return }
+    setErr('')
+    save.mutate()
+  }
   const print = () => {
     const row = (l: Line) => `<tr><td>${l.label}</td><td style="text-align:right">${rs(l.amountCents)}</td></tr>`
     const html = `<h2>Payslip — ${period}</h2><p><strong>${slip.employee.fullName}</strong> (${slip.employee.employeeCode})</p>
@@ -212,35 +237,36 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
     w.document.close(); setTimeout(() => w.print(), 300)
   }
   return (
-    <Modal title={`${slip.employee.fullName} — ${period}`} wide onClose={onClose}>
-      <div className="grid md:grid-cols-2 gap-5">
+    <Modal title={`${slip.employee.fullName} — ${period}`} wide onClose={onClose} dirty={draft && changed.length > 0}>
+      <form onSubmit={submit} noValidate className="grid md:grid-cols-2 gap-5">
         <div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Payslip</p>
           {slip.lines.map((l) => (
             <div key={l.code + l.label} className="flex justify-between text-sm py-1 border-b border-white/[0.04]">
-              <span style={{ color: l.kind === 'deduction' ? '#b42318' : l.kind === 'employer' ? 'rgb(var(--fg-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}</span>
+              <span style={{ color: l.kind === 'deduction' ? 'var(--erp-danger)' : l.kind === 'employer' ? 'rgb(var(--fg-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}</span>
               <span className="text-white/85">{l.kind === 'deduction' ? '−' : ''}{rs(l.amountCents)}</span>
             </div>
           ))}
           <div className="flex justify-between text-base font-black pt-2"><span className="text-white/85">Net</span><span className="text-primary-ink">{rs(slip.netCents)}</span></div>
-          <button className={`${btnGhost} mt-3`} onClick={print}>Print payslip</button>
+          <button type="button" className={`${btnGhost} mt-3`} onClick={print}>Print payslip</button>
         </div>
         <div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Inputs {draft ? '(editable)' : ''}</p>
           <div className="grid grid-cols-2 gap-2">
             {INPUTS.map(([k, label, money]) => (
               <label key={k} className="text-[11px] text-white/50">{label}
-                <input type="number" step="any" min={0} disabled={!draft} className={`${inp} mt-1`}
-                  value={money ? vals[k]! / 100 : vals[k]}
-                  onChange={(e) => setVals({ ...vals, [k]: money ? Math.round(Number(e.target.value) * 100) : Number(e.target.value) })} />
+                <NumberField disabled={!draft} className={`${inp} mt-1`} decimals={2} min={0}
+                  aria-invalid={vals[k] == null || undefined}
+                  value={vals[k] == null ? null : money ? vals[k]! / 100 : vals[k]}
+                  onValueChange={(n) => setVals({ ...vals, [k]: n == null ? null : money ? Math.round(n * 100) : n })} />
               </label>
             ))}
           </div>
-          {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
-          {draft && <button className={`${btn} mt-3`} disabled={save.isPending} onClick={() => save.mutate()}>Recalculate this payslip</button>}
-          <p className="text-[10px] text-white/35 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, overtime, adjustments and loans. “Recalculate from records” on the run replaces any edits.</p>
+          {err && <p className="text-xs text-red-700 mt-2" role="alert">{err}</p>}
+          {draft && <button type="submit" className={`${btn} mt-3`} disabled={save.isPending || changed.length === 0}>{save.isPending ? 'Recalculating…' : 'Recalculate this payslip'}</button>}
+          <p className="text-xs text-white/55 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, overtime, adjustments and loans. “Recalculate from records” on the run replaces any edits.</p>
         </div>
-      </div>
+      </form>
     </Modal>
   )
 }

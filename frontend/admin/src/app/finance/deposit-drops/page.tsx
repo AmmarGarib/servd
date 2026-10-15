@@ -20,6 +20,8 @@ import { BankAccountSelect } from '../../../components/finance/BankAccountSelect
 import { ReferenceUsedBeforeNotice, type PaymentRefUse } from '../../../components/finance/PaymentReceivedFields'
 import { useActiveCompany } from '../../../lib/connectorsApi'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '../../../components/ui/Modal'
+import { Field, focusField, useSubmitOnce } from '../cash-vouchers/ui'
 
 interface Drop {
   id: string
@@ -154,58 +156,60 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 
   const done = !!notBooked || !!reused
   const close = done ? onSaved : onClose
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={close}>
-    <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-        <h2 className="font-black text-white/90">Record bank deposit</h2>
-        <button onClick={close} aria-label="Close" className="text-white/40 text-xl">✕</button>
-      </div>
-      <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-        <Field label="Shift (optional — for the variance check)">
-          {shifts.length > 0 ? (
-            <Select value={shiftId} onChange={(e) => setShiftId(e.target.value)} className={fieldCls}>
-              <option value="">— not from one shift —</option>
-              {shifts.map((s) => (
-                <option key={s.shiftId} value={s.shiftId}>
-                  {s.cashier} · {new Date(s.openedAt).toLocaleString()}{s.status === 'open' ? ' (open)' : ''}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <input value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
-          )}
-        </Field>
-        <Field label="Amount counted at drop (PKR) *">
-          <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
-        </Field>
-        <BankAccountSelect tenantId={company?.id} value={bankAccountId} onChange={setBankAccountId} id="deposit-bank" label="Bank account" className={fieldCls} />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Deposit slip #"><input value={slipNumber} onChange={(e) => setSlipNumber(e.target.value)} maxLength={100} placeholder="From the bank's stamped slip" autoComplete="off" className={fieldCls + ' font-mono'} /></Field>
-          <Field label="Tamper-bag serial"><input value={bagSerial} onChange={(e) => setBagSerial(e.target.value)} className={fieldCls + ' font-mono'} /></Field>
-        </div>
-        <Field label="Receipt photo URL"><input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} /></Field>
-        <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
-        {save.error && <div className="rounded-xl px-4 py-3 text-sm" style={{ color: 'var(--erp-danger)', background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{(save.error as Error).message}</div>}
-        {notBooked && (
-          <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ color: 'var(--erp-warning)', background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
-            The drop is saved, but it is not in the books yet ({notBooked}). Finance has been flagged to post it.
-          </div>
-        )}
-        <ReferenceUsedBeforeNotice uses={reused} />
-      </div>
-      <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
+  const [tried, setTried] = useState(false)
+  const submit = useSubmitOnce(save.isPending)(() => {
+    setTried(true)
+    if (amountCents <= 0) { focusField('dd-amount'); return false }
+    save.mutate()
+    return true
+  })
+  return <Modal title="Record bank deposit" onClose={close} dirty={!done && !save.isPending && (amountCents > 0 || !!slipNumber.trim() || !!bagSerial.trim() || !!notes.trim())}
+    footer={
+      <div className="flex justify-between gap-3">
         {done ? (
-          <button onClick={onSaved} className="ml-auto rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90">Done</button>
+          <button type="button" onClick={onSaved} className="ml-auto rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90">Done</button>
         ) : (
           <>
-            <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-            <button onClick={() => save.mutate()} disabled={save.isPending || amountCents <= 0} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Saving…' : 'Record drop'}</button>
+            <button type="button" onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
+            <button type="submit" form="dd-form" disabled={save.isPending} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Saving…' : 'Record drop'}</button>
           </>
         )}
       </div>
-    </div>
-  </div>
+    }>
+    <form id="dd-form" onSubmit={submit} className="space-y-3" noValidate>
+      <Field label="Shift (optional — for the variance check)">
+        {shifts.length > 0 ? (
+          <Select id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} className={fieldCls}>
+            <option value="">— not from one shift —</option>
+            {shifts.map((s) => (
+              <option key={s.shiftId} value={s.shiftId}>
+                {s.cashier} · {new Date(s.openedAt).toLocaleString()}{s.status === 'open' ? ' (open)' : ''}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <input id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
+        )}
+      </Field>
+      <Field label="Amount counted at drop (PKR) *" error={tried && amountCents <= 0 ? 'Enter the amount counted.' : ''}>
+        <MoneyInput id="dd-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
+      </Field>
+      <BankAccountSelect tenantId={company?.id} value={bankAccountId} onChange={setBankAccountId} id="deposit-bank" label="Bank account" className={fieldCls} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Deposit slip #"><input value={slipNumber} onChange={(e) => setSlipNumber(e.target.value)} maxLength={100} placeholder="From the bank's stamped slip" autoComplete="off" className={fieldCls + ' font-mono'} /></Field>
+        <Field label="Tamper-bag serial"><input value={bagSerial} onChange={(e) => setBagSerial(e.target.value)} className={fieldCls + ' font-mono'} /></Field>
+      </div>
+      <Field label="Receipt photo URL"><input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} /></Field>
+      <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
+    </form>
+      {save.error && <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ color: 'var(--erp-danger)', background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{(save.error as Error).message}</div>}
+      {notBooked && (
+        <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ color: 'var(--erp-warning)', background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
+          The drop is saved, but it is not in the books yet ({notBooked}). Finance has been flagged to post it.
+        </div>
+      )}
+      <ReferenceUsedBeforeNotice uses={reused} />
+  </Modal>
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

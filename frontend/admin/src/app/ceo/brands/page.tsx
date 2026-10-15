@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId, isValidElement, cloneElement } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -489,15 +489,16 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
         <Section title="Public contact" subtitle="Per brand. Feeds schema.org rich results, the microsite footer, the WhatsApp buttons and /press — no deploy needed.">
           <fieldset className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Phone (E.164)" hint="The number Google lists. Keep it identical to the Google Business Profile.">
-              <input value={phone} onChange={(e) => setPhone(e.target.value)}
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="brand-phone" autoComplete="off"
                 placeholder="+923001234567" className="s-input w-full font-mono text-sm" />
             </Field>
             <Field label="WhatsApp" hint="The brand's one WhatsApp number — every WhatsApp button on its microsite uses it. Digits only; blank falls back to the phone.">
-              <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)}
+              <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} type="tel" inputMode="tel" name="brand-whatsapp" autoComplete="off"
                 placeholder="923001234567" className="s-input w-full font-mono text-sm" />
             </Field>
             <Field label="Email" hint="The brand's guest-facing email — shown on its microsite, visit page and the app.">
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} name="brand-email" inputMode="email"
+                autoComplete="off" autoCapitalize="none" spellCheck={false}
                 placeholder="brand@gsfoods.pk" className="s-input w-full font-mono text-sm" />
             </Field>
             <Field label="Area label" hint="The neighbourhood shown in the storefront pill, e.g. “Ittehad Commercial, DHA Phase 6”.">
@@ -795,11 +796,17 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  // Wire the label to its control (click focuses it; screen readers announce it)
+  // and the hint to the control's description.
+  const uid = useId()
+  const only = isValidElement<Record<string, unknown>>(children) ? children : null
+  const id = (only?.props['id'] as string | undefined) ?? `${uid}-f`
+  const hintId = `${uid}-h`
   return (
     <div>
-      <label className="text-xs text-white/55 block mb-1">{label}</label>
-      {children}
-      {hint && <p className="text-[10px] text-white/35 mt-1">{hint}</p>}
+      <label htmlFor={id} className="text-xs text-white/55 block mb-1">{label}</label>
+      {only ? cloneElement(only, { id, ...(hint ? { 'aria-describedby': hintId } : {}) }) : children}
+      {hint && <p id={hintId} className="text-[10px] text-white/35 mt-1">{hint}</p>}
     </div>
   )
 }

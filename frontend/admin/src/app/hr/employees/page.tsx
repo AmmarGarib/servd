@@ -2,13 +2,13 @@
 // Employee master — spec §3. The add form is the Employee Master format.
 
 import Link from 'next/link'
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { api } from '../../../lib/api'
 import { card, btn, btnGhost, rs, day, human, STATUS_COLOR, type HrField } from '../../../lib/hr'
 import { HrShell, Modal, useHrForm, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
-import { FormRenderer } from '../../../components/hr/FormRenderer'
+import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
 
 interface Row {
   id: string; employeeCode: string; fullName: string; phone: string | null; status: string; employmentType: string
@@ -16,13 +16,45 @@ interface Row {
 }
 
 export default function EmployeesPage() {
-  const [q, setQ] = useState('')
-  const [status, setStatus] = useState('current')
+  // useSearchParams needs a Suspense boundary in a statically built page.
+  return <Suspense fallback={null}><Employees /></Suspense>
+}
+
+const STATUS_CHIPS: Array<[string, string]> = [['current', 'Current'], ['all', 'Everyone'], ['resigned', 'Resigned'], ['terminated', 'Terminated'], ['separated', 'Separated']]
+
+function Employees() {
+  const router = useRouter()
+  const path = usePathname()
+  const sp = useSearchParams()
+  // q and status live in the URL, so Back and a shared link restore them.
+  const urlQ = sp.get('q') ?? ''
+  const status = sp.get('status') ?? 'current'
+  const [q, setQ] = useState(urlQ)
   const [adding, setAdding] = useState(false)
   const [csvErr, setCsvErr] = useState('')
-  const { data: rows = [], error } = useQuery({
-    queryKey: ['hr-employees', q, status],
-    queryFn: () => api.get<Row[]>(`/hr/employees?${new URLSearchParams({ ...(q && { q }), ...(status && { status }) })}`),
+  const writeUrl = (next: { q?: string; status?: string }) => {
+    const p = new URLSearchParams(sp.toString())
+    const nq = next.q ?? q
+    const ns = next.status ?? status
+    if (nq) p.set('q', nq); else p.delete('q')
+    if (ns !== 'current') p.set('status', ns); else p.delete('status')
+    const qs = p.toString()
+    router.replace(qs ? `${path}?${qs}` : (path ?? '/hr/employees'), { scroll: false })
+  }
+  // Debounced: one request per pause in typing, not one per key.
+  const first = useRef(true)
+  useEffect(() => {
+    if (first.current) { first.current = false; return }
+    const t = setTimeout(() => { if (q !== urlQ) writeUrl({ q }) }, 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q])
+  // Back / forward changes the URL: follow it.
+  useEffect(() => { setQ(urlQ) }, [urlQ])
+  const { data: rows = [], error, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['hr-employees', urlQ, status],
+    queryFn: () => api.get<Row[]>(`/hr/employees?${new URLSearchParams({ ...(urlQ && { q: urlQ }), ...(status !== 'all' && { status }) })}`),
+    placeholderData: keepPreviousData,
   })
   return (
     <HrShell title="Employees" subtitle="The central HR database. Everyone employed — with or without a servd login."
@@ -30,14 +62,27 @@ export default function EmployeesPage() {
         <button className={btnGhost} onClick={() => { setCsvErr(''); api.download('/hr/reports/employees.csv', 'hr-employee-master.csv').catch((e: Error) => setCsvErr(e.message)) }}>Export CSV</button>
         <button className={btn} onClick={() => setAdding(true)}>+ Add employee</button>
       </>}>
-      <div className="flex flex-wrap gap-2 mb-4">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, ID, CNIC, phone"
-          className="rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 w-72" aria-label="Search employees" />
-        {[['current', 'Current'], ['', 'Everyone'], ['resigned', 'Resigned'], ['terminated', 'Terminated'], ['separated', 'Separated']].map(([k, l]) => (
-          <button key={k} onClick={() => setStatus(k!)} className={`rounded-full px-3 py-1 text-xs font-bold border ${status === k ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>{l}</button>
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="relative w-full sm:w-72">
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, ID, CNIC, phone"
+            onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.preventDefault(); setQ(''); writeUrl({ q: '' }) } }}
+            autoComplete="off" enterKeyHint="search"
+            className="rounded-lg px-3 py-2 pr-10 text-sm bg-white/[0.04] border border-white/10 text-white/90 w-full [&::-webkit-search-cancel-button]:appearance-none" aria-label="Search employees" />
+          {q && (
+            <button type="button" aria-label="Clear search" onClick={() => { setQ(''); writeUrl({ q: '' }) }}
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center text-white/45 hover:text-white/80">✕</button>
+          )}
+        </div>
+        {STATUS_CHIPS.map(([k, l]) => (
+          <button key={k} type="button" aria-pressed={status === k} onClick={() => writeUrl({ status: k })}
+            className={`rounded-full px-3 py-1 text-xs font-bold border [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-4 ${status === k ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>{l}</button>
         ))}
+        <span className="text-xs text-white/40" role="status" aria-live="polite">{isFetching && !isLoading ? 'Updating…' : ''}</span>
       </div>
-      {error && <p className="text-sm text-red-700 mb-3">{(error as Error).message}</p>}
+      {error && (
+        <p className="text-sm text-red-700 mb-3" role="alert">{(error as Error).message}{' '}
+          <button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>
+      )}
       {csvErr && <p className="text-sm text-red-700 mb-3">Export failed: {csvErr}</p>}
       <div className="rounded-2xl overflow-x-auto" style={card}>
         <table className="w-full text-sm">
@@ -48,7 +93,7 @@ export default function EmployeesPage() {
             {rows.map((e) => (
               <tr key={e.id} className="border-t border-white/[0.05] hover:bg-white/[0.03]">
                 <td className="px-4 py-3 text-white/50 font-mono text-xs">{e.employeeCode}</td>
-                <td className="px-4 py-3"><Link href={`/hr/employees/${e.id}`} className="font-bold text-white/90 hover:underline">{e.fullName}</Link>{e.userId && <span className="ml-1 text-[10px] text-primary-ink" title="Has a servd login">●</span>}</td>
+                <td className="px-4 py-3"><Link href={`/hr/employees/${e.id}`} className="font-bold text-white/90 hover:underline py-2 inline-block">{e.fullName}</Link>{e.userId && <span className="ml-1 text-[10px] text-primary-ink" title="Has a servd login">●</span>}</td>
                 <td className="px-4 py-3 text-white/65">{e.designation ?? '—'}</td>
                 <td className="px-4 py-3 text-white/65">{e.department ?? '—'}</td>
                 <td className="px-4 py-3 text-white/65">{e.branch ?? '—'}</td>
@@ -58,7 +103,14 @@ export default function EmployeesPage() {
                 <td className="px-4 py-3"><span className="text-xs font-bold" style={{ color: STATUS_COLOR[e.status] }}>{human(e.status)}</span></td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan={9} className="px-4 py-10 text-center text-white/40">No employees match.</td></tr>}
+            {isLoading && <tr><td colSpan={9} className="px-4 py-10 text-center text-white/40">Loading employees…</td></tr>}
+            {!isLoading && !error && rows.length === 0 && (
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-white/40">
+                {urlQ || status !== 'current'
+                  ? <>No employees match. <button type="button" className="underline font-bold" onClick={() => { setQ(''); router.replace(path ?? '/hr/employees', { scroll: false }) }}>Clear filters</button></>
+                  : <>No employees yet. <button type="button" className="underline font-bold" onClick={() => setAdding(true)}>Add the first one</button></>}
+              </td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -81,19 +133,35 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
   const nameKey = fields.find((f) => f.bind === 'employee.fullName')?.key
   const named = !!nameKey && typeof v[nameKey] === 'string' && !!(v[nameKey] as string).trim()
   const [err, setErr] = useState('')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const formRef = useRef<HTMLFormElement>(null)
   const save = useMutation({
     mutationFn: () => api.post<{ id: string }>('/hr/employees', { data: v }),
     onSuccess: (e) => { void qc.invalidateQueries(); router.push(`/hr/employees/${e.id}`) },
     onError: (e: Error) => setErr(e.message),
   })
+  const submit = (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (save.isPending) return
+    const found = validate(fields, v)
+    if (nameKey && !named && !found[nameKey]) found[nameKey] = 'Full name is required'
+    setErrors(found)
+    if (Object.keys(found).length > 0) { setErr(''); focusFirstInvalid(formRef.current); return }
+    setErr('')
+    save.mutate()
+  }
   return (
-    <Modal title="Add employee" wide onClose={onClose}>
-      {form ? <FormRenderer fields={fields} value={v} onChange={setValue} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading format…</p>}
-      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
-      <div className="flex gap-2 mt-5">
-        <button className={btn} disabled={save.isPending || !named} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Add employee'}</button>
-        <button className={btnGhost} onClick={onClose}>Cancel</button>
-      </div>
+    <Modal title="Add employee" wide onClose={onClose} dirty={value !== null}>
+      <form ref={formRef} onSubmit={submit} noValidate>
+        {form ? <FormRenderer fields={fields} value={v} errors={errors}
+          onChange={(nv) => { setValue(nv); if (Object.keys(errors).length) setErrors(validate(fields, nv)) }} ctx={{ lookups, org }} />
+          : <p className="text-sm text-white/40">Loading format…</p>}
+        <div className="flex flex-wrap items-center gap-2 mt-5">
+          <button type="submit" className={btn} disabled={save.isPending || !form}>{save.isPending ? 'Saving…' : 'Add employee'}</button>
+          <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
+        </div>
+        {err && <p className="text-xs text-red-700 mt-3" role="alert">{err}</p>}
+      </form>
     </Modal>
   )
 }

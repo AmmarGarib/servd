@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { menuApi, api, type Category, type MenuItem } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
@@ -8,6 +8,11 @@ import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { fmtPkrWhole } from '../../lib/money'
+import { toast } from 'sonner'
+import { useConfirm } from '../../components/ui/ConfirmDialog'
+import { Modal } from '../../components/ui/Modal'
+import { FormField } from '../../components/ui/FormField'
+import { MoneyInput } from '../../components/ui/MoneyInput'
 
 interface ConceptTab { id: string; name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
 
@@ -25,6 +30,7 @@ export default function MenuPage() {
   const [addingItemToCat, setAddingItemToCat] = useState<string | null>(null)
   const [addingCategory, setAddingCategory] = useState(false)
   const qc = useQueryClient()
+  const confirm = useConfirm()
 
   const viewAll = useViewAllTenants()
   const { data: tenants = [] } = useMyTenants()
@@ -42,15 +48,30 @@ export default function MenuPage() {
     enabled: !!conceptId,
   })
 
+  // 86 / restore. The toast (role=status, announced by sonner) says what
+  // happened; Undo is the same toggle the other way round.
   const toggle86 = useMutation({
-    mutationFn: ({ id, isAvailable }: { id: string; isAvailable: boolean }) =>
+    mutationFn: ({ id, isAvailable }: { id: string; isAvailable: boolean; name?: string; undo?: boolean }) =>
       menuApi.toggleAvailability(id, isAvailable),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['menu', conceptId] }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['menu', conceptId] })
+      if (v.undo || !v.name) return
+      toast(v.isAvailable ? `${v.name} is back on the menu` : `${v.name} marked sold out (86)`, {
+        action: { label: 'Undo', onClick: () => toggle86.mutate({ id: v.id, isAvailable: !v.isAvailable, name: v.name, undo: true }) },
+      })
+    },
+    onError: (e: Error) => toast.error(e.message || 'Could not change availability'),
   })
 
+  // Delete has no inverse call, so its toast has no Undo — the confirm names
+  // the item first.
   const deleteItem = useMutation({
-    mutationFn: (id: string) => menuApi.deleteItem(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['menu', conceptId] }),
+    mutationFn: ({ id }: { id: string; name: string }) => menuApi.deleteItem(id),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['menu', conceptId] })
+      toast(`${v.name} deleted`)
+    },
+    onError: (e: Error) => toast.error(e.message || 'Could not delete the item'),
   })
 
   // ── Category edit / delete ─────────────────────────────────────────────
@@ -132,7 +153,7 @@ export default function MenuPage() {
           categories={categories}
           loading={isLoading}
           pendingId={toggle86.isPending ? toggle86.variables?.id ?? null : null}
-          onToggle={(id, isAvailable) => toggle86.mutate({ id, isAvailable })}
+          onToggle={(id, isAvailable, name) => toggle86.mutate({ id, isAvailable, name })}
         />
       )}
       {view === 'windows' && (
@@ -163,48 +184,61 @@ export default function MenuPage() {
             <div className="flex items-center justify-between mb-3 border-b border-s-border pb-2 gap-3">
               {editingCatId === cat.id ? (
                 /* Inline edit mode — rename input + Save/Cancel/Delete row. */
-                <div className="flex-1 flex items-center gap-2 flex-wrap">
+                <form
+                  className="flex-1 flex items-center gap-2 flex-wrap"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    if (editingCatName.trim() && editingCatName.trim() !== cat.name && !renameCategory.isPending) {
+                      renameCategory.mutate({ id: cat.id, name: editingCatName.trim() })
+                    } else if (editingCatName.trim() === cat.name) {
+                      setEditingCatId(null); setCatError(null)
+                    }
+                  }}>
                   <input
                     autoFocus
+                    required
+                    aria-label="Category name"
+                    enterKeyHint="done"
                     value={editingCatName}
                     onChange={(e) => setEditingCatName(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && editingCatName.trim()) {
-                        renameCategory.mutate({ id: cat.id, name: editingCatName.trim() })
-                      } else if (e.key === 'Escape') {
-                        setEditingCatId(null); setCatError(null)
-                      }
+                      if (e.key === 'Escape') { setEditingCatId(null); setCatError(null) }
                     }}
                     className="rounded-lg bg-s-bg border border-s-border px-3 py-1.5 text-lg font-bold text-s-text focus:border-primary focus:outline-none"
                   />
                   <button
-                    onClick={() => editingCatName.trim() && renameCategory.mutate({ id: cat.id, name: editingCatName.trim() })}
-                    disabled={!editingCatName.trim() || editingCatName.trim() === cat.name || renameCategory.isPending}
-                    className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-40">
+                    type="submit"
+                    disabled={renameCategory.isPending}
+                    className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-40 [@media(pointer:coarse)]:min-h-11">
                     {renameCategory.isPending ? 'Saving…' : 'Save'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => { setEditingCatId(null); setCatError(null) }}
-                    className="rounded-lg border border-s-border text-s-muted px-3 py-1.5 text-xs hover:text-s-text">
+                    className="rounded-lg border border-s-border text-s-muted px-3 py-1.5 text-xs hover:text-s-text [@media(pointer:coarse)]:min-h-11">
                     Cancel
                   </button>
                   <button
-                    onClick={() => {
+                    type="button"
+                    onClick={async () => {
                       const itemCount = cat.items.filter((i) => !(i as { deletedAt?: string }).deletedAt).length
                       if (itemCount > 0) {
                         setCatError(`Delete or move the ${itemCount} item${itemCount === 1 ? '' : 's'} in this category first.`)
                         return
                       }
-                      if (confirm(`Delete category "${cat.name}"?`)) {
-                        removeCategory.mutate(cat.id)
-                      }
+                      const ok = await confirm({
+                        title: `Delete category "${cat.name}"?`,
+                        body: 'The category is removed from the menu.',
+                        confirmLabel: 'Delete category', danger: true,
+                      })
+                      if (ok) removeCategory.mutate(cat.id)
                     }}
                     disabled={removeCategory.isPending}
-                    className="rounded-lg border border-s-red/40 text-s-red px-3 py-1.5 text-xs hover:bg-s-red/10 ml-auto">
+                    className="rounded-lg border border-s-red/40 text-s-red px-3 py-1.5 text-xs hover:bg-s-red/10 ml-auto [@media(pointer:coarse)]:min-h-11">
                     🗑 Delete category
                   </button>
-                  {catError && <p className="basis-full text-xs text-s-red font-semibold">{catError}</p>}
-                </div>
+                  {catError && <p role="alert" className="basis-full text-xs text-s-red font-semibold">{catError}</p>}
+                </form>
               ) : (
                 <>
                   <button
@@ -250,8 +284,12 @@ export default function MenuPage() {
 
                   <div className="mt-3 flex gap-2">
                     <button
-                      onClick={() => toggle86.mutate({ id: item.id, isAvailable: !item.isAvailable })}
-                      className={`flex-1 rounded-lg py-2 text-xs font-bold transition-colors ${
+                      type="button"
+                      onClick={() => toggle86.mutate({ id: item.id, isAvailable: !item.isAvailable, name: item.name })}
+                      disabled={toggle86.isPending && toggle86.variables?.id === item.id}
+                      title={item.isAvailable ? 'Mark sold out (86)' : 'Back on the menu'}
+                      aria-label={item.isAvailable ? `Mark ${item.name} sold out (86)` : `Restore ${item.name} to the menu`}
+                      className={`flex-1 [@media(pointer:coarse)]:min-h-11 rounded-lg py-2 text-xs font-bold transition-colors disabled:opacity-50 ${
                         item.isAvailable
                           ? 'bg-s-red/20 text-s-red hover:bg-s-red/40'
                           : 'bg-primary/20 text-primary-ink hover:bg-primary/40'
@@ -260,14 +298,25 @@ export default function MenuPage() {
                       {item.isAvailable ? '86 Item' : 'Restore'}
                     </button>
                     <button
+                      type="button"
                       onClick={() => setEditItem(item)}
-                      className="rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text"
+                      className="[@media(pointer:coarse)]:min-h-11 rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text"
                     >
                       Edit
                     </button>
                     <button
-                      onClick={() => { if (window.confirm(`Delete "${item.name}"?`)) deleteItem.mutate(item.id) }}
-                      className="rounded-lg border border-s-border px-2 py-2 text-xs text-s-red hover:border-s-red"
+                      type="button"
+                      aria-label={`Delete item ${item.name}`}
+                      title="Delete item"
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: `Delete "${item.name}"?`,
+                          body: 'It is removed from the menu and the storefront. This cannot be undone.',
+                          confirmLabel: 'Delete item', danger: true,
+                        })
+                        if (ok) deleteItem.mutate({ id: item.id, name: item.name })
+                      }}
+                      className="[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 rounded-lg border border-s-border px-2 py-2 text-xs text-s-red hover:border-s-red"
                     >
                       ✕
                     </button>
@@ -324,7 +373,7 @@ function AvailabilityBoard({ categories, loading, pendingId, onToggle }: {
   categories: Category[]
   loading: boolean
   pendingId: string | null
-  onToggle: (id: string, isAvailable: boolean) => void
+  onToggle: (id: string, isAvailable: boolean, name: string) => void
 }) {
   const off = categories.reduce((n, c) => n + c.items.filter((i) => !i.isAvailable).length, 0)
   return (
@@ -355,7 +404,7 @@ function AvailabilityBoard({ categories, loading, pendingId, onToggle }: {
                 {!item.isAvailable && <span className="rounded-full bg-s-red/15 px-2 py-0.5 text-xs font-bold text-s-red">86&apos;d</span>}
                 <Switch value={item.isAvailable} disabled={pendingId === item.id}
                   label={item.isAvailable ? `86 ${item.name}` : `Restore ${item.name}`}
-                  onChange={(v) => onToggle(item.id, v)} />
+                  onChange={(v) => onToggle(item.id, v, item.name)} />
               </div>
             </div>
           ))}
@@ -426,7 +475,7 @@ function TimeWindowRow({ cat, onSaved }: { cat: WindowedCategory; onSaved: () =>
             <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
           </label>
           {(start || end) && (
-            <button onClick={() => { setStart(''); setEnd('') }} className="text-xs text-s-muted hover:text-s-red">Clear</button>
+            <button type="button" onClick={() => { setStart(''); setEnd('') }} className="text-xs text-s-muted hover:text-s-red">Clear</button>
           )}
           {dirty && (
             <button onClick={() => save.mutate()} disabled={invalid || save.isPending}
@@ -456,31 +505,42 @@ function AddCategoryForm({ conceptId, sortOrder, onSaved, onCancel }: {
     onError: (e) => console.error('create category failed', e),
   })
 
+  const [touched, setTouched] = useState(false)
+  const nameErr = touched && !name.trim() ? 'Enter a category name.' : undefined
   return (
-    <div className="mb-6 rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+    <form noValidate className="mb-6 rounded-xl border border-primary bg-s-surface p-4 space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        setTouched(true)
+        if (name.trim() && !mutation.isPending) mutation.mutate()
+      }}>
       <h3 className="font-bold text-s-text">New Category</h3>
-      <input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) mutation.mutate() }}
-        placeholder="e.g. Starters, Mains, Drinks, Desserts"
-        className="w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none"
-      />
-      {mutation.isError && <p className="text-s-red text-sm">Failed to create — make sure you&apos;re logged in as admin/manager.</p>}
+      <FormField label="Category name" required error={nameErr}>
+        <input
+          autoFocus
+          required
+          enterKeyHint="done"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
+          placeholder="e.g. Starters, Mains, Drinks, Desserts"
+          className="w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none"
+        />
+      </FormField>
+      {mutation.isError && <p role="alert" className="text-s-red text-sm">Failed to create — make sure you&apos;re logged in as admin/manager.</p>}
       <div className="flex gap-2">
         <button
-          onClick={() => { if (name.trim()) mutation.mutate() }}
-          disabled={!name.trim() || mutation.isPending}
-          className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50 hover:opacity-90"
+          type="submit"
+          disabled={mutation.isPending}
+          className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 [@media(pointer:coarse)]:min-h-11 text-sm disabled:opacity-50 hover:opacity-90"
         >
           {mutation.isPending ? 'Creating…' : 'Create Category'}
         </button>
-        <button onClick={onCancel} className="rounded-lg border border-s-border text-s-muted px-4 py-2 text-sm hover:text-s-text">
+        <button type="button" onClick={onCancel} className="rounded-lg border border-s-border text-s-muted px-4 py-2 [@media(pointer:coarse)]:min-h-11 text-sm hover:text-s-text">
           Cancel
         </button>
       </div>
-    </div>
+    </form>
   )
 }
 
@@ -489,7 +549,8 @@ function AddItemForm({ conceptId, categoryId, displayOrder, onSaved, onCancel }:
 }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [price, setPrice] = useState('')
+  const [priceCents, setPriceCents] = useState(0)
+  const [touched, setTouched] = useState(false)
 
   const mutation = useMutation({
     mutationFn: () => menuApi.createItem({
@@ -497,62 +558,48 @@ function AddItemForm({ conceptId, categoryId, displayOrder, onSaved, onCancel }:
       categoryId,
       name: name.trim(),
       description: description.trim() || undefined,
-      priceCents: Math.round(parseFloat(price) * 100),
+      priceCents,
       isAvailable: true,
       displayOrder,
     }),
     onSuccess: onSaved,
   })
+  const nameErr = touched && !name.trim() ? 'Enter the item name.' : undefined
+  const priceErr = touched && priceCents <= 0 ? 'Enter a price above zero.' : undefined
+  const inputCls = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm'
 
   return (
-    <div className="mb-4 rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+    <form noValidate className="mb-4 rounded-xl border border-primary bg-s-surface p-4 space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        setTouched(true)
+        if (name.trim() && priceCents > 0 && !mutation.isPending) mutation.mutate()
+      }}>
       <h3 className="font-bold text-s-text">New Menu Item</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="sm:col-span-2">
-          <label className="text-xs text-s-muted">Item name *</label>
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Grilled Chicken Sandwich"
-            className="w-full mt-1 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm"
-          />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="text-xs text-s-muted">Description (optional)</label>
-          <input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Brief description for customers"
-            className="w-full mt-1 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm"
-          />
-        </div>
-        <div>
-          <label className="text-xs text-s-muted">Price (PKR) *</label>
-          <input
-            type="number"
-            min="0"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            placeholder="850"
-            className="w-full mt-1 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm"
-          />
-        </div>
+        <FormField className="sm:col-span-2" label="Item name" required error={nameErr}>
+          <input autoFocus required enterKeyHint="next" value={name} onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Grilled Chicken Sandwich" className={inputCls} />
+        </FormField>
+        <FormField className="sm:col-span-2" label="Description (optional)">
+          <input enterKeyHint="next" value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Brief description for customers" className={inputCls} />
+        </FormField>
+        <FormField label="Price (PKR)" required error={priceErr}>
+          <MoneyInput value={priceCents} onChange={setPriceCents} placeholder="850" className={inputCls} />
+        </FormField>
       </div>
-      {mutation.isError && <p className="text-s-red text-sm">Save failed — check the price is a valid number.</p>}
+      {mutation.isError && <p role="alert" className="text-s-red text-sm">Save failed — check the price is a valid number.</p>}
       <div className="flex gap-2">
-        <button
-          onClick={() => { if (name.trim() && price) mutation.mutate() }}
-          disabled={!name.trim() || !price || mutation.isPending}
-          className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50 hover:opacity-90"
-        >
+        <button type="submit" disabled={mutation.isPending}
+          className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50 hover:opacity-90 [@media(pointer:coarse)]:min-h-11">
           {mutation.isPending ? 'Saving…' : 'Add to Menu'}
         </button>
-        <button onClick={onCancel} className="rounded-lg border border-s-border text-s-muted px-4 py-2 text-sm hover:text-s-text">
+        <button type="button" onClick={onCancel} className="rounded-lg border border-s-border text-s-muted px-4 py-2 text-sm hover:text-s-text [@media(pointer:coarse)]:min-h-11">
           Cancel
         </button>
       </div>
-    </div>
+    </form>
   )
 }
 
@@ -562,7 +609,9 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
   const [name, setName] = useState(item.name)
   const [nameUrdu, setNameUrdu] = useState(item.nameUrdu ?? '')
   const [description, setDescription] = useState(item.description ?? '')
-  const [price, setPrice] = useState(String(item.priceCents / 100))
+  const [priceCents, setPriceCents] = useState(item.priceCents)
+  const [touched, setTouched] = useState(false)
+  const formId = useId()
   const [imageUrl, setImageUrl] = useState(item.imageUrl ?? '')
   const [videoUrl, setVideoUrl] = useState(item.videoUrl ?? '')
   const [instructions, setInstructions] = useState(item.instructions ?? '')
@@ -571,6 +620,9 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
   const [uploadError, setUploadError] = useState('')
   const [videoUploading, setVideoUploading] = useState(false)
   const [videoUploadError, setVideoUploadError] = useState('')
+  const dirty = name !== item.name || nameUrdu !== (item.nameUrdu ?? '') || description !== (item.description ?? '') ||
+    priceCents !== item.priceCents || imageUrl !== (item.imageUrl ?? '') || videoUrl !== (item.videoUrl ?? '') ||
+    instructions !== (item.instructions ?? '') || instructionsUrdu !== (item.instructionsUrdu ?? '')
 
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -628,7 +680,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
       name,
       nameUrdu: nameUrdu.trim() || undefined,
       description: description || undefined,
-      priceCents: Math.round(parseFloat(price) * 100),
+      priceCents,
       imageUrl: imageUrl.trim() || undefined,
       videoUrl: videoUrl.trim() || undefined,
       instructions: instructions.trim() || undefined,
@@ -638,15 +690,23 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-secondary/50" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-t-2xl bg-s-surface p-5 space-y-4 max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold text-s-text">Edit: {item.name}</h2>
-          <button onClick={onClose} className="text-s-muted text-2xl leading-none">✕</button>
+    <Modal title={`Edit: ${item.name}`} onClose={onClose} wide dirty={dirty}
+      footer={
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-s-border py-3 text-s-muted hover:text-s-text">Cancel</button>
+          <button type="submit" form={formId} disabled={save.isPending || uploading || videoUploading}
+            className="flex-1 rounded-xl bg-primary py-3 font-bold text-primary-on disabled:opacity-50 hover:opacity-90">
+            {save.isPending ? 'Saving…' : 'Save Changes'}
+          </button>
         </div>
+      }>
+      <form id={formId} noValidate className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault()
+          setTouched(true)
+          if (!name.trim() || priceCents <= 0 || save.isPending) return
+          save.mutate()
+        }}>
         <div className="space-y-3">
           {/* Image */}
           <div>
@@ -661,7 +721,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
                 <input type="file" accept="image/*" className="sr-only" onChange={handleImageUpload} />
               </label>
               {imageUrl && (
-                <button onClick={() => setImageUrl('')} className="text-xs text-s-red hover:underline">Remove</button>
+                <button type="button" onClick={() => setImageUrl('')} className="text-xs text-s-red hover:underline">Remove</button>
               )}
             </div>
             {uploadError && <p className="text-xs text-s-red mt-1">{uploadError}</p>}
@@ -681,7 +741,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
                 <input type="file" accept="video/mp4,video/webm" className="sr-only" onChange={handleVideoUpload} />
               </label>
               {videoUrl && (
-                <button onClick={() => setVideoUrl('')} className="text-xs text-s-red hover:underline">Remove</button>
+                <button type="button" onClick={() => setVideoUrl('')} className="text-xs text-s-red hover:underline">Remove</button>
               )}
             </div>
             <p className="text-[10px] text-s-muted mt-1">
@@ -691,71 +751,59 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
           </div>
 
           {/* Name */}
-          <div>
-            <label className="text-xs text-s-muted">Name (English)</label>
-            <input value={name} onChange={(e) => setName(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs text-s-muted">اردو نام — Urdu name (for KDS)</label>
+          <FormField label="Name (English)" required error={touched && !name.trim() ? 'Enter the item name.' : undefined}>
+            <input required enterKeyHint="next" value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
+          </FormField>
+          <FormField label="اردو نام — Urdu name (for KDS)">
             <input
+              enterKeyHint="next"
               value={nameUrdu}
               onChange={(e) => setNameUrdu(e.target.value)}
               dir="rtl"
               placeholder="مثلاً: گرلڈ چکن سینڈوچ"
-              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none"
+              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none"
               style={{ fontFamily: 'sans-serif' }}
             />
-          </div>
-          <div>
-            <label className="text-xs text-s-muted">Description</label>
-            <input value={description} onChange={(e) => setDescription(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs text-s-muted">Price (PKR)</label>
-            <input type="number" value={price} onChange={(e) => setPrice(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
-          </div>
+          </FormField>
+          <FormField label="Description">
+            <input enterKeyHint="next" value={description} onChange={(e) => setDescription(e.target.value)}
+              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
+          </FormField>
+          <FormField label="Price (PKR)" required error={touched && priceCents <= 0 ? 'Enter a price above zero.' : undefined}>
+            <MoneyInput value={priceCents} onChange={setPriceCents}
+              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
+          </FormField>
 
           {/* Instructions */}
           <div className="border-t border-s-border pt-3">
             <label className="text-xs font-semibold text-s-muted uppercase tracking-wide">Kitchen Instructions</label>
             <p className="text-xs text-s-muted mb-2">Shown to kitchen staff when they tap the dish name on KDS</p>
-            <div>
-              <label className="text-xs text-s-muted">Instructions (English)</label>
+            <FormField label="Instructions (English)">
               <textarea
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
                 rows={4}
                 placeholder="e.g. 1. Grill chicken breast 6 min each side&#10;2. Toast bun 2 min&#10;3. Add sauces, lettuce, tomato&#10;4. Plate immediately"
-                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none"
+                className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none"
               />
-            </div>
-            <div className="mt-2">
-              <label className="text-xs text-s-muted">ہدایات — Instructions (اردو)</label>
+            </FormField>
+            <FormField className="mt-2" label="ہدایات — Instructions (اردو)">
               <textarea
                 value={instructionsUrdu}
                 onChange={(e) => setInstructionsUrdu(e.target.value)}
                 rows={4}
                 dir="rtl"
                 placeholder="مثلاً: ۱. چکن گرل کریں ۶ منٹ..."
-                className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none"
+                className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none"
                 style={{ fontFamily: 'sans-serif' }}
               />
-            </div>
+            </FormField>
           </div>
         </div>
 
-        {save.isError && <p className="text-sm text-s-red">Save failed</p>}
-        <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border py-3 text-s-muted hover:text-s-text">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending || uploading}
-            className="flex-1 rounded-xl bg-primary py-3 font-bold text-primary-on disabled:opacity-50 hover:opacity-90">
-            {save.isPending ? 'Saving…' : 'Save Changes'}
-          </button>
-        </div>
-      </div>
-    </div>
+        {save.isError && <p role="alert" className="text-sm text-s-red">Save failed{(save.error as Error)?.message ? `: ${(save.error as Error).message}` : ''}</p>}
+      </form>
+    </Modal>
   )
 }

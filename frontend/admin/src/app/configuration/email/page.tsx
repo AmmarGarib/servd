@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react'
 import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import Link from 'next/link'
+import { PasswordInput } from '../../../components/ui/PasswordInput'
 
 // Email (SMTP) settings — the SECOND delivery channel.
 //
@@ -81,13 +82,25 @@ export default function EmailSettingsPage() {
   const field = ({ k, label, hint, type = 'text', placeholder, note }: { k: 'host'|'port'|'user'|'from'|'pass'; label: string; hint?: string; type?: string; placeholder?: string; note?: ReactNode }) => (
     <div>
       <label htmlFor={`smtp-${k}`} className="block text-xs font-semibold text-s-muted mb-1">{label}</label>
-      <input
-        id={`smtp-${k}`} type={type}
-        value={k === 'pass' ? (f.pass ?? '') : v(k)}
-        onChange={(e) => setF((p) => ({ ...p, [k]: e.target.value }))}
-        placeholder={placeholder}
-        className="w-full px-3 py-2 rounded border border-s-border bg-s-surface text-s-text font-mono text-xs"
-      />
+      {k === 'pass' ? (
+        <PasswordInput
+          id="smtp-pass" name="smtp-pass" autoComplete="new-password" autoCapitalize="none" spellCheck={false}
+          value={f.pass ?? ''}
+          onChange={(e) => setF((p) => ({ ...p, pass: e.target.value }))}
+          placeholder={placeholder}
+          className="w-full px-3 py-2 rounded border border-s-border bg-s-surface text-s-text font-mono text-xs"
+        />
+      ) : (
+        <input
+          id={`smtp-${k}`} type={type} name={`smtp-${k}`}
+          autoComplete="off" autoCapitalize="none" spellCheck={false}
+          inputMode={k === 'port' ? 'numeric' : k === 'from' || k === 'user' ? 'email' : k === 'host' ? 'url' : undefined}
+          value={v(k as 'host'|'port'|'user'|'from')}
+          onChange={(e) => setF((p) => ({ ...p, [k]: e.target.value }))}
+          placeholder={placeholder}
+          className="w-full px-3 py-2 rounded border border-s-border bg-s-surface text-s-text font-mono text-xs"
+        />
+      )}
       {hint && <p className="text-[11px] text-s-muted mt-1">{hint}</p>}
       {note}
     </div>
@@ -148,19 +161,20 @@ export default function EmailSettingsPage() {
         )}
 
         {canEdit && (<>
-        <div className="s-card p-4 space-y-4">
+        <form className="s-card p-4 space-y-4" autoComplete="off"
+          onSubmit={(e) => { e.preventDefault(); if (!save.isPending) save.mutate() }}>
           {field({ k: 'host', label: 'SMTP HOST', placeholder: 'smtp.gmail.com', hint: "Your mail provider's server address." })}
           {field({ k: 'port', label: 'PORT', placeholder: '587', hint: '587 for most providers; 465 if the provider says to use SSL.' })}
           {field({ k: 'user', label: 'USERNAME', placeholder: 'noreply@gsfoods.pk', hint: 'Usually the full email address.' })}
           {field({
-            k: 'pass', label: 'PASSWORD', type: 'password',
+            k: 'pass', label: 'PASSWORD',
             placeholder: data?.passSet ? 'Saved — leave blank to keep' : 'app password',
             hint: 'For Gmail or Google Workspace this is an app password, not the account password.',
             note: passNoteEl,
           })}
           {field({ k: 'from', label: 'SEND AS', placeholder: 'noreply@gsfoods.pk', hint: 'What customers see in the From line.' })}
 
-          <button onClick={() => save.mutate()} disabled={save.isPending}
+          <button type="submit" disabled={save.isPending}
             className="px-4 py-2 rounded bg-secondary text-secondary-on text-sm font-semibold disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
@@ -171,14 +185,16 @@ export default function EmailSettingsPage() {
           {save.isSuccess && save.data?.warning && (
             <p className="text-xs text-s-amber font-semibold" role="alert">{save.data.warning}</p>
           )}
-        </div>
+        </form>
 
-        <div className="s-card p-4 space-y-3">
+        <form className="s-card p-4 space-y-3"
+          onSubmit={(e) => { e.preventDefault(); if (testTo.includes('@') && !test.isPending) { setResult(null); test.mutate() } }}>
           <p className="text-sm font-semibold text-s-text">Send a test email</p>
           <div className="flex gap-2">
             <input value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com"
+              type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} name="smtp-test-to"
               aria-label="Address to test" className="flex-1 px-3 py-2 rounded border border-s-border bg-s-surface text-s-text text-sm" />
-            <button onClick={() => { setResult(null); test.mutate() }}
+            <button type="submit"
               disabled={test.isPending || !testTo.includes('@')}
               className="px-4 py-2 rounded border border-s-border text-sm font-semibold text-s-text disabled:opacity-50">
               {test.isPending ? 'Sending…' : 'Send test'}
@@ -189,7 +205,7 @@ export default function EmailSettingsPage() {
               {result.ok ? 'Sent. Check the inbox (and spam).' : `Failed — ${result.error}`}
             </p>
           )}
-        </div>
+        </form>
         </>)}
       </div>
     </div>

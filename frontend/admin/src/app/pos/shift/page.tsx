@@ -5,7 +5,9 @@ import { posApi, type ZReport } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
 import { useAuthStore } from '../../../store/auth'
 import { useCurrentShift } from '../../../hooks/useCurrentShift'
-import { fmtPkrWhole } from '../../../lib/money'
+import { fmtPkr, fmtPkrWhole } from '../../../lib/money'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { NumberField } from '../../../components/ui/NumberField'
 import { VendorPayoutPanel, CodPayInPanel } from './DrawerPanels'
 import { OpenTicketsCloseConfirm } from '../../../components/pos/OpenTicketsCloseConfirm'
 import {
@@ -33,6 +35,7 @@ export default function ShiftPage() {
   const [closingFloat, setClosingFloat] = useState('')
   const [zReport, setZReport] = useState<ClosedZReport | null>(null)
   const [closeBlock, setCloseBlock] = useState<CloseBlock | null>(null)
+  const confirm = useConfirm()
 
   // The server says which drawer this user is on (hooks/useCurrentShift).
   const current = useCurrentShift()
@@ -68,6 +71,23 @@ export default function ShiftPage() {
       void current.refetch()
     },
   })
+  // Close Shift asks first: a mistyped count (an extra zero) cannot be taken back.
+  async function askClose() {
+    if (closeBlock || closeMutation.isPending || !closingFloat) return
+    const counted = Math.round(parseFloat(closingFloat || '0') * 100)
+    const ok = await confirm({
+      title: `Close drawer with ${fmtPkr(counted)} counted?`,
+      body: 'This closes the shift and prints the Z-report. The count cannot be changed afterwards.',
+      confirmLabel: 'Close shift',
+      cancelLabel: 'Recount',
+      danger: true,
+    })
+    if (ok) closeMutation.mutate(false)
+  }
+  const openedAt = current.data?.shift?.openedAt
+  const openedLabel = openedAt
+    ? new Date(openedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Karachi' })
+    : null
   const closeError = closeMutation.isError && !isOpenTicketsError(closeMutation.error)
     ? tillErrorMessage(closeMutation.error, 'Could not close the shift — try again')
     : null
@@ -77,7 +97,7 @@ export default function ShiftPage() {
   }
 
   return (
-    <div className="erp-kitchen-dark flex min-h-screen flex-col items-center justify-center bg-kds-bg p-6">
+    <div className="erp-kitchen-dark flex min-h-screen min-h-dvh flex-col items-center justify-center bg-kds-bg p-6">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-black text-kds-text">Shift Management</h1>
@@ -86,53 +106,69 @@ export default function ShiftPage() {
 
         {!shiftId ? (
           /* Open shift */
-          <div className="rounded-2xl bg-kds-card p-6 space-y-4">
+          <form className="rounded-2xl bg-kds-card p-6 space-y-4"
+            onSubmit={(e) => { e.preventDefault(); if (!openMutation.isPending) openMutation.mutate() }}>
             <h2 className="font-bold text-kds-text">Open New Shift</h2>
             <div>
-              <label className="mb-1 block text-sm text-kds-subtext">Opening Cash Float (PKR)</label>
-              <input
-                type="number"
-                value={openingFloat}
-                onChange={(e) => setOpeningFloat(e.target.value)}
+              <label htmlFor="shift-open-float" className="mb-1 block text-sm text-kds-subtext">Opening Cash Float (PKR)</label>
+              <NumberField
+                id="shift-open-float"
+                decimals={2}
+                min={0}
+                value={openingFloat === '' ? null : Number(openingFloat)}
+                onValueChange={(v) => setOpeningFloat(v == null ? '' : String(v))}
                 placeholder="0"
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-xl font-bold text-kds-text"
               />
             </div>
             <button
-              onClick={() => openMutation.mutate()}
+              type="submit"
               disabled={openMutation.isPending}
               className="w-full rounded-xl bg-kds-green py-4 font-bold text-white disabled:opacity-50"
             >
               {openMutation.isPending ? 'Opening…' : 'Open Shift'}
             </button>
             {openMutation.isError && (
-              <p className="text-sm text-kds-red">Failed to open shift</p>
+              <p className="text-sm text-kds-red" role="alert">{tillErrorMessage(openMutation.error, 'Failed to open shift')}</p>
             )}
-          </div>
+          </form>
         ) : (
           /* Close shift */
           <div className="rounded-2xl bg-kds-card p-6 space-y-4">
             <div className="rounded-lg bg-kds-green/20 border border-kds-green px-4 py-3">
               <p className="text-sm font-semibold text-kds-green">Shift Active</p>
-              <p className="text-xs text-kds-subtext font-mono">{shiftId}</p>
+              <p className="text-xs text-kds-subtext">{openedLabel ? `Opened ${openedLabel}` : 'Drawer open'}</p>
             </div>
             {/* Owner decision 2: the cashier counts BLIND. Nothing on this
                 screen (or anything a cashier can open) shows the expected
                 cash before the count is submitted — the Z-report with the
                 expected figure and the variance appears only after close. */}
+            <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void askClose() }}>
             <div>
-              <label className="mb-1 block text-sm text-kds-subtext">Closing Cash Count (PKR)</label>
+              <label htmlFor="shift-close-count" className="mb-1 block text-sm text-kds-subtext">Closing Cash Count (PKR)</label>
               <p className="mb-2 text-xs text-kds-subtext">
                 Count every note and coin in the drawer and enter the total. The expected amount is shown after you close.
               </p>
-              <input
-                type="number"
-                value={closingFloat}
-                onChange={(e) => setClosingFloat(e.target.value)}
+              <NumberField
+                id="shift-close-count"
+                decimals={2}
+                min={0}
+                value={closingFloat === '' ? null : Number(closingFloat)}
+                onValueChange={(v) => setClosingFloat(v == null ? '' : String(v))}
                 placeholder="0"
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-xl font-bold text-kds-text"
               />
             </div>
+            {!closeBlock && (
+              <button
+                type="submit"
+                disabled={closeMutation.isPending || !closingFloat}
+                className="w-full rounded-xl bg-kds-red py-4 font-bold text-white disabled:opacity-50"
+              >
+                {closeMutation.isPending ? 'Closing…' : 'Close Shift & Print Z-Report'}
+              </button>
+            )}
+            </form>
             {closeBlock ? (
               <OpenTicketsCloseConfirm
                 tone="till"
@@ -145,16 +181,7 @@ export default function ShiftPage() {
                 onConfirm={() => closeMutation.mutate(true)}
               />
             ) : (
-              <>
-                <button
-                  onClick={() => closeMutation.mutate(false)}
-                  disabled={closeMutation.isPending || !closingFloat}
-                  className="w-full rounded-xl bg-kds-red py-4 font-bold text-white disabled:opacity-50"
-                >
-                  {closeMutation.isPending ? 'Closing…' : 'Close Shift & Print Z-Report'}
-                </button>
-                {closeError && <p className="text-sm text-kds-red" role="alert">{closeError}</p>}
-              </>
+              closeError && <p className="text-sm text-kds-red" role="alert">{closeError}</p>
             )}
           </div>
         )}
@@ -182,7 +209,7 @@ function ZReportView({ report, onClose }: { report: ClosedZReport; onClose: () =
   const refundDue = report.refundDueCents ?? 0
 
   return (
-    <div className="erp-kitchen-dark flex min-h-screen flex-col items-center justify-center bg-kds-bg p-6">
+    <div className="erp-kitchen-dark flex min-h-screen min-h-dvh flex-col items-center justify-center bg-kds-bg p-6">
       <div className="w-full max-w-md rounded-2xl bg-kds-card p-6 space-y-4">
         <div className="text-center">
           <h1 className="text-2xl font-black text-kds-text">Z-Report</h1>

@@ -19,7 +19,7 @@
 // for anonymous bookings (ONLINE-R2 — such slots come back as
 // reason 'sign_in').
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
@@ -30,6 +30,8 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 // GA4 events (no-op without GA4 / consent) — the shared contract in lib/analytics.
 import { track } from '../../../lib/analytics'
 import { PARTY_SIZES } from './partySizes'
+import { isPkMobile, normalisePhone } from '../../../lib/phone'
+import { smoothScrollTo } from '../../../lib/scroll'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -108,6 +110,11 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
   const [done, setDone] = useState<BookingResponse | null>(null)
   const [signInToBook, setSignInToBook] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [loadError, setLoadError] = useState(false)
+  const [phoneError, setPhoneError] = useState('')
+  const formRef = useRef<HTMLFormElement | null>(null)
+  const nameRef = useRef<HTMLInputElement | null>(null)
+  const doneHeadingRef = useRef<HTMLHeadingElement | null>(null)
 
   // The signed-in customer, if any (persisted store — null until hydrated).
   const token = useCustomerAuth((s) => s.token)
@@ -143,12 +150,19 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
     return () => { cancelled = true }
   }, [token, slug])
 
+  const dateUsable = !!date && date >= todayPktIso()
   useEffect(() => {
-    setLoading(true)
     setSelected(null)
     setDisabled(false)
+    setLoadError(false)
+    // No request for an empty or past date; say what to do instead.
+    if (!dateUsable) { setData(null); setLoading(false); return }
+    // One controller per request: a superseded answer is dropped, never shown.
+    const ctl = new AbortController()
+    setLoading(true)
     fetch(`${API_URL}/api/v1/reservations/availability?conceptSlug=${slug}&date=${date}&partySize=${partySize}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: ctl.signal,
     })
       .then(async (r) => {
         if (r.ok) return r.json() as Promise<AvailabilityResponse>
@@ -159,12 +173,30 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
             return null
           }
         }
-        return null
+        throw new Error(`availability ${r.status}`)
       })
-      .then((d) => setData(d))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false))
-  }, [slug, date, partySize, token, reloadKey])
+      .then((d) => { if (!ctl.signal.aborted) setData(d) })
+      .catch(() => { if (!ctl.signal.aborted) { setData(null); setLoadError(true) } })
+      .finally(() => { if (!ctl.signal.aborted) setLoading(false) })
+    return () => ctl.abort()
+  }, [slug, date, dateUsable, partySize, token, reloadKey])
+
+  // A slot was picked: bring the details form into view and start on the name.
+  useEffect(() => {
+    if (!selected) return
+    const t = setTimeout(() => {
+      smoothScrollTo(formRef.current)
+      nameRef.current?.focus({ preventScroll: true })
+    }, 0)
+    return () => clearTimeout(t)
+  }, [selected])
+
+  // Booked: back to the top, on the confirmation.
+  useEffect(() => {
+    if (!done) return
+    window.scrollTo(0, 0)
+    doneHeadingRef.current?.focus({ preventScroll: true })
+  }, [done])
 
   const groupedSlots = useMemo(() => {
     if (!data) return []
@@ -183,6 +215,11 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selected || !name.trim() || !phone.trim()) return
+    if (!isPkMobile(normalisePhone(phone))) {
+      setPhoneError('Use a Pakistani mobile like 0300 1234567')
+      document.getElementById('reserve-phone')?.focus()
+      return
+    }
     setSubmitting(true)
     setError(null)
     setSignInToBook(false)
@@ -238,7 +275,7 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
             style={{ display: 'inline-block', marginBottom: '0.5rem' }}>
             <polyline points="20 6 9 17 4 12" />
           </svg>
-          <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.75rem' }}>
+          <h1 ref={doneHeadingRef} tabIndex={-1} style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.75rem', outline: 'none' }}>
             Reservation request sent.
           </h1>
           {sentWhatsapp || sentEmail ? (
@@ -345,20 +382,33 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
           {/* Step 2: pick a slot */}
           <div className="servd-card" style={{ padding: '1.5rem' }}>
             <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>2. Pick a time</h2>
-            {loading && <p style={{ color: 'var(--servd-mute)', textAlign: 'center', padding: '1.5rem' }}>Loading availability…</p>}
-            {!loading && data && data.slots.length === 0 && (
-              <p style={{ color: 'var(--servd-mute)', textAlign: 'center', padding: '1.5rem' }}>
-                No slots available on {date}. Try another day.
-              </p>
-            )}
-            {!loading && data && !token && data.slots.some((s) => s.reason === 'sign_in') && (
+            <div aria-live="polite">
+              {loading && <p style={{ color: 'var(--servd-mute)', textAlign: 'center', padding: '0.75rem' }}>Loading availability…</p>}
+              {!loading && !dateUsable && (
+                <p style={{ color: 'var(--servd-mute)', textAlign: 'center', padding: '1.5rem' }}>
+                  {date ? 'Pick today or a later date.' : 'Pick a date'}
+                </p>
+              )}
+              {!loading && loadError && (
+                <p style={{ color: 'var(--servd-mute)', textAlign: 'center', padding: '1.5rem' }}>
+                  Couldn&rsquo;t load times ·{' '}
+                  <button type="button" onClick={() => setReloadKey((k) => k + 1)} style={{ color: 'var(--servd-green-ink)', fontWeight: 700, textDecoration: 'underline', minHeight: '44px', padding: '0 0.5rem' }}>Try again</button>
+                </p>
+              )}
+              {!loading && data && data.slots.length === 0 && (
+                <p style={{ color: 'var(--servd-mute)', textAlign: 'center', padding: '1.5rem' }}>
+                  No tables for {partySize} on this day. Try another day.
+                </p>
+              )}
+            </div>
+            {!loading && data && dateUsable && !token && data.slots.some((s) => s.reason === 'sign_in') && (
               <p style={{ fontSize: '0.85rem', color: 'var(--servd-mute)', marginBottom: '1rem' }}>
                 Some times are held for guests with an account.{' '}
                 <Link href={`/login?next=/reserve/${slug}`} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link> to see them.
               </p>
             )}
-            {!loading && data && groupedSlots.map(([groupName, slots]) => (
-              <div key={groupName} style={{ marginBottom: '1.25rem' }}>
+            {data && dateUsable && groupedSlots.map(([groupName, slots]) => (
+              <div key={groupName} aria-busy={loading} style={{ marginBottom: '1.25rem', opacity: loading ? 0.45 : 1, pointerEvents: loading ? 'none' : undefined, transition: 'opacity 0.15s' }}>
                 <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--servd-mute)', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.6rem' }}>
                   {groupName}
                 </p>
@@ -371,6 +421,7 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
                         onClick={() => s.available && setSelected(s.time)}
                         disabled={!s.available}
                         aria-pressed={sel}
+                        aria-label={`${new Date(s.time).toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', weekday: 'long', day: 'numeric', month: 'long' })}, ${fmtSlot(s.time)}${s.available ? '' : s.reason === 'sign_in' ? ', sign in to book' : ', full'}`}
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
@@ -388,6 +439,7 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
                         }}
                       >
                         {fmtSlot(s.time)}
+                        {!s.available && <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', textDecoration: 'none', display: 'inline-block' }}>{s.reason === 'sign_in' ? 'Sign in' : 'Full'}</span>}
                       </button>
                     )
                   })}
@@ -398,21 +450,25 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
 
           {/* Step 3: guest details */}
           {selected && (
-            <form className="servd-card" style={{ padding: '1.5rem' }} onSubmit={onSubmit}>
+            <form ref={formRef} className="servd-card" style={{ padding: '1.5rem' }} onSubmit={onSubmit}>
               <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>3. Your details</h2>
               <div style={{ display: 'grid', gap: '0.75rem' }}>
                 <label>
                   <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Full name *</span>
-                  <input required value={name} onChange={(e) => setName(e.target.value)} className="servd-input" style={{ marginTop: '0.4rem' }} />
+                  <input ref={nameRef} required name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="servd-input servd-field" style={{ marginTop: '0.4rem' }} />
                 </label>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
                   <label>
                     <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Phone *</span>
-                    <input required type="tel" inputMode="tel" placeholder="+92 …" value={phone} onChange={(e) => setPhone(e.target.value)} className="servd-input" style={{ marginTop: '0.4rem' }} />
+                    <input id="reserve-phone" required name="tel" autoComplete="tel" type="tel" inputMode="tel" placeholder="0300 1234567" value={phone}
+                      onChange={(e) => { setPhone(e.target.value); if (phoneError && isPkMobile(normalisePhone(e.target.value))) setPhoneError('') }}
+                      aria-invalid={!!phoneError} aria-describedby={phoneError ? 'reserve-phone-err' : undefined}
+                      className="servd-input servd-field" style={{ marginTop: '0.4rem' }} />
+                    {phoneError && <span id="reserve-phone-err" role="alert" style={{ display: 'block', marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--servd-danger)' }}>{phoneError}</span>}
                   </label>
                   <label>
                     <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Email</span>
-                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="servd-input" style={{ marginTop: '0.4rem' }} />
+                    <input type="email" name="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} className="servd-input servd-field" style={{ marginTop: '0.4rem' }} />
                   </label>
                 </div>
                 <label>

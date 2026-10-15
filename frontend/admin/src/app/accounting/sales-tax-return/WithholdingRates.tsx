@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { NumberField } from '../../../components/ui/NumberField'
 
 type Section = '153_1_a' | '153_1_b' | '153_1_c' | '155'
 interface Rate { filerBps: number; nonFilerBps: number }
@@ -165,15 +166,13 @@ function RateInput({ label, value, readOnly, max, onChange }: { label: string; v
       {readOnly
         ? <span className="block font-mono text-sm text-s-text py-1.5">{value === '' ? '—' : `${value}%`}</span>
         : (
-          <input
-            type="number"
+          <NumberField
+            decimals={2}
             min={0}
             max={max / 100}
-            step="0.01"
-            inputMode="decimal"
             className="s-input"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
+            value={value.trim() === '' || !Number.isFinite(Number(value)) ? null : Number(value)}
+            onValueChange={(n) => onChange(n == null ? '' : String(n))}
           />
         )}
     </label>

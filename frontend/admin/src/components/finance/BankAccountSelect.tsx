@@ -12,6 +12,9 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
 
+/** The one label style of the finance forms (muted token, text-xs). */
+export const FIELD_LABEL_CLASS = 'block text-xs text-s-muted mb-1'
+
 export interface BankAccountOption {
   id: string
   name: string
@@ -44,6 +47,7 @@ export function BankAccountSelect({
   id = 'bank-account',
   label = 'Bank account',
   className,
+  labelClassName = FIELD_LABEL_CLASS,
 }: {
   /** The company the money belongs to (the document's company). */
   tenantId: string | null | undefined
@@ -53,16 +57,17 @@ export function BankAccountSelect({
   label?: string
   /** Class for the <Select> (the page's field style). */
   className?: string
+  labelClassName?: string
 }) {
   const { data = [], isLoading, isError } = useBankAccounts()
   const banks = banksOf(data, tenantId)
   const required = banks.length > 1
 
   return (
-    <label htmlFor={id} className="block">
-      <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">
+    <div>
+      <label htmlFor={id} className={labelClassName}>
         {label}{required ? ' *' : ''}
-      </span>
+      </label>
       <Select
         id={id}
         value={value}
@@ -78,6 +83,6 @@ export function BankAccountSelect({
           <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>
         ))}
       </Select>
-    </label>
+    </div>
   )
 }

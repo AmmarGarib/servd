@@ -186,7 +186,9 @@ const ScrollExpandMedia = ({
   const slides: BgSlide[] = bgSlides?.length ? bgSlides : bgImageSrc ? [{ src: bgImageSrc, alt: '' }] : [];
   const [showContent, setShowContent] = useState<boolean>(false);
   const [mediaFullyExpanded, setMediaFullyExpanded] = useState<boolean>(false);
-  const [touchStartY, setTouchStartY] = useState<number>(0);
+  // Where the current touch started (a ref: the touchmove listener is attached
+  // once and must never miss a move waiting for a re-render).
+  const touchStartRef = useRef<number>(0);
   const [isMobileState, setIsMobileState] = useState<boolean>(false);
   // The document is at (or within 5px of) the top — where scrolling up on an
   // expanded hero collapses it again.
@@ -241,6 +243,19 @@ const ScrollExpandMedia = ({
   // stays for the life of the hero.
   const progressRef = useRef(0);
   progressRef.current = scrollProgress;
+  const expandedRef = useRef(false);
+  expandedRef.current = mediaFullyExpanded;
+
+  // Smooth anchor scrolling (globals.css) fights the hero while it is still
+  // collapsed: the scroll handler below resets the page to the top, and a
+  // jump to #kitchens has to land at once so it can finish the expansion.
+  // Collapsed = instant; once expanded the page's smooth scrolling is back.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!mediaFullyExpanded) root.style.scrollBehavior = 'auto';
+    else root.style.removeProperty('scroll-behavior');
+    return () => { root.style.removeProperty('scroll-behavior'); };
+  }, [mediaFullyExpanded]);
   useEffect(() => {
     const handleScroll = (): void => {
       setAtTop(window.scrollY <= 5);
@@ -270,10 +285,10 @@ const ScrollExpandMedia = ({
   useEffect(() => {
     const handleTouchStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      if (t) setTouchStartY(t.clientY);
+      if (t) touchStartRef.current = t.clientY;
     };
     const handleTouchEnd = (): void => {
-      setTouchStartY(0);
+      touchStartRef.current = 0;
     };
     window.addEventListener('touchstart', handleTouchStart, { passive: true });
     window.addEventListener('touchend', handleTouchEnd, { passive: true });
@@ -292,19 +307,23 @@ const ScrollExpandMedia = ({
     if (!heroInPlay) return;
 
     const handleWheel = (e: WheelEvent) => {
+      const mediaFullyExpanded = expandedRef.current;
       if (mediaFullyExpanded && e.deltaY < 0 && window.scrollY <= 5) {
         setMediaFullyExpanded(false);
+        expandedRef.current = false;
         e.preventDefault();
       } else if (!mediaFullyExpanded) {
         e.preventDefault();
         const scrollDelta = e.deltaY * 0.0009;
         const newProgress = Math.min(
-          Math.max(scrollProgress + scrollDelta, 0),
+          Math.max(progressRef.current + scrollDelta, 0),
           1
         );
+        progressRef.current = newProgress;
         setScrollProgress(newProgress);
 
         if (newProgress >= 1) {
+          expandedRef.current = true;
           setMediaFullyExpanded(true);
           setShowContent(true);
         } else if (newProgress < 0.75) {
@@ -314,6 +333,9 @@ const ScrollExpandMedia = ({
     };
 
     const handleTouchMove = (e: TouchEvent) => {
+      const touchStartY = touchStartRef.current;
+      const mediaFullyExpanded = expandedRef.current;
+      const scrollProgress = progressRef.current;
       if (!touchStartY) return;
 
       const t = e.touches[0];
@@ -334,6 +356,7 @@ const ScrollExpandMedia = ({
 
       if (mediaFullyExpanded && deltaY < -20 && window.scrollY <= 5) {
         setMediaFullyExpanded(false);
+        expandedRef.current = false;
         e.preventDefault();
       } else if (!mediaFullyExpanded) {
         e.preventDefault();
@@ -344,16 +367,18 @@ const ScrollExpandMedia = ({
           Math.max(scrollProgress + scrollDelta, 0),
           1
         );
+        progressRef.current = newProgress;
         setScrollProgress(newProgress);
 
         if (newProgress >= 1) {
+          expandedRef.current = true;
           setMediaFullyExpanded(true);
           setShowContent(true);
         } else if (newProgress < 0.75) {
           setShowContent(false);
         }
 
-        setTouchStartY(touchY);
+        touchStartRef.current = touchY;
       }
     };
 
@@ -363,7 +388,7 @@ const ScrollExpandMedia = ({
       window.removeEventListener('wheel', handleWheel);
       window.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [heroInPlay, scrollProgress, mediaFullyExpanded, touchStartY]);
+  }, [heroInPlay]);
 
   // Keyboard: the keys that scroll down expand the hero (the snap-back above
   // used to leave keyboard users stuck at scrollY 0). End also lets the

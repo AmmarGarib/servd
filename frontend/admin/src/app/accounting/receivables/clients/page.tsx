@@ -26,6 +26,9 @@ import { api, ApiError } from '../../../../lib/api'
 import { fmtPkrWhole, startOfMonthPktIso } from '../../../../lib/money'
 import { useActiveCompany } from '../../../../lib/connectorsApi'
 import { Select } from '@/components/ui/Select'
+import { Modal as SharedModal } from '../../../../components/ui/Modal'
+import { NumberField } from '../../../../components/ui/NumberField'
+import { DialogForm, RupeeField } from '../../../../components/finance/PaymentReceivedFields'
 
 type ClientStatus = 'pending' | 'active' | 'suspended' | 'closed'
 interface Overdue { invoiceId: string; number: string; dueDate: string; balanceCents: number }
@@ -77,16 +80,9 @@ function previousMonthEnd(): { periodTo: string; month: string } {
 function L({ t, children }: { t: string; children: React.ReactNode }) {
   return <label className="block"><span className="text-[11px] font-bold text-white/50">{t}</span>{children}</label>
 }
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
-        <p className="text-lg font-black text-white/90 mb-4">{title}</p>
-        {children}
-      </div>
-    </div>
-  )
+/** Thin wrapper over the shared Modal (Escape, focus trap, scroll lock, "Discard changes?" when `dirty`). */
+function Modal({ title, children, onClose, dirty }: { title: string; children: React.ReactNode; onClose: () => void; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} dirty={dirty}>{children}</SharedModal>
 }
 function Err({ msg }: { msg: string | null }) {
   return msg ? <p role="alert" className="mt-3 text-sm font-bold" style={{ color: 'var(--erp-danger)' }}>{msg}</p> : null
@@ -139,21 +135,23 @@ function CutoverPanel({ status, onDone }: { status: TillStatus; onDone: () => vo
           : <p className="text-sm font-bold text-white/60">Waiting for the CEO</p>}
       </div>
       {asking && (
-        <Modal title="Split till clearing" onClose={() => setAsking(false)}>
+        <Modal title="Split till clearing" onClose={() => setAsking(false)} dirty={!split.isPending && !!reason.trim()}>
+          <DialogForm busy={split.isPending} onSubmit={() => split.mutate()} missing={reason.trim().length < 10 ? 'Give the reason (10 characters or more).' : null}>
           <p className="text-sm text-white/60 mb-3">
             Moves {fmtPkrWhole(status.previewCents)} of till clearing from 1110 to 1115 in the active company, once. It is audited.
           </p>
           <L t="Why (at least 10 characters)">
-            <textarea className={inp} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="CA confirmed on …" />
+            <textarea className={inp} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 10 ? true : undefined} placeholder="CA confirmed on …" />
           </L>
           <Err msg={err} />
           <div className="flex gap-2 mt-5">
-            <button onClick={() => split.mutate()} disabled={split.isPending || reason.trim().length < 10}
+            <button type="submit" disabled={split.isPending}
               className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">
               {split.isPending ? 'Splitting…' : 'Split till clearing'}
             </button>
-            <button onClick={() => setAsking(false)} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
+            <button type="button" onClick={() => setAsking(false)} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
           </div>
+          </DialogForm>
         </Modal>
       )}
     </section>
@@ -196,11 +194,12 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
     onSuccess: onCreated,
     onError: (e) => setErr(errText(e)),
   })
-  const valid = f.legalName.trim().length >= 2 && toPaisa(f.limit) > 0
+  const missing = f.legalName.trim().length < 2 ? 'Enter the client\'s legal name.' : toPaisa(f.limit) <= 0 ? 'Enter a credit limit above zero.' : null
   return (
-    <Modal title="New client" onClose={onClose}>
+    <Modal title="New client" onClose={onClose} dirty={!create.isPending && (!!f.legalName.trim() || !!f.tradeName.trim() || !!f.limit || !!f.notes.trim())}>
+      <DialogForm busy={create.isPending} onSubmit={() => { setErr(null); create.mutate() }} missing={missing}>
       <div className="space-y-3">
-        <L t="Legal name"><input className={inp} value={f.legalName} onChange={(e) => set('legalName', e.target.value)} /></L>
+        <L t="Legal name"><input className={inp} aria-invalid={f.legalName.trim().length < 2 ? true : undefined} value={f.legalName} onChange={(e) => set('legalName', e.target.value)} /></L>
         <L t="Trade name"><input className={inp} value={f.tradeName} onChange={(e) => set('tradeName', e.target.value)} /></L>
         <div className="grid grid-cols-2 gap-3">
           <L t="NTN"><input className={inp} value={f.ntn} onChange={(e) => set('ntn', e.target.value)} /></L>
@@ -213,9 +212,9 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
           <L t="Contact email (statements go here)"><input type="email" className={inp} value={f.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} /></L>
         </div>
         <div className="grid grid-cols-3 gap-3">
-          <L t="Credit limit (PKR)"><input inputMode="decimal" className={inp} value={f.limit} onChange={(e) => set('limit', e.target.value)} /></L>
-          <L t="Terms (days)"><input inputMode="numeric" className={inp} value={f.termsDays} onChange={(e) => set('termsDays', e.target.value)} /></L>
-          <L t="Overdue grace (days)"><input inputMode="numeric" className={inp} value={f.graceDays} onChange={(e) => set('graceDays', e.target.value)} /></L>
+          <L t="Credit limit (PKR)"><RupeeField className={inp} label="Credit limit (PKR)" value={f.limit} onChange={(v) => set('limit', v)} invalid={toPaisa(f.limit) <= 0 && f.legalName.trim().length >= 2} /></L>
+          <L t="Terms (days)"><NumberField className={inp} min={0} max={365} value={f.termsDays === '' ? null : Number(f.termsDays)} onValueChange={(n) => set('termsDays', n == null ? '' : String(n))} /></L>
+          <L t="Overdue grace (days)"><NumberField className={inp} min={0} max={365} value={f.graceDays === '' ? null : Number(f.graceDays)} onValueChange={(n) => set('graceDays', n == null ? '' : String(n))} /></L>
         </div>
         <L t="Brands this client may be billed at">
           <Select className={inp} value="" onChange={(e) => { const v = e.target.value; if (v && !brandIds.includes(v)) setBrandIds([...brandIds, v]) }}>
@@ -245,12 +244,13 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
       </div>
       <Err msg={err} />
       <div className="flex gap-2 mt-5">
-        <button onClick={() => { setErr(null); create.mutate() }} disabled={create.isPending || !valid}
+        <button type="submit" disabled={create.isPending}
           className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">
           {create.isPending ? 'Saving…' : 'Create client'}
         </button>
-        <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
+        <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
       </div>
+      </DialogForm>
     </Modal>
   )
 }
@@ -268,20 +268,20 @@ function BulkDialog({ periodTo, month, onClose, onDone }: { periodTo: string; mo
   return (
     <Modal title={`Issue ${month} statements`} onClose={onClose}>
       {!result ? (
-        <>
+        <DialogForm busy={issue.isPending} onSubmit={() => { setErr(null); issue.mutate() }} missing={null}>
           <p className="text-sm text-white/70">
             Bills every client in the active company for charges up to <b>{periodTo}</b>. Clients with nothing to bill are skipped.
             A statement is not a tax invoice and posts nothing to the books.
           </p>
           <Err msg={err} />
           <div className="flex gap-2 mt-5">
-            <button onClick={() => { setErr(null); issue.mutate() }} disabled={issue.isPending}
+            <button type="submit" disabled={issue.isPending}
               className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">
               {issue.isPending ? 'Issuing…' : `Issue ${month} statements`}
             </button>
-            <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
+            <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
           </div>
-        </>
+        </DialogForm>
       ) : (
         <>
           <p className="text-sm font-black text-white/90">Created {result.created.length} · Skipped {result.skipped.length}</p>
@@ -300,7 +300,7 @@ function BulkDialog({ periodTo, month, onClose, onDone }: { periodTo: string; mo
               {result.skipped.map((s) => <li key={s.accountId}>{s.accountNumber}: {s.message}</li>)}
             </ul>
           )}
-          <button onClick={onClose} className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+          <button type="button" onClick={onClose} className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
         </>
       )}
     </Modal>

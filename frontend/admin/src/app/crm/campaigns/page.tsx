@@ -18,6 +18,8 @@ import { api } from '../../../lib/api'
 import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Select } from '@/components/ui/Select'
+import { FormField } from '@/components/ui/FormField'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 type Channel = 'email' | 'whatsapp'
 
@@ -134,6 +136,8 @@ export default function CampaignsPage() {
     enabled: showForm,
   })
 
+  const [sendError, setSendError] = useState<string | null>(null)
+  const confirm = useConfirm()
   const reset = () => {
     setShowForm(false)
     setForm(EMPTY)
@@ -161,7 +165,7 @@ export default function CampaignsPage() {
   const send = useMutation({
     mutationFn: (id: string) => api.post(`/crm/campaigns/${id}/send`, {}),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['campaigns'] }),
-    onError: (e: Error) => alert(e.message),
+    onError: (e: Error) => setSendError(e.message),
   })
 
   const canSave = !!form.name && !!form.body && (form.channel !== 'email' || !!form.subject)
@@ -176,6 +180,7 @@ export default function CampaignsPage() {
           <p className="text-sm text-s-muted">Email and WhatsApp broadcasts to a segment of your customers</p>
         </div>
         <button
+          type="button"
           onClick={() => setShowForm(true)}
           className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90">
           + New campaign
@@ -190,37 +195,34 @@ export default function CampaignsPage() {
             {error && <p className="mb-3 rounded-lg bg-s-red/10 border border-s-red/30 px-3 py-2 text-sm text-s-red">{error}</p>}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
               <div className="lg:col-span-2 grid grid-cols-2 gap-4 content-start">
-                <div>
-                  <label className="text-xs text-s-muted mb-1 block">Campaign name *</label>
+                <FormField label="Campaign name" required>
                   <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    placeholder="Ramadan special" required className={inp} />
-                </div>
-                <div>
-                  <label className="text-xs text-s-muted mb-1 block">Channel *</label>
+                    name="campaign-name" autoComplete="off" placeholder="Ramadan special" required className={inp} />
+                </FormField>
+                <FormField label="Channel" required>
                   <Select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value as Channel })} className={inp}>
                     <option value="whatsapp">WhatsApp</option>
                     <option value="email">Email</option>
                   </Select>
-                </div>
+                </FormField>
                 {form.channel === 'email' && (
-                  <div className="col-span-2">
-                    <label className="text-xs text-s-muted mb-1 block">Subject *</label>
+                  <FormField className="col-span-2" label="Subject" required>
                     <input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })}
-                      placeholder="Something new on the menu" className={inp} />
-                  </div>
+                      name="campaign-subject" autoComplete="off" placeholder="Something new on the menu" className={inp} />
+                  </FormField>
                 )}
                 <div className="col-span-2">
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-s-muted">Message *</label>
-                    <span className="text-xs text-s-muted">{form.body.length}/2000</span>
+                    <label htmlFor="campaign-body" className="text-xs text-s-muted">Message *</label>
+                    <span className="text-xs text-s-muted" aria-live="polite">{form.body.length}/2000</span>
                   </div>
-                  <textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value.slice(0, 2000) })}
+                  <textarea id="campaign-body" value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value.slice(0, 2000) })}
                     placeholder="Write your message…" required rows={5}
                     className={`${inp} resize-y`} />
                 </div>
                 <div className="col-span-2">
-                  <label className="text-xs text-s-muted mb-1 block">Segment</label>
-                  <Select value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} className={inp}>
+                  <label htmlFor="campaign-segment" className="text-xs text-s-muted mb-1 block">Segment</label>
+                  <Select id="campaign-segment" value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} className={inp}>
                     <option value="">Everyone reachable in the brands below</option>
                     {segments.map((s) => (
                       <option key={s.slug} value={s.slug}>{s.name} — {s.memberCount.toLocaleString()}</option>
@@ -237,16 +239,16 @@ export default function CampaignsPage() {
                 </div>
                 <div className="col-span-2">
                   {!isWaitlist && <>
-                  <label className="text-xs text-s-muted mb-1 block">Brands</label>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => setBrandIds([])}
+                  <span id="campaign-brands" className="text-xs text-s-muted mb-1 block">Brands</span>
+                  <div className="flex flex-wrap gap-2" role="group" aria-labelledby="campaign-brands">
+                    <button type="button" onClick={() => setBrandIds([])} aria-pressed={brandIds.length === 0}
                       className={`rounded-full px-3 py-1 text-xs font-bold border ${brandIds.length === 0 ? 'bg-primary text-primary-on border-primary' : 'border-s-border text-s-muted'}`}>
                       All brands
                     </button>
                     {concepts.map((c) => {
                       const on = brandIds.includes(c.id)
                       return (
-                        <button type="button" key={c.id}
+                        <button type="button" key={c.id} aria-pressed={on}
                           onClick={() => setBrandIds(on ? brandIds.filter((x) => x !== c.id) : [...brandIds, c.id])}
                           className={`rounded-full px-3 py-1 text-xs font-bold border ${on ? 'bg-primary text-primary-on border-primary' : 'border-s-border text-s-muted'}`}>
                           {c.name}
@@ -275,8 +277,13 @@ export default function CampaignsPage() {
                 {create.isPending ? 'Saving…' : 'Save as draft'}
               </button>
               <button type="button" disabled={create.isPending || !canSave}
-                onClick={() => {
-                  if (confirm(`Send "${form.name}" now to ${audience?.total.toLocaleString() ?? 'all'} customers?`)) { setError(null); create.mutate(true) }
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: `Send "${form.name}" now?`,
+                    body: `It goes to ${audience?.total.toLocaleString() ?? 'all'} customers straight away and cannot be recalled.`,
+                    confirmLabel: 'Send now',
+                  })
+                  if (ok) { setError(null); create.mutate(true) }
                 }}
                 className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
                 Save and send now
@@ -289,6 +296,9 @@ export default function CampaignsPage() {
           </form>
         )}
 
+        {sendError && (
+          <p role="alert" className="mb-4 rounded-lg bg-s-red/10 border border-s-red/30 px-3 py-2 text-sm text-s-red">{sendError}</p>
+        )}
         {isLoading ? (
           <p className="text-s-muted text-sm">Loading…</p>
         ) : campaigns.length === 0 ? (
@@ -329,7 +339,10 @@ export default function CampaignsPage() {
                       (or a never-sent scheduled one) offers the button. */}
                   {(c.status === 'draft' || c.status === 'scheduled') && c.segment?.slug !== 'legacy' && (
                     <button
-                      onClick={() => { if (confirm(`Send "${c.name}" now to all recipients?`)) send.mutate(c.id) }}
+                      onClick={async () => {
+                        const ok = await confirm({ title: `Send "${c.name}" now?`, body: 'It goes to all recipients straight away and cannot be recalled.', confirmLabel: 'Send now' })
+                        if (ok) { setSendError(null); send.mutate(c.id) }
+                      }}
                       disabled={send.isPending}
                       className="rounded-xl bg-primary text-primary-on text-xs font-bold px-3 py-1.5 hover:opacity-90 disabled:opacity-50 shrink-0">
                       {send.isPending ? 'Sending…' : 'Send now'}

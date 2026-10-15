@@ -57,6 +57,29 @@ interface LoyaltyStatus {
   progressPct: number
 }
 
+/** Sign-in link that brings the visitor back to exactly where they were. */
+function loginUrl(): string {
+  if (typeof window === 'undefined') return '/login'
+  const here = window.location.pathname + window.location.search
+  return `/login?next=${encodeURIComponent(here)}`
+}
+
+function WarnIcon() {
+  return (
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+  )
+}
+function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'inline-block', verticalAlign: '-2px', marginRight: 6 }}>
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+  )
+}
+
 export default function AccountPage() {
   const router = useRouter()
   const { token, clearAuth } = useCustomerAuth()
@@ -72,7 +95,10 @@ export default function AccountPage() {
   const [editingAddrId, setEditingAddrId] = useState<string | null>(null)
   const [addrError, setAddrError] = useState('')
   const [addrSaving, setAddrSaving] = useState(false)
-  const addrFormRef = useRef<HTMLDivElement | null>(null)
+  const addrFormRef = useRef<HTMLFormElement | null>(null)
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null)
+  const [rowError, setRowError] = useState<{ id: string; msg: string } | null>(null)
   const [loyalty, setLoyalty] = useState<LoyaltyStatus | null>(null)
 
   const fetchAddresses = useCallback(() => {
@@ -88,7 +114,7 @@ export default function AccountPage() {
     Promise.all([
       fetch(`${API_URL}/api/v1/storefront/account`, { headers: { Authorization: `Bearer ${token}` } })
         .then(async res => {
-          if (res.status === 401) { clearAuth(); router.replace('/login'); return null }
+          if (res.status === 401) { clearAuth(); router.replace(loginUrl()); return null }
           if (!res.ok) throw new Error('Failed to load account')
           return res.json() as Promise<CustomerProfile>
         }),
@@ -108,7 +134,7 @@ export default function AccountPage() {
   }, [token, router, clearAuth])
 
   useEffect(() => {
-    if (!token) { router.replace('/login'); return }
+    if (!token) { router.replace(loginUrl()); return }
     fetchAccount()
   }, [token, router, fetchAccount])
 
@@ -186,20 +212,37 @@ export default function AccountPage() {
 
   async function deleteAddress(id: string) {
     if (!token) return
-    await fetch(`${API_URL}/api/v1/storefront/addresses/${id}`, {
-      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
-    })
-    fetchAddresses()
+    setRowBusyId(id); setRowError(null)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storefront/addresses/${encodeURIComponent(id)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('remove')
+      setConfirmRemoveId(null)
+    } catch {
+      setRowError({ id, msg: "We couldn't remove that address. Please try again." })
+    } finally {
+      setRowBusyId(null)
+      fetchAddresses()
+    }
   }
 
   async function setDefault(id: string) {
     if (!token) return
-    await fetch(`${API_URL}/api/v1/storefront/addresses/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ isDefault: true }),
-    })
-    fetchAddresses()
+    setRowBusyId(id); setRowError(null)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storefront/addresses/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isDefault: true }),
+      })
+      if (!res.ok) throw new Error('default')
+    } catch {
+      setRowError({ id, msg: "We couldn't change your default address. Please try again." })
+    } finally {
+      setRowBusyId(null)
+      fetchAddresses()
+    }
   }
 
   if (loading) return (
@@ -211,8 +254,13 @@ export default function AccountPage() {
   if (error || !profile) return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4"
       style={{ background: 'transparent' }}>
-      <div className="text-5xl">⚠</div>
-      <p className="text-sm" style={{ color: 'var(--servd-danger)' }}>{error || 'Account not found'}</p>
+      <div style={{ color: 'var(--servd-danger)' }}><WarnIcon /></div>
+      <p role="alert" className="text-sm" style={{ color: 'var(--servd-danger)' }}>{error || 'Account not found'}</p>
+      <button type="button" onClick={() => { setError(''); setLoading(true); fetchAccount() }}
+        className="rounded-2xl font-black px-8 min-h-[44px] text-sm transition-all"
+        style={{ border: '1px solid var(--servd-line)', color: 'var(--servd-ink)' }}>
+        Try again
+      </button>
       <Link href="/#kitchens"
         className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
         style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 4px 20px rgba(61,31,59,0.3)' }}>
@@ -398,21 +446,22 @@ export default function AccountPage() {
           </div>
 
           {showAddAddr && (
-            <div ref={addrFormRef} className="rounded-2xl p-4 mb-3 space-y-3 scroll-mt-20"
+            <form ref={addrFormRef} onSubmit={(e) => { e.preventDefault(); void saveAddress() }}
+              className="rounded-2xl p-4 mb-3 space-y-3 scroll-mt-20"
               style={{ background: '#fff', border: '1px solid rgba(135,197,64,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
               <p className="text-xs font-black" style={{ color: 'var(--servd-ink)' }}>
                 {editingAddrId ? 'Edit address' : 'New address'}
               </p>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Label (e.g. Home, Work, Gym)</label>
-                <input value={addrForm.label} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
-                  placeholder="Home" className="mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none"
+                <label htmlFor="addr-label" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Label (e.g. Home, Work, Gym)</label>
+                <input id="addr-label" name="label" autoComplete="off" value={addrForm.label} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
+                  placeholder="Home" className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
                   style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
               </div>
               <div>
-                <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Full address</label>
-                <input value={addrForm.address} onChange={(e) => setAddrForm({ ...addrForm, address: e.target.value })}
-                  placeholder="House #5, Street 12, DHA Phase 2…" className="mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none"
+                <label htmlFor="addr-address" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Full address</label>
+                <input id="addr-address" name="address" autoComplete="street-address" value={addrForm.address} onChange={(e) => setAddrForm({ ...addrForm, address: e.target.value })}
+                  placeholder="House #5, Street 12, DHA Phase 2…" className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
                   style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
               </div>
               {/* The drop point — required, so this address works for delivery
@@ -434,18 +483,18 @@ export default function AccountPage() {
                 <span className="text-xs" style={{ color: 'rgba(15,26,15,0.55)' }}>Set as default delivery address</span>
               </label>
               <div className="flex gap-2">
-                <button onClick={() => void saveAddress()} disabled={addrSaving || !addrForm.label || !addrForm.address}
-                  className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
+                <button type="submit" disabled={addrSaving || !addrForm.label || !addrForm.address}
+                  className="flex-1 rounded-xl min-h-[44px] py-2.5 text-sm font-black transition-all disabled:opacity-50"
                   style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                   {addrSaving ? 'Saving…' : 'Save address'}
                 </button>
-                <button onClick={closeAddressForm}
-                  className="px-4 rounded-xl text-sm transition-all"
+                <button type="button" onClick={closeAddressForm}
+                  className="px-4 min-h-[44px] rounded-xl text-sm transition-all"
                   style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.08)' }}>
                   Cancel
                 </button>
               </div>
-            </div>
+            </form>
           )}
 
           {addresses.length === 0 && !showAddAddr ? (
@@ -479,32 +528,51 @@ export default function AccountPage() {
                       )}
                     </div>
                     <p className="text-xs line-clamp-1 mt-0.5" style={{ color: 'rgba(15,26,15,0.45)' }}>{addr.address}</p>
+                    {rowError?.id === addr.id && (
+                      <p role="alert" className="text-[11px] font-semibold mt-1" style={{ color: 'var(--servd-danger)' }}>{rowError.msg}</p>
+                    )}
                     {(addr.lat == null || addr.lng == null) && (
                       <p className="text-[10px] font-semibold mt-0.5" style={{ color: 'var(--servd-danger)' }}>
                         No map pin yet — edit to add one for delivery
                       </p>
                     )}
                   </div>
-                  <div className="flex flex-col gap-1 shrink-0">
-                    <button onClick={() => openEditAddress(addr)}
-                      className="text-[10px] font-bold transition-colors"
-                      style={{ color: 'var(--servd-ink)' }}>
-                      Edit
-                    </button>
-                    {!addr.isDefault && (
-                      <button onClick={() => void setDefault(addr.id)}
-                        className="text-[10px] font-bold transition-colors"
-                        style={{ color: 'var(--servd-green-dark)' }}>
-                        Set default
-                      </button>
+                  <div className="flex flex-col shrink-0 items-end">
+                    {confirmRemoveId === addr.id ? (
+                      <div className="flex items-center gap-1" role="group" aria-label={`Remove ${addr.label}?`}>
+                        <span className="text-[11px] font-bold" style={{ color: 'var(--servd-ink)' }}>Remove?</span>
+                        <button type="button" disabled={rowBusyId === addr.id} onClick={() => void deleteAddress(addr.id)}
+                          className="text-[11px] font-bold min-h-[44px] min-w-[44px] px-2 disabled:opacity-50"
+                          style={{ color: 'var(--servd-danger)' }}>
+                          {rowBusyId === addr.id ? 'Removing…' : 'Yes'}
+                        </button>
+                        <button type="button" disabled={rowBusyId === addr.id} onClick={() => { setConfirmRemoveId(null); setRowError(null) }}
+                          className="text-[11px] font-bold min-h-[44px] min-w-[44px] px-2"
+                          style={{ color: 'var(--servd-mute)' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => openEditAddress(addr)}
+                          className="text-[11px] font-bold transition-colors min-h-[44px] min-w-[44px] px-2"
+                          style={{ color: 'var(--servd-ink)' }}>
+                          Edit
+                        </button>
+                        {!addr.isDefault && (
+                          <button type="button" disabled={rowBusyId === addr.id} onClick={() => void setDefault(addr.id)}
+                            className="text-[11px] font-bold transition-colors min-h-[44px] px-2 disabled:opacity-50"
+                            style={{ color: 'var(--servd-green-dark)' }}>
+                            {rowBusyId === addr.id ? 'Saving…' : 'Set default'}
+                          </button>
+                        )}
+                        <button type="button" onClick={() => { setRowError(null); setConfirmRemoveId(addr.id) }}
+                          className="text-[11px] font-bold transition-colors min-h-[44px] min-w-[44px] px-2"
+                          style={{ color: 'var(--servd-danger)' }}>
+                          Remove
+                        </button>
+                      </>
                     )}
-                    <button onClick={() => void deleteAddress(addr.id)}
-                      className="text-[10px] font-bold transition-colors"
-                      style={{ color: 'rgba(220,38,38,0.6)' }}
-                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-danger)')}
-                      onMouseLeave={e => (e.currentTarget.style.color = 'rgba(220,38,38,0.6)')}>
-                      Remove
-                    </button>
                   </div>
                 </div>
               ))}
@@ -1151,7 +1219,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
   const [error, setError] = useState<string | null>(null)
 
   async function submit() {
-    if (!title.trim() || !description.trim()) return
+    if (submitting || !title.trim() || !description.trim()) return
     setSubmitting(true)
     setError(null)
     try {
@@ -1201,24 +1269,24 @@ function SupportSection({ orders }: { orders: Order[] }) {
           </div>
         </button>
       ) : (
-        <div className="rounded-2xl p-5 space-y-3"
+        <form className="rounded-2xl p-5 space-y-3" onSubmit={(e) => { e.preventDefault(); void submit() }}
           style={{ background: '#fff', border: '1px solid rgba(135,197,64,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between">
             <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Tell us what went wrong</p>
-            <button onClick={() => setOpen(false)} className="text-xs" style={{ color: 'var(--servd-mute)' }}>Close</button>
+            <button type="button" onClick={() => setOpen(false)} className="text-xs min-h-[44px] px-2" style={{ color: 'var(--servd-mute)' }}>Close</button>
           </div>
 
           {success && (
-            <div className="rounded-xl px-3 py-2 text-xs font-bold"
+            <div role="status" className="rounded-xl px-3 py-2 text-xs font-bold"
               style={{ background: 'rgba(135,197,64,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(135,197,64,0.25)' }}>
-              ✓ Got it — a manager will reach out within 24 hours.
+              <CheckIcon />Got it — a manager will reach out within 24 hours.
             </div>
           )}
 
           <div>
-            <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Related order (optional)</label>
-            <select value={orderId} onChange={(e) => setOrderId(e.target.value)}
-              className="mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none"
+            <label htmlFor="support-order" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Related order (optional)</label>
+            <select id="support-order" value={orderId} onChange={(e) => setOrderId(e.target.value)}
+              className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
               style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }}>
               <option value="">— No specific order —</option>
               {orders.map((o) => (
@@ -1230,8 +1298,8 @@ function SupportSection({ orders }: { orders: Order[] }) {
           </div>
 
           <div>
-            <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Category</label>
-            <div className="mt-1 grid grid-cols-3 gap-1.5">
+            <p id="support-category-label" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Category</p>
+            <div className="mt-1 grid grid-cols-3 gap-1.5" role="group" aria-labelledby="support-category-label">
               {([
                 { key: 'wrong_item',    label: 'Wrong item'    },
                 { key: 'missing_item',  label: 'Missing item'  },
@@ -1240,7 +1308,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
                 { key: 'delivery',      label: 'Delivery'      },
                 { key: 'other',         label: 'Other'         },
               ] as const).map((c) => (
-                <button key={c.key} onClick={() => setCategory(c.key)}
+                <button key={c.key} type="button" aria-pressed={category === c.key} onClick={() => setCategory(c.key)}
                   className="rounded-xl px-2 py-3 text-xs font-bold transition-all flex items-center justify-center text-center"
                   style={category === c.key
                     ? { background: 'rgba(135,197,64,0.1)', border: '1px solid rgba(135,197,64,0.35)', color: 'var(--servd-green-dark)' }
@@ -1252,33 +1320,33 @@ function SupportSection({ orders }: { orders: Order[] }) {
           </div>
 
           <div>
-            <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Title *</label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)}
+            <label htmlFor="support-title" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Title *</label>
+            <input id="support-title" name="title" autoComplete="off" value={title} onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Karahi was cold on arrival"
               maxLength={200}
-              className="mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none"
+              className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
               style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
           </div>
 
           <div>
-            <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>What happened? *</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+            <label htmlFor="support-desc" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>What happened? *</label>
+            <textarea id="support-desc" name="description" autoComplete="off" value={description} onChange={(e) => setDescription(e.target.value)}
               rows={4}
               placeholder="More detail helps us fix it for everyone…"
-              className="mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none resize-none"
+              className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm resize-none"
               style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
           </div>
 
           {error && (
-            <p className="text-xs" style={{ color: 'var(--servd-danger)' }}>{error}</p>
+            <p role="alert" className="text-xs" style={{ color: 'var(--servd-danger)' }}>{error}</p>
           )}
 
-          <button onClick={() => void submit()} disabled={submitting || !title.trim() || !description.trim()}
-            className="w-full rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
+          <button type="submit" disabled={submitting || !title.trim() || !description.trim()}
+            className="w-full rounded-xl min-h-[44px] py-2.5 text-sm font-black transition-all disabled:opacity-50"
             style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
             {submitting ? 'Sending…' : 'Send to manager'}
           </button>
-        </div>
+        </form>
       )}
     </div>
   )
@@ -1337,27 +1405,27 @@ function VerifyContactBanner({ token, profile, onVerified }: {
       {active === null ? (
         <div className="flex flex-wrap gap-2 mt-3">
           {pending.map((c) => (
-            <button key={c} disabled={busy} onClick={() => { void send(c) }}
-              className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
+            <button key={c} type="button" disabled={busy} onClick={() => { void send(c) }}
+              className="text-xs font-bold px-3 min-h-[44px] rounded-xl disabled:opacity-50"
               style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
               Verify {labelFor(c)}
             </button>
           ))}
         </div>
       ) : (
-        <div className="flex gap-2 mt-3">
+        <form className="flex gap-2 mt-3" onSubmit={(e) => { e.preventDefault(); if (!busy && code.length >= 6) void confirm() }}>
           <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
             inputMode="numeric" autoComplete="one-time-code" placeholder={`Code from ${active === 'phone' ? 'WhatsApp' : 'email'}`}
             aria-label="Verification code"
-            className="flex-1 min-w-0 px-3 py-2 rounded-xl text-sm" style={{ border: '1px solid rgba(0,0,0,0.15)' }} />
-          <button disabled={busy || code.length < 6} onClick={() => { void confirm() }}
-            className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
+            className="servd-field flex-1 min-w-0 px-3 py-2 rounded-xl text-base sm:text-sm" style={{ border: '1px solid rgba(0,0,0,0.15)' }} />
+          <button type="submit" disabled={busy || code.length < 6}
+            className="text-xs font-bold px-3 min-h-[44px] rounded-xl disabled:opacity-50"
             style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
             Verify
           </button>
-        </div>
+        </form>
       )}
-      {msg && <p className="text-xs mt-2" style={{ color: 'var(--servd-danger)' }}>{msg}</p>}
+      {msg && <p role="alert" className="text-xs mt-2" style={{ color: 'var(--servd-danger)' }}>{msg}</p>}
     </div>
   )
 }

@@ -19,6 +19,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
+import { PasswordInput } from '../../../components/ui/PasswordInput'
 
 interface Account {
   id: string
@@ -136,11 +137,11 @@ function PasswordSection({ first, onDone }: { first: boolean; onDone: () => void
         </div>
       ) : (
         <form onSubmit={submit} className="mt-3 space-y-2.5">
-          <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)}
+          <PasswordInput value={current} onChange={(e) => setCurrent(e.target.value)}
             placeholder="Current password" autoComplete="current-password" className={inputCls} />
-          <input type="password" value={next} onChange={(e) => setNext(e.target.value)}
+          <PasswordInput value={next} onChange={(e) => setNext(e.target.value)}
             placeholder="New password" autoComplete="new-password" className={inputCls} />
-          <input type="password" value={again} onChange={(e) => setAgain(e.target.value)}
+          <PasswordInput value={again} onChange={(e) => setAgain(e.target.value)}
             placeholder="Repeat new password" autoComplete="new-password" className={inputCls} />
           <p className="text-[11px] text-s-muted">At least {MIN_PASSWORD} characters, and not containing your email name.</p>
           {err && <p className="text-xs font-bold text-red-700">{err}</p>}
@@ -191,17 +192,17 @@ function PinSection({ hasPin }: { hasPin: boolean }) {
       </p>
       <form onSubmit={submit} className="mt-3 space-y-2.5">
         {hasPin ? (
-          <input type="password" inputMode="numeric" value={proof} maxLength={8}
+          <PasswordInput numeric value={proof} maxLength={8}
             onChange={(e) => setProof(e.target.value.replace(/\D/g, ''))}
             placeholder="Current PIN" autoComplete="off" className={inputCls} />
         ) : (
-          <input type="password" value={proof} onChange={(e) => setProof(e.target.value)}
+          <PasswordInput value={proof} onChange={(e) => setProof(e.target.value)}
             placeholder="Your password" autoComplete="current-password" className={inputCls} />
         )}
-        <input type="password" inputMode="numeric" value={pin} maxLength={8}
+        <PasswordInput numeric value={pin} maxLength={8}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
           placeholder="New PIN (4–8 digits)" autoComplete="off" className={inputCls} />
-        <input type="password" inputMode="numeric" value={pin2} maxLength={8}
+        <PasswordInput numeric value={pin2} maxLength={8}
           onChange={(e) => setPin2(e.target.value.replace(/\D/g, ''))}
           placeholder="Repeat new PIN" autoComplete="off" className={inputCls} />
         <p className="text-[11px] text-s-muted">Not guessable: no repeated digits (1111), runs (1234) or years.</p>

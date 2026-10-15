@@ -18,7 +18,7 @@ export default function SignupPage() {
           servd<span style={{ color: 'var(--servd-green)' }}>.</span>
         </Link>
 
-        <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>
+        <div className="w-full rounded-3xl px-7 py-8 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both', background: 'linear-gradient(rgb(255 255 255 / 0.10), rgb(255 255 255 / 0.10)), color-mix(in srgb, var(--servd-black) 80%, transparent)' }}>
           <SignupForm />
         </div>
 

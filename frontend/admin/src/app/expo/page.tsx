@@ -311,7 +311,7 @@ export default function ExpoPage() {
   }, {})
 
   return (
-    <div className="erp-kitchen-dark min-h-screen bg-kds-bg">
+    <div className="erp-kitchen-dark min-h-full bg-kds-bg">
       {/* Unrouted-items toast — fires when the order was confirmed but some
           items have no station, so the line will never see them. */}
       {unroutedToast.length > 0 && (
@@ -490,17 +490,20 @@ export default function ExpoPage() {
                         paid; a refund goes through the till. */}
                     {!order.paid && (
                       <button onClick={() => setRejecting(order.id)} disabled={reject.isPending}
-                        className="rounded-xl px-3 py-2.5 text-xs font-bold transition-colors disabled:opacity-40 bg-kds-red/10 text-kds-red border border-kds-red/25">
+                        className="min-h-11 rounded-xl px-4 text-xs font-bold transition-colors disabled:opacity-40 bg-kds-red/10 text-kds-red border border-kds-red/25">
                         Reject
                       </button>
                     )}
                     <button onClick={() => fire.mutate(order.id)} disabled={fire.isPending}
-                      className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-40 bg-kds-green text-kds-bg">
+                      className="flex-1 min-h-11 rounded-xl text-sm font-black transition-all disabled:opacity-40 bg-kds-green text-kds-bg">
                       {fire.isPending && fire.variables === order.id ? 'Firing…' : 'Fire'}
                     </button>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <form className="space-y-2" onSubmit={(e) => {
+                    e.preventDefault()
+                    if (rejectReason.trim() && !reject.isPending) reject.mutate({ orderId: order.id, reason: rejectReason })
+                  }}>
                     {/* Quick-reason chips — most rejects on the pass fall into
                         a handful of buckets. Tap a chip → the reason fills in,
                         edit before confirming if needed. Saves the expo from
@@ -511,7 +514,7 @@ export default function ExpoPage() {
                           key={preset}
                           type="button"
                           onClick={() => setRejectReason(preset)}
-                          className={`text-[11px] font-bold rounded-full px-2.5 py-1 transition-colors border ${rejectReason === preset
+                          className={`text-[11px] font-bold rounded-full px-2.5 min-h-9 transition-colors border ${rejectReason === preset
                             ? 'bg-kds-red/20 text-kds-red border-kds-red/50'
                             : 'bg-white/[0.04] text-white/60 border-white/10'}`}>
                           {preset}
@@ -519,20 +522,22 @@ export default function ExpoPage() {
                       ))}
                     </div>
                     <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
+                      autoFocus aria-label="Reject reason" autoComplete="off" enterKeyHint="send"
+                      onKeyDown={(e) => { if (e.key === 'Escape') { setRejecting(null); setRejectReason('') } }}
                       placeholder="…or type a custom reason"
                       className="w-full rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none bg-black/40 border border-kds-red/20 text-white/90" />
                     <div className="flex gap-2">
-                      <button onClick={() => { setRejecting(null); setRejectReason('') }}
-                        className="rounded-lg px-3 py-2 text-xs font-bold transition-colors bg-white/[0.04] text-white/60">
+                      <button type="button" onClick={() => { setRejecting(null); setRejectReason('') }}
+                        className="min-h-11 rounded-lg px-4 text-xs font-bold transition-colors bg-white/[0.04] text-white/60">
                         Cancel
                       </button>
-                      <button onClick={() => reject.mutate({ orderId: order.id, reason: rejectReason })}
+                      <button type="submit"
                         disabled={!rejectReason.trim() || reject.isPending}
-                        className="flex-1 rounded-lg py-2 text-xs font-black transition-colors disabled:opacity-40 bg-kds-red text-kds-text">
+                        className="flex-1 min-h-11 rounded-lg text-xs font-black transition-colors disabled:opacity-40 bg-kds-red text-kds-text">
                         Confirm reject
                       </button>
                     </div>
-                  </div>
+                  </form>
                 )}
               </article>
             )

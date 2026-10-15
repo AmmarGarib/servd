@@ -17,7 +17,7 @@ import { NETWORK_ERROR, customerErrorMessage, postAuthDest, type ApiErrorBody } 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 const inputCls =
-  'w-full rounded-2xl px-4 py-3.5 text-sm font-semibold text-white bg-white/10 border border-white/20 placeholder:text-white/35 focus:outline-none focus:border-white/60 focus:bg-white/[0.16] transition-all'
+  'servd-field w-full rounded-2xl px-4 py-3.5 text-base sm:text-sm font-semibold text-white bg-white/10 border border-white/20 placeholder:text-white/35 focus:outline-none focus:border-white/60 focus:bg-white/[0.16] transition-all'
 
 export function LoginForm({
   onSuccess, autoFocus = true, idPrefix = 'login',

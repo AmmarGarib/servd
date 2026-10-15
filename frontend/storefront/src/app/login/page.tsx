@@ -23,7 +23,7 @@ export default function LoginPage() {
           servd<span style={{ color: 'var(--servd-green)' }}>.</span>
         </Link>
 
-        <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>
+        <div className="w-full rounded-3xl px-7 py-8 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both', background: 'linear-gradient(rgb(255 255 255 / 0.10), rgb(255 255 255 / 0.10)), color-mix(in srgb, var(--servd-black) 80%, transparent)' }}>
           <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Sign in</h1>
           <p className="text-sm mb-6 text-white/60">Welcome back.</p>
 

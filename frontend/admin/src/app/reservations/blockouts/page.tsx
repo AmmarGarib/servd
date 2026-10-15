@@ -11,6 +11,8 @@ import { api } from '../../../lib/api'
 import { todayPktIso } from '../../../lib/money'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
+import { NumberField } from '@/components/ui/NumberField'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Concept { id: string; name: string }
 interface Blockout {
@@ -20,6 +22,7 @@ interface Blockout {
 
 export default function BlockoutsPage() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [showNew, setShowNew] = useState(false)
 
@@ -45,7 +48,7 @@ export default function BlockoutsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-s-bg">
+    <div className="min-h-full bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between flex-wrap gap-3">
         <div>
           <Link href="/reservations" className="text-xs text-s-muted hover:text-s-text">← Reservations</Link>
@@ -86,8 +89,10 @@ export default function BlockoutsPage() {
                   </td>
                   <td className="px-4 py-2 text-xs text-s-text">{b.reason ?? '—'}</td>
                   <td className="px-4 py-2 text-right">
-                    <button onClick={() => { if (confirm('Delete this blockout?')) remove.mutate(b.id) }}
-                      className="text-xs text-s-red hover:underline">Delete</button>
+                    <button onClick={async () => {
+                      const ok = await confirm({ title: 'Delete this blockout?', body: 'Bookings will open up again for this period.', confirmLabel: 'Delete', danger: true })
+                      if (ok) remove.mutate(b.id)
+                    }} className="min-h-11 px-3 text-xs text-s-red hover:underline">Delete</button>
                   </td>
                 </tr>
               ))}
@@ -114,7 +119,7 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
   const [kind, setKind] = useState<'closure' | 'private_event' | 'reduced_capacity' | 'custom'>('closure')
   const [startTime, setStartTime] = useState(`${todayPktIso()}T18:00`)
   const [endTime, setEndTime] = useState(`${todayPktIso()}T23:00`)
-  const [capacityCap, setCapacityCap] = useState<number | ''>('')
+  const [capacityCap, setCapacityCap] = useState<number | null>(null)
   const [reason, setReason] = useState('')
   const [err, setErr] = useState<string | null>(null)
 
@@ -123,7 +128,7 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
       conceptId, kind,
       startTime: new Date(`${startTime}:00+05:00`).toISOString(),
       endTime:   new Date(`${endTime}:00+05:00`).toISOString(),
-      capacityCap: capacityCap === '' ? null : Number(capacityCap),
+      capacityCap: kind === 'reduced_capacity' ? capacityCap : null,
       reason: reason.trim() || null,
     }),
     onSuccess: onCreated,
@@ -160,7 +165,7 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
           {kind === 'reduced_capacity' && (
             <label className="block">
               <span className="text-xs text-s-muted">Tables available</span>
-              <input type="number" min={1} value={capacityCap} onChange={(e) => setCapacityCap(e.target.value === '' ? '' : Number(e.target.value))} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              <NumberField min={1} value={capacityCap} onValueChange={setCapacityCap} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
           )}
           <label className="block">

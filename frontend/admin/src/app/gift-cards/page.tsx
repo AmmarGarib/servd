@@ -29,6 +29,7 @@ import {
   PAYMENT_REFERENCE_ERROR_TEXT, type PaymentRefUse,
 } from '../../components/finance/PaymentReceivedFields'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '@/components/ui/Modal'
 
 type Status = 'active' | 'redeemed_full' | 'expired' | 'voided'
 /** How a void refund pays the balance back (money out — its own list, no bank deposit). */
@@ -628,16 +629,18 @@ function VoidModal({ target, canForfeitSold, onClose, onDone }: { target: VoidTa
       ]
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="void-title" className="fixed inset-0 z-50 bg-secondary/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-s-surface rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-s-border flex justify-between gap-3">
-          <div>
-            <h2 id="void-title" className="text-lg font-bold">{target.settling ? 'Settle voided card' : 'Void gift card'}</h2>
-            <p className="text-xs text-s-muted font-mono">{target.code} · {fmtPkr(target.balanceCents)} on the card</p>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="text-2xl leading-none text-s-muted">×</button>
+    <Modal title={target.settling ? 'Settle voided card' : 'Void gift card'} onClose={onClose} dirty={reason.trim().length > 0}
+      footer={
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
+          <button type="submit" form="void-form" disabled={submit.isPending || reason.trim().length < 3} className="s-btn-danger text-sm">
+            {submit.isPending ? 'Working…' : target.settling ? 'Settle' : 'Void card'}
+          </button>
         </div>
-        <div className="p-5 space-y-3 text-sm">
+      }>
+        <form id="void-form" className="space-y-3 text-sm"
+          onSubmit={(e) => { e.preventDefault(); if (reason.trim().length >= 3 && !submit.isPending) submit.mutate() }}>
+          <p className="text-xs text-s-muted font-mono">{target.code} · {fmtPkr(target.balanceCents)} on the card</p>
           {!promo && !canForfeitSold && (
             <p className="text-xs text-s-muted">Keeping the money on a sold card (breakage) is the CEO&apos;s call.</p>
           )}
@@ -670,16 +673,9 @@ function VoidModal({ target, canForfeitSold, onClose, onDone }: { target: VoidTa
             <span className="block text-xs text-s-muted mb-1">Reason</span>
             <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="s-input" placeholder="e.g. customer asked for the balance back" />
           </label>
-          {submit.isError && <p className="text-xs text-s-red">{errText(submit.error)}</p>}
-        </div>
-        <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2">
-          <button onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
-          <button onClick={() => submit.mutate()} disabled={submit.isPending || reason.trim().length < 3} className="s-btn-danger text-sm">
-            {submit.isPending ? 'Working…' : target.settling ? 'Settle' : 'Void card'}
-          </button>
-        </div>
-      </div>
-    </div>
+          {submit.isError && <p role="alert" className="text-xs text-s-red">{errText(submit.error)}</p>}
+        </form>
+    </Modal>
   )
 }
 
@@ -724,20 +720,23 @@ function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: 
   })
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="issue-title" className="fixed inset-0 z-50 bg-secondary/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-s-surface rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-s-border flex justify-between gap-3">
-          <div>
-            <h2 id="issue-title" className="text-lg font-bold">Issue gift card</h2>
-            {company && <p className="text-xs text-s-muted">For {company.name}</p>}
-          </div>
-          <button onClick={onClose} aria-label="Close" className="text-2xl leading-none text-s-muted">×</button>
+    <Modal title="Issue gift card" onClose={onClose}
+      dirty={!!(recipient || recEmail || buyerEmail || message || reason || paymentRef)}
+      footer={
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
+          <button type="submit" form="issue-form" disabled={create.isPending || !amountOk || !paymentOk || (promo && reason.trim().length < 3)} className="s-btn-primary text-sm">
+            {create.isPending ? 'Issuing…' : `Issue · ${amountOk ? fmtPkr(amountCents) : 'PKR —'}`}
+          </button>
         </div>
-        <div className="p-5 space-y-3 text-sm">
+      }>
+        <form id="issue-form" className="space-y-3 text-sm" autoComplete="off"
+          onSubmit={(e) => { e.preventDefault(); if (amountOk && paymentOk && !(promo && reason.trim().length < 3) && !create.isPending) create.mutate() }}>
+          {company && <p className="text-xs text-s-muted">For {company.name}</p>}
           {canGivePromo && (
             <div className="flex gap-2" role="radiogroup" aria-label="Card type">
               {(['sold', 'promotional'] as const).map((k) => (
-                <button key={k} role="radio" aria-checked={kind === k} onClick={() => setKind(k)}
+                <button key={k} type="button" role="radio" aria-checked={kind === k} onClick={() => setKind(k)}
                   className={kind === k ? 's-btn-primary text-xs' : 's-btn-secondary text-xs'}>
                   {k === 'sold' ? 'Sold' : 'Promotional (free)'}
                 </button>
@@ -750,16 +749,16 @@ function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: 
           </label>
           <label className="block">
             <span className="block text-xs text-s-muted mb-1">Recipient name</span>
-            <input value={recipient} onChange={(e) => setRecipient(e.target.value)} className="s-input" />
+            <input value={recipient} onChange={(e) => setRecipient(e.target.value)} name="recipient-name" autoComplete="off" className="s-input" />
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label className="block">
               <span className="block text-xs text-s-muted mb-1">Recipient email</span>
-              <input type="email" value={recEmail} onChange={(e) => setRecEmail(e.target.value)} className="s-input" />
+              <input type="email" value={recEmail} onChange={(e) => setRecEmail(e.target.value)} name="recipient-email" inputMode="email" autoComplete="off" autoCapitalize="none" spellCheck={false} className="s-input" />
             </label>
             <label className="block">
               <span className="block text-xs text-s-muted mb-1">Buyer email</span>
-              <input type="email" value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} className="s-input" />
+              <input type="email" value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} name="buyer-email" inputMode="email" autoComplete="off" autoCapitalize="none" spellCheck={false} className="s-input" />
             </label>
           </div>
           <label className="block">
@@ -788,15 +787,8 @@ function NewGiftCardModal({ canGivePromo, onClose, onCreated }: { canGivePromo: 
                 : null}
             />
           )}
-          {create.isError && <p className="text-xs text-s-red">{errText(create.error)}</p>}
-        </div>
-        <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2">
-          <button onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={create.isPending || !amountOk || !paymentOk || (promo && reason.trim().length < 3)} className="s-btn-primary text-sm">
-            {create.isPending ? 'Issuing…' : `Issue · ${amountOk ? fmtPkr(amountCents) : 'PKR —'}`}
-          </button>
-        </div>
-      </div>
-    </div>
+          {create.isError && <p role="alert" className="text-xs text-s-red">{errText(create.error)}</p>}
+        </form>
+    </Modal>
   )
 }

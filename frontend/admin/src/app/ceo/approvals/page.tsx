@@ -27,6 +27,7 @@ import {
   type ApprovalAction as Action, type ApprovalHandedOverTo, type ApprovalSectionId, type ApprovalSectionSummary, type ApprovalTypeSummary,
 } from '../approvalsData'
 import { useAuthStore } from '../../../store/auth'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 interface Item {
   type: string
@@ -77,6 +78,7 @@ function ApprovalsInbox() {
   const params = useSearchParams()
   const [filter, setFilter] = useState<string>(params?.get('type') ?? 'all')
   const [openHr, setOpenHr] = useState<Item | null>(null)
+  const [doneMsg, setDoneMsg] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const { data, isLoading, error } = useQuery({
@@ -137,9 +139,9 @@ function ApprovalsInbox() {
       )}
 
       {showTabs && (
-        <div className="mt-5 flex flex-wrap gap-2" role="tablist">
+        <div className="mt-5 flex gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Section">
           <Chip on={section === 'all'} onClick={() => { setSection('all'); setFilter('all') }} label="All" count={data?.total ?? 0} />
-          {sections.map((sc) => (
+          {sections.filter((sc) => sc.count > 0 || section === sc.id).map((sc) => (
             <Chip key={sc.id} on={section === sc.id} onClick={() => { setSection(sc.id); setFilter('all') }}
               label={sc.id === 'ceo' ? 'CEO only' : sc.title} count={sc.count} />
           ))}
@@ -147,10 +149,10 @@ function ApprovalsInbox() {
       )}
 
       {/* Counts per type */}
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Type">
         <Chip on={filter === 'all'} onClick={() => setFilter('all')} label={showTabs ? 'Every type' : 'All'}
           count={section === 'all' ? (data?.total ?? 0) : (sections.find((x) => x.id === section)?.count ?? 0)} />
-        {types.map((t) => (
+        {types.filter((t) => t.count > 0 || t.error || filter === t.type).map((t) => (
           <Chip key={t.type} on={filter === t.type} onClick={() => setFilter(t.type)} label={t.label} count={t.count} error={t.error} />
         ))}
       </div>
@@ -175,6 +177,13 @@ function ApprovalsInbox() {
       })()}
 
       <div className="mt-5 space-y-3">
+        <div role="status" aria-live="polite">
+          {doneMsg && (
+            <p className="rounded-xl px-3 py-2 text-sm font-bold break-words" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.15)', color: 'var(--erp-success)' }}>
+              {doneMsg}
+            </p>
+          )}
+        </div>
         {isLoading && <p className="text-sm text-white/40">Loading…</p>}
         {error && <p className="text-sm" style={{ color: 'var(--erp-danger)' }}>Could not load approvals: {(error as Error).message}</p>}
         {!isLoading && !error && (data?.types.length ?? 0) === 0 && (
@@ -202,7 +211,7 @@ function ApprovalsInbox() {
             )}
             {rows.map((i) => (
               <ItemCard key={`${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={i.viaHeadOfficeName ?? hoName(i.viaHeadOfficeId)}
-                showCompany={showCompany} onDone={refresh} onOpenHr={() => setOpenHr(i)} />
+                showCompany={showCompany} onDone={refresh} onDecided={setDoneMsg} onOpenHr={() => setOpenHr(i)} />
             ))}
           </section>
         ))}
@@ -221,7 +230,7 @@ function ApprovalsInbox() {
                 <p className="text-xs text-white/50 px-1">You can still decide these yourself; the first decision wins.</p>
                 {handedItems.map((i) => (
                   <ItemCard key={`h:${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={i.viaHeadOfficeName ?? hoName(i.viaHeadOfficeId)}
-                    showCompany={showCompany} onDone={refresh} onOpenHr={() => setOpenHr(i)} />
+                    showCompany={showCompany} onDone={refresh} onDecided={setDoneMsg} onOpenHr={() => setOpenHr(i)} />
                 ))}
               </div>
             )}
@@ -245,8 +254,8 @@ function handedLabel(rows: Item[]): string {
 
 function Chip({ on, onClick, label, count, error }: { on: boolean; onClick: () => void; label: string; count: number; error?: boolean }) {
   return (
-    <button onClick={onClick}
-      className="rounded-full px-3 py-1.5 text-xs font-bold flex items-center gap-1.5 transition-colors"
+    <button onClick={onClick} aria-pressed={on}
+      className="rounded-full px-3 py-2 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
       style={on
         ? { background: 'var(--erp-accent-dim)', border: '1px solid var(--erp-accent)', color: 'var(--text)' }
         : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
@@ -261,9 +270,15 @@ function Chip({ on, onClick, label, count, error }: { on: boolean; onClick: () =
   )
 }
 
-function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onOpenHr }: {
-  item: Item; typeLabel: string; viaName: string | null; showCompany: boolean; onDone: () => void; onOpenHr: () => void
+function doneVerb(a: Action): string {
+  return a.kind === 'approve' ? 'Approved' : a.kind === 'return' ? 'Returned' : 'Rejected'
+}
+
+function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onDecided, onOpenHr }: {
+  item: Item; typeLabel: string; viaName: string | null; showCompany: boolean; onDone: () => void
+  onDecided: (msg: string) => void; onOpenHr: () => void
 }) {
+  const confirm = useConfirm()
   const [pending, setPending] = useState<Action | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -275,14 +290,21 @@ function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onOpenHr }: {
       const extra = item.tenantId ? { tenantId: item.tenantId } : undefined
       return a.method === 'PATCH' ? api.patch(a.path, a.body, extra) : api.post(a.path, a.body, extra)
     },
-    onSuccess: () => { setErr(null); onDone() },
+    onSuccess: (_r, a) => { setErr(null); onDecided(`${doneVerb(a)}: ${item.title}`); onDone() },
     onError: (e: Error) => setErr(e.message),
   })
 
   function click(a: Action) {
     setErr(null)
+    // Buttons that need text or tick-boxes open the dialog, which already
+    // shows the confirm text inline. A one-click button with a confirm text has
+    // no inline copy, so it asks once, in the shared dialog.
     if (a.input || (a.options?.length ?? 0) > 0) { setPending(pending?.label === a.label ? null : a); return }
-    if (a.confirm && !window.confirm(a.confirm)) return
+    if (a.confirm) {
+      void confirm({ title: a.label, body: a.confirm, confirmLabel: a.label, danger: a.kind !== 'approve' })
+        .then((r) => { if (r) run.mutate(a) })
+      return
+    }
     run.mutate(a)
   }
 
@@ -326,7 +348,9 @@ function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onOpenHr }: {
               : a.kind === 'return'
                 ? { background: 'transparent', border: '1px solid var(--border-strong)', color: 'rgb(var(--fg-rgb) / 0.8)' }
                 : { background: 'transparent', border: '1px solid var(--erp-danger)', color: 'var(--erp-danger)' }}>
-            {a.label}
+            {run.isPending && run.variables?.label === a.label
+              ? (a.kind === 'approve' ? 'Approving…' : a.kind === 'return' ? 'Returning…' : 'Rejecting…')
+              : a.label}
           </button>
         ))}
         {item.record && (
@@ -345,7 +369,7 @@ function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onOpenHr }: {
       {pending && (
         <ApprovalActionDialog action={pending} tenantId={item.tenantId}
           warnings={item.facts.find((f) => f.label === 'Warnings')?.value ?? null}
-          onClose={() => setPending(null)} onDone={() => { setPending(null); onDone() }} />
+          onClose={() => setPending(null)} onDone={() => { onDecided(`${doneVerb(pending)}: ${item.title}`); setPending(null); onDone() }} />
       )}
       {err && <p className="mt-2 text-xs" style={{ color: 'var(--erp-danger)' }}>{err}</p>}
     </div>

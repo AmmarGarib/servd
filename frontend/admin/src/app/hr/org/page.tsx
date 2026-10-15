@@ -11,14 +11,16 @@ import { api } from '../../../lib/api'
 import { card, inp, btn, human, type OrgData } from '../../../lib/hr'
 import { HrShell, useHrOrg } from '../../../components/hr/HrShell'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 type Unit = OrgData['units'][number]
 
 export default function HrOrgPage() {
-  const { data: org, error } = useHrOrg()
+  const { data: org, error, isLoading } = useHrOrg()
   return (
     <HrShell title="Organization setup" subtitle="The lists every HR form picks from. Deactivating an entry hides it from new forms; past records keep it.">
-      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}</p>}
+      {isLoading && <p className="text-sm text-white/40" role="status">Loading…</p>}
       {org && (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           <DepartmentsPanel departments={org.departments} archived={org.archivedDepartments ?? []} />
@@ -72,7 +74,7 @@ function DepartmentsPanel({ departments, archived }: { departments: OrgData['dep
             {archived.map((d) => (
               <li key={d.id} className="flex items-center gap-2 text-sm">
                 <span className="flex-1 text-white/35 line-through">{d.name}</span>
-                <button className="text-[11px] text-white/40 hover:text-white" onClick={() => patch.mutate({ id: d.id, body: { archived: false } })}>Bring back</button>
+                <button className={SMALL_BTN} onClick={() => patch.mutate({ id: d.id, body: { archived: false } })}>Bring back</button>
               </li>
             ))}
           </ul>
@@ -82,23 +84,34 @@ function DepartmentsPanel({ departments, archived }: { departments: OrgData['dep
   )
 }
 
+const SMALL_BTN = 'text-[11px] text-white/50 hover:text-white px-1.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-3'
+
 function DepartmentRow({ d, onRename, onHeadOffice, onArchive, setupApplied = false }: { d: OrgData['departments'][number]; onRename: (name: string) => void; onHeadOffice: () => void; onArchive: () => void; setupApplied?: boolean }) {
+  const confirm = useConfirm()
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(d.name)
+  const archive = async () => {
+    const ok = await confirm({ title: `Archive "${d.name}"?`, body: 'It is hidden from new forms and positions; past records keep it. You can bring it back.', confirmLabel: 'Archive', danger: true })
+    if (ok) onArchive()
+  }
   return (
     <li className="flex items-center gap-2 text-sm">
       {editing ? (
         <>
-          <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus
-            onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) } }} />
-          <button className="text-xs text-primary-ink font-bold" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
+          <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus aria-label="Name"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setName(d.name); setEditing(false) }
+            }} />
+          <button className="text-xs text-primary-ink font-bold px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
+          <button className={SMALL_BTN} onClick={() => { setName(d.name); setEditing(false) }}>Cancel</button>
         </>
       ) : (
         <>
           <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && !setupApplied && <span className="text-[10px] font-bold text-amber-700 ml-2">HEAD OFFICE</span>}</span>
-          <button className="text-[11px] text-white/40 hover:text-white" onClick={() => { setName(d.name); setEditing(true) }}>Rename</button>
-          {!setupApplied && <button className="text-[11px] text-white/40 hover:text-white" onClick={onHeadOffice}>{d.isHeadOffice ? 'Not head office' : 'Head office'}</button>}
-          <button className="text-[11px] text-white/40 hover:text-white" onClick={onArchive}>Archive</button>
+          <button className={SMALL_BTN} onClick={() => { setName(d.name); setEditing(true) }}>Rename</button>
+          {!setupApplied && <button className={SMALL_BTN} onClick={onHeadOffice}>{d.isHeadOffice ? 'Not head office' : 'Head office'}</button>}
+          <button className={SMALL_BTN} onClick={() => void archive()}>Archive</button>
         </>
       )}
     </li>
@@ -144,21 +157,33 @@ function UnitsPanel({ kind, units }: { kind: string; units: Unit[] }) {
 }
 
 function UnitRow({ u, onRename, onToggle }: { u: Unit; onRename: (name: string) => void; onToggle: () => void }) {
+  const confirm = useConfirm()
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(u.name)
+  const toggle = async () => {
+    if (u.isActive) {
+      const ok = await confirm({ title: `Deactivate "${u.name}"?`, body: 'It is hidden from new forms; past records keep it. You can reactivate it.', confirmLabel: 'Deactivate', danger: true })
+      if (!ok) return
+    }
+    onToggle()
+  }
   return (
     <li className="flex items-center gap-2 text-sm">
       {editing ? (
         <>
-          <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus
-            onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) } }} />
-          <button className="text-xs text-primary-ink font-bold" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
+          <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus aria-label="Name"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setName(u.name); setEditing(false) }
+            }} />
+          <button className="text-xs text-primary-ink font-bold px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
+          <button className={SMALL_BTN} onClick={() => { setName(u.name); setEditing(false) }}>Cancel</button>
         </>
       ) : (
         <>
           <span className={`flex-1 ${u.isActive ? 'text-white/80' : 'text-white/30 line-through'}`}>{u.name}{u.code && <span className="text-white/35"> · {u.code}</span>}</span>
-          <button className="text-[11px] text-white/40 hover:text-white" onClick={() => { setName(u.name); setEditing(true) }}>Rename</button>
-          <button className="text-[11px] text-white/40 hover:text-white" onClick={onToggle}>{u.isActive ? 'Deactivate' : 'Reactivate'}</button>
+          <button className={SMALL_BTN} onClick={() => { setName(u.name); setEditing(true) }}>Rename</button>
+          <button className={SMALL_BTN} onClick={() => void toggle()}>{u.isActive ? 'Deactivate' : 'Reactivate'}</button>
         </>
       )}
     </li>

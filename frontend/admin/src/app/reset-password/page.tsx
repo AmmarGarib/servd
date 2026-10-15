@@ -12,6 +12,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { PasswordInput } from '../../components/ui/PasswordInput'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -68,7 +69,6 @@ function ResetPasswordInner() {
     }
   }
 
-  const field = 'w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none'
   const fieldStyle = { background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }
   const cta = 'w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40'
   const ctaStyle = { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
@@ -114,15 +114,15 @@ function ResetPasswordInner() {
 
           {state === 'ready' && (
             <form onSubmit={submit} className="mt-6">
-              <input
-                type="password" value={pw1} onChange={(e) => setPw1(e.target.value)}
-                placeholder="New password" autoComplete="new-password" autoFocus
-                className={field} style={fieldStyle}
+              <PasswordInput
+                value={pw1} onChange={(e) => setPw1(e.target.value)}
+                placeholder="New password" aria-label="New password" autoComplete="new-password" autoFocus
+                wrapperClassName="mb-3" className="w-full rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
               />
-              <input
-                type="password" value={pw2} onChange={(e) => setPw2(e.target.value)}
-                placeholder="Repeat new password" autoComplete="new-password"
-                className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
+              <PasswordInput
+                value={pw2} onChange={(e) => setPw2(e.target.value)}
+                placeholder="Repeat new password" aria-label="Repeat new password" autoComplete="new-password"
+                wrapperClassName="mb-4" className="w-full rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
               />
               <p className="text-[10px] text-s-dim mb-3 text-center">At least {MIN_LENGTH} characters.</p>
               {error && <p className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}

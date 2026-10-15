@@ -22,6 +22,10 @@ import {
   TREATMENT_OPTIONS, TREATMENT_LABEL, WHT_SECTION_LABEL, AUTHORITY_LABEL,
 } from '../../../components/fixedAssets/CapexForms'
 import { Select } from '@/components/ui/Select'
+import { Modal as SharedModal } from '../../../components/ui/Modal'
+import { NumberField } from '../../../components/ui/NumberField'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { Field, dateBounds, firstMissing, focusField, useSubmitOnce } from '../cash-vouchers/ui'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 // The shapes of GET /finance/capex live in components/fixedAssets/capexTypes.ts.
@@ -626,95 +630,106 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
     onSuccess: () => onSaved(),
   })
 
+  const confirm = useConfirm()
+  const bounds = dateBounds()
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'ol-category': categoryId ? '' : 'Pick a category.',
+    'ol-name': name.trim() ? '' : 'Give the line a name.',
+    'ol-amount': amountCents > 0 ? '' : 'Enter an amount above zero.',
+    'ol-due': nextDueDate && (nextDueDate < bounds.min || nextDueDate > bounds.max) ? `Pick a date between ${bounds.min} and ${bounds.max}.` : '',
+  }
+  const submit = useSubmitOnce(save.isPending || del.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    save.mutate()
+    return true
+  })
+  const dirty = !save.isPending && (name !== (line?.name ?? '') || vendor !== (line?.vendor ?? '') || amountCents !== (line?.amountCents ?? 0))
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden"
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-          <h2 className="font-black text-white/90">{isEdit ? 'Edit OpEx line' : 'Add OpEx line'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-        </div>
-        <div className="p-5 space-y-3">
+    <ModalShell title={isEdit ? 'Edit OpEx line' : 'Add OpEx line'} onClose={onClose} dirty={dirty}>
+      <form id="ol-form" onSubmit={submit} className="space-y-3" noValidate>
           <div>
-            <label className="text-xs text-white/55">Category *</label>
-            <div className="flex gap-2 mt-1">
-              <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={fieldCls + ' flex-1'}>
-                <option value="">— pick —</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
-              </Select>
-              <button type="button" onClick={() => setCreatingCategory(!creatingCategory)}
-                className="rounded-lg border border-white/10 px-3 text-xs text-white/55 hover:text-white">+ New</button>
-            </div>
-            {creatingCategory && (
-              <div className="rounded-lg p-3 mt-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                <div className="grid grid-cols-[60px_1fr] gap-2">
-                  <input value={newCategoryEmoji} onChange={(e) => setNewCategoryEmoji(e.target.value)} placeholder="🏢" className={fieldCls + ' text-center text-xl'} />
-                  <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && newCategoryName.trim()) createCat.mutate() }}
-                    placeholder="Category name (e.g. Rent, Utilities)" className={fieldCls} autoFocus />
-                </div>
-                {createCat.error && (
-                  <p className="text-xs text-s-red mt-2">Could not create: {(createCat.error as Error).message}</p>
-                )}
-                <div className="flex justify-between gap-2 mt-2">
-                  <button onClick={() => { setCreatingCategory(false); setNewCategoryName(''); setNewCategoryEmoji('') }}
-                    className="text-xs text-white/55 hover:text-white">Cancel</button>
-                  <button onClick={() => createCat.mutate()} disabled={!newCategoryName.trim() || createCat.isPending}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
-                    {createCat.isPending ? 'Creating…' : '+ Create category'}
-                  </button>
-                </div>
+          <label htmlFor="ol-category" className="text-xs text-white/55">Category *</label>
+          <div className="flex gap-2 mt-1">
+            <Select id="ol-category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={fieldCls + ' flex-1'}>
+              <option value="">— pick —</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
+            </Select>
+            <button type="button" onClick={() => setCreatingCategory(!creatingCategory)}
+              className="rounded-lg border border-white/10 px-3 text-xs text-white/55 hover:text-white">+ New</button>
+          </div>
+          {tried && errs['ol-category'] && <p role="alert" className="text-[11px] mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-category']}</p>}
+          {creatingCategory && (
+            <div className="rounded-lg p-3 mt-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+              <div className="grid grid-cols-[60px_1fr] gap-2">
+                <input value={newCategoryEmoji} onChange={(e) => setNewCategoryEmoji(e.target.value)} placeholder="🏢" aria-label="Emoji" className={fieldCls + ' text-center text-xl'} />
+                <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (newCategoryName.trim()) createCat.mutate() } }}
+                  aria-label="New category name" placeholder="Category name (e.g. Rent, Utilities)" className={fieldCls} autoFocus />
               </div>
-            )}
-          </div>
-          <div>
-            <label className="text-xs text-white/55">Line name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="42C kitchen rent — Phase 1" className={fieldCls + ' mt-1'} />
-          </div>
-          <div>
-            <label className="text-xs text-white/55">Vendor</label>
-            <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Landlord" className={fieldCls + ' mt-1'} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-white/55">Amount (PKR) *</label>
-              <MoneyInput value={amountCents} onChange={setAmount} className={fieldCls + ' mt-1'} />
+              {createCat.error && (
+                <p className="text-xs text-s-red mt-2">Could not create: {(createCat.error as Error).message}</p>
+              )}
+              <div className="flex justify-between gap-2 mt-2">
+                <button type="button" onClick={() => { setCreatingCategory(false); setNewCategoryName(''); setNewCategoryEmoji('') }}
+                  className="text-xs text-white/55 hover:text-white">Cancel</button>
+                <button type="button" onClick={() => createCat.mutate()} disabled={!newCategoryName.trim() || createCat.isPending}
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+                  {createCat.isPending ? 'Creating…' : '+ Create category'}
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-white/55">Cadence</label>
-              <Select value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)} className={fieldCls + ' mt-1'}>
-                <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
-                <option value="annual">Annual</option>
-                <option value="per_use">Per use</option>
-              </Select>
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-white/55">Next due</label>
-            <input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls + ' mt-1'} />
-          </div>
-          {save.error && <ErrorBanner error={save.error} />}
+          )}
         </div>
-        <div className="flex items-center justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-          <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-          <div className="flex items-center gap-3 ml-auto">
-            {isEdit && (
-              <button onClick={() => { if (confirm(`Delete "${name}"?`)) del.mutate() }}
-                disabled={del.isPending}
-                className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red disabled:opacity-50">
-                {del.isPending ? 'Deleting…' : 'Delete'}
-              </button>
-            )}
-            <button onClick={() => save.mutate()} disabled={save.isPending || !categoryId || !name.trim() || amountCents <= 0}
-              className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
-              {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Add line'}
-            </button>
+        <div>
+          <label htmlFor="ol-name" className="text-xs text-white/55">Line name *</label>
+          <input id="ol-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="42C kitchen rent — Phase 1" className={fieldCls + ' mt-1'} />
+          {tried && errs['ol-name'] && <p role="alert" className="text-[11px] mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-name']}</p>}
+        </div>
+        <div>
+          <label htmlFor="ol-vendor" className="text-xs text-white/55">Vendor</label>
+          <input id="ol-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Landlord" className={fieldCls + ' mt-1'} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="ol-amount" className="text-xs text-white/55">Amount (PKR) *</label>
+            <MoneyInput id="ol-amount" value={amountCents} onChange={setAmount} className={fieldCls + ' mt-1'} />
+            {tried && errs['ol-amount'] && <p role="alert" className="text-[11px] mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-amount']}</p>}
+          </div>
+          <div>
+            <label htmlFor="ol-cadence" className="text-xs text-white/55">Cadence</label>
+            <Select id="ol-cadence" value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)} className={fieldCls + ' mt-1'}>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="annual">Annual</option>
+              <option value="per_use">Per use</option>
+            </Select>
           </div>
         </div>
-      </div>
-    </div>
+        <div>
+          <label htmlFor="ol-due" className="text-xs text-white/55">Next due</label>
+          <input id="ol-due" type="date" min={bounds.min} max={bounds.max} value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls + ' mt-1'} />
+        </div>
+      </form>
+      {save.error && <ErrorBanner error={save.error} />}
+      {del.error && <ErrorBanner error={del.error} />}
+      <ModalFooter onCancel={onClose}>
+        {isEdit && (
+          <button type="button" onClick={async () => { if (await confirm({ title: `Delete ${name || 'this line'}?`, body: 'The OpEx line is removed from this project.', confirmLabel: 'Delete', danger: true })) del.mutate() }}
+            disabled={del.isPending}
+            className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto disabled:opacity-50">
+            {del.isPending ? 'Deleting…' : 'Delete'}
+          </button>
+        )}
+        <button type="submit" form="ol-form" disabled={save.isPending}
+          className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
+          {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Add line'}
+        </button>
+      </ModalFooter>
+    </ModalShell>
   )
 }
 
@@ -727,6 +742,7 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
   onClose: () => void
   onSaved: () => void
 }) {
+  const confirm = useConfirm()
   const [scopes, setScopes] = useState<ScopeDef[]>(currentScopes.map((s) => ({ ...s })))
   const usedKeys = new Set(project.lines.map((l) => l.scope))
 
@@ -757,11 +773,12 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
   function patch(i: number, p: Partial<ScopeDef>) {
     setScopes((prev) => prev.map((s, idx) => idx === i ? { ...s, ...p } : s))
   }
-  function remove(i: number) {
+  async function remove(i: number) {
     const target = scopes[i]
     if (!target) return
     if (usedKeys.has(target.key)) {
-      if (!confirm(`"${target.label}" has lines in it. Remove the section anyway? Lines will move to "Unsorted" — drag them to other sections later.`)) return
+      const ok = await confirm({ title: `Remove "${target.label || 'this section'}"?`, body: 'It has lines in it. They move to "Unsorted"; drag them to other sections later.', confirmLabel: 'Remove section', danger: true })
+      if (!ok) return
     }
     setScopes((prev) => prev.filter((_, idx) => idx !== i))
   }
@@ -781,67 +798,55 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
     setScopes(SCOPES.map((s) => ({ key: s.key, label: s.label, emoji: s.emoji, hint: s.hint })))
   }
 
+  const submit = useSubmitOnce(save.isPending)(() => { save.mutate(); return true })
+  const dirty = !save.isPending && JSON.stringify(scopes) !== JSON.stringify(currentScopes.map((x) => ({ ...x })))
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-2xl overflow-hidden"
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-          <div>
-            <h2 className="font-black text-white/90">Customize sections</h2>
-            <p className="text-xs text-white/45 mt-0.5">Rename, reorder, or define your own. Lines under a removed section move to &ldquo;Unsorted&rdquo;.</p>
-          </div>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-        </div>
-
-        <div className="p-5 space-y-2 max-h-[70vh] overflow-y-auto">
+    <ModalShell title="Customize sections" onClose={onClose} wide dirty={dirty}>
+      <p className="text-xs text-white/45 -mt-1">Rename, reorder, or define your own. Lines under a removed section move to &ldquo;Unsorted&rdquo;.</p>
+      <form id="scopes-form" onSubmit={submit} className="space-y-2">
           {scopes.map((s, i) => {
-            const used = usedKeys.has(s.key)
-            return (
-              <div key={i} className="rounded-lg p-3 grid grid-cols-[24px_60px_1fr_2fr_auto_auto] gap-2 items-center"
-                style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                <span className="text-xs font-mono text-white/35">{i + 1}</span>
-                <input value={s.emoji ?? ''} onChange={(e) => patch(i, { emoji: e.target.value })}
-                  placeholder="📦" className={fieldCls + ' text-center text-lg'} />
-                <input value={s.label} onChange={(e) => patch(i, { label: e.target.value })}
-                  placeholder="Label (e.g. Back of House)" className={fieldCls + ' font-bold'} />
-                <input value={s.hint ?? ''} onChange={(e) => patch(i, { hint: e.target.value })}
-                  placeholder="Hint (e.g. Kitchen equipment, walk-in, exhaust)" className={fieldCls + ' text-xs'} />
-                <div className="flex items-center">
-                  <button onClick={() => move(i, -1)} disabled={i === 0} className="text-white/30 hover:text-white px-1 disabled:opacity-20">↑</button>
-                  <button onClick={() => move(i, 1)}  disabled={i === scopes.length - 1} className="text-white/30 hover:text-white px-1 disabled:opacity-20">↓</button>
-                </div>
-                <button onClick={() => remove(i)} className="text-white/30 hover:text-s-red px-1"
-                  title={used ? 'In use — confirm to remove' : 'Remove section'}>
-                  {used ? '⚠' : '✕'}
-                </button>
+          const used = usedKeys.has(s.key)
+          return (
+            <div key={i} className="rounded-lg p-3 grid grid-cols-[24px_60px_1fr_2fr_auto_auto] gap-2 items-center"
+              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+              <span className="text-xs font-mono text-white/35">{i + 1}</span>
+              <input value={s.emoji ?? ''} onChange={(e) => patch(i, { emoji: e.target.value })}
+                placeholder="📦" aria-label={`Section ${i + 1} emoji`} className={fieldCls + ' text-center text-lg'} />
+              <input value={s.label} onChange={(e) => patch(i, { label: e.target.value })}
+                aria-label={`Section ${i + 1} label`} placeholder="Label (e.g. Back of House)" className={fieldCls + ' font-bold'} />
+              <input value={s.hint ?? ''} onChange={(e) => patch(i, { hint: e.target.value })}
+                aria-label={`Section ${i + 1} hint`} placeholder="Hint (e.g. Kitchen equipment, walk-in, exhaust)" className={fieldCls + ' text-xs'} />
+              <div className="flex items-center">
+                <button type="button" aria-label="Move up" onClick={() => move(i, -1)} disabled={i === 0} className="text-white/30 hover:text-white px-1 disabled:opacity-20">↑</button>
+                <button type="button" aria-label="Move down" onClick={() => move(i, 1)}  disabled={i === scopes.length - 1} className="text-white/30 hover:text-white px-1 disabled:opacity-20">↓</button>
               </div>
-            )
-          })}
+              <button type="button" aria-label={`Remove section ${i + 1}`} onClick={() => void remove(i)} className="text-white/30 hover:text-s-red px-1"
+                title={used ? 'In use — confirm to remove' : 'Remove section'}>
+                {used ? '⚠' : '✕'}
+              </button>
+            </div>
+          )
+        })}
 
-          <div className="flex items-center gap-2 pt-2">
-            <button onClick={addBlank}
-              className="text-xs font-bold rounded-lg px-3 py-1.5 bg-primary text-primary-on hover:opacity-90">
-              + Add section
-            </button>
-            <button onClick={reset}
-              className="text-xs text-white/55 hover:text-white">
-              Reset to default
-            </button>
-          </div>
-
-          {save.error && <ErrorBanner error={save.error} />}
-        </div>
-
-        <div className="flex items-center justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-          <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending || scopes.length === 0}
-            className={primaryBtn}>
-            {save.isPending ? 'Saving…' : 'Save sections'}
+        <div className="flex items-center gap-2 pt-2">
+          <button type="button" onClick={addBlank}
+            className="text-xs font-bold rounded-lg px-3 py-1.5 bg-primary text-primary-on hover:opacity-90">
+            + Add section
+          </button>
+          <button type="button" onClick={reset}
+            className="text-xs text-white/55 hover:text-white">
+            Reset to default
           </button>
         </div>
-      </div>
-    </div>
+
+      </form>
+      {save.error && <ErrorBanner error={save.error} />}
+      <ModalFooter onCancel={onClose}>
+        <button type="submit" form="scopes-form" disabled={save.isPending || scopes.length === 0} className={primaryBtn}>
+          {save.isPending ? 'Saving…' : 'Save sections'}
+        </button>
+      </ModalFooter>
+    </ModalShell>
   )
 }
 
@@ -955,9 +960,24 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
     onSuccess: (created) => onSaved(created.id),
   })
 
-  return <ModalShell title="New CapEx project" onClose={onClose}>
-    <Field label="Project name *">
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="42C Kitchen — Phase 1 build" className={fieldCls} autoFocus />
+  const bounds = dateBounds()
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'np-name': name.trim() ? '' : 'Give the project a name.',
+    'np-open': targetOpeningDate && (targetOpeningDate < bounds.min || targetOpeningDate > bounds.max) ? `Pick a date between ${bounds.min} and ${bounds.max}.` : '',
+  }
+  const submit = useSubmitOnce(save.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    save.mutate()
+    return true
+  })
+  const shown = (k: string) => (tried ? errs[k] : '')
+  return <ModalShell title="New CapEx project" onClose={onClose} dirty={!save.isPending && (!!name.trim() || !!address.trim() || budgetEnvelopeCents > 0)}>
+    <form id="np-form" onSubmit={submit} className="space-y-4" noValidate>
+    <Field label="Project name *" error={shown('np-name')}>
+      <input id="np-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="42C Kitchen — Phase 1 build" className={fieldCls} autoFocus />
     </Field>
     <Field label="Project type">
       <Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} className={fieldCls}>
@@ -973,10 +993,10 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
     </Field>
     <div className="grid grid-cols-2 gap-3">
       <Field label="Floor area (sqft)">
-        <input type="number" value={floorAreaSqft} onChange={(e) => setFloorAreaSqft(e.target.value === '' ? '' : +e.target.value)} className={fieldCls} />
+        <NumberField decimals={2} min={0} value={floorAreaSqft === '' ? null : floorAreaSqft} onValueChange={(n) => setFloorAreaSqft(n == null ? '' : n)} className={fieldCls} />
       </Field>
-      <Field label="Target opening">
-        <input type="date" value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
+      <Field label="Target opening" error={shown('np-open')}>
+        <input id="np-open" type="date" min={bounds.min} max={bounds.max} value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
       </Field>
     </div>
     <Field label="Budget envelope (PKR) *">
@@ -1015,13 +1035,13 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
                   next[i] = { ...next[i]!, label: e.target.value }
                   setJvPartners(next)
                 }}
-                placeholder={i === 0 ? 'e.g. Viva' : 'e.g. Garibsons'}
+                aria-label={`Partner ${i + 1} name`} placeholder={i === 0 ? 'e.g. Viva' : 'e.g. Garibsons'}
                 className={fieldCls + ' flex-1'} />
               <div className="relative w-24">
-                <input type="number" min={0} max={100} value={p.pct}
-                  onChange={(e) => {
+                <NumberField decimals={2} min={0} max={100} value={p.pct} aria-label={`Partner ${i + 1} share (%)`}
+                  onValueChange={(n) => {
                     const next = [...jvPartners]
-                    next[i] = { ...next[i]!, pct: parseFloat(e.target.value) || 0 }
+                    next[i] = { ...next[i]!, pct: n ?? 0 }
                     setJvPartners(next)
                   }}
                   className={fieldCls + ' pr-7'} />
@@ -1041,9 +1061,10 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
       )}
     </div>
 
+    </form>
     {save.error && <ErrorBanner error={save.error} />}
     <ModalFooter onCancel={onClose}>
-      <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
+      <button type="submit" form="np-form" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Creating…' : 'Create project →'}
       </button>
     </ModalFooter>
@@ -1077,9 +1098,27 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
     onSuccess: () => onSaved(),
   })
 
-  return <ModalShell title="Edit project" onClose={onClose} wide>
+  const confirm = useConfirm()
+  const bounds = dateBounds()
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'ep-name': name.trim() ? '' : 'The project needs a name.',
+    'ep-open': targetOpeningDate && (targetOpeningDate < bounds.min || targetOpeningDate > bounds.max) ? `Pick a date between ${bounds.min} and ${bounds.max}.` : '',
+  }
+  const submit = useSubmitOnce(save.isPending || del.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    save.mutate()
+    return true
+  })
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const dirty = !save.isPending && (name !== project.name || phase !== project.phase || budgetEnvelopeCents !== project.budgetEnvelopeCents
+    || contingencyPct !== project.contingencyPct || notes !== (project.notes ?? '') || address !== (project.address ?? ''))
+  return <ModalShell title="Edit project" onClose={onClose} wide dirty={dirty}>
+    <form id="ep-form" onSubmit={submit} className="space-y-4" noValidate>
     <div className="grid grid-cols-2 gap-3">
-      <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
+      <Field label="Name *" error={shown('ep-name')}><input id="ep-name" value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
       <Field label="Phase">
         <Select value={phase} onChange={(e) => setPhase(e.target.value as Phase)} className={fieldCls}>
           {Object.entries(PHASE_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
@@ -1090,9 +1129,12 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
       <Field label="Budget envelope (PKR)">
         <MoneyInput value={budgetEnvelopeCents} onChange={setBudgetEnvelopeCents} className={fieldCls} />
       </Field>
-      <Field label="Contingency %">
-        <input type="number" step="0.01" min={0} max={0.5} value={contingencyPct} onChange={(e) => setContingencyPct(+e.target.value || 0)} className={fieldCls} />
-        <Hint>{(contingencyPct * 100).toFixed(0)}% — buffer over budgeted lines</Hint>
+      <Field label="Contingency (%)">
+        {/* Shown as a percent (0 to 50); the project stores the fraction (0 to 0.5), so it is converted both ways. */}
+        <NumberField decimals={2} min={0} max={50}
+          value={Number((contingencyPct * 100).toFixed(2))}
+          onValueChange={(n) => setContingencyPct(n == null ? 0 : Number((n / 100).toFixed(4)))} className={fieldCls} />
+        <Hint>{(contingencyPct * 100).toFixed(0)}% — buffer over budgeted lines (0 to 50)</Hint>
       </Field>
     </div>
     <div className="grid grid-cols-2 gap-3">
@@ -1106,25 +1148,26 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
     <Field label="Address"><input value={address} onChange={(e) => setAddress(e.target.value)} className={fieldCls} /></Field>
     <div className="grid grid-cols-2 gap-3">
       <Field label="Floor area (sqft)">
-        <input type="number" value={floorAreaSqft} onChange={(e) => setFloorAreaSqft(e.target.value === '' ? '' : +e.target.value)} className={fieldCls} />
+        <NumberField decimals={2} min={0} value={floorAreaSqft === '' ? null : floorAreaSqft} onValueChange={(n) => setFloorAreaSqft(n == null ? '' : n)} className={fieldCls} />
       </Field>
-      <Field label="Target opening">
-        <input type="date" value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
+      <Field label="Target opening" error={shown('ep-open')}>
+        <input id="ep-open" type="date" min={bounds.min} max={bounds.max} value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
       </Field>
     </div>
     <Field label="Notes">
       <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={fieldCls} />
     </Field>
+    </form>
     {save.error && <ErrorBanner error={save.error} />}
     {del.error && <ErrorBanner error={del.error} />}
     <ModalFooter onCancel={onClose}>
-      <button
-        onClick={() => { if (confirm(`Delete project "${project.name}"? Lines, quotes and payments will go with it.`)) del.mutate() }}
+      <button type="button"
+        onClick={async () => { if (await confirm({ title: `Delete project "${project.name}"?`, body: 'Its lines, quotes and payments go with it.', confirmLabel: 'Delete project', danger: true })) del.mutate() }}
         disabled={del.isPending}
         className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto disabled:opacity-50">
         {del.isPending ? 'Deleting…' : 'Delete project'}
       </button>
-      <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
+      <button type="submit" form="ep-form" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : 'Save changes'}
       </button>
     </ModalFooter>
@@ -1138,7 +1181,8 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
   const lookups = useCapexLookups()
   const [item, setItem] = useState(line?.item ?? '')
   const [category, setCategory] = useState(line?.category ?? '')
-  const [quantity, setQuantity] = useState(line?.quantity ?? 1)
+  const [quantity, setQuantity] = useState<number | null>(line?.quantity ?? 1)
+  const qty = quantity ?? 1
   const [unitCostCents, setUnitCostCents] = useState(line?.unitCostCents ?? 0)
   const [vendor, setVendor] = useState(line?.vendor ?? '')
   const [vendorContact, setVendorContact] = useState(line?.vendorContact ?? '')
@@ -1183,7 +1227,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
         expectedDeliveryDate: expectedDeliveryDate ? `${expectedDeliveryDate}T00:00:00Z` : null,
         notes: notes || null,
         ...(onRegister ? {} : {
-          item, quantity, unitCostCents,
+          item, quantity: qty, unitCostCents,
           category: category || null,
           negotiatedCents: negotiatedCents === '' ? null : +negotiatedCents,
           inputTaxCents,
@@ -1203,15 +1247,37 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
     onSuccess: () => onSaved(),
   })
 
-  return <ModalShell title={`${line ? 'Edit' : 'Add'} ${scope} line`} onClose={onClose} wide>
+  const confirm = useConfirm()
+  const bounds = dateBounds()
+  const [tried, setTried] = useState(false)
+  const dateBad = (v: string) => (v && (v < bounds.min || v > bounds.max) ? `Pick a date between ${bounds.min} and ${bounds.max}.` : '')
+  const errs: Record<string, string> = {
+    'cl-item': item.trim() ? '' : 'Name the item.',
+    'cl-qty': quantity != null && quantity >= 1 ? '' : 'Quantity must be 1 or more.',
+    'cl-auth': inputTaxCents > 0 && !inputTaxAuthority && !onRegister ? 'Say which authority charged the sales tax.' : '',
+    'cl-exp': dateBad(expectedDeliveryDate),
+    'cl-del': dateBad(actualDeliveryDate),
+    'cl-inst': dateBad(installedDate),
+  }
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const submit = useSubmitOnce(save.isPending || del.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    save.mutate()
+    return true
+  })
+  const dirty = !save.isPending && (item !== (line?.item ?? '') || qty !== (line?.quantity ?? 1) || unitCostCents !== (line?.unitCostCents ?? 0) || notes !== (line?.notes ?? '') || vendor !== (line?.vendor ?? ''))
+  return <ModalShell title={`${line ? 'Edit' : 'Add'} ${scope} line`} onClose={onClose} wide dirty={dirty}>
+    <form id="cl-form" onSubmit={submit} className="space-y-4" noValidate>
     {onRegister && (
       <div className="rounded-xl px-4 py-3 text-xs text-white/70" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.08)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.25)' }}>
         This item is on the fixed-asset register (or sent for approval), so its name, cost, quantity, tax and dates are fixed.
         Void the asset on the register and prepare it again to change them.
       </div>
     )}
-    <Field label="Item *">
-      <input value={item} onChange={(e) => setItem(e.target.value)} disabled={onRegister}
+    <Field label="Item *" error={shown('cl-item')}>
+      <input id="cl-item" value={item} onChange={(e) => setItem(e.target.value)} disabled={onRegister}
         placeholder="Rational SCC 6-2/1 combi oven · 5-tier walk-in shelving · Emergency lighting set" className={fieldCls + ' disabled:opacity-60'} autoFocus />
     </Field>
 
@@ -1219,8 +1285,8 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
       <Field label="Category">
         <input value={category} onChange={(e) => setCategory(e.target.value)} disabled={onRegister} placeholder="Cooking · Refrigeration" className={fieldCls + ' disabled:opacity-60'} />
       </Field>
-      <Field label="Quantity">
-        <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(+e.target.value || 1)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+      <Field label="Quantity" error={shown('cl-qty')}>
+        <NumberField id="cl-qty" min={1} value={quantity} onValueChange={setQuantity} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
       </Field>
       <Field label="Priority">
         <Select value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)} className={fieldCls}>
@@ -1235,7 +1301,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Budgeted unit cost (PKR)">
           <MoneyInput value={unitCostCents} onChange={setUnitCostCents} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
-          <Hint>{PKR(unitCostCents * quantity)} total for qty {quantity}</Hint>
+          <Hint>{PKR(unitCostCents * qty)} total for qty {qty}</Hint>
         </Field>
         <Field label="Quoted (PKR)">
           <MoneyInput value={quotedCents === '' ? 0 : quotedCents} onChange={(c) => setQuotedCents(c)} className={fieldCls} placeholder="Initial quote" />
@@ -1283,8 +1349,8 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
         <Field label="Sales tax in the price (PKR)">
           <MoneyInput value={inputTaxCents} onChange={setInputTaxCents} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
         </Field>
-        <Field label="Sales tax charged by">
-          <Select value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value)} disabled={onRegister || inputTaxCents === 0} className={fieldCls + ' disabled:opacity-60'}>
+        <Field label="Sales tax charged by" error={shown('cl-auth')}>
+          <Select id="cl-auth" value={inputTaxAuthority} onChange={(e) => setInputTaxAuthority(e.target.value)} disabled={onRegister || inputTaxCents === 0} className={fieldCls + ' disabled:opacity-60'}>
             <option value="">{inputTaxCents === 0 ? 'Not needed' : 'Pick the authority'}</option>
             {authorities.map((x) => <option key={x} value={x}>{AUTHORITY_LABEL[x] ?? x.toUpperCase()}</option>)}
           </Select>
@@ -1302,16 +1368,16 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
           </Select>
         </Field>
         <Field label="Lead time (days)">
-          <input type="number" value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value === '' ? '' : +e.target.value)} className={fieldCls} />
+          <NumberField min={0} value={leadTimeDays === '' ? null : leadTimeDays} onValueChange={(n) => setLeadTimeDays(n == null ? '' : n)} className={fieldCls} />
         </Field>
-        <Field label="Expected delivery">
-          <input type="date" value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className={fieldCls} />
+        <Field label="Expected delivery" error={shown('cl-exp')}>
+          <input id="cl-exp" type="date" min={bounds.min} max={bounds.max} value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className={fieldCls} />
         </Field>
-        <Field label="Delivered on">
-          <input type="date" value={actualDeliveryDate} onChange={(e) => setActualDeliveryDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+        <Field label="Delivered on" error={shown('cl-del')}>
+          <input id="cl-del" type="date" min={bounds.min} max={bounds.max} value={actualDeliveryDate} onChange={(e) => setActualDeliveryDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
         </Field>
-        <Field label="Installed on">
-          <input type="date" value={installedDate} onChange={(e) => setInstalledDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+        <Field label="Installed on" error={shown('cl-inst')}>
+          <input id="cl-inst" type="date" min={bounds.min} max={bounds.max} value={installedDate} onChange={(e) => setInstalledDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
           <Hint>Depreciation starts from the install date, else the delivery date.</Hint>
         </Field>
       </div>
@@ -1322,7 +1388,9 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
         placeholder="3-year warranty, gas connection required, lead time confirmed by Bilal on call." className={fieldCls} />
     </Field>
 
-    {/* Quote comparison shopping — only shown when editing an existing line */}
+    </form>
+
+    {/* Quote comparison shopping — only shown when editing an existing line (outside the line's form: it has its own forms) */}
     {line && <QuotePanel line={line} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {/* Payment schedule */}
@@ -1333,12 +1401,12 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
 
     <ModalFooter onCancel={onClose}>
       {line && (
-        <button onClick={() => { if (confirm('Delete this line?')) del.mutate() }}
+        <button type="button" onClick={async () => { if (await confirm({ title: `Delete ${item.trim() || 'this line'}?`, body: 'Its quotes and instalments are removed with it.', confirmLabel: 'Delete line', danger: true })) del.mutate() }}
           className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">
           Delete line
         </button>
       )}
-      <button onClick={() => save.mutate()} disabled={save.isPending || !item.trim() || (inputTaxCents > 0 && !inputTaxAuthority && !onRegister)} className={primaryBtn}>
+      <button type="submit" form="cl-form" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
       </button>
     </ModalFooter>
@@ -1361,6 +1429,14 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
       ...(fileUrl && { fileUrl }),
     }),
     onSuccess: () => { setAdding(false); setVendor(''); setTotalCents(0); setLeadTimeDays(''); setContactName(''); setFileUrl(''); onChange() },
+  })
+  const [quoteProblem, setQuoteProblem] = useState<string | null>(null)
+  const submitQuote = useSubmitOnce(add.isPending)(() => {
+    if (!vendor.trim()) { setQuoteProblem('Enter the vendor name.'); focusField('q-vendor'); return false }
+    if (totalCents <= 0) { setQuoteProblem('Enter the quote total.'); focusField('q-total'); return false }
+    setQuoteProblem(null)
+    add.mutate()
+    return true
   })
   const setWinner = useMutation({
     mutationFn: (qid: string) => api.patch(`/finance/capex/quotes/${qid}/winner`, {}),
@@ -1395,23 +1471,25 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
     </div>
 
     {adding ? (
-      <div className="rounded-xl p-3 mt-2"
+      <form onSubmit={submitQuote} noValidate className="rounded-xl p-3 mt-2"
         style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
         <div className="grid grid-cols-2 gap-2">
-          <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor name" className={fieldCls} autoFocus />
-          <MoneyInput value={totalCents} onChange={setTotalCents} placeholder="Total (PKR)" className={fieldCls} />
+          <input id="q-vendor" aria-label="Vendor name" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor name" className={fieldCls} autoFocus />
+          <MoneyInput id="q-total" ariaLabel="Quote total (PKR)" value={totalCents} onChange={setTotalCents} placeholder="Total (PKR)" className={fieldCls} />
         </div>
         <div className="grid grid-cols-3 gap-2 mt-2">
-          <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" className={fieldCls} />
-          <input type="number" value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value === '' ? '' : +e.target.value)} placeholder="Lead days" className={fieldCls} />
-          <input value={fileUrl} onChange={(e) => setFileUrl(e.target.value)} placeholder="Quote file URL (optional)" className={fieldCls} />
+          <input aria-label="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" className={fieldCls} />
+          <NumberField aria-label="Lead days" min={0} value={leadTimeDays === '' ? null : leadTimeDays} onValueChange={(n) => setLeadTimeDays(n == null ? '' : n)} placeholder="Lead days" className={fieldCls} />
+          <input aria-label="Quote file URL" value={fileUrl} onChange={(e) => setFileUrl(e.target.value)} placeholder="Quote file URL (optional)" className={fieldCls} />
         </div>
+        {quoteProblem && <p role="alert" className="text-[11px] font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{quoteProblem}</p>}
+        {add.error && <ErrorBanner error={add.error} />}
         <div className="flex gap-2 mt-2 justify-end">
-          <button onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
-          <button onClick={() => add.mutate()} disabled={add.isPending || !vendor.trim() || totalCents <= 0}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">+ Save quote</button>
+          <button type="button" onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
+          <button type="submit" disabled={add.isPending}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">{add.isPending ? 'Saving…' : '+ Save quote'}</button>
         </div>
-      </div>
+      </form>
     ) : (
       <button onClick={() => setAdding(true)}
         className="w-full rounded-lg border-2 border-dashed border-white/10 px-3 py-2 text-xs text-white/55 hover:text-white hover:border-white/30 mt-2">
@@ -1447,6 +1525,15 @@ function PaymentPanel({ project, line, tenantId, onChange }: { project: Project;
       ...(bankAccountId && { bankAccountId }),
     }),
     onSuccess: () => { setAdding(false); setAmountCents(0); setDueDate(''); setBankAccountId(''); onChange() },
+  })
+  const bounds = dateBounds()
+  const [schedProblem, setSchedProblem] = useState<string | null>(null)
+  const submitSchedule = useSubmitOnce(add.isPending)(() => {
+    if (amountCents <= 0) { setSchedProblem('Enter the instalment amount.'); focusField('sch-amount'); return false }
+    if (dueDate && (dueDate < bounds.min || dueDate > bounds.max)) { setSchedProblem(`Pick a due date between ${bounds.min} and ${bounds.max}.`); focusField('sch-due'); return false }
+    setSchedProblem(null)
+    add.mutate()
+    return true
   })
   const remove = useMutation({
     mutationFn: (pid: string) => api.delete(`/finance/capex/payments/${pid}`),
@@ -1518,29 +1605,30 @@ function PaymentPanel({ project, line, tenantId, onChange }: { project: Project;
     <CapitalisePanel project={project} line={line} onChange={onChange} />
 
     {adding ? (
-      <div className="rounded-xl p-3 mt-2"
+      <form onSubmit={submitSchedule} noValidate className="rounded-xl p-3 mt-2"
         style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <Select value={label} onChange={(e) => setLabel(e.target.value as typeof label)} className={fieldCls}>
+          <Select aria-label="Instalment type" value={label} onChange={(e) => setLabel(e.target.value as typeof label)} className={fieldCls}>
             <option value="deposit">Deposit</option>
             <option value="midpoint">Midpoint</option>
             <option value="balance">Balance</option>
             <option value="extra">Extra</option>
           </Select>
-          <MoneyInput value={amountCents} onChange={setAmountCents} placeholder="Amount (PKR)" className={fieldCls} />
-          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} aria-label="Due date" />
+          <MoneyInput id="sch-amount" ariaLabel="Instalment amount (PKR)" value={amountCents} onChange={setAmountCents} placeholder="Amount (PKR)" className={fieldCls} />
+          <input id="sch-due" type="date" min={bounds.min} max={bounds.max} value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} aria-label="Due date" />
         </div>
         <div className="mt-2">
           <BankAccountSelect tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId}
             id={`capex-sched-bank-${line.id}`} label="To be paid from" className={fieldCls} />
         </div>
+        {schedProblem && <p role="alert" className="text-[11px] font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{schedProblem}</p>}
         {add.error && <ErrorBanner error={add.error} />}
         <div className="flex gap-2 mt-2 justify-end">
-          <button onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
-          <button onClick={() => add.mutate()} disabled={add.isPending || amountCents <= 0}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">+ Schedule</button>
+          <button type="button" onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
+          <button type="submit" disabled={add.isPending}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">{add.isPending ? 'Saving…' : '+ Schedule'}</button>
         </div>
-      </div>
+      </form>
     ) : (
       <button onClick={() => setAdding(true)}
         className="w-full rounded-lg border-2 border-dashed border-white/10 px-3 py-2 text-xs text-white/55 hover:text-white hover:border-white/30 mt-2">
@@ -1592,20 +1680,33 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
   const termOk = !termRequired || (!!coversFrom && Number(coversMonths) >= 1)
   const overrideOk = !override || (overrideReason.trim().length >= 5 && overrideCents < amount)
 
+  const [problem, setProblem] = useState<string | null>(null)
+  const submitPaid = useSubmitOnce(pay.isPending)(() => {
+    const bad: [string, string] | null =
+      amount <= 0 ? ['mp-amount', 'Enter the amount paid.']
+      : !paidOn ? ['mp-paid', 'Pick the day it was paid.']
+      : !termOk ? ['mp-months', 'A rent advance needs the month it starts and how many months it covers (1 to 240).']
+      : !overrideOk ? ['mp-why', 'Your own withholding figure needs a reason (5 characters or more) and must be below the amount.']
+      : null
+    if (bad) { setProblem(bad[1]); focusField(bad[0]); return false }
+    setProblem(null)
+    pay.mutate()
+    return true
+  })
   return (
-    <div className="mt-3 space-y-3 rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+    <form onSubmit={submitPaid} noValidate className="mt-3 space-y-3 rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="sm:col-span-1">
           <BankAccountSelect tenantId={tenantId} value={bankId} onChange={setBankId} id={`capex-pay-bank-${payment.id}`} label="Paid from" className={fieldCls} />
         </div>
-        <Field label="Paid on"><input type="date" value={paidOn} max={new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} /></Field>
-        <Field label="Amount (PKR)"><MoneyInput value={amount} onChange={setAmount} className={fieldCls} /></Field>
+        <Field label="Paid on"><input id="mp-paid" type="date" min="2000-01-01" value={paidOn} max={new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} /></Field>
+        <Field label="Amount (PKR)"><MoneyInput id="mp-amount" value={amount} onChange={setAmount} className={fieldCls} /></Field>
       </div>
 
       {(termExpected || needsTerm) && (
         <div className="grid grid-cols-2 gap-3">
           <Field label={`Covers from${termRequired ? ' *' : ''}`}><input type="month" value={coversFrom} onChange={(e) => setCoversFrom(e.target.value)} className={fieldCls} /></Field>
-          <Field label={`Covers how many months${termRequired ? ' *' : ''}`}><input type="number" min={1} max={240} value={coversMonths} onChange={(e) => setCoversMonths(e.target.value)} className={fieldCls} /></Field>
+          <Field label={`Covers how many months${termRequired ? ' *' : ''}`}><NumberField id="mp-months" min={1} max={240} value={coversMonths === '' ? null : Number(coversMonths)} onValueChange={(n) => setCoversMonths(n == null ? '' : String(n))} className={fieldCls} /></Field>
           <div className="col-span-2"><Hint>A rent advance is spread over the months it covers, one month at a time.</Hint></div>
         </div>
       )}
@@ -1619,39 +1720,31 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
       {override && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Income tax withheld (PKR)"><MoneyInput value={overrideCents} onChange={setOverrideCents} className={fieldCls} /></Field>
-          <Field label="Why (at least 5 characters)"><input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} className={fieldCls} /></Field>
+          <Field label="Why (at least 5 characters)"><input id="mp-why" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} className={fieldCls} /></Field>
         </div>
       )}
 
+      {problem && <p role="alert" className="text-[11px] font-bold" style={{ color: 'var(--erp-danger)' }}>{problem}</p>}
       {pay.error && <ErrorBanner error={pay.error} />}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="text-xs text-white/55 hover:text-white">Cancel</button>
-        <button onClick={() => pay.mutate()} disabled={pay.isPending || amount <= 0 || !termOk || !overrideOk}
+        <button type="button" onClick={onClose} className="text-xs text-white/55 hover:text-white">Cancel</button>
+        <button type="submit" disabled={pay.isPending}
           className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
           {pay.isPending ? 'Saving…' : `Paid ${PKR(amount)}`}
         </button>
       </div>
-    </div>
+    </form>
   )
 }
 
 // ─── Shared bits ──────────────────────────────────────────────────────────
 
-function ModalShell({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-    <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'} rounded-2xl overflow-hidden`}
-      style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-        <h2 className="font-black text-white/90">{title}</h2>
-        <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-      </div>
-      <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">{children}</div>
-    </div>
-  </div>
+function ModalShell({ title, children, onClose, wide, dirty }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} wide={wide} dirty={dirty}>{children}</SharedModal>
 }
 function ModalFooter({ children, onCancel }: { children: React.ReactNode; onCancel: () => void }) {
   return <div className="flex items-center justify-between gap-3 pt-4 mt-4 border-t border-white/[0.05]">
-    <button onClick={onCancel} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
+    <button type="button" onClick={onCancel} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
     {children}
   </div>
 }
@@ -1662,12 +1755,9 @@ function Section({ heading, children }: { heading: string; children: React.React
     {children}
   </div>
 }
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div>
-}
 function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
-  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" role="alert" style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{errorWords(error)}</div>
+  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" role="alert" ref={(el) => { if (el && !el.dataset['seen']) { el.dataset['seen'] = '1'; el.scrollIntoView({ block: 'nearest' }) } }} style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{errorWords(error)}</div>
 }
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
 const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

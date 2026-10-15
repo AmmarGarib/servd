@@ -2,6 +2,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { MANUAL_CONVERT_ATTR, useConversion } from '../blocks/conversion'
 import { track } from '../../lib/analytics'
+import { formatPhone, normalisePhone } from '../../lib/phone'
 
 // The servd new-brand waitlist form: details + consent → WhatsApp code →
 // "You're on the list." Used by /waitlist and the `waitlist_form` block (pages
@@ -49,6 +50,23 @@ function friendlyError(status: number, data: Record<string, unknown>, codeStep: 
 }
 
 type Step = 'details' | 'code' | 'done'
+type FieldKey = 'name' | 'phone' | 'email' | 'consent'
+type FieldErrors = Partial<Record<FieldKey, string>>
+
+/** One message per field; '' = valid. Phone accepts 03xx…, 92…, +92… and any
+ *  other international number of 10-15 digits. */
+function fieldError(k: FieldKey, v: { name: string; phone: string; email: string; consent: boolean }): string {
+  switch (k) {
+    case 'name': return v.name.trim().length < 2 ? 'Please enter your name.' : ''
+    case 'phone': {
+      const n = normalisePhone(v.phone).length
+      return n < 10 || n > 15 ? 'Enter your WhatsApp number, e.g. 0300 1234567.' : ''
+    }
+    case 'email': return v.email.trim() && !/^\S+@\S+\.\S+$/.test(v.email.trim()) ? 'That email does not look right. Leave it blank if you prefer.' : ''
+    case 'consent': return v.consent ? '' : 'Please tick the box so we are allowed to message you.'
+  }
+}
+const FIELD_ORDER: FieldKey[] = ['name', 'phone', 'email', 'consent']
 
 export function WaitlistForm({
   title = 'Be first in line.',
@@ -78,6 +96,8 @@ export function WaitlistForm({
   const [cooldown, setCooldown] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [errors, setErrors] = useState<FieldErrors>({})
+  const autoSent = useRef('')
   const codeRef = useRef<HTMLInputElement>(null)
   const doneRef = useRef<HTMLDivElement>(null)
 
@@ -122,17 +142,42 @@ export function WaitlistForm({
     }
   }
 
+  /** Re-check one field as it changes, but only once it has a message — the
+   *  message clears the moment the field is valid (and never nags early). */
+  const recheck = (k: FieldKey, v: { name: string; phone: string; email: string; consent: boolean }) => {
+    if (!errors[k]) return
+    const m = fieldError(k, v)
+    setErrors((e) => { const n = { ...e }; if (m) n[k] = m; else delete n[k]; return n })
+  }
+  const fieldProps = (k: FieldKey) => ({
+    'aria-invalid': errors[k] ? true : undefined,
+    'aria-describedby': errors[k] ? fid(`${k}-err`) : undefined,
+  })
+  const fieldMsg = (k: FieldKey) => errors[k]
+    ? <p id={fid(`${k}-err`)} style={fieldErrorStyle}>{errors[k]}</p> : null
+
   async function onDetails(e: FormEvent) {
     e.preventDefault()
-    if (name.trim().length < 2) return setError('Please enter your name.')
-    if (phone.replace(/\D/g, '').length < 10) return setError('Enter your WhatsApp number, e.g. 0300 1234567.')
-    if (email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) return setError('That email does not look right. Leave it blank if you prefer.')
-    if (!consent) return setError('Please tick the box so we are allowed to message you.')
-    if (await requestCode()) { setCode(''); setStep('code') }
+    const vals = { name, phone, email, consent }
+    const next: FieldErrors = {}
+    for (const k of FIELD_ORDER) { const m = fieldError(k, vals); if (m) next[k] = m }
+    setErrors(next)
+    const firstBad = FIELD_ORDER.find((k) => next[k])
+    if (firstBad) {
+      setError('')
+      // Focus after the aria-invalid state has rendered.
+      requestAnimationFrame(() => document.getElementById(fid(firstBad))?.focus())
+      return
+    }
+    if (await requestCode()) { setCode(''); autoSent.current = ''; setStep('code') }
   }
 
-  async function onCode(e: FormEvent) {
+  function onCode(e: FormEvent) {
     e.preventDefault()
+    return joinWith(code)
+  }
+
+  async function joinWith(code: string) {
     if (!/^\d{6}$/.test(code)) return setError('Enter the 6-digit code from WhatsApp.')
     setBusy(true)
     setError('')
@@ -174,7 +219,13 @@ export function WaitlistForm({
           <Label htmlFor={fid('code')}>Code</Label>
           <input
             ref={codeRef} id={fid('code')} name="code" value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onChange={(e) => {
+              const v = e.target.value.replace(/\D/g, '').slice(0, 6)
+              setCode(v)
+              if (v.length < 6) { autoSent.current = ''; return }
+              // The sixth digit (typed, pasted or autofilled) submits once.
+              if (!busy && autoSent.current !== v) { autoSent.current = v; void joinWith(v) }
+            }}
             inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} required
             aria-invalid={!!error} aria-describedby={error ? fid('err') : undefined}
             style={{ ...inputStyle, fontSize: '1.4rem', letterSpacing: '0.4em', textAlign: 'center', fontWeight: 800 }}
@@ -201,16 +252,30 @@ export function WaitlistForm({
           {subtitle ? <p style={leadStyle}>{subtitle}</p> : null}
 
           <Field id={fid('name')} label="Your name">
-            <input id={fid('name')} name="name" value={name} onChange={(e) => setName(e.target.value)}
-              autoComplete="name" maxLength={120} required style={inputStyle} />
+            <input id={fid('name')} name="name" value={name}
+              onChange={(e) => { setName(e.target.value); recheck('name', { name: e.target.value, phone, email, consent }) }}
+              autoComplete="name" maxLength={120} required style={inputStyle} {...fieldProps('name')} />
+            {fieldMsg('name')}
           </Field>
           <Field id={fid('phone')} label="WhatsApp number">
-            <input id={fid('phone')} name="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
-              inputMode="tel" autoComplete="tel" placeholder="0300 1234567" maxLength={20} required style={inputStyle} />
+            <input id={fid('phone')} name="phone" type="tel" value={phone}
+              onChange={(e) => {
+                // Digits only (a leading + is kept); spaces are added on blur.
+                const raw = e.target.value
+                const v = (raw.trimStart().startsWith('+') ? '+' : '') + raw.replace(/\D/g, '')
+                setPhone(v); recheck('phone', { name, phone: v, email, consent })
+              }}
+              onBlur={() => { if (phone && !fieldError('phone', { name, phone, email, consent })) setPhone(formatPhone(phone)) }}
+              inputMode="tel" autoComplete="tel" placeholder="0300 1234567" maxLength={20} required style={inputStyle}
+              {...fieldProps('phone')} />
+            {fieldMsg('phone')}
           </Field>
           <Field id={fid('email')} label="Email" optional>
-            <input id={fid('email')} name="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email" maxLength={200} style={inputStyle} />
+            <input id={fid('email')} name="email" type="email" value={email}
+              onChange={(e) => { setEmail(e.target.value); recheck('email', { name, phone, email: e.target.value, consent }) }}
+              autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={200} style={inputStyle}
+              {...fieldProps('email')} />
+            {fieldMsg('email')}
           </Field>
           <Field id={fid('area')} label="Your area" optional>
             <input id={fid('area')} name="area" value={area} onChange={(e) => setArea(e.target.value)}
@@ -222,10 +287,13 @@ export function WaitlistForm({
           </Field>
 
           <label htmlFor={fid('consent')} style={consentStyle}>
-            <input id={fid('consent')} type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)}
-              required style={{ width: 20, height: 20, marginTop: 2, flexShrink: 0, accentColor: 'var(--servd-green)' }} />
+            <input id={fid('consent')} type="checkbox" checked={consent}
+              onChange={(e) => { setConsent(e.target.checked); recheck('consent', { name, phone, email, consent: e.target.checked }) }}
+              required style={{ width: 20, height: 20, marginTop: 2, flexShrink: 0, accentColor: 'var(--servd-green)' }}
+              {...fieldProps('consent')} />
             <span>{WAITLIST_CONSENT_TEXT}</span>
           </label>
+          {fieldMsg('consent')}
 
           {errorBox}
           <button type="submit" disabled={busy} style={primaryButton(busy)}>
@@ -278,6 +346,10 @@ const inputStyle: CSSProperties = {
 const consentStyle: CSSProperties = {
   display: 'flex', gap: '0.7rem', alignItems: 'flex-start', cursor: 'pointer',
   fontSize: '0.88rem', lineHeight: 1.45, margin: '0.4rem 0 1rem',
+}
+const fieldErrorStyle: CSSProperties = {
+  margin: '0.35rem 0 0', padding: '0.4rem 0.7rem', borderRadius: '0.6rem',
+  background: '#fff1f1', color: 'var(--servd-danger)', fontSize: '0.82rem', fontWeight: 600,
 }
 const errorStyle: CSSProperties = {
   margin: '0.75rem 0 0', padding: '0.65rem 0.85rem', borderRadius: '0.75rem',

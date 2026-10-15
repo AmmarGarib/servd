@@ -1,12 +1,78 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+
+// ── The new-order chime ──────────────────────────────────────────────────────
+// ONE AudioContext for the whole page (a fresh one per order was never closed
+// and Chrome caps live contexts). Browsers start it suspended until a tap, so a
+// wall-mounted tablet nobody has touched is silent: the first pointerdown /
+// keydown resumes it, and `useKdsAudioState` lets the header say so while it
+// is still blocked (UX audit ERP-FOH-12).
+export type KdsAudioState = 'running' | 'suspended' | 'unsupported'
+
+let sharedCtx: AudioContext | null = null
+let gestureBound = false
+const audioListeners = new Set<() => void>()
+const notifyAudio = () => audioListeners.forEach((l) => l())
+
+function audioCtor(): typeof AudioContext | null {
+  if (typeof window === 'undefined') return null
+  return window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext || null
+}
+
+function getAudioContext(): AudioContext | null {
+  if (sharedCtx && sharedCtx.state !== 'closed') return sharedCtx
+  const Ctx = audioCtor()
+  if (!Ctx) return null
+  try {
+    sharedCtx = new Ctx()
+    sharedCtx.onstatechange = notifyAudio
+  } catch { sharedCtx = null }
+  return sharedCtx
+}
+
+/** Resume the shared context — call from a tap (the header's banner does). */
+export function enableKdsSound() {
+  const ctx = getAudioContext()
+  if (ctx && ctx.state === 'suspended') void ctx.resume().then(notifyAudio).catch(() => { /* still blocked */ })
+}
+
+function bindGestureResume() {
+  if (gestureBound || typeof window === 'undefined') return
+  gestureBound = true
+  const onGesture = () => {
+    enableKdsSound()
+    if (sharedCtx?.state === 'running') {
+      window.removeEventListener('pointerdown', onGesture, true)
+      window.removeEventListener('keydown', onGesture, true)
+      gestureBound = false
+    }
+  }
+  window.addEventListener('pointerdown', onGesture, true)
+  window.addEventListener('keydown', onGesture, true)
+}
+
+function audioSnapshot(): KdsAudioState {
+  if (!audioCtor()) return 'unsupported'
+  return sharedCtx?.state === 'running' ? 'running' : 'suspended'
+}
+
+/** Whether the chime can play right now; mounts the first-tap resume. */
+export function useKdsAudioState(): KdsAudioState {
+  useEffect(() => { getAudioContext(); bindGestureResume(); notifyAudio() }, [])
+  return useSyncExternalStore(
+    (cb) => { audioListeners.add(cb); return () => { audioListeners.delete(cb) } },
+    audioSnapshot,
+    () => 'suspended' as KdsAudioState,
+  )
+}
 
 // Louder, longer 4-tone alert chime designed to cut through kitchen noise.
 // Two repeats of an ascending C-E-G-C arpeggio at 0.7 gain.
 function playNewOrderBeep() {
   try {
-    const Ctx = (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)
-    const ctx = new Ctx()
+    const ctx = getAudioContext()
+    if (!ctx) return
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => { /* blocked until a tap */ })
     const t0 = ctx.currentTime
     const beep = (start: number, freq: number, dur: number, gainPeak = 0.5) => {
       const osc = ctx.createOscillator()
@@ -50,6 +116,7 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}): KdsSocketState 
   // in two seconds whether the socket dropped (vs. just a quiet 5-minute lull).
   // We also mirror these into the kds store so the header (which doesn't call
   // this hook itself) can read them without prop-drilling.
+  useKdsAudioState() // mounts the first-tap resume for the chime
   const [connected, setConnected] = useState(false)
   const [lastOrderAt, setLastOrderAt] = useState<Date | null>(null)
   const setWsConnected   = useKdsStore((s) => s.setWsConnected)

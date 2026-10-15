@@ -15,6 +15,7 @@ import { api, ApiError } from '../../lib/api'
 import { fmtPkrWhole } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
+import { Modal as SharedModal } from '../ui/Modal'
 
 export const FA_BASE = '/accounting/fixed-assets'
 
@@ -212,20 +213,9 @@ export function L({ t, children, hint }: { t: string; children: React.ReactNode;
   )
 }
 
-export function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-3 sm:p-4" onClick={onClose}>
-      <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} rounded-2xl p-5 sm:p-6 max-h-[92vh] overflow-y-auto`}
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <p className="text-lg font-black text-white/90">{title}</p>
-          <button onClick={onClose} aria-label="Close" className="text-white/40 hover:text-white text-xl leading-none">&times;</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
+/** Thin wrapper over the shared Modal (Escape, focus trap, scroll lock, "Discard changes?" when `dirty`). */
+export function Modal({ title, children, onClose, wide, dirty }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} wide={wide} dirty={dirty}>{children}</SharedModal>
 }
 
 export function ErrorLine({ error }: { error: unknown }) {

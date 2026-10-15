@@ -23,6 +23,7 @@ import { SettlePanel, Thumbs } from './SettlePanel'
 import { DocumentsPanel, SpentPanel, VerifyPanel } from './DocsPanel'
 import { ErrorBanner, StatusBadge, dangerOutlineBtn, fieldCls, primaryBtn, secondaryBtn } from './ui'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
@@ -42,6 +43,7 @@ const NOTE_BTN: Record<NoteAct, string> = { return: 'Return for correction', rej
 const APPROVED_ON = ['approved', 'disbursed', 'settled', 'posted', 'converted']
 
 export function VoucherDetail({ id }: { id: string }) {
+  const confirm = useConfirm()
   const qc = useQueryClient()
   const { data: v, isLoading, error } = useVoucher(id)
   const { data: tenants = [] } = useMyTenants()
@@ -141,7 +143,7 @@ export function VoucherDetail({ id }: { id: string }) {
             {v.canFinanceApprove && <span className="text-xs font-bold text-white/60">Finance approval is below.</span>}
             {v.canApprove && (
               <button disabled={act.isPending} className={primaryBtn}
-                onClick={() => { if (window.confirm(`Approve ${v.number}: PKR ${formatPkr(v.amountCents)} for ${holder}? The cashier may then pay it.`)) run('approve', { amountCents: v.amountCents }) }}>
+                onClick={async () => { if (await confirm({ title: `Approve ${v.number}?`, body: `PKR ${formatPkr(v.amountCents)} for ${holder}. The cashier may then pay it.`, confirmLabel: 'Approve' })) run('approve', { amountCents: v.amountCents }) }}>
                 Approve (CEO)
               </button>
             )}
@@ -203,7 +205,7 @@ export function VoucherDetail({ id }: { id: string }) {
             <p className="text-sm font-black text-white/90">Did you receive the cash?</p>
             <p className="text-xs text-white/55">Confirming puts your name in the Received by box. Finance can verify the documents after that.</p>
             <button disabled={act.isPending} className={primaryBtn}
-              onClick={() => { if (window.confirm(`Confirm you received PKR ${formatPkr(v.amountCents)} in cash for ${v.number}?`)) run('confirm-received') }}>
+              onClick={async () => { if (await confirm({ title: `Cash received for ${v.number}?`, body: `Confirm you received PKR ${formatPkr(v.amountCents)} in cash.`, confirmLabel: 'Cash received' })) run('confirm-received') }}>
               {act.isPending ? 'Saving…' : 'Cash received'}
             </button>
           </div>
@@ -378,9 +380,9 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
       <p className="text-xs text-white/55">Check the expense account and set a discount if there is one, then send it to the CEO.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-white/55">Expense account</label>
+          <label htmlFor="fa-category" className="text-xs text-white/55">Expense account</label>
           <div className="mt-1">
-            <Select value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
+            <Select id="fa-category" value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
               {!categories.some((c) => c.key === category) && category && <option value={category}>{category}</option>}
               <option value="">— pick —</option>
               {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
@@ -388,8 +390,8 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
           </div>
         </div>
         <div>
-          <label className="text-xs text-white/55">Discount (PKR)</label>
-          <div className="mt-1"><MoneyInput value={discountCents} onChange={setDiscountCents} className={fieldCls} ariaLabel="Discount in rupees" /></div>
+          <label htmlFor="fa-discount" className="text-xs text-white/55">Discount (PKR)</label>
+          <div className="mt-1"><MoneyInput id="fa-discount" value={discountCents} onChange={setDiscountCents} className={fieldCls} ariaLabel="Discount in rupees" /></div>
           <p className="text-[11px] text-white/45 mt-1">Total to pay PKR {formatPkr(Math.max(0, gross - discountCents))}</p>
         </div>
       </div>
@@ -441,6 +443,7 @@ function History({ id }: { id: string }) {
 
 /** Approved: the custodian picks the box and confirms the cash was handed over. */
 function PayPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean; onDone: () => void }) {
+  const confirm = useConfirm()
   const { data: all = [] } = usePettyBoxes()
   const { data: mine = [] } = useMyBoxes()
   const boxes = (isKeeper ? all : mine).filter((b) => b.isActive && b.tenantId === v.tenantId)
@@ -474,7 +477,7 @@ function PayPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean; 
       {short && <p className="text-xs text-s-red font-bold">{box!.name} holds PKR {formatPkr(box!.floatCents)} — less than this request. Top it up first.</p>}
       {pay.error && <ErrorBanner message={errorWords(pay.error)} />}
       <button disabled={pay.isPending || (!fixed && !chosen)} className={primaryBtn}
-        onClick={() => { if (window.confirm(`Cash handed to ${holder}: PKR ${formatPkr(v.amountCents)}?`)) { pay.reset(); pay.mutate() } }}>
+        onClick={async () => { if (await confirm({ title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} leaves the box.`, confirmLabel: 'Cash handed over' })) { pay.reset(); pay.mutate() } }}>
         {pay.isPending ? 'Paying…' : `Cash handed to ${holder}`}
       </button>
     </div>

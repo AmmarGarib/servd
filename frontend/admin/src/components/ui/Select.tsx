@@ -5,7 +5,8 @@
 // an event whose target.value is the picked value — so a page swaps
 // `<select` for `<Select` and nothing else changes.
 //
-// Short lists (fewer than SEARCH_FROM options) stay a native <select>. Longer
+// Short lists (fewer than SEARCH_FROM options; fewer than COARSE_SEARCH_FROM on
+// a touch screen, where the native picker is nicer) stay a native <select>. Longer
 // ones open as a list with a search box: type to filter, arrows + Enter to
 // pick, Escape to close. The list is portalled to <body> (so modals with
 // overflow or transforms never clip it) and carries the theme class of the
@@ -13,13 +14,29 @@
 
 import {
   Children, Fragment, isValidElement, useCallback, useEffect, useId, useLayoutEffect,
-  useMemo, useRef, useState,
+  useMemo, useRef, useState, useSyncExternalStore,
   type ChangeEvent, type CSSProperties, type ReactNode, type SelectHTMLAttributes,
 } from 'react'
 import { createPortal } from 'react-dom'
 
 /** Lists with at least this many options get the search box. */
 export const SEARCH_FROM = 4
+/** On a touch screen (pointer: coarse) the native picker wins below this many options. */
+export const COARSE_SEARCH_FROM = 8
+/** On a touch screen the search box only grabs focus (and the keyboard) from this many options. */
+const COARSE_AUTOFOCUS_FROM = 12
+
+const COARSE_QUERY = '(pointer: coarse)'
+function subscribeCoarse(cb: () => void) {
+  if (typeof window === 'undefined' || !window.matchMedia) return () => {}
+  const mq = window.matchMedia(COARSE_QUERY)
+  mq.addEventListener('change', cb)
+  return () => mq.removeEventListener('change', cb)
+}
+const coarseNow = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(COARSE_QUERY).matches
+function useCoarsePointer() {
+  return useSyncExternalStore(subscribeCoarse, coarseNow, () => false)
+}
 
 const THEME_CLASSES = ['erp-kitchen-dark', 'erp-on-secondary', 'erp-on-surface']
 
@@ -64,9 +81,10 @@ export function Select(props: SelectProps) {
     collect(props.children, null, out)
     return out
   }, [props.children])
+  const coarse = useCoarsePointer()
   const visible = options.filter((o) => !o.hidden)
-  if (props.multiple || visible.length < SEARCH_FROM) return <select {...props} />
-  return <SearchSelect {...props} options={options} />
+  if (props.multiple || visible.length < (coarse ? COARSE_SEARCH_FROM : SEARCH_FROM)) return <select {...props} />
+  return <SearchSelect {...props} options={options} coarse={coarse} />
 }
 
 export default Select
@@ -86,11 +104,11 @@ function neighbourFocusable(from: HTMLElement, dir: 1 | -1, skip?: HTMLElement |
 }
 
 function SearchSelect({
-  options, value, defaultValue, onChange, onBlur, onFocus, name, required, disabled, className, style,
+  options, coarse, value, defaultValue, onChange, onBlur, onFocus, name, required, disabled, className, style,
   id, title, autoFocus, 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy,
   // Everything else the caller passed (onClick, onKeyDown, data-*, aria-*…) belongs to the trigger.
   children: _children, multiple: _multiple, size: _size, form: _form, ...rest
-}: SelectProps & { options: Opt[] }) {
+}: SelectProps & { options: Opt[]; coarse: boolean }) {
   const passThrough = rest as unknown as React.ButtonHTMLAttributes<HTMLButtonElement>
   const controlled = value !== undefined
   const first = options.find((o) => !o.disabled)?.value ?? ''
@@ -104,6 +122,7 @@ function SearchSelect({
   const [active, setActive] = useState(0)
   const [pos, setPos] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null)
   const [themeClass, setThemeClass] = useState('')
+  const [darkTrigger, setDarkTrigger] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -115,16 +134,25 @@ function SearchSelect({
     return options.filter((o) => !o.hidden && (!q || fold(o.label).includes(q) || (o.group && fold(o.group).includes(q))))
   }, [options, query])
 
+  // Sized from the VISUAL viewport: on iOS the soft keyboard does not resize the
+  // layout viewport, so window.innerHeight would hide the lower half of the list
+  // behind it. Fixed positioning is in layout-viewport coordinates, hence the offsets.
   const place = useCallback(() => {
     const el = triggerRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const width = Math.min(Math.max(r.width, 240), window.innerWidth - 16)
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
-    const below = window.innerHeight - r.bottom - 8
-    const above = r.top - 8
+    const vv = window.visualViewport
+    const vTop = vv?.offsetTop ?? 0
+    const vLeft = vv?.offsetLeft ?? 0
+    const vW = vv?.width ?? window.innerWidth
+    const vBottom = vTop + (vv?.height ?? window.innerHeight)
+    const layoutH = document.documentElement.clientHeight || window.innerHeight
+    const width = Math.min(Math.max(r.width, 240), vW - 16)
+    const left = Math.max(vLeft + 8, Math.min(r.left, vLeft + vW - width - 8))
+    const below = vBottom - r.bottom - 8
+    const above = r.top - vTop - 8
     if (below >= 240 || below >= above) setPos({ left, width, top: r.bottom + 4, maxHeight: Math.min(360, below - 4) })
-    else setPos({ left, width, bottom: window.innerHeight - r.top + 4, maxHeight: Math.min(360, above - 4) })
+    else setPos({ left, width, bottom: layoutH - r.top + 4, maxHeight: Math.min(360, above - 4) })
   }, [])
 
   const openList = (seed = '') => {
@@ -157,7 +185,15 @@ function SearchSelect({
     close()
   }
 
-  useLayoutEffect(() => { if (open) searchRef.current?.focus() }, [open])
+  // Phones: only a long list earns the keyboard; a short one keeps focus on the list.
+  const focusSearch = !coarse || options.filter((o) => !o.hidden).length >= COARSE_AUTOFOCUS_FROM
+  useLayoutEffect(() => {
+    if (open) (focusSearch ? searchRef.current : listRef.current)?.focus({ preventScroll: true })
+  }, [open, focusSearch])
+
+  useLayoutEffect(() => {
+    setDarkTrigger(!!triggerRef.current?.closest('.erp-kitchen-dark'))
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -173,10 +209,24 @@ function SearchSelect({
     document.addEventListener('pointerdown', onDown, true)
     window.addEventListener('scroll', onMove, true)
     window.addEventListener('resize', onMove)
+    const vv = window.visualViewport
+    vv?.addEventListener('resize', onMove)
+    vv?.addEventListener('scroll', onMove)
+    // The trigger scrolled out of view (a phone, a long form): close rather than strand the list.
+    let io: IntersectionObserver | undefined
+    if (triggerRef.current && typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver((entries) => {
+        if (entries.some((en) => !en.isIntersecting)) close(false)
+      })
+      io.observe(triggerRef.current)
+    }
     return () => {
       document.removeEventListener('pointerdown', onDown, true)
       window.removeEventListener('scroll', onMove, true)
       window.removeEventListener('resize', onMove)
+      vv?.removeEventListener('resize', onMove)
+      vv?.removeEventListener('scroll', onMove)
+      io?.disconnect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, place])
@@ -195,8 +245,11 @@ function SearchSelect({
   const onSearchKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => step(a, 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => step(a, -1)) }
-    else if (e.key === 'Home') { e.preventDefault(); setActive(step(-1, 1)) }
-    else if (e.key === 'End') { e.preventDefault(); setActive(step(shown.length, -1)) }
+    // Home / End edit the search text while there is some; on an empty box they jump in the list.
+    else if (e.key === 'Home' && !query) { e.preventDefault(); setActive(step(-1, 1)) }
+    else if (e.key === 'End' && !query) { e.preventDefault(); setActive(step(shown.length, -1)) }
+    else if (e.key === 'PageDown') { e.preventDefault(); setActive((a) => { let n = a; for (let k = 0; k < 8; k++) n = step(n, 1); return n }) }
+    else if (e.key === 'PageUp') { e.preventDefault(); setActive((a) => { let n = a; for (let k = 0; k < 8; k++) n = step(n, -1); return n }) }
     else if (e.key === 'Enter') { e.preventDefault(); const o = shown[active]; if (o) choose(o) }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     else if (e.key === 'Tab') {
@@ -237,13 +290,13 @@ function SearchSelect({
       }}>
       <div className={`p-2 border-b ${dark ? 'border-kds-border' : ''}`} style={dark ? undefined : { borderColor: 'var(--border)' }}>
         <input ref={searchRef} value={query} placeholder="Search…" aria-label="Search options"
-          role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
+          role="textbox" aria-controls={listId}
           aria-activedescendant={shown[active] ? `${listId}-${active}` : undefined}
           onChange={(e) => { setQuery(e.target.value); setActive(0) }}
           onKeyDown={onSearchKey}
           className={`s-input !py-1.5 ${dark ? "!bg-kds-bg !text-kds-text !border-kds-border" : ""}`} />
       </div>
-      <div ref={listRef} id={listId} role="listbox" aria-label={ariaLabel ?? title ?? 'Options'} className="overflow-y-auto py-1 min-h-0 flex-1">
+      <div ref={listRef} id={listId} role="listbox" tabIndex={-1} onKeyDown={onSearchKey} aria-label={ariaLabel ?? title ?? 'Options'} className="overflow-y-auto py-1 min-h-0 flex-1 outline-none">
         {shown.length === 0 && <p className={`px-3 py-2 text-sm ${mutedCls}`} style={mutedStyle}>No matches</p>}
         {shown.map((o, i) => {
           const header = o.group !== lastGroup && o.group ? o.group : null
@@ -251,7 +304,7 @@ function SearchSelect({
           const sel = o.value === current
           return (
             <Fragment key={`${o.group ?? ''}\u0000${o.value}\u0000${i}`}>
-              {header && <p className={`px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider font-bold ${mutedCls}`} style={mutedStyle}>{header}</p>}
+              {header && <p role="presentation" className={`px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider font-bold ${mutedCls}`} style={mutedStyle}>{header}</p>}
               <div id={`${listId}-${i}`} data-idx={i} role="option" aria-selected={sel} aria-disabled={o.disabled || undefined}
                 onPointerMove={() => { if (!o.disabled && active !== i) setActive(i) }}
                 onPointerDown={(e) => e.preventDefault()}
@@ -273,18 +326,21 @@ function SearchSelect({
     document.body,
   )
 
+  // The empty option is a placeholder ("Select…", "All"), not a choice: show it muted.
+  const placeholderLook = picked?.value === ''
   const triggerStyle: CSSProperties = { backgroundImage: 'none', ...style, display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }
   return (
     <>
       <button {...passThrough} ref={triggerRef} type="button" id={id} title={title} disabled={disabled} autoFocus={autoFocus}
-        aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} aria-labelledby={ariaLabelledBy}
+        role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined} aria-label={ariaLabel} aria-labelledby={ariaLabelledBy}
         onClick={(e) => { passThrough.onClick?.(e); if (!e.defaultPrevented) (open ? close() : openList()) }}
         onKeyDown={onTriggerKey}
         onFocus={onFocus as unknown as React.FocusEventHandler<HTMLButtonElement>}
         onBlur={onBlur as unknown as React.FocusEventHandler<HTMLButtonElement>}
         className={`${className ?? ''} ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
         style={triggerStyle}>
-        <span className="flex-1 min-w-0 truncate">{picked?.label || ' '}</span>
+        <span className={`flex-1 min-w-0 truncate ${placeholderLook && darkTrigger ? 'text-kds-subtext' : ''}`}
+          style={placeholderLook && !darkTrigger ? { color: 'var(--muted)' } : undefined}>{picked?.label || ' '}</span>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden className="shrink-0 opacity-60">
           <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

@@ -14,6 +14,8 @@ import { fetchHealth } from '../../lib/connectorsApi'
 import { contentApi, STOREFRONT_BRANDS_KEY } from '../../lib/content'
 import { cleanFontFamily } from './kitCatalog'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '@/components/ui/Modal'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 export type LibraryAsset = {
   id: string
@@ -146,6 +148,7 @@ export function LibraryPanel({
 }) {
   const allowedKinds = kinds && kinds.length > 0 ? kinds : ALL_KINDS
   const qc = useQueryClient()
+  const confirm = useConfirm()
 
   const [kind, setKind] = useState<Kind | 'all'>(allowedKinds.length === 1 ? allowedKinds[0]! : 'all')
   const [brand, setBrand] = useState<string>('')          // '' = every brand
@@ -345,7 +348,9 @@ export function LibraryPanel({
                   Edit
                 </button>
                 <button
-                  onClick={() => { if (confirm(`Remove "${a.name}" from the library? Pages that use it will lose it.`)) remove.mutate(a.id) }}
+                  onClick={async () => {
+                    if (await confirm({ title: `Remove "${a.name}" from the library?`, body: 'Pages that use it will lose it.', confirmLabel: 'Remove', danger: true })) remove.mutate(a.id)
+                  }}
                   className="rounded-md px-2 py-1 text-[11px] font-semibold text-s-red hover:bg-s-red/10">
                   Delete
                 </button>
@@ -412,8 +417,12 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
   const [brand, setBrand] = useState(defaultBrand)
   const [tags, setTags] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState('')
+  // One row per chosen file: uploading / done / failed (with Retry).
+  type UpRow = { key: number; file: File; state: 'queued' | 'uploading' | 'done' | 'failed'; error?: string }
+  const [rows, setRows] = useState<UpRow[]>([])
+  const keySeq = useRef(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const patchRow = (key: number, patch: Partial<UpRow>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
 
   async function uploadOne(file: File) {
     const contentType = contentTypeFor(file)
@@ -458,23 +467,39 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
     }
   }
 
-  async function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
-    if (!files.length) return
-    setError('')
-    const failures: string[] = []
-    for (const [i, file] of files.entries()) {
-      setBusy(`Uploading ${i + 1} of ${files.length}…`)
-      try { await uploadOne(file) } catch (err) {
-        // Not configured: every other file fails the same way — say it once.
-        if (err instanceof StorageNotConfiguredError) { failures.length = 0; failures.push(err.message); break }
-        failures.push((err as Error).message)
+  async function runRows(list: Array<{ key: number; file: File }>) {
+    for (const [i, { key, file }] of list.entries()) {
+      setBusy(`Uploading ${i + 1} of ${list.length}…`)
+      patchRow(key, { state: 'uploading', error: undefined })
+      try {
+        await uploadOne(file)
+        patchRow(key, { state: 'done' })
+      } catch (err) {
+        patchRow(key, { state: 'failed', error: (err as Error).message })
+        // Not configured: every other file fails the same way.
+        if (err instanceof StorageNotConfiguredError) {
+          const rest = new Set(list.slice(i + 1).map((r) => r.key))
+          setRows((rs) => rs.map((r) => (rest.has(r.key) ? { ...r, state: 'failed', error: 'Not uploaded: file storage is not set up.' } : r)))
+          break
+        }
       }
     }
     setBusy(null)
-    if (failures.length) setError(failures.join(' · '))
-    if (inputRef.current) inputRef.current.value = ''
     onDone()
+  }
+
+  async function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    if (inputRef.current) inputRef.current.value = ''
+    if (!files.length) return
+    const added = files.map((file) => ({ key: ++keySeq.current, file }))
+    setRows((rs) => [...rs.filter((r) => r.state !== 'done'), ...added.map((r) => ({ ...r, state: 'queued' as const }))])
+    await runRows(added)
+  }
+
+  const retry = (key: number) => {
+    const r = rows.find((x) => x.key === key)
+    if (r && !busy) void runRows([{ key, file: r.file }])
   }
 
   const label = kinds.length === 1 ? `Upload ${KIND_LABEL[kinds[0]!].toLowerCase()}` : 'Upload files'
@@ -505,7 +530,25 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
       <span className="text-[10px] text-s-muted">
         {[kinds.includes('image') && 'images', kinds.includes('video') && 'MP4/WebM up to 50 MB', kinds.includes('font') && 'WOFF2/WOFF/TTF/OTF'].filter(Boolean).join(' · ')}
       </span>
-      {error && <p className="basis-full text-xs text-s-red">{error}</p>}
+      {rows.length > 0 && (
+        <ul className="basis-full space-y-1" aria-label="Uploads">
+          {rows.map((r) => (
+            <li key={r.key} className="flex items-center gap-2 rounded-lg bg-s-bg px-2 py-1 text-xs">
+              <span className="min-w-0 flex-1 truncate text-s-text" title={r.file.name}>{r.file.name}</span>
+              {r.state === 'queued' && <span className="text-s-muted">Waiting</span>}
+              {r.state === 'uploading' && <span className="text-s-muted" role="status">Uploading…</span>}
+              {r.state === 'done' && <span className="text-success">Uploaded</span>}
+              {r.state === 'failed' && (
+                <>
+                  <span className="min-w-0 max-w-[60%] text-s-red" role="alert" title={r.error}>{r.error ?? 'Failed'}</span>
+                  <button type="button" onClick={() => retry(r.key)} disabled={!!busy} className="shrink-0 font-semibold text-primary-ink hover:underline disabled:opacity-50">Retry</button>
+                  <button type="button" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label={`Dismiss ${r.file.name}`} className="shrink-0 text-s-muted hover:text-s-text">Dismiss</button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -513,22 +556,6 @@ function UploadBar({ kinds, concepts, defaultBrand, onDone }: {
 // ─── Modals ────────────────────────────────────────────────────────────────────
 
 const inputCls = 'mt-1 w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none'
-
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={title}
-        className="max-h-[90vh] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl border border-s-border bg-s-surface p-5"
-        onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold text-s-text">{title}</h2>
-          <button onClick={onClose} className="text-sm text-s-muted hover:text-s-text" aria-label="Close">Close</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
 
 function BrandSelect({ value, onChange, concepts }: { value: string; onChange: (v: string) => void; concepts: ConceptLite[] }) {
   return (

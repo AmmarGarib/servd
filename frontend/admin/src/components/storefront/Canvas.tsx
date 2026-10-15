@@ -11,6 +11,7 @@
 // its tooltip), actions on hover or when selected, column children indented.
 
 import { useEffect, useRef, useState } from 'react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ChevronDown, ChevronUp, Copy, CornerLeftUp, Eye, EyeOff, GripVertical, Trash2 } from 'lucide-react'
 import { blockSpec, blockSummary, canNest, columnsOf, MOTION_UI, motionPresetOf, type Block } from '../../lib/blocks'
 import { makeBlock, sectionSpec, sectionSummary, type PaletteItem } from '../../lib/sections'
@@ -75,10 +76,37 @@ interface CanvasProps {
   reveal?: { id: string; nonce: number } | null
   /** Shown, but the live page drew nothing for them. */
   missingIds?: ReadonlySet<string> | null
+  /** Screen-reader announcement (aria-live) for add / move. */
+  onAnnounce?: (text: string) => void
 }
 
-export function Canvas({ blocks, onChange, selectedId, onSelect, items, compact = false, hoverId = null, onHover, reveal, missingIds }: CanvasProps) {
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let n = el?.parentElement ?? null; n; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY
+    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight) return n
+  }
+  return null
+}
+
+export function Canvas({ blocks, onChange, selectedId, onSelect, items, compact = false, hoverId = null, onHover, reveal, missingIds, onAnnounce }: CanvasProps) {
   const root = useRef<HTMLDivElement>(null)
+  const confirm = useConfirm()
+
+  // While an element is dragged, a long list scrolls when the pointer nears the pane's top or bottom edge.
+  useEffect(() => {
+    const onOver = (e: DragEvent) => {
+      if (!drag) return
+      const sc = scrollParent(root.current)
+      if (!sc) return
+      const r = sc.getBoundingClientRect()
+      const zone = 48
+      if (e.clientX < r.left || e.clientX > r.right) return
+      if (e.clientY < r.top + zone && e.clientY >= r.top - 8) sc.scrollTop -= Math.ceil((r.top + zone - e.clientY) / 3)
+      else if (e.clientY > r.bottom - zone && e.clientY <= r.bottom + 8) sc.scrollTop += Math.ceil((e.clientY - (r.bottom - zone)) / 3)
+    }
+    document.addEventListener('dragover', onOver, true)
+    return () => document.removeEventListener('dragover', onOver, true)
+  }, [])
 
   useEffect(() => {
     if (!reveal) return
@@ -94,25 +122,27 @@ export function Canvas({ blocks, onChange, selectedId, onSelect, items, compact 
     if (p.source === 'palette') {
       const b = makeBlock(p.type)
       const next = insertAt(blocks, slot, b)
-      if (next !== blocks) { onChange(next); onSelect(b.id) }
+      if (next !== blocks) { onChange(next); onSelect(b.id); onAnnounce?.(`Element added at position ${slot.index + 1}.`) }
     } else {
       onChange(moveTo(blocks, p.id, slot))
+      onAnnounce?.(`Element moved to position ${slot.index + 1}.`)
     }
   }
 
   const ops: Ops = {
     select: onSelect,
     hover: (id) => onHover?.(id),
-    up: (id) => onChange(nudge(blocks, id, -1)),
-    down: (id) => onChange(nudge(blocks, id, 1)),
-    out: (id) => onChange(moveOut(blocks, id)),
+    up: (id) => { onChange(nudge(blocks, id, -1)); onAnnounce?.('Element moved up.') },
+    down: (id) => { onChange(nudge(blocks, id, 1)); onAnnounce?.('Element moved down.') },
+    out: (id) => { onChange(moveOut(blocks, id)); onAnnounce?.('Element moved out of columns.') },
     dup: (id) => { const r = duplicate(blocks, id); onChange(r.blocks); if (r.newId) onSelect(r.newId) },
     toggle: (id) => { const b = findBlock(blocks, id); if (b) onChange(updateBlock(blocks, { ...b, hidden: !b.hidden || undefined })) },
-    del: (id) => {
+    del: async (id) => {
       const b = findBlock(blocks, id)
       const kids = b ? (columnsOf(b) ?? []).flat().length : 0
-      if (kids && !confirm(`Delete these columns and the ${kids} element(s) inside?`)) return
+      if (kids && !await confirm({ title: 'Delete these columns?', body: `The ${kids} element(s) inside are deleted too.`, confirmLabel: 'Delete', danger: true })) return
       onChange(removeBlock(blocks, id))
+      onAnnounce?.('Element deleted.')
       if (selectedId === id) onSelect(null)
     },
     addInto: (parentId, col, key) => {
@@ -153,7 +183,7 @@ type Ops = {
   select: (id: string) => void
   hover: (id: string | null) => void
   up: (id: string) => void; down: (id: string) => void; out: (id: string) => void
-  dup: (id: string) => void; toggle: (id: string) => void; del: (id: string) => void
+  dup: (id: string) => void; toggle: (id: string) => void; del: (id: string) => void | Promise<void>
   addInto: (parentId: string, col: number, key: string) => void
 }
 

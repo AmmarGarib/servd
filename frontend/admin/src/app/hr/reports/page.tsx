@@ -46,11 +46,11 @@ export default function HrReportsPage() {
 
   return (
     <HrShell title="HR reports" subtitle="The four HR formats. Attendance comes from the time clock; payroll is read from the month's payroll run.">
-      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}</p>}
       <div className="flex flex-wrap gap-1 mb-5">
         {reports.map((r) => (
-          <button key={r.key} onClick={() => setKey(r.key)}
-            className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap ${def?.key === r.key ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>
+          <button key={r.key} type="button" aria-pressed={def?.key === r.key} onClick={() => setKey(r.key)}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap [@media(pointer:coarse)]:min-h-[44px] ${def?.key === r.key ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>
             {r.title}
           </button>
         ))}
@@ -63,7 +63,7 @@ export default function HrReportsPage() {
             <p className="text-xs text-white/45 mt-0.5">{def.description}</p>
             <div className="flex flex-wrap items-end gap-3 mt-4">
               {def.params.includes('month') && (
-                <Field label="Month"><input type="month" className={inp} value={q.month} onChange={(e) => setQ({ ...q, month: e.target.value })} /></Field>
+                <Field label="Month"><input type="month" className={inp} value={q.month} placeholder="YYYY-MM" pattern="\d{4}-\d{2}" onChange={(e) => { if (/^\d{4}-\d{2}$/.test(e.target.value)) setQ({ ...q, month: e.target.value }) }} /></Field>
               )}
               {def.params.includes('status') && (
                 <Field label="Status">
@@ -90,8 +90,8 @@ export default function HrReportsPage() {
             {dlErr && <p className="text-xs text-red-700 mt-2">{dlErr}</p>}
           </div>
 
-          {preview.error && <p className="text-sm text-red-700">{(preview.error as Error).message}</p>}
-          {preview.isLoading && <p className="text-sm text-white/40">Loading…</p>}
+          {preview.error && <p className="text-sm text-red-700" role="alert">{(preview.error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void preview.refetch()}>Retry</button></p>}
+          {preview.isLoading && <p className="text-sm text-white/40" role="status">Loading…</p>}
           {preview.data && <ReportView t={preview.data} />}
         </div>
       )}

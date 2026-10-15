@@ -14,6 +14,9 @@ import { useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryLabel, categoryValueOf, stockErrorText } from '../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
+import { FormField } from '../../components/ui/FormField'
+import { NumberField } from '../../components/ui/NumberField'
+import { MoneyInput } from '../../components/ui/MoneyInput'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
@@ -140,6 +143,8 @@ export default function InventoryPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('stock')
   const [showAdd, setShowAdd] = useState(false)
+  // A panel's Save was pressed once: show what is missing next to each field.
+  const [tried, setTried] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', category: '', notes: '', tenantId: '' })
   const { data: tenants = [] } = useMyTenants()
   const viewAll = useViewAllTenants()
@@ -293,12 +298,14 @@ export default function InventoryPage() {
   function openWaste(item: InventoryItem) {
     clearPhoto()
     wasteMutation.reset()
+    setTried(false)
     setWasteItemId(item.id)
     setWasteForm({ quantity: '', unit: item.unit, reason: 'spoilage', notes: '', conceptId: '', locationId: '' })
   }
 
   function openEdit(item: InventoryItem) {
     editMutation.reset()
+    setTried(false)
     setAssignItemId(null)
     setEditItemId(item.id)
     setEditForm({
@@ -310,6 +317,7 @@ export default function InventoryPage() {
   }
   function openAssign(item: InventoryItem) {
     assignMutation.reset()
+    setTried(false)
     setEditItemId(null)
     setAssignItemId(item.id)
     setAssignForm({ tenantId: tenants.length === 1 ? tenants[0]!.id : '', costPkr: item.unitCostCents != null ? String(item.unitCostCents / 100) : '' })
@@ -376,7 +384,7 @@ export default function InventoryPage() {
     <div className="min-h-screen bg-s-bg">
       {/* Toast */}
       {toast && (
-        <div className="fixed top-4 right-4 z-50 rounded-xl border border-s-border bg-s-surface px-4 py-3 text-sm text-s-text shadow-xl">
+        <div role="status" className="fixed top-4 right-4 z-50 rounded-xl border border-s-border bg-s-surface px-4 py-3 text-sm text-s-text shadow-xl">
           {toast}
         </div>
       )}
@@ -403,7 +411,7 @@ export default function InventoryPage() {
             </Link>
           )}
           {!kitchenView && (
-            <button onClick={() => setShowAdd(true)}
+            <button onClick={() => { setTried(false); setShowAdd(true) }}
               className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
               + Add item
             </button>
@@ -448,11 +456,17 @@ export default function InventoryPage() {
 
           {/* Add form */}
           {showAdd && !kitchenView && (
-            <div className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+            <form noValidate className="rounded-xl border border-primary bg-s-surface p-4 space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault()
+                setTried(true)
+                if (!addForm.name.trim() || addForm.parLevel === '' || (needsCompanyPick && !addForm.tenantId) || addMutation.isPending) return
+                addMutation.mutate()
+              }}>
               <p className="font-bold text-s-text text-sm">Add inventory item</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <F label="Item name">
-                  <input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
+                <F label="Item name" required error={tried && !addForm.name.trim() ? 'Enter the item name.' : null}>
+                  <input required enterKeyHint="next" value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
                     placeholder="Chicken breast" className={fi} autoFocus />
                 </F>
                 <F label="Unit">
@@ -460,8 +474,9 @@ export default function InventoryPage() {
                     {['kg', 'g', 'L', 'ml', 'pcs', 'box', 'bag', 'bottle'].map((u) => <option key={u} value={u}>{u}</option>)}
                   </Select>
                 </F>
-                <F label="Par level">
-                  <input type="number" value={addForm.parLevel} onChange={(e) => setAddForm({ ...addForm, parLevel: e.target.value })}
+                <F label="Par level" required error={tried && addForm.parLevel === '' ? 'Enter a par level (0 or more).' : null}>
+                  <NumberField decimals={3} min={0} enterKeyHint="next" value={numOf(addForm.parLevel)}
+                    onValueChange={(v) => setAddForm({ ...addForm, parLevel: textOf(v) })}
                     placeholder="5" className={fi} />
                 </F>
                 <F label="Category">
@@ -471,7 +486,7 @@ export default function InventoryPage() {
                   </Select>
                 </F>
                 <F label="Notes (optional)">
-                  <input value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
+                  <input enterKeyHint="done" value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
                     placeholder="Brand, cut, pack size…" className={fi} />
                 </F>
               </div>
@@ -488,26 +503,23 @@ export default function InventoryPage() {
                   onChange={(id) => setAddForm({ ...addForm, tenantId: id })}
                   required={!addForm.tenantId} />
               )}
+              {tried && needsCompanyPick && !addForm.tenantId && <p role="alert" className="text-xs text-s-red">Pick the company this item belongs to.</p>}
               <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    if (needsCompanyPick && !addForm.tenantId) return
-                    addMutation.mutate()
-                  }}
-                  disabled={!addForm.name || !addForm.parLevel || (needsCompanyPick && !addForm.tenantId) || addMutation.isPending}
+                <button type="submit" disabled={addMutation.isPending}
                   className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {addMutation.isPending ? 'Adding…' : 'Add item'}
                 </button>
-                <button onClick={() => setShowAdd(false)}
+                <button type="button" onClick={() => setShowAdd(false)}
                   className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
-              {addMutation.isError && <p className="text-xs text-s-red">{(addMutation.error as Error).message}</p>}
-            </div>
+              {addMutation.isError && <p role="alert" className="text-xs text-s-red">{(addMutation.error as Error).message}</p>}
+            </form>
           )}
 
           {/* Edit item: category, opening cost, par, issue on receipt */}
           {editItem && !kitchenView && (
-            <div className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+            <form noValidate className="rounded-xl border border-primary bg-s-surface p-4 space-y-3"
+              onSubmit={(e) => { e.preventDefault(); if (!editMutation.isPending) editMutation.mutate(editItem) }}>
               <p className="font-bold text-s-text text-sm">Edit — {editItem.name}</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <F label="Category">
@@ -522,12 +534,13 @@ export default function InventoryPage() {
                       {editItem.unitCostCents != null ? `PKR ${(editItem.unitCostCents / 100).toLocaleString('en-PK', { maximumFractionDigits: 3 })} per ${editItem.unit}` : '—'}
                     </p>
                   ) : (
-                    <input type="number" step="any" min={0} value={editForm.costPkr} onChange={(e) => setEditForm({ ...editForm, costPkr: e.target.value })}
+                    <MoneyInput value={centsOf(editForm.costPkr)} onChange={(c) => setEditForm({ ...editForm, costPkr: pkrOf(c) })}
                       placeholder="1.5" className={fi} />
                   )}
                 </F>
                 <F label="Par level">
-                  <input type="number" min={0} value={editForm.parLevel} onChange={(e) => setEditForm({ ...editForm, parLevel: e.target.value })} className={fi} />
+                  <NumberField decimals={3} min={0} value={numOf(editForm.parLevel)}
+                    onValueChange={(v) => setEditForm({ ...editForm, parLevel: textOf(v) })} className={fi} />
                 </F>
               </div>
               <p className="text-xs text-s-muted">
@@ -547,30 +560,37 @@ export default function InventoryPage() {
                 </label>
               )}
               <div className="flex gap-2">
-                <button onClick={() => editMutation.mutate(editItem)} disabled={editMutation.isPending}
+                <button type="submit" disabled={editMutation.isPending}
                   className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {editMutation.isPending ? 'Saving…' : 'Save'}
                 </button>
-                <button onClick={() => setEditItemId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+                <button type="button" onClick={() => setEditItemId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
               {editMutation.isError && <p role="alert" className="text-xs text-s-red">{stockErrorText(editMutation.error)}</p>}
-            </div>
+            </form>
           )}
 
           {/* Assign a company to a company-less item */}
           {assignItem && !kitchenView && (
-            <div className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+            <form noValidate className="rounded-xl border border-primary bg-s-surface p-4 space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault()
+                setTried(true)
+                if (assignMutation.isPending || !assignForm.tenantId || (assignItem.currentStock > 0 && assignForm.costPkr.trim() === '')) return
+                assignMutation.mutate(assignItem)
+              }}>
               <p className="font-bold text-s-text text-sm">Assign a company — {assignItem.name}</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <F label="Company">
+                <F label="Company" required error={tried && !assignForm.tenantId ? 'Pick a company.' : null}>
                   <Select value={assignForm.tenantId} onChange={(e) => setAssignForm({ ...assignForm, tenantId: e.target.value })} className={fi}>
                     <option value="">— pick a company —</option>
                     {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </Select>
                 </F>
                 {assignItem.currentStock > 0 && (
-                  <F label={`Opening unit cost (PKR per ${assignItem.unit})`}>
-                    <input type="number" step="any" min={0} value={assignForm.costPkr} onChange={(e) => setAssignForm({ ...assignForm, costPkr: e.target.value })}
+                  <F label={`Opening unit cost (PKR per ${assignItem.unit})`} required
+                    error={tried && assignForm.costPkr.trim() === '' ? 'Enter the cost per unit — the stock is booked at it.' : null}>
+                    <MoneyInput value={centsOf(assignForm.costPkr)} onChange={(c) => setAssignForm({ ...assignForm, costPkr: pkrOf(c) })}
                       placeholder="1.5" className={fi} />
                   </F>
                 )}
@@ -581,27 +601,32 @@ export default function InventoryPage() {
                   : 'An item needs a company before it can be counted, wasted, received or costed. This cannot be changed afterwards.'}
               </p>
               <div className="flex gap-2">
-                <button onClick={() => assignMutation.mutate(assignItem)}
-                  disabled={assignMutation.isPending || !assignForm.tenantId || (assignItem.currentStock > 0 && assignForm.costPkr.trim() === '')}
+                <button type="submit" disabled={assignMutation.isPending}
                   className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {assignMutation.isPending ? 'Assigning…' : 'Assign company'}
                 </button>
-                <button onClick={() => setAssignItemId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+                <button type="button" onClick={() => setAssignItemId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
               {assignMutation.isError && <p role="alert" className="text-xs text-s-red">{stockErrorText(assignMutation.error)}</p>}
-            </div>
+            </form>
           )}
 
           {/* Log Waste inline form */}
           {wasteItemId && canWaste && (
-            <div className="rounded-xl border border-s-red/50 bg-red-100/10 p-4 space-y-3">
+            <form noValidate className="rounded-xl border border-s-red/50 bg-red-100/10 p-4 space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault()
+                setTried(true)
+                if (!(wasteQty > 0) || wasteMutation.isPending || photoBusy) return
+                wasteMutation.mutate(wasteItemId)
+              }}>
               <p className="font-bold text-s-red text-sm">
                 Log waste — {wasteItem?.name}
               </p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <F label="Quantity">
-                  <input type="number" step="0.01" value={wasteForm.quantity}
-                    onChange={(e) => setWasteForm({ ...wasteForm, quantity: e.target.value })}
+                <F label="Quantity" required error={tried && !(wasteQty > 0) ? 'Enter how much was wasted (more than 0).' : null}>
+                  <NumberField decimals={3} min={0} enterKeyHint="next" value={numOf(wasteForm.quantity)}
+                    onValueChange={(v) => setWasteForm({ ...wasteForm, quantity: textOf(v) })}
                     placeholder="2.5" className={fi} autoFocus />
                 </F>
                 <F label="Unit">
@@ -614,7 +639,7 @@ export default function InventoryPage() {
                   </Select>
                 </F>
                 <F label="Notes (optional)">
-                  <input value={wasteForm.notes} onChange={(e) => setWasteForm({ ...wasteForm, notes: e.target.value })}
+                  <input enterKeyHint="done" value={wasteForm.notes} onChange={(e) => setWasteForm({ ...wasteForm, notes: e.target.value })}
                     placeholder="Describe waste…" className={fi} />
                 </F>
               </div>
@@ -675,16 +700,15 @@ export default function InventoryPage() {
               </div>
 
               <div className="flex gap-2">
-                <button onClick={() => wasteMutation.mutate(wasteItemId)}
-                  disabled={!wasteForm.quantity || wasteMutation.isPending || photoBusy}
+                <button type="submit" disabled={wasteMutation.isPending || photoBusy}
                   className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {wasteMutation.isPending ? 'Logging…' : 'Log waste & deduct stock'}
                 </button>
-                <button onClick={closeWaste}
+                <button type="button" onClick={closeWaste}
                   className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
               {wasteError && !photoRequiredMsg && <p role="alert" className="text-xs text-s-red">{stockErrorText(wasteError)}</p>}
-            </div>
+            </form>
           )}
 
           {/* ════ ALL STOCK ════ */}
@@ -959,13 +983,16 @@ export default function InventoryPage() {
   )
 }
 
-function F({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-xs text-s-muted font-medium">{label}</label>
-      <div className="mt-1">{children}</div>
-    </div>
-  )
+// Label wired to its control (htmlFor / aria-describedby) with an inline error.
+function F({ label, required, error, children }: { label: string; required?: boolean; error?: string | null; children: React.ReactElement }) {
+  return <FormField label={label} required={required} error={error ?? undefined}>{children}</FormField>
 }
+
+// Form state keeps numbers as typed text ('' = empty); the fields want number | null.
+const numOf = (t: string): number | null => (t.trim() === '' || !Number.isFinite(Number(t)) ? null : Number(t))
+const textOf = (n: number | null): string => (n == null ? '' : String(n))
+// A PKR-per-unit string and the cents MoneyInput works in (same unit the API gets: cents).
+const centsOf = (pkr: string): number => Math.round((numOf(pkr) ?? 0) * 100)
+const pkrOf = (cents: number): string => (cents > 0 ? String(cents / 100) : '')
 
 const fi = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none transition-colors'

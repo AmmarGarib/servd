@@ -8,6 +8,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
+import { NumberField } from '../../../../components/ui/NumberField'
 import {
   FA_BASE, FaFrame, Notice, Modal, L, ErrorLine, card, inp, btnPrimary, btnGhost, fmtLife, pct, errorWords,
 } from '../../../../components/fixedAssets/shared'
@@ -119,6 +120,10 @@ export default function ClassesPage() {
   )
 }
 
+/** Digits-only text state ↔ NumberField value (the state stays the string the form always held). */
+const asNum = (v: string): number | null => (v.trim() === '' || !Number.isFinite(Number(v)) ? null : Number(v))
+const fromNum = (n: number | null): string => (n == null ? '' : String(n))
+
 function EditClass({ row, onClose, onSaved }: { row: ClassRow; onClose: () => void; onSaved: () => void }) {
   const [label, setLabel] = useState(row.label)
   const [life, setLife] = useState(row.defaultLifeMonths ? String(row.defaultLifeMonths) : '')
@@ -139,21 +144,35 @@ function EditClass({ row, onClose, onSaved }: { row: ClassRow; onClose: () => vo
     onSuccess: onSaved,
   })
   const lifeOk = !row.depreciable || (Number(life) >= 1 && Number(life) <= 600)
-  const ratesOk = Number(rate) >= 0 && Number(rate) <= 100 && Number(allowance) >= 0 && Number(allowance) <= 100
+  const ratesOk = rate.trim() !== '' && allowance.trim() !== '' && Number(rate) >= 0 && Number(rate) <= 100 && Number(allowance) >= 0 && Number(allowance) <= 100
+  const [problem, setProblem] = useState<string | null>(null)
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (save.isPending) return
+    const bad: [string, string] | null = !label.trim() ? ['ec-name', 'The class needs a name.']
+      : !lifeOk ? ['ec-life', 'Default life must be 1 to 600 months.']
+      : !ratesOk ? ['ec-rate', 'The tax rate and the first-year allowance must each be 0 to 100%.']
+      : null
+    if (bad) { setProblem(bad[1]); document.getElementById(bad[0])?.focus(); return }
+    setProblem(null)
+    save.mutate()
+  }
+  const dirty = !save.isPending && (label !== row.label || life !== (row.defaultLifeMonths ? String(row.defaultLifeMonths) : '') || rate !== String(row.taxRateBp / 100)
+    || allowance !== String(row.taxInitialAllowanceBp / 100) || pooled !== row.pooled || active !== row.isActive)
 
   return (
-    <Modal title={`Edit ${row.label}`} onClose={onClose}>
-      <form onSubmit={(e) => { e.preventDefault(); save.mutate() }} className="space-y-3">
+    <Modal title={`Edit ${row.label}`} onClose={onClose} dirty={dirty}>
+      <form onSubmit={onSubmit} noValidate className="space-y-3">
         <p className="text-[11px] text-white/45">Ledger accounts {row.costAccountCode}{row.accumAccountCode ? ` / ${row.accumAccountCode}` : ''} are fixed for the class and cannot change.</p>
-        <L t="Name"><input className={inp} value={label} onChange={(e) => setLabel(e.target.value)} /></L>
+        <L t="Name"><input id="ec-name" className={inp} value={label} onChange={(e) => setLabel(e.target.value)} /></L>
         {row.depreciable ? (
           <L t="Default life (months)" hint={Number(life) > 0 ? `That is ${fmtLife(Number(life))}. Used when an item is prepared for the register without its own life.` : undefined}>
-            <input type="number" min={1} max={600} className={inp} value={life} onChange={(e) => setLife(e.target.value)} />
+            <NumberField id="ec-life" min={1} max={600} className={inp} value={asNum(life)} onValueChange={(n) => setLife(fromNum(n))} />
           </L>
         ) : <p className="text-sm text-white/60">This class is never depreciated, so it has no life.</p>}
         <div className="grid grid-cols-2 gap-3">
-          <L t="Tax depreciation rate (%)"><input type="number" min={0} max={100} step="0.5" className={inp} value={rate} onChange={(e) => setRate(e.target.value)} /></L>
-          <L t="First-year allowance (%)"><input type="number" min={0} max={100} step="0.5" className={inp} value={allowance} onChange={(e) => setAllowance(e.target.value)} /></L>
+          <L t="Tax depreciation rate (%)"><NumberField id="ec-rate" decimals={2} min={0} max={100} className={inp} value={asNum(rate)} onValueChange={(n) => setRate(fromNum(n))} /></L>
+          <L t="First-year allowance (%)"><NumberField decimals={2} min={0} max={100} className={inp} value={asNum(allowance)} onValueChange={(n) => setAllowance(fromNum(n))} /></L>
         </div>
         <label className="flex items-start gap-2 text-sm text-white/75">
           <input type="checkbox" className="mt-0.5" checked={pooled} disabled={row.assetCount > 0} onChange={(e) => setPooled(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
@@ -164,9 +183,10 @@ function EditClass({ row, onClose, onSaved }: { row: ClassRow; onClose: () => vo
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
           In use (switched-off classes cannot be picked for new assets)
         </label>
+        {problem && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
         <ErrorLine error={save.error} />
         <div className="flex gap-2 pt-2">
-          <button type="submit" disabled={save.isPending || !label.trim() || !lifeOk || !ratesOk} className={btnPrimary}>{save.isPending ? 'Saving…' : 'Save class'}</button>
+          <button type="submit" disabled={save.isPending} className={btnPrimary}>{save.isPending ? 'Saving…' : 'Save class'}</button>
           <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
         </div>
       </form>
@@ -187,23 +207,36 @@ function EditPolicy({ row, onClose, onSaved }: { row: PolicyRow; onClose: () => 
     }, { tenantId: row.tenantId }),
     onSuccess: onSaved,
   })
-  const ok = /^[A-Za-z0-9_-]{1,12}$/.test(prefix.trim()) && Number(uncap) >= 1 && Number(uncap) <= 365 && Number(overdue) >= 1 && Number(overdue) <= 365
+  const [problem, setProblem] = useState<string | null>(null)
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (save.isPending) return
+    const bad: [string, string] | null = !/^[A-Za-z0-9_-]{1,12}$/.test(prefix.trim()) ? ['ep-prefix', 'The tag prefix is 1 to 12 letters, digits, - or _.']
+      : !(Number(uncap) >= 1 && Number(uncap) <= 365) ? ['ep-uncap', 'Days must be 1 to 365.']
+      : !(Number(overdue) >= 1 && Number(overdue) <= 365) ? ['ep-overdue', 'Days must be 1 to 365.']
+      : null
+    if (bad) { setProblem(bad[1]); document.getElementById(bad[0])?.focus(); return }
+    setProblem(null)
+    save.mutate()
+  }
+  const dirty = !save.isPending && (prefix !== row.assetTagPrefix || uncap !== String(row.capexUncapitalisedAlertDays) || overdue !== String(row.capexAdvanceOverdueDays))
 
   return (
-    <Modal title={`Register policy: ${row.companyName}`} onClose={onClose}>
-      <form onSubmit={(e) => { e.preventDefault(); save.mutate() }} className="space-y-3">
+    <Modal title={`Register policy: ${row.companyName}`} onClose={onClose} dirty={dirty}>
+      <form onSubmit={onSubmit} noValidate className="space-y-3">
         <L t="Asset tag prefix" hint="Letters, digits, - and _ only, up to 12. New tags are the prefix and a running number, like FA-00001. Existing tags do not change.">
-          <input className={inp} value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={12} />
+          <input id="ep-prefix" className={inp} value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={12} />
         </L>
         <L t="Flag a delivered item not yet capitalised after (days)">
-          <input type="number" min={1} max={365} className={inp} value={uncap} onChange={(e) => setUncap(e.target.value)} />
+          <NumberField id="ep-uncap" min={1} max={365} className={inp} value={asNum(uncap)} onValueChange={(n) => setUncap(fromNum(n))} />
         </L>
         <L t="Flag a supplier advance with no delivery after (days)">
-          <input type="number" min={1} max={365} className={inp} value={overdue} onChange={(e) => setOverdue(e.target.value)} />
+          <NumberField id="ep-overdue" min={1} max={365} className={inp} value={asNum(overdue)} onValueChange={(n) => setOverdue(fromNum(n))} />
         </L>
+        {problem && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
         <ErrorLine error={save.error} />
         <div className="flex gap-2 pt-2">
-          <button type="submit" disabled={save.isPending || !ok} className={btnPrimary}>{save.isPending ? 'Saving…' : 'Save policy'}</button>
+          <button type="submit" disabled={save.isPending} className={btnPrimary}>{save.isPending ? 'Saving…' : 'Save policy'}</button>
           <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
         </div>
       </form>

@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 
 import { useRouter } from 'next/navigation'
 import { RiderApiError, friendlyError, riderApi } from '../../lib/riderApi'
 import { useRiderSession } from '../../lib/riderSession'
-import { formatPhone, normalisePhone } from './_lib/format'
+import { formatPhone, isPkMobile, normalisePhone } from './_lib/format'
 import { Banner, Button } from './_components/ui'
 
 const CODE_LENGTH = 6
@@ -40,6 +40,17 @@ export default function RiderSignInPage() {
     return () => clearTimeout(t)
   }, [resendIn])
 
+  // A hung request must never lock the screen: after 15s let the rider retry.
+  useEffect(() => {
+    if (!busy) return
+    const t = setTimeout(() => {
+      submitting.current = false
+      setBusy(false)
+      setError('Taking too long. Try again.')
+    }, 15000)
+    return () => clearTimeout(t)
+  }, [busy])
+
   useEffect(() => {
     if (step === 'code') codeRef.current?.focus()
   }, [step])
@@ -50,8 +61,8 @@ export default function RiderSignInPage() {
     e?.preventDefault()
     if (busy) return
     setError(null)
-    if (normalised.length < 11 || normalised.length > 15) {
-      setError('Enter your mobile number, like 0300 1234567.')
+    if (!isPkMobile(normalised)) {
+      setError('Use a Pakistani mobile like 0300 1234567')
       return
     }
     setBusy(true)
@@ -111,7 +122,11 @@ export default function RiderSignInPage() {
         <p className="mt-2 text-[16px] leading-snug" style={{ color: 'var(--servd-mute)' }}>
           {step === 'phone'
             ? 'Use the mobile number your manager added for you. We send a code on WhatsApp.'
-            : <>If <strong style={{ color: 'var(--servd-ink)' }}>{formatPhone(normalised)}</strong> is registered as a servd rider, a {CODE_LENGTH}-digit code is on its way on WhatsApp.</>}
+            : <>If <strong style={{ color: 'var(--servd-ink)' }}>{formatPhone(normalised)}</strong> is registered as a servd rider, a {CODE_LENGTH}-digit code is on its way on WhatsApp.{' '}
+              <button type="button" className="font-bold underline min-h-[44px]" style={{ color: 'var(--servd-purple)' }}
+                onClick={() => { setStep('phone'); setCode(''); setError(null) }}>
+                Wrong number? Change
+              </button></>}
         </p>
       </div>
 
@@ -154,7 +169,6 @@ export default function RiderSignInPage() {
               placeholder={'0'.repeat(CODE_LENGTH)}
               value={code}
               onChange={(e) => onCodeChange(e.target.value)}
-              readOnly={busy}
               className="w-full rounded-2xl px-4 text-center text-[34px] font-black tracking-[0.4em] outline-none focus:ring-4"
               style={{ ...inputStyle, minHeight: 72 }}
               aria-invalid={!!error}

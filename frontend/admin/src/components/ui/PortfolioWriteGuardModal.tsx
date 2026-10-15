@@ -11,9 +11,10 @@
 // as `x-servd-active-tenant` for the retried request. The operator stays
 // looking at all companies; only the single write lands in the picked one.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { Modal } from './Modal'
 import { onPortfolioWriteRequest, resolvePortfolioWrite, setPickedTenantId } from '../../hooks/useEnsureTenant'
 
 interface Tenant {
@@ -39,6 +40,14 @@ export function PortfolioWriteGuardModal() {
     enabled: open,                 // only fetch when actually shown
   })
 
+  // Navigating away (unmount) while the prompt is open must not leave the
+  // awaiting write pending forever: resolve it as cancelled.
+  const openRef = useRef(false)
+  openRef.current = open
+  useEffect(() => () => {
+    if (openRef.current) { setPickedTenantId(null); resolvePortfolioWrite('cancelled') }
+  }, [])
+
   useEffect(() => {
     return onPortfolioWriteRequest((intentText) => {
       setIntent(intentText)
@@ -61,54 +70,43 @@ export function PortfolioWriteGuardModal() {
   if (!open) return null
 
   return (
-    <div role="dialog" aria-modal="true"
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-      style={{ background: 'rgb(var(--ink-rgb) / 0.5)' }}
-      onClick={cancel}>
-      <div onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-2xl"
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-        <div className="px-6 pt-6 pb-4 border-b border-white/[0.06]">
-          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-primary-ink">Portfolio mode</p>
-          <h2 className="text-xl font-black text-white/95 mt-1">Which company is this for?</h2>
-          <p className="text-xs text-white/45 mt-1.5">
-            {intent
-              ? <>You&rsquo;re trying to <strong className="text-white/85">{intent}</strong>. Pick the company it should land in — just this one write, no session switch.</>
-              : <>Pick the company this change should land in. You&rsquo;ll stay viewing all companies — only this write goes to the picked one.</>}
-          </p>
-        </div>
-
-        <div className="px-6 py-4 space-y-2 max-h-[60vh] overflow-y-auto">
-          {tenants.length === 0 && (
-            <p className="text-xs text-white/40 text-center py-6">Loading your companies…</p>
-          )}
-          {tenants.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => pick(t.id)}
-              className="w-full text-left rounded-xl px-4 py-3 transition-all flex items-center justify-between gap-3"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-              <div className="min-w-0 flex-1">
-                <p className="font-bold text-sm text-white/90 truncate">{t.name}</p>
-                <p className="text-[11px] text-white/40 mt-0.5">
-                  {t.industry ?? 'Restaurant'} · {t.role ?? 'member'} · <span className="font-mono">{t.slug}</span>
-                </p>
-              </div>
-              <span className="text-xs text-primary-ink font-bold whitespace-nowrap">Use this →</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="px-6 py-4 flex justify-between items-center border-t border-white/[0.06]">
-          <p className="text-[11px] text-white/35">
-            One-shot — you stay in portfolio view after.
-          </p>
-          <button onClick={cancel}
+    <Modal title="Which company is this for?" onClose={cancel} zIndex={60}
+      footer={
+        <div className="flex justify-between items-center gap-3">
+          <p className="text-[11px] text-white/35">One-shot — you stay in portfolio view after.</p>
+          <button type="button" onClick={cancel}
             className="rounded-lg px-4 py-2 text-xs font-bold text-white/55 hover:text-white">
             Cancel
           </button>
         </div>
+      }>
+      <p className="text-[10px] font-black uppercase tracking-[0.24em] text-primary-ink">Portfolio mode</p>
+      <p className="text-xs text-white/45">
+        {intent
+          ? <>You&rsquo;re trying to <strong className="text-white/85">{intent}</strong>. Pick the company it should land in — just this one write, no session switch.</>
+          : <>Pick the company this change should land in. You&rsquo;ll stay viewing all companies — only this write goes to the picked one.</>}
+      </p>
+      <div className="space-y-2">
+        {tenants.length === 0 && (
+          <p className="text-xs text-white/40 text-center py-6">Loading your companies…</p>
+        )}
+        {tenants.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => pick(t.id)}
+            className="w-full text-left rounded-xl px-4 py-3 transition-all flex items-center justify-between gap-3"
+            style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-sm text-white/90 truncate">{t.name}</p>
+              <p className="text-[11px] text-white/40 mt-0.5">
+                {t.industry ?? 'Restaurant'} · {t.role ?? 'member'} · <span className="font-mono">{t.slug}</span>
+              </p>
+            </div>
+            <span className="text-xs text-primary-ink font-bold whitespace-nowrap">Use this →</span>
+          </button>
+        ))}
       </div>
-    </div>
+    </Modal>
   )
 }

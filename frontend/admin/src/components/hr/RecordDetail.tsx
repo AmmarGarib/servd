@@ -14,6 +14,8 @@ import { useHrAccess } from './HrShell'
 import { RecordMoney, BankAccountName } from './RecordMoney'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
 import { Select } from '@/components/ui/Select'
+import { NumberField } from '@/components/ui/NumberField'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 // Letters that make sense from a record — spec §26.
 export const LETTERS_FOR: Record<string, string[]> = {
@@ -68,6 +70,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
   const [draft, setDraft] = useState<Record<string, unknown>>(record.data)
   const [note, setNote] = useState('')
   // An earlier approver's hours, when one cut the claim — otherwise the hours claimed.
+  const confirmAsk = useConfirm()
   const [hours, setHours] = useState<string>(record.section === 'overtime'
     ? String(typeof record.data['approvedHours'] === 'number' ? record.data['approvedHours'] : record.quantity ?? '')
     : '')
@@ -196,7 +199,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
               return (
                 <li key={w.key} className="flex items-baseline gap-2 text-xs">
                   <span className="w-4 text-white/35">{i + 1}.</span>
-                  <span className="font-bold" style={{ color: a ? (a.decision === 'approved' ? '#3f7d20' : '#b42318') : current ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.4)' }}>
+                  <span className="font-bold" style={{ color: a ? (a.decision === 'approved' ? '#3f7d20' : 'var(--erp-danger)') : current ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.4)' }}>
                     {w.label}
                   </span>
                   <span className="text-white/40">({ROLE_LABEL[w.role]})</span>
@@ -244,7 +247,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
           <p className="text-xs font-bold text-amber-700">Waiting on: {step.label}</p>
           {record.section === 'overtime' && (
             <label className="block text-xs text-white/60">Approved hours
-              <input type="number" step="0.25" min={0} className={`${inp} mt-1`} value={hours} onChange={(e) => setHours(e.target.value)} />
+              <NumberField className={`${inp} mt-1`} decimals={2} min={0} value={hours === '' ? null : Number(hours)} onValueChange={(n) => setHours(n == null ? '' : String(n))} />
             </label>
           )}
           {loanPayout && (
@@ -289,7 +292,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
         ))}
         {cancellable ? (
           <button className="ml-auto text-xs text-white/40 hover:text-red-700" disabled={cancel.isPending}
-            onClick={() => { if (confirm('Cancel this record?')) cancel.mutate() }}>Cancel record</button>
+            onClick={async () => { if (await confirmAsk({ title: 'Cancel this record?', body: 'It is marked cancelled and leaves the approval flow.', confirmLabel: 'Cancel record', cancelLabel: 'Keep it', danger: true })) cancel.mutate() }}>Cancel record</button>
         ) : null}
       </div>
     </div>

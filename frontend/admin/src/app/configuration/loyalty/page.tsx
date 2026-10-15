@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 // /configuration/loyalty — full operator-managed loyalty system.
 //   1. Global rules: earn rate, redeem rate, minimum redeem, expiry,
@@ -286,6 +287,7 @@ function TierEditor({ initial, onCancel, onSaved, onDeleted }: {
     customPerks:            initial?.customPerks ?? [],
     description:            initial?.description ?? '',
   })
+  const confirm = useConfirm()
   const [perkDraft, setPerkDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -318,7 +320,11 @@ function TierEditor({ initial, onCancel, onSaved, onDeleted }: {
 
   async function remove() {
     if (!initial) return
-    if (!confirm(`Delete the "${initial.displayName || initial.tier}" tier? This will fail if customers are still on it — toggle Inactive instead if so.`)) return
+    if (!(await confirm({
+      title: `Delete the "${initial.displayName || initial.tier}" tier?`,
+      body: 'This will fail if customers are still on it — toggle Inactive instead if so.',
+      confirmLabel: 'Delete tier', danger: true,
+    }))) return
     setSaving(true); setErr(null)
     try {
       await api.delete(`/loyalty/tiers/${initial.id}`)

@@ -1,5 +1,6 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { useDialog } from '../ui/Modal'
 import { fmtPkrWhole } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
 import { paidCentsOf, preBillErrorMessage, printPreBill, type TillOrder } from './tillApi'
@@ -27,6 +28,8 @@ function minutesSince(iso: string): string {
 export function OpenTickets({ brandName, tickets, loading, error, onPick, onClose }: OpenTicketsProps) {
   // "Pre-bill" prints the guest's bill for an open ticket (spec §17.1): not a
   // tax invoice, never sent to the POS, recorded for Finance → Voided pre bills.
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDialog(panelRef, { onClose })
   const [printing, setPrinting] = useState<string | null>(null)
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
   function preBill(o: TillOrder) {
@@ -39,21 +42,24 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
   }
   return (
     <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-end justify-center bg-black/80 sm:items-center"
-      role="dialog" aria-modal="true" aria-label="Open tickets">
-      <div className="flex max-h-[85dvh] w-full max-w-md flex-col rounded-t-2xl bg-kds-card sm:rounded-2xl">
-        <div className="flex items-center justify-between border-b border-kds-border px-5 py-4">
+      role="presentation">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Open tickets"
+        className="flex max-h-[85dvh] w-full max-w-md flex-col rounded-t-2xl bg-kds-card outline-none sm:rounded-2xl"
+        style={{ overscrollBehavior: 'contain' }}>
+        <div className="flex items-center justify-between border-b border-kds-border py-2 pl-5 pr-1">
           <div>
             <h2 className="text-lg font-bold text-kds-text">Open tickets</h2>
             <p className="text-xs text-kds-subtext">{brandName ?? 'This brand'} · rung, not yet paid</p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-xl text-kds-subtext">✕</button>
+          <button type="button" data-dialog-close onClick={onClose} aria-label="Close"
+            className="flex h-11 w-11 shrink-0 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
         </div>
         {note && (
           <p className={`border-b border-kds-border px-5 py-2 text-xs ${note.ok ? 'text-kds-subtext' : 'text-kds-red'}`} role={note.ok ? 'status' : 'alert'}>
             {note.text}
           </p>
         )}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           {loading && tickets.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-kds-subtext">Loading…</p>
           ) : error ? (

@@ -11,7 +11,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
-import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, pinRefusal, pkr, primaryBtn, type Box } from './ui'
+import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, firstMissing, focusField, pinRefusal, pkr, primaryBtn, useSubmitOnce, type Box } from './ui'
 import { Select } from '@/components/ui/Select'
 
 export type TopupSource = 'garibsons' | 'safe' | 'bank' | 'till'
@@ -61,7 +61,7 @@ export function SourcePicker({ value, onChange, tenantId, boxId, allowTill }: {
     )}
     {value.source === 'till' && (
       <Field label="Open drawer *">
-        <Select value={value.shiftId} onChange={(e) => onChange({ ...value, shiftId: e.target.value })} className={fieldCls}>
+        <Select id="tu-drawer" value={value.shiftId} onChange={(e) => onChange({ ...value, shiftId: e.target.value })} className={fieldCls}>
           <option value="">{isError ? 'Drawers unavailable' : drawers.length === 0 ? 'No open drawer in this company' : '— pick the drawer —'}</option>
           {drawers.map((d) => (
             <option key={d.id} value={d.id}>{d.cashierName}{d.locationName ? ` · ${d.locationName}` : ''} · opened {new Date(d.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</option>
@@ -86,27 +86,44 @@ export function TopUpModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
     }),
     onSuccess: () => onSaved(),
   })
-  return <Modal title={`Top up ${box.name}`} onClose={onClose}>
-    <Field label="From *">
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'tu-source': sourceReady(src) ? '' : 'Pick the open drawer.',
+    'tu-amount': amountCents > 0 ? '' : 'Enter an amount above zero.',
+    'tu-reason': reason.trim() ? '' : 'Say why the box is being topped up.',
+    'tu-pin': overLimit && !managerOverridePin ? 'A manager PIN is needed above the limit.' : '',
+  }
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const submit = useSubmitOnce(save.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad === 'tu-source' ? 'tu-drawer' : bad); return false }
+    save.mutate()
+    return true
+  })
+  return <Modal title={`Top up ${box.name}`} onClose={onClose} dirty={!save.isPending && (amountCents > 0 || !!reason.trim())}>
+    <form onSubmit={submit} className="space-y-3" noValidate>
+    <Field label="From *" error={shown('tu-source')}>
       <SourcePicker value={src} onChange={setSrc} tenantId={box.tenantId} boxId={box.id} allowTill={isKeeper} />
     </Field>
-    <Field label="Amount (PKR) *">
-      <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
+    <Field label="Amount (PKR) *" error={shown('tu-amount')}>
+      <MoneyInput id="tu-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
       <p className="text-[10px] text-white/30 mt-1">In the box now: {pkr(box.floatCents)} · limit without a PIN {pkr(box.topUpLimitCents)}</p>
     </Field>
-    <Field label="Reason *">
-      <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} placeholder="Weekly float from Jamil sb" className={fieldCls} />
+    <Field label="Reason *" error={shown('tu-reason')}>
+      <input id="tu-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} placeholder="Weekly float from Jamil sb" className={fieldCls} />
     </Field>
     {overLimit && (
-      <Field label="Manager PIN *">
-        <input type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Above the box's top-up limit" className={fieldCls} />
+      <Field label="Manager PIN *" error={shown('tu-pin')}>
+        <input id="tu-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Above the box's top-up limit" className={fieldCls} />
       </Field>
     )}
     {save.error && <ErrorBanner error={pinRefusal(save.error) ?? save.error} />}
     <Footer onCancel={onClose} primary={
-      <button onClick={() => save.mutate()} disabled={save.isPending || amountCents <= 0 || !reason.trim() || !sourceReady(src) || (overLimit && !managerOverridePin)} className={primaryBtn}>
+      <button type="submit" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : 'Top up'}
       </button>
     } />
+    </form>
   </Modal>
 }

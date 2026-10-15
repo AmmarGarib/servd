@@ -2,16 +2,18 @@
 // One employee: the master record (edited through the Employee Master format),
 // documents, requests, leave, loans, salary history, letters, and their login.
 
-import { useParams } from 'next/navigation'
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrRecord, type HrLogin } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
-import { FormRenderer } from '../../../../components/hr/FormRenderer'
+import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
 import { Select } from '@/components/ui/Select'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Profile {
   employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
@@ -26,16 +28,73 @@ interface Profile {
 }
 
 const TABS = ['Profile', 'Documents', 'Requests', 'Leave', 'Loans & pay', 'Letters', 'Login & clock-in'] as const
+type Tab = (typeof TABS)[number]
+// The tab lives in ?tab= so reload, Back and a shared link land on it.
+const TAB_SLUG: Record<Tab, string> = { Profile: 'profile', Documents: 'documents', Requests: 'requests', Leave: 'leave', 'Loans & pay': 'pay', Letters: 'letters', 'Login & clock-in': 'login' }
+const tabFromSlug = (s: string | null): Tab => TABS.find((t) => TAB_SLUG[t] === s) ?? 'Profile'
 
 export default function EmployeeProfilePage() {
+  return <Suspense fallback={null}><EmployeeProfile /></Suspense>
+}
+
+function EmployeeProfile() {
   const { id } = useParams<{ id: string }>()
-  const [tab, setTab] = useState<(typeof TABS)[number]>('Profile')
-  const { data: p, error } = useQuery({ queryKey: ['hr-employee', id], queryFn: () => api.get<Profile>(`/hr/employees/${id}`) })
+  const router = useRouter()
+  const path = usePathname()
+  const sp = useSearchParams()
+  const confirm = useConfirm()
+  const tab = tabFromSlug(sp.get('tab'))
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  // The Profile form reports whether it holds unsaved edits.
+  const dirty = useRef(false)
+  const setDirty = useCallback((d: boolean) => { dirty.current = d }, [])
+  const { data: p, error, isLoading } = useQuery({ queryKey: ['hr-employee', id], queryFn: () => api.get<Profile>(`/hr/employees/${id}`) })
   const e = p?.employee
+
+  const askDiscard = useCallback(async () => {
+    if (!dirty.current) return true
+    const r = await confirm({ title: 'Discard your changes?', body: 'The profile has edits that are not saved.', confirmLabel: 'Discard', cancelLabel: 'Keep editing', danger: true })
+    if (r) dirty.current = false
+    return !!r
+  }, [confirm])
+
+  // Hard leave (reload, close, address bar) and in-app links both ask first.
+  useEffect(() => {
+    const beforeUnload = (ev: BeforeUnloadEvent) => { if (dirty.current) { ev.preventDefault(); ev.returnValue = '' } }
+    const onClick = (ev: MouseEvent) => {
+      if (!dirty.current || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return
+      const a = (ev.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!a || a.target === '_blank' || a.origin !== window.location.origin) return
+      if (a.pathname === window.location.pathname && a.search === window.location.search) return
+      ev.preventDefault(); ev.stopPropagation()
+      void askDiscard().then((ok) => { if (ok) router.push(a.pathname + a.search + a.hash) })
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    document.addEventListener('click', onClick, true)
+    return () => { window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('click', onClick, true) }
+  }, [askDiscard, router])
+
+  const go = async (t: Tab) => {
+    if (t === tab) return
+    if (tab === 'Profile' && !(await askDiscard())) return
+    const q = new URLSearchParams(sp.toString())
+    if (t === 'Profile') q.delete('tab'); else q.set('tab', TAB_SLUG[t])
+    const qs = q.toString()
+    router.replace(qs ? `${path}?${qs}` : (path ?? ''), { scroll: false })
+  }
+  const onTabKey = (ev: React.KeyboardEvent, i: number) => {
+    const last = TABS.length - 1
+    const next = ev.key === 'ArrowRight' ? (i === last ? 0 : i + 1) : ev.key === 'ArrowLeft' ? (i === 0 ? last : i - 1) : ev.key === 'Home' ? 0 : ev.key === 'End' ? last : -1
+    if (next < 0) return
+    ev.preventDefault()
+    tabRefs.current[next]?.focus()
+    void go(TABS[next]!)
+  }
   return (
     <HrShell title={e ? e.fullName : 'Employee'} subtitle={e ? `${e.employeeCode} · ${p?.labels.designation ?? 'No designation'} · ${p?.labels.department ?? 'No department'} · ${p?.labels.branch ?? 'No branch'}` : undefined}
       actions={e && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[e.status] }}>{human(e.status)}</span>}>
-      {error && <p className="text-sm text-red-700">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-red-700" role="alert">{(error as Error).message}</p>}
+      {isLoading && <p className="text-sm text-white/40">Loading employee…</p>}
       {p && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
@@ -45,25 +104,29 @@ export default function EmployeeProfilePage() {
             <Stat label="Manager" value={p.labels.manager ?? '—'} />
             <Stat label="Loans outstanding" value={rs(p.loans.reduce((a, l) => a + l.outstandingCents, 0))} />
           </div>
-          <div className="flex gap-1 mb-5 overflow-x-auto">
-            {TABS.map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap ${tab === t ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>{t}</button>
+          <div role="tablist" aria-label="Employee sections" className="flex gap-1 mb-5 overflow-x-auto">
+            {TABS.map((t, i) => (
+              <button key={t} ref={(el) => { tabRefs.current[i] = el }} type="button" role="tab" id={`emp-tab-${TAB_SLUG[t]}`} aria-selected={tab === t} aria-controls="emp-tabpanel"
+                tabIndex={tab === t ? 0 : -1} onKeyDown={(ev) => onTabKey(ev, i)} onClick={() => void go(t)}
+                className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap [@media(pointer:coarse)]:min-h-[44px] ${tab === t ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>{t}</button>
             ))}
           </div>
-          {tab === 'Profile' && <ProfileTab p={p} />}
-          {tab === 'Documents' && <DocumentsTab p={p} />}
-          {tab === 'Requests' && <RequestsTab p={p} />}
-          {tab === 'Leave' && <LeaveTab p={p} />}
-          {tab === 'Loans & pay' && <PayTab p={p} />}
-          {tab === 'Letters' && <LettersTab p={p} />}
-          {tab === 'Login & clock-in' && <LoginTab p={p} />}
+          <div role="tabpanel" id="emp-tabpanel" aria-labelledby={`emp-tab-${TAB_SLUG[tab]}`}>
+            {tab === 'Profile' && <ProfileTab p={p} onDirty={setDirty} />}
+            {tab === 'Documents' && <DocumentsTab p={p} />}
+            {tab === 'Requests' && <RequestsTab p={p} />}
+            {tab === 'Leave' && <LeaveTab p={p} />}
+            {tab === 'Loans & pay' && <PayTab p={p} />}
+            {tab === 'Letters' && <LettersTab p={p} />}
+            {tab === 'Login & clock-in' && <LoginTab p={p} />}
+          </div>
         </>
       )}
     </HrShell>
   )
 }
 
-function ProfileTab({ p }: { p: Profile }) {
+function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void }) {
   const qc = useQueryClient()
   // The employee's own company's format and lists — in portfolio view that
   // need not be the active company, and the API checks against theirs.
@@ -79,60 +142,93 @@ function ProfileTab({ p }: { p: Profile }) {
   const [value, setValue] = useState<Record<string, unknown> | null>(null)
   const [err, setErr] = useState('')
   const [ok, setOk] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const formRef = useRef<HTMLFormElement>(null)
   const save = useMutation({
     mutationFn: () => api.patch(`/hr/employees/${p.employee.id}`, { data: value }),
-    onSuccess: () => { setOk(true); setErr(''); void qc.invalidateQueries() },
+    onSuccess: () => { setOk(true); setErr(''); setValue(null); void qc.invalidateQueries() },
     onError: (e: Error) => { setErr(e.message); setOk(false) },
   })
+  useEffect(() => { onDirty(value !== null) }, [value, onDirty])
+  useEffect(() => () => onDirty(false), [onDirty])
   if (!form) return <p className="text-sm text-white/40">Loading format…</p>
   const v = value ?? initial()
+  const submit = (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (!value || save.isPending) return
+    const found = validate(form.current.fields, v)
+    setErrors(found)
+    if (Object.keys(found).length > 0) { setErr(''); focusFirstInvalid(formRef.current); return }
+    save.mutate()
+  }
   return (
-    <div className="rounded-2xl p-5" style={card}>
-      <FormRenderer fields={form.current.fields} value={v} onChange={(x) => { setValue(x); setOk(false) }} ctx={{ lookups, org }} />
-      {err && <p className="text-xs text-red-700 mt-3">{err}</p>}
-      {ok && <p className="text-xs text-primary-ink mt-3">Saved.</p>}
-      <div className="flex gap-2 mt-5">
-        <button className={btn} disabled={save.isPending || !value} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save changes'}</button>
-        {value && <button className={btnGhost} onClick={() => setValue(null)}>Discard</button>}
+    <form ref={formRef} onSubmit={submit} noValidate className="rounded-2xl p-5" style={card}>
+      <FormRenderer fields={form.current.fields} value={v} errors={errors}
+        onChange={(x) => { setValue(x); setOk(false); if (Object.keys(errors).length) setErrors(validate(form.current.fields, x)) }} ctx={{ lookups, org }} />
+      <div className="flex flex-wrap items-center gap-2 mt-5">
+        <button type="submit" className={btn} disabled={save.isPending || !value}>{save.isPending ? 'Saving…' : 'Save changes'}</button>
+        {value && <button type="button" className={btnGhost} onClick={() => { setValue(null); setErrors({}); setErr('') }}>Discard</button>}
+        {value && <span className="text-xs text-white/50">Unsaved changes</span>}
       </div>
-      <p className="text-[11px] text-white/35 mt-3">Promotions, transfers and salary revisions should go through their own sections so they are approved and appear in the history. Editing salary here is recorded in the audit trail.</p>
-    </div>
+      {err && <p className="text-xs text-red-700 mt-3" role="alert">{err}</p>}
+      <p className="text-xs text-primary-ink mt-3" role="status" aria-live="polite">{ok ? 'Saved.' : ''}</p>
+      <p className="text-xs text-white/50 mt-3">Promotions, transfers and salary revisions should go through their own sections so they are approved and appear in the history. Editing salary here is recorded in the audit trail.</p>
+    </form>
   )
 }
 
 function DocumentsTab({ p }: { p: Profile }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: types = [] } = useQuery({ queryKey: ['hr-doc-types'], queryFn: () => api.get<string[]>('/hr/documents/types') })
   const [f, setF] = useState({ docType: 'cnic_front', title: '', fileUrl: '', issueDate: '', expiryDate: '' })
   const [err, setErr] = useState('')
   const add = useMutation({
-    mutationFn: () => api.post('/hr/documents', { employeeId: p.employee.id, docType: f.docType, title: f.title || undefined, fileUrl: f.fileUrl || undefined, issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined }),
+    mutationFn: () => api.post('/hr/documents', { employeeId: p.employee.id, docType: f.docType, title: f.title.trim() || undefined, fileUrl: f.fileUrl.trim() || undefined, issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined }),
     onSuccess: () => { setErr(''); setF({ ...f, title: '', fileUrl: '', issueDate: '', expiryDate: '' }); void qc.invalidateQueries() },
     onError: (e: Error) => setErr(e.message),
   })
-  const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: () => void qc.invalidateQueries() })
-  const del = useMutation({ mutationFn: (id: string) => api.delete(`/hr/documents/${id}`), onSuccess: () => void qc.invalidateQueries() })
+  const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: () => void qc.invalidateQueries(), onError: (e: Error) => setErr(`Could not verify: ${e.message}`) })
+  const del = useMutation({ mutationFn: (id: string) => api.delete(`/hr/documents/${id}`), onSuccess: () => void qc.invalidateQueries(), onError: (e: Error) => setErr(`Could not delete: ${e.message}`) })
   const soon = (d: string | null) => d && new Date(d).getTime() - Date.now() < 30 * 86_400_000
+  const submit = (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (add.isPending) return
+    if (!f.title.trim() && !f.fileUrl.trim()) { setErr('Give the document a title or a link to the file.'); return }
+    if (f.issueDate && f.expiryDate && f.expiryDate < f.issueDate) { setErr('The expiry date is before the issue date.'); return }
+    setErr('')
+    add.mutate()
+  }
+  const lbl = 'block text-[11px] font-bold text-white/55 mb-1'
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-6 gap-2 items-end" style={card}>
-        <Select className={inp} value={f.docType} onChange={(e) => setF({ ...f, docType: e.target.value })} aria-label="Document type">{types.map((t) => <option key={t} value={t}>{human(t)}</option>)}</Select>
-        <input className={inp} placeholder="Title (optional)" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
-        <input className={`${inp} md:col-span-2`} placeholder="Link to the file" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} />
-        <input type="date" className={inp} title="Expiry date" value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} aria-label="Expiry date" />
-        <button className={btn} disabled={add.isPending} onClick={() => add.mutate()}>Add</button>
-      </div>
-      {err && <p className="text-xs text-red-700">{err}</p>}
+      <form onSubmit={submit} className="rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 items-end" style={card}>
+        <div><span className={lbl}>Type</span>
+          <Select className={inp} value={f.docType} onChange={(e) => setF({ ...f, docType: e.target.value })} aria-label="Document type">{types.map((t) => <option key={t} value={t}>{human(t)}</option>)}</Select></div>
+        <label><span className={lbl}>Title</span>
+          <input className={inp} placeholder="e.g. CNIC front" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} autoComplete="off" /></label>
+        <label className="md:col-span-2"><span className={lbl}>Link to the file</span>
+          <input type="url" className={inp} placeholder="https://…" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} autoComplete="off" /></label>
+        <label><span className={lbl}>Issue date</span>
+          <input type="date" className={inp} value={f.issueDate} onChange={(e) => setF({ ...f, issueDate: e.target.value })} /></label>
+        <label><span className={lbl}>Expiry date</span>
+          <input type="date" className={inp} value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} /></label>
+        <button type="submit" className={`${btn} sm:col-span-2 md:col-span-6 md:justify-self-start`} disabled={add.isPending}>{add.isPending ? 'Adding…' : 'Add document'}</button>
+      </form>
+      {err && <p className="text-xs text-red-700" role="alert">{err}</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
         {p.documents.length === 0 && <p className="p-6 text-sm text-white/40 text-center">No documents yet.</p>}
         {p.documents.map((d) => (
-          <div key={d.id} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 flex items-center gap-3 text-sm">
-            <span className="font-bold text-white/85 w-48 shrink-0">{d.title || human(d.docType)}</span>
+          <div key={d.id} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <span className="font-bold text-white/85 sm:w-48 shrink-0">{d.title || human(d.docType)}</span>
             {d.fileUrl ? <a href={d.fileUrl} target="_blank" rel="noreferrer" className="text-primary-ink text-xs hover:underline">Open</a> : <span className="text-xs text-white/30">No file</span>}
             <span className="text-xs" style={{ color: soon(d.expiryDate) ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.45)' }}>{d.expiryDate ? `Expires ${day(d.expiryDate)}` : ''}</span>
-            <span className="ml-auto flex gap-3">
-              {d.verifiedAt ? <span className="text-xs text-primary-ink">Verified</span> : <button className="text-xs text-white/50 hover:text-white" onClick={() => verify.mutate(d.id)}>Mark verified</button>}
-              <button className="text-xs text-white/35 hover:text-red-700" onClick={() => { if (confirm('Delete this document?')) del.mutate(d.id) }}>Delete</button>
+            <span className="ml-auto flex gap-1">
+              {d.verifiedAt ? <span className="text-xs text-primary-ink">Verified</span> : <button type="button" className="text-xs text-white/50 hover:text-white px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Mark verified</button>}
+              <button type="button" className="text-xs text-white/50 hover:text-red-700 px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
+                const ok = await confirm({ title: 'Delete this document?', body: `${d.title || human(d.docType)} will be removed from ${p.employee.fullName}'s file.`, confirmLabel: 'Delete', danger: true })
+                if (ok) del.mutate(d.id)
+              }}>Delete</button>
             </span>
           </div>
         ))}
@@ -164,7 +260,7 @@ function LeaveTab({ p }: { p: Profile }) {
       {p.leaveBalances.map((b) => (
         <div key={b.leaveTypeId} className="rounded-2xl p-4" style={card}>
           <p className="text-sm font-black text-white/85">{b.name} <span className="text-[10px] font-bold text-white/35">{b.paid ? 'PAID' : 'UNPAID'}</span></p>
-          <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? '#b42318' : '#3f7d20' }}>{b.balance}</p>
+          <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? 'var(--erp-danger)' : '#3f7d20' }}>{b.balance}</p>
           <p className="text-[11px] text-white/45 mt-1">{b.entitlement} entitled {b.carriedForward ? `+${b.carriedForward} carried ` : ''}{b.adjustments ? `${b.adjustments > 0 ? '+' : ''}${b.adjustments} adjusted ` : ''}· {b.taken} taken{b.pending ? ` · ${b.pending} pending` : ''}</p>
         </div>
       ))}
@@ -336,18 +432,30 @@ function WorkLocationsCard({ p }: { p: Profile }) {
 
 function KioskPinCard({ p }: { p: Profile }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [pin, setPin] = useState('')
   const [msg, setMsg] = useState('')
+  const [bad, setBad] = useState(false)
   const save = useMutation({
     mutationFn: () => api.post(`/hr/employees/${p.employee.id}/kiosk-pin`, { pin }),
-    onSuccess: () => { setPin(''); setMsg('PIN set. Tell them in person — it is not shown again.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
-    onError: (e: Error) => setMsg(e.message),
+    onSuccess: () => { setPin(''); setBad(false); setMsg('PIN set. Tell them in person — it is not shown again.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
+    onError: (e: Error) => { setBad(true); setMsg(e.message) },
   })
   const clear = useMutation({
     mutationFn: () => api.delete(`/hr/employees/${p.employee.id}/kiosk-pin`),
-    onSuccess: () => { setMsg('PIN removed.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
-    onError: (e: Error) => setMsg(e.message),
+    onSuccess: () => { setBad(false); setMsg('PIN removed.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
+    onError: (e: Error) => { setBad(true); setMsg(e.message) },
   })
+  const submit = (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (save.isPending) return
+    if (pin.length < 4) { setBad(true); setMsg('The PIN is 4 to 6 digits.'); return }
+    setMsg(''); save.mutate()
+  }
+  const remove = async () => {
+    const ok = await confirm({ title: 'Remove the kiosk PIN?', body: `${p.employee.fullName} will no longer be able to punch at the kiosk until a new PIN is set.`, confirmLabel: 'Remove PIN', danger: true })
+    if (ok) clear.mutate()
+  }
   return (
     <div className="rounded-2xl p-5" style={card}>
       <p className="text-sm font-black text-white/85 mb-2">Kiosk PIN</p>
@@ -355,16 +463,17 @@ function KioskPinCard({ p }: { p: Profile }) {
       {p.user ? (
         <p className="text-xs text-white/45">This person has a login, so they clock in with it — no kiosk PIN needed.</p>
       ) : (
-        <>
+        <form onSubmit={submit}>
           <p className="text-xs mb-2" style={{ color: p.kioskPinSet ? '#3f7d20' : 'rgb(var(--fg-rgb) / 0.45)' }}>{p.kioskPinSet ? 'A PIN is set.' : 'No PIN yet.'}</p>
-          <div className="flex gap-2">
-            <input className={inp} inputMode="numeric" maxLength={6} placeholder="4–6 digits" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} aria-label="New kiosk PIN" />
-            <button className={btn} disabled={pin.length < 4 || save.isPending} onClick={() => save.mutate()}>{p.kioskPinSet ? 'Change' : 'Set'}</button>
-            {p.kioskPinSet && <button className={btnGhost} disabled={clear.isPending} onClick={() => clear.mutate()}>Remove</button>}
+          <div className="flex flex-wrap gap-2">
+            <PasswordInput numeric className={inp} wrapperClassName="flex-1 min-w-[160px]" maxLength={6} autoComplete="new-password" placeholder="4–6 digits"
+              value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} aria-label="New kiosk PIN" aria-invalid={bad && pin.length < 4 ? true : undefined} />
+            <button type="submit" className={btn} disabled={pin.length < 4 || save.isPending}>{save.isPending ? 'Saving…' : p.kioskPinSet ? 'Change' : 'Set'}</button>
+            {p.kioskPinSet && <button type="button" className={btnGhost} disabled={clear.isPending} onClick={() => void remove()}>Remove</button>}
           </div>
-        </>
+        </form>
       )}
-      {msg && <p className="text-xs text-white/60 mt-2">{msg}</p>}
+      {msg && <p className={`text-xs mt-2 ${bad ? 'text-red-700' : 'text-white/60'}`} role={bad ? 'alert' : 'status'}>{msg}</p>}
     </div>
   )
 }

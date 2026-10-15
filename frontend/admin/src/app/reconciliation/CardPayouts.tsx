@@ -15,6 +15,13 @@ import { api, ApiError } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '../../components/ui/Modal'
+import { NumberField } from '../../components/ui/NumberField'
+import { DialogForm } from '../../components/finance/PaymentReceivedFields'
+
+/** A settings string ↔ NumberField value (the strings are what the form always held). */
+const asNum = (v: string): number | null => (v.trim() === '' || !Number.isFinite(Number(v)) ? null : Number(v))
+const fromNum = (n: number | null): string => (n == null ? '' : String(n))
 
 // ─── Types (the API's shapes) ────────────────────────────────────────────────
 
@@ -413,25 +420,25 @@ function SettingsCard() {
           </Select>
         </Field>
         <Field label="Matching starts on" hint="Card days before it were cleared by hand. Set automatically the first time matching is switched on.">
-          <input type="date" className="s-input" value={f.startDay} disabled={!edit} onChange={set('startDay')} />
+          <input type="date" className="s-input" min="2000-01-01" value={f.startDay} disabled={!edit} onChange={set('startDay')} />
         </Field>
         <Field label="MDR (Keenu's fee), %" hint="Of the card sales, e.g. 2.5">
-          <input type="number" min={0} max={10} step="0.01" inputMode="decimal" className="s-input" value={f.mdr} disabled={!edit} onChange={set('mdr')} />
+          <NumberField decimals={2} min={0} max={10} className="s-input" value={asNum(f.mdr)} disabled={!edit} onValueChange={(n) => { setSaved(false); setF((p) => (p ? { ...p, mdr: fromNum(n) } : p)) }} />
         </Field>
         <Field label="Tax on the fee, %" hint="Only helps predict the payout; the whole fee is a cost (6080).">
-          <input type="number" min={0} max={30} step="0.01" inputMode="decimal" className="s-input" value={f.feeTax} disabled={!edit} onChange={set('feeTax')} />
+          <NumberField decimals={2} min={0} max={30} className="s-input" value={asNum(f.feeTax)} disabled={!edit} onValueChange={(n) => { setSaved(false); setF((p) => (p ? { ...p, feeTax: fromNum(n) } : p)) }} />
         </Field>
         <Field label="Paid within (days)" hint="Keenu pays 1 to this many days after the card day (1–5).">
-          <input type="number" min={1} max={5} step={1} inputMode="numeric" className="s-input" value={f.lagDays} disabled={!edit} onChange={set('lagDays')} />
+          <NumberField min={1} max={5} className="s-input" value={asNum(f.lagDays)} disabled={!edit} onValueChange={(n) => { setSaved(false); setF((p) => (p ? { ...p, lagDays: fromNum(n) } : p)) }} />
         </Field>
         <Field label="One payout covers at most (days)" hint="A weekend batch is 3 (1–5).">
-          <input type="number" min={1} max={5} step={1} inputMode="numeric" className="s-input" value={f.maxBatchDays} disabled={!edit} onChange={set('maxBatchDays')} />
+          <NumberField min={1} max={5} className="s-input" value={asNum(f.maxBatchDays)} disabled={!edit} onValueChange={(n) => { setSaved(false); setF((p) => (p ? { ...p, maxBatchDays: fromNum(n) } : p)) }} />
         </Field>
         <Field label="Tolerance, % of card sales" hint="How far a payout may be from the prediction (0–2).">
-          <input type="number" min={0} max={2} step="0.01" inputMode="decimal" className="s-input" value={f.tolerance} disabled={!edit} onChange={set('tolerance')} />
+          <NumberField decimals={2} min={0} max={2} className="s-input" value={asNum(f.tolerance)} disabled={!edit} onValueChange={(n) => { setSaved(false); setF((p) => (p ? { ...p, tolerance: fromNum(n) } : p)) }} />
         </Field>
         <Field label="Largest fee allowed, %" hint="A confirm implying a bigger fee is refused (0–10).">
-          <input type="number" min={0} max={10} step="0.01" inputMode="decimal" className="s-input" value={f.maxFee} disabled={!edit} onChange={set('maxFee')} />
+          <NumberField decimals={2} min={0} max={10} className="s-input" value={asNum(f.maxFee)} disabled={!edit} onValueChange={(n) => { setSaved(false); setF((p) => (p ? { ...p, maxFee: fromNum(n) } : p)) }} />
         </Field>
       </div>
       {edit && (
@@ -463,23 +470,22 @@ function UndoModal({ settlement, onClose }: { settlement: Settlement; onClose: (
     },
   })
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="s-card w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Undo card payout">
-        <p className="text-lg font-bold text-s-text">Undo this card payout</p>
+    <Modal title="Undo this card payout" onClose={onClose} dirty={!go.isPending && !!reason.trim()}>
+      <DialogForm busy={go.isPending} onSubmit={() => go.mutate()} missing={reason.trim().length < 3 ? 'Give a reason (3 characters or more).' : null}>
         <p className="text-sm text-s-muted">
           The payout&apos;s entry ({fmtPkr(settlement.netCents)} received, fee {fmtPkr(settlement.feeCents)}) is reversed, the card days {dayRange(settlement.dayFrom, settlement.dayTo)} are
           free again and the bank line goes back to unmatched.
         </p>
-        <Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Matched to the wrong days" /></Field>
-        {go.error && <p className="text-xs text-s-red">{cardPayoutErrorText(go.error)}</p>}
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="s-btn-danger text-sm" disabled={go.isPending || reason.trim().length < 3} onClick={() => go.mutate()}>
+        <div className="mt-3"><Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Matched to the wrong days" /></Field></div>
+        {go.error && <p role="alert" className="text-xs text-s-red mt-3">{cardPayoutErrorText(go.error)}</p>}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button type="submit" className="s-btn-danger text-sm" disabled={go.isPending}>
             {go.isPending ? 'Undoing…' : 'Undo payout'}
           </button>
           <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
         </div>
-      </div>
-    </div>
+      </DialogForm>
+    </Modal>
   )
 }
 

@@ -17,6 +17,10 @@ import { TerminalCharge } from './TerminalCharge'
 import { RaastPanel, type RaastDone } from './RaastPanel'
 import { OnAccountPanel, type OnAccountDone } from './OnAccountPanel'
 import { orderRef } from '../../lib/orderRef'
+import { useDialog } from '../ui/Modal'
+import { useConfirm } from '../ui/ConfirmDialog'
+import { NumberField } from '../ui/NumberField'
+import { PasswordInput } from '../ui/PasswordInput'
 
 /** What the done screen shows: change due, the sale's fiscal document, the card the machine took. */
 interface Done {
@@ -57,6 +61,7 @@ type PaymentMethod = 'cash' | 'card' | 'raast' | 'on_account' | 'comp' | 'staff_
 // An open ticket starts at step 2. Nothing here computes GST.
 export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const {
     cart, discountCents, discountReason, shiftId, tableId, customerId,
     clearCart, ensureCheckoutKey, lines, itemTotalCents,
@@ -444,23 +449,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   }
 
   if (!shiftId) {
-    return (
-      <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
-        <div className="w-full max-w-sm rounded-2xl bg-kds-card p-6 text-center space-y-4">
-          <div className="text-4xl">⚠️</div>
-          <h2 className="text-lg font-bold text-kds-text">No Shift Open</h2>
-          <p className="text-sm text-kds-subtext">You need to open a shift before processing payments.</p>
-          <div className="flex gap-3">
-            <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border py-3 text-kds-subtext">
-              Cancel
-            </button>
-            <a href="/pos/shift" className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-white text-center">
-              Open Shift
-            </a>
-          </div>
-        </div>
-      </div>
-    )
+    return <NoShiftDialog onClose={onClose} />
   }
 
   const methodPicker = (
@@ -538,6 +527,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
               : tillErrorMessage(ring.error, 'Could not ring up the order'))}</p>
         )}
         <button
+          type="button"
           onClick={() => ring.mutate()}
           disabled={ring.isPending || cart.length === 0 || !brand}
           className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
@@ -551,8 +541,44 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   // ── Step 2: take payment for the order ────────────────────────────────────
   const live = order.items.filter((i) => i.status !== 'voided')
   const title = order.table?.label ? `Table ${order.table.label}` : `Order ${orderRef(order.id)}`
+
+  // The generic Confirm button (cash, card by reference, comp, staff meal) — the
+  // other tenders have their own panels with their own buttons.
+  const genericConfirm = method !== 'on_account' && method !== 'raast' && !useTerminal
+  const confirmBlocked =
+    pay.isPending ||
+    !shown ||
+    due <= 0 ||
+    (method === 'card' && !configSettled) ||
+    (method === 'cash' && tenderedCents < due) ||
+    (method === 'comp' && !compReason.trim()) ||
+    (needsRef && !gatewayRef.trim()) ||
+    (method === 'staff_meal' && !staffMealFor.trim())
+  async function confirmPay() {
+    if (pay.isPending) return
+    // A comp / staff meal writes the bill off: say what, once, before it goes.
+    if (method === 'comp' || method === 'staff_meal') {
+      const n = live.reduce((c, i) => c + i.quantity, 0)
+      const label = method === 'comp' ? 'complimentary' : 'a staff meal'
+      const ok = await confirm({
+        title: method === 'comp' ? 'Mark this order complimentary?' : 'Ring this as a staff meal?',
+        body: `${n} item${n !== 1 ? 's' : ''}, ${fmtPkr(stored?.dueCents ?? due)} — written off as ${label}. No money is taken.`,
+        confirmLabel: method === 'comp' ? 'Mark complimentary' : 'Ring as staff meal',
+        cancelLabel: 'Go back',
+        danger: true,
+      })
+      if (!ok) return
+    }
+    setBillChanged(false)
+    pay.mutate()
+  }
+  // Enter in any field of the step takes the step's own Confirm (never when it is disabled).
+  function onPayFormSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (genericConfirm && !confirmBlocked) void confirmPay()
+  }
   return (
-    <Shell title={done ? 'Paid' : method === 'on_account' ? `${title} — on account` : `${title} — ${shown ? fmtPkrWhole(due) : '…'}`} onClose={onClose}>
+    <Shell dismissible={!holding} title={done ? 'Paid' : method === 'on_account' ? `${title} — on account` : `${title} — ${shown ? fmtPkrWhole(due) : '…'}`} onClose={onClose}>
       {!done && (
         <>
           {/* What is being charged */}
@@ -612,6 +638,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
             </p>
           )}
 
+          <form id="till-pay-form" onSubmit={onPayFormSubmit} noValidate>
           {/* Terminal reference — a card / QR sale keyed on the machine by hand is settled against it */}
           {needsRef && (
             <div className="mb-4">
@@ -627,8 +654,9 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
                   </button>
                 </div>
               )}
-              <label className="mb-1 block text-sm text-kds-subtext">Terminal reference</label>
+              <label htmlFor="till-ref" className="mb-1 block text-sm text-kds-subtext">Terminal reference</label>
               <input
+                id="till-ref"
                 type="text"
                 value={gatewayRef}
                 onChange={(e) => setGatewayRef(e.target.value)}
@@ -643,13 +671,12 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           {tipsAccepted && (
             <div className="mb-4">
               <label htmlFor="till-tip" className="mb-1 block text-sm text-kds-subtext">Tip (optional, PKR)</label>
-              <input
+              <NumberField
                 id="till-tip"
-                type="number"
-                inputMode="decimal"
+                decimals={2}
                 min={0}
-                value={heldTip ? String(heldTip.tipCents / 100) : raastHeld ? String(raastHeld.tipCents / 100) : tip}
-                onChange={(e) => setTip(e.target.value)}
+                value={heldTip ? heldTip.tipCents / 100 : raastHeld ? raastHeld.tipCents / 100 : tip === '' ? null : Number(tip)}
+                onValueChange={(v) => setTip(v == null ? '' : String(v))}
                 disabled={tipLocked}
                 placeholder="0"
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-lg font-bold text-kds-text disabled:opacity-60"
@@ -681,8 +708,9 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           {/* Staff meal — who is eating; rung through as a comp */}
           {method === 'staff_meal' && (
             <div className="mb-4">
-              <label className="mb-1 block text-sm text-kds-subtext">Staff member</label>
+              <label htmlFor="till-staff" className="mb-1 block text-sm text-kds-subtext">Staff member</label>
               <input
+                id="till-staff"
                 type="text"
                 value={staffMealFor}
                 onChange={(e) => setStaffMealFor(e.target.value)}
@@ -692,10 +720,11 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
               />
               {pinBoxShown && (
                 <>
-                  <label className="mb-1 mt-3 block text-sm text-kds-subtext">Manager PIN (every staff meal needs a manager)</label>
-                  <input
-                    type="password"
-                    inputMode="numeric"
+                  <label htmlFor="till-pin-staff" className="mb-1 mt-3 block text-sm text-kds-subtext">Manager PIN (every staff meal needs a manager)</label>
+                  <PasswordInput
+                    id="till-pin-staff"
+                    numeric
+                    maxLength={8}
                     autoComplete="off"
                     value={managerPin}
                     onChange={(e) => setManagerPin(e.target.value)}
@@ -710,7 +739,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           {method === 'cash' && shown && (
             <div className="mb-4">
               <div className="mb-1 flex items-baseline justify-between">
-                <label className="block text-sm text-kds-subtext">Tendered amount (PKR)</label>
+                <label htmlFor="till-tender" className="block text-sm text-kds-subtext">Tendered amount (PKR)</label>
                 <button
                   type="button"
                   onClick={() => setTendered((Math.ceil(due / 100)).toString())}
@@ -719,11 +748,12 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
                   Exact
                 </button>
               </div>
-              <input
-                type="number"
-                inputMode="decimal"
-                value={tendered}
-                onChange={(e) => setTendered(e.target.value)}
+              <NumberField
+                id="till-tender"
+                decimals={2}
+                min={0}
+                value={tendered === '' ? null : Number(tendered)}
+                onValueChange={(v) => setTendered(v == null ? '' : String(v))}
                 placeholder={`${Math.ceil(due / 100)}`}
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-xl font-bold text-kds-green"
                 autoFocus
@@ -744,24 +774,28 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           {/* Comp reason */}
           {method === 'comp' && (
             <div className="mb-4">
-              <label className="mb-1 block text-sm text-kds-subtext">Reason (required)</label>
+              <label htmlFor="till-comp-reason" className="mb-1 block text-sm text-kds-subtext">Reason (required)</label>
               <input
+                id="till-comp-reason"
                 type="text"
                 value={compReason}
                 onChange={(e) => setCompReason(e.target.value)}
                 placeholder="Customer complaint, long wait…"
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text"
               />
-              <label className="mb-1 mt-3 block text-sm text-kds-subtext">Manager PIN (needed above your comp limit)</label>
-              <input
-                type="password"
-                inputMode="numeric"
+              <label htmlFor="till-pin-comp" className="mb-1 mt-3 block text-sm text-kds-subtext">Manager PIN (needed above your comp limit)</label>
+              <PasswordInput
+                id="till-pin-comp"
+                numeric
+                maxLength={8}
+                autoComplete="off"
                 value={managerPin}
                 onChange={(e) => setManagerPin(e.target.value)}
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text"
               />
             </div>
           )}
+          </form>
 
           {pay.isError && !(pay.error instanceof ApiError && pay.error.code === 'AMOUNT_MISMATCH') && (
             <p className="mb-3 text-sm text-kds-red">
@@ -820,17 +854,9 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
             ) : null
           ) : (
             <button
-              onClick={() => { setBillChanged(false); pay.mutate() }}
-              disabled={
-                pay.isPending ||
-                !shown ||
-                due <= 0 ||
-                (method === 'card' && !configSettled) ||
-                (method === 'cash' && tenderedCents < due) ||
-                (method === 'comp' && !compReason.trim()) ||
-                (needsRef && !gatewayRef.trim()) ||
-                (method === 'staff_meal' && !staffMealFor.trim())
-              }
+              type="submit"
+              form="till-pay-form"
+              disabled={confirmBlocked}
               className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
             >
               {pay.isPending
@@ -952,16 +978,47 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   )
 }
 
-function Shell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+// Every till dialog behaves the same (components/ui/Modal useDialog): Escape,
+// a Tab trap, focus back to the opener, background scroll locked. `dismissible`
+// false (a card-machine charge or a Raast request is waiting) turns Escape off;
+// the close button stays, and closing keeps the charge running as before.
+function Shell({ title, onClose, children, dismissible = true }: { title: string; onClose: () => void; children: React.ReactNode; dismissible?: boolean }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDialog(panelRef, { onClose, dismissible })
   return (
-    <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-end justify-center bg-black/80 sm:items-center"
-      role="dialog" aria-modal="true" aria-label={title}>
-      <div className="max-h-[92dvh] w-full max-w-sm overflow-y-auto rounded-t-2xl bg-kds-card p-5 sm:rounded-2xl">
+    <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-end justify-center bg-black/80 sm:items-center" role="presentation">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title}
+        className="max-h-[92dvh] w-full max-w-sm overflow-y-auto rounded-t-2xl bg-kds-card p-5 outline-none sm:rounded-2xl"
+        style={{ overscrollBehavior: 'contain' }}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold text-kds-text">{title}</h2>
-          <button onClick={onClose} aria-label="Close" className="text-kds-subtext text-xl">✕</button>
+          <button type="button" data-dialog-close onClick={onClose} aria-label="Close"
+            className="-mr-3 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
         </div>
         {children}
+      </div>
+    </div>
+  )
+}
+
+function NoShiftDialog({ onClose }: { onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDialog(panelRef, { onClose })
+  return (
+    <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4" role="presentation">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="no-shift-title"
+        className="w-full max-w-sm space-y-4 rounded-2xl bg-kds-card p-6 text-center outline-none">
+        <div className="text-4xl">⚠️</div>
+        <h2 id="no-shift-title" className="text-lg font-bold text-kds-text">No Shift Open</h2>
+        <p className="text-sm text-kds-subtext">You need to open a shift before processing payments.</p>
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose} className="min-h-11 flex-1 rounded-xl border border-kds-border py-3 text-kds-subtext">
+            Cancel
+          </button>
+          <a href="/pos/shift" className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-kds-green py-3 text-center font-bold text-white">
+            Open Shift
+          </a>
+        </div>
       </div>
     </div>
   )

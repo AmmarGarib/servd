@@ -14,6 +14,11 @@ import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { stockErrorText } from '../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '../../components/ui/Modal'
+import { FormField } from '../../components/ui/FormField'
+import { NumberField } from '../../components/ui/NumberField'
+import { MoneyInput } from '../../components/ui/MoneyInput'
+import { useConfirm } from '../../components/ui/ConfirmDialog'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
@@ -185,14 +190,25 @@ function fmt(iso: string) { return new Date(iso).toLocaleDateString('en-PK', { d
 
 const fi = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none'
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-xs text-s-muted font-medium">{label}</label>
-      <div className="mt-1">{children}</div>
-    </div>
-  )
+// Label wired to its control (htmlFor / aria-describedby), with an optional inline error.
+function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string | null; children: React.ReactElement }) {
+  return <FormField label={label} required={required} error={error ?? undefined}>{children}</FormField>
 }
+
+// Forms keep numbers as typed text ('' = empty); the number fields want number | null.
+const numOf = (t: string): number | null => (t.trim() === '' || !Number.isFinite(Number(t)) ? null : Number(t))
+const textOf = (n: number | null): string => (n == null ? '' : String(n))
+// Money is typed in rupees as text; MoneyInput works in cents. What the API gets is unchanged.
+const centsOf = (pkr: string): number => Math.round((numOf(pkr) ?? 0) * 100)
+const pkrOf = (cents: number): string => (cents > 0 ? String(cents / 100) : '')
+
+// Human labels for the status filter chips ('pending_approval' → 'Pending approval').
+const STATUS_LABEL: Record<string, string> = {
+  '': 'All', draft: 'Draft', pending_approval: 'Pending approval', approved: 'Approved', sent: 'Sent',
+  partial: 'Part-received', received: 'Received', cancelled: 'Cancelled',
+  open: 'Open', partially_paid: 'Partly paid', paid: 'Paid', applied: 'Applied', void: 'Void', overdue: 'Overdue',
+}
+const statusLabel = (st: string) => STATUS_LABEL[st] ?? (st ? st.charAt(0).toUpperCase() + st.slice(1).replace(/_/g, ' ') : 'All')
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
@@ -292,6 +308,7 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
   const [markSentId, setMarkSentId] = useState<string | null>(null)
   const [markSentChannel, setMarkSentChannel] = useState<'phone' | 'whatsapp' | 'in_person' | 'email'>('phone')
   const [markSentNote, setMarkSentNote] = useState('')
+  const [triedReason, setTriedReason] = useState(false)
 
   const qs = new URLSearchParams()
   if (statusFilter) qs.set('status', statusFilter)
@@ -334,10 +351,10 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1 flex-wrap">
           {statuses.map((s) => (
-            <button key={s} onClick={() => setStatusFilter(s)}
+            <button type="button" key={s} onClick={() => setStatusFilter(s)} aria-pressed={statusFilter === s}
               className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
                 ${statusFilter === s ? 'bg-accent-dim border border-accent text-s-text' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
-              {s || 'All'}
+              {statusLabel(s)}
             </button>
           ))}
         </div>
@@ -412,7 +429,7 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
         <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="font-bold text-s-text">PO Detail — {detail.reference ?? detail.id.slice(-8)}</p>
-            <button onClick={() => setDetailId(null)} className="text-s-muted hover:text-s-text text-xs">✕ Close</button>
+            <button onClick={() => setDetailId(null)} aria-label="Close PO detail" className="text-s-muted hover:text-s-text text-xs">✕ Close</button>
           </div>
           {detail.lines && detail.lines.length > 0 && (
             <div className="overflow-x-auto">
@@ -448,30 +465,36 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
 
       {/* Reject modal */}
       {rejectId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-s-text">Reject PO</p>
-            <Field label="Reason (required)">
-              <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={fi} autoFocus />
+        <Modal title="Reject PO" onClose={() => { setRejectId(null); setRejectReason('') }} dirty={rejectReason !== ''}>
+          <form noValidate className="space-y-4" onSubmit={(e) => {
+            e.preventDefault()
+            setTriedReason(true)
+            if (!rejectReason.trim() || actionMut.isPending) return
+            actionMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason.trim() } }); setRejectId(null); setRejectReason(''); setTriedReason(false)
+          }}>
+            <Field label="Reason" required error={triedReason && !rejectReason.trim() ? 'Say why this PO is rejected.' : null}>
+              <input required value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={fi} autoFocus />
             </Field>
             <div className="flex gap-2">
-              <button disabled={!rejectReason || actionMut.isPending}
-                onClick={() => { actionMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason } }); setRejectId(null); setRejectReason('') }}
+              <button type="submit" disabled={actionMut.isPending}
                 className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Reject
               </button>
-              <button onClick={() => { setRejectId(null); setRejectReason('') }}
+              <button type="button" onClick={() => { setRejectId(null); setRejectReason(''); setTriedReason(false) }}
                 className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
       {/* Mark sent modal — the PO went out by phone / own WhatsApp / in person */}
       {markSentId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-s-text">Mark PO as sent</p>
+        <Modal title="Mark PO as sent" onClose={() => { setMarkSentId(null); setMarkSentNote('') }} dirty={markSentNote !== ''}>
+          <form noValidate className="space-y-4" onSubmit={(e) => {
+            e.preventDefault()
+            if (actionMut.isPending) return
+            actionMut.mutate({ id: markSentId, action: 'mark-sent', body: { channel: markSentChannel, note: markSentNote || null } }); setMarkSentId(null); setMarkSentNote('')
+          }}>
             <p className="text-xs text-s-muted">Only if you have already given this order to the supplier yourself.</p>
             <Field label="How was it sent?">
               <Select value={markSentChannel} onChange={(e) => setMarkSentChannel(e.target.value as typeof markSentChannel)} className={fi}>
@@ -485,37 +508,39 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
               <input value={markSentNote} onChange={(e) => setMarkSentNote(e.target.value)} placeholder="e.g. spoke to Imran, delivery Tuesday" className={fi} />
             </Field>
             <div className="flex gap-2">
-              <button disabled={actionMut.isPending}
-                onClick={() => { actionMut.mutate({ id: markSentId, action: 'mark-sent', body: { channel: markSentChannel, note: markSentNote || null } }); setMarkSentId(null); setMarkSentNote('') }}
+              <button type="submit" disabled={actionMut.isPending}
                 className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Mark sent
               </button>
-              <button onClick={() => { setMarkSentId(null); setMarkSentNote('') }}
+              <button type="button" onClick={() => { setMarkSentId(null); setMarkSentNote('') }}
                 className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Back</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
       {/* Cancel modal */}
       {cancelId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-s-text">Cancel PO</p>
-            <Field label="Reason (required)">
-              <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} className={fi} autoFocus />
+        <Modal title="Cancel PO" onClose={() => { setCancelId(null); setCancelReason('') }} dirty={cancelReason !== ''}>
+          <form noValidate className="space-y-4" onSubmit={(e) => {
+            e.preventDefault()
+            setTriedReason(true)
+            if (!cancelReason.trim() || actionMut.isPending) return
+            actionMut.mutate({ id: cancelId, action: 'cancel', body: { reason: cancelReason.trim() } }); setCancelId(null); setCancelReason(''); setTriedReason(false)
+          }}>
+            <Field label="Reason" required error={triedReason && !cancelReason.trim() ? 'Say why this PO is cancelled.' : null}>
+              <input required value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} className={fi} autoFocus />
             </Field>
             <div className="flex gap-2">
-              <button disabled={!cancelReason || actionMut.isPending}
-                onClick={() => { actionMut.mutate({ id: cancelId, action: 'cancel', body: { reason: cancelReason } }); setCancelId(null); setCancelReason('') }}
+              <button type="submit" disabled={actionMut.isPending}
                 className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Cancel PO
               </button>
-              <button onClick={() => { setCancelId(null); setCancelReason('') }}
+              <button type="button" onClick={() => { setCancelId(null); setCancelReason(''); setTriedReason(false) }}
                 className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Back</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
     </div>
   )
@@ -610,33 +635,39 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
   }
 
   const totalCents = lines.reduce((s, l) => s + (Number(l.quantityOrdered) || 0) * Math.round((Number(l.unitCostCents) || 0) * 100), 0)
-  const valid = supplierId && lines.every((l) => l.inventoryItemId && l.quantityOrdered && l.unitCostCents)
+  const [tried, setTried] = useState(false)
+  const lineBad = (l: typeof lines[number]) => !l.inventoryItemId || !(Number(l.quantityOrdered) > 0) || !l.unitCostCents
+  const valid = !!supplierId && lines.length > 0 && !lines.some(lineBad)
+  const msg = tried && !valid && supplierId
+    ? (lines.length === 0 ? 'Add at least one line.' : 'Every line needs an item, a quantity above 0 and a unit cost.')
+    : null
 
   return (
-    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
+    <form noValidate className="rounded-xl border border-primary bg-s-surface p-5 space-y-4"
+      onSubmit={(e) => { e.preventDefault(); setTried(true); if (valid && !mut.isPending) mut.mutate() }}>
       <div className="flex items-center justify-between">
         <p className="font-bold text-s-text">{title ?? (initial ? 'Draft purchase order from reorder suggestions' : 'New Purchase Order')}</p>
-        <button onClick={onClose} className="text-s-muted hover:text-s-text text-xs">✕</button>
+        <button type="button" onClick={onClose} aria-label="Close" className="text-s-muted hover:text-s-text text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
       </div>
       {initial && !title && (
         <p className="text-xs text-s-muted">Quantities bring each item back to its par level, after what is already on order. Check them and the prices, then create the PO — it is a draft until you submit it.</p>
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Field label="Supplier *">
+        <Field label="Supplier" required error={tried && !supplierId ? 'Choose a supplier.' : null}>
           <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fi}>
             <option value="">Select supplier</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>
         </Field>
         <Field label="Reference">
-          <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="PO-2024-001" className={fi} />
+          <input enterKeyHint="next" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="PO-2024-001" className={fi} />
         </Field>
         <Field label="Expected delivery">
           <input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} className={fi} />
         </Field>
         <Field label="Notes">
-          <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional…" className={fi} />
+          <input enterKeyHint="next" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional…" className={fi} />
         </Field>
       </div>
 
@@ -646,43 +677,44 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
         {lines.map((line, i) => (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
             <div className="col-span-5">
-              <Select value={line.inventoryItemId} onChange={(e) => updateLine(i, 'inventoryItemId', e.target.value)} className={fi}>
+              <Select value={line.inventoryItemId} aria-label={`Line ${i + 1} item`} onChange={(e) => updateLine(i, 'inventoryItemId', e.target.value)} className={fi}>
                 <option value="">Select item</option>
                 {invItems.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>)}
               </Select>
             </div>
             <div className="col-span-2">
-              <input type="number" placeholder="Qty" value={line.quantityOrdered}
-                onChange={(e) => updateLine(i, 'quantityOrdered', e.target.value)} className={fi} />
+              <NumberField decimals={3} min={0} enterKeyHint="next" placeholder="Qty" aria-label={`Line ${i + 1} quantity`}
+                value={numOf(line.quantityOrdered)} onValueChange={(v) => updateLine(i, 'quantityOrdered', textOf(v))} className={fi} />
             </div>
             <div className="col-span-2">
-              <input type="number" placeholder="Unit cost (PKR)" value={line.unitCostCents}
-                onChange={(e) => updateLine(i, 'unitCostCents', e.target.value)} className={fi} />
+              <MoneyInput placeholder="Unit cost (PKR)" ariaLabel={`Line ${i + 1} unit cost in rupees`}
+                value={centsOf(line.unitCostCents)} onChange={(c) => updateLine(i, 'unitCostCents', pkrOf(c))} className={fi} />
             </div>
             <div className="col-span-2">
-              <input placeholder="Notes" value={line.notes}
+              <input placeholder="Notes" aria-label={`Line ${i + 1} notes`} enterKeyHint="next" value={line.notes}
                 onChange={(e) => updateLine(i, 'notes', e.target.value)} className={fi} />
             </div>
             <div className="col-span-1">
-              <button onClick={() => removeLine(i)} className="w-full rounded-lg border border-s-border text-s-red py-2 text-sm hover:bg-red-100/20">✕</button>
+              <button type="button" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`} className="w-full rounded-lg border border-s-border text-s-red py-2 text-sm hover:bg-red-100/20 [@media(pointer:coarse)]:min-h-11">✕</button>
             </div>
           </div>
         ))}
-        <button onClick={addLine} className="text-xs text-primary-ink hover:underline">+ Add line</button>
+        <button type="button" onClick={addLine} className="text-xs text-primary-ink hover:underline">+ Add line</button>
       </div>
 
       <div className="flex items-center justify-between pt-2 border-t border-s-border">
         <p className="text-sm font-bold text-s-text">Total: {fmtPkrWhole(totalCents)}</p>
         <div className="flex gap-2">
-          <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
+          <button type="submit" disabled={mut.isPending}
             className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
             {mut.isPending ? 'Creating…' : 'Create PO'}
           </button>
-          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
         </div>
       </div>
-      {mut.isError && <p className="text-xs text-s-red">{(mut.error as Error).message}</p>}
-    </div>
+      {msg && <p role="alert" className="text-xs text-s-red">{msg}</p>}
+      {mut.isError && <p role="alert" className="text-xs text-s-red">{(mut.error as Error).message}</p>}
+    </form>
   )
 }
 
@@ -702,6 +734,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   const [showCreate, setShowCreate] = useState(false)
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidReason, setVoidReason] = useState('')
+  const [voidTried, setVoidTried] = useState(false)
   const [matchId, setMatchId] = useState<string | null>(null)
   const [creditBillId, setCreditBillId] = useState<string | null>(null)
   const [applyCn, setApplyCn] = useState<Bill | null>(null)
@@ -738,7 +771,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   // note's own void: stock goes back, its entry is reversed).
   const voidMut = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api.post(`/procurement/bills/${id}/void`, { reason }),
-    onSuccess: () => { refresh(); setVoidId(null); setVoidReason('') },
+    onSuccess: () => { refresh(); setVoidId(null); setVoidReason(''); setVoidTried(false) },
   })
 
   const statuses = ['', 'open', 'partially_paid', 'paid', 'void']
@@ -763,7 +796,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors
                   ${statusFilter === s && !overdue ? 'bg-accent-dim border border-accent text-s-text' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
-                {s ? s.replace(/_/g, ' ') : 'All'}
+                {statusLabel(s)}
               </button>
             ))}
             <button onClick={() => { setOverdue(!overdue); setStatusFilter('') }}
@@ -919,7 +952,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <div className="rounded-xl border border-s-border bg-s-surface p-4">
           <div className="flex items-center justify-between mb-3">
             <p className="font-bold text-s-text text-sm">3-Way Match Result</p>
-            <button onClick={() => setMatchId(null)} className="text-s-muted text-xs">✕</button>
+            <button type="button" onClick={() => setMatchId(null)} aria-label="Close match result" className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
           </div>
           <pre className="text-xs text-s-muted overflow-auto max-h-48">{JSON.stringify(matchResult, null, 2)}</pre>
         </div>
@@ -931,27 +964,31 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
       {/* Void modal — a bill, or a credit note */}
       {voidId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-s-text">{voiding?.kind === 'credit_note' ? 'Void credit note' : 'Void Bill'}</p>
+        <Modal title={voiding?.kind === 'credit_note' ? 'Void credit note' : 'Void Bill'}
+          onClose={() => { setVoidId(null); setVoidReason(''); voidMut.reset() }} dirty={voidReason !== ''}>
+          <form noValidate className="space-y-4" onSubmit={(e) => {
+            e.preventDefault()
+            setVoidTried(true)
+            if (!voidReason.trim() || voidMut.isPending) return
+            voidMut.mutate({ id: voidId, reason: voidReason.trim() })
+          }}>
             {voiding?.kind === 'credit_note' && (
               <p className="text-xs text-s-muted">Its entry is reversed, any stock sent back goes back into stock, and the bill owes the credited amount again.</p>
             )}
-            <Field label="Reason (required)">
-              <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} className={fi} autoFocus />
+            <Field label="Reason" required error={voidTried && !voidReason.trim() ? 'Say why this is being voided.' : null}>
+              <input required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} className={fi} autoFocus />
             </Field>
-            {voidMut.error && <p className="text-xs text-s-red">{errText(voidMut.error)}</p>}
+            {voidMut.error && <p role="alert" className="text-xs text-s-red">{errText(voidMut.error)}</p>}
             <div className="flex gap-2">
-              <button disabled={!voidReason || voidMut.isPending}
-                onClick={() => voidMut.mutate({ id: voidId, reason: voidReason })}
+              <button type="submit" disabled={voidMut.isPending}
                 className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Void
               </button>
-              <button onClick={() => { setVoidId(null); setVoidReason(''); voidMut.reset() }}
+              <button type="button" onClick={() => { setVoidId(null); setVoidReason(''); voidMut.reset() }}
                 className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
     </div>
   )
@@ -977,6 +1014,8 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
   const [returnStock, setReturnStock] = useState(true)
   const [applyToBill, setApplyToBill] = useState(true)
   const [picked, setPicked] = useState<Record<string, { on: boolean; qty: string; price: string }>>({})
+  const [tried, setTried] = useState(false)
+  const dirty = !!number.trim() || !!tax || !!notes.trim() || Object.values(picked).some((r) => r.on)
 
   const byQuantity = reason === 'return' || reason === 'short' || reason === 'damaged'
   const lines = bill?.creditable?.lines ?? []
@@ -1005,12 +1044,12 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
-      <div className="bg-s-surface border border-s-border rounded-2xl p-5 w-full max-w-2xl max-h-[90vh] overflow-y-auto space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="font-bold text-s-text">Credit note / return{bill ? ` — bill ${bill.billNumber}` : ''}</p>
-          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
-        </div>
+    <Modal title={`Credit note / return${bill ? ` — bill ${bill.billNumber}` : ''}`} onClose={onClose} wide dirty={dirty}>
+      <form noValidate className="space-y-4" onSubmit={(e) => {
+        e.preventDefault()
+        setTried(true)
+        if (valid && !mut.isPending) mut.mutate()
+      }}>
         {isLoading && <p className="text-sm text-s-muted">Loading…</p>}
         {error && <p className="text-sm text-s-red">{errText(error)}</p>}
         {bill && (
@@ -1020,13 +1059,13 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
               {bill.creditable && <> · {fmtPkrWhole(bill.creditable.subtotalLeftCents)} of goods left to credit</>}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="Supplier's credit note no. *">
-                <input value={number} onChange={(e) => setNumber(e.target.value)} className={fi} placeholder="CN-1043" />
+              <Field label="Supplier's credit note no." required error={tried && !number.trim() ? 'Enter the supplier\u2019s credit note number.' : null}>
+                <input required enterKeyHint="next" value={number} onChange={(e) => setNumber(e.target.value)} className={fi} placeholder="CN-1043" />
               </Field>
-              <Field label="Date *">
+              <Field label="Date" required error={tried && !date ? 'Pick the date.' : null}>
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={fi} />
               </Field>
-              <Field label="Why *">
+              <Field label="Why" required>
                 <Select value={reason} onChange={(e) => { setReason(e.target.value as typeof reason); setPicked({}) }} className={fi}>
                   {CREDIT_REASONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
                 </Select>
@@ -1053,11 +1092,13 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
                     </label>
                     {r.on && (
                       <div className="grid grid-cols-2 gap-2 pl-6">
-                        <Field label={byQuantity ? 'Quantity' : 'Quantity it applies to'}>
-                          <input type="number" min="0" step="any" value={r.qty} onChange={(e) => setRow(l, { qty: e.target.value })} className={fi} />
+                        <Field label={byQuantity ? 'Quantity' : 'Quantity it applies to'}
+                          error={tried && !(Number(r.qty) > 0) ? 'Enter a quantity above 0.' : null}>
+                          <NumberField decimals={3} min={0} enterKeyHint="next" value={numOf(r.qty)} onValueChange={(v) => setRow(l, { qty: textOf(v) })} className={fi} />
                         </Field>
-                        <Field label={byQuantity ? 'Price per unit (PKR)' : 'Credit per unit (PKR) *'}>
-                          <input type="number" min="0" step="any" value={r.price} onChange={(e) => setRow(l, { price: e.target.value })} className={fi} placeholder="0" />
+                        <Field label={byQuantity ? 'Price per unit (PKR)' : 'Credit per unit (PKR)'}
+                          error={tried && !(Number(r.price) > 0) ? 'Enter a price above 0.' : null}>
+                          <MoneyInput value={centsOf(r.price)} onChange={(c) => setRow(l, { price: pkrOf(c) })} className={fi} placeholder="0" />
                         </Field>
                       </div>
                     )}
@@ -1068,10 +1109,10 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Sales tax on the credit note (PKR)">
-                <input type="number" min="0" step="any" value={tax} onChange={(e) => setTax(e.target.value)} className={fi} placeholder="0" />
+                <MoneyInput value={centsOf(tax)} onChange={(c) => setTax(pkrOf(c))} className={fi} placeholder="0" />
               </Field>
               <Field label="Note">
-                <input value={notes} onChange={(e) => setNotes(e.target.value)} className={fi} placeholder="Optional" />
+                <input enterKeyHint="done" value={notes} onChange={(e) => setNotes(e.target.value)} className={fi} placeholder="Optional" />
               </Field>
             </div>
             {canSendBack && (
@@ -1088,18 +1129,19 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
             <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-s-border">
               <p className="text-sm font-bold text-s-text">Credit note total: {fmtPkrWhole(-(subtotal + taxCents))}</p>
               <div className="flex gap-2">
-                <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
+                <button type="submit" disabled={mut.isPending}
                   className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {mut.isPending ? 'Saving…' : 'Record credit note'}
                 </button>
-                <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+                <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
               </div>
             </div>
-            {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
+            {tried && chosen.length === 0 && <p role="alert" className="text-xs text-s-red">Tick at least one line to credit.</p>}
+            {mut.isError && <p role="alert" className="text-xs text-s-red">{errText(mut.error)}</p>}
           </>
         )}
-      </div>
-    </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -1122,12 +1164,8 @@ function ApplyCreditModal({ cn, onDone, onClose }: { cn: Bill; onDone: () => voi
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
-      <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-lg space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="font-bold text-s-text">Apply credit note {cn.billNumber}</p>
-          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
-        </div>
+    <Modal title={`Apply credit note ${cn.billNumber}`} onClose={onClose} dirty={adding > 0}>
+      <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (!mut.isPending && adding > 0 && adding <= left) mut.mutate() }}>
         <p className="text-xs text-s-muted">{fmtPkrWhole(left)} left to apply to {cn.supplier?.name ?? 'this supplier'}&apos;s bills.</p>
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {open.map((b) => (
@@ -1136,23 +1174,25 @@ function ApplyCreditModal({ cn, onDone, onClose }: { cn: Bill; onDone: () => voi
                 <p className="text-sm text-s-text font-medium">{b.billNumber}</p>
                 <p className="text-xs text-s-muted">Owed: {fmtPkrWhole(billDue(b))}</p>
               </div>
-              <input type="number" min="0" step="any" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
-                value={amounts[b.id] ?? ''} onChange={(e) => setAmounts({ ...amounts, [b.id]: e.target.value })} />
+              <MoneyInput placeholder="Amount (PKR)" ariaLabel={`Amount of the credit note to apply to bill ${b.billNumber}`}
+                className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
+                value={centsOf(amounts[b.id] ?? '')} onChange={(c) => setAmounts({ ...amounts, [b.id]: pkrOf(c) })} />
             </div>
           ))}
           {open.length === 0 && <p className="text-s-muted text-sm">This supplier has no open bills.</p>}
         </div>
-        {adding > left && <p className="text-xs text-s-red">That is more than is left on the credit note.</p>}
-        {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
+        {adding > left && <p role="alert" className="text-xs text-s-red">That is more than is left on the credit note.</p>}
+        {mut.isError && <p role="alert" className="text-xs text-s-red">{errText(mut.error)}</p>}
         <div className="flex gap-2 pt-2">
-          <button onClick={() => mut.mutate()} disabled={mut.isPending || adding <= 0 || adding > left}
+          <button type="submit" disabled={mut.isPending || adding <= 0 || adding > left}
             className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
             {mut.isPending ? 'Applying…' : 'Apply'}
           </button>
-          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
         </div>
-      </div>
-    </div>
+        {adding <= 0 && open.length > 0 && <p className="text-[11px] text-s-muted">Type the amount to take off at least one bill.</p>}
+      </form>
+    </Modal>
   )
 }
 
@@ -1185,28 +1225,22 @@ function UnapplyList({ title, rows, pending, error, onUnapply, onClose }: {
   onClose: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
-      <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-md space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="font-bold text-s-text">{title}</p>
-          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
-        </div>
-        <p className="text-xs text-s-muted">The bill owes that amount again; the money stays on account with the supplier. The ledger does not change.</p>
-        <div className="space-y-2">
-          {rows.map((r) => (
-            <div key={r.billId} className="flex items-center justify-between gap-3 text-sm">
-              <span className="font-mono text-xs text-s-text">{r.billNumber}</span>
-              <span className="text-s-text">{fmtPkrWhole(r.amountCents)}</span>
-              <button disabled={pending} onClick={() => onUnapply(r.billId)}
-                className="text-xs text-s-red hover:opacity-80 font-semibold disabled:opacity-50">Unapply</button>
-            </div>
-          ))}
-          {rows.length === 0 && <p className="text-sm text-s-muted">Not applied to any bill.</p>}
-        </div>
-        {!!error && <p className="text-xs text-s-red">{errText(error)}</p>}
-        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Done</button>
+    <Modal title={title} onClose={onClose}>
+      <p className="text-xs text-s-muted">The bill owes that amount again; the money stays on account with the supplier. The ledger does not change.</p>
+      <div className="space-y-2">
+        {rows.map((r) => (
+          <div key={r.billId} className="flex items-center justify-between gap-3 text-sm">
+            <span className="font-mono text-xs text-s-text">{r.billNumber}</span>
+            <span className="text-s-text">{fmtPkrWhole(r.amountCents)}</span>
+            <button type="button" disabled={pending} onClick={() => onUnapply(r.billId)}
+              className="text-xs text-s-red hover:opacity-80 font-semibold disabled:opacity-50 [@media(pointer:coarse)]:min-h-11">Unapply</button>
+          </div>
+        ))}
+        {rows.length === 0 && <p className="text-sm text-s-muted">Not applied to any bill.</p>}
       </div>
-    </div>
+      {!!error && <p role="alert" className="text-xs text-s-red">{errText(error)}</p>}
+      <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Done</button>
+    </Modal>
   )
 }
 
@@ -1284,6 +1318,7 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
   const [lines, setLines] = useState<BillLine[]>([])
   const [picker, setPicker] = useState<'receipt' | 'po' | null>(null)
   const [chosen, setChosen] = useState<Record<string, boolean>>({})
+  const [tried, setTried] = useState(false)
 
   const supplier = suppliers.find((s) => s.id === form.supplierId) ?? null
 
@@ -1390,14 +1425,23 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
   const supplierAuthority = supplier?.defaultTaxAuthority ?? null
   const supplierSection = supplier?.defaultWhtSection ?? null
 
+  // Why Save can't go through yet — shown once it is pressed (the button stays live).
+  const problem = !form.supplierId ? 'Choose the supplier.'
+    : !form.billNumber.trim() ? 'Enter the supplier’s bill number.'
+    : !form.billDate ? 'Pick the bill date.'
+    : lines.length === 0 ? 'Add at least one line: fill from a delivery or a PO, or add an expense line.'
+    : !lines.every(lineOk) ? 'Every line needs a quantity above 0, a unit cost and, for an expense, its description and account (a note of 10+ characters if it is not equipment).'
+    : null
+
   return (
-    <div className="rounded-xl border border-primary bg-s-surface p-4 sm:p-5 space-y-4">
+    <form noValidate className="rounded-xl border border-primary bg-s-surface p-4 sm:p-5 space-y-4"
+      onSubmit={(e) => { e.preventDefault(); setTried(true); if (!problem && !mut.isPending) mut.mutate() }}>
       <div className="flex items-center justify-between">
         <p className="font-bold text-s-text">New Supplier Bill</p>
-        <button onClick={onClose} className="text-s-muted text-xs" aria-label="Close">✕</button>
+        <button type="button" onClick={onClose} className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11" aria-label="Close">✕</button>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="Supplier *">
+        <Field label="Supplier" required error={tried && !form.supplierId ? 'Choose the supplier.' : null}>
           <Select value={form.supplierId} onChange={(e) => changeSupplier(e.target.value)} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -1411,17 +1455,17 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
             ))}
           </Select>
         </Field>
-        <Field label="Bill number *">
-          <input value={form.billNumber} onChange={(e) => setForm({ ...form, billNumber: e.target.value })} className={fi} />
+        <Field label="Bill number" required error={tried && !form.billNumber.trim() ? 'Enter the bill number.' : null}>
+          <input required enterKeyHint="next" value={form.billNumber} onChange={(e) => setForm({ ...form, billNumber: e.target.value })} className={fi} />
         </Field>
-        <Field label="Bill date *">
+        <Field label="Bill date" required error={tried && !form.billDate ? 'Pick the bill date.' : null}>
           <input type="date" value={form.billDate} onChange={(e) => setForm({ ...form, billDate: e.target.value })} className={fi} />
         </Field>
         <Field label="Due date">
           <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={fi} />
         </Field>
         <Field label="Sales tax on the bill (PKR)">
-          <input type="number" min={0} step="any" value={form.taxPkr} onChange={(e) => setForm({ ...form, taxPkr: e.target.value })} placeholder="0" className={fi} />
+          <MoneyInput value={centsOf(form.taxPkr)} onChange={(c) => setForm({ ...form, taxPkr: pkrOf(c) })} placeholder="0" className={fi} />
         </Field>
         <Field label="Tax charged by">
           <Select value={form.taxAuthority} onChange={(e) => setForm({ ...form, taxAuthority: e.target.value })} className={fi}>
@@ -1436,10 +1480,10 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
           </Select>
         </Field>
         <Field label="Notes">
-          <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
+          <input enterKeyHint="next" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
         <Field label="Attachment URL">
-          <input value={form.attachmentUrl} onChange={(e) => setForm({ ...form, attachmentUrl: e.target.value })} placeholder="https://…" className={fi} />
+          <input type="url" inputMode="url" enterKeyHint="done" value={form.attachmentUrl} onChange={(e) => setForm({ ...form, attachmentUrl: e.target.value })} placeholder="https://…" className={fi} />
         </Field>
       </div>
       {supplier && (
@@ -1467,7 +1511,7 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
               <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
                 Line {i + 1} · {l.kind === 'stock' ? 'Stock item' : 'Expense'}
               </span>
-              <button onClick={() => setLines(lines.filter((x) => x.key !== l.key))} className="text-xs text-s-red hover:underline">Remove</button>
+              <button type="button" onClick={() => setLines(lines.filter((x) => x.key !== l.key))} aria-label={`Remove line ${i + 1}`} className="text-xs text-s-red hover:underline [@media(pointer:coarse)]:min-h-11">Remove</button>
             </div>
 
             {l.kind === 'stock' ? (
@@ -1479,7 +1523,7 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
               </>
             ) : (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <input placeholder="Description *" value={l.description} onChange={(e) => patchLine(l.key, { description: e.target.value })} className={fi} />
+                <input placeholder="Description *" aria-label={`Line ${i + 1} description`} enterKeyHint="next" value={l.description} onChange={(e) => patchLine(l.key, { description: e.target.value })} className={fi} />
                 {chartHidden || expenseAccounts.length === 0 ? (
                   <input placeholder="Expense account code (6xxx) *" inputMode="numeric" maxLength={4} value={l.expenseAccountCode}
                     onChange={(e) => patchLine(l.key, { expenseAccountCode: e.target.value.replace(/\D/g, '') })} className={fi} aria-label="Expense account code" />
@@ -1494,10 +1538,10 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
 
             <div className="grid grid-cols-2 gap-2 sm:max-w-md">
               <label className="text-[11px] text-s-muted">Quantity{l.unit ? ` (${l.unit})` : ''} *
-                <input type="number" min={0} step="any" value={l.quantity} onChange={(e) => patchLine(l.key, { quantity: e.target.value })} className={fi + ' mt-0.5'} />
+                <NumberField decimals={3} min={0} enterKeyHint="next" value={numOf(l.quantity)} onValueChange={(v) => patchLine(l.key, { quantity: textOf(v) })} className={fi + ' mt-0.5'} />
               </label>
               <label className="text-[11px] text-s-muted">Unit cost (PKR) *
-                <input type="number" min={0} step="any" value={l.unitCostPkr} onChange={(e) => patchLine(l.key, { unitCostPkr: e.target.value })} className={fi + ' mt-0.5'} />
+                <MoneyInput value={centsOf(l.unitCostPkr)} onChange={(cts) => patchLine(l.key, { unitCostPkr: pkrOf(cts) })} className={fi + ' mt-0.5'} />
               </label>
             </div>
 
@@ -1508,7 +1552,7 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
                   <span>It is not equipment (“{matched}” matched). Finance or the CEO only.</span>
                 </label>
                 {l.notEquipment && (
-                  <input value={l.notEquipmentReason} onChange={(e) => patchLine(l.key, { notEquipmentReason: e.target.value })} maxLength={500}
+                  <input aria-label="Why it is an expense" value={l.notEquipmentReason} onChange={(e) => patchLine(l.key, { notEquipmentReason: e.target.value })} maxLength={500}
                     placeholder="Why it is an expense (10 characters or more)" className={fi} />
                 )}
               </div>
@@ -1597,13 +1641,14 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
           {taxCents > 0 && <> · tax {fmtPkrWhole(taxCents)} · total <span className="font-bold">{fmtPkrWhole(subtotalCents + taxCents)}</span></>}
         </p>
         <div className="flex gap-2">
-          <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
+          <button type="submit" disabled={mut.isPending}
             className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
             {mut.isPending ? 'Saving…' : 'Save Bill'}
           </button>
-          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
         </div>
       </div>
+      {tried && problem && <p role="alert" className="text-xs text-s-red">{problem}</p>}
       {mut.isError && (
         <div role="alert" className="text-xs text-s-red space-y-1">
           <p>{errText(mut.error)}</p>
@@ -1612,7 +1657,7 @@ function CreateBillForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>
           )}
         </div>
       )}
-    </div>
+    </form>
   )
 }
 
@@ -1626,6 +1671,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   const [unapplyId, setUnapplyId] = useState<string | null>(null)
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidReason, setVoidReason] = useState('')
+  const [voidTried, setVoidTried] = useState(false)
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['procurement', 'payments'],
@@ -1643,7 +1689,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   })
   const voidMut = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api.post(`/procurement/payments/${id}/void`, { reason }),
-    onSuccess: () => { refresh(); setVoidId(null); setVoidReason('') },
+    onSuccess: () => { refresh(); setVoidId(null); setVoidReason(''); setVoidTried(false) },
   })
   const unapplying = unapplyId ? payments.find((p) => p.id === unapplyId) : null
 
@@ -1738,25 +1784,28 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       )}
 
       {voidId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-s-text">Void payment</p>
+        <Modal title="Void payment" onClose={() => { setVoidId(null); setVoidReason(''); setVoidTried(false); voidMut.reset() }} dirty={voidReason !== ''}>
+          <form noValidate className="space-y-4" onSubmit={(e) => {
+            e.preventDefault()
+            setVoidTried(true)
+            if (!voidReason.trim() || voidMut.isPending) return
+            voidMut.mutate({ id: voidId, reason: voidReason.trim() })
+          }}>
             <p className="text-xs text-s-muted">For a bounced cheque or a payment recorded by mistake. Its ledger entry is reversed today. Cash paid out of petty cash or a till can&apos;t be voided here.</p>
-            <Field label="Reason (required)">
-              <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} className={fi} autoFocus placeholder="e.g. cheque bounced" />
+            <Field label="Reason" required error={voidTried && !voidReason.trim() ? 'Say why this payment is being voided.' : null}>
+              <input required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} className={fi} autoFocus placeholder="e.g. cheque bounced" />
             </Field>
-            {voidMut.error && <p className="text-xs text-s-red">{errText(voidMut.error)}</p>}
+            {voidMut.error && <p role="alert" className="text-xs text-s-red">{errText(voidMut.error)}</p>}
             <div className="flex gap-2">
-              <button disabled={!voidReason.trim() || voidMut.isPending}
-                onClick={() => voidMut.mutate({ id: voidId, reason: voidReason.trim() })}
+              <button type="submit" disabled={voidMut.isPending}
                 className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Void
               </button>
-              <button onClick={() => { setVoidId(null); setVoidReason(''); voidMut.reset() }}
+              <button type="button" onClick={() => { setVoidId(null); setVoidReason(''); setVoidTried(false); voidMut.reset() }}
                 className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
     </div>
   )
@@ -1785,25 +1834,32 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
     },
   })
 
-  const valid = form.supplierId && form.paymentDate && Number(form.amountCents) > 0 && (form.method !== 'wallet' || form.bankAccountId)
+  const [tried, setTried] = useState(false)
+  const walletMissing = form.method === 'wallet' && !form.bankAccountId
+  const problem = !form.supplierId ? 'Choose the supplier.'
+    : !form.paymentDate ? 'Pick the payment date.'
+    : !(Number(form.amountCents) > 0) ? 'Enter the amount paid.'
+    : walletMissing ? 'Choose the wallet account the payment came from.'
+    : null
 
   return (
-    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
+    <form noValidate className="rounded-xl border border-primary bg-s-surface p-5 space-y-4"
+      onSubmit={(e) => { e.preventDefault(); setTried(true); if (!problem && !mut.isPending) mut.mutate() }}>
       <div className="flex items-center justify-between">
         <p className="font-bold text-s-text">Record Payment</p>
-        <button onClick={onClose} className="text-s-muted text-xs">✕</button>
+        <button type="button" onClick={onClose} aria-label="Close" className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Field label="Supplier *">
+        <Field label="Supplier" required error={tried && !form.supplierId ? 'Choose the supplier.' : null}>
           <Select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value, bankAccountId: '' })} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>
         </Field>
-        <Field label="Date *">
+        <Field label="Date" required error={tried && !form.paymentDate ? 'Pick the payment date.' : null}>
           <input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} className={fi} />
         </Field>
-        <Field label="Method *">
+        <Field label="Method" required>
           <Select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value, bankAccountId: '' })} className={fi}>
             {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </Select>
@@ -1824,24 +1880,25 @@ function CreatePaymentForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClie
           </div>
         )}
         <Field label="Reference">
-          <input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder={form.method === 'cheque' ? 'Cheque no.' : 'Bank reference'} className={fi} />
+          <input enterKeyHint="next" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder={form.method === 'cheque' ? 'Cheque no.' : 'Bank reference'} className={fi} />
         </Field>
-        <Field label="Amount (PKR) *">
-          <input type="number" min="0" step="any" value={form.amountCents} onChange={(e) => setForm({ ...form, amountCents: e.target.value })} placeholder="50000" className={fi} />
+        <Field label="Amount (PKR)" required error={tried && !(Number(form.amountCents) > 0) ? 'Enter the amount paid.' : null}>
+          <MoneyInput value={centsOf(form.amountCents)} onChange={(cts) => setForm({ ...form, amountCents: pkrOf(cts) })} placeholder="50000" className={fi} />
         </Field>
         <Field label="Notes">
-          <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
+          <input enterKeyHint="done" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
       </div>
       <div className="flex gap-2 pt-2 border-t border-s-border">
-        <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
+        <button type="submit" disabled={mut.isPending}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
           {mut.isPending ? 'Saving…' : 'Record Payment'}
         </button>
-        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+        <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
       </div>
-      {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
-    </div>
+      {tried && problem && <p role="alert" className="text-xs text-s-red">{problem}</p>}
+      {mut.isError && <p role="alert" className="text-xs text-s-red">{errText(mut.error)}</p>}
+    </form>
   )
 }
 
@@ -1870,13 +1927,10 @@ function AllocateModal({ paymentId, supplierId, qc, onClose }: { paymentId: stri
     },
   })
 
+  const entered = Object.values(allocations).some((v) => v && Number(v) > 0)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4">
-      <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-lg space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="font-bold text-s-text">Allocate to Bills</p>
-          <button onClick={onClose} className="text-s-muted text-xs">✕</button>
-        </div>
+    <Modal title="Allocate to Bills" onClose={onClose} dirty={entered}>
+      <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (entered && !mut.isPending) mut.mutate() }}>
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {owing.map((b) => (
             <div key={b.id} className="flex items-center gap-3">
@@ -1884,25 +1938,27 @@ function AllocateModal({ paymentId, supplierId, qc, onClose }: { paymentId: stri
                 <p className="text-sm text-s-text font-medium">{b.billNumber}</p>
                 <p className="text-xs text-s-muted">Outstanding: {fmtPkrWhole(billDue(b))}</p>
               </div>
-              <input type="number" min="0" step="any" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
-                value={allocations[b.id] ?? ''}
-                onChange={(e) => setAllocations({ ...allocations, [b.id]: e.target.value })} />
+              <MoneyInput placeholder="Amount (PKR)" ariaLabel={`Amount to allocate to bill ${b.billNumber}`}
+                className="w-32 rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none"
+                value={centsOf(allocations[b.id] ?? '')}
+                onChange={(cts) => setAllocations({ ...allocations, [b.id]: pkrOf(cts) })} />
             </div>
           ))}
           {owing.length === 0 && (
             <p className="text-s-muted text-sm">No open bills to allocate to.</p>
           )}
         </div>
-        {mut.isError && <p className="text-xs text-s-red">{errText(mut.error)}</p>}
+        {mut.isError && <p role="alert" className="text-xs text-s-red">{errText(mut.error)}</p>}
         <div className="flex gap-2 pt-2">
-          <button onClick={() => mut.mutate()} disabled={mut.isPending || Object.values(allocations).every((v) => !v || Number(v) <= 0)}
+          <button type="submit" disabled={mut.isPending || !entered}
             className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
             {mut.isPending ? 'Applying…' : 'Apply allocations'}
           </button>
-          <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
         </div>
-      </div>
-    </div>
+        {!entered && owing.length > 0 && <p className="text-[11px] text-s-muted">Type the amount to put against at least one bill.</p>}
+      </form>
+    </Modal>
   )
 }
 
@@ -1995,7 +2051,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="font-bold text-s-text">{statement.supplier.name} — Statement</p>
-            <button onClick={() => setStatementId(null)} className="text-s-muted text-xs">✕</button>
+            <button type="button" onClick={() => setStatementId(null)} aria-label="Close statement" className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
           </div>
           <div className="flex flex-wrap gap-6">
             <div>
@@ -2128,20 +2184,21 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
   }
 
   return (
-    <div className="rounded-xl border border-primary bg-s-surface p-5 space-y-4">
+    <form noValidate className="rounded-xl border border-primary bg-s-surface p-5 space-y-4"
+      onSubmit={(e) => { e.preventDefault(); if (!mut.isPending) submit() }}>
       <div className="flex items-center justify-between">
         <p className="font-bold text-s-text">{supplier ? 'Edit Supplier' : 'New Supplier'}</p>
-        <button onClick={onClose} className="text-s-muted text-xs">✕</button>
+        <button type="button" onClick={onClose} aria-label="Close" className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Field label="Name *">
-          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fi} autoFocus />
+        <Field label="Name" required error={err === 'Supplier name is required.' ? err : null}>
+          <input required enterKeyHint="next" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fi} autoFocus />
         </Field>
         {/* Company picker — required in portfolio mode for new suppliers,
             hidden for edits (transfer happens via the Monitor edit drawer to
             keep audit logging on the dedicated transfer surface). */}
         {!supplier && tenants.length > 1 && (
-          <Field label="Company *">
+          <Field label="Company" required>
             <Select value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} className={fi}>
               {viewAll && <option value="">— pick a company —</option>}
               {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -2149,10 +2206,10 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
           </Field>
         )}
         <Field label="Phone">
-          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={fi} />
+          <input type="tel" inputMode="tel" enterKeyHint="next" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={fi} />
         </Field>
         <Field label="Email">
-          <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={fi} />
+          <input type="email" inputMode="email" enterKeyHint="next" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={fi} />
         </Field>
         <Field label="Address">
           <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className={fi} />
@@ -2161,13 +2218,13 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
           <input value={form.taxId} onChange={(e) => setForm({ ...form, taxId: e.target.value })} className={fi} />
         </Field>
         <Field label="Payment terms (days)">
-          <input type="number" value={form.paymentTermsDays} onChange={(e) => setForm({ ...form, paymentTermsDays: e.target.value })} className={fi} />
+          <NumberField min={0} max={365} enterKeyHint="next" value={numOf(form.paymentTermsDays)} onValueChange={(v) => setForm({ ...form, paymentTermsDays: textOf(v) })} className={fi} />
         </Field>
         <Field label="Lead time (days)">
-          <input type="number" value={form.leadTimeDays} onChange={(e) => setForm({ ...form, leadTimeDays: e.target.value })} className={fi} />
+          <NumberField min={0} max={365} enterKeyHint="next" value={numOf(form.leadTimeDays)} onValueChange={(v) => setForm({ ...form, leadTimeDays: textOf(v) })} className={fi} />
         </Field>
         <Field label="Opening balance (PKR)">
-          <input type="number" value={form.openingBalanceCents} onChange={(e) => setForm({ ...form, openingBalanceCents: e.target.value })} placeholder="0" className={fi} />
+          <MoneyInput allowNegative value={centsOf(form.openingBalanceCents)} onChange={(cts) => setForm({ ...form, openingBalanceCents: cts ? String(cts / 100) : '' })} placeholder="0" className={fi} />
         </Field>
         <Field label="Notes">
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
@@ -2217,13 +2274,13 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
       </div>
       {err && <p role="alert" className="text-xs font-bold text-s-red pt-1">{err}</p>}
       <div className="flex gap-2 pt-2 border-t border-s-border">
-        <button onClick={submit} disabled={!form.name || mut.isPending}
+        <button type="submit" disabled={mut.isPending}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
           {mut.isPending ? 'Saving…' : supplier ? 'Update' : 'Add Supplier'}
         </button>
-        <button onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+        <button type="button" onClick={onClose} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
       </div>
-    </div>
+    </form>
   )
 }
 
@@ -2346,6 +2403,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
   const [threshold, setThreshold] = useState<number | null>(null)
   const [newThreshold, setNewThreshold] = useState('')
+  const [thresholdTried, setThresholdTried] = useState(false)
 
   const { data: thresholdData, refetch: refetchThreshold } = useQuery({
     queryKey: ['procurement', 'threshold'],
@@ -2365,6 +2423,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
   const [rejectId, setRejectId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [rejectTried, setRejectTried] = useState(false)
 
   if (isLoading) return <div className="p-6"><p className="text-s-muted text-sm">Loading…</p></div>
 
@@ -2379,16 +2438,23 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           </p>
           <p className="text-xs text-s-muted">POs above this value require manual approval</p>
         </div>
-        <div className="flex items-center gap-2 ml-auto">
-          <input type="number" placeholder="New threshold (PKR)" value={newThreshold}
-            onChange={(e) => setNewThreshold(e.target.value)}
+        <form noValidate className="flex flex-wrap items-center gap-2 ml-auto"
+          onSubmit={(e) => {
+            e.preventDefault()
+            setThresholdTried(true)
+            if (!newThreshold || thresholdMut.isPending) return
+            thresholdMut.mutate(Math.round(Number(newThreshold) * 100))
+            setThresholdTried(false)
+          }}>
+          <MoneyInput placeholder="New threshold (PKR)" ariaLabel="New auto-approval threshold in rupees"
+            value={centsOf(newThreshold)} onChange={(cts) => setNewThreshold(pkrOf(cts))}
             className="w-44 rounded-lg bg-s-bg border border-s-border px-3 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none" />
-          <button disabled={!newThreshold || thresholdMut.isPending}
-            onClick={() => thresholdMut.mutate(Math.round(Number(newThreshold) * 100))}
-            className="rounded-xl bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50">
+          <button type="submit" disabled={thresholdMut.isPending}
+            className="rounded-xl bg-primary text-primary-on font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50 [@media(pointer:coarse)]:min-h-11">
             Update
           </button>
-        </div>
+          {thresholdTried && !newThreshold && <p role="alert" className="basis-full text-[11px] text-s-red">Type the new threshold in rupees.</p>}
+        </form>
       </div>
 
       {orders.length === 0 ? (
@@ -2434,22 +2500,25 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
       )}
 
       {rejectId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <p className="font-bold text-s-text">Reject PO</p>
-            <Field label="Reason (required)">
-              <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={fi} autoFocus />
+        <Modal title="Reject PO" onClose={() => { setRejectId(null); setRejectTried(false) }} dirty={rejectReason !== ''}>
+          <form noValidate className="space-y-4" onSubmit={(e) => {
+            e.preventDefault()
+            setRejectTried(true)
+            if (!rejectReason.trim() || approveRejectMut.isPending) return
+            approveRejectMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason.trim() } }); setRejectId(null); setRejectTried(false)
+          }}>
+            <Field label="Reason" required error={rejectTried && !rejectReason.trim() ? 'Say why this PO is rejected.' : null}>
+              <input required value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={fi} autoFocus />
             </Field>
             <div className="flex gap-2">
-              <button disabled={!rejectReason || approveRejectMut.isPending}
-                onClick={() => { approveRejectMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason } }); setRejectId(null) }}
+              <button type="submit" disabled={approveRejectMut.isPending}
                 className="rounded-xl bg-s-red text-bone font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                 Reject
               </button>
-              <button onClick={() => setRejectId(null)} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
+              <button type="button" onClick={() => { setRejectId(null); setRejectTried(false) }} className="rounded-xl border border-s-border text-s-muted px-4 py-2 text-sm">Cancel</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
     </div>
   )
@@ -2479,16 +2548,16 @@ function PriceHistoryTab() {
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-s-muted">Item:</label>
-          <Select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}
+          <label htmlFor="ph-item" className="text-xs text-s-muted">Item:</label>
+          <Select id="ph-item" value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}
             className="rounded-lg bg-s-surface border border-s-border px-3 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none">
             <option value="">All items</option>
             {invItems.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
           </Select>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-s-muted">Supplier:</label>
-          <Select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}
+          <label htmlFor="ph-supplier" className="text-xs text-s-muted">Supplier:</label>
+          <Select id="ph-supplier" value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}
             className="rounded-lg bg-s-surface border border-s-border px-3 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none">
             <option value="">All suppliers</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}

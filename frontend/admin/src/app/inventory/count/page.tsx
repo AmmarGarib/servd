@@ -21,13 +21,19 @@
 // Every save answers with the books result: green when the entry posted, red
 // when the count is saved but its ledger entry was refused.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
 import { stockErrorText, errorCode } from '../../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
+import { NumberField } from '../../../components/ui/NumberField'
+import { MoneyInput } from '../../../components/ui/MoneyInput'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { useAuthStore } from '../../../store/auth'
+import { readLensTenant } from '../../../lib/api'
+import { useMyTenants } from '../../../components/ui/TenantPicker'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number
@@ -51,6 +57,13 @@ type Mode = 'spot' | 'opening'
 const EPS = 1e-6
 const fi = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none'
 const qtyText = (q: number) => String(Math.round(q * 1000) / 1000)
+// Draft lines keep numbers as typed text ('' = empty); the fields want number | null.
+const numOf = (t: string): number | null => (t.trim() === '' || !Number.isFinite(Number(t)) ? null : Number(t))
+const textOf = (n: number | null): string => (n == null ? '' : String(n))
+// Unit cost is typed in rupees; MoneyInput works in cents, the API gets cents.
+const centsOf = (pkr: string): number => Math.round((numOf(pkr) ?? 0) * 100)
+const pkrOf = (cents: number): string => (cents > 0 ? String(cents / 100) : '')
+const DRAFT_PREFIX = 'servd:count-draft:'
 
 export default function PhysicalCountPage() {
   const qc = useQueryClient()
@@ -78,6 +91,46 @@ export default function PhysicalCountPage() {
   const [suggested, setSuggested] = useState<SuggestedItem[] | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [result, setResult] = useState<{ mode: Mode; res: CountResult; differences: number } | null>(null)
+  const [tried, setTried] = useState(false)
+  const confirm = useConfirm()
+  const me = useAuthStore((s) => s.user)
+  const { data: myTenants = [], isFetched: tenantsFetched } = useMyTenants()
+  const linesRef = useRef<HTMLDivElement>(null)
+
+  // ── Draft autosave (ERP-OPS-7) ─────────────────────────────────────────
+  // A count session = this login, the company, the kind of count and the
+  // outlet. The draft lives in this browser only; it is cleared on submit.
+  const companyKey = readLensTenant() ?? (myTenants.length === 1 ? myTenants[0]!.id : 'all')
+  const draftKey = me && tenantsFetched ? `${DRAFT_PREFIX}${me.id}:${companyKey}:${mode}:${locationId || 'all'}` : null
+  const [hydratedKey, setHydratedKey] = useState<string | null>(null)
+  const [restored, setRestored] = useState(false)
+
+  // Load the session's draft whenever the session changes.
+  useEffect(() => {
+    if (!draftKey) return
+    type Saved = { lines?: Record<string, DraftLine>; notes?: string }
+    let got: Saved | null = null
+    try {
+      const raw = localStorage.getItem(draftKey)
+      if (raw) got = JSON.parse(raw) as Saved
+    } catch { got = null }
+    const l = got?.lines && typeof got.lines === 'object' ? got.lines : {}
+    const has = Object.values(l).some((x) => x && x.qty !== '')
+    setLines(has ? l : {})
+    setNotes(has && typeof got?.notes === 'string' ? got.notes : '')
+    setRestored(has)
+    setHydratedKey(draftKey)
+  }, [draftKey])
+
+  // Save as the counter types (only after the load above, so it never wipes a draft).
+  useEffect(() => {
+    if (!draftKey || hydratedKey !== draftKey) return
+    const has = Object.values(lines).some((x) => x.qty !== '')
+    try {
+      if (has) localStorage.setItem(draftKey, JSON.stringify({ lines, notes, savedAt: Date.now() }))
+      else localStorage.removeItem(draftKey)
+    } catch { /* private window or blocked storage: the count still works */ }
+  }, [lines, notes, draftKey, hydratedKey])
 
   // A login that can only make opening counts (finance) starts there.
   useEffect(() => {
@@ -129,6 +182,35 @@ export default function PhysicalCountPage() {
       }).length
     : 0
   const ready = entered.length > 0 && missingReasons === 0 && badOpening === 0
+  const countedOnScreen = shown.filter((i) => (lines[i.id]?.qty ?? '') !== '').length
+
+  // Leaving with typed quantities that were not submitted loses the count (the
+  // draft is kept in this browser, but a refresh should still ask).
+  const unsaved = entered.length > 0
+  useEffect(() => {
+    if (!unsaved) return
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', h)
+    return () => window.removeEventListener('beforeunload', h)
+  }, [unsaved])
+
+  // The keyboard's Next / Enter key on a phone: every field of the list is one
+  // input, so Enter moves to the next input in page order (the reason box of a
+  // differing line comes right after its Counted box). The last one goes on to
+  // the notes. Typing never submits the whole count by accident.
+  useEffect(() => {
+    linesRef.current?.querySelectorAll('input').forEach((i) => { i.enterKeyHint = 'next' })
+  })
+  function onLinesKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+    const t = e.target
+    if (!(t instanceof HTMLInputElement)) return
+    e.preventDefault()
+    const all = Array.from(e.currentTarget.querySelectorAll<HTMLInputElement>('input:not([type=hidden]):not([disabled])'))
+    const next = all[all.indexOf(t) + 1]
+    if (next) { next.focus(); next.scrollIntoView({ block: 'center', behavior: 'smooth' }) }
+    else document.getElementById('count-notes')?.focus()
+  }
 
   const submit = useMutation({
     mutationFn: () => api.post<CountResult>('/crosschecks/physical-counts', {
@@ -154,6 +236,7 @@ export default function PhysicalCountPage() {
       const differences = res.lines.filter((l) => Math.abs(l.physicalQty - l.systemQty) > EPS).length
       setResult({ mode, res, differences })
       setLines({}); setNotes(''); setSuggested(null); setShowAll(false)
+      setTried(false); setRestored(false)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     },
   })
@@ -178,7 +261,12 @@ export default function PhysicalCountPage() {
         </p>
       </header>
 
-      <div className="px-4 sm:px-7 py-5 max-w-4xl mx-auto space-y-4">
+      <form noValidate className="px-4 sm:px-7 py-5 max-w-4xl mx-auto space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault()
+          setTried(true)
+          if (ready && !submit.isPending) submit.mutate()
+        }}>
         {result && (
           <div role="status" className="rounded-xl px-4 py-3 text-sm space-y-1"
             style={result.res.ledger.posted
@@ -213,8 +301,8 @@ export default function PhysicalCountPage() {
         {/* Mode */}
         {(canSpot || canOpening) && (
           <div className="flex flex-wrap items-center gap-2">
-            {canSpot && <ModeButton on={mode === 'spot'} onClick={() => { setMode('spot'); setLines({}) }}>Spot count</ModeButton>}
-            {canOpening && <ModeButton on={mode === 'opening'} onClick={() => { setMode('opening'); setLines({}); setSuggested(null) }}>Opening count</ModeButton>}
+            {canSpot && <ModeButton on={mode === 'spot'} onClick={() => { setMode('spot'); setResult(null) }}>Spot count</ModeButton>}
+            {canOpening && <ModeButton on={mode === 'opening'} onClick={() => { setMode('opening'); setSuggested(null); setResult(null) }}>Opening count</ModeButton>}
             {mode === 'spot' && canSpot && (
               <button type="button" onClick={() => suggest.mutate()} disabled={suggest.isPending}
                 className="ml-auto rounded-xl border border-s-border px-4 py-2 text-xs font-bold text-s-text hover:border-primary hover:text-primary-ink disabled:opacity-50">
@@ -228,6 +316,7 @@ export default function PhysicalCountPage() {
         {/* Outlet + search */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input value={search} onChange={(e) => { setSearch(e.target.value); if (suggested) setShowAll(true) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); linesRef.current?.querySelector('input')?.focus() } }}
             placeholder="Search items…" className={fi} aria-label="Search items" />
           {outlets.length > 0 && (
             <Select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fi} aria-label="Outlet counted">
@@ -262,7 +351,33 @@ export default function PhysicalCountPage() {
         )}
 
         {/* Lines */}
-        <div className="rounded-2xl overflow-hidden border border-s-border">
+        {restored && (
+          <div role="status" className="flex items-center justify-between gap-3 flex-wrap rounded-xl px-4 py-2.5 text-xs"
+            style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)' }}>
+            <span className="text-s-text">Restored your draft — {entered.length} line{entered.length === 1 ? '' : 's'} you had counted but not submitted.</span>
+            <span className="flex gap-3">
+              <button type="button" onClick={() => setRestored(false)} className="text-s-muted hover:text-s-text">Dismiss</button>
+              <button type="button" className="font-bold text-s-red hover:underline" onClick={async () => {
+                const ok = await confirm({ title: 'Discard the draft?', body: 'The quantities you typed are cleared. Nothing has been submitted.', confirmLabel: 'Discard draft', danger: true })
+                if (ok) { setLines({}); setNotes(''); setRestored(false) }
+              }}>Discard draft</button>
+            </span>
+          </div>
+        )}
+
+        {/* Progress — stays in view while the list scrolls */}
+        {mayCount && shown.length > 0 && (
+          <div className="sticky top-0 z-10 -mx-1 px-1 py-2" style={{ background: 'var(--bg)' }}>
+            <div className="flex items-center gap-3 rounded-xl border border-s-border bg-s-surface px-4 py-2 text-xs">
+              <span role="status" className="font-bold text-s-text">{countedOnScreen} of {shown.length} counted</span>
+              <span className="h-1.5 flex-1 rounded-full bg-s-border overflow-hidden" aria-hidden>
+                <span className="block h-full rounded-full" style={{ width: `${Math.round((countedOnScreen / shown.length) * 100)}%`, background: 'var(--erp-success)' }} />
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div ref={linesRef} onKeyDown={onLinesKey} className="rounded-2xl overflow-hidden border border-s-border">
           {isLoading && <p className="p-5 text-xs text-s-muted">Loading…</p>}
           {!isLoading && shown.length === 0 && (
             <p className="p-5 text-xs text-s-muted italic">
@@ -293,16 +408,16 @@ export default function PhysicalCountPage() {
                   </div>
                   {mayCount && (
                     <div className="flex items-center gap-2 flex-wrap">
-                      <input type="number" step="0.001" min={0} inputMode="decimal" value={l.qty}
-                        onChange={(e) => patch(item.id, { qty: e.target.value })}
+                      <NumberField decimals={3} min={0} value={numOf(l.qty)}
+                        onValueChange={(v) => patch(item.id, { qty: textOf(v) })}
                         placeholder="Counted" aria-label={`${item.name} counted`}
                         className="w-28 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none" />
                       <span className="text-xs text-s-muted w-10">{item.unit}</span>
                       {mode === 'opening' && (
-                        <input type="number" step="any" min={0} inputMode="decimal" value={l.costPkr}
-                          onChange={(e) => patch(item.id, { costPkr: e.target.value })}
+                        <MoneyInput value={centsOf(l.costPkr)}
+                          onChange={(c) => patch(item.id, { costPkr: pkrOf(c) })}
                           placeholder={item.unitCostCents != null ? `${item.unitCostCents / 100}` : 'Unit cost'}
-                          aria-label={`${item.name} unit cost in rupees`}
+                          ariaLabel={`${item.name} unit cost in rupees`}
                           className="w-28 rounded-lg bg-s-bg border border-s-border px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none" />
                       )}
                     </div>
@@ -316,7 +431,7 @@ export default function PhysicalCountPage() {
                     </p>
                     {differs && (
                       <div>
-                        <input value={l.reason} onChange={(e) => patch(item.id, { reason: e.target.value })} maxLength={200}
+                        <input enterKeyHint="next" value={l.reason} onChange={(e) => patch(item.id, { reason: e.target.value })} maxLength={200}
                           placeholder="Why does it differ? (required, 3+ characters)" aria-label={`Reason for the difference on ${item.name}`}
                           className={fi} style={reasonShort ? { borderColor: 'var(--erp-warning)' } : undefined} />
                         <p className="text-[11px] text-s-muted mt-1">
@@ -364,13 +479,14 @@ export default function PhysicalCountPage() {
                 {badOpening} line{badOpening === 1 ? ' needs' : 's need'} a quantity above zero and a unit cost
               </span>
             )}
-            <button onClick={() => submit.mutate()} disabled={submit.isPending || !ready}
+            {tried && entered.length === 0 && <span role="alert" className="text-xs" style={{ color: 'var(--erp-warning)' }}>Enter at least one counted quantity first.</span>}
+            <button type="submit" disabled={submit.isPending}
               className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
               {submit.isPending ? 'Saving…' : `Submit ${mode === 'opening' ? 'opening ' : ''}count (${entered.length} item${entered.length === 1 ? '' : 's'})`}
             </button>
           </div>
         ) : null}
-      </div>
+      </form>
     </div>
   )
 }

@@ -4,8 +4,11 @@
 // version. The CEO can roll back to any version (republished as a new one);
 // everyone else sees the history read-only.
 
+import { useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
+import { useDialog } from '@/components/ui/Modal'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { contentApi, fmtDateTime, type LayoutStat, type LayoutVersion } from '../../lib/content'
 
 export function VersionsDrawer({ slug, isAdmin, liveVersion, onClose, onRolledBack }: {
@@ -16,6 +19,9 @@ export function VersionsDrawer({ slug, isAdmin, liveVersion, onClose, onRolledBa
   onRolledBack: () => void
 }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
+  const panelRef = useRef<HTMLElement>(null)
+  useDialog(panelRef, { onClose })
   const versions = useQuery<LayoutVersion[]>({ queryKey: ['site-layout-versions', slug], queryFn: () => contentApi.versions(slug) })
   const stats = useQuery<LayoutStat[]>({ queryKey: ['site-layout-stats', slug], queryFn: () => contentApi.stats(slug) })
 
@@ -32,13 +38,13 @@ export function VersionsDrawer({ slug, isAdmin, liveVersion, onClose, onRolledBa
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-secondary/50" onClick={onClose}>
-      <aside className="h-full w-full max-w-md bg-s-surface border-l border-s-border flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <aside ref={panelRef} role="dialog" aria-modal="true" aria-label="Versions" className="h-full w-full outline-none max-w-md bg-s-surface border-l border-s-border flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-s-border flex items-center justify-between">
           <div>
             <h2 className="text-sm font-bold text-s-text">Versions</h2>
             <p className="text-[11px] text-s-muted">{isAdmin ? 'Roll back republishes an old version as a new one.' : 'Read-only. The CEO can roll back.'}</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="text-s-muted hover:text-s-text"><X size={18} /></button>
+          <button type="button" data-dialog-close onClick={onClose} aria-label="Close" className="text-s-muted hover:text-s-text"><X size={18} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {versions.isLoading && <p className="text-xs text-s-muted">Loading...</p>}
@@ -56,7 +62,7 @@ export function VersionsDrawer({ slug, isAdmin, liveVersion, onClose, onRolledBa
                   </p>
                   {isAdmin && !live && (
                     <button type="button" disabled={rollback.isPending} className="s-btn-secondary text-xs py-1"
-                      onClick={() => { if (confirm(`Roll back to version ${v.version}? It goes live immediately as a new version.`)) rollback.mutate(v.version) }}>
+                      onClick={async () => { if (await confirm({ title: `Roll back to version ${v.version}?`, body: 'It goes live immediately as a new version.', confirmLabel: 'Roll back', danger: true })) rollback.mutate(v.version) }}>
                       Roll back
                     </button>
                   )}

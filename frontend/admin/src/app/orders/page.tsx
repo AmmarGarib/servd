@@ -1,6 +1,7 @@
 'use client'
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Fragment, Suspense, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi, api, type Order } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
 import { canOpenPath } from '../../lib/moduleCatalog'
@@ -14,6 +15,7 @@ import {
 import { useCanPrintBill } from '../../components/pos/useCanPrintBill'
 import { orderRef } from '../../lib/orderRef'
 import { Select } from '@/components/ui/Select'
+import { useConfirm, type ConfirmResult } from '@/components/ui/ConfirmDialog'
 
 // The full & final bill exists only once an order reached it (spec §17.1):
 // completed, or since refunded / cancelled / rejected (bannered so), or paid
@@ -30,21 +32,25 @@ function hasFinalBill(order: Order): boolean {
 }
 
 /** Reprint the full & final bill (a DUPLICATE); an order still open is offered its pre-bill instead. */
-async function reprintReceipt(orderId: string) {
+async function reprintReceipt(
+  orderId: string,
+  ui: { confirm: (o: { title: string; confirmLabel?: string }) => Promise<ConfirmResult>; onError: (m: string) => void },
+) {
   const token = useAuthStore.getState().token       // F43
   try {
     await printHtml(() => fetchReceiptHtml(orderId, token, { duplicate: true }), { width: 420, height: 600 })
   } catch (e) {
     if (isPreBillRequired(e)) {
-      if (!window.confirm('This order isn’t paid yet, so it has no full & final bill. Print a pre-bill instead? (Not a tax invoice.)')) return
+      const ok = await ui.confirm({ title: 'This order isn’t paid yet, so it has no full & final bill. Print a pre-bill instead? (Not a tax invoice.)', confirmLabel: 'Print pre-bill' })
+      if (!ok) return
       try {
         await printPreBill(orderId, 'cash', token)
       } catch (err) {
-        alert(preBillErrorMessage(err))
+        ui.onError(preBillErrorMessage(err))
       }
       return
     }
-    alert(tillErrorMessage(e, 'The bill is not available for this order'))
+    ui.onError(tillErrorMessage(e, 'The bill is not available for this order'))
   }
 }
 
@@ -83,12 +89,50 @@ type Tab = 'live' | 'history'
 interface Concept { id: string; name: string; primaryColor: string | null }
 
 export default function OrdersPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-s-muted">Loading…</div>}>
+      <OrdersBoard />
+    </Suspense>
+  )
+}
+
+function OrdersBoard() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<Tab>('live')
-  const [conceptFilter, setConceptFilter] = useState('all')
-  const [source, setSource] = useState('')
-  const [status, setStatus] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
+  const confirm = useConfirm()
+  const router = useRouter()
+  const pathname = usePathname()
+  const params = useSearchParams()
+  // Tab and filters live in the URL, so opening an order and pressing Back
+  // restores them (ERP-FOH-9).
+  const tab: Tab = params?.get('tab') === 'history' ? 'history' : 'live'
+  const conceptFilter = params?.get('brand') ?? 'all'
+  const source = params?.get('source') ?? ''
+  const status = params?.get('status') ?? ''
+  const dateFrom = params?.get('from') ?? ''
+  const [search, setSearch] = useState(params?.get('q') ?? '')
+  const [actionError, setActionError] = useState<string | null>(null)
+  const setParams = (updates: Record<string, string>, clearSelection = true) => {
+    const next = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : (params?.toString() ?? ''))
+    for (const [k, v] of Object.entries(updates)) {
+      if (v) next.set(k, v); else next.delete(k)
+    }
+    const qs = next.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+    if (clearSelection) setSelected(new Set())
+  }
+  const setTab = (t: Tab) => setParams({ tab: t === 'history' ? 'history' : '' })
+  const setConceptFilter = (id: string) => setParams({ brand: id === 'all' ? '' : id })
+  const setSource = (v: string) => setParams({ source: v })
+  const setStatus = (v: string) => setParams({ status: v })
+  const setDateFrom = (v: string) => setParams({ from: v })
+  // The search box types into local state; the URL follows after a pause.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if ((params?.get('q') ?? '') !== search.trim()) setParams({ q: search.trim() })
+    }, 300)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   // Bulk selection state
@@ -117,15 +161,21 @@ export default function OrdersPage() {
     enabled: tab === 'live',
   })
 
-  const { data: historyData, isLoading: histLoading } = useQuery({
+  // "Load more" pages by time: the next page asks for orders placed at or
+  // before the oldest one shown (the list is newest-first), and a row seen
+  // twice at the boundary is dropped below.
+  const { data: historyData, isLoading: histLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ['orders', 'history', conceptFilter, source, status, dateFrom],
-    queryFn: () => ordersApi.list({
+    initialPageParam: '' as string,
+    queryFn: ({ pageParam }) => ordersApi.list({
       ...(source && { source }),
       ...(status && { status }),
       ...(dateFrom && { dateFrom: `${dateFrom}T00:00:00Z` }),
+      ...(pageParam && { dateTo: pageParam }),
       ...(conceptFilter !== 'all' && { conceptId: conceptFilter }),
       limit: '50',
     }),
+    getNextPageParam: (last) => (last.hasMore ? (last.data[last.data.length - 1]?.placedAt ?? undefined) : undefined),
     refetchInterval: 30_000,
     enabled: tab === 'history',
   })
@@ -147,6 +197,7 @@ export default function OrdersPage() {
   const updateStatus = useMutation({
     mutationFn: ({ id, s }: { id: string; s: string }) => api.patch(`/orders/${id}/status`, { status: s }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['orders'] }),
+    onError: (err: Error) => setActionError(err.message),
   })
 
   const bulkUpdate = useMutation({
@@ -157,6 +208,7 @@ export default function OrdersPage() {
       void qc.invalidateQueries({ queryKey: ['orders'] })
       setSelected(new Set())
     },
+    onError: (err: Error) => setActionError(err.message),
   })
 
   // Cancelling is not a status write: it goes through the one staff cancel
@@ -170,7 +222,7 @@ export default function OrdersPage() {
       void qc.invalidateQueries({ queryKey: ['orders'] })
       setSelected(new Set())
     },
-    onError: (err: Error) => alert(err.message),
+    onError: (err: Error) => setActionError(err.message),
   })
 
   const saveNote = useMutation({
@@ -183,7 +235,24 @@ export default function OrdersPage() {
   })
 
   const liveOrders = liveData?.data ?? []
-  const histOrders = historyData?.data ?? []
+  const allHist = useMemo(() => {
+    const seen = new Set<string>()
+    const out: Order[] = []
+    for (const pg of historyData?.pages ?? []) for (const o of pg.data) if (!seen.has(o.id)) { seen.add(o.id); out.push(o) }
+    return out
+  }, [historyData])
+  // Search filters the rows already loaded: order ref, phone or name.
+  const needle = search.trim().toLowerCase().replace(/^#/, '')
+  const histOrders = useMemo(() => {
+    if (!needle) return allHist
+    const digits = needle.replace(/\D/g, '')
+    return allHist.filter((o) => {
+      const ph = ((o as { customerPhone?: string | null }).customerPhone ?? '').replace(/\D/g, '')
+      return orderRef(o.id).toLowerCase().includes(needle)
+        || (o.customerName ?? '').toLowerCase().includes(needle)
+        || (digits.length >= 3 && ph.includes(digits))
+    })
+  }, [allHist, needle])
   const grouped: Record<string, Order[]> = {}
   for (const s of LIVE_STATUSES) grouped[s] = liveOrders.filter((o) => o.status === s)
 
@@ -197,7 +266,7 @@ export default function OrdersPage() {
   }
 
   function toggleAll() {
-    if (selected.size === histOrders.length) {
+    if (histOrders.length > 0 && histOrders.every((o) => selected.has(o.id))) {
       setSelected(new Set())
     } else {
       setSelected(new Set(histOrders.map((o) => o.id)))
@@ -205,9 +274,14 @@ export default function OrdersPage() {
   }
 
   const selCount = selected.size
+  const selTotal = allHist.filter((o) => selected.has(o.id)).reduce((t, o) => t + o.totalCents, 0)
+  const rowKey = (e: KeyboardEvent, fn: () => void) => {
+    if (e.target !== e.currentTarget) return
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn() }
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-s-bg overflow-hidden">
+    <div className="h-full min-h-0 flex flex-col bg-s-bg overflow-hidden">
       <header className="border-b border-s-border px-4 py-3 md:px-6 md:py-4 flex items-center justify-between gap-3">
         <div>
           <h1 className="text-xl md:text-2xl font-black text-s-text mt-0.5">Orders</h1>
@@ -286,7 +360,13 @@ export default function OrdersPage() {
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6">
+            {actionError && (
+              <div role="alert" className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-s-red/40 bg-s-red/10 px-3 py-2 text-sm text-s-red">
+                <span>{actionError}</span>
+                <button onClick={() => setActionError(null)} aria-label="Dismiss" className="shrink-0 px-1">✕</button>
+              </div>
+            )}
 
             {/* ════ LIVE ════ */}
             {tab === 'live' && (
@@ -308,7 +388,9 @@ export default function OrdersPage() {
                       <div className="space-y-2">
                         {(grouped[s] ?? []).map((order) => (
                           <div key={order.id}
+                            role="button" tabIndex={0} aria-expanded={expandedId === order.id}
                             onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}
+                            onKeyDown={(e) => rowKey(e, () => setExpandedId(expandedId === order.id ? null : order.id))}
                             className={`rounded-xl border bg-s-surface p-3 cursor-pointer transition-colors ${
                               expandedId === order.id ? 'border-accent' : 'border-s-border hover:border-primary/50'
                             }`}>
@@ -369,9 +451,15 @@ export default function OrdersPage() {
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </Select>
-                  <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={sel} />
-                  {(source || status || dateFrom) && (
-                    <button onClick={() => { setSource(''); setStatus(''); setDateFrom('') }}
+                  <label className="flex items-center gap-2 text-xs text-s-muted">
+                    From
+                    <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={sel} />
+                  </label>
+                  <input type="search" value={search} onChange={(e) => setSearch(e.target.value)}
+                    aria-label="Search loaded orders by number, phone or name" placeholder="Search # / phone / name"
+                    autoComplete="off" className={`${sel} min-w-[14rem]`} />
+                  {(source || status || dateFrom || search) && (
+                    <button onClick={() => { setSearch(''); setParams({ source: '', status: '', from: '', q: '' }) }}
                       className="text-xs text-s-muted hover:text-s-red">Clear filters</button>
                   )}
                 </div>
@@ -386,8 +474,9 @@ export default function OrdersPage() {
                           <th className="px-3 py-3 w-10">
                             <input
                               type="checkbox"
-                              checked={histOrders.length > 0 && selected.size === histOrders.length}
+                              checked={histOrders.length > 0 && histOrders.every((o) => selected.has(o.id))}
                               onChange={toggleAll}
+                              aria-label="Select all loaded orders"
                               className="rounded border-s-border accent-primary cursor-pointer"
                             />
                           </th>
@@ -401,15 +490,18 @@ export default function OrdersPage() {
                           const noteState = notes[order.id] ?? { open: false, draft: order.deliveryNotes ?? '' }
                           const isSelected = selected.has(order.id)
                           return (
-                            <>
-                              <tr key={order.id}
-                                className={`hover:bg-s-surface/50 cursor-pointer transition-colors ${isSelected ? 'bg-primary/5' : ''}`}
+                            <Fragment key={order.id}>
+                              <tr
+                                role="button" tabIndex={0} aria-expanded={expandedId === order.id}
+                                className={`hover:bg-s-surface/50 cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--erp-primary)] ${isSelected ? 'bg-primary/5' : ''}`}
+                                onKeyDown={(e) => rowKey(e, () => setExpandedId(expandedId === order.id ? null : order.id))}
                                 onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}>
                                 <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                                   <input
                                     type="checkbox"
                                     checked={isSelected}
                                     onChange={() => toggleSelect(order.id)}
+                                    aria-label={`Select order ${orderRef(order.id)}`}
                                     className="rounded border-s-border accent-primary cursor-pointer"
                                   />
                                 </td>
@@ -456,7 +548,7 @@ export default function OrdersPage() {
                                     </button>
                                     {canPrint && hasFinalBill(order) && (
                                       <button
-                                        onClick={() => void reprintReceipt(order.id)}
+                                        onClick={() => void reprintReceipt(order.id, { confirm, onError: setActionError })}
                                         title="Reprint the full & final bill (marked DUPLICATE)"
                                         className="text-xs px-2 py-1 rounded border border-s-border/50 text-s-muted hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
                                         Reprint
@@ -520,14 +612,22 @@ export default function OrdersPage() {
                                   </td>
                                 </tr>
                               )}
-                            </>
+                            </Fragment>
                           )
                         })}
                       </tbody>
                     </table>
                     {histOrders.length === 0 && !histLoading && (
-                      <div className="py-12 text-center text-s-muted">No orders found</div>
+                      <div className="py-12 text-center text-s-muted">{needle ? 'No loaded order matches. Load more to search further back.' : 'No orders found'}</div>
                     )}
+                  </div>
+                )}
+                {!histLoading && hasNextPage && (
+                  <div className="flex justify-center">
+                    <button onClick={() => void fetchNextPage()} disabled={isFetchingNextPage}
+                      className="min-h-11 rounded-lg border border-s-border px-5 text-sm font-semibold text-s-text hover:border-primary disabled:opacity-50">
+                      {isFetchingNextPage ? 'Loading…' : 'Load more'}
+                    </button>
                   </div>
                 )}
               </div>
@@ -543,17 +643,30 @@ export default function OrdersPage() {
           <span className="text-sm font-semibold text-s-text">{selCount} selected</span>
           <div className="w-px h-5 bg-s-border" />
           <button
-            onClick={() => {
-              const reason = window.prompt(`Reason for cancelling ${selCount} orders (required):`)?.trim() ?? ''
-              if (reason.length < 3) return
-              bulkCancel.mutate({ ids: Array.from(selected), reason })
+            onClick={async () => {
+              const r = await confirm({
+                title: `Cancel ${selCount} orders?`, body: `${selCount} selected orders, ${fmtPkrWhole(selTotal)} in total, will be cancelled.`,
+                confirmLabel: 'Cancel orders', cancelLabel: 'Keep orders', danger: true,
+                reason: { label: 'Reason for cancelling (required)', minLength: 3 },
+              })
+              if (!r || !r.reason) return
+              setActionError(null)
+              bulkCancel.mutate({ ids: Array.from(selected), reason: r.reason })
             }}
             disabled={bulkCancel.isPending || bulkUpdate.isPending}
             className="rounded-lg border border-s-red/40 bg-s-red/10 text-s-red font-semibold px-4 py-1.5 text-sm hover:bg-s-red/20 transition-colors disabled:opacity-50">
             {bulkCancel.isPending ? 'Cancelling…' : 'Cancel'}
           </button>
           <button
-            onClick={() => bulkUpdate.mutate({ ids: Array.from(selected), s: 'completed' })}
+            onClick={async () => {
+              const r = await confirm({
+                title: `Complete ${selCount} orders?`, body: `${selCount} selected orders, ${fmtPkrWhole(selTotal)} in total, will be marked completed.`,
+                confirmLabel: 'Complete orders',
+              })
+              if (!r) return
+              setActionError(null)
+              bulkUpdate.mutate({ ids: Array.from(selected), s: 'completed' })
+            }}
             disabled={bulkUpdate.isPending}
             className="rounded-lg border border-primary/40 bg-primary/10 text-primary-ink font-semibold px-4 py-1.5 text-sm hover:bg-primary/20 transition-colors disabled:opacity-50">
             {bulkUpdate.isPending ? 'Updating…' : 'Complete'}

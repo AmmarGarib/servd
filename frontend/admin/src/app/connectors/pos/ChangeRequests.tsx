@@ -19,6 +19,8 @@ import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { useAuthStore } from '../../../store/auth'
 import { Badge, Card, ErrorLine, Field, OkLine, fmtWhen, type Tone } from '../../../components/connectors/ui'
 import { Select } from '@/components/ui/Select'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 const STATUS: Record<ChangeRequestStatus, { tone: Tone; label: string }> = {
   submitted: { tone: 'warn', label: 'Waiting for approval' },
@@ -123,6 +125,7 @@ function RequestRow({ c, canDecide, userId, onDone, onError }: {
   onDone: (text: string) => void
   onError: (e: unknown) => void
 }) {
+  const confirm = useConfirm()
   const [rejecting, setRejecting] = useState(false)
   const [note, setNote] = useState('')
   const st = STATUS[c.status]
@@ -162,7 +165,7 @@ function RequestRow({ c, canDecide, userId, onDone, onError }: {
           {!rejecting && canDecide && (
             <>
               <button type="button" className="s-btn-primary text-sm" disabled={act.isPending}
-                onClick={() => { if (window.confirm('Approve and apply this change now?')) act.mutate('approve') }}>
+                onClick={async () => { if (await confirm({ title: 'Approve and apply this change now?', confirmLabel: 'Approve and apply' })) act.mutate('approve') }}>
                 {act.isPending ? 'Working…' : 'Approve and apply'}
               </button>
               <button type="button" className="s-btn-secondary text-sm" onClick={() => setRejecting(true)}>Reject</button>
@@ -170,7 +173,7 @@ function RequestRow({ c, canDecide, userId, onDone, onError }: {
           )}
           {!rejecting && mine && (
             <button type="button" className="s-btn-ghost text-sm" disabled={act.isPending}
-              onClick={() => { if (window.confirm('Withdraw this request? Only the person who sent it can.')) act.mutate('withdraw') }}>
+              onClick={async () => { if (await confirm({ title: 'Withdraw this request?', body: 'Only the person who sent it can.', confirmLabel: 'Withdraw', danger: true })) act.mutate('withdraw') }}>
               Withdraw
             </button>
           )}
@@ -256,20 +259,20 @@ function RequestForm({ data, companyName, activeTenantId, onDone, onCancel }: {
           </Select>
         </Field>
         <Field label="Address (base URL)" htmlFor="cr-url" hint={current.baseUrl ? `Now: ${current.baseUrl}` : 'None set now'}>
-          <input id="cr-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…" maxLength={500} className="s-input py-1.5" />
+          <input id="cr-url" type="url" inputMode="url" autoCapitalize="none" spellCheck={false} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…" maxLength={500} className="s-input py-1.5" />
         </Field>
         <Field label={kind === 'fiscal' ? 'Timeout (ms)' : 'Charge timeout (seconds)'} htmlFor="cr-timeout">
           <input id="cr-timeout" inputMode="numeric" value={timeout} onChange={(e) => setTimeoutV(e.target.value.replace(/[^\d]/g, ''))} className="s-input py-1.5" />
         </Field>
         <Field label="New API key" htmlFor="cr-key" hint={current.apiKeyHint ? `Now: ${current.apiKeyHint}. Typed once; sealed on send and never shown again.` : 'Typed once; sealed on send and never shown again.'}>
-          <input id="cr-key" type="password" autoComplete="new-password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); if (e.target.value) setClearKey(false) }} className="s-input py-1.5" />
+          <PasswordInput id="cr-key" name="cr-key" autoComplete="new-password" autoCapitalize="none" spellCheck={false} value={apiKey} onChange={(e) => { setApiKey(e.target.value); if (e.target.value) setClearKey(false) }} className="s-input py-1.5" />
           <label className="mt-1 flex items-center gap-2 text-xs text-s-muted">
             <input type="checkbox" style={{ accentColor: 'var(--erp-accent)' }} checked={clearKey} disabled={!!apiKey} onChange={(e) => setClearKey(e.target.checked)} />
             Clear the stored key instead
           </label>
         </Field>
         <Field label="New webhook secret" htmlFor="cr-secret" hint={current.webhookSecretHint ? `Now: ${current.webhookSecretHint}. Typed once; sealed on send.` : 'Typed once; sealed on send.'}>
-          <input id="cr-secret" type="password" autoComplete="new-password" value={webhookSecret} onChange={(e) => { setWebhookSecret(e.target.value); if (e.target.value) setClearSecret(false) }} className="s-input py-1.5" />
+          <PasswordInput id="cr-secret" name="cr-secret" autoComplete="new-password" autoCapitalize="none" spellCheck={false} value={webhookSecret} onChange={(e) => { setWebhookSecret(e.target.value); if (e.target.value) setClearSecret(false) }} className="s-input py-1.5" />
           <label className="mt-1 flex items-center gap-2 text-xs text-s-muted">
             <input type="checkbox" style={{ accentColor: 'var(--erp-accent)' }} checked={clearSecret} disabled={!!webhookSecret} onChange={(e) => setClearSecret(e.target.checked)} />
             Clear the stored secret instead

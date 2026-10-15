@@ -48,7 +48,12 @@ export function StorefrontNav({ initialBrandSlug = null, children }: Props) {
   // own brand-themed header. Every other one-segment servd page keeps it —
   // /press, /reserve, /waitlist and /group-order used to lose it by accident.
   const segments = pathname.split('/').filter(Boolean)
-  const SERVD_PAGES = ['home', 'account', 'orders', 'login', 'signup', 'press', 'reserve', 'waitlist', 'group-order']
+  // Every one-segment servd route under app/ (rider and the HIDDEN_PREFIXES
+  // never reach here; `pages` is /pages/<slug>, two segments).
+  const SERVD_PAGES = [
+    'home', 'account', 'orders', 'login', 'signup', 'press', 'reserve', 'waitlist', 'group-order',
+    'faq', 'locations', 'about', 'contact', 'privacy', 'terms',
+  ]
   if (segments.length === 1 && !SERVD_PAGES.includes(segments[0]!)) {
     return null
   }

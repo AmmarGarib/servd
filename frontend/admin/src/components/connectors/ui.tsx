@@ -4,6 +4,7 @@
 // colours, no emoji icons.
 
 import { useEffect, useState, type ReactNode } from 'react'
+import { Modal as SharedModal } from '../ui/Modal'
 import type { FiscalDocStatus, TerminalChargeStatus } from '../../lib/connectorsApi'
 import { DOC_STATUS_LABEL, CHARGE_STATUS_LABEL } from '../../lib/connectorsApi'
 
@@ -197,21 +198,7 @@ export function ConfirmPhrase({ phrase, value, onChange }: { phrase: string; val
   )
 }
 
-/** Modal shell (light admin surface). */
+/** Modal shell — a thin wrapper over the shared dialog (focus trap, Escape, scroll lock). */
 export function Modal({ title, onClose, children, wide }: { title: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-s-text/40 p-0 sm:p-4" onClick={onClose}>
-      <div
-        role="dialog" aria-modal="true"
-        className={`w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'} max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-s-overlay border border-s-border shadow-modal`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 flex items-center justify-between gap-3 border-b border-s-border bg-s-overlay px-4 py-3">
-          <h3 className="text-sm font-bold text-s-text">{title}</h3>
-          <button onClick={onClose} className="s-btn-ghost px-2 py-1 text-xs" aria-label="Close">Close</button>
-        </div>
-        <div className="p-4 space-y-3">{children}</div>
-      </div>
-    </div>
-  )
+  return <SharedModal title={title} onClose={onClose} wide={wide}>{children}</SharedModal>
 }

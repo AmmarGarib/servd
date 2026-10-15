@@ -11,6 +11,7 @@
 // paid with; a card taken on the card machine goes back on the machine
 // (RefundOptions).
 
+import { PasswordInput } from '../../components/ui/PasswordInput'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -260,7 +261,7 @@ export default function RefundsPage() {
                 {mode === 'cancel' && !isManager && (
                   <div className="space-y-1">
                     <label htmlFor="cancel-pin" className="text-xs font-semibold text-s-muted">Manager PIN (a manager approves every cancel)</label>
-                    <input id="cancel-pin" type="password" inputMode="numeric" autoComplete="off"
+                    <PasswordInput id="cancel-pin" name="manager-pin" numeric autoComplete="off"
                       value={cancelPin} onChange={(e) => setCancelPin(e.target.value)}
                       className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5 text-sm text-s-text" />
                   </div>

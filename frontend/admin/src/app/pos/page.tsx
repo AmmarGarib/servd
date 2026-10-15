@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Modifier } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
@@ -12,6 +12,22 @@ import { useOpenTickets, type TillBrand, type TillOrder } from '../../components
 import { requestSync, listenForSync, getQueuedOrders } from '../../lib/offline-queue'
 import Link from 'next/link'
 import { useCurrentShift } from '../../hooks/useCurrentShift'
+import { useDialog } from '../../components/ui/Modal'
+import { useConfirm } from '../../components/ui/ConfirmDialog'
+import { fmtPkrWhole } from '../../lib/money'
+
+/** Arrow / Home / End move between the tabs of a tablist. `activate` also selects the tab
+ *  (categories); brand tabs only move focus, because selecting one can clear the order. */
+function tabListKeys(e: KeyboardEvent<HTMLElement>, activate: boolean) {
+  if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+  const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'))
+  const i = tabs.indexOf(document.activeElement as HTMLElement)
+  if (i < 0 || tabs.length === 0) return
+  e.preventDefault()
+  const n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+  tabs[n]!.focus()
+  if (activate) tabs[n]!.click()
+}
 
 export default function PosPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -23,6 +39,8 @@ export default function PosPage() {
   const [isOnline, setIsOnline] = useState(true)
   const [queuedCount, setQueuedCount] = useState(0)
   const [syncedCount, setSyncedCount] = useState(0)
+  const [soldOutNote, setSoldOutNote] = useState<string | null>(null)
+  const confirm = useConfirm()
 
   useEffect(() => {
     // Register SW
@@ -90,7 +108,7 @@ export default function PosPage() {
   const refetchTickets = openTickets.refetch
   const onRaastBillPaid = useCallback(() => { void refetchTickets() }, [refetchTickets])
 
-  const { data: categories = [] } = useQuery<Category[]>({
+  const { data: categories = [], isLoading: menuLoading } = useQuery<Category[]>({
     queryKey: ['menu', conceptId],
     queryFn: () => menuApi.getMenu(conceptId),
     enabled: !!conceptId,
@@ -102,9 +120,18 @@ export default function PosPage() {
 
   const currentCategory = categories.find((c) => c.id === selectedCategory) ?? categories[0]
 
+  useEffect(() => {
+    if (!soldOutNote) return
+    const t = setTimeout(() => setSoldOutNote(null), 3000)
+    return () => clearTimeout(t)
+  }, [soldOutNote])
+
   function handleItemTap(item: MenuItem) {
-    const hasRequiredModifiers = item.modifierGroups?.some((g: ModifierGroup) => g.isRequired)
-    if (hasRequiredModifiers) {
+    if (!item.isAvailable) { setSoldOutNote(`${item.name} is sold out`); return }
+    // ANY modifier group opens the sheet — optional extras are sold too.
+    // Add to order works with zero picks when every group is optional.
+    const hasModifiers = item.modifierGroups?.some((g: ModifierGroup) => g.isRequired || (g.modifiers?.length ?? 0) > 0)
+    if (hasModifiers) {
       setModifierItem(item)
     } else {
       addItem(item, [])
@@ -112,30 +139,15 @@ export default function PosPage() {
   }
 
   return (
-    <div className="erp-kitchen-dark flex h-screen overflow-hidden bg-kds-bg">
+    <div className="erp-kitchen-dark flex h-screen h-dvh overflow-hidden bg-kds-bg">
 
-      {/* Mobile cart backdrop */}
+      {/* Mobile cart drawer (mounted only while open: one cart in the DOM at a time) */}
       {cartOpen && (
-        <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={() => setCartOpen(false)} />
+        <CartDrawer onClose={() => setCartOpen(false)}>
+          <PosCart conceptId={conceptId || null} onClose={() => setCartOpen(false)}
+            onCheckout={() => { setCartOpen(false); setPayment({}) }} />
+        </CartDrawer>
       )}
-
-      {/* Mobile cart drawer */}
-      {/* kds.card is a Tailwind colour, not a custom property, so the old
-          `var(--kds-card, #141720)` always fell through to a hex that is in no
-          palette. This drawer already uses border-kds-border / text-kds-text,
-          so it takes the kds card colour via the class. */}
-      <div className={`fixed inset-x-0 bottom-0 z-50 lg:hidden transition-transform duration-300 bg-kds-card ${cartOpen ? 'translate-y-0' : 'translate-y-full'}`}
-        style={{ maxHeight: '85dvh', display: 'flex', flexDirection: 'column',
-          borderTop: '1px solid rgb(var(--fg-rgb) / 0.08)',
-          borderRadius: '16px 16px 0 0' }}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-kds-border shrink-0">
-          <span className="font-bold text-kds-text">Current Order</span>
-          <button onClick={() => setCartOpen(false)} className="text-kds-subtext hover:text-kds-text text-xl leading-none">✕</button>
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <PosCart conceptId={conceptId || null} onCheckout={() => { setCartOpen(false); setPayment({}) }} />
-        </div>
-      </div>
 
       {/* Mobile cart FAB */}
       {cartCount > 0 && !cartOpen && (
@@ -175,34 +187,44 @@ export default function PosPage() {
         )}
 
         {/* Brand selector */}
-        <div className="flex h-12 items-center gap-2 overflow-x-auto border-b border-kds-border bg-kds-card px-3 scrollbar-hide">
+        <div className="flex min-h-12 items-center gap-2 overflow-x-auto border-b border-kds-border bg-kds-card px-3 scrollbar-hide">
           <Link href="/w" className="text-kds-subtext text-xs hover:text-kds-text mr-2 shrink-0">← Back</Link>
           <span className="text-sm text-kds-subtext shrink-0">Brand:</span>
           {brandsFailed && <span className="text-sm font-semibold text-kds-red">Could not load your brands — reload, or ask a manager</span>}
           {!brandsFailed && !brandsLoading && concepts.length === 0 && <span className="text-sm text-kds-subtext">No brands in your company yet</span>}
-          {concepts.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => {
-                const st = usePosStore.getState()
-                // Another brand's dishes can't go on this brand's ticket (the
-                // server refuses them): switching brand starts a fresh order.
-                if (c.id !== conceptId && st.cart.length > 0) {
-                  if (!window.confirm('Switching brand clears the current order. Continue?')) return
-                  st.clearCart()
-                }
-                st.setConceptId(c.id)
-                setSelectedCategory(null)
-              }}
-              className={`shrink-0 rounded px-3 py-1 text-sm font-semibold ${
-                c.id === conceptId
-                  ? 'bg-kds-green text-white'
-                  : 'text-kds-subtext hover:text-kds-text'
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
+          <div role="tablist" aria-label="Brand" onKeyDown={(e) => tabListKeys(e, false)} className="flex shrink-0 items-center gap-2">
+            {concepts.map((c) => (
+              <button
+                key={c.id}
+                role="tab"
+                aria-selected={c.id === conceptId}
+                tabIndex={c.id === conceptId ? 0 : -1}
+                onClick={async () => {
+                  const st = usePosStore.getState()
+                  // Another brand's dishes can't go on this brand's ticket (the
+                  // server refuses them): switching brand starts a fresh order.
+                  if (c.id !== conceptId && st.cart.length > 0) {
+                    const ok = await confirm({
+                      title: 'Switch brand?',
+                      body: 'Switching brand clears the current order.',
+                      confirmLabel: 'Switch and clear', cancelLabel: 'Keep order', danger: true,
+                    })
+                    if (!ok) return
+                    st.clearCart()
+                  }
+                  st.setConceptId(c.id)
+                  setSelectedCategory(null)
+                }}
+                className={`min-h-11 shrink-0 rounded px-3 py-1 text-sm font-semibold ${
+                  c.id === conceptId
+                    ? 'bg-kds-green text-white'
+                    : 'text-kds-subtext hover:text-kds-text'
+                }`}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
           {/* Raast QR: bank transfers no bill claimed on its own (shown only when there are some) */}
           <div className="ml-auto flex shrink-0 items-center">
             <RaastAlerts
@@ -217,7 +239,7 @@ export default function PosPage() {
           <button
             onClick={() => setShowTickets(true)}
             disabled={!conceptId}
-            className="flex shrink-0 items-center gap-2 rounded-lg border border-kds-border px-3 py-1 text-sm font-semibold text-kds-text hover:border-kds-green disabled:opacity-30"
+            className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-kds-border px-3 py-1 text-sm font-semibold text-kds-text hover:border-kds-green disabled:opacity-30"
           >
             Open tickets
             {ticketCount > 0 && (
@@ -227,12 +249,16 @@ export default function PosPage() {
         </div>
 
         {/* Category tabs */}
-        <div className="flex gap-1 overflow-x-auto border-b border-kds-border bg-kds-card px-3 py-2 scrollbar-hide">
+        <div role="tablist" aria-label="Menu category" onKeyDown={(e) => tabListKeys(e, true)}
+          className="flex gap-1 overflow-x-auto border-b border-kds-border bg-kds-card px-3 py-2 scrollbar-hide">
           {categories.map((cat) => (
             <button
               key={cat.id}
+              role="tab"
+              aria-selected={cat.id === (selectedCategory ?? categories[0]?.id)}
+              tabIndex={cat.id === (selectedCategory ?? categories[0]?.id) ? 0 : -1}
               onClick={() => setSelectedCategory(cat.id)}
-              className={`shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+              className={`min-h-11 shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                 cat.id === (selectedCategory ?? categories[0]?.id)
                   ? 'bg-kds-green text-white'
                   : 'text-kds-subtext hover:bg-kds-border hover:text-kds-text'
@@ -246,11 +272,19 @@ export default function PosPage() {
         {/* Menu items grid */}
         <div className="flex-1 overflow-y-auto p-3">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4">
+            {menuLoading && !!conceptId && Array.from({ length: 8 }, (_, i) => (
+              <div key={i} className="skeleton min-h-[80px]" aria-hidden
+                style={{
+                  backgroundColor: 'rgb(var(--fg-rgb) / 0.06)',
+                  backgroundImage: 'linear-gradient(90deg, rgb(var(--fg-rgb) / 0.06) 25%, rgb(var(--fg-rgb) / 0.12) 50%, rgb(var(--fg-rgb) / 0.06) 75%)',
+                  backgroundSize: '200% 100%',
+                }} />
+            ))}
             {currentCategory?.items.map((item) => (
               <button
                 key={item.id}
                 onClick={() => handleItemTap(item)}
-                disabled={!item.isAvailable}
+                aria-disabled={!item.isAvailable}
                 className={`flex min-h-[80px] flex-col items-start rounded-lg border p-3 text-left transition-all active:scale-95 ${
                   item.isAvailable
                     ? 'border-kds-border bg-kds-card hover:border-kds-green'
@@ -277,6 +311,12 @@ export default function PosPage() {
       <div className="hidden lg:flex w-80 flex-col border-l border-kds-border bg-kds-card">
         <PosCart conceptId={conceptId || null} onCheckout={() => setPayment({})} />
       </div>
+
+      {soldOutNote && (
+        <div role="status" className="fixed bottom-5 left-1/2 z-[60] -translate-x-1/2 rounded-xl border border-kds-amber bg-kds-card px-4 py-3 text-sm font-semibold text-kds-amber shadow-lg">
+          {soldOutNote}
+        </div>
+      )}
 
       {/* Modifier modal */}
       {modifierItem && (
@@ -312,6 +352,35 @@ export default function PosPage() {
   )
 }
 
+// ─── Mobile cart drawer ─────────────────────────────────────────────────────
+// Mounted only while open, so the page holds one cart at a time. PosCart draws
+// the header (and the close button when it is given onClose).
+
+function CartDrawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [shown, setShown] = useState(false)
+  useDialog(panelRef, { onClose })
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(true))
+    // The drawer is the phone layout; on a wide screen the side rail takes over.
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const wide = () => { if (mq.matches) onClose() }
+    mq.addEventListener('change', wide)
+    return () => { cancelAnimationFrame(raf); mq.removeEventListener('change', wide) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={onClose} />
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Current order"
+        className={`fixed inset-x-0 bottom-0 z-50 flex flex-col bg-kds-card outline-none transition-transform duration-300 motion-reduce:transition-none lg:hidden ${shown ? 'translate-y-0' : 'translate-y-full'}`}
+        style={{ maxHeight: '85dvh', borderTop: '1px solid rgb(var(--fg-rgb) / 0.08)', borderRadius: '16px 16px 0 0', overscrollBehavior: 'contain' }}>
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      </div>
+    </>
+  )
+}
+
 // ─── Modifier Modal ─────────────────────────────────────────────────────────
 
 function ModifierModal({
@@ -323,6 +392,8 @@ function ModifierModal({
   onConfirm: (mods: Modifier[]) => void
   onClose: () => void
 }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDialog(panelRef, { onClose })
   // F14: track selections per-group so we can enforce minSelect/maxSelect.
   // A flat selected set wasn't enough to tell "0 from required group" apart
   // from "5 from a max-3 group" — the new structure makes both visible.
@@ -349,13 +420,14 @@ function ModifierModal({
     })
   }
 
-  // For each required group, the user must pick at least minSelect items.
-  // Compute a friendly message and a disabled state for the confirm button.
+  // A REQUIRED group needs at least minSelect (1 if unset) picks; an optional
+  // group needs none, so Add to order works with zero picks. Compute a friendly
+  // message and a disabled state for the confirm button.
   const groupErrors: Record<string, string | null> = {}
   let canConfirm = true
   for (const g of item.modifierGroups ?? []) {
     const picked = selectedByGroup[g.id]?.size ?? 0
-    const min = g.minSelect ?? (g.isRequired ? 1 : 0)
+    const min = g.isRequired ? Math.max(g.minSelect ?? 0, 1) : 0
     const max = g.maxSelect ?? Infinity
     if (picked < min) {
       groupErrors[g.id] = min === 1 ? 'Please choose 1' : `Please choose at least ${min}`
@@ -368,75 +440,89 @@ function ModifierModal({
     }
   }
 
+  const allMods = item.modifierGroups.flatMap((g: ModifierGroup) => g.modifiers)
+  const pickedIds = new Set<string>()
+  for (const set of Object.values(selectedByGroup)) for (const id of set) pickedIds.add(id)
+  const pickedMods = allMods.filter((m: Modifier) => pickedIds.has(m.id))
+  // The same figure the cart shows: unit price + each picked modifier's delta.
+  const runningTotalCents = item.priceCents + pickedMods.reduce((s: number, m: Modifier) => s + m.priceDeltaCents, 0)
+
   function confirm() {
     if (!canConfirm) return
-    const picked = new Set<string>()
-    for (const set of Object.values(selectedByGroup)) for (const id of set) picked.add(id)
-    const allMods = item.modifierGroups.flatMap((g: ModifierGroup) => g.modifiers)
-    onConfirm(allMods.filter((m: Modifier) => picked.has(m.id)))
+    onConfirm(pickedMods)
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="modifier-modal-title">
-      <div className="w-full max-w-md rounded-t-2xl bg-kds-card p-5 sm:rounded-2xl">
-        <h2 id="modifier-modal-title" className="mb-4 text-lg font-bold">{item.name} — Options</h2>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center" role="presentation">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="modifier-modal-title"
+        className="flex max-h-[90dvh] w-full max-w-md flex-col rounded-t-2xl bg-kds-card outline-none sm:rounded-2xl"
+        style={{ overscrollBehavior: 'contain' }}>
+        <div className="flex shrink-0 items-center justify-between border-b border-kds-border pl-5 pr-1">
+          <h2 id="modifier-modal-title" className="py-3 text-lg font-bold text-kds-text">{item.name} — Options</h2>
+          <button type="button" data-dialog-close onClick={onClose} aria-label="Close"
+            className="flex h-11 w-11 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
+        </div>
 
-        {item.modifierGroups.map((group: ModifierGroup) => {
-          const picked = selectedByGroup[group.id]
-          const max = group.maxSelect ?? Infinity
-          const err = groupErrors[group.id]
-          return (
-            <div key={group.id} className="mb-4">
-              <div className="mb-2 flex items-baseline justify-between">
-                <p className="text-sm font-semibold text-kds-subtext">
-                  {group.name}
-                  {group.isRequired && <span className="ml-1 text-kds-red">*</span>}
-                </p>
-                {(group.minSelect > 0 || group.maxSelect < 99) && (
-                  <p className="text-[10px] uppercase tracking-wider text-kds-subtext">
-                    {group.minSelect === group.maxSelect
-                      ? `pick ${group.minSelect}`
-                      : `${group.minSelect}–${group.maxSelect}`}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4" style={{ overscrollBehavior: 'contain' }}>
+          {item.modifierGroups.map((group: ModifierGroup) => {
+            const picked = selectedByGroup[group.id]
+            const max = group.maxSelect ?? Infinity
+            const err = groupErrors[group.id]
+            return (
+              <div key={group.id} className="mb-4">
+                <div className="mb-2 flex items-baseline justify-between">
+                  <p className="text-sm font-semibold text-kds-subtext">
+                    {group.name}
+                    {group.isRequired && <span className="ml-1 text-kds-red">*</span>}
                   </p>
+                  {(group.minSelect > 0 || group.maxSelect < 99) && (
+                    <p className="text-[10px] uppercase tracking-wider text-kds-subtext">
+                      {group.minSelect === group.maxSelect
+                        ? `pick ${group.minSelect}`
+                        : `${group.minSelect}–${group.maxSelect}`}
+                    </p>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {group.modifiers.map((mod: Modifier) => {
+                    const isOn = picked?.has(mod.id) ?? false
+                    return (
+                      <button
+                        key={mod.id}
+                        type="button"
+                        aria-pressed={isOn}
+                        onClick={() => toggle(group.id, mod.id, max)}
+                        className={`min-h-11 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                          isOn
+                            ? 'border-kds-green bg-kds-green/20 text-kds-green'
+                            : 'border-kds-border text-kds-text hover:border-kds-subtext'
+                        }`}
+                      >
+                        <span>{mod.name}</span>
+                        {mod.priceDeltaCents !== 0 && (
+                          <span className="ml-1 text-kds-subtext">
+                            +{fmtPkrWhole(mod.priceDeltaCents)}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+                {err && (
+                  <p className="mt-1 text-xs font-semibold text-kds-amber">{err}</p>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                {group.modifiers.map((mod: Modifier) => {
-                  const isOn = picked?.has(mod.id) ?? false
-                  return (
-                    <button
-                      key={mod.id}
-                      onClick={() => toggle(group.id, mod.id, max)}
-                      className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                        isOn
-                          ? 'border-kds-green bg-kds-green/20 text-kds-green'
-                          : 'border-kds-border text-kds-text hover:border-kds-subtext'
-                      }`}
-                    >
-                      <span>{mod.name}</span>
-                      {mod.priceDeltaCents !== 0 && (
-                        <span className="ml-1 text-kds-subtext">
-                          +{(mod.priceDeltaCents / 100).toFixed(0)}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-              {err && (
-                <p className="mt-1 text-xs font-semibold text-kds-amber">{err}</p>
-              )}
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
 
-        <div className="flex gap-3 pt-2">
-          <button onClick={onClose} className="kds-btn-ghost flex-1 py-3">
+        <div className="sticky bottom-0 flex shrink-0 gap-3 border-t border-kds-border bg-kds-card px-5 py-3">
+          <button type="button" onClick={onClose} className="kds-btn-ghost flex-1 py-3">
             Cancel
           </button>
-          <button onClick={confirm} disabled={!canConfirm}
+          <button type="button" onClick={confirm} disabled={!canConfirm}
             className="kds-btn-primary flex-1 py-3 disabled:cursor-not-allowed disabled:opacity-40">
-            Add to Order
+            Add to order · {fmtPkrWhole(runningTotalCents)}
           </button>
         </div>
       </div>

@@ -4,13 +4,14 @@
 // pop-up rules. Image/video fields and copy fields can pull from the media
 // library (LibraryPanel in pick mode).
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { LibraryPanel, type LibraryAsset } from './LibraryPanel'
 import { contentApi, type MediaAssetLite } from '../../lib/content'
 import { BUILTIN_FONTS, type Align } from '../../lib/blocks'
 import { Select } from '@/components/ui/Select'
+import { useDialog } from '@/components/ui/Modal'
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -53,6 +54,10 @@ export function AlignSelect({ value, onChange }: { value: Align; onChange: (v: A
   )
 }
 
+const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+/** #rgb to #rrggbb, for the native colour picker. */
+const longHex = (v: string) => (v.length === 4 ? `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}` : v)
+
 export function ColorInput({ value, onChange, placeholder, fallback }: {
   value: string | undefined
   onChange: (v: string | undefined) => void
@@ -60,27 +65,63 @@ export function ColorInput({ value, onChange, placeholder, fallback }: {
   /** What the colour picker shows while the value is empty (e.g. the default). */
   fallback?: string
 }) {
-  const hex = value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback && /^#[0-9a-f]{6}$/i.test(fallback) ? fallback : '#000000'
+  const [text, setText] = useState(value ?? '')
+  const [focused, setFocused] = useState(false)
+  // Follow outside changes (the swatch, undo, a reload) while not typing.
+  useEffect(() => { if (!focused) setText(value ?? '') }, [value, focused])
+  const valid = text === '' || HEX_RE.test(text.trim())
+  const shown = value && HEX_RE.test(value) ? longHex(value) : fallback && HEX_RE.test(fallback) ? longHex(fallback) : '#000000'
+  const commit = () => {
+    const t = text.trim()
+    if (t === '') { onChange(undefined); return }
+    if (HEX_RE.test(t)) { onChange(t); setText(t) } else setText(value ?? '') // invalid: revert
+  }
   return (
-    <div className="flex gap-2">
-      <input type="color" value={hex} onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-10 shrink-0 rounded border border-s-border bg-s-bg-soft cursor-pointer" aria-label="Pick colour" />
-      <input value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)} placeholder={placeholder} className="s-input" />
+    <div>
+      <div className="flex gap-2">
+        <input type="color" value={shown} onChange={(e) => { setText(e.target.value); onChange(e.target.value) }}
+          className="h-9 w-10 shrink-0 rounded border border-s-border bg-s-bg-soft cursor-pointer" aria-label="Pick colour" />
+        <input value={text} placeholder={placeholder} className="s-input" aria-invalid={!valid || undefined}
+          onFocus={() => setFocused(true)}
+          onChange={(e) => {
+            setText(e.target.value)
+            const t = e.target.value.trim()
+            if (HEX_RE.test(t)) onChange(t) // live preview while a valid hex is typed
+          }}
+          onBlur={() => { setFocused(false); commit() }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />
+      </div>
+      {!valid && <p role="alert" className="text-[11px] text-s-red mt-1">Use a hex colour like #6a0dad or #fff. It goes back to the last good colour when you leave the box.</p>}
     </div>
   )
 }
 
 export function NumberInput({ value, onChange, min, max, step }: { value: number | undefined; onChange: (v: number | undefined) => void; min?: number; max?: number; step?: number }) {
+  // Keep what was typed; clamp and commit on blur or Enter, so "1" on the way to "15" is never snapped to the minimum.
+  const [text, setText] = useState(value === undefined ? '' : String(value))
+  const [focused, setFocused] = useState(false)
+  useEffect(() => { if (!focused) setText(value === undefined ? '' : String(value)) }, [value, focused])
+  const commit = () => {
+    const t = text.trim()
+    if (t === '') { onChange(undefined); return }
+    let n = Number(t)
+    if (Number.isNaN(n)) { setText(value === undefined ? '' : String(value)); return }
+    if (min !== undefined) n = Math.max(min, n)
+    if (max !== undefined) n = Math.min(max, n)
+    setText(String(n))
+    onChange(n)
+  }
+  const range = min !== undefined && max !== undefined ? `${min} to ${max}` : min !== undefined ? `at least ${min}` : max !== undefined ? `at most ${max}` : ''
   return (
-    <input type="number" min={min} max={max} step={step} value={value ?? ''} className="s-input"
-      onChange={(e) => {
-        if (e.target.value === '') return onChange(undefined)
-        let n = Number(e.target.value)
-        if (Number.isNaN(n)) return
-        if (min !== undefined) n = Math.max(min, n)
-        if (max !== undefined) n = Math.min(max, n)
-        onChange(n)
-      }} />
+    <div>
+      <input type="number" inputMode="decimal" min={min} max={max} step={step} value={text} className="s-input"
+        onFocus={() => setFocused(true)}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => { setFocused(false); commit() }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit() } }}
+        onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()} />
+      {range && <p className="text-[11px] text-s-dim mt-1">{range}</p>}
+    </div>
   )
 }
 
@@ -92,12 +133,14 @@ export function LibraryPickerModal({ kinds, title, onPick, onClose }: {
   onPick: (asset: LibraryAsset) => void
   onClose: () => void
 }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDialog(panelRef, { onClose }) // Escape, focus trap, focus back to the opener
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="s-card w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-secondary/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title} className="s-card w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col outline-none" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-s-border flex items-center justify-between">
           <h2 className="text-sm font-bold text-s-text">{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="text-s-muted hover:text-s-text"><X size={18} /></button>
+          <button type="button" data-dialog-close onClick={onClose} aria-label="Close" className="text-s-muted hover:text-s-text"><X size={18} /></button>
         </div>
         <div className="overflow-y-auto p-4">
           <LibraryPanel mode="pick" kinds={kinds} onPick={(a) => { onPick(a); onClose() }} />
@@ -115,20 +158,23 @@ export function MediaInput({ value, onChange, kind, placeholder }: {
   placeholder?: string
 }) {
   const [open, setOpen] = useState(false)
+  const [broken, setBroken] = useState(false)
+  useEffect(() => { setBroken(false) }, [value])
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
         <input value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder={placeholder ?? 'https://...'} className="s-input" />
         <button type="button" onClick={() => setOpen(true)} className="s-btn-secondary text-xs shrink-0">Library</button>
       </div>
-      {value && (
+      {value && !broken && (
         <div className="h-20 w-32 rounded-lg overflow-hidden border border-s-border bg-s-elevated">
           {kind === 'video'
-            ? <video src={value} className="h-full w-full object-cover" muted playsInline />
+            ? <video src={value} className="h-full w-full object-cover" muted playsInline preload="metadata" onError={() => setBroken(true)} />
             // eslint-disable-next-line @next/next/no-img-element
-            : <img src={value} alt="" className="h-full w-full object-cover" />}
+            : <img src={value} alt="" className="h-full w-full object-cover" onError={() => setBroken(true)} />}
         </div>
       )}
+      {value && broken && <p className="text-[11px] text-s-amber">That address did not load as {kind === 'video' ? 'a video' : 'an image'}. Check the link.</p>}
       {open && (
         <LibraryPickerModal kinds={[kind]} title={kind === 'video' ? 'Pick a video' : 'Pick an image'}
           onPick={(a) => onChange(a.url)} onClose={() => setOpen(false)} />

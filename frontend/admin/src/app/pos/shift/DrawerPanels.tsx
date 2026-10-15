@@ -13,6 +13,8 @@ import { fmtPkrWhole } from '../../../lib/money'
 import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from '../../../components/pos/pinErrors'
 import { orderRef } from '../../../lib/orderRef'
 import { Select } from '@/components/ui/Select'
+import { NumberField } from '../../../components/ui/NumberField'
+import { PasswordInput } from '../../../components/ui/PasswordInput'
 
 interface PayoutCategory { key: string; label: string; code: string }
 interface CodDue {
@@ -69,14 +71,17 @@ export function VendorPayoutPanel({ shiftId }: { shiftId: string }) {
     // A wrong PIN, or the wrong-PIN lock-out: clear the box so it is typed afresh.
     onError: (e) => { if (e instanceof ApiError && (e.code === 'INVALID_MANAGER_PIN' || e.code === 'MANAGER_PIN_LOCKED')) setPin('') },
   })
+  const canPayOut = !payout.isPending && parseFloat(amount) > 0 && !!category && reason.trim().length >= 1
   return (
-    <div className="rounded-2xl bg-kds-card p-6 space-y-3">
+    <form className="rounded-2xl bg-kds-card p-6 space-y-3"
+      onSubmit={(e) => { e.preventDefault(); if (canPayOut) { setDone(null); payout.mutate() } }}>
       <h2 className="font-bold text-kds-text">Pay a vendor from the till</h2>
       <p className="text-xs text-kds-subtext">Needs a manager PIN and stays under the pay-out cap. Larger amounts go through petty cash or the bank.</p>
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label htmlFor="payout-amount" className="mb-1 block text-xs text-kds-subtext">Amount (PKR)</label>
-          <input id="payout-amount" type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} />
+          <NumberField id="payout-amount" decimals={2} min={0} value={amount === '' ? null : Number(amount)}
+            onValueChange={(v) => setAmount(v == null ? '' : String(v))} className={inputCls} />
         </div>
         <div>
           <label htmlFor="payout-category" className="mb-1 block text-xs text-kds-subtext">For</label>
@@ -95,19 +100,19 @@ export function VendorPayoutPanel({ shiftId }: { shiftId: string }) {
         </div>
         <div>
           <label htmlFor="payout-pin" className="mb-1 block text-xs text-kds-subtext">Manager PIN</label>
-          <input id="payout-pin" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} className={inputCls} />
+          <PasswordInput id="payout-pin" numeric maxLength={8} autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} className={inputCls} />
         </div>
       </div>
       {payout.error && <p role="alert" className="text-xs text-kds-red">{payoutErrorMessage(payout.error)}</p>}
       {done && <p role="status" className="text-xs text-kds-green">{done}</p>}
       <button
-        onClick={() => { setDone(null); payout.mutate() }}
-        disabled={payout.isPending || !amount || !category || reason.trim().length < 1}
+        type="submit"
+        disabled={!canPayOut}
         className="w-full rounded-xl bg-kds-amber py-3 font-bold text-black disabled:opacity-50"
       >
         {payout.isPending ? 'Recording…' : 'Pay out'}
       </button>
-    </div>
+    </form>
   )
 }
 

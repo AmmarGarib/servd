@@ -14,6 +14,8 @@ import {
 import { useCompanyLocations } from './PosIdsTable'
 import { Badge, Card, ErrorLine, Field, OkLine, RangeNumberInput, TestBadge, fmtWhen } from './ui'
 import { Select } from '@/components/ui/Select'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 const TERMINAL_TEST_SCENARIOS = ['approve', 'decline', 'never', 'unknown_start', 'late_approve', 'void_fails', 'offline', 'by_amount'] as const
 
@@ -21,6 +23,7 @@ type Row = Omit<TerminalEntry, 'id'> & { id?: string }
 
 export function TerminalSetup({ data, canEdit, activeTenantId }: { data: ConnectorsOverview; canEdit: boolean; activeTenantId: string | null }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const t = data.terminal
   const drivers = useDrivers()
   const termDrivers = (drivers.data ?? []).filter((d) => d.kind === 'terminal')
@@ -118,7 +121,7 @@ export function TerminalSetup({ data, canEdit, activeTenantId }: { data: Connect
               </div>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
-                <input type="password" autoComplete="new-password" className="s-input font-mono text-xs flex-1 min-w-[200px]" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Paste the key from the processor" />
+                <PasswordInput name="terminal-api-key" autoComplete="new-password" autoCapitalize="none" spellCheck={false} wrapperClassName="flex-1 min-w-[200px]" className="s-input font-mono text-xs" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Paste the key from the processor" />
                 <button className="s-btn-ghost px-2 py-1 text-xs" onClick={() => setApiKey(null)}>Keep current</button>
               </div>
             )}
@@ -131,8 +134,8 @@ export function TerminalSetup({ data, canEdit, activeTenantId }: { data: Connect
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="text-s-muted">Secret:</span>
               <span className="font-mono text-s-text">{t.webhookSecretHint ?? 'Not set'}</span>
-              {canEdit && <button className="s-btn-secondary px-2 py-1 text-xs" disabled={regen.isPending} onClick={() => { if (!t.webhookSecretHint || confirm('Generate a new webhook secret? The processor must switch to it.')) regen.mutate() }}>Regenerate</button>}
-              {canEdit && <button className="s-btn-ghost px-2 py-1 text-xs" disabled={rotate.isPending} onClick={() => { if (confirm('Issue a new webhook address? The old one stops working at once.')) rotate.mutate() }}>New address</button>}
+              {canEdit && <button className="s-btn-secondary px-2 py-1 text-xs" disabled={regen.isPending} onClick={async () => { if (!t.webhookSecretHint || await confirm({ title: 'Generate a new webhook secret?', body: 'The processor must switch to it.', confirmLabel: 'Generate', danger: true })) regen.mutate() }}>Regenerate</button>}
+              {canEdit && <button className="s-btn-ghost px-2 py-1 text-xs" disabled={rotate.isPending} onClick={async () => { if (await confirm({ title: 'Issue a new webhook address?', body: 'The old one stops working at once.', confirmLabel: 'Issue new address', danger: true })) rotate.mutate() }}>New address</button>}
             </div>
             {newSecret && (
               <div className="mt-2 rounded-lg border border-s-amber/40 bg-s-amber-dim p-3 text-xs">
@@ -202,12 +205,16 @@ export function TerminalSetup({ data, canEdit, activeTenantId }: { data: Connect
 
       {canEdit && (
         <div className="flex flex-wrap items-center gap-3">
-          <button className="s-btn-primary" disabled={save.isPending || invalid || numbersBad || Object.keys(body).length === 0} onClick={() => {
+          <button className="s-btn-primary" disabled={save.isPending || invalid || numbersBad || Object.keys(body).length === 0} onClick={async () => {
             // Turning the till button on with the TEST driver (or switching an
             // enabled machine to TEST) means card sales are recorded as paid
             // with no money taken — make the operator say so.
             const testAtTill = enabled && driver === 'test' && (enabled !== t.enabled || driver !== t.driver)
-            if (testAtTill && !confirm('The TEST card machine will be ON at the till.\n\nEvery “Charge on card machine” is approved by the simulator and recorded as a paid card sale — no card is charged and no money moves.\n\nOnly do this to rehearse, never while trading. Continue?')) return
+            if (testAtTill && !(await confirm({
+              title: 'Turn the TEST card machine on at the till?',
+              body: 'Every “Charge on card machine” is approved by the simulator and recorded as a paid card sale — no card is charged and no money moves. Only do this to rehearse, never while trading.',
+              confirmLabel: 'Turn on TEST machine', danger: true,
+            }))) return
             save.mutate()
           }}>
             {save.isPending ? 'Saving…' : 'Save card machine settings'}

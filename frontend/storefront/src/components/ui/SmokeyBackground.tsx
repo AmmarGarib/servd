@@ -70,8 +70,11 @@ export function SmokeyBackground({ color = '#5c3458', className = '', backdropBl
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    setReady(false)
+    // Less motion: no shader at all (the page's solid background stands in).
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
     const gl = canvas.getContext('webgl')
-    if (!gl) { console.warn('WebGL not supported — smokey background disabled'); return }
+    if (!gl || gl.isContextLost()) { console.warn('WebGL not available — smokey background disabled'); return }
 
     const compile = (type: number, src: string): WebGLShader | null => {
       const shader = gl.createShader(type)
@@ -99,7 +102,6 @@ export function SmokeyBackground({ color = '#5c3458', className = '', backdropBl
       return
     }
     gl.useProgram(program)
-    setReady(true)
 
     const buf = gl.createBuffer()
     gl.bindBuffer(gl.ARRAY_BUFFER, buf)
@@ -116,20 +118,34 @@ export function SmokeyBackground({ color = '#5c3458', className = '', backdropBl
     const [r, g, b] = hexToRgb(color)
     gl.uniform3f(uColor, r, g, b)
 
+    // The glow is a soft gradient, so resolution buys nothing: 1 canvas px per
+    // CSS px, and 0.75 on small screens to spare the battery (never above the
+    // 1.5 devicePixelRatio cap by construction).
+    const small = window.matchMedia?.('(max-width: 767px)').matches ?? false
+    const scale = small ? 0.75 : 1
+
     const start = Date.now()
     let raf = 0
+    let dead = false
     const render = () => {
-      const w = canvas.clientWidth, h = canvas.clientHeight
+      if (dead || document.hidden) { raf = 0; return }   // paused while the tab is hidden
+      const cw = canvas.clientWidth, ch = canvas.clientHeight
+      const w = Math.max(1, Math.round(cw * scale)), h = Math.max(1, Math.round(ch * scale))
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
       gl.viewport(0, 0, w, h)
       gl.uniform2f(uRes, w, h)
       gl.uniform1f(uTime, (Date.now() - start) / 1000)
-      const mx = mouse.current.hovering ? mouse.current.x : w / 2
-      const my = mouse.current.hovering ? h - mouse.current.y : h / 2
+      const mx = mouse.current.hovering ? mouse.current.x * scale : w / 2
+      const my = mouse.current.hovering ? h - mouse.current.y * scale : h / 2
       gl.uniform2f(uMouse, mx, my)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
       raf = requestAnimationFrame(render)
     }
+    const onVisibility = () => { if (!document.hidden && !dead && !raf) raf = requestAnimationFrame(render) }
+    // A lost context draws nothing: hide the canvas, never show a white one.
+    const onLost = (e: Event) => { e.preventDefault(); dead = true; cancelAnimationFrame(raf); raf = 0; setReady(false) }
+    document.addEventListener('visibilitychange', onVisibility)
+    canvas.addEventListener('webglcontextlost', onLost)
 
     const onMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect()
@@ -143,8 +159,12 @@ export function SmokeyBackground({ color = '#5c3458', className = '', backdropBl
     canvas.addEventListener('mouseleave', onLeave)
 
     render()
+    setReady(true)   // only after the program linked and the first frame drew
     return () => {
+      dead = true
       cancelAnimationFrame(raf)
+      document.removeEventListener('visibilitychange', onVisibility)
+      canvas.removeEventListener('webglcontextlost', onLost)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mouseenter', onEnter)
       canvas.removeEventListener('mouseleave', onLeave)

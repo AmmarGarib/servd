@@ -9,6 +9,8 @@ import { boxGiven, boxGivenErrorMessage, boxGivenOffer, useCartQuote, useOpenTic
 interface PosCartProps {
   conceptId: string | null
   onCheckout: () => void
+  /** Phone drawer: the one header gets the close button. Absent on the side rail. */
+  onClose?: () => void
 }
 
 // The cart shows the food value and, when the API can quote a cart, the
@@ -22,7 +24,7 @@ interface PosCartProps {
 // (packaging rule, owner 2026-10-13). A line that already counts its packaging
 // (takeaway, delivery, a packaging-vessel brand like Stackd) shows nothing.
 // The cart itself has no order yet, so it has nothing to box.
-export function PosCart({ conceptId, onCheckout }: PosCartProps) {
+export function PosCart({ conceptId, onCheckout, onClose }: PosCartProps) {
   const { cart, removeItem, updateItemQty, updateItemNotes, discountCents, itemTotalCents, lines } = usePosStore()
   const items = itemTotalCents()
   const cartLines = lines()
@@ -34,9 +36,15 @@ export function PosCart({ conceptId, onCheckout }: PosCartProps) {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-kds-border px-4 py-3">
-        <h2 className="font-bold text-kds-text">Current Order</h2>
-        <p className="text-xs text-kds-subtext">{cart.length} item{cart.length !== 1 ? 's' : ''}</p>
+      <div className="flex items-center justify-between border-b border-kds-border py-3 pl-4 pr-1">
+        <div>
+          <h2 className="font-bold text-kds-text">Current Order</h2>
+          <p className="text-xs text-kds-subtext">{cart.length} item{cart.length !== 1 ? 's' : ''}</p>
+        </div>
+        {onClose && (
+          <button type="button" data-dialog-close onClick={onClose} aria-label="Close order"
+            className="flex h-11 w-11 shrink-0 items-center justify-center text-xl leading-none text-kds-subtext hover:text-kds-text">✕</button>
+        )}
       </div>
 
       {/* Items */}
@@ -68,34 +76,34 @@ export function PosCart({ conceptId, onCheckout }: PosCartProps) {
                   <button
                     onClick={() => updateItemQty(item.id, item.quantity - 1)}
                     aria-label={`Decrease quantity of ${item.name}`}
-                    className="h-11 w-11 rounded-lg bg-kds-border text-base font-bold text-kds-text active:bg-kds-border/70"
+                    className="h-11 w-11 shrink-0 rounded-lg bg-kds-border text-base font-bold text-kds-text active:bg-kds-border/70"
                   >
                     −
                   </button>
-                  <span className="w-8 text-center font-bold text-kds-text text-base" aria-live="polite">{item.quantity}</span>
+                  <span className="w-8 shrink-0 text-center font-bold text-kds-text text-base" aria-live="polite">{item.quantity}</span>
                   <button
                     onClick={() => updateItemQty(item.id, item.quantity + 1)}
                     aria-label={`Increase quantity of ${item.name}`}
-                    className="h-11 w-11 rounded-lg bg-kds-border text-base font-bold text-kds-text active:bg-kds-border/70"
+                    className="h-11 w-11 shrink-0 rounded-lg bg-kds-border text-base font-bold text-kds-text active:bg-kds-border/70"
                   >
                     +
                   </button>
-                  <input
-                    type="text"
-                    placeholder="Note…"
-                    aria-label={`Note for ${item.name}`}
-                    value={item.notes}
-                    onChange={(e) => updateItemNotes(item.id, e.target.value)}
-                    className="flex-1 rounded border border-kds-border bg-transparent px-2 py-1 text-xs text-kds-text placeholder:text-kds-subtext"
-                  />
                   <button
                     onClick={() => removeItem(item.id)}
-                    className="h-11 w-11 rounded-lg bg-kds-red/20 text-kds-red font-bold active:bg-kds-red/30"
+                    className="ml-auto h-11 w-11 shrink-0 rounded-lg bg-kds-red/20 text-kds-red font-bold active:bg-kds-red/30"
                     aria-label={`Remove ${item.name} from cart`}
                   >
                     ✕
                   </button>
                 </div>
+                <input
+                  type="text"
+                  placeholder="Note…"
+                  aria-label={`Note for ${item.name}`}
+                  value={item.notes}
+                  onChange={(e) => updateItemNotes(item.id, e.target.value)}
+                  className="mt-2 w-full rounded border border-kds-border bg-transparent px-2 py-2 text-xs text-kds-text placeholder:text-kds-subtext"
+                />
               </div>
             ))}
           </div>

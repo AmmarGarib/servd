@@ -28,6 +28,10 @@ import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { Select } from '@/components/ui/Select'
+import { Modal as SharedModal } from '../../../components/ui/Modal'
+import { NumberField } from '../../../components/ui/NumberField'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { Field, dateBounds, firstMissing, focusField, useSubmitOnce } from '../cash-vouchers/ui'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
 
@@ -762,10 +766,22 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
     onSuccess: () => onSaved(),
   })
 
-  return <ModalShell title={category ? 'Edit category' : 'New OpEx category'} onClose={onClose}>
+  const confirm = useConfirm()
+  const [tried, setTried] = useState(false)
+  const nameErr = tried && !name.trim() ? 'Give the category a name.' : ''
+  const submit = useSubmitOnce(save.isPending || del.isPending)(() => {
+    setTried(true)
+    if (!name.trim()) { focusField('opex-cat-name'); return false }
+    save.mutate()
+    return true
+  })
+  const dirty = !save.isPending && (name !== (category?.name ?? '') || emoji !== (category?.emoji ?? '') || budgetMonthlyCents !== (category?.budgetMonthlyCents ?? 0) || notes !== (category?.notes ?? ''))
+
+  return <ModalShell title={category ? 'Edit category' : 'New OpEx category'} onClose={onClose} dirty={dirty}>
+    <form id="opex-cat-form" onSubmit={submit} className="space-y-4" noValidate>
     <div className="grid grid-cols-[80px_1fr] gap-3">
       <Field label="Emoji"><input value={emoji} onChange={(e) => setEmoji(e.target.value)} placeholder="🏢" className={fieldCls + ' text-center text-2xl'} /></Field>
-      <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Rent / lease" className={fieldCls} autoFocus /></Field>
+      <Field label="Name *" error={nameErr}><input id="opex-cat-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Rent / lease" className={fieldCls} autoFocus /></Field>
     </div>
     <Field label="Monthly budget (PKR)">
       <MoneyInput value={budgetMonthlyCents} onChange={setBudget} className={fieldCls} />
@@ -790,13 +806,15 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
       </div>
     )}
     <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
+    </form>
     {save.error && <ErrorBanner error={save.error} />}
+    {del.error && <ErrorBanner error={del.error} />}
     <ModalFooter onCancel={onClose}>
       {category && (
-        <button onClick={() => { if (confirm('Archive this category?')) del.mutate() }}
+        <button type="button" onClick={async () => { if (await confirm({ title: `Archive ${category.name}?`, body: 'The category and its lines are hidden from OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
           className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">Archive</button>
       )}
-      <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
+      <button type="submit" form="opex-cat-form" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : category ? 'Save' : 'Create category'}
       </button>
     </ModalFooter>
@@ -857,9 +875,28 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
     onSuccess: () => onSaved(),
   })
 
-  return <ModalShell title={`${line ? 'Edit' : 'Add'} line · ${category.name}`} onClose={onClose} wide>
-    <Field label="Name *">
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Office rent — DHA Phase 5" className={fieldCls} autoFocus />
+  const confirm = useConfirm()
+  const bounds = dateBounds()
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'opex-line-name': name.trim() ? '' : 'Give the line a name.',
+    'opex-line-supplier': whtSection && !supplierId && !payroll ? 'Pick the supplier — a withholding section needs one.' : '',
+    'opex-line-due': nextDueDate && (nextDueDate < bounds.min || nextDueDate > bounds.max) ? `Pick a date between ${bounds.min} and ${bounds.max}.` : '',
+  }
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const submit = useSubmitOnce(save.isPending || del.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad); return false }
+    save.mutate()
+    return true
+  })
+  const dirty = !save.isPending && (name !== (line?.name ?? '') || amountCents !== (line?.amountCents ?? 0) || notes !== (line?.notes ?? '') || vendor !== (line?.vendor ?? ''))
+
+  return <ModalShell title={`${line ? 'Edit' : 'Add'} line · ${category.name}`} onClose={onClose} wide dirty={dirty}>
+    <form id="opex-line-form" onSubmit={submit} className="space-y-4" noValidate>
+    <Field label="Name *" error={shown('opex-line-name')}>
+      <input id="opex-line-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Office rent — DHA Phase 5" className={fieldCls} autoFocus />
     </Field>
     {payroll ? (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -871,7 +908,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         <div>
           <label htmlFor={`opex-vendor-${line?.id ?? 'new'}`} className="text-xs text-white/55">Vendor (supplier)</label>
           <div className="mt-1">
-            <Select id={`opex-vendor-${line?.id ?? 'new'}`} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls} disabled={vendors.isLoading}>
+            <Select id={`opex-vendor-${line?.id ?? 'new'}`} aria-invalid={shown('opex-line-supplier') ? true : undefined} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls} disabled={vendors.isLoading}>
               <option value="">{vendors.isError ? 'Suppliers unavailable' : '— no supplier picked —'}</option>
               {(vendors.data ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </Select>
@@ -911,7 +948,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
       </Field>
     </div>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      <Field label="Next due"><input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls} /></Field>
+      <Field label="Next due" error={shown('opex-line-due')}><input id="opex-line-due" type="date" min={bounds.min} max={bounds.max} value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls} /></Field>
       <Field label="Payment method">
         <Select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={fieldCls}>
           <option value="">—</option>
@@ -950,22 +987,24 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
           Withholding needs the supplier picked above: its filer status and exemption certificate decide the rate (Accounting → Sales tax return → Withholding rates).
           A rent paid months ahead is marked &ldquo;prepaid&rdquo; on the payment; a refundable deposit is recorded in CapEx.
         </Hint>
-        {whtSection && !supplierId && <p className="text-[11px] text-s-amber">Pick the supplier — a withholding section needs one.</p>}
+        {whtSection && !supplierId && <p role={tried ? 'alert' : undefined} className="text-[11px] text-s-amber">Pick the supplier — a withholding section needs one.</p>}
       </Section>
     )}
     <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
+    </form>
 
-    {/* Payment history — only when editing */}
+    {/* Payment history — only when editing (outside the line's form: it has its own forms) */}
     {line && <PaymentHistory line={line} category={category} onChange={() => qc.invalidateQueries({ queryKey: ['opex-categories'] })} />}
 
     {save.error && <ErrorBanner error={save.error} />}
+    {del.error && <ErrorBanner error={del.error} />}
 
     <ModalFooter onCancel={onClose}>
       {line && (
-        <button onClick={() => { if (confirm('Archive this line?')) del.mutate() }}
+        <button type="button" onClick={async () => { if (await confirm({ title: `Archive ${line.name}?`, body: 'The line stops appearing in OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
           className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">Archive</button>
       )}
-      <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || (!!whtSection && !supplierId && !payroll)} className={primaryBtn}>
+      <button type="submit" form="opex-line-form" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
       </button>
     </ModalFooter>
@@ -1242,21 +1281,43 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   const overrideOk = !overrideOn || overrideReason.trim().length >= 10
   const notEquipmentOk = !notEquipment || notEquipmentReason.trim().length >= 10
   const shownSection: WhtSection | null = section === 'usual' ? usualSection : section === 'none' ? null : section
+  const confirm = useConfirm()
+  const bounds = dateBounds()
+  const [problem, setProblem] = useState<string | null>(null)
+  // What is missing, in field order: [field id, message]. Save stays enabled;
+  // pressing it with one missing says which and focuses it.
+  const problems: Array<[string, string]> = ([
+    [`ps-${idp}`, !periodStart || periodStart < bounds.min || periodStart > bounds.max ? `Period start must be a date between ${bounds.min} and ${bounds.max}.` : ''],
+    [`pe-${idp}`, !periodEnd || periodEnd < bounds.min || periodEnd > bounds.max ? `Period end must be a date between ${bounds.min} and ${bounds.max}.` : ''],
+    [`inv-${idp}`, invoiceCents <= 0 ? 'Enter the invoice amount.' : ''],
+    [`auth-${idp}`, !payroll && inputTaxCents > 0 && !authority ? 'Pick who charged the sales tax.' : ''],
+    [`cm-${idp}`, !prepaidOk ? 'Prepaid needs a start month and 1 to 120 months.' : ''],
+    [`pd-${idp}`, !paidOn ? 'Pick the date it was paid.' : ''],
+  ] as Array<[string, string]>)
+  if (!overrideOk) problems.push([`ovr-${idp}`, 'Say why a different amount is withheld (10 characters or more).'])
+  if (!notEquipmentOk) problems.push([`ne-${idp}`, 'Say why it is an expense (10 characters or more).'])
+  const firstProblem = problems.find(([, m]) => m)
+  const submit = useSubmitOnce(save.isPending || unpay.isPending)(() => {
+    if (firstProblem) { setProblem(firstProblem[1]); focusField(firstProblem[0]); return false }
+    setProblem(null)
+    save.mutate()
+    return true
+  })
 
   return (
-    <div className="rounded-xl p-3 mt-2 space-y-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+    <form onSubmit={submit} noValidate className="rounded-xl p-3 mt-2 space-y-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
           <label htmlFor={`ps-${idp}`} className="text-[11px] text-white/55">Period from</label>
-          <input id={`ps-${idp}`} type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={fieldCls} />
+          <input id={`ps-${idp}`} type="date" min={bounds.min} max={bounds.max} value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={fieldCls} />
         </div>
         <div>
           <label htmlFor={`pe-${idp}`} className="text-[11px] text-white/55">Period to</label>
-          <input id={`pe-${idp}`} type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={fieldCls} />
+          <input id={`pe-${idp}`} type="date" min={bounds.min} max={bounds.max} value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={fieldCls} />
         </div>
         <div>
           <span className="block text-[11px] text-white/55">{payroll ? 'Amount paid (PKR)' : 'Invoice amount, incl. sales tax (PKR)'}</span>
-          <MoneyInput value={invoiceCents} onChange={setInvoice} className={fieldCls} ariaLabel={payroll ? 'Amount paid (PKR)' : 'Invoice amount (PKR)'} />
+          <MoneyInput id={`inv-${idp}`} value={invoiceCents} onChange={setInvoice} className={fieldCls} ariaLabel={payroll ? 'Amount paid (PKR)' : 'Invoice amount (PKR)'} />
         </div>
       </div>
 
@@ -1322,7 +1383,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
               {overrideOn && (
                 <div className="grid grid-cols-1 sm:grid-cols-[10rem_1fr] gap-2">
                   <MoneyInput value={overrideCents} onChange={setOverrideCents} className={fieldCls} ariaLabel="Withholding (PKR)" />
-                  <input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} maxLength={500}
+                  <input id={`ovr-${idp}`} aria-label="Why a different amount is withheld" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} maxLength={500}
                     placeholder="Why (e.g. the vendor's certificate covers part of the year)" className={fieldCls} />
                   <p className="sm:col-span-2 text-[11px] text-white/45">The cash paid is the invoice less this. The reason (10 characters or more) is on the withholding register for the CA.</p>
                 </div>
@@ -1346,7 +1407,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
                 </div>
                 <div>
                   <label htmlFor={`cm-${idp}`} className="text-[11px] text-white/55">For how many months</label>
-                  <input id={`cm-${idp}`} type="number" min={1} max={120} step={1} inputMode="numeric" value={coversMonths} onChange={(e) => setCoversMonths(e.target.value)} className={fieldCls} />
+                  <NumberField id={`cm-${idp}`} min={1} max={120} value={coversMonths === '' ? null : Number(coversMonths)} onValueChange={(n) => setCoversMonths(n == null ? '' : String(n))} className={fieldCls} />
                 </div>
               </>
             )}
@@ -1360,7 +1421,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
           <label htmlFor={`pd-${idp}`} className="text-[11px] text-white/55">Paid on</label>
-          <input id={`pd-${idp}`} type="date" value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} />
+          <input id={`pd-${idp}`} type="date" min={bounds.min} value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} />
         </div>
         <div>
           <label htmlFor={`ref-${idp}`} className="text-[11px] text-white/55">Reference (cheque / transfer no.)</label>
@@ -1395,6 +1456,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
           <button type="button" onClick={() => setOverrideAccount(true)} className="text-primary-ink hover:underline">Book this one elsewhere</button>
         </p>
       )}
+      {problem && <p role="alert" className="text-[11px] font-bold text-s-red">{problem}</p>}
       {err && (
         <div role="alert" className="text-[11px] text-s-red space-y-1">
           <p>{opexErrorText(err)}</p>
@@ -1410,24 +1472,24 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
             It is not equipment (&ldquo;{equipment.matched}&rdquo; matched) — finance or the CEO only
           </label>
           {notEquipment && (
-            <input value={notEquipmentReason} onChange={(e) => setNotEquipmentReason(e.target.value)} maxLength={500}
+            <input id={`ne-${idp}`} aria-label="Why it is an expense" value={notEquipmentReason} onChange={(e) => setNotEquipmentReason(e.target.value)} maxLength={500}
               placeholder="Why it is an expense (10 characters or more)" className={fieldCls} />
           )}
         </div>
       )}
       <div className="flex flex-wrap justify-end gap-2">
         {payment?.paidAt && (
-          <button onClick={() => { if (confirm('Mark this payment unpaid? Its entry is reversed.')) unpay.mutate() }} disabled={unpay.isPending}
+          <button type="button" onClick={async () => { if (await confirm({ title: `Mark ${line.name} unpaid?`, body: 'The payment goes back to unpaid and its ledger entry is reversed.', confirmLabel: 'Mark unpaid', danger: true })) unpay.mutate() }} disabled={unpay.isPending}
             className="text-xs text-s-red/80 hover:text-s-red mr-auto">Mark unpaid</button>
         )}
-        <button onClick={onCancel} className="text-xs text-white/55 hover:text-white">Cancel</button>
-        <button onClick={() => save.mutate()}
-          disabled={save.isPending || invoiceCents <= 0 || !paidOn || !prepaidOk || !overrideOk || !notEquipmentOk || (!payroll && inputTaxCents > 0 && !authority)}
+        <button type="button" onClick={onCancel} className="text-xs text-white/55 hover:text-white">Cancel</button>
+        <button type="submit"
+          disabled={save.isPending}
           className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
           {save.isPending ? 'Saving…' : payment ? (payment.paidAt ? 'Save correction' : 'Mark paid') : '+ Record'}
         </button>
       </div>
-    </div>
+    </form>
   )
 }
 
@@ -1519,21 +1581,12 @@ function PostOldPayments({ onEditCategory, onPosted }: { onEditCategory: (catego
 
 // ─── Shared ───────────────────────────────────────────────────────────────
 
-function ModalShell({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-    <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'} rounded-2xl overflow-hidden`}
-      style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-        <h2 className="font-black text-white/90">{title}</h2>
-        <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-      </div>
-      <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">{children}</div>
-    </div>
-  </div>
+function ModalShell({ title, children, onClose, wide, dirty }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} wide={wide} dirty={dirty}>{children}</SharedModal>
 }
 function ModalFooter({ children, onCancel }: { children: React.ReactNode; onCancel: () => void }) {
   return <div className="flex items-center justify-between gap-3 pt-4 mt-4 border-t border-white/[0.05]">
-    <button onClick={onCancel} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
+    <button type="button" onClick={onCancel} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
     {children}
   </div>
 }
@@ -1544,13 +1597,10 @@ function Section({ heading, children }: { heading: string; children: React.React
     {children}
   </div>
 }
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div>
-}
 function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
   return (
-    <div className="rounded-xl px-4 py-3 text-sm text-s-red"
+    <div role="alert" ref={(el) => { if (el && !el.dataset['seen']) { el.dataset['seen'] = '1'; el.scrollIntoView({ block: 'nearest' }) } }} className="rounded-xl px-4 py-3 text-sm text-s-red"
       style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>
       {opexErrorText(error)}
     </div>

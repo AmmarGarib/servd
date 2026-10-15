@@ -25,6 +25,8 @@ import Link from 'next/link'
 import WithholdingRates from './WithholdingRates'
 import WithholdingRegister from './WithholdingRegister'
 import { Select } from '@/components/ui/Select'
+import { Modal as SharedModal } from '../../../components/ui/Modal'
+import { DialogForm, RupeeField } from '../../../components/finance/PaymentReceivedFields'
 
 interface AccountTotal { code: string; name: string; totalCents: number }
 type AuthorityKey = 'fbr' | 'srb'
@@ -193,15 +195,9 @@ const errText = (e: unknown) => {
 const toPaisa = (rupees: string) => Math.round((Number(rupees) || 0) * 100)
 const rupees = (cents: number) => (cents / 100).toFixed(2)
 
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="s-card w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={title}>
-        <p className="text-lg font-bold text-s-text mb-4">{title}</p>
-        {children}
-      </div>
-    </div>
-  )
+/** Thin wrapper over the shared Modal (Escape, focus trap, scroll lock, "Discard changes?" when `dirty`). */
+function Modal({ title, children, onClose, dirty }: { title: string; children: React.ReactNode; onClose: () => void; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} dirty={dirty}>{children}</SharedModal>
 }
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -282,9 +278,9 @@ export default function SalesTaxReturnPage() {
         <div className="flex flex-wrap items-center gap-2">
           {tab !== 'withholding-rates' && (
             <>
-              <input type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+              <input type="date" aria-label="From" min="2000-01-01" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
               <span className="text-s-muted text-xs">→</span>
-              <input type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+              <input type="date" aria-label="To" min="2000-01-01" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
             </>
           )}
           {tab === 'return' && <button type="button" onClick={exportCsv} className="s-btn-secondary text-sm">Export CSV</button>}
@@ -797,17 +793,19 @@ function PayModal({ report, target, onClose }: { report: STR; target: PayTarget;
   })
   const settled = toPaisa(f.paid) + (salesTax ? toPaisa(f.input) + toPaisa(f.withheld) : 0) + (provincial ? toPaisa(f.cross) : 0)
   return (
-    <Modal title={`Record payment — ${PAY_LABEL[target.key]}`} onClose={onClose}>
+    <Modal title={`Record payment — ${PAY_LABEL[target.key]}`} onClose={onClose} dirty={!go.isPending && (f.paid !== rupees(target.paidCents) || f.input !== rupees(target.inputSetOffCents) || f.withheld !== '0' || f.cross !== '0' || !!f.cprNumber.trim() || !!f.notes.trim())}>
+      <DialogForm busy={go.isPending} onSubmit={() => go.mutate()}
+        missing={settled <= 0 ? 'Enter an amount: what was paid, or what is set off.' : !f.paidAt ? 'Pick the day it was paid.' : !f.periodFrom || !f.periodTo ? 'Pick the period the payment covers.' : null}>
       <p className="text-xs text-s-muted mb-3">
         Posts the payment in the books on the day it was paid. It settles the tax owed; it never lowers the output of any period.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Period from"><input type="date" className="s-input" value={f.periodFrom} onChange={set('periodFrom')} /></Field>
-        <Field label="Period to"><input type="date" className="s-input" value={f.periodTo} onChange={set('periodTo')} /></Field>
-        <Field label="Paid (PKR)"><input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.paid} onChange={set('paid')} /></Field>
+        <Field label="Period from"><input type="date" className="s-input" min="2000-01-01" value={f.periodFrom} onChange={set('periodFrom')} aria-invalid={!f.periodFrom ? true : undefined} /></Field>
+        <Field label="Period to"><input type="date" className="s-input" min="2000-01-01" value={f.periodTo} onChange={set('periodTo')} aria-invalid={!f.periodTo ? true : undefined} /></Field>
+        <Field label="Paid (PKR)"><RupeeField label="Paid (PKR)" value={f.paid} onChange={(v) => setF((p) => ({ ...p, paid: v }))} invalid={settled <= 0} /></Field>
         {salesTax && (
           <Field label="Input tax set off (PKR)" hint="Recoverable input of the same authority, used against this output.">
-            <input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.input} onChange={set('input')} />
+            <RupeeField label="Input tax set off (PKR)" value={f.input} onChange={(v) => setF((p) => ({ ...p, input: v }))} />
           </Field>
         )}
         {salesTax && (
@@ -818,7 +816,7 @@ function PayModal({ report, target, onClose }: { report: STR; target: PayTarget;
               : `No tax our clients withheld for ${PAY_LABEL[target.key]} is waiting to be set off.`}
           >
             <div className="flex gap-2">
-              <input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.withheld} onChange={set('withheld')} />
+              <div className="flex-1 min-w-0"><RupeeField label="Withheld by customers set off (PKR)" value={f.withheld} onChange={(v) => setF((p) => ({ ...p, withheld: v }))} /></div>
               {target.withheldAvailableCents > 0 && (
                 <button type="button" className="s-btn-secondary text-xs shrink-0" onClick={() => setF((p) => ({ ...p, withheld: rupees(target.withheldAvailableCents) }))}>
                   Use all
@@ -835,7 +833,7 @@ function PayModal({ report, target, onClose }: { report: STR; target: PayTarget;
               : `No federal input on raw materials is claimable against ${PAY_LABEL[target.key]} right now.`}
           >
             <div className="flex gap-2">
-              <input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.cross} onChange={set('cross')} />
+              <div className="flex-1 min-w-0"><RupeeField label="Federal input on raw materials set off (PKR)" value={f.cross} onChange={(v) => setF((p) => ({ ...p, cross: v }))} /></div>
               {target.crossAvailableCents > 0 && (
                 <button type="button" className="s-btn-secondary text-xs shrink-0" onClick={() => setF((p) => ({ ...p, cross: rupees(target.crossAvailableCents) }))}>
                   Use all
@@ -844,7 +842,7 @@ function PayModal({ report, target, onClose }: { report: STR; target: PayTarget;
             </div>
           </Field>
         )}
-        <Field label="Paid on"><input type="date" className="s-input" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} /></Field>
+        <Field label="Paid on"><input type="date" className="s-input" min="2000-01-01" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} aria-invalid={!f.paidAt ? true : undefined} /></Field>
         <Field label="How">
           <Select className="s-input" value={f.method} onChange={set('method')}>
             <option value="bank_transfer">Bank transfer / e-payment</option>
@@ -862,13 +860,14 @@ function PayModal({ report, target, onClose }: { report: STR; target: PayTarget;
         <Field label="Notes"><input className="s-input" value={f.notes} onChange={set('notes')} /></Field>
       </div>
       <p className="text-sm text-s-muted mt-3">Settles <strong className="text-s-text">{fmtPkr(settled)}</strong> of tax owed.</p>
-      {err && <p className="text-xs text-s-red mt-2">{err}</p>}
+      {err && <p role="alert" className="text-xs text-s-red mt-2">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="button" className="s-btn-primary text-sm" disabled={go.isPending || settled <= 0 || !f.paidAt} onClick={() => go.mutate()}>
+        <button type="submit" className="s-btn-primary text-sm" disabled={go.isPending}>
           {go.isPending ? 'Saving…' : 'Record payment'}
         </button>
         <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
       </div>
+      </DialogForm>
     </Modal>
   )
 }
@@ -893,7 +892,8 @@ function LinkModal({ report, onClose }: { report: STR; onClose: () => void }) {
     onError: (e: Error) => setErr(errText(e)),
   })
   return (
-    <Modal title="Link an entry already posted" onClose={onClose}>
+    <Modal title="Link an entry already posted" onClose={onClose} dirty={!go.isPending && (!!entryId || !!cprNumber.trim())}>
+      <DialogForm busy={go.isPending} onSubmit={() => go.mutate()} missing={!entryId ? 'Pick the entry to link.' : !periodFrom || !periodTo ? 'Pick the period it covers.' : null}>
       <p className="text-xs text-s-muted mb-3">
         A tax payment you already posted as a manual journal or a bank-reconciliation adjustment. It is recorded as this period&apos;s payment — nothing is posted again.
       </p>
@@ -904,8 +904,8 @@ function LinkModal({ report, onClose }: { report: STR; onClose: () => void }) {
           </Select>
         </Field>
         <Field label="CPR / challan number"><input className="s-input" value={cprNumber} onChange={(e) => setCpr(e.target.value)} /></Field>
-        <Field label="Period from"><input type="date" className="s-input" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} /></Field>
-        <Field label="Period to"><input type="date" className="s-input" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} /></Field>
+        <Field label="Period from"><input type="date" className="s-input" min="2000-01-01" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} aria-invalid={!periodFrom ? true : undefined} /></Field>
+        <Field label="Period to"><input type="date" className="s-input" min="2000-01-01" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} aria-invalid={!periodTo ? true : undefined} /></Field>
       </div>
       <p className="text-[11px] font-bold uppercase tracking-wider text-s-muted mt-4 mb-1">Entry</p>
       <div className="max-h-56 overflow-y-auto rounded border border-s-border">
@@ -921,13 +921,14 @@ function LinkModal({ report, onClose }: { report: STR; onClose: () => void }) {
           </label>
         ))}
       </div>
-      {err && <p className="text-xs text-s-red mt-2">{err}</p>}
+      {err && <p role="alert" className="text-xs text-s-red mt-2">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="button" className="s-btn-primary text-sm" disabled={go.isPending || !entryId} onClick={() => go.mutate()}>
+        <button type="submit" className="s-btn-primary text-sm" disabled={go.isPending}>
           {go.isPending ? 'Linking…' : 'Link as payment'}
         </button>
         <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
       </div>
+      </DialogForm>
     </Modal>
   )
 }
@@ -942,20 +943,22 @@ function VoidModal({ payment, onClose }: { payment: TaxPayment; onClose: () => v
     onError: (e: Error) => setErr(errText(e)),
   })
   return (
-    <Modal title={payment.linked ? 'Unlink this payment' : 'Void this payment'} onClose={onClose}>
+    <Modal title={payment.linked ? 'Unlink this payment' : 'Void this payment'} onClose={onClose} dirty={!go.isPending && !!reason.trim()}>
+      <DialogForm busy={go.isPending} onSubmit={() => go.mutate()} missing={reason.trim().length < 5 ? 'Give a reason (5 characters or more).' : null}>
       <p className="text-sm text-s-muted">
         {payment.linked
           ? 'The entry stays in the ledger as it was posted; it is no longer recorded as this period\'s payment.'
           : `The payment of ${fmtPkr(payment.paidCents)} is reversed in the ledger today. You can then record it again.`}
       </p>
-      <div className="mt-4"><Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Wrong amount typed" /></Field></div>
-      {err && <p className="text-xs text-s-red mt-2">{err}</p>}
+      <div className="mt-4"><Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 5 ? true : undefined} placeholder="Wrong amount typed" /></Field></div>
+      {err && <p role="alert" className="text-xs text-s-red mt-2">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="button" className="s-btn-danger text-sm" disabled={go.isPending || reason.trim().length < 5} onClick={() => go.mutate()}>
+        <button type="submit" className="s-btn-danger text-sm" disabled={go.isPending}>
           {go.isPending ? 'Saving…' : payment.linked ? 'Unlink' : 'Void payment'}
         </button>
         <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
       </div>
+      </DialogForm>
     </Modal>
   )
 }

@@ -25,6 +25,7 @@ import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { Select } from '@/components/ui/Select'
+import { dateBounds } from '../../finance/cash-vouchers/ui'
 import { JournalRequests, type JournalRequest } from './JournalRequests'
 
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
@@ -147,6 +148,7 @@ export default function JournalEntryPage() {
   if (debitTotal === 0) blockers.push('Enter the amounts')
   else if (difference !== 0) blockers.push(`Debits and credits differ by ${fmtPkr(Math.abs(difference))}`)
   if (dateLocked) blockers.push(`Books are closed through ${lockedThrough} — pick a later date`)
+  if (!date || date < dateBounds().min || date > dateBounds().max) blockers.push(`Pick a date between ${dateBounds().min} and ${dateBounds().max}`)
 
   const post = useMutation({
     mutationFn: () => api.post<{ id: string }>('/accounting/journal', {
@@ -228,7 +230,7 @@ export default function JournalEntryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-s-bg">
+    <div className="min-h-screen bg-s-bg min-w-0 max-w-full">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/accounting" className="text-xs text-s-muted hover:text-s-text">← Accounting</Link>
@@ -238,7 +240,7 @@ export default function JournalEntryPage() {
         <Link href="/accounting/ledger" className="s-btn-secondary text-sm">Ledger</Link>
       </header>
 
-      <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4">
+      <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4 min-w-0">
         {canPrepare && (
           <div role="tablist" aria-label="Journal sections" className="flex gap-1 border-b border-s-border">
             {([['entry', editing ? 'Editing a request' : 'New entry'], ['requests', isAdmin ? 'Requests' : 'My requests']] as Array<[PageTab, string]>).map(([k, label]) => (
@@ -274,7 +276,7 @@ export default function JournalEntryPage() {
         )}
 
         {canPrepare && tab === 'entry' && (
-          <section className="s-card p-4 space-y-4" aria-label="New journal entry">
+          <section className="s-card p-4 space-y-4 min-w-0" aria-label="New journal entry">
             {editing && (
               <p className="text-xs text-s-muted">
                 Editing your {editing.status === 'returned' ? 'returned ' : ''}request for {companyName(editing.tenantId)}.
@@ -294,7 +296,11 @@ export default function JournalEntryPage() {
               )}
               <label className="block">
                 <span className="block text-xs text-s-muted mb-1">Date</span>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+                <input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(e) => setDate(e.target.value)} className={inputCls}
+                  aria-invalid={dateLocked || !date || date < dateBounds().min || date > dateBounds().max ? true : undefined}
+                  aria-describedby={dateLocked ? 'journal-date-note' : undefined} />
+                {dateLocked && <span id="journal-date-note" role="alert" className="block text-[11px] text-s-red mt-1">Books are closed through {lockedThrough} — pick a later date.</span>}
+                {!dateLocked && date && (date < dateBounds().min || date > dateBounds().max) && <span role="alert" className="block text-[11px] text-s-red mt-1">Pick a date between {dateBounds().min} and {dateBounds().max}.</span>}
               </label>
               <label className="block sm:col-span-2">
                 <span className="block text-xs text-s-muted mb-1">Description</span>
@@ -313,7 +319,8 @@ export default function JournalEntryPage() {
               </p>
             )}
 
-            <div className="overflow-x-auto -mx-4 px-4">
+            {/* Only this wrapper scrolls sideways. It is `relative` so the table header's sr-only text cannot escape it and widen the page. */}
+            <div className="relative overflow-x-auto -mx-4 px-4 min-w-0" tabIndex={0} aria-label="Journal lines (scrolls sideways on a narrow screen)">
               <table className="w-full text-sm min-w-[44rem]">
                 <thead className="text-xs text-s-muted">
                   <tr>
@@ -322,7 +329,7 @@ export default function JournalEntryPage() {
                     <th className="text-left font-medium py-1 pr-2">Memo</th>
                     <th className="text-right font-medium py-1 pr-2 w-32">Debit (PKR)</th>
                     <th className="text-right font-medium py-1 pr-2 w-32">Credit (PKR)</th>
-                    <th className="w-8"><span className="sr-only">Remove</span></th>
+                    <th className="w-8 relative"><span className="sr-only">Remove</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -505,7 +512,7 @@ function ManualEntryRow({ e, isAdmin, canRequest, company }: { e: LedgerEntry; i
           </label>
           <label className="block">
             <span className="block text-xs text-s-muted mb-1">Reversal date</span>
-            <input type="date" value={date} onChange={(x) => setDate(x.target.value)} className={inputCls} />
+            <input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(x) => setDate(x.target.value)} className={inputCls} />
           </label>
           {isAdmin ? (
             <button type="button" onClick={() => reverse.mutate()} disabled={reason.trim().length < 5 || reverse.isPending} className="s-btn-danger text-sm">

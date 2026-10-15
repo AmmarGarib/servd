@@ -12,7 +12,7 @@ import { api, ApiError } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { SpendLinesEditor, emptyLine, lineBody, linesReady, type SpendLine } from '../../../components/finance/SpendLinesEditor'
 import { ReceiptUploader, type UploadedReceipt } from '../../../components/finance/ReceiptUploader'
-import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, pkr, primaryBtn, type Box } from './ui'
+import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, firstMissing, focusField, pkr, primaryBtn, useSubmitOnce, type Box } from './ui'
 import { Select } from '@/components/ui/Select'
 
 interface OpenBill { id: string; billNumber: string; status: string; totalCents: number; whtCents: number; paidCents: number; creditedCents?: number; supplier: { name: string } }
@@ -61,36 +61,51 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
     },
   })
 
-  const ready = amountCents > 0 && !!reason.trim() && amountCents <= box.floatCents
-    && (mode === 'bill' ? !!supplierBillId : linesReady(lines, amountCents))
+  const [tried, setTried] = useState(false)
+  const errs: Record<string, string> = {
+    'sp-amount': amountCents <= 0 ? 'Enter an amount above zero.' : amountCents > box.floatCents ? `More than the ${pkr(box.floatCents)} in the box.` : '',
+    'sp-reason': reason.trim() ? '' : 'Say what the money was for.',
+    ...(mode === 'bill'
+      ? { 'sp-bill': supplierBillId ? '' : 'Pick the supplier bill.' }
+      : { 'sp-lines': linesReady(lines, amountCents) ? '' : 'Every line needs a category, and the lines must add up to the amount.' }),
+  }
+  const shown = (k: string) => (tried ? errs[k] : '')
+  const submit = useSubmitOnce(save.isPending)(() => {
+    setTried(true)
+    const bad = firstMissing(errs)
+    if (bad) { focusField(bad === 'sp-lines' ? 'sp-reason' : bad); return false }
+    save.mutate()
+    return true
+  })
 
-  return <Modal title={`Spend from ${box.name}`} onClose={onClose}>
+  return <Modal title={`Spend from ${box.name}`} onClose={onClose} dirty={!save.isPending && (amountCents > 0 || !!reason.trim() || receipts.length > 0)}>
+    <form onSubmit={submit} className="space-y-3" noValidate>
     {openBills.length > 0 && (
       <Choice<'expense' | 'bill'> value={mode} onChange={setMode} options={[
         { value: 'expense', label: 'Expense' },
         { value: 'bill', label: 'Pays a supplier bill' },
       ]} />
     )}
-    <Field label="Amount (PKR) *">
-      <MoneyInput value={amountCents} onChange={setAmount} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
+    <Field label="Amount (PKR) *" error={shown('sp-amount')}>
+      <MoneyInput id="sp-amount" value={amountCents} onChange={setAmount} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
       <p className="text-[10px] mt-1" style={{ color: amountCents > box.floatCents ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
         {amountCents > box.floatCents ? `More than the ${pkr(box.floatCents)} in the box` : `In the box now: ${pkr(box.floatCents)}`}
       </p>
     </Field>
-    <Field label="What for *">
-      <input value={reason} onChange={(e) => setWhat(e.target.value)} maxLength={200} placeholder="Printer paper and pens" className={fieldCls} />
+    <Field label="What for *" error={shown('sp-reason')}>
+      <input id="sp-reason" value={reason} onChange={(e) => setWhat(e.target.value)} maxLength={200} placeholder="Printer paper and pens" className={fieldCls} />
     </Field>
     <Field label="Vendor">
       <input value={vendorName} onChange={(e) => setVendorName(e.target.value)} maxLength={120} placeholder="Optional" className={fieldCls} />
     </Field>
     {mode === 'expense' ? (
-      <Field label="Booked to *">
+      <Field label="Booked to *" error={shown('sp-lines')}>
         <SpendLinesEditor lines={lines} onChange={setLines} totalCents={amountCents} canPickAccount={isKeeper} tenantId={box.tenantId} fieldClassName={fieldCls} />
         <p className="text-[10px] text-white/35 mt-1">Kitchen food, drinks and packaging are stock — book them through a supplier receipt, not here.</p>
       </Field>
     ) : (
-      <Field label="Supplier bill *">
-        <Select value={supplierBillId} onChange={(e) => setSupplierBillId(e.target.value)} className={fieldCls}>
+      <Field label="Supplier bill *" error={shown('sp-bill')}>
+        <Select id="sp-bill" value={supplierBillId} onChange={(e) => setSupplierBillId(e.target.value)} className={fieldCls}>
           <option value="">— pick the bill —</option>
           {openBills.map((b) => (
             <option key={b.id} value={b.id}>{b.supplier.name} · {b.billNumber} · {pkr(b.totalCents - (b.whtCents ?? 0) - b.paidCents - (b.creditedCents ?? 0))} due</option>
@@ -110,7 +125,8 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
     <p className="text-[10px] text-white/35">A receipt photo is required above your company&apos;s photo threshold (PKR 500 unless changed).</p>
     {save.error && <ErrorBanner error={save.error} />}
     <Footer onCancel={onClose} primary={
-      <button onClick={() => save.mutate()} disabled={save.isPending || !ready} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Record spend'}</button>
+      <button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Record spend'}</button>
     } />
+    </form>
   </Modal>
 }

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { usePathname, useRouter } from 'next/navigation'
@@ -14,6 +14,7 @@ import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
 import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath } from '../../lib/moduleCatalog'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
+import { useDialog } from './Modal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
 import { useApprovalCounts } from '../../app/ceo/approvalsData'
 import { TestCompanyBanner } from './TestCompanyBanner'
@@ -112,10 +113,12 @@ function NavLinks({
   pathname,
   collapsed,
   onNavigate,
+  label,
 }: {
   pathname: string
   collapsed: boolean
   onNavigate?: () => void
+  label?: string
 }) {
   const { data: me } = usePermissions()
   const isSuper = me?.role === 'admin'
@@ -342,7 +345,7 @@ function NavLinks({
   }
 
   return (
-    <nav className="relative z-10 flex-1 overflow-y-auto scrollbar-hide py-2 space-y-3">
+    <nav aria-label={label ?? 'Main navigation'} className="relative z-10 flex-1 overflow-y-auto scrollbar-hide py-2 space-y-3">
       {/* ── Pinned strip ────────────────────────────────────────────────── */}
       {pinnedItems.length > 0 && (
         <div>
@@ -437,7 +440,7 @@ function SubHeader({ title }: { title: string }) {
 
 function SectionHeader({ title, collapsed, onClick }: { title: string; collapsed: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} aria-expanded={!collapsed}
       className="flex items-center gap-1.5 px-4 pb-1.5 w-full group"
       title={collapsed ? `Expand ${title}` : `Collapse ${title}`}>
       <div className="h-px flex-1" style={{ background: 'rgb(var(--fg-rgb) / 0.05)' }} />
@@ -553,6 +556,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return <><SandboxBanner /><Shell>{children}</Shell></>
 }
 
+// Mounted only while the phone drawer is open: Escape, a Tab trap, focus in,
+// scroll lock — the same behaviour as every dialog (useDialog), no chrome.
+function DrawerBehaviour({ panelRef, onClose }: { panelRef: React.RefObject<HTMLElement | null>; onClose: () => void }) {
+  useDialog(panelRef, { onClose })
+  return null
+}
+
+const SCROLL_KEY = 'servd_scroll:'
+// Module level, not a ref: a Back may remount the shell, and the flag must survive that.
+let poppedNav = false
+// Registered when this module loads — before the Next router adds its own popstate
+// handler (which commits the page synchronously, so a later listener is too late).
+// The flag expires so a hash-only Back never taints the next link click.
+if (typeof window !== 'undefined') {
+  let t = 0
+  window.addEventListener('popstate', () => {
+    poppedNav = true
+    window.clearTimeout(t)
+    t = window.setTimeout(() => { poppedNav = false }, 1500)
+  })
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -573,6 +598,63 @@ function Shell({ children }: { children: React.ReactNode }) {
   }
   const [clockingOut, setClockingOut] = useState(false)
   const { user, token, clearAuth } = useAuthStore()
+
+  const hamburgerRef = useRef<HTMLButtonElement>(null)
+  const drawerRef = useRef<HTMLElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  const wasOpen = useRef(false)
+  const pathRef = useRef(pathname)
+
+  // Browser Back closes the drawer (and is what tells us a back/forward is happening).
+  useEffect(() => {
+    const onPop = () => setMobileOpen(false)
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  // Focus returns to the hamburger when the drawer closes.
+  useEffect(() => {
+    if (wasOpen.current && !mobileOpen) hamburgerRef.current?.focus({ preventScroll: true })
+    wasOpen.current = mobileOpen
+  }, [mobileOpen])
+
+  // The scroller is <main>: a new page starts at the top, Back/Forward restores
+  // where you were (kept per path in sessionStorage).
+  useEffect(() => {
+    const main = mainRef.current
+    if (!main) return
+    let raf = 0
+    const onScroll = () => {
+      // During a route change the URL is already the new page while <main> still
+      // holds the old one (and the browser clamps its scroll as the content swaps):
+      // that scroll must not overwrite the old page's saved position.
+      if (window.location.pathname !== pathRef.current) return
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        if (window.location.pathname !== pathRef.current) return
+        try { sessionStorage.setItem(SCROLL_KEY + pathRef.current, String(main.scrollTop)) } catch { /* private mode */ }
+      })
+    }
+    main.addEventListener('scroll', onScroll, { passive: true })
+    return () => { main.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf) }
+  }, [pathname])
+  useEffect(() => {
+    pathRef.current = pathname
+    const main = mainRef.current
+    if (!main) return
+    let target = 0
+    if (poppedNav) {
+      try { target = Number(sessionStorage.getItem(SCROLL_KEY + pathname)) || 0 } catch { /* ignore */ }
+    }
+    poppedNav = false
+    main.scrollTop = target
+    if (!target) return
+    // The page may still be loading its rows: retry while it grows.
+    const timers = [120, 400, 900].map((ms) => window.setTimeout(() => {
+      if (Math.abs(main.scrollTop - target) > 2) main.scrollTop = target
+    }, ms))
+    return () => timers.forEach(clearTimeout)
+  }, [pathname])
 
   async function handleClockOut() {
     if (clockingOut) return
@@ -715,18 +797,33 @@ function Shell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
+    <div className="flex h-screen h-dvh overflow-hidden" style={{ background: 'var(--bg)' }}>
+
+      <a href="#main"
+        onClick={(e) => { e.preventDefault(); mainRef.current?.focus() }}
+        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[100] focus:rounded-lg focus:px-4 focus:py-2 focus:text-sm focus:font-bold"
+        style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
+        Skip to content
+      </a>
 
       {/* ── Mobile overlay ─────────────────────────────────────────────────── */}
       {mobileOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/60 md:hidden"
           onClick={() => setMobileOpen(false)}
+          aria-hidden
         />
       )}
+      {mobileOpen && <DrawerBehaviour panelRef={drawerRef} onClose={() => setMobileOpen(false)} />}
 
       {/* ── Mobile drawer ──────────────────────────────────────────────────── */}
       <aside
+        ref={drawerRef}
+        id="mobile-drawer"
+        aria-label="Menu"
+        // Closed = inert: its links leave the tab order and the accessibility tree.
+        // (React 18 has no `inert` prop; '' renders the attribute, undefined removes it.)
+        {...({ inert: mobileOpen ? undefined : '' } as Record<string, unknown>)}
         className={`erp-on-secondary fixed inset-y-0 left-0 z-50 w-[220px] flex flex-col transition-transform duration-300 md:hidden ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
@@ -745,15 +842,15 @@ function Shell({ children }: { children: React.ReactNode }) {
           style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
           <ServdLogo size={30} />
           <span className="flex-1" />
-          <button onClick={() => setMobileOpen(false)}
-            className="text-white/30 hover:text-white/70 transition-colors p-1 rounded">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <button onClick={() => setMobileOpen(false)} aria-label="Close menu" aria-expanded={mobileOpen} aria-controls="mobile-drawer"
+            className="flex h-11 w-11 items-center justify-center text-white/50 hover:text-white/80 transition-colors rounded">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </button>
         </div>
 
-        <NavLinks pathname={pathname} collapsed={false} onNavigate={() => setMobileOpen(false)} />
+        <NavLinks pathname={pathname} collapsed={false} onNavigate={() => setMobileOpen(false)} label="Menu" />
         {/* Called, not mounted: UserFooter is declared inside Shell, so as a
             <Component/> it would remount (and rebuild the switcher) on every render. */}
         {UserFooter({ collapsed: false, switcher: false })}
@@ -784,10 +881,10 @@ function Shell({ children }: { children: React.ReactNode }) {
           {!collapsed && (
             <>
               <span className="flex-1" />
-              <button onClick={() => setCollapsedPersisted(true)}
-                className="text-white/20 hover:text-white/55 transition-colors p-1 rounded"
-                style={{ marginRight: '-4px' }}>
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <button onClick={() => setCollapsedPersisted(true)} aria-label="Collapse sidebar" aria-expanded={true}
+                className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/70 transition-colors rounded"
+                style={{ marginRight: '-12px' }}>
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
                   <path d="M8 2L3 6.5l5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </button>
@@ -796,18 +893,18 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         {collapsed && (
-          <button onClick={() => setCollapsedPersisted(false)}
-            className="relative z-10 flex justify-center py-2.5 transition-colors"
-            style={{ color: 'rgb(var(--fg-rgb) / 0.2)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.55)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.2)')}>
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <button onClick={() => setCollapsedPersisted(false)} aria-label="Expand sidebar" aria-expanded={false}
+            className="relative z-10 flex items-center justify-center min-h-[44px] transition-colors"
+            style={{ color: 'rgb(var(--fg-rgb) / 0.4)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.7)')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.4)')}>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
               <path d="M5 2l5 4.5L5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
         )}
 
-        <NavLinks pathname={pathname} collapsed={collapsed} />
+        <NavLinks pathname={pathname} collapsed={collapsed} label="Sidebar" />
         {UserFooter({ collapsed })}
       </aside>
 
@@ -816,10 +913,10 @@ function Shell({ children }: { children: React.ReactNode }) {
 
         <header className="md:hidden flex items-center h-[54px] shrink-0 px-4 gap-3"
           style={{ background: 'var(--surface)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.055)' }}>
-          <button onClick={() => setMobileOpen(true)}
-            className="text-white/40 hover:text-white/80 transition-colors p-1.5 rounded-lg"
+          <button ref={hamburgerRef} onClick={() => setMobileOpen(true)} aria-label="Open menu" aria-expanded={mobileOpen} aria-controls="mobile-drawer"
+            className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/80 transition-colors rounded-lg"
             style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </button>
@@ -830,7 +927,8 @@ function Shell({ children }: { children: React.ReactNode }) {
         <TestCompanyBanner />
         <LensBanner />
         <ImpersonationBanner />
-        <main className="flex-1 min-h-0 overflow-y-auto animate-fade-in pb-20 md:pb-0">
+        <main id="main" ref={mainRef} tabIndex={-1}
+          className="flex-1 min-h-0 overflow-y-auto animate-fade-in pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0 outline-none">
           <PageGuard pathname={pathname}>{children}</PageGuard>
         </main>
       </div>

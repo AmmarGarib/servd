@@ -125,14 +125,35 @@ export default function OrderStatusPage() {
     }
   }, [token, router, pathname, slug, id])
 
+  // Last good answer, and whether the last poll(s) failed. Drives the
+  // "Reconnecting…" / "Updated n s ago" line.
+  const [lastOkAt, setLastOkAt] = useState<number | null>(null)
+  const [reconnecting, setReconnecting] = useState(false)
+
+  // Poll for the order — a visibility-aware loop: nothing is requested while
+  // the tab is hidden, and the moment the customer comes back (or the network
+  // does) it refetches at once instead of waiting out the interval. Failures
+  // back off and show "Reconnecting…" rather than a stale status that looks
+  // live.
   useEffect(() => {
     if (!token) return
     let stopped = false
-    let iv: ReturnType<typeof setInterval> | null = null
-    const stop = () => { if (iv) { clearInterval(iv); iv = null } stopped = true }
+    let inflight = false
+    let failures = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null } }
+    const stop = () => { stopped = true; clearTimer() }
+    const schedule = () => {
+      clearTimer()
+      if (stopped || document.hidden) return
+      const delay = failures > 0 ? Math.min(30000, 5000 * 2 ** failures) : 10000
+      timer = setTimeout(() => void poll(), delay)
+    }
 
     const poll = async () => {
-      if (stopped) return
+      if (stopped || inflight) return
+      clearTimer()
+      inflight = true
       try {
         const res = await fetch(`${API_URL}/api/v1/storefront/orders/${id}`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -144,8 +165,11 @@ export default function OrderStatusPage() {
           return
         }
         if (res.status === 404) { setNotFound(true); stop(); return }
-        if (!res.ok) return
+        if (!res.ok) throw new Error(`status ${res.status}`)
         const data = await res.json() as OrderStatus
+        failures = 0
+        setReconnecting(false)
+        setLastOkAt(Date.now())
         if (prevStatus.current && prevStatus.current !== data.status) {
           setFlash(true)
           setTimeout(() => setFlash(false), 900)
@@ -159,12 +183,32 @@ export default function OrderStatusPage() {
           id: data.id, totalCents: data.totalCents, taxCents: data.taxCents, slug: data.concept.slug,
           isTest: data.isTestCompany === true || data.concept.isTestCompany === true, status: data.status,
         })
-        if (trackingDone(data)) stop()
-      } catch { /* keep polling */ }
+        if (trackingDone(data)) { stop(); return }
+      } catch {
+        failures += 1
+        if (!stopped) setReconnecting(true)
+      } finally {
+        inflight = false
+      }
+      schedule()
     }
+
+    const onVisibility = () => {
+      if (document.hidden) clearTimer()
+      else void poll()
+    }
+    const onOnline = () => void poll()
+    const onOffline = () => setReconnecting(true)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
     void poll()
-    iv = setInterval(() => void poll(), 10000)
-    return () => stop()
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
   }, [id, token, router, pathname, slug])
 
   if (notFound) return (
@@ -261,17 +305,18 @@ export default function OrderStatusPage() {
             </p>
           )}
 
-          <h1 className="font-display font-black text-3xl leading-tight tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>
-            {cfg.headline}
-          </h1>
-          <p className="text-sm mt-2 font-medium" style={{ color: 'var(--servd-mute)' }}>
-            {cfg.sub}
-          </p>
-
-          {!isDone && !isReady && (
-            <p className="text-xs mt-3" style={{ color: 'var(--servd-dim)' }}>
-              Updates automatically · checking every 10s
+          {/* Announced politely when the status changes. */}
+          <div role="status" aria-live="polite" aria-atomic="true">
+            <h1 className="font-display font-black text-3xl leading-tight tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>
+              {cfg.headline}
+            </h1>
+            <p className="text-sm mt-2 font-medium" style={{ color: 'var(--servd-mute)' }}>
+              {cfg.sub}
             </p>
+          </div>
+
+          {!isDone && (reconnecting || !isReady) && (
+            <FreshnessLine since={lastOkAt} reconnecting={reconnecting} />
           )}
 
           <div className="mt-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5"
@@ -542,6 +587,24 @@ function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArri
 }
 
 // ── Inline SVG iconography — no emoji as structural icons ──────────────────
+
+/** "Updates automatically · Updated 12s ago", or "Reconnecting…" when the last
+ *  poll failed. Owns its own clock so the page does not re-render every tick. */
+function FreshnessLine({ since, reconnecting }: { since: number | null; reconnecting: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 5000)
+    return () => clearInterval(t)
+  }, [])
+  const secs = since == null ? null : Math.max(0, Math.round((now - since) / 1000))
+  return (
+    <p className="text-xs mt-3" style={{ color: reconnecting ? 'var(--servd-danger)' : 'var(--servd-dim)' }}>
+      {reconnecting
+        ? `Reconnecting…${secs != null ? ` last updated ${secs}s ago` : ''}`
+        : `Updates automatically${secs != null ? ` · Updated ${secs}s ago` : ''}`}
+    </p>
+  )
+}
 
 function StatusIcon({ status, animated }: { status: string; animated: boolean }) {
   const props = { width: 64, height: 64, viewBox: '0 0 64 64', fill: 'none', stroke: 'currentColor', strokeWidth: 2.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }

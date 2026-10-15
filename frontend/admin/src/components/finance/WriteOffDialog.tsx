@@ -39,9 +39,11 @@ import { api, ApiError } from '../../lib/api'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { fetchEvidenceUrl, kb, prepareReceiptFile } from '../../lib/photoPrep'
 import {
-  PAYMENT_REFERENCE_ERROR_TEXT, PaymentReceivedFields, ReferenceUsedBeforeNotice, isBankMethod, receiptFieldsValid,
+  DialogForm, PAYMENT_REFERENCE_ERROR_TEXT, PaymentReceivedFields, ReferenceUsedBeforeNotice, RupeeField as RupeeFieldBase, isBankMethod, receiptFieldsValid,
   type PaymentRefUse,
 } from './PaymentReceivedFields'
+import { checkReceiptFile } from './ReceiptUploader'
+import { Modal as SharedModal } from '../ui/Modal'
 
 // ─── Shapes ──────────────────────────────────────────────────────────────────
 
@@ -181,37 +183,26 @@ function Field({ t, children }: { t: string; children: React.ReactNode }) {
   return <label className="block"><span className="text-[11px] font-bold text-white/50">{t}</span>{children}</label>
 }
 
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="w-full max-w-lg rounded-2xl p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="text-lg font-black text-white/90 mb-4">{title}</p>
-        {children}
-      </div>
-    </div>
-  )
+/** Thin wrapper over the shared Modal (Escape, focus trap, scroll lock, "Discard changes?" when `dirty`). */
+function Modal({ title, children, onClose, dirty }: { title: string; children: React.ReactNode; onClose: () => void; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} dirty={dirty}>{children}</SharedModal>
 }
 
-function Actions({ busy, disabled, label, busyLabel, onGo, onClose, danger }: {
-  busy: boolean; disabled?: boolean; label: string; busyLabel: string; onGo: () => void; onClose: () => void; danger?: boolean
+const RupeeField = (p: Omit<React.ComponentProps<typeof RupeeFieldBase>, 'className'>) => <RupeeFieldBase {...p} className={inp} />
+
+function Actions({ busy, label, busyLabel, onClose, danger }: {
+  busy: boolean; label: string; busyLabel: string; onClose: () => void; danger?: boolean
 }) {
   return (
     <div className="flex flex-wrap gap-2 mt-5">
       <button
-        onClick={onGo}
-        disabled={busy || disabled}
+        type="submit"
+        disabled={busy}
         className={`rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50 ${danger ? 'bg-s-red text-bone' : 'bg-primary text-primary-on'}`}
       >
         {busy ? busyLabel : label}
       </button>
-      <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Close</button>
+      <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Close</button>
     </div>
   )
 }
@@ -243,6 +234,7 @@ function EvidencePicker({ files, onChange }: { files: PickedFile[]; onChange: (n
   const input = useRef<HTMLInputElement>(null)
   const counter = useRef(0)
   const [busy, setBusy] = useState(false)
+  const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Revoke the local previews when the dialog goes away.
@@ -253,11 +245,18 @@ function EvidencePicker({ files, onChange }: { files: PickedFile[]; onChange: (n
   async function add(list: FileList | null) {
     if (!list || list.length === 0) return
     setError(null)
+    // Type and size are checked on select (the server takes photos and PDFs up to 3 MB).
+    const picked = Array.from(list)
+    const refused = picked.map(checkReceiptFile).filter((m): m is string => !!m)
+    const okFiles = picked.filter((f) => !checkReceiptFile(f))
+    if (refused.length > 0) setError(refused.join(' '))
+    if (okFiles.length === 0) { if (input.current) input.current.value = ''; return }
     setBusy(true)
     let next = [...files]
     try {
-      for (const file of Array.from(list)) {
+      for (const file of okFiles) {
         if (next.length >= MAX_FILES) { setError(`At most ${MAX_FILES} files.`); break }
+        setWorking(`Preparing ${file.name || 'photo'}…`)
         const p = await prepareReceiptFile(file)
         next = [...next, {
           key: ++counter.current, fileName: nameFor(file.name, p.mime), mime: p.mime, base64: p.base64, bytes: p.bytes, previewUrl: p.previewUrl,
@@ -268,6 +267,7 @@ function EvidencePicker({ files, onChange }: { files: PickedFile[]; onChange: (n
       setError(e instanceof Error ? e.message : 'That file could not be added.')
     } finally {
       setBusy(false)
+      setWorking(null)
       if (input.current) input.current.value = ''
     }
   }
@@ -310,6 +310,7 @@ function EvidencePicker({ files, onChange }: { files: PickedFile[]; onChange: (n
         </button>
       )}
       <input ref={input} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={(e) => void add(e.target.files)} />
+      {working && <p role="status" className="text-[11px] mt-2 text-white/70">{working}</p>}
       {error && <ErrorLine text={error} />}
     </div>
   )
@@ -350,7 +351,8 @@ export function WriteOffDialog({ invoice, onClose, onDone }: {
   })
 
   return (
-    <Modal title={`Write off ${invoice.number}`} onClose={onClose}>
+    <Modal title={`Write off ${invoice.number}`} onClose={onClose} dirty={!go.isPending && (amount !== rupees(invoice.balanceCents) || !!reason.trim() || files.length > 0)}>
+      <DialogForm busy={go.isPending} onSubmit={() => { setErr(''); go.mutate() }} missing={problem}>
       <p className="text-sm text-white/60">
         {invoice.customerName} still owes <strong className="text-white/90">{fmtPkrWhole(invoice.balanceCents)}</strong> of {fmtPkrWhole(invoice.totalCents)}.
         <strong className="text-white/90"> The CEO approves every write-off.</strong> Once approved, the amount (sales tax included) comes off what we are owed
@@ -366,21 +368,22 @@ export function WriteOffDialog({ invoice, onClose, onDone }: {
       <div className="grid grid-cols-1 gap-3 mt-4">
         <Field t="Amount to write off (PKR)">
           <div className="flex gap-1">
-            <input type="number" min={0} className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <div className="flex-1 min-w-0"><RupeeField label="Amount to write off (PKR)" value={amount} onChange={setAmount} invalid={cents <= 0 || cents > invoice.balanceCents} /></div>
             <button type="button" onClick={() => setAmount(rupees(invoice.balanceCents))}
               className="rounded-lg px-2 text-[11px] font-bold border border-white/10 text-white/60 whitespace-nowrap">All of it</button>
           </div>
         </Field>
         <Field t="Reason *">
           <textarea className={`${inp} min-h-[84px]`} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)}
+            aria-invalid={reasonLen < 10 ? true : undefined}
             placeholder="Client closed in March; two reminders and a legal notice went unanswered…" />
           <span className="block text-right text-[10px] text-white/35">{reasonLen} / 500</span>
         </Field>
         <EvidencePicker files={files} onChange={setFiles} />
       </div>
-      {problem && !err && <p className="text-[11px] text-white/45 mt-3">{problem}</p>}
       {err && <ErrorLine text={err} />}
-      <Actions busy={go.isPending} disabled={!!problem} label="Ask the CEO to approve" busyLabel="Sending…" onGo={() => { setErr(''); go.mutate() }} onClose={onClose} />
+      <Actions busy={go.isPending} label="Ask the CEO to approve" busyLabel="Sending…" onClose={onClose} />
+      </DialogForm>
     </Modal>
   )
 }
@@ -406,7 +409,8 @@ export function WriteOffDecisionDialog({ writeOff, mode, onClose, onDone }: {
   const what = `${fmtPkrWhole(writeOff.amountCents)} on ${writeOff.invoiceNumber ?? 'the invoice'}${writeOff.customerName ? ` — ${writeOff.customerName}` : ''}`
   const title = mode === 'approve' ? 'Approve write-off' : mode === 'reject' ? 'Reject write-off' : 'Cancel write-off request'
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose} dirty={!go.isPending && !!note.trim()}>
+      <DialogForm busy={go.isPending} onSubmit={() => { setErr(''); go.mutate() }} missing={noteRequired && note.trim().length < 3 ? 'Add a note (3 to 500 characters).' : null}>
       <p className="text-sm text-white/60">
         {mode === 'approve' && <>Write off <strong className="text-white/90">{what}</strong> as a bad debt? It comes off what we are owed today (Dr 6160 Bad Debts / Cr 1110 Receivables, sales tax included) and cannot be undone — only a later recovery can bring money back.</>}
         {mode === 'reject' && <>Turn down the request to write off <strong className="text-white/90">{what}</strong>. The invoice stays owed and the requester sees your note.</>}
@@ -416,19 +420,19 @@ export function WriteOffDecisionDialog({ writeOff, mode, onClose, onDone }: {
       <div className="mt-4">
         <Field t={noteRequired ? 'Note * (3 to 500 characters)' : 'Note (optional)'}>
           <input className={inp} value={note} maxLength={500} onChange={(e) => setNote(e.target.value)}
+            aria-invalid={noteRequired && note.trim().length < 3 ? true : undefined}
             placeholder={mode === 'reject' ? 'Why this cannot be written off yet' : ''} />
         </Field>
       </div>
       {err && <ErrorLine text={err} />}
       <Actions
         busy={go.isPending}
-        disabled={noteRequired && note.trim().length < 3}
         label={mode === 'approve' ? 'Approve and write off' : mode === 'reject' ? 'Reject' : 'Cancel the request'}
         busyLabel="Saving…"
-        onGo={() => { setErr(''); go.mutate() }}
         onClose={onClose}
         danger={mode !== 'approve'}
       />
+      </DialogForm>
     </Modal>
   )
 }
@@ -478,14 +482,15 @@ export function RecoveryDialog({ writeOff, onClose, onDone }: {
         <p className="text-sm text-white/70 mb-3">{fmtPkrWhole(cents)} recovered on {writeOff.invoiceNumber ?? 'the invoice'}. It is booked back against bad debts.</p>
         <ReferenceUsedBeforeNotice uses={saved.uses} />
         <div className="flex flex-wrap gap-2 mt-5">
-          <button onClick={() => onDone(saved.writeOff, cents)} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+          <button type="button" onClick={() => onDone(saved.writeOff, cents)} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
         </div>
       </Modal>
     )
   }
 
   return (
-    <Modal title={`Money recovered on ${writeOff.invoiceNumber ?? 'a written-off invoice'}`} onClose={onClose}>
+    <Modal title={`Money recovered on ${writeOff.invoiceNumber ?? 'a written-off invoice'}`} onClose={onClose} dirty={!go.isPending && (amount !== rupees(writeOff.recoverableCents) || !!reference.trim())}>
+      <DialogForm busy={go.isPending} onSubmit={() => { setErr(''); go.mutate() }} missing={problem}>
       <p className="text-sm text-white/60">
         {writeOff.customerName ?? 'The client'} paid something we had written off. It goes into the bank or cash it arrived in and is booked back against bad debts.
         Written off <strong className="text-white/90">{fmtPkrWhole(writeOff.amountCents)}</strong>, recovered so far{' '}
@@ -493,8 +498,8 @@ export function RecoveryDialog({ writeOff, onClose, onDone }: {
         <strong className="text-white/90">{fmtPkrWhole(writeOff.recoverableCents)}</strong>.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-        <Field t="Amount received (PKR)"><input type="number" min={0} className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
-        <Field t="Received on"><input type="date" className={inp} value={date} min={earliest} max={todayPktIso()} onChange={(e) => setDate(e.target.value)} /></Field>
+        <Field t="Amount received (PKR)"><RupeeField label="Amount received (PKR)" value={amount} onChange={setAmount} invalid={cents <= 0 || cents > writeOff.recoverableCents} /></Field>
+        <Field t="Received on"><input type="date" className={inp} value={date} min={earliest ?? '2000-01-01'} max={todayPktIso()} onChange={(e) => setDate(e.target.value)} /></Field>
         <div className="sm:col-span-2">
           <PaymentReceivedFields
             tenantId={writeOff.tenantId}
@@ -507,9 +512,9 @@ export function RecoveryDialog({ writeOff, onClose, onDone }: {
           />
         </div>
       </div>
-      {problem && !err && <p className="text-[11px] text-white/45 mt-3">{problem}</p>}
       {err && <ErrorLine text={err} />}
-      <Actions busy={go.isPending} disabled={!!problem} label="Record recovery" busyLabel="Saving…" onGo={() => { setErr(''); go.mutate() }} onClose={onClose} />
+      <Actions busy={go.isPending} label="Record recovery" busyLabel="Saving…" onClose={onClose} />
+      </DialogForm>
     </Modal>
   )
 }
@@ -538,7 +543,7 @@ export function EvidenceFiles({ writeOff }: { writeOff: Pick<WriteOffRow, 'id' |
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <span className="text-[11px] text-white/45">Evidence:</span>
       {writeOff.attachments.map((a) => (
-        <button key={a.id} onClick={() => void open(a.id)} disabled={busy === a.id}
+        <button key={a.id} type="button" onClick={() => void open(a.id)} disabled={busy === a.id}
           className="text-[11px] font-bold text-primary-ink underline disabled:opacity-50">
           {a.fileName} ({kb(a.sizeBytes)})
         </button>

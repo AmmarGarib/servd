@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiError } from '../../lib/api'
+import { PasswordInput } from '../ui/PasswordInput'
 import { fmtPkr, fmtPkrWhole } from '../../lib/money'
 import {
   chargeOnAccount, lookupOnAccount, newOnAccountKey, onAccountErrorText, onAccountQuote, tillErrorMessage,
@@ -302,10 +303,10 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
       {!found ? (
         <div className="space-y-2">
           <label htmlFor="oa-code" className="block text-sm text-kds-subtext">Scan the client’s card</label>
-          <input
+          <PasswordInput
             id="oa-code"
             ref={inputRef}
-            type="password"
+            maxLength={CODE_MAX + 1}
             value={typed}
             onChange={(e) => setTyped(e.target.value.slice(0, CODE_MAX + 1))}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitCode(typed) } }}

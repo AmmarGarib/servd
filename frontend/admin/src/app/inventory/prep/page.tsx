@@ -18,6 +18,8 @@ import { usePermissions } from '../../../hooks/useCan'
 import { fmtPkrWhole } from '../../../lib/money'
 import { stockErrorText } from '../../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
+import { FormField } from '../../../components/ui/FormField'
+import { NumberField } from '../../../components/ui/NumberField'
 
 interface InventoryItem { id: string; name: string; unit: string; currentStock: number }
 interface DraftInput { inventoryItemId: string; qtyDrawn: number; unit: string }
@@ -70,6 +72,7 @@ export default function PrepBatchPage() {
   const [notes, setNotes] = useState('')
   const [locationId, setLocationId] = useState('')
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null)
+  const [tried, setTried] = useState(false)
 
   // Ingredient choices: the stock list when this login can read it, else the
   // ingredients of the company's sub-recipes (name + stock unit, no on-hand).
@@ -130,7 +133,7 @@ export default function PrepBatchPage() {
         : yieldPct != null && yieldPct < 0.85
           ? { tone: 'warn', text: 'Batch saved — low yield flagged.' }
           : { tone: 'ok', text: adHoc ? 'Batch logged. The ingredients were drawn from stock at the price paid.' : 'Batch logged.' })
-      setRecipeId(''); setMultiplier(1)
+      setRecipeId(''); setMultiplier(1); setTried(false)
       setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setPhotoUrl(''); setNotes('')
       if (!ledger || ledger.posted) setTimeout(() => setFeedback(null), 6000)
     },
@@ -145,6 +148,13 @@ export default function PrepBatchPage() {
 
   const yieldPct = expectedYieldQty && actualYieldQty && +expectedYieldQty > 0 ? (+actualYieldQty / +expectedYieldQty) * 100 : null
   const missing = prep?.inputs.filter((i) => i.missing) ?? []
+  // Why Log batch can't go through yet — shown once it is pressed (the button stays live).
+  const problem = !recipeId ? 'Pick the sub-recipe you made (or Other).'
+    : !itemName.trim() ? 'Name the prep.'
+    : inputs.length === 0 ? 'Add at least one ingredient you used.'
+    : inputs.some((x) => !x.inventoryItemId) ? 'Pick the ingredient on every line.'
+    : !actualYieldQty ? 'Enter the actual yield.'
+    : null
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -160,7 +170,8 @@ export default function PrepBatchPage() {
         </p>
       </header>
 
-      <div className="px-7 py-6 max-w-3xl mx-auto space-y-5">
+      <form noValidate className="px-7 py-6 max-w-3xl mx-auto space-y-5"
+        onSubmit={(e) => { e.preventDefault(); setTried(true); if (!problem && !submit.isPending) submit.mutate() }}>
         {feedback && (
           <div role="status" className="rounded-xl px-4 py-3 text-sm font-bold"
             style={feedback.tone === 'ok'
@@ -174,7 +185,7 @@ export default function PrepBatchPage() {
 
         <Section title="What did you make?">
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-3">
-            <Field label="Sub-recipe *">
+            <Field label="Sub-recipe" required error={tried && !recipeId ? 'Pick the sub-recipe you made (or Other).' : null}>
               <Select value={recipeId} className={fieldCls}
                 onChange={(e) => {
                   const id = e.target.value
@@ -189,9 +200,9 @@ export default function PrepBatchPage() {
             </Field>
             {!adHoc && (
               <Field label="Batches">
-                <input type="number" min={0.25} step={0.25} value={multiplier} className={fieldCls}
-                  onChange={(e) => {
-                    const m = parseFloat(e.target.value) || 1
+                <NumberField decimals={2} min={0.25} value={multiplier} className={fieldCls}
+                  onValueChange={(v) => {
+                    const m = v && v > 0 ? v : 1
                     setMultiplier(m)
                     applyRecipe(prep, m)
                   }} />
@@ -200,8 +211,8 @@ export default function PrepBatchPage() {
           </div>
           {adHoc && (
             <div className="mt-3 space-y-2">
-              <Field label="Prep name *">
-                <input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="Staff meal base" className={fieldCls} />
+              <Field label="Prep name" required error={tried && !itemName.trim() ? 'Name the prep.' : null}>
+                <input required enterKeyHint="next" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="Staff meal base" className={fieldCls} />
               </Field>
               <p className="text-xs text-s-muted">
                 A batch that is not in the recipe library draws its ingredients from stock at the price paid (oldest stock first), and books that cost to cost of sales.
@@ -231,10 +242,10 @@ export default function PrepBatchPage() {
           )}
           <div className="grid grid-cols-2 gap-3 mt-3">
             <Field label="Expected yield (g)">
-              <input type="number" step="0.1" value={expectedYieldQty} onChange={(e) => setExpectedYieldQty(e.target.value === '' ? '' : parseFloat(e.target.value))} placeholder="e.g. 500" className={fieldCls} />
+              <NumberField decimals={1} min={0} enterKeyHint="next" value={expectedYieldQty === '' ? null : expectedYieldQty} onValueChange={(v) => setExpectedYieldQty(v ?? '')} placeholder="e.g. 500" className={fieldCls} />
             </Field>
-            <Field label="Actual yield (g) *">
-              <input type="number" step="0.1" value={actualYieldQty} onChange={(e) => setActualYieldQty(e.target.value === '' ? '' : parseFloat(e.target.value))} placeholder="What you got" className={fieldCls} />
+            <Field label="Actual yield (g)" required error={tried && !actualYieldQty ? 'Enter the actual yield.' : null}>
+              <NumberField decimals={1} min={0} enterKeyHint="next" value={actualYieldQty === '' ? null : actualYieldQty} onValueChange={(v) => setActualYieldQty(v ?? '')} placeholder="What you got" className={fieldCls} />
             </Field>
           </div>
           {yieldPct != null && (
@@ -255,29 +266,30 @@ export default function PrepBatchPage() {
             <div key={i} className="grid grid-cols-[minmax(0,1fr)_84px_44px_auto] gap-2 items-center mt-2">
               <Select value={inp.inventoryItemId}
                 onChange={(e) => patchInput(i, { inventoryItemId: e.target.value, unit: itemById.get(e.target.value)?.unit ?? '' })}
-                className={fieldCls}>
+                aria-label={`Ingredient ${i + 1}`} className={fieldCls}>
                 <option value="">— ingredient —</option>
                 {ingredients.map((it) => <option key={it.id} value={it.id}>{it.label}</option>)}
               </Select>
-              <input type="number" step="0.001" value={inp.qtyDrawn} onChange={(e) => patchInput(i, { qtyDrawn: parseFloat(e.target.value) || 0 })} placeholder="Qty" className={fieldCls} />
+              <NumberField decimals={3} min={0} enterKeyHint="next" value={inp.qtyDrawn || null} onValueChange={(v) => patchInput(i, { qtyDrawn: v ?? 0 })}
+                aria-label={`Ingredient ${i + 1} quantity`} placeholder="Qty" className={fieldCls} />
               {/* The draw is taken off stock as-is, so it is always in the item's own stock unit. */}
               <span className="text-xs text-white/55">{itemById.get(inp.inventoryItemId)?.unit ?? inp.unit}</span>
-              <button onClick={() => rmInput(i)} className="text-white/30 hover:text-s-red px-2">✕</button>
+              <button type="button" onClick={() => rmInput(i)} aria-label={`Remove ingredient ${i + 1}`} className="text-white/30 hover:text-s-red px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
             </div>
           ))}
-          <button onClick={addInput} className="text-xs text-primary-ink hover:underline mt-3">+ Add ingredient</button>
+          <button type="button" onClick={addInput} className="text-xs text-primary-ink hover:underline mt-3">+ Add ingredient</button>
         </Section>
 
         <Section title="Evidence (optional)">
-          <Field label="Photo URL"><input value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://… of finished prep" className={fieldCls} /></Field>
+          <Field label="Photo URL"><input type="url" inputMode="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://… of finished prep" className={fieldCls} /></Field>
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
         </Section>
 
         {submit.error && <div role="alert" className="rounded-xl px-4 py-3 text-sm text-s-red" style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 35%, transparent)' }}>Not saved. {stockErrorText(submit.error)}</div>}
 
         <div className="flex justify-end pt-2">
-          <button onClick={() => submit.mutate()}
-            disabled={submit.isPending || !recipeId || !itemName.trim() || inputs.length === 0 || inputs.some((x) => !x.inventoryItemId) || !actualYieldQty}
+          {tried && problem && <p role="alert" className="mr-4 self-center text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>{problem}</p>}
+          <button type="submit" disabled={submit.isPending}
             className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {submit.isPending ? 'Saving…' : 'Log batch →'}
           </button>
@@ -307,7 +319,7 @@ export default function PrepBatchPage() {
             </div>
           </div>
         )}
-      </div>
+      </form>
     </div>
   )
 }
@@ -318,5 +330,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div className="mt-3">{children}</div>
   </div>
 }
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><label className="text-xs text-white/55">{label}</label><div className="mt-1">{children}</div></div> }
+function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string | null; children: React.ReactElement }) {
+  return <FormField label={label} required={required} error={error ?? undefined}>{children}</FormField>
+}
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"

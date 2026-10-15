@@ -123,7 +123,8 @@ export async function LocationDetails({ fields, ctx }: SectionProps) {
       {/* Embedded Google map — the pin, else the address; none without either. */}
       {fields.showMap === true && maps.embedQuery && (
         <div className="container" style={{ marginTop: '2rem' }}>
-          <div style={{ aspectRatio: '16/9', borderRadius: '1rem', overflow: 'hidden', border: '1px solid var(--servd-line)' }}>
+          {/* The skeleton colour shows until the embed paints (and if it never does). */}
+          <div style={{ aspectRatio: '16/9', borderRadius: '1rem', overflow: 'hidden', border: '1px solid var(--servd-line)', background: 'var(--servd-surface)' }}>
             <iframe
               src={`https://www.google.com/maps?q=${encodeURIComponent(maps.embedQuery)}&output=embed`}
               width="100%" height="100%" style={{ border: 0 }}
@@ -131,6 +132,14 @@ export async function LocationDetails({ fields, ctx }: SectionProps) {
               title={`${name} on Google Maps`}
             />
           </div>
+          {maps.href && (
+            <p style={{ margin: '0.75rem 0 0' }}>
+              <a href={maps.href} target="_blank" rel="noopener noreferrer" className="sv-tap-link"
+                style={{ color: 'var(--servd-ink)', fontWeight: 700 }}>
+                Open in Maps
+              </a>
+            </p>
+          )}
         </div>
       )}
     </section>

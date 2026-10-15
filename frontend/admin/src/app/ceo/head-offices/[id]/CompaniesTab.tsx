@@ -8,24 +8,14 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '../../../../lib/api'
 import { Select } from '../../../../components/ui/Select'
+import { Modal as SharedModal } from '../../../../components/ui/Modal'
 import {
   headOfficeApi, monthLabel, monthRange, addMonthsTo, currentMonthPkt,
   type HeadOfficeDetail, type HeadOfficeLinkRow,
 } from '../../../../lib/headOfficeApi'
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgb(var(--ink-rgb) / 0.4)' }} onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl p-5" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
-        role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <h2 className="text-base font-black text-white/90">{title}</h2>
-          <button type="button" onClick={onClose} className="s-btn-ghost text-xs px-2 py-1" aria-label="Close">Close</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
+  return <SharedModal title={title} onClose={onClose}>{children}</SharedModal>
 }
 
 export function errText(e: unknown): string {

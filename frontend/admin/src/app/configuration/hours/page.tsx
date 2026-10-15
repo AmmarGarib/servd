@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Concept { id: string; name: string; slug: string }
 interface ServiceHour {
@@ -28,12 +29,39 @@ interface DayState {
   windows: Window[]
 }
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+// The server treats a close at or before the open as "closes the next day"
+// (storefront/serviceHours.ts, reservations/hours.ts). So an earlier close is
+// not an error — it is shown as an overnight window — but an identical open
+// and close is almost certainly a slip, and windows of one day must not overlap.
+function windowEnd(w: Window): number { return w.closeMin <= w.openMin ? w.closeMin + 1440 : w.closeMin }
+
+/** Problems per window index for one day: same open/close, or overlap with another window. */
+function windowProblems(windows: Window[]): Record<number, string> {
+  const out: Record<number, string> = {}
+  windows.forEach((w, i) => {
+    if (w.closeMin === w.openMin) out[i] = 'Opening and closing time are the same.'
+  })
+  for (let a = 0; a < windows.length; a++) {
+    for (let b = a + 1; b < windows.length; b++) {
+      const x = windows[a]!, y = windows[b]!
+      if (x.openMin < windowEnd(y) && y.openMin < windowEnd(x)) {
+        out[a] = out[a] ?? `Overlaps window ${b + 1}.`
+        out[b] = out[b] ?? `Overlaps window ${a + 1}.`
+      }
+    }
+  }
+  return out
+}
+
 const DEFAULT_OPEN = 11 * 60
 const DEFAULT_CLOSE = 23 * 60
 const DEFAULT_WINDOW: Window = { openMin: DEFAULT_OPEN, closeMin: DEFAULT_CLOSE, isReservable: true }
 
 export default function HoursPage() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: concepts = [] } = useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })
   const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   useEffect(() => { if (!conceptId && concepts.length > 0) setConceptId(concepts[0]!.id) }, [concepts, conceptId])
@@ -87,6 +115,19 @@ export default function HoursPage() {
   function applyToAll(openMin: number, closeMin: number) {
     setDays((prev) => prev.map((d) => ({ ...d, isOpen: true, windows: [{ openMin, closeMin, isReservable: true }] })))
   }
+  async function copyDayToOthers(i: number) {
+    const src = days[i]
+    if (!src) return
+    const ok = await confirm({
+      title: `Copy ${DAY_NAMES[i]}'s hours to every other day?`,
+      body: 'This replaces the other days\' hours here. Nothing is saved until you press Save hours.',
+      confirmLabel: 'Copy to other days',
+    })
+    if (!ok) return
+    setDays((prev) => prev.map((d, idx) => idx === i ? d : { ...d, isOpen: src.isOpen, windows: src.windows.map((w) => ({ ...w })) }))
+  }
+  const problems = days.map((d) => (d.isOpen ? windowProblems(d.windows) : {}))
+  const hasProblems = problems.some((p) => Object.keys(p).length > 0)
   function fmtMin(min: number) { const h = Math.floor(min / 60); const m = min % 60; return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}` }
   function parseMin(v: string) { const [h, m] = v.split(':').map(Number); return ((h ?? 0) * 60 + (m ?? 0)) }
 
@@ -127,11 +168,11 @@ export default function HoursPage() {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/65">{concept?.name ?? 'Brand'} weekly hours</h2>
                 <div className="flex gap-1.5">
-                  <button onClick={() => applyToAll(11 * 60, 23 * 60)}
+                  <button type="button" onClick={() => applyToAll(11 * 60, 23 * 60)}
                     className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-white">
                     11–23 all
                   </button>
-                  <button onClick={() => applyToAll(9 * 60, 22 * 60)}
+                  <button type="button" onClick={() => applyToAll(9 * 60, 22 * 60)}
                     className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-white">
                     9–22 all
                   </button>
@@ -148,20 +189,29 @@ export default function HoursPage() {
                         <span className="text-sm font-bold text-white/85">{DAY_LABELS[i]}</span>
                       </label>
                       {d.isOpen ? (
-                        <button onClick={() => addWindow(i)}
-                          className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-white">
-                          + Window
-                        </button>
+                        <div className="ml-auto flex flex-wrap justify-end gap-1.5">
+                          <button type="button" onClick={() => void copyDayToOthers(i)}
+                            className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-white">
+                            Copy to other days
+                          </button>
+                          <button type="button" onClick={() => addWindow(i)}
+                            className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-white">
+                            + Window
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-xs text-white/35 italic ml-auto">Closed</span>
                       )}
                     </div>
                     {d.isOpen && d.windows.map((w, wi) => (
-                      <div key={wi} className="flex items-center gap-3 pl-20 flex-wrap">
-                        <input type="time" value={fmtMin(w.openMin)} onChange={(e) => patchWindow(i, wi, { openMin: parseMin(e.target.value) })}
+                      <div key={wi} className="pl-0 sm:pl-20">
+                      <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
+                        <input type="time" value={fmtMin(w.openMin)} onChange={(e) => e.target.value && patchWindow(i, wi, { openMin: parseMin(e.target.value) })}
+                          aria-label={`${DAY_NAMES[i]} window ${wi + 1} opens at`} aria-invalid={!!problems[i]?.[wi]}
                           className={fieldCls + ' w-32'} />
-                        <span className="text-white/40 text-sm">→</span>
-                        <input type="time" value={fmtMin(w.closeMin)} onChange={(e) => patchWindow(i, wi, { closeMin: parseMin(e.target.value) })}
+                        <span className="text-white/40 text-sm" aria-hidden>→</span>
+                        <input type="time" value={fmtMin(w.closeMin)} onChange={(e) => e.target.value && patchWindow(i, wi, { closeMin: parseMin(e.target.value) })}
+                          aria-label={`${DAY_NAMES[i]} window ${wi + 1} closes at`} aria-invalid={!!problems[i]?.[wi]}
                           className={fieldCls + ' w-32'} />
                         <label className="flex items-center gap-1.5 cursor-pointer">
                           <input type="checkbox" checked={w.isReservable}
@@ -169,7 +219,14 @@ export default function HoursPage() {
                             className="accent-accent" />
                           <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Reservable</span>
                         </label>
-                        <button onClick={() => removeWindow(i, wi)} className="ml-auto text-xs text-red-700/80 hover:text-red-700">Remove</button>
+                        <button type="button" onClick={() => removeWindow(i, wi)} aria-label={`Remove ${DAY_NAMES[i]} window ${wi + 1}`}
+                          className="ml-auto text-xs text-red-700/80 hover:text-red-700 min-h-[44px] px-2">Remove</button>
+                      </div>
+                      {problems[i]?.[wi] ? (
+                        <p role="alert" className="text-[11px] mt-1" style={{ color: 'var(--erp-danger)' }}>{problems[i]![wi]}</p>
+                      ) : w.closeMin < w.openMin ? (
+                        <p className="text-[11px] mt-1 text-white/45">Closes the next day.</p>
+                      ) : null}
                       </div>
                     ))}
                   </div>
@@ -178,10 +235,12 @@ export default function HoursPage() {
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.05]">
-              <button onClick={() => save.mutate()} disabled={save.isPending || !conceptId}
+              <button type="button" onClick={() => save.mutate()} disabled={save.isPending || !conceptId || hasProblems}
                 className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
                 {save.isPending ? 'Saving…' : 'Save hours'}
               </button>
+              {hasProblems && <p role="alert" className="self-center text-xs" style={{ color: 'var(--erp-danger)' }}>Fix the highlighted windows to save.</p>}
+              {save.isError && <p role="alert" className="self-center text-xs text-red-700">{(save.error as Error).message}</p>}
             </div>
           </>
         )}

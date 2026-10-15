@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
 import { api, paymentMethodLabel, RAAST_STATUS_LABEL, RAAST_STATUS_SHORT, type RaastReceiptState } from '../../../lib/api'
@@ -33,6 +33,38 @@ import {
 import { ApiError } from '../../../lib/api'
 import { orderRef } from '../../../lib/orderRef'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '@/components/ui/Modal'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+
+/** Copy text with a short "Copied" state; falls back to selecting it when the clipboard API is refused. */
+function CopyButton({ text, label, className = '' }: { text: string; label: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  async function copy() {
+    let ok = false
+    try { await navigator.clipboard.writeText(text); ok = true } catch {
+      // Fallback: a hidden textarea, selected and copied the old way.
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta); ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch { ok = false }
+    }
+    if (ok) {
+      setCopied(true)
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => setCopied(false), 1500)
+    }
+  }
+  return (
+    <button type="button" onClick={() => void copy()} aria-label={`Copy ${label}`}
+      className={`inline-flex min-h-8 items-center rounded-md border border-s-border px-2 text-xs text-s-muted hover:border-primary hover:text-primary-ink transition-colors ${className}`}>
+      <span role="status" aria-live="polite">{copied ? 'Copied' : 'Copy'}</span>
+    </button>
+  )
+}
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -113,16 +145,17 @@ const NOT_FINAL = new Set(['received', 'confirmed', 'preparing', 'ready'])
 const ENDED = new Set(['cancelled', 'rejected'])
 
 // The numbered tax invoice / credit note, as issued (backend invoices/service).
-async function openInvoice(invoiceId: string) {
+async function openInvoice(invoiceId: string): Promise<boolean> {
   const token = useAuthStore.getState().token
   const res = await fetch(`${API_URL}/api/v1/invoices/${invoiceId}/html`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
-  if (!res.ok) { alert('Invoice not available'); return }
+  if (!res.ok) return false
   const blob = new Blob([await res.text()], { type: 'text/html' })
   const url = URL.createObjectURL(blob)
   const win = window.open(url, '_blank', 'width=720,height=900')
   if (!win) URL.revokeObjectURL(url)
+  return true
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -325,6 +358,7 @@ function MoneyTakenModal({
   const [amountInput, setAmountInput] = useState<string | null>(null)
   const amount = amountInput ?? (maxCents / 100).toFixed(2)
   const [reason, setReason] = useState('')
+  const amountRef = useRef<HTMLInputElement>(null)
   // Raast: the reference of the transfer the manager already sent back from the bank.
   const [raastRef, setRaastRef] = useState('')
   const raastRefIssue = method === 'raast' ? raastRefundRefProblem(raastRef) : null
@@ -429,12 +463,40 @@ function MoneyTakenModal({
     handBack.reset()
   }
 
+  const submitDisabled = handBack.isPending || cardRefund.isPending || (!following && (
+    !method || !amountOk || reason.trim().length < 3 || uploading || (needsPhoto && !photoUrl) || machineStuck || !!raastRefIssue
+  ))
+  const submitHandBack = () => {
+    if (submitDisabled) return
+    if (viaMachine || following) cardRefund.mutate(); else handBack.mutate()
+  }
+  const summary = !following && method && amountOk
+    ? `Refund ${fmtPkr(amountCents)} to ${viaMachine ? 'the card (card machine)' : (HAND_BACK_LABEL[method as HandBackTender] ?? method).toLowerCase()} for order #${orderRef(order.id)}`
+    : null
+
   return (
-    <div className="fixed inset-0 bg-secondary/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Refund money taken">
-      <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
+    <Modal title="Refund money taken" onClose={onClose} initialFocusRef={amountRef} dismissible={!handBack.isPending && !cardRefund.isPending}
+      dirty={!following && (reason.trim() !== '' || amountInput !== null || raastRef.trim() !== '')}
+      footer={
+        <div className="space-y-2">
+          {summary && <p className="text-xs font-semibold text-s-text" aria-live="polite">{summary}</p>}
+          <div className="flex gap-3">
+            <button type="submit" form="due-refund-form" disabled={submitDisabled}
+              className="flex-1 min-h-11 rounded-xl bg-s-red text-bone text-sm font-bold hover:opacity-90 disabled:opacity-40">
+              {cardRefund.isPending ? 'On the card machine…'
+                : following ? 'Keep following the refund'
+                : handBack.isPending ? 'Refunding…'
+                : `Refund ${amountOk ? fmtPkr(amountCents) : ''}${viaMachine ? ' to card' : ''}`.replace(/\s+/g, ' ').trim()}
+            </button>
+            <button type="button" onClick={onClose} className="flex-1 min-h-11 rounded-xl border border-s-border text-s-muted text-sm hover:border-s-text">
+              Close
+            </button>
+          </div>
+        </div>
+      }>
+      <form id="due-refund-form" className="space-y-4" onSubmit={(e) => { e.preventDefault(); submitHandBack() }}>
         <div>
-          <p className="font-bold text-s-text text-lg">Refund money taken</p>
-          <p className="text-xs text-s-muted mt-1">
+          <p className="text-xs text-s-muted">
             This ticket was {order.status} after the till took {fmtPkr(taken.dueCents)}. It was never a sale: the refund is booked
             against the money held for it, and nothing goes to the fiscal POS.
           </p>
@@ -519,7 +581,7 @@ function MoneyTakenModal({
 
         <div>
           <label htmlFor="due-amount" className="text-xs text-s-muted block mb-1">Amount (PKR) — up to {fmtPkr(maxCents)}</label>
-          <input id="due-amount" inputMode="decimal" value={amount} onChange={(e) => setAmountInput(e.target.value)}
+          <input id="due-amount" ref={amountRef} inputMode="decimal" value={amount} onChange={(e) => setAmountInput(e.target.value)}
             disabled={!!following || cardRefund.isPending}
             className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text font-mono focus:border-primary focus:outline-none disabled:opacity-60" />
           {!following && amount.trim() !== '' && !amountOk && (
@@ -552,24 +614,8 @@ function MoneyTakenModal({
         {handBack.isError && <p className="text-sm text-s-red" role="alert">{handBackErrorMessage(handBack.error)}</p>}
         {cardRefund.isError && <p className="text-sm text-s-red" role="alert">{handBackErrorMessage(cardRefund.error)}</p>}
 
-        <div className="flex gap-3">
-          <button
-            onClick={() => (viaMachine || following ? cardRefund.mutate() : handBack.mutate())}
-            disabled={handBack.isPending || cardRefund.isPending || (!following && (
-              !method || !amountOk || reason.trim().length < 3 || uploading || (needsPhoto && !photoUrl) || machineStuck || !!raastRefIssue
-            ))}
-            className="flex-1 rounded-xl bg-s-red text-bone text-sm font-bold py-2 hover:opacity-90 disabled:opacity-40">
-            {cardRefund.isPending ? 'On the card machine…'
-              : following ? 'Keep following the refund'
-              : handBack.isPending ? 'Refunding…'
-              : `Refund ${amountOk ? fmtPkr(amountCents) : ''}${viaMachine ? ' to card' : ''}`.replace(/\s+/g, ' ').trim()}
-          </button>
-          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-text">
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -631,6 +677,8 @@ function RefundModal({
   onDone,
 }: { order: OrderDetail; onClose: () => void; onDone: (message: string) => void }) {
   const [reason, setReason] = useState('')
+  const reasonRef = useRef<HTMLTextAreaElement>(null)
+  const pinRef = useRef<HTMLInputElement>(null)
   // A sold order is refunded; one not sold yet is cancelled (a manager approves).
   const [mode, setMode] = useState<'refund' | 'cancel'>(order.status === 'completed' ? 'refund' : 'cancel')
   const [choice, setChoice] = useState<RefundChoice>(() => defaultRefundChoice(order.payments, order.source))
@@ -666,10 +714,32 @@ function RefundModal({
     ? isManager || pin.trim().length > 0
     : order.status === 'completed' && refundChoiceReady(order.payments, choice, !!policy.data?.requirePhotoEvidence, order.source)
 
+  const submitDisabled = refund.isPending || reason.trim().length < 3 || !ready
+  // The line above the button states what the submit does, from the same figures it sends.
+  const summary = mode === 'cancel'
+    ? `Cancel order #${orderRef(order.id)} with no refund`
+    : order.status === 'completed'
+      ? `Refund ${fmtPkr(order.totalCents)} to ${choice.method ? ((choice.method === 'card' && choice.viaMachine) ? 'the card (card machine)' : (HAND_BACK_LABEL[choice.method as HandBackTender] ?? choice.method).toLowerCase()) : 'the way it was paid'} for order #${orderRef(order.id)}`
+      : null
+
   return (
-    <div className="fixed inset-0 bg-secondary/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Refund or cancel order">
-      <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
-        <p className="font-bold text-s-text text-lg">Refund / Cancel Order</p>
+    <Modal title="Refund / Cancel Order" onClose={onClose} initialFocusRef={mode === 'cancel' && !isManager ? pinRef : reasonRef} dismissible={!refund.isPending}
+      dirty={reason.trim() !== '' || pin !== ''}
+      footer={
+        <div className="space-y-2">
+          {summary && <p className="text-xs font-semibold text-s-text" aria-live="polite">{summary}</p>}
+          <div className="flex gap-3">
+            <button type="submit" form="order-refund-form" disabled={submitDisabled}
+              className="flex-1 min-h-11 rounded-xl bg-s-red text-bone text-sm font-bold hover:opacity-90 disabled:opacity-40">
+              {refund.isPending ? 'Processing…' : mode === 'refund' ? 'Refund' : 'Cancel order'}
+            </button>
+            <button type="button" onClick={onClose} className="flex-1 min-h-11 rounded-xl border border-s-border text-s-muted text-sm hover:border-s-text">
+              Close
+            </button>
+          </div>
+        </div>
+      }>
+      <form id="order-refund-form" className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (!submitDisabled) refund.mutate() }}>
         <div className="flex gap-2">
           {/* R2-UI-06: a completed sale is refunded, never cancelled — the
               state machine refuses completed → cancelled, so the option is
@@ -677,8 +747,9 @@ function RefundModal({
           {(order.status === 'completed' ? (['refund'] as const) : (['refund', 'cancel'] as const)).map((m) => (
             <button
               key={m}
+              type="button"
               onClick={() => setMode(m)}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+              className={`flex-1 min-h-11 rounded-lg text-sm font-semibold border transition-colors ${
                 mode === m
                   ? 'bg-primary text-primary-on border-primary'
                   : 'border-s-border text-s-muted hover:text-s-text'
@@ -699,7 +770,7 @@ function RefundModal({
         {mode === 'cancel' && !isManager && (
           <div>
             <label htmlFor="cancel-pin" className="text-xs text-s-muted block mb-1">Manager PIN (a manager approves every cancel)</label>
-            <input id="cancel-pin" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)}
+            <PasswordInput id="cancel-pin" ref={pinRef} numeric maxLength={8} autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)}
               className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none" />
           </div>
         )}
@@ -707,6 +778,7 @@ function RefundModal({
           <label htmlFor="refund-reason" className="text-xs text-s-muted block mb-1">Reason (required)</label>
           <textarea
             id="refund-reason"
+            ref={reasonRef}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={3}
@@ -720,19 +792,8 @@ function RefundModal({
             {mode === 'cancel' ? cancelErrorMessage(refund.error) : refundErrorMessage(refund.error)}
           </p>
         )}
-        <div className="flex gap-3">
-          <button
-            onClick={() => refund.mutate()}
-            disabled={refund.isPending || reason.trim().length < 3 || !ready}
-            className="flex-1 rounded-xl bg-s-red text-bone text-sm font-bold py-2 hover:opacity-90 disabled:opacity-40">
-            {refund.isPending ? 'Processing…' : mode === 'refund' ? 'Refund' : 'Cancel order'}
-          </button>
-          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-text">
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -743,6 +804,7 @@ export default function OrderDetailPage() {
   const qc = useQueryClient()
 
   const [refundOpen, setRefundOpen] = useState(false)
+  const [invoiceError, setInvoiceError] = useState<string | null>(null)
   const [handBackOpen, setHandBackOpen] = useState(false)
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
@@ -920,6 +982,7 @@ export default function OrderDetailPage() {
               <h1 className="text-xl font-bold text-s-text font-mono">
                 #{orderRef(order.id)}
               </h1>
+              <CopyButton text={orderRef(order.id)} label="order number" />
               <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${STATUS_COLORS[order.status] ?? ''}`}>
                 {order.status}
               </span>
@@ -1058,7 +1121,9 @@ export default function OrderDetailPage() {
                     <p className="text-sm font-semibold text-s-text">{order.customer.name}</p>
                   )}
                   {order.customer.phone && (
-                    <p className="text-sm text-s-muted">{order.customer.phone}</p>
+                    <p className="text-sm text-s-muted flex items-center gap-2">{order.customer.phone}
+                      <CopyButton text={order.customer.phone} label="phone number" />
+                    </p>
                   )}
                   {order.customer.email && (
                     <p className="text-xs text-s-muted">{order.customer.email}</p>
@@ -1339,6 +1404,7 @@ export default function OrderDetailPage() {
               {(order.taxInvoices?.length ?? 0) > 0 && (
                 <div className="mt-4 pt-4 border-t border-s-border space-y-2">
                   <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Tax documents</p>
+                  {invoiceError && <p role="alert" className="text-xs text-s-red">{invoiceError}</p>}
                   {order.taxInvoices!.map((inv) => (
                     <div key={inv.id} className="flex items-center justify-between gap-3">
                       <div>
@@ -1348,8 +1414,8 @@ export default function OrderDetailPage() {
                         </p>
                       </div>
                       <button
-                        onClick={() => void openInvoice(inv.id)}
-                        className="rounded-lg border border-s-border text-s-muted text-xs px-3 py-1.5 hover:border-primary hover:text-primary-ink transition-colors">
+                        onClick={() => { setInvoiceError(null); void openInvoice(inv.id).then((ok) => { if (!ok) setInvoiceError('Invoice not available') }) }}
+                        className="rounded-lg border border-s-border text-s-muted text-xs px-3 min-h-11 hover:border-primary hover:text-primary-ink transition-colors">
                         View
                       </button>
                     </div>

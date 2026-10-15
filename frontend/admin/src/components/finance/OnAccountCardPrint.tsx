@@ -17,6 +17,8 @@
 
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
+import { Modal } from '../ui/Modal'
+import { useConfirm } from '../ui/ConfirmDialog'
 
 export interface OnAccountCardPrintProps {
   /** The one-time code; null = closed. */
@@ -35,6 +37,7 @@ export function groupCode(code: string, size = 4): string {
 }
 
 export function OnAccountCardPrint({ code, clientName, accountNumber, cardLabel, companyName, onClose }: OnAccountCardPrintProps) {
+  const confirm = useConfirm()
   const [qr, setQr] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [printed, setPrinted] = useState(false)
@@ -51,13 +54,20 @@ export function OnAccountCardPrint({ code, clientName, accountNumber, cardLabel,
 
   if (!code) return null
 
-  const close = () => {
-    if (!printed && !window.confirm('The card code cannot be shown again. Close without printing?')) return
+  const close = async () => {
+    if (!printed) {
+      const ok = await confirm({
+        title: `Close ${clientName}'s card without printing?`,
+        body: 'The card code is shown once and cannot be shown again. If you close now, rotate the card to get a new one.',
+        confirmLabel: 'Close without printing', cancelLabel: 'Back to the card', danger: true,
+      })
+      if (!ok) return
+    }
     onClose()
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4 oa-print-root">
+    <Modal title={`Card for ${clientName}`} onClose={() => void close()}>
       <style>{`
         .oa-card { width: 85.6mm; height: 54mm; box-sizing: border-box; }
         @media print {
@@ -67,10 +77,8 @@ export function OnAccountCardPrint({ code, clientName, accountNumber, cardLabel,
           .oa-card { position: fixed; left: 0; top: 0; border-radius: 0 !important; border: none !important; }
         }
       `}</style>
-      <div className="w-full max-w-md rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-        <p className="text-lg font-black text-white/90">Card for {clientName}</p>
-        <p role="alert" className="mt-2 rounded-lg px-3 py-2 text-sm font-bold"
+      <div>
+        <p role="alert" className="rounded-lg px-3 py-2 text-sm font-bold"
           style={{ background: 'color-mix(in srgb, var(--erp-warning) 14%, transparent)', color: 'rgb(var(--fg-rgb) / 0.9)' }}>
           Shown once — print now. The code cannot be shown again; if this card is lost, rotate it.
         </p>
@@ -95,12 +103,12 @@ export function OnAccountCardPrint({ code, clientName, accountNumber, cardLabel,
         </div>
 
         <div className="mt-5 flex gap-2">
-          <button onClick={() => { setPrinted(true); window.print() }} disabled={!qr}
+          <button type="button" onClick={() => { setPrinted(true); window.print() }} disabled={!qr}
             className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">Print card</button>
-          <button onClick={close} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Close</button>
+          <button type="button" onClick={() => void close()} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Close</button>
         </div>
       </div>
-    </div>
+    </Modal>
   )
 }
 

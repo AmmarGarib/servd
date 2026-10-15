@@ -19,6 +19,8 @@ import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import { Select } from '@/components/ui/Select'
+import { Modal as SharedModal } from '../../../components/ui/Modal'
+import { DialogForm, RupeeField } from '../../../components/finance/PaymentReceivedFields'
 
 type SchemeKey = 'salary_tax' | 'eobi' | 'sessi'
 const SCHEMES: SchemeKey[] = ['salary_tax', 'eobi', 'sessi']
@@ -82,15 +84,9 @@ function monthsBack(month: string, n: number): string {
 }
 const total = (a: Amounts) => a.eobiCents + a.sessiCents + a.salaryTaxCents
 
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="s-card w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={title}>
-        <p className="text-lg font-bold text-s-text mb-4">{title}</p>
-        {children}
-      </div>
-    </div>
-  )
+/** Thin wrapper over the shared Modal (Escape, focus trap, scroll lock, "Discard changes?" when `dirty`). */
+function Modal({ title, children, onClose, dirty }: { title: string; children: React.ReactNode; onClose: () => void; dirty?: boolean }) {
+  return <SharedModal title={title} onClose={onClose} dirty={dirty}>{children}</SharedModal>
 }
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -313,14 +309,16 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
     onError: (e: Error) => setErr(e.message),
   })
   return (
-    <Modal title={`Record payment — ${label}`} onClose={onClose}>
+    <Modal title={`Record payment — ${label}`} onClose={onClose} dirty={!go.isPending && (f.paid !== rupees(target.owedCents) || !!f.cprNumber.trim() || !!f.notes.trim())}>
+      <DialogForm busy={go.isPending} onSubmit={() => go.mutate()}
+        missing={!f.month ? 'Pick the month the payment is for.' : toPaisa(f.paid) <= 0 ? 'Enter the amount paid.' : !f.paidAt ? 'Pick the day it was paid.' : null}>
       <p className="text-xs text-s-muted mb-3">
         Posts the challan in the books on the day it was paid: the payable is cleared and the money leaves the bank (or cash).
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="For the month"><input type="month" className="s-input" value={f.month} onChange={set('month')} /></Field>
-        <Field label="Paid (PKR)"><input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={f.paid} onChange={set('paid')} /></Field>
-        <Field label="Paid on"><input type="date" className="s-input" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} /></Field>
+        <Field label="For the month"><input type="month" className="s-input" min="2000-01" value={f.month} onChange={set('month')} aria-invalid={!f.month ? true : undefined} /></Field>
+        <Field label="Paid (PKR)"><RupeeField label="Paid (PKR)" value={f.paid} onChange={(v) => setF((p) => ({ ...p, paid: v }))} invalid={toPaisa(f.paid) <= 0} /></Field>
+        <Field label="Paid on"><input type="date" className="s-input" min="2000-01-01" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} aria-invalid={!f.paidAt ? true : undefined} /></Field>
         <Field label="How">
           <Select className="s-input" value={f.method} onChange={set('method')}>
             <option value="bank_transfer">Bank transfer / e-payment</option>
@@ -337,13 +335,14 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
         <Field label="CPR / challan number"><input className="s-input" value={f.cprNumber} onChange={set('cprNumber')} /></Field>
         <Field label="Notes"><input className="s-input" value={f.notes} onChange={set('notes')} /></Field>
       </div>
-      {err && <p className="text-xs text-s-red mt-3">{err}</p>}
+      {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="button" className="s-btn-primary text-sm" disabled={go.isPending || toPaisa(f.paid) <= 0 || !f.paidAt || !f.month} onClick={() => go.mutate()}>
+        <button type="submit" className="s-btn-primary text-sm" disabled={go.isPending}>
           {go.isPending ? 'Saving…' : 'Record payment'}
         </button>
         <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
       </div>
+      </DialogForm>
     </Modal>
   )
 }
@@ -369,7 +368,8 @@ function LinkModal({ initial, schemes, onClose, onDone }: {
     onError: (e: Error) => setErr(e.message),
   })
   return (
-    <Modal title="Link a challan already posted" onClose={onClose}>
+    <Modal title="Link a challan already posted" onClose={onClose} dirty={!go.isPending && (!!entryId || !!cprNumber.trim())}>
+      <DialogForm busy={go.isPending} onSubmit={() => go.mutate()} missing={!month ? 'Pick the month the payment is for.' : !entryId ? 'Pick the entry to link.' : null}>
       <p className="text-xs text-s-muted mb-3">
         A challan you already posted as a manual journal or a bank-reconciliation adjustment. It is recorded as that month&apos;s payment — nothing is posted again.
       </p>
@@ -379,7 +379,7 @@ function LinkModal({ initial, schemes, onClose, onDone }: {
             {schemes.map((s) => <option key={s.key} value={s.key}>{s.label} ({s.account})</option>)}
           </Select>
         </Field>
-        <Field label="For the month"><input type="month" className="s-input" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>
+        <Field label="For the month"><input type="month" className="s-input" min="2000-01" value={month} onChange={(e) => setMonth(e.target.value)} aria-invalid={!month ? true : undefined} /></Field>
         <Field label="CPR / challan number"><input className="s-input" value={cprNumber} onChange={(e) => setCpr(e.target.value)} /></Field>
       </div>
       <p className="text-[11px] font-bold uppercase tracking-wider text-s-muted mt-4 mb-1">Entry</p>
@@ -397,13 +397,14 @@ function LinkModal({ initial, schemes, onClose, onDone }: {
           </label>
         ))}
       </div>
-      {err && <p className="text-xs text-s-red mt-3">{err}</p>}
+      {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="button" className="s-btn-primary text-sm" disabled={go.isPending || !entryId || !month} onClick={() => go.mutate()}>
+        <button type="submit" className="s-btn-primary text-sm" disabled={go.isPending}>
           {go.isPending ? 'Linking…' : 'Link as payment'}
         </button>
         <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
       </div>
+      </DialogForm>
     </Modal>
   )
 }
@@ -417,20 +418,22 @@ function VoidModal({ label, payment, onClose, onDone }: { label: string; payment
     onError: (e: Error) => setErr(e.message),
   })
   return (
-    <Modal title={payment.linked ? `Unlink this ${label} challan` : `Void this ${label} challan`} onClose={onClose}>
+    <Modal title={payment.linked ? `Unlink this ${label} challan` : `Void this ${label} challan`} onClose={onClose} dirty={!go.isPending && !!reason.trim()}>
+      <DialogForm busy={go.isPending} onSubmit={() => go.mutate()} missing={reason.trim().length < 5 ? 'Give a reason (5 characters or more).' : null}>
       <p className="text-sm text-s-muted">
         {payment.linked
           ? 'The entry stays in the ledger as it was posted; it is no longer recorded as this month\'s challan.'
           : `The payment of ${fmtPkr(payment.paidCents)} is reversed in the ledger today. You can then record it again.`}
       </p>
-      <div className="mt-4"><Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Wrong month picked" /></Field></div>
-      {err && <p className="text-xs text-s-red mt-3">{err}</p>}
+      <div className="mt-4"><Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 5 ? true : undefined} placeholder="Wrong month picked" /></Field></div>
+      {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="button" className="s-btn-danger text-sm" disabled={go.isPending || reason.trim().length < 5} onClick={() => go.mutate()}>
+        <button type="submit" className="s-btn-danger text-sm" disabled={go.isPending}>
           {go.isPending ? 'Saving…' : payment.linked ? 'Unlink' : 'Void payment'}
         </button>
         <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
       </div>
+      </DialogForm>
     </Modal>
   )
 }
@@ -538,25 +541,25 @@ function ReclassPanel({ onDone }: { onDone: () => void }) {
               </div>
             )}
             {p.canPost ? (
-              <>
+              <DialogForm busy={go.isPending} onSubmit={() => go.mutate()}
+                missing={toPaisa(amounts.eobi) + toPaisa(amounts.sessi) + toPaisa(amounts.tax) <= 0 ? 'Enter at least one amount to move.' : note.trim().length < 5 ? 'Add a note (5 characters or more).' : null}>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Field label="EOBI → 2043 (PKR)"><input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={amounts.eobi} onChange={(e) => setEdit({ ...amounts, eobi: e.target.value })} /></Field>
-                  <Field label="SESSI → 2044 (PKR)"><input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={amounts.sessi} onChange={(e) => setEdit({ ...amounts, sessi: e.target.value })} /></Field>
-                  <Field label="Salary tax → 2042 (PKR)"><input type="number" min={0} step="0.01" inputMode="decimal" className="s-input" value={amounts.tax} onChange={(e) => setEdit({ ...amounts, tax: e.target.value })} /></Field>
+                  <Field label="EOBI → 2043 (PKR)"><RupeeField label="EOBI to 2043 (PKR)" value={amounts.eobi} onChange={(v) => setEdit({ ...amounts, eobi: v })} /></Field>
+                  <Field label="SESSI → 2044 (PKR)"><RupeeField label="SESSI to 2044 (PKR)" value={amounts.sessi} onChange={(v) => setEdit({ ...amounts, sessi: v })} /></Field>
+                  <Field label="Salary tax → 2042 (PKR)"><RupeeField label="Salary tax to 2042 (PKR)" value={amounts.tax} onChange={(v) => setEdit({ ...amounts, tax: v })} /></Field>
                 </div>
                 <Field label="Note" hint="Posted once, dated today. It cannot be reversed from here.">
-                  <input className="s-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Move payroll statutory amounts to their own payables" />
+                  <input className="s-input" value={note} onChange={(e) => setNote(e.target.value)} aria-invalid={note.trim().length < 5 ? true : undefined} placeholder="Move payroll statutory amounts to their own payables" />
                 </Field>
-                {err && <p className="text-xs text-s-red">{err}</p>}
+                {err && <p role="alert" className="text-xs text-s-red">{err}</p>}
                 <button
-                  type="button"
-                  className="s-btn-primary text-sm"
-                  disabled={go.isPending || note.trim().length < 5 || toPaisa(amounts.eobi) + toPaisa(amounts.sessi) + toPaisa(amounts.tax) <= 0}
-                  onClick={() => go.mutate()}
+                  type="submit"
+                  className="s-btn-primary text-sm mt-3"
+                  disabled={go.isPending}
                 >
                   {go.isPending ? 'Posting…' : `Post the reclass (${fmtPkr(toPaisa(amounts.eobi) + toPaisa(amounts.sessi) + toPaisa(amounts.tax))})`}
                 </button>
-              </>
+              </DialogForm>
             ) : (
               <p className="text-xs text-s-muted">Finance or the CEO posts the reclass. Suggested: EOBI {fmtPkr(p.suggested.eobiCents)}, SESSI {fmtPkr(p.suggested.sessiCents)}, salary tax {fmtPkr(p.suggested.salaryTaxCents)}.</p>
             )}

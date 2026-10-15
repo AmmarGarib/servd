@@ -9,24 +9,54 @@
 // location), the Punch log (with out-of-area punches flagged — never refused)
 // and this day view. Month totals are the Attendance & Leaves format in Reports.
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
-import { card, inp, btnGhost, human, localDate, type PunchRow } from '../../../lib/hr'
+import { card, inp, btnGhost, human, type PunchRow } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
 
 const STATUS_TONE: Record<string, string> = {
-  present: '#3f7d20', late: '#a15c00', missing_punch: '#b42318', absent: '#b42318', half_day: '#a15c00',
+  present: '#3f7d20', late: '#a15c00', missing_punch: 'var(--erp-danger)', absent: 'var(--erp-danger)', half_day: '#a15c00',
 }
 
-const time = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+// Every time and day here is Karachi's, whatever the viewer's device says.
+const TZ = 'Asia/Karachi'
+const time = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: TZ })
+const karachiDate = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+const daysAgo = (n: number) => karachiDate(new Date(Date.now() - n * 86_400_000))
+const updatedAt = (ms: number) => (ms ? new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: TZ }) : '')
+
+/** A date box that ignores being emptied (the last valid day stays). */
+function DateBox({ value, onValid, label, className }: { value: string; onValid: (v: string) => void; label: string; className: string }) {
+  return <input type="date" className={className} value={value} aria-label={label} onChange={(e) => { if (e.target.value) onValid(e.target.value) }} />
+}
+
+function QuickRanges({ options, onPick }: { options: Array<[string, () => void]>; onPick?: () => void }) {
+  return (
+    <span className="flex gap-1">
+      {options.map(([label, fn]) => (
+        <button key={label} type="button" className="rounded-full px-3 py-1 text-xs font-bold border border-white/10 text-white/60 hover:text-white [@media(pointer:coarse)]:min-h-[44px]" onClick={() => { fn(); onPick?.() }}>{label}</button>
+      ))}
+    </span>
+  )
+}
+
+function Refresh({ at, fetching, onClick }: { at: number; fetching: boolean; onClick: () => void }) {
+  return (
+    <span className="text-xs text-white/50" role="status" aria-live="polite">
+      {fetching ? 'Refreshing…' : at ? `Updated ${updatedAt(at)}` : ''} ·{' '}
+      <button type="button" className="font-bold text-primary-ink hover:underline" onClick={onClick}>Refresh</button>
+    </span>
+  )
+}
 
 function DayTab() {
-  const [date, setDate] = useState(localDate())
+  const [date, setDate] = useState(karachiDate())
   const [onlyExceptions, setOnlyExceptions] = useState(false)
-  const { data, error, isLoading } = useQuery({
+  const { data, error, isLoading, dataUpdatedAt, isFetching, refetch } = useQuery({
     queryKey: ['time-clock-logs', date],
     queryFn: () => api.get<{ date: string; rows: PunchRow[] }>(`/time-clock/logs?date=${date}`),
   })
@@ -34,10 +64,12 @@ function DayTab() {
   return (
     <>
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <input type="date" className={`${inp} max-w-[180px]`} value={date} onChange={(e) => setDate(e.target.value)} aria-label="Day" />
+        <DateBox className={`${inp} max-w-[180px]`} value={date} onValid={setDate} label="Day" />
+        <QuickRanges options={[['Today', () => setDate(karachiDate())], ['Yesterday', () => setDate(daysAgo(1))]]} />
         <label className="flex items-center gap-2 text-xs text-white/60">
           <input type="checkbox" checked={onlyExceptions} onChange={(e) => setOnlyExceptions(e.target.checked)} /> Exceptions only
         </label>
+        <Refresh at={dataUpdatedAt} fetching={isFetching} onClick={() => void refetch()} />
         <span className="ml-auto flex gap-3 text-xs">
           <Link href="/hr/s/attendance" className="text-primary-ink hover:underline">All attendance records</Link>
           <Link href="/hr/s/attendance_correction" className="text-primary-ink hover:underline">Corrections</Link>
@@ -122,7 +154,7 @@ function TodayTab() {
   const [locationId, setLocationId] = useState('')
   const [filter, setFilter] = useState<'all' | TodayStatus | 'out_of_area'>('all')
   const { data: locations = [] } = useQuery({ queryKey: ['locations'], queryFn: () => api.get<LocationLite[]>('/locations') })
-  const { data, error, isLoading } = useQuery({
+  const { data, error, isLoading, dataUpdatedAt, isFetching, refetch } = useQuery({
     queryKey: ['hr-tracking-today', locationId],
     queryFn: () => api.get<TodayData>(`/hr/attendance-tracking/today${locationId ? `?locationId=${encodeURIComponent(locationId)}` : ''}`),
     refetchInterval: 60_000,
@@ -146,12 +178,13 @@ function TodayTab() {
           {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </Select>
         <span className="text-xs text-white/40">{data ? `Today, ${data.date}` : ''}</span>
+        <Refresh at={dataUpdatedAt} fetching={isFetching} onClick={() => void refetch()} />
         <Link href="/hr/reports" className="ml-auto text-xs text-primary-ink hover:underline">Month totals: Attendance &amp; Leaves report</Link>
       </div>
       <div className="flex flex-wrap gap-1 mb-4">
         {chips.map((c) => (
-          <button key={c.key} onClick={() => setFilter(c.key)}
-            className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap ${filter === c.key ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>
+          <button key={c.key} type="button" aria-pressed={filter === c.key} onClick={() => setFilter(c.key)}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap [@media(pointer:coarse)]:min-h-[44px] ${filter === c.key ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>
             {c.label}{c.n != null ? ` · ${c.n}` : ''}
           </button>
         ))}
@@ -192,12 +225,12 @@ function TodayTab() {
 }
 
 function PunchLogTab() {
-  const [from, setFrom] = useState(localDate())
-  const [to, setTo] = useState(localDate())
+  const [from, setFrom] = useState(karachiDate())
+  const [to, setTo] = useState(karachiDate())
   const [outOnly, setOutOnly] = useState(false)
   const [page, setPage] = useState(1)
   const qs = new URLSearchParams({ from, to, page: String(page), pageSize: '100', ...(outOnly && { outOfArea: '1' }) }).toString()
-  const { data, error, isLoading } = useQuery({
+  const { data, error, isLoading, dataUpdatedAt, isFetching, refetch } = useQuery({
     queryKey: ['hr-tracking-punches', qs],
     queryFn: () => api.get<LogData>(`/hr/attendance-tracking/punches?${qs}`),
   })
@@ -205,12 +238,20 @@ function PunchLogTab() {
   return (
     <>
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <input type="date" className={`${inp} max-w-[170px]`} value={from} onChange={(e) => { setFrom(e.target.value); setPage(1) }} aria-label="From" />
-        <input type="date" className={`${inp} max-w-[170px]`} value={to} onChange={(e) => { setTo(e.target.value); setPage(1) }} aria-label="To" />
+        <DateBox className={`${inp} max-w-[170px]`} value={from} label="From" onValid={(v) => { if (v > to) { setFrom(to); setTo(v) } else setFrom(v); setPage(1) }} />
+        <DateBox className={`${inp} max-w-[170px]`} value={to} label="To" onValid={(v) => { if (v < from) { setTo(from); setFrom(v) } else setTo(v); setPage(1) }} />
+        <QuickRanges options={[
+          ['Today', () => { setFrom(karachiDate()); setTo(karachiDate()) }],
+          ['Yesterday', () => { setFrom(daysAgo(1)); setTo(daysAgo(1)) }],
+          ['7 days', () => { setFrom(daysAgo(6)); setTo(karachiDate()) }],
+        ]} onPick={() => setPage(1)} />
         <label className="flex items-center gap-2 text-xs text-white/60">
           <input type="checkbox" checked={outOnly} onChange={(e) => { setOutOnly(e.target.checked); setPage(1) }} /> Out-of-area punches only
         </label>
-        {data && <span className="ml-auto text-xs text-white/40">{data.total} punch{data.total === 1 ? '' : 'es'}</span>}
+        <span className="ml-auto flex items-center gap-3">
+          {data && <span className="text-xs text-white/40">{data.total} punch{data.total === 1 ? '' : 'es'}</span>}
+          <Refresh at={dataUpdatedAt} fetching={isFetching} onClick={() => void refetch()} />
+        </span>
       </div>
       <p className="text-[11px] text-white/40 mb-3">A punch outside the person&rsquo;s work locations is never refused — it is recorded here and flagged for HR.</p>
       {error && <p className="text-sm text-red-700 mb-3">{(error as Error).message}</p>}
@@ -251,19 +292,44 @@ function PunchLogTab() {
 }
 
 const TABS = [['today', 'Today'], ['punches', 'Punch log'], ['day', 'Day & corrections']] as const
+type TabKey = (typeof TABS)[number][0]
 
 export default function HrAttendancePage() {
-  const [tab, setTab] = useState<(typeof TABS)[number][0]>('today')
+  return <Suspense fallback={null}><Attendance /></Suspense>
+}
+
+function Attendance() {
+  const router = useRouter()
+  const path = usePathname()
+  const sp = useSearchParams()
+  // The tab is in ?tab= so reload, Back and a shared link keep it.
+  const tab: TabKey = TABS.find(([k]) => k === sp.get('tab'))?.[0] ?? 'today'
+  const pick = (k: TabKey) => {
+    const q = new URLSearchParams(sp.toString())
+    if (k === 'today') q.delete('tab'); else q.set('tab', k)
+    const qs = q.toString()
+    router.replace(qs ? `${path}?${qs}` : (path ?? ''), { scroll: false })
+  }
+  const onKey = (ev: React.KeyboardEvent, i: number) => {
+    const next = ev.key === 'ArrowRight' ? (i + 1) % TABS.length : ev.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : -1
+    if (next < 0) return
+    ev.preventDefault()
+    pick(TABS[next]![0])
+    ;(ev.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus()
+  }
   return (
     <HrShell title="Attendance tracking" subtitle="Punches come from the time clock (login on a phone, or the outlet tablet with a PIN), measured against each person's work locations. Out-of-area punches are allowed and flagged.">
-      <div className="flex gap-1 mb-5 overflow-x-auto">
-        {TABS.map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap ${tab === k ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>{label}</button>
+      <div role="tablist" aria-label="Attendance views" className="flex gap-1 mb-5 overflow-x-auto">
+        {TABS.map(([k, label], i) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} tabIndex={tab === k ? 0 : -1} onKeyDown={(ev) => onKey(ev, i)} onClick={() => pick(k)}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap [@media(pointer:coarse)]:min-h-[44px] ${tab === k ? 'bg-primary text-primary-on' : 'text-white/50 border border-white/10'}`}>{label}</button>
         ))}
       </div>
-      {tab === 'today' && <TodayTab />}
-      {tab === 'punches' && <PunchLogTab />}
-      {tab === 'day' && <DayTab />}
+      <div role="tabpanel">
+        {tab === 'today' && <TodayTab />}
+        {tab === 'punches' && <PunchLogTab />}
+        {tab === 'day' && <DayTab />}
+      </div>
     </HrShell>
   )
 }

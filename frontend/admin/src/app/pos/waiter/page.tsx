@@ -135,7 +135,7 @@ export default function WaiterPage() {
 
   if (step === 'done') {
     return (
-      <div className="erp-kitchen-dark flex flex-col items-center justify-center h-screen gap-6 bg-kds-bg px-6 text-center">
+      <div className="erp-kitchen-dark flex flex-col items-center justify-center h-screen h-dvh gap-6 bg-kds-bg px-6 text-center">
         <div className="text-6xl">{queuedOffline ? '⏳' : '✅'}</div>
         <h1 className="text-2xl font-black text-kds-text">{queuedOffline ? 'Queued offline' : 'Order Sent!'}</h1>
         <p className="text-kds-subtext">
@@ -182,7 +182,7 @@ export default function WaiterPage() {
   }
 
   return (
-    <div className="erp-kitchen-dark flex flex-col h-screen bg-kds-bg overflow-hidden">
+    <div className="erp-kitchen-dark flex flex-col h-screen h-dvh bg-kds-bg overflow-hidden">
 
       {/* Header */}
       <div className="flex items-center gap-3 h-12 px-4 border-b border-kds-border bg-kds-card shrink-0">

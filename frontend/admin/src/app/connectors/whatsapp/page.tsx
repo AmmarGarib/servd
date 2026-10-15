@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { ApiError } from '../../../lib/api'
 import { connectorsApi, connectorErrorText, fetchHealth, type WhatsappStatus } from '../../../lib/connectorsApi'
+import { PasswordInput } from '../../../components/ui/PasswordInput'
 import { Badge, Banner, Dot, fmtWhen } from '../../../components/connectors/ui'
 
 // Dev → API → WhatsApp connector (moved here from /configuration/whatsapp,
@@ -194,11 +195,13 @@ export default function WhatsappSettingsPage() {
           })}
         </div>
 
-        <div className="s-card p-4 space-y-4">
+        <form className="s-card p-4 space-y-4" autoComplete="off"
+          onSubmit={(e) => { e.preventDefault(); if (!save.isPending && !forbidden) save.mutate() }}>
           <div>
             <label htmlFor="wa-url" className="block text-xs font-semibold text-s-muted mb-1">ENDPOINT</label>
             <input
               id="wa-url"
+              type="url" inputMode="url" name="wa-url" autoComplete="off" autoCapitalize="none" spellCheck={false}
               value={urlValue}
               onChange={(e) => setApiUrl(e.target.value)}
               placeholder="https://whatsapp.garibsons.app/webhook/xxxxxxxx/send"
@@ -212,10 +215,12 @@ export default function WhatsappSettingsPage() {
 
           <div>
             <label htmlFor="wa-key" className="block text-xs font-semibold text-s-muted mb-1">API KEY</label>
-            <input
+            <PasswordInput
               id="wa-key"
-              type="password"
+              name="wa-key"
               autoComplete="new-password"
+              autoCapitalize="none"
+              spellCheck={false}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={data?.apiKeyHint ? `Saved (${data.apiKeyHint}) — leave blank to keep` : 'sk-…'}
@@ -227,7 +232,7 @@ export default function WhatsappSettingsPage() {
           </div>
 
           <button
-            onClick={() => save.mutate()}
+            type="submit"
             disabled={save.isPending || forbidden}
             className="px-4 py-2 rounded bg-secondary text-secondary-on text-sm font-semibold disabled:opacity-50"
           >
@@ -235,7 +240,7 @@ export default function WhatsappSettingsPage() {
           </button>
           {save.isSuccess && <span className="ml-3 text-xs text-s-green">Saved. Takes effect within 30 seconds.</span>}
           {save.isError && <span className="ml-3 text-xs text-s-red">{connectorErrorText(save.error)}</span>}
-        </div>
+        </form>
 
         <div className="s-card p-4 space-y-3">
           <p className="text-sm font-semibold text-s-text">Send a test message</p>

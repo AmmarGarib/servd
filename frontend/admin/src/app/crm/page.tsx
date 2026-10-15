@@ -14,6 +14,7 @@ import {
   PAYMENT_REFERENCE_ERROR_TEXT, type PaymentRefUse,
 } from '../../components/finance/PaymentReceivedFields'
 import { Select } from '@/components/ui/Select'
+import { Modal } from '@/components/ui/Modal'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -180,11 +181,11 @@ export default function CRMPage() {
 
       {/* Block / unblock modal — raises or lifts this company's ban */}
       {banModal && (
-        <div className="fixed inset-0 bg-secondary/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full space-y-4">
-            <p className="font-bold text-s-text">
-              {banModal.ban ? 'Unblock customer' : 'Block customer'}
-            </p>
+        <Modal title={banModal.ban ? 'Unblock customer' : 'Block customer'}
+          dirty={banReason.trim().length > 0}
+          onClose={() => { setBanModal(null); setBanReason(''); setBanError(null) }}>
+          <form className="space-y-4"
+            onSubmit={(e) => { e.preventDefault(); if (!toggleBan.isPending && banReason.trim().length >= 3) toggleBan.mutate({ id: banModal.id, ban: banModal.ban, reason: banReason.trim() }) }}>
             <p className="text-sm text-s-muted">{banModal.name}</p>
             <p className="text-xs text-s-muted">
               {banModal.ban
@@ -193,37 +194,38 @@ export default function CRMPage() {
                   ? 'Already blocked across servd by another servd kitchen (only that kitchen can lift it). Blocking here adds this company\'s own ban, which stays if theirs is lifted.'
                   : "They won't be able to order or book at any servd brand, and won't receive campaigns."}
             </p>
-            <input value={banReason} onChange={(e) => setBanReason(e.target.value)}
+            <input value={banReason} onChange={(e) => setBanReason(e.target.value)} autoFocus name="ban-reason" autoComplete="off"
+              aria-label={banModal.ban ? 'Why unblock? (required)' : 'Reason (required)'}
               placeholder={banModal.ban ? 'Why unblock? (required)' : 'Reason (required)'} className={inp} />
-            {banError && <p className="text-xs text-s-red">{banError}</p>}
+            {banError && <p role="alert" className="text-xs text-s-red">{banError}</p>}
             <div className="flex gap-3">
               <button
-                onClick={() => toggleBan.mutate({ id: banModal.id, ban: banModal.ban, reason: banReason.trim() })}
+                type="submit"
                 disabled={toggleBan.isPending || banReason.trim().length < 3}
                 className={`flex-1 rounded-xl text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50 ${
                   banModal.ban ? 'bg-primary text-primary-on' : 'bg-s-red text-[#fff]'
                 }`}>
                 {toggleBan.isPending ? '…' : banModal.ban ? 'Unblock' : 'Block'}
               </button>
-              <button onClick={() => { setBanModal(null); setBanReason(''); setBanError(null) }}
+              <button type="button" onClick={() => { setBanModal(null); setBanReason(''); setBanError(null) }}
                 className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-border-strong">
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
       {/* Wallet top-up modal */}
       {walletModal && (
-        <div className="fixed inset-0 bg-secondary/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-s-surface border border-s-border rounded-2xl p-6 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-4">
-            <p className="font-bold text-s-text">Wallet top-up</p>
+        <Modal title="Wallet top-up" onClose={resetWallet} dirty={walletAmount.trim() !== '' || walletRef.trim() !== ''}>
+          <form className="space-y-4"
+            onSubmit={(e) => { e.preventDefault(); if (walletAmountOk && walletPaymentOk && !topupWallet.isPending) topupWallet.mutate({ id: walletModal.id, amount: Math.round(parseFloat(walletAmount) * 100) }) }}>
             <p className="text-sm text-s-muted">{walletModal.name}</p>
             <div>
-              <label className="text-xs text-s-muted mb-1 block">Amount (PKR)</label>
-              <input type="number" min="1" value={walletAmount} onChange={(e) => setWalletAmount(e.target.value)}
-                placeholder="500" className={inp} />
+              <label htmlFor="wallet-amount" className="text-xs text-s-muted mb-1 block">Amount (PKR)</label>
+              <input id="wallet-amount" type="number" min="1" inputMode="decimal" value={walletAmount} onChange={(e) => setWalletAmount(e.target.value)}
+                autoFocus placeholder="500" className={inp} />
             </div>
             <div>
               <label htmlFor="wallet-kind" className="text-xs text-s-muted mb-1 block">What is it?</label>
@@ -257,21 +259,21 @@ export default function CRMPage() {
                 labelClassName="text-xs text-s-muted mb-1 block"
               />
             )}
-            {walletError && <p className="text-xs text-s-red">{walletError}</p>}
+            {walletError && <p role="alert" className="text-xs text-s-red">{walletError}</p>}
             <div className="flex gap-3">
               <button
-                onClick={() => topupWallet.mutate({ id: walletModal.id, amount: Math.round(parseFloat(walletAmount) * 100) })}
+                type="submit"
                 disabled={!walletAmountOk || !walletPaymentOk || topupWallet.isPending}
                 className="flex-1 rounded-xl bg-primary text-primary-on text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50">
                 {topupWallet.isPending ? 'Crediting…' : 'Credit wallet'}
               </button>
-              <button onClick={resetWallet}
+              <button type="button" onClick={resetWallet}
                 className="flex-1 rounded-xl border border-s-border text-s-muted text-sm py-2 hover:border-s-border-strong">
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
       <div className="flex h-[calc(100vh-81px)]">
@@ -282,6 +284,7 @@ export default function CRMPage() {
               value={search}
               onChange={(e) => { setSearch(e.target.value); setSelectedId(null) }}
               placeholder="Search name, phone, email…"
+              type="search" name="customer-search" aria-label="Search customers" autoComplete="off" autoCapitalize="none" spellCheck={false}
               className="w-full rounded-xl bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none" />
           </div>
 

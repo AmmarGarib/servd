@@ -15,6 +15,8 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { MoneyInput } from '../ui/MoneyInput'
+import { NumberField } from '../ui/NumberField'
+import { useConfirm } from '../ui/ConfirmDialog'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
 import {
   PaymentReceivedFields, ReferenceUsedBeforeNotice, receiptFieldsValid, isBankMethod, type PaymentRefUse,
@@ -24,6 +26,16 @@ import { canOpenPath } from '../../lib/moduleCatalog'
 import { FA_BASE, L, Modal, ErrorLine, Notice, errorWords, inp, btnPrimary, btnGhost, money, fmtDay, fmtLife, todayIso, useFaCapabilities } from './shared'
 import type { CapexLookups, CapexSupplier, Line, Orphan, Payment, Project } from './capexTypes'
 import { Select } from '@/components/ui/Select'
+
+/** Digits-only text state → NumberField value and back (the stored string stays what the API took before). */
+const asNum = (v: string): number | null => (v === '' ? null : Number(v))
+const fromNum = (n: number | null): string => (n == null ? '' : String(n))
+/** Sensible bounds for a business date (2000-01-01 to a year ahead). */
+function dateBounds(): { min: string; max: string } {
+  const [y, m, d] = todayIso().split('-').map(Number) as [number, number, number]
+  return { min: '2000-01-01', max: new Date(Date.UTC(y + 1, m - 1, d)).toISOString().slice(0, 10) }
+}
+function focusId(id: string) { const el = document.getElementById(id); if (el) { el.focus(); el.scrollIntoView({ block: 'nearest' }) } }
 
 // ─── Words ──────────────────────────────────────────────────────────────────
 
@@ -301,10 +313,26 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
   const shared = cls?.pooled ? !poolConcept : !brandId
   const hasLocation = !!locationId || !!project.locationId
   const sharedNeedsLocation = !!cls && !cls.pooled && shared && !hasLocation
-  const valid = !!cls && !!inService && (!cls.pooled || (!!typeKey && hasLocation)) && !sharedNeedsLocation && !taxMissingAuthority && (!life || Number(life) >= 1)
+  const bounds = dateBounds()
+  const problems: Array<[string, string]> = []
+  if (!cls) problems.push(['cap-class', 'Pick the asset class.'])
+  if (!inService || inService < bounds.min || inService > bounds.max) problems.push(['cap-service', `Pick the in-service date (${bounds.min} to ${bounds.max}).`])
+  if (cls?.pooled && !typeKey) problems.push(['cap-type', 'Pick the smallwares type.'])
+  if (cls?.pooled && !hasLocation) problems.push(['cap-outlet', 'Pick the outlet the smallwares are at.'])
+  if (sharedNeedsLocation) problems.push(['cap-outlet', 'Shared equipment needs its location. Pick the outlet it is at, or give it a brand.'])
+  if (taxMissingAuthority) problems.push(['cap-tax', 'Set which authority charged the sales tax on the line before capitalising it.'])
+  if (life && Number(life) < 1) problems.push(['cap-life', 'Life must be at least 1 month.'])
+  const [capProblem, setCapProblem] = useState<string | null>(null)
+  const submitCap = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (send.isPending) return
+    if (problems[0]) { setCapProblem(problems[0][1]); focusId(problems[0][0]); return }
+    setCapProblem(null)
+    send.mutate()
+  }
 
   return (
-    <div className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.05)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.2)' }}>
+    <form onSubmit={submitCap} noValidate className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.05)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.2)' }}>
       <p className="text-sm font-black text-white/85">Prepare for the register</p>
       <p className="text-xs text-white/60 mt-0.5">
         Delivered. Cost {money(total)}, {money(advanced)} advanced so far{total > advanced ? `, ${money(total - advanced)} still owed to the supplier` : ''}.{' '}
@@ -313,18 +341,18 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
         <L t="Class">
-          <Select className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife('') }}>
+          <Select id="cap-class" className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife('') }}>
             {classes.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </Select>
         </L>
         <L t="Name on the register"><input className={inp} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></L>
-        <L t="In service from"><input type="date" className={inp} value={inService} onChange={(e) => setInService(e.target.value)} /></L>
+        <L t="In service from"><input id="cap-service" type="date" min={bounds.min} max={bounds.max} className={inp} value={inService} onChange={(e) => setInService(e.target.value)} /></L>
         <L t="Life (months)" hint={cls?.depreciable ? `Blank uses the class default: ${fmtLife(cls.defaultLifeMonths)}.` : 'This class is not depreciated.'}>
-          <input type="number" min={1} max={600} className={inp} value={life} disabled={!cls?.depreciable} onChange={(e) => setLife(e.target.value)} placeholder={cls?.defaultLifeMonths ? String(cls.defaultLifeMonths) : ''} />
+          <NumberField id="cap-life" min={1} max={600} className={inp} value={asNum(life)} disabled={!cls?.depreciable} onValueChange={(n) => setLife(fromNum(n))} placeholder={cls?.defaultLifeMonths ? String(cls.defaultLifeMonths) : ''} />
         </L>
         <L t="Salvage value (PKR)"><MoneyInput value={salvage} onChange={setSalvage} className={inp} /></L>
         <L t="Sales tax claimed (PKR)" hint={line.inputTaxAuthority ? `Charged by ${line.inputTaxAuthority.toUpperCase()}.` : undefined}>
-          <MoneyInput value={inputTax} onChange={setInputTax} className={inp} />
+          <MoneyInput id="cap-tax" value={inputTax} onChange={setInputTax} className={inp} />
         </L>
         {cls && !cls.pooled && (
           <L t="Brand">
@@ -336,7 +364,7 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
           </L>
         )}
         <L t="Asset location (outlet)" hint={sharedNeedsLocation ? 'Shared equipment needs its location' : undefined}>
-          <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+          <Select id="cap-outlet" className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
             {project.locationId
               ? <option value="">The project&rsquo;s outlet</option>
               : <option value="" disabled={shared || !!cls?.pooled}>{shared || cls?.pooled ? 'Pick the outlet it is at' : 'No outlet'}</option>}
@@ -346,7 +374,7 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
         {cls?.pooled && (
           <>
             <L t="Smallwares type">
-              <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
+              <Select id="cap-type" className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
                 <option value="">Pick a type</option>
                 {project.lookups.smallwareTypes.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
               </Select>
@@ -361,7 +389,7 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
         )}
         {cls?.key === 'leasehold' && (
           <L t="Lease ends (optional)" hint="Depreciation stops at the lease end if that comes before the life.">
-            <input type="date" className={inp} value={leaseEnds} onChange={(e) => setLeaseEnds(e.target.value)} />
+            <input type="date" min={bounds.min} className={inp} value={leaseEnds} onChange={(e) => setLeaseEnds(e.target.value)} />
           </L>
         )}
         <div className="sm:col-span-2"><L t="Note for the CEO (optional)"><input className={inp} value={note} onChange={(e) => setNote(e.target.value)} /></L></div>
@@ -379,11 +407,12 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
       {taxMissingAuthority && <p className="text-xs text-s-red mt-2">Set which authority charged the sales tax on the line before capitalising it.</p>}
       {sharedNeedsLocation && <p className="text-xs mt-2" style={{ color: 'var(--erp-warning)' }}>Shared equipment needs its location. Pick the outlet it is at, or give it a brand.</p>}
 
+      {capProblem && !taxMissingAuthority && !sharedNeedsLocation && <p role="alert" className="text-xs font-bold text-s-red mt-2">{capProblem}</p>}
       <ErrorLine error={send.error} />
-      <button onClick={() => send.mutate()} disabled={send.isPending || !valid} className={`${btnPrimary} mt-3`}>
+      <button type="submit" disabled={send.isPending} className={`${btnPrimary} mt-3`}>
         {send.isPending ? 'Sending…' : caps.canApprove ? 'Capitalise now' : 'Send to CEO'}
       </button>
-    </div>
+    </form>
   )
 }
 
@@ -457,16 +486,35 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
     onSuccess: onDone,
   })
 
-  const valid = !!L0 && !!locationId && item.trim().length > 0 && !!cls && (!cls.pooled || !!typeKey) && qty >= 1 && unitCost > 0 && !!paidAt
-    && (tax === 0 || !!authority) && tax < total && (!override || (overrideReason.trim().length >= 5 && overrideCents < total))
-    && (banksHere.length <= 1 || !!bankId)
+  const bounds = dateBounds()
+  const problems: Array<[string, string]> = []
+  if (!locationId) problems.push(['qb-outlet', 'Pick the outlet it is for.'])
+  if (!item.trim()) problems.push(['qb-item', 'Say what you bought.'])
+  if (!cls) problems.push(['qb-class', 'Pick the class.'])
+  if (cls?.pooled && !typeKey) problems.push(['qb-type', 'Pick the smallwares type.'])
+  if (qty < 1) problems.push(['qb-qty', 'Quantity must be 1 or more.'])
+  if (unitCost <= 0) problems.push(['qb-cost', 'Enter the unit cost.'])
+  if (!paidAt || paidAt < bounds.min || paidAt > todayIso()) problems.push(['qb-paid', 'Pick the day it was paid (not in the future).'])
+  if (banksHere.length > 1 && !bankId) problems.push(['quickbuy-bank', 'Pick the bank it was paid from.'])
+  if (tax > 0 && !authority) problems.push(['qb-auth', 'Pick the authority that charged the sales tax.'])
+  if (tax > 0 && tax >= total) problems.push(['qb-tax', 'The sales tax must be less than the total.'])
+  if (override && !(overrideReason.trim().length >= 5 && overrideCents < total)) problems.push(['qb-why', 'Your own withholding figure needs a reason (5 characters or more) and must be below the total.'])
+  const [problem, setProblem] = useState<string | null>(null)
+  const submitBuy = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (send.isPending) return
+    if (!L0) return
+    if (problems[0]) { setProblem(problems[0][1]); focusId(problems[0][0]); return }
+    setProblem(null)
+    send.mutate()
+  }
 
   return (
-    <Modal title="Buy equipment (Quick buy)" onClose={onClose} wide>
+    <Modal title="Buy equipment (Quick buy)" onClose={onClose} wide dirty={!send.isPending && (!!item.trim() || unitCost > 0 || !!ref.trim() || !!notes.trim())}>
       {lookups.isLoading && <p className="text-sm text-white/45">Loading…</p>}
       {lookups.error && <Notice tone="bad">{errorWords(lookups.error)}</Notice>}
       {L0 && (
-        <form onSubmit={(e) => { e.preventDefault(); send.mutate() }} className="space-y-3">
+        <form onSubmit={submitBuy} noValidate className="space-y-3">
           <p className="text-xs text-white/55">
             Records a purchase made today: it is paid from a bank account, and the equipment is prepared for the fixed-asset register in the same step.
             Equipment bought with cash goes through a cash request and its CapEx line instead.
@@ -474,20 +522,20 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <L t="Outlet it is for">
-              <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+              <Select id="qb-outlet" className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
                 <option value="">Pick an outlet</option>
                 {L0.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </Select>
             </L>
-            <L t="What did you buy"><input className={inp} value={item} onChange={(e) => setItem(e.target.value)} maxLength={200} placeholder="Rational combi oven" /></L>
+            <L t="What did you buy"><input id="qb-item" className={inp} value={item} onChange={(e) => setItem(e.target.value)} maxLength={200} placeholder="Rational combi oven" /></L>
             <L t="Class">
-              <Select className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife(''); setTypeKey('') }}>
+              <Select id="qb-class" className={inp} value={classKey} onChange={(e) => { setClassKey(e.target.value); setLife(''); setTypeKey('') }}>
                 {L0.assetClasses.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
               </Select>
             </L>
             {cls?.pooled ? (
               <L t="Smallwares type">
-                <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
+                <Select id="qb-type" className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
                   <option value="">Pick a type</option>
                   {L0.lookups.smallwareTypes.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                 </Select>
@@ -501,15 +549,15 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
                 </Select>
               </L>
             )}
-            <L t="Quantity"><input type="number" min={1} max={100000} className={inp} value={quantity} onChange={(e) => setQuantity(e.target.value)} /></L>
-            <L t="Unit cost, sales tax included (PKR)"><MoneyInput value={unitCost} onChange={setUnitCost} className={inp} /></L>
+            <L t="Quantity"><NumberField id="qb-qty" min={1} max={100000} className={inp} value={asNum(quantity)} onValueChange={(n) => setQuantity(fromNum(n))} /></L>
+            <L t="Unit cost, sales tax included (PKR)"><MoneyInput id="qb-cost" value={unitCost} onChange={setUnitCost} className={inp} /></L>
             <L t="Supplier">
               <Select className={inp} value={supplierId} onChange={(e) => { setSupplierId(e.target.value); const s = L0.lookups.suppliers.find((x) => x.id === e.target.value); if (s?.defaultTaxAuthority && !authority) setAuthority(s.defaultTaxAuthority) }}>
                 <option value="">No supplier on file</option>
                 {L0.lookups.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </Select>
             </L>
-            <L t="Paid on"><input type="date" className={inp} value={paidAt} max={todayIso()} onChange={(e) => setPaidAt(e.target.value)} /></L>
+            <L t="Paid on"><input id="qb-paid" type="date" min={bounds.min} className={inp} value={paidAt} max={todayIso()} onChange={(e) => setPaidAt(e.target.value)} /></L>
             <BankAccountSelect tenantId={L0.tenantId} value={bankId} onChange={setBankId} id="quickbuy-bank" label="Paid from (bank)" className={inp} />
             <L t="Payment reference"><input className={inp} value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Cheque or transfer number" /></L>
           </div>
@@ -517,9 +565,9 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
           {!cls?.pooled && <p className="text-[11px] text-white/45">Equipment is booked to the outlet and shared across brands. Smallwares can be given to a brand.</p>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <L t="Sales tax inside the price (PKR)"><MoneyInput value={tax} onChange={setTax} className={inp} /></L>
+            <L t="Sales tax inside the price (PKR)"><MoneyInput id="qb-tax" value={tax} onChange={setTax} className={inp} /></L>
             <L t="Charged by">
-              <Select className={inp} value={authority} onChange={(e) => setAuthority(e.target.value)} disabled={tax === 0}>
+              <Select id="qb-auth" className={inp} value={authority} onChange={(e) => setAuthority(e.target.value)} disabled={tax === 0}>
                 <option value="">{tax === 0 ? 'Not needed' : 'Pick the authority'}</option>
                 {L0.taxAuthorities.map((a) => <option key={a} value={a}>{AUTHORITY_LABEL[a] ?? a.toUpperCase()}</option>)}
               </Select>
@@ -538,7 +586,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
           {override && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <L t="Income tax withheld (PKR)"><MoneyInput value={overrideCents} onChange={setOverrideCents} className={inp} /></L>
-              <L t="Why (at least 5 characters)"><input className={inp} value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="Certificate not on file yet" /></L>
+              <L t="Why (at least 5 characters)"><input id="qb-why" className={inp} value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="Certificate not on file yet" /></L>
             </div>
           )}
           <ExemptionLine supplier={supplier} />
@@ -548,17 +596,18 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
             <summary className="text-sm font-bold text-white/70 cursor-pointer">More details (life, salvage value, warranty, notes)</summary>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
               <L t="Life (months)" hint={cls?.depreciable ? `Blank uses the class default: ${fmtLife(cls.defaultLifeMonths)}.` : 'This class is not depreciated.'}>
-                <input type="number" min={1} max={600} className={inp} value={life} disabled={!cls?.depreciable} onChange={(e) => setLife(e.target.value)} />
+                <NumberField min={1} max={600} className={inp} value={asNum(life)} disabled={!cls?.depreciable} onValueChange={(n) => setLife(fromNum(n))} />
               </L>
               <L t="Salvage value (PKR)"><MoneyInput value={salvage} onChange={setSalvage} className={inp} /></L>
-              <L t="Warranty (months)"><input type="number" min={0} max={600} className={inp} value={warranty} onChange={(e) => setWarranty(e.target.value)} /></L>
+              <L t="Warranty (months)"><NumberField min={0} max={600} className={inp} value={asNum(warranty)} onValueChange={(n) => setWarranty(fromNum(n))} /></L>
               <L t="Notes"><input className={inp} value={notes} onChange={(e) => setNotes(e.target.value)} /></L>
             </div>
           </details>
 
+          {problem && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
           <ErrorLine error={send.error} />
           <div className="flex flex-wrap gap-2 pt-1">
-            <button type="submit" disabled={send.isPending || !valid} className={btnPrimary}>{send.isPending ? 'Recording…' : `Pay ${money(total - (override ? overrideCents : wht.whtCents))} and prepare for the register`}</button>
+            <button type="submit" disabled={send.isPending} className={btnPrimary}>{send.isPending ? 'Recording…' : `Pay ${money(total - (override ? overrideCents : wht.whtCents))} and prepare for the register`}</button>
             <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
           </div>
         </form>
@@ -607,19 +656,34 @@ export function DepositReturnModal({ payment, line, project, onClose, onDone }: 
     onSuccess: (r) => { if (r?.referenceUsedBefore?.length) setReused(r.referenceUsedBefore); else onDone() },
   })
   const total = returned + kept
-  const valid = total > 0 && total <= held && (kept === 0 || reason.trim().length >= 5)
-    && (returned === 0 || receiptFieldsValid({ method, reference }))
+  const bounds = dateBounds()
+  const [problem, setProblem] = useState<string | null>(null)
+  const submitReturn = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (send.isPending) return
+    const bad: [string, string] | null =
+      total <= 0 ? ['dr-returned', 'Enter what came back, or what the landlord kept.']
+      : total > held ? ['dr-returned', `Returned plus kept cannot be more than the ${money(held)} held.`]
+      : kept > 0 && reason.trim().length < 5 ? ['dr-why', 'Say why the landlord kept it (5 characters or more).']
+      : !receivedAt || receivedAt < bounds.min || receivedAt > todayIso() ? ['dr-date', 'Pick the day the money came back (not in the future).']
+      : returned > 0 && !receiptFieldsValid({ method, reference }) ? ['deposit-return-ref', 'Enter the payment reference # (the receipt, slip, transfer or cheque number).']
+      : null
+    if (bad) { setProblem(bad[1]); focusId(bad[0]); return }
+    setProblem(null)
+    send.mutate()
+  }
 
   return (
-    <Modal title={`Deposit back: ${line.item}`} onClose={reused ? onDone : onClose}>
-      <form onSubmit={(e) => { e.preventDefault(); send.mutate() }} className="space-y-3">
+    <Modal title={`Deposit back: ${line.item}`} onClose={reused ? onDone : onClose}
+      dirty={!reused && !send.isPending && (returned !== payment.depositReturnedCents || kept !== payment.depositForfeitedCents || !!reason.trim() || !!reference.trim())}>
+      <form onSubmit={submitReturn} noValidate className="space-y-3">
         <p className="text-sm text-white/65">The deposit held is <strong className="text-white/90">{money(held)}</strong>. Enter the totals; saving again corrects them.</p>
         <div className="grid grid-cols-2 gap-3">
-          <L t="Returned to us (PKR)"><MoneyInput value={returned} onChange={setReturned} className={inp} /></L>
+          <L t="Returned to us (PKR)"><MoneyInput id="dr-returned" value={returned} onChange={setReturned} className={inp} /></L>
           <L t="Kept by the landlord (PKR)"><MoneyInput value={kept} onChange={setKept} className={inp} /></L>
         </div>
-        {kept > 0 && <L t="Why the landlord kept it (at least 5 characters)"><input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Damage to the counter" /></L>}
-        <L t="Money came back on"><input type="date" className={inp} value={receivedAt} max={todayIso()} onChange={(e) => setReceivedAt(e.target.value)} /></L>
+        {kept > 0 && <L t="Why the landlord kept it (at least 5 characters)"><input id="dr-why" className={inp} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Damage to the counter" /></L>}
+        <L t="Money came back on"><input id="dr-date" type="date" min={bounds.min} className={inp} value={receivedAt} max={todayIso()} onChange={(e) => setReceivedAt(e.target.value)} /></L>
         {returned > 0 && (
           <PaymentReceivedFields
             tenantId={project.tenantId}
@@ -639,6 +703,7 @@ export function DepositReturnModal({ payment, line, project, onClose, onDone }: 
           />
         )}
         {total > held && <p className="text-xs text-s-red">Returned plus kept cannot be more than the {money(held)} held.</p>}
+        {problem && total <= held && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
         <ErrorLine error={send.error} />
         {reused ? (
           <div className="space-y-3 pt-1">
@@ -647,7 +712,7 @@ export function DepositReturnModal({ payment, line, project, onClose, onDone }: 
           </div>
         ) : (
           <div className="flex gap-2 pt-1">
-            <button type="submit" disabled={send.isPending || !valid} className={btnPrimary}>{send.isPending ? 'Saving…' : 'Save'}</button>
+            <button type="submit" disabled={send.isPending} className={btnPrimary}>{send.isPending ? 'Saving…' : 'Save'}</button>
             <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
           </div>
         )}
@@ -678,8 +743,8 @@ export function ReclassDepositModal({ payment, line, project, onClose, onDone }:
       {dry.data && <p className="text-sm text-white/85 mt-3"><strong>{money(dry.data.amountCents)}</strong> would move from prepaid rent to security deposits. Nothing has been posted yet.</p>}
       <ErrorLine error={dry.error ?? real.error} />
       <div className="flex gap-2 mt-4">
-        <button onClick={() => real.mutate()} disabled={!dry.data || real.isPending} className={btnPrimary}>{real.isPending ? 'Moving…' : 'Move it'}</button>
-        <button onClick={onClose} className={btnGhost}>Cancel</button>
+        <button type="button" onClick={() => real.mutate()} disabled={!dry.data || real.isPending} className={btnPrimary}>{real.isPending ? 'Moving…' : 'Move it'}</button>
+        <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
       </div>
     </Modal>
   )
@@ -691,6 +756,7 @@ export function ReclassDepositModal({ payment, line, project, onClose, onDone }:
 export function OrphanBanner() {
   const qc = useQueryClient()
   const caps = useFaCapabilities()
+  const confirm = useConfirm()
   const q = useQuery<{ orphans: Orphan[] }>({
     queryKey: ['capex-orphans'],
     queryFn: () => api.get('/finance/capex/orphans'),
@@ -713,7 +779,7 @@ export function OrphanBanner() {
             <span className="text-white/80">{money(o.amountCents)} · {o.reason === 'project_deleted' ? 'its project was deleted' : 'the instalment was deleted'}</span>
             {caps.canApprove && (
               <button className={btnGhost} disabled={reverse.isPending}
-                onClick={() => { if (window.confirm(`Reverse this ${money(o.amountCents)} entry?`)) reverse.mutate(o) }}>Reverse</button>
+                onClick={async () => { if (await confirm({ title: `Reverse this ${money(o.amountCents)} entry?`, body: o.reason === 'project_deleted' ? 'Its project was deleted after it was posted. The entry is reversed in the books.' : 'The instalment was deleted after it was posted. The entry is reversed in the books.', confirmLabel: 'Reverse entry', danger: true })) reverse.mutate(o) }}>Reverse</button>
             )}
           </li>
         ))}
