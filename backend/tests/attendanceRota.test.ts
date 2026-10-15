@@ -307,7 +307,8 @@ describe('/scheduling is the generated week with exceptions', () => {
     // Cook: Tue, Thu, Fri, Sat 8 h + Wed evening (swap) 8 h = 40 h at Rs 250/h.
     const cost = await call('boss', 'GET', `/scheduling/labor-cost?conceptId=${conceptId}&weekStart=2026-09-21`)
     const cook = (cost.json().byEmployee as Array<{ employeeId: string; hours: number; rateCents: number; totalCents: number }>).find((x) => x.employeeId === emps['Cook'])
-    expect(cook).toMatchObject({ hours: 40, rateCents: RS(250), totalCents: RS(10000) })
+    // Pay basis = the actual days of the month (owner HR-1): September has 30, so 52,000 / 30 / 8.
+    expect(cook).toMatchObject({ hours: 40, rateCents: Math.round(RS(52000) / 30 / 8), totalCents: Math.round(40 * RS(52000) / 30 / 8) })
     expect((await call('cook', 'GET', `/scheduling/labor-cost?conceptId=${conceptId}&weekStart=2026-09-21`)).statusCode).toBe(403)
   })
 

@@ -263,7 +263,7 @@ describe('one promo evaluation, percentage on food only', () => {
 
   it('applies the per-customer limit when a customer is known', async () => {
     const c = await mkCustomer('promo-user')
-    const promo = await prisma.promoCode.findUniqueOrThrow({ where: { tenantId_code: { tenantId: tenantA, code } } })
+    const promo = await prisma.promoCode.findFirstOrThrow({ where: { tenantId: tenantA, code, deletedAt: null } })
     const o = await mkOrder(conceptA, c.id, 100_000)
     await prisma.promoCodeUsage.create({ data: { promoCodeId: promo.id, customerId: c.id, orderId: o.id, discountCents: 10_000 } })
     const r = await evaluatePromo({ code, tenantId: tenantA, conceptId: conceptA, foodSubtotalCents: 100_000, customerId: c.id })

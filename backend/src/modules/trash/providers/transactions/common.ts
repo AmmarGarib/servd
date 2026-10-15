@@ -43,7 +43,7 @@ export function sortRows(rows: TrashRow[], limit: number): TrashRow[] {
     .slice(0, limit)
 }
 
-export const n = (v: unknown): number => (typeof v === 'bigint' ? Number(v) : typeof v === 'number' ? v : Number(v ?? 0))
+export const n = (v: unknown): number => (typeof v === 'number' ? v : Number(v ?? 0))
 
 export function pkr(cents: unknown): string {
   return `PKR ${(n(cents) / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`

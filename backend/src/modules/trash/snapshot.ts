@@ -29,12 +29,12 @@ function modelOrThrow(name: string) {
   return m
 }
 
-/** JSON-safe copy of a row (Date → ISO, bigint → number, Decimal → string). */
+/** JSON-safe copy of a row (Date → ISO, Decimal → string). BIGINT money already
+ *  reaches here as a number (lib/money.ts moneyAsNumbers on every client). */
 function toJsonRow(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(row)) {
     if (v instanceof Date) out[k] = v.toISOString()
-    else if (typeof v === 'bigint') out[k] = Number(v)
     else if (v instanceof Prisma.Decimal) out[k] = v.toString()
     else if (v && typeof v === 'object' && (v as Buffer) instanceof Uint8Array) out[k] = { __bytes: Buffer.from(v as Uint8Array).toString('base64') }
     else out[k] = v

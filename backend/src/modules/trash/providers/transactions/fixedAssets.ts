@@ -96,7 +96,6 @@ const fixedAssetRequest: TrashProvider = {
     const figures = { ...((e.payload ?? {}) as Record<string, unknown>) }
     // Never: the sale's payment reference #, the CEO's decision, the date.
     delete figures.reference
-    for (const k of Object.keys(figures)) if (typeof figures[k] === 'bigint') figures[k] = n(figures[k])
     return prefill(`${BASE}/${e.assetId}`, {
       payload: { kind: e.kind, assetId: e.assetId, reason: e.reason, payload: figures },
     })
