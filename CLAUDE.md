@@ -1075,6 +1075,25 @@ job right the first time:
 
 Verification of money/tax/auth code is never delegated below Opus.
 
+**Be conservative with tokens (owner, 2026-10-15).** Sub-agent work is
+token-heavy, so:
+
+- Default every worker to the LOWEST tier that can do it: haiku for
+  look-ups, checks and mechanical edits; sonnet for ordinary building. Opus
+  workers only for money, tax, ledger, auth/permissions, company separation
+  and migrations.
+- Every multi-agent task has ONE Opus agent as its CEO, above the
+  lower-tier workers: it plans and splits the work, gives each worker a tight
+  brief (files, what to change, how to check), reviews what comes back and
+  sends wrong work back. The CEO does not redo workers' work itself.
+- Gates scale with risk: one Opus gate (medium effort; high only for the
+  final money/tax/auth gate) on critical streams; a sonnet or haiku check, or
+  the orchestrator's own spot-check, on UI, docs and copy.
+- Brief workers with paths and the exact change, not "read everything";
+  don't fan out more agents than the work genuinely splits into; don't
+  re-run a full sweep when a targeted check will do; reuse a finished agent
+  (SendMessage) instead of briefing a new one.
+
 ### Parallel agents
 
 - Fan out independent work — per-module, per-page, per-brand — as
