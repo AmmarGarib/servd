@@ -41,3 +41,19 @@ export function startOfMonthPktIso(): string {
   const pkt = new Date(now.getTime() + 5 * 3600_000)
   return `${pkt.toISOString().slice(0, 7)}-01`
 }
+
+/** ISO instant -> `YYYY-MM-DDTHH:mm` Karachi wall time (for datetime-local inputs). */
+export function isoToPktLocal(iso: string): string {
+  return new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(0, 16)
+}
+
+/** `YYYY-MM-DDTHH:mm` read as Karachi wall time -> ISO instant (UTC). */
+export function pktLocalToIso(local: string): string {
+  return new Date(`${local.length === 16 ? `${local}:00` : local}+05:00`).toISOString()
+}
+
+/** Local calendar day of a Date (browser's Y/M/D) as YYYY-MM-DD — never via toISOString. */
+export function localYmd(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}

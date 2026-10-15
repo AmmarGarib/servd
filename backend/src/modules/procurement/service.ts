@@ -37,6 +37,7 @@ import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
 import { assertExpenseCode } from '../accounting/expenseCategories.js'
 import { isAuthorityKey, type AuthorityKey } from '../accounting/taxAuthorities.js'
 import { whtSectionOrNull, type WhtSection } from '../../lib/withholding.js'
+import { fmtPktDate } from '../accounting/dates.js'
 
 // ─── Amount ceilings (BOOKS-06) ──────────────────────────────────────────────
 //
@@ -1142,7 +1143,20 @@ export interface AgingReport {
   unassigned: { bySupplier: AgingRow[]; total: AgingTotals }
 }
 
-function agingBucket(daysPastDue: number): AgingBucketKey {
+/**
+ * Whole Karachi calendar days a bill is past due at `asOf`. dueDate is stored
+ * as UTC midnight of its day (a YYYY-MM-DD from the form); asOf is an instant.
+ * Both are read as Karachi dates (fmtPktDate: UTC midnight stays the same day,
+ * and a PKT-midnight instant reads as its own day too), so a bill due
+ * yesterday is 1 day overdue from 00:00 PKT, not from 05:00 PKT.
+ */
+export function apDaysPastDue(dueDate: Date, asOf: Date): number {
+  const dueDay = Date.parse(`${fmtPktDate(dueDate)}T00:00:00Z`)
+  const asOfDay = Date.parse(`${fmtPktDate(asOf)}T00:00:00Z`)
+  return Math.round((asOfDay - dueDay) / 86_400_000)
+}
+
+export function agingBucket(daysPastDue: number): AgingBucketKey {
   if (daysPastDue <= 0) return 'current'
   if (daysPastDue <= 30) return '1_30'
   if (daysPastDue <= 60) return '31_60'
@@ -1195,7 +1209,7 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
       const due = billDueCents(b)
       if (due < 0) { row.creditsCents += -due; continue }   // paid beyond what it owed
       if (due === 0) continue
-      row[agingBucket(Math.floor((asOf.getTime() - b.dueDate.getTime()) / 86_400_000))] += due
+      row[agingBucket(apDaysPastDue(b.dueDate, asOf))] += due
       row.bills += 1
     }
     for (const p of s.payments) row.creditsCents += Math.max(0, toCents(p.amountCents) - toCents(p.appliedCents))

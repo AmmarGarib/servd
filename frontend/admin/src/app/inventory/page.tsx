@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError } from '../../lib/api'
+import { todayPktIso } from '../../lib/money'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
@@ -130,7 +131,7 @@ function downloadStockCsv(items: InventoryItem[]) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `inventory-${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = `inventory-${todayPktIso()}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }

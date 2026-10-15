@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { isoToPktLocal, pktLocalToIso, localYmd } from '@/lib/money'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ function fmtDate(d: Date) {
 }
 
 function toInputDate(d: Date) {
-  return d.toISOString().slice(0, 10)
+  return localYmd(d) // local Y/M/D; toISOString() would give the previous UTC day in PKT
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ export default function CalendarPage() {
   const grid = useMemo(() => calendarGrid(viewMonth.year, viewMonth.month), [viewMonth])
 
   const eventsForDay = (day: Date) =>
-    events.filter((e) => isSameDay(new Date(e.startDate), day))
+    events.filter((e) => e.startDate.slice(0, 10) === localYmd(day)) // all-day events are stored as UTC midnight of the chosen date
 
   function prevMonth() {
     setViewMonth(({ year, month }) =>
@@ -331,15 +332,15 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
   const [caption, setCaption]       = useState(event?.socialPost?.caption ?? '')
   const [mediaUrl, setMediaUrl]     = useState(event?.socialPost?.mediaUrls?.[0] ?? '')
   const [scheduledFor, setSchedFor] = useState(
-    event?.socialPost?.scheduledFor?.slice(0, 16) ?? `${startDate}T09:00`,
+    event?.socialPost?.scheduledFor ? isoToPktLocal(event.socialPost.scheduledFor) : `${startDate}T09:00`,
   )
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = {
         title, description: description || undefined, type, status,
-        startDate: new Date(startDate).toISOString(),
-        endDate:   endDate ? new Date(endDate).toISOString() : undefined,
+        startDate: `${startDate}T00:00:00.000Z`,
+        endDate:   endDate ? `${endDate}T00:00:00.000Z` : undefined,
         department: department || undefined,
         allDay: true,
       }
@@ -348,7 +349,7 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
         if (type === 'social_post' && caption) {
           await api.post(`/calendar/${event.id}/social-post`, {
             platform, caption, mediaUrls: mediaUrl ? [mediaUrl] : [],
-            scheduledFor: new Date(scheduledFor).toISOString(),
+            scheduledFor: pktLocalToIso(scheduledFor),
           })
         }
       } else {
@@ -356,7 +357,7 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
         if (type === 'social_post' && caption) {
           await api.post(`/calendar/${created.id}/social-post`, {
             platform, caption, mediaUrls: mediaUrl ? [mediaUrl] : [],
-            scheduledFor: new Date(scheduledFor).toISOString(),
+            scheduledFor: pktLocalToIso(scheduledFor),
           })
         }
       }

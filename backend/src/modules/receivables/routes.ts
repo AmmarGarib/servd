@@ -69,6 +69,7 @@ import { authorityOfOutputCode, AUTHORITIES, type AuthorityKey } from '../accoun
 import { assertMoneyFits, sumCents, toCents, zMoneyCents, type DbMoney } from '../../lib/money.js'
 import { moneyAccountCode, zReceiptMethod, zPaymentRef, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
 import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
+import { fmtPktDate } from '../accounting/dates.js'
 import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
 import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
@@ -112,8 +113,14 @@ export function receiptMemo(invoiceNumber: string, method: string, reference: st
 }
 
 const DAY = 86_400_000
+/**
+ * Days past due counted in Karachi calendar days: dueDate is stored as UTC
+ * midnight of its day (a YYYY-MM-DD), `now` is an instant — both are read as
+ * Karachi dates (fmtPktDate), so an invoice due yesterday is overdue from
+ * 00:00 PKT, not 05:00 PKT.
+ */
 export function agingBucket(dueDate: Date, now = new Date()): 'current' | '1-30' | '31-60' | '61-90' | '90+' {
-  const days = Math.floor((now.getTime() - dueDate.getTime()) / DAY)
+  const days = Math.round((Date.parse(`${fmtPktDate(now)}T00:00:00Z`) - Date.parse(`${fmtPktDate(dueDate)}T00:00:00Z`)) / DAY)
   if (days <= 0) return 'current'
   if (days <= 30) return '1-30'
   if (days <= 60) return '31-60'

@@ -1036,7 +1036,8 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   const { data: me } = usePermissions()
   const canOpenCapex = !!me && canOpenPath('/finance/capex', me.role, me.modules ?? [])
   const today = todayKarachi()
-  const monthEnd = new Date(); monthEnd.setMonth(monthEnd.getMonth() + 1); monthEnd.setDate(0)
+  // Last day of the current Karachi month, from the Karachi `today` (UTC arithmetic on a date-only value).
+  const monthEnd = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0))
   const postedFrom = payment?.ledger?.status === 'posted' ? payment.ledger.creditCode ?? null : null
   const bankOfCode = (code: string | null) =>
     code ? (banks.find((b) => b.accountCode === code && b.tenantId === category.tenantId)?.id ?? '') : ''

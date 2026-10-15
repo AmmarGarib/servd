@@ -346,7 +346,7 @@ function AddMember({ poolId, pending, onAdd }: { poolId: string; pending: boolea
 function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { data: concepts = [] } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Array<{ id: string; name: string }>>('/concepts') })
   const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
-  const [name, setName] = useState(`Pool · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`)
+  const [name, setName] = useState(`Pool · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Karachi' })}`)
   const [start, setStart] = useState(() => lastBusinessDay().start)
   const [end,   setEnd]   = useState(() => lastBusinessDay().end)
   const [err, setErr] = useState<string | null>(null)

@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { todayPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
 
 // The public link people are sent to. Production storefront on purpose: this
@@ -286,7 +287,7 @@ function SignupsTable({ sources }: { sources: string[] }) {
     setExportError(null); setExporting(true)
     try {
       const qs = filterQs.toString()
-      await api.download(`/waitlist/signups.csv${qs ? `?${qs}` : ''}`, `waitlist-${new Date().toISOString().slice(0, 10)}.csv`)
+      await api.download(`/waitlist/signups.csv${qs ? `?${qs}` : ''}`, `waitlist-${todayPktIso()}.csv`)
     } catch (e) {
       setExportError((e as Error).message)
     } finally {

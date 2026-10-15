@@ -14,7 +14,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
-import { fmtPkrWhole } from '../../lib/money'
+import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { useManagerRoles } from '../../lib/roles'
 import { Select } from '@/components/ui/Select'
 
@@ -41,8 +41,10 @@ const SOURCE_TONE: Record<Cell['source'], string> = {
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
-function mondayOf(d: Date) {
-  const u = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+// Monday of the Karachi week containing `iso` (default: today in Karachi). ymd() is only
+// ever applied to UTC-midnight dates built here, so it is correct.
+function mondayOf(iso: string = todayPktIso()) {
+  const u = new Date(`${iso}T00:00:00Z`)
   return new Date(u.getTime() - ((u.getUTCDay() + 6) % 7) * 86_400_000)
 }
 const addDays = (iso: string, n: number) => ymd(new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86_400_000))
@@ -53,7 +55,7 @@ export default function SchedulingPage() {
   const role = useAuthStore((s) => s.user?.role ?? '')
   // Who plans the rota: the API's MANAGERS (lib/roles.ts) + hr.
   const planner = useManagerRoles('hr').has(role)
-  const [weekStart, setWeekStart] = useState(ymd(mondayOf(new Date())))
+  const [weekStart, setWeekStart] = useState(ymd(mondayOf()))
   const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [editing, setEditing] = useState<{ member: StaffMember; cell: Cell } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -87,7 +89,7 @@ export default function SchedulingPage() {
 
   const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   const cellOf = (employeeId: string, date: string) => week.data?.cells.find((c) => c.employeeId === employeeId && c.date === date)
-  const today = ymd(new Date())
+  const today = todayPktIso()
 
   return (
     <div className="p-6 space-y-6">
@@ -108,7 +110,7 @@ export default function SchedulingPage() {
         <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Previous week">‹</button>
         <span className="text-sm font-semibold px-2" style={{ color: 'rgb(var(--fg-rgb) / 0.7)' }}>{fmtDay(dates[0]!)} – {fmtDay(dates[6]!)}</span>
         <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Next week">›</button>
-        <button onClick={() => setWeekStart(ymd(mondayOf(new Date())))} className="px-3 py-1.5 rounded-xl text-xs font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.4)' }}>This week</button>
+        <button onClick={() => setWeekStart(ymd(mondayOf()))} className="px-3 py-1.5 rounded-xl text-xs font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.4)' }}>This week</button>
         {conceptId && planner && (
           <button onClick={() => { if (confirm('Copy last week\'s one-off changes to this week? The roster repeats by itself.')) copyWeek.mutate() }} disabled={copyWeek.isPending}
             className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.3)', color: 'var(--erp-primary-ink)' }}>

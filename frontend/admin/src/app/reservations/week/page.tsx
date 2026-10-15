@@ -19,6 +19,12 @@ interface Reservation {
   table?: { id: string; label: string } | null
 }
 
+// Days here are instants at Karachi midnight (= 19:00 UTC the day before), so the Karachi
+// calendar day is read by shifting +5h — d.toISOString().slice(0,10) would give the day before.
+const KHI = 'Asia/Karachi'
+const pktYmd = (d: Date) => new Date(d.getTime() + 5 * 3_600_000).toISOString().slice(0, 10)
+const pktHour = (iso: string) => Number(new Date(iso).toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: KHI })) % 24
+
 function startOfWeek(iso: string): Date {
   const d = new Date(`${iso.slice(0, 10)}T00:00:00+05:00`)
   // Mon-start week (server-day-of-week mapping: 0 = Sun → shift)
@@ -56,7 +62,7 @@ export default function ReservationsWeekPage() {
     queryKey: ['reservations-week', conceptId, weekStart.toISOString()],
     queryFn: async () => {
       const dayLists = await Promise.all(days.map((d) => {
-        const iso = d.toISOString().slice(0, 10)
+        const iso = pktYmd(d)
         return api.get<Reservation[]>(`/reservations?conceptId=${conceptId}&date=${iso}`)
       }))
       return dayLists
@@ -78,12 +84,12 @@ export default function ReservationsWeekPage() {
             className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
-          <button onClick={() => setAnchor(new Date(weekStart.getTime() - 7 * 86_400_000).toISOString().slice(0, 10))}
+          <button onClick={() => setAnchor(pktYmd(new Date(weekStart.getTime() - 7 * 86_400_000)))}
             className="s-btn-secondary text-xs">← Prev</button>
           <span className="text-xs text-s-muted whitespace-nowrap">
-            {days[0]!.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {days[6]!.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+            {days[0]!.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: KHI })} – {days[6]!.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: KHI })}
           </span>
-          <button onClick={() => setAnchor(new Date(weekStart.getTime() + 7 * 86_400_000).toISOString().slice(0, 10))}
+          <button onClick={() => setAnchor(pktYmd(new Date(weekStart.getTime() + 7 * 86_400_000)))}
             className="s-btn-secondary text-xs">Next →</button>
           <button onClick={() => setAnchor(todayPktIso())} className="s-btn-secondary text-xs">Today</button>
         </div>
@@ -96,13 +102,13 @@ export default function ReservationsWeekPage() {
             {days.map((d) => (
               <button
                 key={d.toISOString()}
-                onClick={() => router.push(`/reservations?date=${d.toISOString().slice(0, 10)}`)}
+                onClick={() => router.push(`/reservations?date=${pktYmd(d)}`)}
                 className="px-2 py-3 text-center hover:bg-s-bg-soft"
               >
                 <p className="text-[10px] uppercase text-s-muted tracking-wider">
-                  {d.toLocaleDateString('en-GB', { weekday: 'short' })}
+                  {d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: KHI })}
                 </p>
-                <p className="text-sm font-bold text-s-text">{d.getDate()}</p>
+                <p className="text-sm font-bold text-s-text">{pktYmd(d).slice(8)}</p>
               </button>
             ))}
           </div>
@@ -114,7 +120,7 @@ export default function ReservationsWeekPage() {
               </div>
               {days.map((d, idx) => {
                 const list = week.data?.[idx] ?? []
-                const inHour = list.filter((r) => new Date(r.startTime).getHours() === h)
+                const inHour = list.filter((r) => pktHour(r.startTime) === h)
                 return (
                   <div key={d.toISOString()} className="border-r border-s-border last:border-0 p-1 space-y-1">
                     {inHour.map((r) => (

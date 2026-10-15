@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { todayPktIso } from '../../../lib/money'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
 
@@ -111,8 +112,8 @@ export default function BlockoutsPage() {
 
 function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string; onClose: () => void; onCreated: () => void }) {
   const [kind, setKind] = useState<'closure' | 'private_event' | 'reduced_capacity' | 'custom'>('closure')
-  const [startTime, setStartTime] = useState(`${new Date().toISOString().slice(0, 10)}T18:00`)
-  const [endTime, setEndTime] = useState(`${new Date().toISOString().slice(0, 10)}T23:00`)
+  const [startTime, setStartTime] = useState(`${todayPktIso()}T18:00`)
+  const [endTime, setEndTime] = useState(`${todayPktIso()}T23:00`)
   const [capacityCap, setCapacityCap] = useState<number | ''>('')
   const [reason, setReason] = useState('')
   const [err, setErr] = useState<string | null>(null)
