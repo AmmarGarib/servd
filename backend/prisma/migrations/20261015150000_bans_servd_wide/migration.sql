@@ -14,6 +14,9 @@ WHERE b."liftedAt" IS NULL AND b."bannedById" IS NULL AND b."customerId" IS NOT 
       AND (o."bannedAt" < b."bannedAt" OR (o."bannedAt" = b."bannedAt" AND o."id" < b."id"))
   );
 
+-- Never queue behind a long lock on live: fail fast and retry the deploy instead.
+SET lock_timeout = '10s';
+
 -- 2) Replace the per-company index with one per customer.
 DROP INDEX IF EXISTS "customer_bans_one_active_auto_per_company";
 

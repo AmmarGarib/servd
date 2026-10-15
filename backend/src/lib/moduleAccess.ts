@@ -562,6 +562,8 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   { prefix: '/dispatch', anyOf: ['dispatch', 'riders'] },
   // /head-offices — CEO → Companies → Head offices (the routes are CEO-only too).
   { prefix: '/head-offices', anyOf: ['tenants'] },
+  // /hr/head-office-transfers — the CEO's people move (routes are ADMIN_ONLY too).
+  { prefix: '/hr/head-office-transfers', anyOf: ['staff_hr'] },
   // /riders — the roster, history, fleet agreements: admin /riders only. The
   // rider app is /rider/* with a rider token and never reaches this.
   { prefix: '/riders',   anyOf: ['riders'] },

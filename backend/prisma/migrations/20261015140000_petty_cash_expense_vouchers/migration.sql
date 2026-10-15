@@ -3,6 +3,9 @@
 -- for a payee), a discount, finance approval, "return for correction", the documents check and the posting stamp.
 -- Additive only: every existing row is a 'request' with discount 0 and expenseOnVerify false (H3 rules).
 
+-- Never queue behind a long lock on live: fail fast and retry the deploy instead.
+SET lock_timeout = '10s';
+
 -- New status values. ALTER TYPE ... ADD VALUE cannot run inside a transaction block on old Postgres; Prisma runs
 -- each migration file in one transaction, and PG >= 12 allows ADD VALUE there as long as the value is not used in
 -- the same transaction (it is not).
