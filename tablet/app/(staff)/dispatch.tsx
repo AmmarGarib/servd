@@ -3,9 +3,13 @@
 //   - With rider (assigned, not yet delivered) — with the job stage the rider
 //     app reports (offered → accepted → picked up → at the door)
 // Tap a rider chip to assign. The rider closes a rider-app job with the
-// customer's code at the door; "Delivered" here is a manager's override, only
-// for a job whose code locked, a rider who is not on the app, or an order from
-// before the rider app (deliverGate below).
+// customer's code at the door. "Enter customer's code" (POST
+// /trustops/orders/:id/verify-otp) is the way to close a delivery from here.
+// "Delivered" is only offered while the order's company is NOT code-only (the
+// board says `codeOnly`), for a job whose code locked, a rider who is not on
+// the app, or an order from before the rider app (deliverGate below); the
+// server decides who may (managers only) and answers 404 once the company is
+// code-only. A locked code: ask a manager (Emergency overrides).
 //
 // Reads the same endpoints as the admin: GET /orders for the active delivery
 // orders and GET /dispatch/board for the riders. Every write goes through
@@ -20,11 +24,11 @@
 // company's rider while they carry one of our orders under a fleet agreement
 // (docs/rider-app.md) — marked "partner".
 
-import { View, Text, ScrollView, Pressable, Alert } from 'react-native'
+import { useState } from 'react'
+import { View, Text, ScrollView, Pressable, Alert, TextInput } from 'react-native'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 
-import { api } from '../../src/lib/api'
-import { useSessionStore } from '../../src/store/session'
+import { api, ApiError } from '../../src/lib/api'
 import { useSocketEvent } from '../../src/lib/socket'
 import { theme } from '../../src/lib/theme'
 import { orderRef } from '../../src/lib/orderRef'
@@ -37,7 +41,7 @@ interface BoardRider {
   name: string
   status: 'available' | 'busy' | 'offline'
   fleetPartner?: boolean
-  orders: Array<{ id: string }>
+  orders: Array<{ id: string; codeOnly?: boolean }>
 }
 
 // GET /orders (list shape)
@@ -80,31 +84,35 @@ function jobStage(o: ActiveOrder): keyof typeof STAGE | null {
 
 /** Wrong hand-over codes before the job locks — DELIVERY_OTP_MAX_ATTEMPTS in backend lib/deliveryOtp.ts. */
 const OTP_MAX_ATTEMPTS = 5
-/** The API's MANAGERS (backend modules/auth/middleware.ts). */
-const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 
 /**
- * Whether this screen may mark a delivery delivered (docs/rider-app.md, "The
- * hand-over code" — it is what stops anyone delivering without going to the
- * door). Only a manager, and only when the code has locked after
- * OTP_MAX_ATTEMPTS wrong tries, the rider never took the job in the app, or
- * the order predates the rider app.
+ * What this screen offers on a delivery (docs/rider-app.md, "The hand-over
+ * code"). The server owns who may do what; this only decides what to show.
+ *  - code-only company: never "Delivered" (the route answers 404). A locked
+ *    code points to Emergency overrides.
+ *  - otherwise "Delivered" only when the code locked, the rider never took the
+ *    job in the app, or the order predates the rider app.
  */
-function deliverGate(o: ActiveOrder, isManager: boolean): { canMark: boolean; locked: boolean; note: string | null } {
+function deliverGate(o: ActiveOrder, codeOnly: boolean): { canMark: boolean; locked: boolean; note: string | null } {
   if (o.status !== 'ready') return { canMark: false, locked: false, note: null }
   const locked = (o.deliveryOtpAttempts ?? 0) >= OTP_MAX_ATTEMPTS
+  if (codeOnly) {
+    return { canMark: false, locked, note: locked ? 'Code locked. Ask a manager: Emergency overrides.' : null }
+  }
   const inApp = !!o.riderAssignedAt && !!o.riderAcceptedAt
   if (inApp && !locked) return { canMark: false, locked, note: "Rider closes it with the customer's code." }
-  if (!isManager) {
-    return { canMark: false, locked, note: locked ? 'Code locked — a manager marks it delivered.' : 'A manager marks it delivered.' }
-  }
   return { canMark: true, locked, note: locked ? `Code locked after ${OTP_MAX_ATTEMPTS} wrong tries.` : null }
 }
 
+/** Wrong-code error: the attempts left, whichever way the API envelope carries it. */
+function attemptsLeftOf(err: unknown): number | null {
+  if (!(err instanceof ApiError)) return null
+  const e = (err.body as { error?: { attemptsLeft?: unknown; details?: { attemptsLeft?: unknown } } } | null)?.error
+  const v = e?.details?.attemptsLeft ?? e?.attemptsLeft
+  return typeof v === 'number' ? v : null
+}
 export default function DispatchScreen() {
   const qc = useQueryClient()
-  const role = useSessionStore(s => s.user?.role)
-  const isManager = MANAGER_ROLES.has(role ?? '')
 
   const orders = useQuery({
     queryKey: ['dispatch', 'orders'],
@@ -133,8 +141,18 @@ export default function DispatchScreen() {
   const delivered = useMutation({
     mutationFn: (orderId: string) => api.post(`/dispatch/orders/${orderId}/delivered`, {}),
     onSuccess:  () => qc.invalidateQueries({ queryKey: ['dispatch'] }),
-    onError:    (err: Error) => Alert.alert('Hmm', err.message),
+    onError:    (err: Error) => {
+      // Code-only company: the override route is gone (404).
+      if (err instanceof ApiError && err.status === 404) Alert.alert('Hmm', "Use Enter customer's code.")
+      else Alert.alert('Hmm', err.message)
+    },
   })
+
+  // Staff entering the customer's code for a rider without the app.
+  async function verifyCode(orderId: string, otp: string) {
+    await api.post(`/trustops/orders/${orderId}/verify-otp`, { otp })
+    qc.invalidateQueries({ queryKey: ['dispatch'] })
+  }
 
   // A manager closing a delivery without the customer's code (deliverGate).
   function confirmDelivered(order: ActiveOrder) {
@@ -157,6 +175,8 @@ export default function DispatchScreen() {
   }
 
   const roster = riders.data ?? []
+  // The board says per order whether its company is code-only.
+  const codeOnlyIds = new Set(roster.flatMap(r => r.orders.filter(x => x.codeOnly).map(x => x.id)))
   const idleRiders = roster.filter(r => r.status === 'available')
 
   return (
@@ -212,9 +232,10 @@ export default function DispatchScreen() {
         </Lane>
         <Lane title="WITH RIDER" count={lanes.withRider.length} tone="warn">
           {lanes.withRider.map(order => {
-            const gate = deliverGate(order, isManager)
+            const gate = deliverGate(order, codeOnlyIds.has(order.id))
             return (
               <OrderCard key={order.id} order={order} riders={[]} onAssign={() => undefined}
+                onVerify={order.status === 'ready' ? (otp) => verifyCode(order.id, otp) : undefined}
                 deliverNote={gate.note} deliverLocked={gate.locked}
                 onDelivered={gate.canMark ? () => confirmDelivered(order) : undefined} />
             )
@@ -247,10 +268,11 @@ function Lane({ title, count, tone, children }: {
   )
 }
 
-function OrderCard({ order, riders, onAssign, onDelivered, deliverNote, deliverLocked }: {
+function OrderCard({ order, riders, onAssign, onVerify, onDelivered, deliverNote, deliverLocked }: {
   order: ActiveOrder
   riders: BoardRider[]
   onAssign: (riderId: string) => void
+  onVerify?: (otp: string) => Promise<void>
   onDelivered?: () => void
   deliverNote?: string | null
   deliverLocked?: boolean
@@ -258,6 +280,42 @@ function OrderCard({ order, riders, onAssign, onDelivered, deliverNote, deliverL
   // Cash still owed at the door: a pending cash payment.
   const cod = order.payments.some(p => p.method === 'cash' && p.status === 'pending')
   const stage = jobStage(order)
+  const [entering, setEntering] = useState(false)
+  const [otp, setOtp] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [codeMsg, setCodeMsg] = useState<string | null>(null)
+  const [codeLocked, setCodeLocked] = useState((order.deliveryOtpAttempts ?? 0) >= OTP_MAX_ATTEMPTS)
+  const [attemptsLeft, setAttemptsLeft] = useState<number | null>(
+    typeof order.deliveryOtpAttempts === 'number' ? Math.max(0, OTP_MAX_ATTEMPTS - order.deliveryOtpAttempts) : null,
+  )
+  const locked = codeLocked || !!deliverLocked
+
+  async function submitCode() {
+    if (!onVerify || busy || otp.length !== 4) return
+    setBusy(true)
+    setCodeMsg(null)
+    try {
+      await onVerify(otp)
+      setEntering(false)
+      setOtp('')
+    } catch (err) {
+      setOtp('')
+      if (err instanceof ApiError && (err.status === 423 || (err.body as { error?: { code?: string } } | null)?.error?.code === 'OTP_LOCKED')) {
+        setCodeLocked(true)
+        setAttemptsLeft(0)
+        setEntering(false)
+      } else if (err instanceof ApiError && err.status === 403) {
+        const left = attemptsLeftOf(err)
+        if (left !== null) setAttemptsLeft(left)
+        if (left === 0) { setCodeLocked(true); setEntering(false) }
+        else setCodeMsg(left === null ? 'Wrong code.' : `Wrong code. ${left} ${left === 1 ? 'try' : 'tries'} left.`)
+      } else {
+        setCodeMsg(err instanceof Error ? err.message : 'Could not check the code.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <View style={{
       backgroundColor: theme.panel, borderRadius: theme.radius,
@@ -285,8 +343,63 @@ function OrderCard({ order, riders, onAssign, onDelivered, deliverNote, deliverL
       )}
 
       {deliverNote ? (
-        <Text style={{ marginTop: 8, color: deliverLocked ? theme.danger : theme.textDim, fontSize: 12, fontWeight: '700' }}>
+        <Text style={{ marginTop: 8, color: locked ? theme.danger : theme.textDim, fontSize: 12, fontWeight: '700' }}>
           {deliverNote}
+        </Text>
+      ) : null}
+
+      {onVerify && !locked && (
+        entering ? (
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ color: theme.textDim, fontSize: 11, fontWeight: '700', letterSpacing: 0.5, marginBottom: 6 }}>
+              CUSTOMER'S CODE{attemptsLeft !== null ? ` · ${attemptsLeft} ${attemptsLeft === 1 ? 'TRY' : 'TRIES'} LEFT` : ''}
+            </Text>
+            <TextInput
+              value={otp}
+              onChangeText={t => { setOtp(t.replace(/\D/g, '').slice(0, 4)); if (codeMsg) setCodeMsg(null) }}
+              keyboardType="number-pad"
+              maxLength={4}
+              editable={!busy}
+              placeholder="0000"
+              placeholderTextColor={theme.textMuted}
+              style={{
+                color: theme.text, fontSize: 24, fontWeight: '900', letterSpacing: 8, textAlign: 'center',
+                borderWidth: 1, borderColor: codeMsg ? theme.danger : theme.border, borderRadius: 8, paddingVertical: 8,
+              }}
+            />
+            {codeMsg ? <Text style={{ marginTop: 6, color: theme.danger, fontSize: 12, fontWeight: '700' }}>{codeMsg}</Text> : null}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <Pressable
+                onPress={() => { setEntering(false); setOtp(''); setCodeMsg(null) }}
+                style={{ flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.border, alignItems: 'center' }}>
+                <Text style={{ color: theme.textDim, fontWeight: '700', fontSize: 13 }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void submitCode()}
+                disabled={busy || otp.length !== 4}
+                style={{
+                  flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.accent, alignItems: 'center',
+                  opacity: busy || otp.length !== 4 ? 0.5 : 1,
+                }}>
+                <Text style={{ color: theme.text, fontWeight: '800', fontSize: 13 }}>{busy ? 'Checking...' : 'Check code'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => setEntering(true)}
+            style={({ pressed }) => ({
+              marginTop: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.accent,
+              alignItems: 'center', backgroundColor: pressed ? theme.accent : 'rgba(34,197,94,0.12)',
+            })}>
+            <Text style={{ color: theme.text, fontWeight: '800', fontSize: 13 }}>Enter customer's code</Text>
+          </Pressable>
+        )
+      )}
+
+      {onVerify && locked && !deliverNote ? (
+        <Text style={{ marginTop: 8, color: theme.danger, fontSize: 12, fontWeight: '700' }}>
+          Code locked. Ask a manager: Emergency overrides.
         </Text>
       ) : null}
 

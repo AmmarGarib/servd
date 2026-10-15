@@ -387,3 +387,38 @@ to 2042, never more than HR booked or than the old accounts still hold. It is
 one-way: a final settlement cancelled after the reclass leaves 2043 overstated
 and is fixed with a manual journal (the preview and a close warning point it
 out).
+
+## 15. Corporate clients on account: the buyer block and the statement (H14)
+
+When a corporate client's bill is charged to its account at the till
+(`docs/on-account.md`), the sale is an ordinary supply and is filed like any
+other full and final bill, with three differences you should know about:
+
+- **The buyer block names the client.** The fiscal sale carries `buyer` with
+  the client's legal name and its NTN (or CNIC) as held on the client record.
+  The tax invoice's default buyer comes from the same charge. The cashier
+  never types it. If the client's NTN is wrong, correct it on the client
+  record (finance); sales already filed are not changed.
+- **Cash tax class.** An on-account bill is taxed at the brand's **cash** GST
+  rate (`taxRateCash`, 15%), not the card/digital rate. The charge is refused
+  (`ON_ACCOUNT_RATE`) if the re-priced bill is not at that rate. To change it
+  is a one-line change in the tender groups (`lib/pricing.ts`), decided by the
+  accountant (open question OA-RATE).
+- **FBR payment mode 2 (cash)** is sent for a credit sale until the fiscal
+  POS vendor says otherwise (OA-FBR-MODE; confirm before the first client).
+- **The statement is not a tax invoice (H14).** The supply was invoiced and
+  filed when the bill was charged. The monthly statement is a collection
+  document: it files nothing with the POS, posts nothing to the ledger, and
+  never lowers or raises output tax. Payment of a statement posts only
+  Dr bank / Cr 1110. A client that withholds sales tax on payment is recorded
+  as in section 13, against one authority per statement
+  (`STATEMENT_MIXED_AUTHORITY` if the statement mixes FBR and SRB brands:
+  record it per authority by hand).
+- **Refunds** of an on-account bill go back to the account only and file a
+  fiscal refund (credit note) through the normal refund path, which also
+  reduces the statement if one was already issued. Credit notes on the
+  statement itself are refused (`STATEMENT_CREDIT_AT_TILL`) so the return is
+  always filed.
+- **Bad debt** on a statement is written off by the CEO (Dr 6160 including
+  the tax, Cr 1110). As in section 3 of `docs/receivables.md`, claiming the
+  output tax back is a tax-return decision for the accountant.

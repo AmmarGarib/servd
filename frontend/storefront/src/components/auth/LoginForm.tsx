@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
+import { BlockedNotice, fetchBlocks, type AccountBlock } from '../account/BlockedNotice'
 import { ErrorToast } from '../ui/ErrorToast'
 import { MagneticButton } from '../ui/MagneticButton'
 import { NETWORK_ERROR, customerErrorMessage, postAuthDest, type ApiErrorBody } from './authFlow'
@@ -34,6 +35,10 @@ export function LoginForm({
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  // A blocked account is told so right after sign-in (appeals on); the way
+  // forward is one button. Empty / null while appeals are off.
+  const [blocked, setBlocked] = useState<AccountBlock[] | null>(null)
+  const proceed = () => { if (onSuccess) onSuccess(); else router.replace(postAuthDest()) }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -64,9 +69,20 @@ export function LoginForm({
       }
       if (!data?.token || !data.customer?.id) { setError(customerErrorMessage(500, null, '')); return }
       setAuth(data.token, data.customer.id)
-      if (onSuccess) onSuccess()
-      else router.replace(postAuthDest())
+      // Sign-in is never refused. If the account is blocked (and the CEO's
+      // appeals switch is on) show the notice first, with a way to carry on.
+      const blocks = await fetchBlocks(data.token)
+      if (blocks.length > 0) { setBlocked(blocks); return }
+      proceed()
     } finally { setLoading(false) }
+  }
+
+  if (blocked) {
+    return (
+      <div className="rounded-2xl p-1">
+        <BlockedNotice blocks={blocked} onContinue={proceed} />
+      </div>
+    )
   }
 
   return (

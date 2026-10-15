@@ -556,11 +556,12 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // needs one of these modules to bump, fire or hand off a ticket.
   { prefix: '/expo',     anyOf: ['expo_station', 'kds_dashboard', 'kds_all'] },
   // /dispatch — admin /dispatch (dispatch), /riders (riders: assign, rider
-  // status) and the tablet Dispatch screen. Customer-code-only completion and
-  // Emergency overrides are PARKED with delivery (owner, 2026-10-13;
-  // .handoff/parked/2026-10-14/): the staff "Delivered" override works as
-  // before until delivery resumes.
+  // status) and the tablet Dispatch screen. A delivery is completed with the
+  // customer's code; staff "Delivered" only while the company's code-only
+  // switch is off (resumed 2026-10-15).
   { prefix: '/dispatch', anyOf: ['dispatch', 'riders'] },
+  // /head-offices — CEO → Companies → Head offices (the routes are CEO-only too).
+  { prefix: '/head-offices', anyOf: ['tenants'] },
   // /riders — the roster, history, fleet agreements: admin /riders only. The
   // rider app is /rider/* with a rider token and never reaches this.
   { prefix: '/riders',   anyOf: ['riders'] },

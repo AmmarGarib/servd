@@ -59,3 +59,21 @@ above zero), tip / points / wallet / promo / gift card, **Total**.
 - The cash option is named for the fulfilment: "Cash on delivery" (delivery),
   "Pay cash at pickup" (pickup, curbside), "Pay at the counter" (dine-in).
   This only changes the text. The gateway is `cash` in every case.
+
+## Blocked accounts (strikes and bans, owner 2026-10-15)
+
+- A block is **servd-wide**: it is on the customer's servd account and applies
+  at every brand of every company. The notice never names a company or brand.
+- When the API answers `BANNED` (403, from the quote or from placing the
+  order), checkout keeps the cart and its own message exactly as before, and
+  also mounts `components/account/BlockedNotice.tsx`. The notice reads
+  `GET /storefront/account/blocks` and offers the appeal form
+  (`POST /storefront/account/ban-appeals`: reason + 10 to 1000 characters;
+  409 `APPEAL_OPEN` and 429 `APPEAL_TOO_SOON` are shown in plain words).
+- While the CEO's appeals switch is OFF both routes answer 404: the notice
+  renders nothing, and the BANNED message is all the customer sees.
+- Same notice: after sign-in / sign-up (sign-in is never refused), on
+  /account, on /reserve, /reserve/<brand>, /group-order and in a group order
+  on a BANNED answer.
+- The order tracker replaces the hand-over code block with "Your rider has the
+  code for this order." when the order's `handoverRerouted` is true.

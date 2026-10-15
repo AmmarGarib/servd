@@ -106,7 +106,7 @@ export type ExceptionKind =
   | 'on_account_card_revoked_used' // a revoked on-account QR card was scanned at the till
   | 'on_account_overdue'         // an on-account statement or invoice past its due date
   | 'on_account_unbilled'        // on-account charges booked but not on a statement for too long
-  | 'till_clearing_unexpected'   // 1115 Till Clearing holds a balance nothing explains
+  | 'till_clearing_unexpected'   // a 1110/1115 till-clearing line the cut-over rules do not explain
   // Tax
   | 'card_payout_unmatched'      // a card machine's sales with no matching bank payout
   | 'gift_card_breakage_held'    // a sold gift card expired but its breakage could not be booked yet

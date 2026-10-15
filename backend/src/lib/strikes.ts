@@ -1,26 +1,29 @@
-// Customer strike + ban engine — PER COMPANY (owner, 2026-10-13).
+// Customer strike + ban engine — SERVD-WIDE (owner decision 2026-10-15:
+// "If strikes and bans is about customers accounts then its ok, let it be
+// across servd. No need to do it per company." — replaces the per-company
+// rule of 2026-10-13).
 //
-// Three-strike accountability. Every offense (no-show, refused-at-door, a
-// manual CRM strike) writes a CustomerStrike stamped with the company whose
-// incident it is (the order's / reservation's brand's company, or the ACTIVE
-// company for a manual strike). When a company's ACTIVE strikes on a customer
-// reach 3 (sum of severities), that company auto-bans the customer: a
-// CustomerBan with that company's tenantId, locking out the account, its email
-// and its phone at THAT company's brands only. Another company is unaffected
-// (CLAUDE.md: bans stay inside the company that issued them). Strikes decay
-// after 12 months.
+// Three-strike accountability on the customer's servd ACCOUNT. Every offense
+// (no-show, refused-at-door, a manual CRM strike) writes a CustomerStrike
+// stamped with the company whose incident it is (the order's / reservation's
+// brand's company, or the ACTIVE company for a manual strike) — the stamp is
+// for audit, reporting and who may see the incident's details. The STANDING is
+// per customer: when the customer's ACTIVE strikes across every company reach
+// 3 (sum of severities), the customer is auto-banned: one CustomerBan stamped
+// with the company whose strike tipped it (the raising company), locking out
+// the account, its email and its phone at EVERY brand of every company.
+// Strikes decay after 12 months.
 //
 // "Active" strikes = not reversed, not expired.
 //
-// Customer.strikeCount / bannedAt / isBlacklisted are a MIRROR for old screens
-// (sum across companies / any active ban). Nothing enforces on them; every
-// check reads CustomerBan through activeBanAtCompany.
+// Customer.strikeCount / bannedAt / isBlacklisted are a MIRROR (servd-wide sum /
+// any active ban). Nothing enforces on them; every check reads CustomerBan
+// through activeBanAtCompany.
 //
-// Legacy rows: the wave-B migration stamped tenantId on every strike and ban
-// it could attribute. A row still NULL is read by the old attribution
-// (crm/customerScope.ts strikeCompanies / banCompanies); a NULL ban that
-// cannot be attributed applies at every company and only the CEO (admin) can
-// lift it.
+// Who may lift a ban / decide its appeal: the CEO (role admin), or a manager of
+// the company that RAISED it (crm/routes.ts findBanInScope). A legacy NULL-company
+// ban: the CEO only. Other companies see the standing (count, blocked yes/no),
+// never another company's incident details.
 //
 // `recordStrike` is fire-and-forget safe: never let a strike write break the
 // upstream flow (reservation seating, order delivery). On any internal error,
@@ -32,7 +35,7 @@ import { AppError, NotFoundError } from './errors.js'
 import { withSavepoint } from './savepoint.js'
 
 const STRIKE_TTL_DAYS = 365
-/** Sum of severities of a company's ACTIVE strikes that triggers that company's auto ban. */
+/** Sum of severities of the customer's ACTIVE strikes (servd-wide) that triggers the auto ban. */
 export const BAN_THRESHOLD = 3
 
 export type StrikeKind =
@@ -80,8 +83,9 @@ async function inTx<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return (db as PrismaClient).$transaction(fn)
 }
 
-async function lockBan(tx: Tx, tenantId: string, customerId: string): Promise<void> {
-  const key = `ban:${tenantId}:${customerId}`
+/** The per-customer ban lock: strikes and bans are servd-wide, so one lock per customer. */
+async function lockBan(tx: Tx, customerId: string): Promise<void> {
+  const key = `ban:${customerId}`
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}::text))`
 }
 
@@ -109,7 +113,7 @@ async function sourceTenantId(db: Db, sourceType?: string, sourceId?: string): P
  * A refused-at-door strike ('cod_refused') always weighs 1: three refusals
  * block, literally (owner). Other kinds keep the caller's severity (1-3).
  *
- * Returns `banId` when the company's auto ban is in force after this strike.
+ * Returns `banId` when an auto ban is in force on the customer after this strike.
  */
 export async function recordStrike(args: RecordStrikeArgs): Promise<{ recorded: boolean; duplicate: boolean; banId?: string }> {
   try {
@@ -161,26 +165,15 @@ export async function recordStrike(args: RecordStrikeArgs): Promise<{ recorded: 
 }
 
 /**
- * Weight (sum of severities) of the customer's ACTIVE strikes at `tenantId`:
- * rows stamped with that company, plus legacy NULL rows the old attribution
- * gives to it (an unattributable legacy row counts everywhere, as it always did).
+ * Weight (sum of severities) of the customer's ACTIVE strikes across servd —
+ * every company's rows and legacy NULL rows alike (one account, one standing).
  */
-export async function activeStrikeWeightAt(db: Db, customerId: string, tenantId: string, now = new Date()): Promise<number> {
+export async function activeStrikeWeight(db: Db, customerId: string, now = new Date()): Promise<number> {
   const rows = await db.customerStrike.findMany({
-    where: { customerId, AND: [activeStrikeWhere(now), { OR: [{ tenantId }, { tenantId: null }] }] },
-    select: { id: true, customerId: true, sourceType: true, sourceId: true, recordedById: true, severity: true, tenantId: true },
+    where: { customerId, ...activeStrikeWhere(now) },
+    select: { severity: true },
   })
-  const legacy = rows.filter((r) => r.tenantId === null)
-  let weight = rows.filter((r) => r.tenantId === tenantId).reduce((s, r) => s + r.severity, 0)
-  if (legacy.length > 0) {
-    const { strikeCompanies } = await import('../modules/crm/customerScope.js')
-    const sc = await strikeCompanies(legacy)
-    for (const r of legacy) {
-      const c = sc.get(r.id)
-      if (c === null || c?.has(tenantId)) weight += r.severity
-    }
-  }
-  return weight
+  return rows.reduce((sum, r) => sum + r.severity, 0)
 }
 
 /**
@@ -210,12 +203,13 @@ export async function syncCustomerBanMirror(db: Db, customerId: string): Promise
 }
 
 /**
- * Promote the customer to an auto ban AT `tenantId` when that company's active
- * strikes weigh 3 or more — unless that company already has an active ban on
- * them (staff or auto). Another company's ban never stops it. Runs under the
- * per-(company, customer) advisory lock, so racing strikes create one ban; the
- * partial unique customer_bans_one_active_auto_per_company is the backstop
- * (a violation reads as "exists"). Always re-syncs the Customer mirror.
+ * Promote the customer to an auto ban when their servd-wide active strikes
+ * weigh 3 or more — unless an active ban (staff or auto, any company) is
+ * already in force on them. The new ban is stamped with `tenantId`, the
+ * company whose strike tipped it (the raising company). Runs under the
+ * per-customer advisory lock, so racing strikes (in any company) create one
+ * ban. Backstop: the partial unique index on active auto bans (a violation
+ * reads as "exists"). Always re-syncs the Customer mirror.
  */
 export async function maybePromoteToBan(
   customerId: string,
@@ -223,13 +217,13 @@ export async function maybePromoteToBan(
   db: Db = serviceClient,
 ): Promise<{ banId?: string; created: boolean }> {
   return inTx(db, async (tx) => {
-    await lockBan(tx, tenantId, customerId)
+    await lockBan(tx, customerId)
     const now = new Date()
-    const weight = await activeStrikeWeightAt(tx, customerId, tenantId, now)
+    const weight = await activeStrikeWeight(tx, customerId, now)
     let result: { banId?: string; created: boolean } = { created: false }
     if (weight >= BAN_THRESHOLD) {
       const existing = await tx.customerBan.findFirst({
-        where: { customerId, tenantId, ...activeBanFilter(now) },
+        where: { customerId, ...activeBanFilter(now) },
         select: { id: true },
         orderBy: { bannedAt: 'desc' },
       })
@@ -244,7 +238,7 @@ export async function maybePromoteToBan(
               customerId,
               email:      customer.email?.toLowerCase() ?? null,
               phone:      customer.phone ?? null,
-              reason:     `Auto-banned: ${weight} active strikes (3-strike threshold)`,
+              reason:     `Auto-banned: ${weight} active strikes across servd (3-strike threshold)`,
               bannedById: null,
             },
             select: { id: true },
@@ -253,9 +247,9 @@ export async function maybePromoteToBan(
             result = { banId: made.value.id, created: true }
           } else {
             const code = (made.error as { code?: string }).code
-            if (code !== 'P2002' && !/customer_bans_one_active_auto_per_company/.test(made.error.message)) throw made.error
+            if (code !== 'P2002' && !/customer_bans_one_active_auto_per_(company|customer)/.test(made.error.message)) throw made.error
             const again = await tx.customerBan.findFirst({
-              where: { customerId, tenantId, liftedAt: null, bannedById: null },
+              where: { customerId, liftedAt: null, bannedById: null },
               select: { id: true },
             })
             result = { banId: again?.id, created: false }
@@ -269,10 +263,9 @@ export async function maybePromoteToBan(
 }
 
 /**
- * Reverse a strike (a manager forgives it). Per the strike's company: when
- * that company's active weight falls below 3, ITS auto ban is lifted — never
- * another company's, never a staff ban. A legacy NULL-company auto ban is
- * lifted only when every company it is attributed to is below 3.
+ * Reverse a strike (a manager forgives it). When the customer's servd-wide
+ * active weight falls below 3, every active AUTO ban on them is lifted (any
+ * company's, legacy NULL ones too) — never a staff ban.
  */
 export async function reverseStrike(
   strikeId: string,
@@ -281,34 +274,13 @@ export async function reverseStrike(
 ): Promise<{ unbanned: boolean }> {
   const strike = await serviceClient.customerStrike.findUnique({
     where: { id: strikeId },
-    select: { id: true, customerId: true, reversedAt: true, tenantId: true, sourceType: true, sourceId: true, recordedById: true },
+    select: { id: true, customerId: true, reversedAt: true },
   })
   if (!strike) throw new NotFoundError('Strike', strikeId)
   if (strike.reversedAt) return { unbanned: false }
 
-  // The companies the strike counts at.
-  let companies: string[]
-  if (strike.tenantId) {
-    companies = [strike.tenantId]
-  } else {
-    const { strikeCompanies } = await import('../modules/crm/customerScope.js')
-    const c = (await strikeCompanies([strike])).get(strike.id)
-    if (c === null || c === undefined) {
-      // Unattributable legacy strike: it counted everywhere — re-check every
-      // company with an active auto ban on the customer.
-      const bans = await serviceClient.customerBan.findMany({
-        where: { customerId: strike.customerId, bannedById: null, tenantId: { not: null }, ...activeBanFilter(new Date()) },
-        select: { tenantId: true },
-      })
-      companies = [...new Set(bans.map((b) => b.tenantId!))]
-    } else {
-      companies = [...c]
-    }
-  }
-  companies.sort()
-
   return serviceClient.$transaction(async (tx) => {
-    for (const t of companies) await lockBan(tx, t, strike.customerId)
+    await lockBan(tx, strike.customerId)
     const claimed = await tx.customerStrike.updateMany({
       where: { id: strikeId, reversedAt: null },
       data:  { reversedAt: new Date(), reversedById, reversalReason },
@@ -317,36 +289,12 @@ export async function reverseStrike(
 
     const now = new Date()
     let unbanned = false
-    for (const t of companies) {
-      if ((await activeStrikeWeightAt(tx, strike.customerId, t, now)) >= BAN_THRESHOLD) continue
+    if ((await activeStrikeWeight(tx, strike.customerId, now)) < BAN_THRESHOLD) {
       const lifted = await tx.customerBan.updateMany({
-        where: { customerId: strike.customerId, tenantId: t, bannedById: null, liftedAt: null },
+        where: { customerId: strike.customerId, bannedById: null, liftedAt: null },
         data:  { liftedAt: now, liftedById: reversedById, liftReason: 'Strike reversed → below threshold' },
       })
-      if (lifted.count > 0) unbanned = true
-    }
-
-    // Legacy NULL-company auto bans: lift when no company they are attributed to is still at 3.
-    const legacyBans = await tx.customerBan.findMany({
-      where: { customerId: strike.customerId, tenantId: null, bannedById: null, liftedAt: null },
-      select: { id: true, customerId: true, bannedById: true, tenantId: true },
-    })
-    if (legacyBans.length > 0) {
-      const { banCompanies } = await import('../modules/crm/customerScope.js')
-      const bc = await banCompanies(legacyBans)
-      for (const b of legacyBans) {
-        const at = bc.get(b.id)
-        const still = at === null || at === undefined
-          ? (await tx.customerStrike.findMany({ where: { customerId: strike.customerId, ...activeStrikeWhere(now) }, select: { severity: true } }))
-              .reduce((s, r) => s + r.severity, 0) >= BAN_THRESHOLD
-          : (await Promise.all([...at].map((t) => activeStrikeWeightAt(tx, strike.customerId, t, now)))).some((w) => w >= BAN_THRESHOLD)
-        if (still) continue
-        await tx.customerBan.updateMany({
-          where: { id: b.id, liftedAt: null },
-          data:  { liftedAt: now, liftedById: reversedById, liftReason: 'Strike reversed → below threshold' },
-        })
-        unbanned = true
-      }
+      unbanned = lifted.count > 0
     }
 
     await syncCustomerBanMirror(tx, strike.customerId)
@@ -358,9 +306,10 @@ export async function reverseStrike(
 
 /**
  * Lift a ban (the CRM "unblock", or an appeal granted). The caller has already
- * checked the ban is its company's (404 otherwise). A legacy NULL-company ban
- * applies everywhere, so only the CEO (role admin) may lift it
- * (403 LEGACY_BAN_ADMIN_ONLY). The company's strikes STAY (owner Q6: lifting
+ * checked the actor may decide it — the CEO, or a manager of the company that
+ * raised it (crm/routes.ts findBanInScope; 404 / 403 otherwise). A legacy
+ * NULL-company ban has no raising company, so only the CEO (role admin) may
+ * lift it (403 LEGACY_BAN_ADMIN_ONLY). The strikes STAY (owner Q6: lifting
  * on appeal keeps the strike history; they expire after a year). Linked open
  * ban_appeal complaints resolve with 'Block lifted: <reason>'. Idempotent:
  * an already-lifted ban is left as it is.
@@ -369,7 +318,7 @@ export async function liftBanTx(tx: Tx, a: { banId: string; actorId: string; rea
   const ban = await tx.customerBan.findUnique({ where: { id: a.banId }, select: { id: true, tenantId: true, customerId: true, liftedAt: true } })
   if (!ban) throw new NotFoundError('Ban', a.banId)
   if (!ban.tenantId && a.actorRole !== 'admin') {
-    throw new AppError('LEGACY_BAN_ADMIN_ONLY', 'This block is from before blocks were per company and applies at every company — only the CEO can lift it.', 403)
+    throw new AppError('LEGACY_BAN_ADMIN_ONLY', 'This block has no company that raised it — only the CEO can lift it.', 403)
   }
   const now = new Date()
   if (!ban.liftedAt) {
@@ -397,7 +346,7 @@ export async function releaseBanContactTx(
   const ban = await tx.customerBan.findUnique({ where: { id: a.banId }, select: { id: true, tenantId: true, customerId: true, email: true, phone: true } })
   if (!ban) throw new NotFoundError('Ban', a.banId)
   if (!ban.tenantId && a.actorRole !== 'admin') {
-    throw new AppError('LEGACY_BAN_ADMIN_ONLY', 'This block is from before blocks were per company and applies at every company — only the CEO can change it.', 403)
+    throw new AppError('LEGACY_BAN_ADMIN_ONLY', 'This block has no company that raised it — only the CEO can change it.', 403)
   }
   const value = a.contact === 'phone' ? ban.phone : ban.email
   if (!value) throw new AppError('NOTHING_TO_RELEASE', `This block holds no ${a.contact === 'phone' ? 'phone number' : 'email'}.`, 409)
@@ -422,12 +371,13 @@ async function resolveOpenAppealsTx(tx: Tx, banId: string, resolution: string, n
   })
 }
 
-// ─── Per-company ban checks (owner decision 15) ──────────────────────────────
+// ─── Ban checks — servd-wide (owner, 2026-10-15) ─────────────────────────────
 //
-// ONE blocking mechanism: CustomerBan. A ban applies at the brands of the
-// company in its tenantId column. A legacy NULL row is attributed the old way
-// (crm/customerScope.banCompanies); one that cannot be attributed applies
-// everywhere — the conservative reading.
+// ONE blocking mechanism: CustomerBan. An active ban applies at every brand of
+// every company, whichever company raised it (its tenantId says who raised it,
+// for audit and for who may lift it — never where it applies). The `tenantId`
+// the readers take is the company being asked about; it no longer narrows the
+// match and is kept so callers stay explicit about where the customer is.
 
 type BanMatch = { customerId?: string | null; email?: string | null; phone?: string | null }
 
@@ -442,29 +392,21 @@ function activeBanWhere(m: BanMatch, now: Date): Prisma.CustomerBanWhereInput | 
 
 type ActiveBan = { id: string; tenantId: string | null; reason: string; bannedAt: Date; ipAddresses: string[] }
 
-/** This company's active ban matching the customer, their email or phone — or null. */
-export async function activeBanAtCompany(args: BanMatch & { tenantId: string | null }): Promise<ActiveBan | null> {
+/**
+ * The active ban matching the customer, their email or phone — servd-wide, any
+ * company's — or null. When the asking company raised one of them, that one is
+ * returned (it can lift it); otherwise the latest.
+ */
+export async function activeBanAtCompany(args: BanMatch & { tenantId?: string | null }): Promise<ActiveBan | null> {
   const where = activeBanWhere(args, new Date())
   if (!where) return null
   const bans = await serviceClient.customerBan.findMany({
-    where: args.tenantId ? { AND: [where, { OR: [{ tenantId: args.tenantId }, { tenantId: null }] }] } : where,
-    select: { id: true, customerId: true, bannedById: true, tenantId: true, reason: true, bannedAt: true, ipAddresses: true },
+    where,
+    select: { id: true, tenantId: true, reason: true, bannedAt: true, ipAddresses: true },
     orderBy: { bannedAt: 'desc' },
   })
   if (bans.length === 0) return null
-  const strip = ({ customerId: _c, bannedById: _b, ...rest }: (typeof bans)[number]): ActiveBan => rest
-  if (!args.tenantId) return strip(bans[0]!)
-  const own = bans.find((b) => b.tenantId === args.tenantId)
-  if (own) return strip(own)
-  const legacy = bans.filter((b) => b.tenantId === null)
-  if (legacy.length === 0) return null
-  const { banCompanies } = await import('../modules/crm/customerScope.js')
-  const companies = await banCompanies(legacy)
-  const hit = legacy.find((b) => {
-    const c = companies.get(b.id)
-    return c === null || (c !== undefined && c.has(args.tenantId!))
-  })
-  return hit ? strip(hit) : null
+  return (args.tenantId ? bans.find((b) => b.tenantId === args.tenantId) : undefined) ?? bans[0]!
 }
 
 export type BanAppealState = { status: 'none' | 'open' | 'declined'; at: Date | null }
@@ -483,13 +425,14 @@ export async function banAppealState(db: Db, banId: string): Promise<BanAppealSt
 }
 
 /**
- * Refuse an order/booking at a brand of `tenantId` when that company has an
- * active ban on this customer. Records the IP on the ban as a forensic signal.
- * The BANNED error carries details { banId, companyName, appeal } so the
- * storefront / app can offer the appeal.
+ * Refuse an order/booking at any brand when an active ban (servd-wide) matches
+ * this customer, their email or phone. Records the IP on the ban as a forensic
+ * signal. The BANNED error carries details { banId, companyName: null, appeal }
+ * so the storefront / app can offer the appeal; it never names the company that
+ * raised the block (the block is on the servd account).
  */
 export async function assertNotBannedAtCompany(args: BanMatch & {
-  tenantId: string | null
+  tenantId?: string | null
   ip?: string | null
   intent?: 'order' | 'reservation' | 'signup'
 }): Promise<void> {
@@ -498,36 +441,24 @@ export async function assertNotBannedAtCompany(args: BanMatch & {
   if (args.ip && !ban.ipAddresses.includes(args.ip)) {
     await serviceClient.customerBan.update({ where: { id: ban.id }, data: { ipAddresses: { push: args.ip } } }).catch(() => {})
   }
-  const companyId = ban.tenantId ?? args.tenantId
-  const [company, appeal] = await Promise.all([
-    companyId ? serviceClient.tenant.findUnique({ where: { id: companyId }, select: { name: true } }).catch(() => null) : null,
-    banAppealState(serviceClient, ban.id).catch((): BanAppealState => ({ status: 'none', at: null })),
-  ])
+  const appeal = await banAppealState(serviceClient, ban.id).catch((): BanAppealState => ({ status: 'none', at: null }))
   const verb = args.intent === 'reservation' ? 'book' : args.intent === 'signup' ? 'sign up' : 'order'
-  throw new AppError('BANNED', `This account can't ${verb} here. If you think this is a mistake, contact the venue directly.`, 403, {
+  throw new AppError('BANNED', `This servd account can't ${verb} right now. If you think this is a mistake, contact us.`, 403, {
     banId: ban.id,
-    companyName: company?.name ?? null,
+    companyName: null,
     appeal,
   })
 }
 
-/** Customers with an active ban that applies at `tenantId` (for marketing reach). */
-export async function bannedCustomerIdsAtCompany(tenantId: string): Promise<string[]> {
-  const now = new Date()
+/**
+ * Customers with an active ban (for marketing reach). Servd-wide: every active
+ * ban applies at every company, so `tenantId` (the sending company) does not
+ * narrow it.
+ */
+export async function bannedCustomerIdsAtCompany(_tenantId?: string): Promise<string[]> {
   const bans = await serviceClient.customerBan.findMany({
-    where: { customerId: { not: null }, ...activeBanFilter(now), AND: [{ OR: [{ tenantId }, { tenantId: null }] }] },
-    select: { id: true, customerId: true, bannedById: true, tenantId: true },
+    where: { customerId: { not: null }, ...activeBanFilter(new Date()) },
+    select: { customerId: true },
   })
-  if (bans.length === 0) return []
-  const out = new Set<string>(bans.filter((b) => b.tenantId === tenantId).map((b) => b.customerId!))
-  const legacy = bans.filter((b) => b.tenantId === null)
-  if (legacy.length > 0) {
-    const { banCompanies } = await import('../modules/crm/customerScope.js')
-    const companies = await banCompanies(legacy)
-    for (const b of legacy) {
-      const c = companies.get(b.id)
-      if (c === null || c?.has(tenantId)) out.add(b.customerId!)
-    }
-  }
-  return [...out]
+  return [...new Set(bans.map((b) => b.customerId!))]
 }

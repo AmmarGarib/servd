@@ -10,11 +10,12 @@ import { fmtPkr, fmtPkrWhole } from '../../lib/money'
 import {
   activeRaastIntents, activeTerminalCharges, billFor, chargeBlocks, fetchOrder, fetchOrderFiscal, fetchReceiptHtml, fiscalLine,
   isFiscalHeld, isOfflinePlaceholder, isPreBillRequired, isTillTender, newIdempotencyKey, payOrder, preBillErrorMessage, printHtml,
-  printPreBill, raastIntentBlocks, ringUp, storedQuote, tillErrorMessage, useCartQuote, useTerminalConfig,
+  paidCentsOf, printPreBill, raastIntentBlocks, ringUp, storedQuote, tillErrorMessage, useCartQuote, useOnAccountEnabled, useTerminalConfig,
   type FiscalView, type RaastIntentView, type TerminalChargeView, type TillBrand, type TillOrder, type TillQuote,
 } from './tillApi'
 import { TerminalCharge } from './TerminalCharge'
 import { RaastPanel, type RaastDone } from './RaastPanel'
+import { OnAccountPanel, type OnAccountDone } from './OnAccountPanel'
 import { orderRef } from '../../lib/orderRef'
 
 /** What the done screen shows: change due, the sale's fiscal document, the card the machine took. */
@@ -25,6 +26,8 @@ interface Done {
   card?: { brand: string | null; last4: string | null; approvalRef: string | null } | null
   /** A Raast QR transfer: its bank reference — provisional until the bank statement matches it. */
   raast?: RaastDone | null
+  /** On account: the client the bill was charged to (the client signs the bill). */
+  onAccount?: OnAccountDone | null
   at: number
 }
 
@@ -40,7 +43,9 @@ interface PaymentModalProps {
 // F-PAY02: wallet methods removed in v1 — re-add when adapters ship.
 // Owner, 2026-10-12: Raast QR replaces Keenu QR at the till (Keenu QR is
 // retired; a payment made to an old Keenu QR standee is taken as Card – Keenu).
-type PaymentMethod = 'cash' | 'card' | 'raast' | 'comp' | 'staff_meal'
+// 'on_account' (corporate clients): offered only when the order's company has
+// an active client and is cut over (GET /pos/on-account/enabled) — OnAccountPanel.
+type PaymentMethod = 'cash' | 'card' | 'raast' | 'on_account' | 'comp' | 'staff_meal'
 
 // FOH-02: the till charges the SERVER's bill. Two steps:
 //   1. Ring up — POST /pos/orders (priced by the server for the chosen tender
@@ -318,6 +323,40 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
     void qc.invalidateQueries({ queryKey: ['pos', 'open-tickets'] })
   }
 
+  function onAccountCharged(r: { fiscal?: FiscalView | null; client: OnAccountDone }) {
+    setDone({ changeCents: 0, fiscal: r.fiscal, onAccount: r.client, at: Date.now() })
+    void qc.invalidateQueries({ queryKey: ['pos', 'open-tickets'] })
+  }
+
+  // ── On account (corporate clients) ────────────────────────────────────────
+  // Shown only when the server says this order's company takes it. It takes
+  // the WHOLE bill and nothing else: never offline, never on a part-paid or
+  // tipped bill, never with a promo, wallet or gift card on it (the server
+  // refuses those too — ON_ACCOUNT_WHOLE_BILL; this only says why up front).
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false)
+  useEffect(() => {
+    const up = () => setOnline(true)
+    const down = () => setOnline(false)
+    window.addEventListener('online', up)
+    window.addEventListener('offline', down)
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
+  }, [])
+  const onAccountOn = useOnAccountEnabled(order?.id ?? null, !!order && !done)
+  const onAccountShown = !!order && onAccountOn.data === true
+  const onAccountWhy: string | null = !order ? null
+    : !online ? 'Needs a connection — on account is never taken offline.'
+    : (order.payments ?? []).some((p) => (p.status === 'paid' || p.status === 'pending') && p.amountCents > 0) || paidCentsOf(order) > 0
+      ? 'Part of this bill is already paid — on account takes the whole bill only.'
+    : (order.tipCents ?? 0) > 0 ? 'This bill has a tip on it — on account takes a bill with no tip.'
+    : (order.promoDiscountCents ?? 0) > 0 || !!order.promoCodeId ? 'A promo is applied — on account takes a bill with no promo on it.'
+    : (order.walletAmountCents ?? 0) > 0 || (order.payments ?? []).some((p) => p.method === 'wallet') ? 'Wallet credit is applied — on account takes a bill with no wallet credit on it.'
+    : (order.payments ?? []).some((p) => p.method === 'gift_card') ? 'A gift card is applied — on account takes a bill with no gift card on it.'
+    : null
+  // Leave the tender if it stops being available (offline, a part payment elsewhere).
+  useEffect(() => {
+    if (!done && method === 'on_account' && (!onAccountShown || onAccountWhy)) setMethod('cash')
+  }, [done, method, onAccountShown, onAccountWhy])
+
   // ── Printing ──────────────────────────────────────────────────────────────
   // Before payment: a PRE-BILL (never a tax invoice, never sent to the POS).
   // After payment: the FULL & FINAL bill with the fiscal block; every print
@@ -385,6 +424,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
     { id: 'cash', label: 'Cash', hint: 'Cash rate' },
     { id: 'card', label: 'Card – Keenu', hint: 'Card machine' },
     { id: 'raast', label: 'Raast QR', hint: 'Bank transfer' },
+    ...(onAccountShown ? [{ id: 'on_account' as const, label: 'On account', hint: 'Client card' }] : []),
     { id: 'staff_meal', label: 'Staff meal', hint: 'Manager' },
     { id: 'comp', label: 'Comp', hint: 'Reason' },
   ]
@@ -394,6 +434,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
     // it settles or is resolved; until the resume answers are in, there may
     // be one we have not seen yet.
     if (holding || !resumeSettled) return
+    if (m === 'on_account' && onAccountWhy) return
     setMethod(m)
     setBillChanged(false)
     setManualOpen(false)
@@ -428,7 +469,8 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
         <button
           key={m.id}
           onClick={() => pickMethod(m.id)}
-          disabled={(holding && method !== m.id) || !resumeSettled}
+          disabled={(holding && method !== m.id) || !resumeSettled || (m.id === 'on_account' && !!onAccountWhy)}
+          title={m.id === 'on_account' && onAccountWhy ? onAccountWhy : undefined}
           aria-pressed={method === m.id}
           className={`rounded-lg border px-1 py-3 text-center text-sm font-semibold transition-colors disabled:opacity-30 ${
             method === m.id
@@ -440,6 +482,9 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           <div className="mt-0.5 text-[10px] font-normal uppercase tracking-wider opacity-70">{m.hint}</div>
         </button>
       ))}
+      {onAccountShown && onAccountWhy && (
+        <p className="col-span-3 text-xs text-kds-subtext">On account: {onAccountWhy}</p>
+      )}
     </div>
   )
 
@@ -507,7 +552,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
   const live = order.items.filter((i) => i.status !== 'voided')
   const title = order.table?.label ? `Table ${order.table.label}` : `Order ${orderRef(order.id)}`
   return (
-    <Shell title={done ? 'Paid' : `${title} — ${shown ? fmtPkrWhole(due) : '…'}`} onClose={onClose}>
+    <Shell title={done ? 'Paid' : method === 'on_account' ? `${title} — on account` : `${title} — ${shown ? fmtPkrWhole(due) : '…'}`} onClose={onClose}>
       {!done && (
         <>
           {/* What is being charged */}
@@ -521,7 +566,8 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
 
           {methodPicker}
 
-          {/* The server's bill for this tender */}
+          {/* The server's bill for this tender (on account shows its own, at the cash rate) */}
+          {method !== 'on_account' && (
           <div className="mb-4 space-y-1 rounded-xl border border-kds-border px-4 py-3 text-sm">
             {shown ? (
               <>
@@ -542,6 +588,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
               <p className="text-sm text-kds-subtext">Getting the bill from the server…</p>
             )}
           </div>
+          )}
 
           {billChanged && shown && (
             <p className="mb-3 text-sm font-semibold text-kds-amber">
@@ -729,7 +776,18 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
             </p>
           )}
 
-          {!resumeSettled ? null : method === 'raast' ? (
+          {!resumeSettled ? null : method === 'on_account' ? (
+            order && shiftId && !onAccountWhy ? (
+              <div className="mb-1">
+                <OnAccountPanel
+                  orderId={order.id}
+                  shiftId={shiftId}
+                  onBillChanged={() => void reloadBill()}
+                  onCharged={onAccountCharged}
+                />
+              </div>
+            ) : null
+          ) : method === 'raast' ? (
             order && shiftId && shown && (due > 0 || raastHeld) ? (
               <RaastPanel
                 orderId={order.id}
@@ -818,7 +876,13 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
       {done && (
         <div className="space-y-3">
           <div className="rounded-xl bg-kds-green/10 border border-kds-green/30 py-3 text-center" role="status">
-            <p className="font-bold text-kds-green">{method === 'comp' || method === 'staff_meal' ? 'Comped' : 'Payment complete'}</p>
+            <p className="font-bold text-kds-green">{method === 'comp' || method === 'staff_meal' ? 'Comped' : done.onAccount ? 'Charged on account' : 'Payment complete'}</p>
+            {done.onAccount && (
+              <p className="mt-1 px-3 text-xs text-kds-subtext">
+                {done.onAccount.name} · Account {done.onAccount.number}
+                {done.onAccount.reference ? ` · Ref ${done.onAccount.reference}` : ''}
+              </p>
+            )}
             {method === 'cash' && done.changeCents > 0 && (
               <p className="text-sm text-kds-amber mt-1">Change: {fmtPkr(done.changeCents)}</p>
             )}
@@ -853,6 +917,11 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
               )}
             </div>
           )}
+          {done.onAccount && (
+            <p className="rounded-xl border border-kds-amber px-3 py-2 text-sm font-semibold text-kds-amber" role="status">
+              Ask the client to sign the bill.
+            </p>
+          )}
           {filedSincePrint && (
             <p className="text-xs font-semibold text-kds-green" role="status">
               The fiscal invoice is filed now — reprint the bill to give the guest the verification QR.
@@ -870,7 +939,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           <div className="grid grid-cols-2 gap-3">
             <button onClick={printFinalBill}
               className="rounded-xl border border-kds-border py-3 text-sm font-bold text-kds-text hover:bg-kds-border/30">
-              {printCount === 0 ? 'Print final bill' : filedSincePrint ? 'Reprint with fiscal QR' : 'Reprint (duplicate)'}
+              {printCount === 0 ? (done.onAccount ? 'Print bill to sign' : 'Print final bill') : filedSincePrint ? 'Reprint with fiscal QR' : 'Reprint (duplicate)'}
             </button>
             <button onClick={onClose}
               className="rounded-xl bg-kds-green py-3 text-sm font-bold text-white">

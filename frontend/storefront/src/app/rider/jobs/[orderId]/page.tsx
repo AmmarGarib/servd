@@ -7,8 +7,11 @@
 //   accepted   Picked up        (409 NOT_READY until the kitchen marks it ready)
 //   picked_up  Arrived
 //   arrived    The customer's 4-digit code → delivered. Wrong codes count down;
-//              after 5 the hand-over locks and a manager marks it delivered
-//              from admin → Dispatch.
+//              after 5 the hand-over locks: call the manager, who can send the
+//              code to the rider's WhatsApp (Emergency overrides). The code
+//              shows here too, as a fallback, with a "Use this code" fill.
+//   picked up / arrived, code-only companies: "Problem at the door" (no code,
+//              refused, can't reach) → bring the food back; a manager logs it.
 //
 // Each step sends the rider's latest position with it (never waits for GPS).
 // The job refreshes every 15 s while on screen, so a kitchen marking it ready
@@ -19,7 +22,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { formatBrandName } from '../../../../lib/concept'
 import {
-  RiderApiError, errorNumber, friendlyError, riderApi, type Job, type JobPlace, type StepAction,
+  RiderApiError, errorNumber, friendlyError, riderApi, type DoorProblemKind, type Job, type JobPlace, type StepAction,
 } from '../../../../lib/riderApi'
 import { useRiderSession } from '../../../../lib/riderSession'
 import { currentPos } from '../../_lib/tracking'
@@ -31,7 +34,12 @@ import {
 
 const DECLINE_REASONS = ['Too far', 'Vehicle problem', 'Already carrying an order', 'Other'] as const
 const OTP_LENGTH = 4
-const OTP_MAX_ATTEMPTS = 5
+
+const DOOR_PROBLEMS: Array<{ kind: DoorProblemKind; label: string }> = [
+  { kind: 'no_code', label: "Customer can't get the code" },
+  { kind: 'refused', label: "Customer refused or won't pay" },
+  { kind: 'unreachable', label: "Can't reach the customer" },
+]
 
 export default function RiderJobPage() {
   const params = useParams<{ orderId: string }>()
@@ -55,6 +63,10 @@ export default function RiderJobPage() {
   const [otpError, setOtpError] = useState<string | null>(null)
   const [attemptsLeft, setAttemptsLeft] = useState<number | null>(null)
   const [locked, setLocked] = useState(false)
+  const [doorOpen, setDoorOpen] = useState(false)
+  const [doorBusy, setDoorBusy] = useState<DoorProblemKind | null>(null)
+  const [doorError, setDoorError] = useState<string | null>(null)
+  const [doorReported, setDoorReported] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -106,6 +118,22 @@ export default function RiderJobPage() {
       void load()
     } finally {
       setBusy(null)
+    }
+  }
+
+  async function reportDoor(kind: DoorProblemKind) {
+    if (doorBusy) return
+    setDoorBusy(kind)
+    setDoorError(null)
+    try {
+      await riderApi.reportDoorProblem(orderId, kind, currentPos())
+      setDoorReported(true)
+      setDoorOpen(false)
+      void load()
+    } catch (err) {
+      setDoorError(stepErrorMessage(err))
+    } finally {
+      setDoorBusy(null)
     }
   }
 
@@ -208,6 +236,10 @@ export default function RiderJobPage() {
 
   const brand = formatBrandName(job.brand?.name)
   const cash = job.cashToCollectCents ?? 0
+  const reroutedCode = job.handover?.rerouted ? job.handover.code : null
+  const canReportDoor = !!job.doorProblemEnabled && (job.stage === 'picked_up' || job.stage === 'arrived')
+  const showReturnGuidance = doorReported || !!job.doorProblem
+  const outlet = formatBrandName(job.pickup?.name) || brand
 
   return (
     <div className="flex flex-1 flex-col">
@@ -282,6 +314,12 @@ export default function RiderJobPage() {
       >
         {error ? <Banner tone="danger" title="Not done">{error}</Banner> : null}
 
+        {showReturnGuidance && canReportDoor ? (
+          <Banner tone="strong" title="Problem at the door reported">
+            Bring the food back to {outlet}; a manager logs it.
+          </Banner>
+        ) : null}
+
         {job.stage === 'offered' && !declining ? (
           <>
             <Button size="xl" busy={busy === 'accept'} disabled={!!busy} onClick={() => void step('accept')}>Accept job</Button>
@@ -325,13 +363,25 @@ export default function RiderJobPage() {
           locked ? (
             <>
               <Banner tone="danger" title="Code locked">
-                {OTP_MAX_ATTEMPTS} wrong codes were entered. Call the kitchen — a manager will mark the order delivered.
+                Call your manager — they can send the code to you.
               </Banner>
               <ButtonLink href={telHref(job.pickup?.phone)} intent="secondary" size="xl" icon={<PhoneIcon />}>
                 Call the kitchen
               </ButtonLink>
             </>
           ) : (
+            <>
+            {reroutedCode ? (
+              <Banner tone="success" title="A manager sent the code to your WhatsApp">
+                {cash > 0 ? 'Take the cash first, then enter the code. ' : 'Check the customer has the food, then enter the code. '}
+                If the message has not arrived, the code is <strong>{reroutedCode}</strong>.
+                <div className="mt-3">
+                  <Button intent="secondary" size="md" onClick={() => { setOtp(reroutedCode); setOtpError(null) }}>
+                    Use this code
+                  </Button>
+                </div>
+              </Banner>
+            ) : null}
             <form className="flex flex-col gap-3" noValidate onSubmit={(e) => { e.preventDefault(); void deliver() }}>
               <label className="flex flex-col gap-1.5">
                 <span className="text-[18px] font-black">Enter the customer&apos;s code</span>
@@ -368,7 +418,30 @@ export default function RiderJobPage() {
                 Complete delivery
               </Button>
             </form>
+            </>
           )
+        ) : null}
+
+        {canReportDoor && !showReturnGuidance && !doorOpen ? (
+          <Button intent="ghost" size="md" disabled={!!busy} onClick={() => { setDoorError(null); setDoorOpen(true) }}>
+            Problem at the door
+          </Button>
+        ) : null}
+
+        {canReportDoor && doorOpen ? (
+          <>
+            <p className="text-[18px] font-black">What is the problem?</p>
+            <div className="flex flex-col gap-2.5">
+              {DOOR_PROBLEMS.map((d) => (
+                <Button key={d.kind} intent="ghost" size="md" busy={doorBusy === d.kind} disabled={!!doorBusy}
+                  onClick={() => void reportDoor(d.kind)}>
+                  {d.label}
+                </Button>
+              ))}
+            </div>
+            {doorError ? <Banner tone="danger" title="Not sent">{doorError}</Banner> : null}
+            <Button intent="secondary" size="md" disabled={!!doorBusy} onClick={() => setDoorOpen(false)}>Cancel</Button>
+          </>
         ) : null}
       </div>
     </div>

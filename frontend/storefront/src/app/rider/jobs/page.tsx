@@ -30,6 +30,8 @@ export default function RiderJobsPage() {
   const [shiftBusy, setShiftBusy] = useState(false)
   const [shiftError, setShiftError] = useState<string | null>(null)
   const [confirmOff, setConfirmOff] = useState(false)
+  // COD cash still held when the rider went off shift: a reminder, never a block.
+  const [cashHeld, setCashHeld] = useState(0)
   // 'carrying' = the server refused to take the rider off shift (a job is
   // theirs); 'stillOn' = going off shift failed (offline, server trouble), so
   // the rider would still be getting offers after signing out.
@@ -66,6 +68,7 @@ export default function RiderJobsPage() {
     try {
       const { rider: fresh } = await riderApi.setShift(true)
       useRiderSession.getState().setRider(fresh)
+      setCashHeld(0)
       void load()
     } catch (err) {
       stopTracking()
@@ -80,8 +83,9 @@ export default function RiderJobsPage() {
     setShiftError(null)
     setShiftBusy(true)
     try {
-      const { rider: fresh } = await riderApi.setShift(false)
+      const { rider: fresh, cashHeldCents } = await riderApi.setShift(false)
       useRiderSession.getState().setRider(fresh)
+      setCashHeld(cashHeldCents ?? 0)
       setConfirmOff(false)
       void load()
     } catch (err) {
@@ -149,6 +153,11 @@ export default function RiderJobsPage() {
             </Button>
           )}
           {shiftError ? <Banner tone="danger" title="Not changed">{shiftError}</Banner> : null}
+          {!onShift && cashHeld > 0 ? (
+            <Banner tone="strong" title={`You are holding ${pkr(cashHeld)}`}>
+              Hand it in at the counter.
+            </Banner>
+          ) : null}
         </div>
       </Card>
 
@@ -247,6 +256,12 @@ function JobCard({ job }: { job: Job }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <StageBadge stage={job.stage} />
+            {job.handover?.rerouted && job.handover.code ? (
+              <span className="rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.1em]"
+                style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
+                Code sent to you
+              </span>
+            ) : null}
             {cash > 0 ? (
               <span className="rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.1em]"
                 style={{ background: 'var(--servd-purple)', color: 'var(--servd-on-purple)' }}>

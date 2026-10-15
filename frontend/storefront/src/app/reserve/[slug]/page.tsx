@@ -23,6 +23,7 @@ import { fetchLiveConcepts, isServdCompanyBrand, lookupConcept } from '../../../
 import { brandDescriptor, cityOf } from '../../brand/[slug]/meta'
 import { liveSectionFields } from '../../../sections/liveFields'
 import { str } from '../../../sections/safe'
+import { BlockedNotice } from '../../../components/account/BlockedNotice'
 import ReserveScreen from './ReserveScreen'
 import { MAX_PARTY } from './partySizes'
 
@@ -82,6 +83,7 @@ export default async function ReserveBrandPage({ params }: Params) {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
+      <div className="container-narrow" style={{ paddingTop: '1rem' }}><BlockedNotice conceptSlug={concept.slug} /></div>
       <ReserveScreen brandName={name} intro={intro} />
     </>
   )

@@ -26,7 +26,11 @@ import {
 } from '../../components/pos/tillApi'
 import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from '../../components/pos/pinErrors'
 
-export type RefundTender = 'cash' | 'card' | 'raast' | 'keenu_qr'
+// On account (corporate clients): a bill charged to a client's account is
+// refunded BACK TO THAT ACCOUNT (the server credits the client; no money
+// leaves a drawer, no drawer is named). It is the only option for an
+// all-on-account bill — the till charges the whole bill on account or not at all.
+export type RefundTender = 'cash' | 'card' | 'raast' | 'keenu_qr' | 'on_account'
 
 export interface RefundRequest {
   amountCents: number
@@ -65,7 +69,8 @@ export async function refundThroughEngine(orderId: string, req: RefundRequest): 
         amountCents: req.amountCents,
         reason: req.reason,
         ...(req.method && { method: req.method }),
-        ...(req.shiftId && { shiftId: req.shiftId }),
+        // Back to a client's account: no money leaves a drawer, so no drawer is named.
+        ...(req.shiftId && req.method !== 'on_account' && { shiftId: req.shiftId }),
         ...(req.photoUrl && { photoUrl: req.photoUrl }),
         ...(req.gatewayRef && { gatewayRef: req.gatewayRef }),
         ...(pin && { managerOverridePin: pin }),
@@ -100,7 +105,7 @@ export interface RefundPayment {
 }
 
 /** The server's REFUND_TENDERS (backend lib/tenders.ts): the way a sale was paid, incl. the retired Keenu QR's old rows. */
-const REFUND_TENDERS: readonly RefundTender[] = ['cash', 'card', 'raast', 'keenu_qr']
+const REFUND_TENDERS: readonly RefundTender[] = ['cash', 'card', 'raast', 'keenu_qr', 'on_account']
 /** The server's PENDING_GATEWAY_TENDERS: pending rows a processor may still confirm — never Raast. */
 const DIGITAL_TENDERS: readonly string[] = ['card', 'keenu_qr']
 
@@ -140,6 +145,7 @@ export const TENDER_LABEL: Record<RefundTender, string> = {
   card: 'Card – Keenu',
   raast: 'Raast QR — send it back from the bank first',
   keenu_qr: 'Keenu QR (retired)',
+  on_account: 'Back to the client’s account',
 }
 
 /**
@@ -320,6 +326,9 @@ export function refundErrorMessage(e: unknown): string {
         return 'Keenu QR is retired — refund the sale the way it was paid.'
       case 'REFUND_METHOD_NOT_TENDERED':
         return e.message || 'Refund the way the sale was paid.'
+      case 'ON_ACCOUNT_REFUND_INSTEAD':
+      case 'ON_ACCOUNT_NOT_PARKABLE':
+        return 'This bill was charged to a client account — refund it back to the client’s account.'
     }
     return e.message || e.code
   }

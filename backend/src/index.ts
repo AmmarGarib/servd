@@ -75,6 +75,17 @@ import { orderRoutes, orderItemRoutes, orderCourseRoutes } from './modules/order
 import { menuRoutes } from './modules/menu/routes.js'
 import { posRoutes } from './modules/pos/routes.js'
 import posBoxGivenRoutes from './modules/pos/boxGivenRoutes.js'
+import { registerHeadOfficePlugins } from './modules/headOffices/index.js'
+import { hrHeadOfficeTransferRoutes } from './modules/hr/transferRoutes.js'
+import emergencyOverridesRoutes from './modules/emergencyOverrides/routes.js'
+import banAppealRoutes from './modules/storefront/banAppealRoutes.js'
+import { customerAccountRoutes } from './modules/receivables/customerAccounts.js'
+import posOnAccountRoutes from './modules/pos/onAccountRoutes.js'
+import { tillClearingRoutes } from './modules/accounting/tillClearingRoutes.js'
+import { startHeadOfficeRechargeWorker } from './workers/headOfficeRecharge.js'
+import { startCodCustodyWorker } from './workers/codCustody.js'
+import { startTillClearingSweepWorker } from './workers/tillClearingSweep.js'
+import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
@@ -374,6 +385,8 @@ async function build() {
       // in a box takes its recipe's packaging. Its own plugin under /pos
       // (ungated by module; the route's role list decides).
       await api.register(posBoxGivenRoutes, { prefix: '/pos' })
+      // On account (resumed 2026-10-15): a named client's QR card charges the whole bill at the till.
+      await api.register(posOnAccountRoutes, { prefix: '/pos' })
       // POS connector (spec §8): /connectors (config, module api_pos), /pos
       // (card machine + an order's fiscal documents), /webhooks/pos (vendor
       // events, own raw-body parser).
@@ -402,6 +415,11 @@ async function build() {
       await api.register(withholdingRoutes, { prefix: '/accounting/withholding' })
       await api.register(statutoryRoutes, { prefix: '/accounting/statutory' })
       await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
+      // Head office (D1/D3): /head-offices (CEO) + the recharge runs.
+      await registerHeadOfficePlugins(api)
+      // On-account clients and till clearing (resumed 2026-10-15).
+      await api.register(customerAccountRoutes, { prefix: '/accounting/customer-accounts' })
+      await api.register(tillClearingRoutes, { prefix: '/accounting/till-clearing' })
       // Finance → Stock differences (H20): waste and count differences wait
       // in 1290 with their reason until the CEO approves them into cost of
       // sales.
@@ -412,10 +430,16 @@ async function build() {
       await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
       await api.register(foodSafetyRoutes, { prefix: '/food-safety' })
       await api.register(hrRoutes, { prefix: '/hr' })
+      // Moving staff between a head office and its companies (HO-C2, CEO only).
+      await api.register(hrHeadOfficeTransferRoutes, { prefix: '/hr' })
       await api.register(crmRoutes, { prefix: '/crm' })
       await api.register(waitlistRoutes, { prefix: '/waitlist' })
       await api.register(loyaltyRoutes, { prefix: '/loyalty' })
       await api.register(storefrontRoutes, { prefix: '/storefront' })
+      // A banned customer's own view of their blocks + appeals (resumed 2026-10-15).
+      await api.register(banAppealRoutes, { prefix: '/storefront' })
+      // Emergency overrides: send the hand-over code to the rider; food a rider brought back.
+      await api.register(emergencyOverridesRoutes, { prefix: '/emergency-overrides' })
       await api.register(reviewRoutes, { prefix: '/reviews' })
       await api.register(complaintRoutes, { prefix: '/complaints' })
       await api.register(feedbackRoutes, { prefix: '/feedback' })
@@ -873,6 +897,28 @@ async function build() {
               if (late) details.cardPayouts = `${late} company(ies) with card days past the payout lag and no bank payout — Reconciliation → Card payouts`
             } catch (err) { warnOf('cardPayouts', err) }
           })(),
+          // Head office (D1/D3): recharges ON whose last month is not done, open pair mismatches. Counts only.
+          (async () => {
+            try {
+              const { headOfficeHealth } = await import('./modules/headOffices/health.js')
+              const h = await headOfficeHealth()
+              checks.headOffice = h.status
+              if (h.detail) details.headOffice = h.detail
+            } catch (err) { warnOf('headOffice', err) }
+          })(),
+          // Till clearing / on account (resumed 2026-10-15): open unexplained till-clearing lines and overdue
+          // on-account clients. Counts only — never an amount or a name.
+          (async () => {
+            try {
+              const open = { status: { in: ['open', 'acknowledged'] as Array<'open' | 'acknowledged'> } }
+              const tc = await prisma.exceptionFlag.count({ where: { kind: 'till_clearing_unexpected', ...open } })
+              checks.tillClearing = tc ? 'warn' : 'ok'
+              if (tc) details.tillClearing = `${tc} unexplained till-clearing line(s) — Accounting → Till clearing`
+              const od = await prisma.exceptionFlag.count({ where: { kind: 'on_account_overdue', ...open } })
+              checks.onAccount = od ? 'warn' : 'ok'
+              if (od) details.onAccount = `${od} overdue on-account client flag(s) — Accounting → Receivables → On-account clients`
+            } catch (err) { warnOf('tillClearing', err) }
+          })(),
         ])
       }
     }
@@ -958,7 +1004,7 @@ async function build() {
     const count = await prisma.location.count({ where: { deletedAt: null } })
     if (count === 0) {
       const tenants = await prisma.tenant.findMany({
-        where: { deletedAt: null, isActive: true },
+        where: { deletedAt: null, isActive: true, kind: 'company' }, // a head office has no outlet
         orderBy: { createdAt: 'asc' },
         select: { id: true, slug: true },
       })
@@ -1161,6 +1207,12 @@ async function build() {
       import('./modules/hr/daily.js').then((m) => m.runHrDaily()).catch((err: Error) => fastify.log.warn(`[hr] nightly sweep failed: ${err.message}`))
     })
     startRiderScoringWorker()
+    // Resumed 2026-10-15: head-office recharges (OFF per head office until the CA confirms), COD custody
+    // flags, the till-clearing sweep (companies cut over only) and on-account overdue / unbilled flags.
+    startHeadOfficeRechargeWorker()
+    startCodCustodyWorker()
+    startTillClearingSweepWorker()
+    startOnAccountDailyWorker()
     startOrderAutoCancelWorker()
     startPaymentRetryWorker()
     startRiderDispatchWorker()

@@ -30,6 +30,14 @@
 // A credit note can only credit what was not written off (WRITTEN_OFF_FIRST).
 // The approvals inbox links here with ?writeOff=<id> to open that request.
 //
+// On-account statements (parked B): a monthly STATEMENT (AR-ST-…, kind
+// 'statement') of an on-account client sits in the same list with a Statement
+// badge, its period and a link to the client. A statement is settled like an
+// invoice, but a credit note is never raised on it (refund the bill at the
+// till), voiding it releases its bills back to the client, and a write-off on
+// it suspends the client and splits the expense by brand — all the server's
+// rules; this page only says so. New invoices may name a client (optional).
+//
 // Record payment (owner, 2026-10-14) uses the shared PaymentReceivedFields:
 // Cash / Card / Bank transfer / Bank deposit / Cheque, a payment reference #
 // that is required for every method (cash included), and "Received into" for
@@ -73,7 +81,9 @@ interface WriteOffLite {
 interface CreditNoteRef { id: string; number: string; issueDate: string; totalCents: number; amountCents: number; taxCents: number; status: string; description: string }
 type Status = 'open' | 'partial' | 'paid' | 'credited' | 'written_off' | 'void' | 'issued'
 interface Invoice {
-  id: string; tenantId: string; conceptId?: string | null; kind: 'invoice' | 'credit_note'; number: string
+  id: string; tenantId: string; conceptId?: string | null; kind: 'invoice' | 'credit_note' | 'statement'; number: string
+  /** A statement's period and client (server fields; null on an invoice). */
+  statementPeriod?: { from: string; to: string } | null; customerAccountId?: string | null
   customerName: string; customerEmail: string | null; customerPhone: string | null
   issueDate: string; dueDate: string; description: string
   amountCents: number; taxCents: number; totalCents: number
@@ -86,6 +96,8 @@ interface Invoice {
 }
 interface Ledger { invoices: Invoice[]; aging: Record<string, number>; outstandingCents: number; creditBalanceCents: number }
 interface Concept { id: string; name: string }
+interface ClientOption { id: string; number?: string; legalName?: string; tradeName?: string | null; status?: string }
+const clientName = (c: ClientOption) => c.tradeName || c.legalName || c.number || c.id
 interface TaxPreview { brandName: string | null; rates: { cashPct: number; cardPct: number } | null; accountCode: string; accountName: string }
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
@@ -127,7 +139,7 @@ function paymentNoun(p: Payment): string {
 }
 const stWithheldSoFar = (i: Invoice) => i.payments.filter((p) => p.method === 'st_withheld' && !p.reversedAt).reduce((t, p) => t + p.amountCents, 0)
 
-const isLive = (i: Invoice) => i.kind === 'invoice' && i.status !== 'void'
+const isLive = (i: Invoice) => (i.kind === 'invoice' || i.kind === 'statement') && i.status !== 'void'
 const creditLeft = (i: Invoice) => {
   const live = i.creditNotes.filter((c) => c.status !== 'void')
   return {
@@ -325,7 +337,7 @@ function Receivables() {
       {dialog?.kind === 'void' && <Void inv={dialog.inv} onClose={close} />}
       {dialog?.kind === 'writeoff' && (
         <WriteOffDialog
-          invoice={{ id: dialog.inv.id, tenantId: dialog.inv.tenantId, number: dialog.inv.number, customerName: dialog.inv.customerName, totalCents: dialog.inv.totalCents, balanceCents: dialog.inv.balanceCents }}
+          invoice={{ id: dialog.inv.id, tenantId: dialog.inv.tenantId, number: dialog.inv.number, customerName: dialog.inv.customerName, totalCents: dialog.inv.totalCents, balanceCents: dialog.inv.balanceCents, kind: dialog.inv.kind }}
           onClose={close}
           onDone={(w) => finished(w.status === 'approved'
             ? `Written off ${fmtPkrWhole(w.amountCents)} on ${dialog.inv.number} as a bad debt — it is booked and out of the aging.`
@@ -374,7 +386,16 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
       <tr id={`inv-${i.id}`} className="border-t border-white/[0.05]"
         style={highlight ? { background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)' } : undefined}>
         <td className="px-4 py-3">
-          <p className="font-bold text-white/90">{i.number}</p>
+          <p className="font-bold text-white/90">
+            {i.number}
+            {i.kind === 'statement' && <span className="ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold s-badge-purple">Statement</span>}
+          </p>
+          {i.kind === 'statement' && (
+            <p className="text-[11px] text-white/50">
+              {i.statementPeriod ? `${i.statementPeriod.from} to ${i.statementPeriod.to}` : 'Statement'}
+              {i.customerAccountId && <> · <Link href={`/accounting/receivables/clients/${i.customerAccountId}`} className="text-primary-ink font-bold">Client</Link></>}
+            </p>
+          )}
           <p className="text-[11px] text-white/40 truncate max-w-[200px]">{isNote ? `Credit note on ${i.originalNumber ?? 'an invoice'} — ${i.description}` : i.description}</p>
         </td>
         <td className="px-4 py-3 text-white/70">{i.customerName}</td>
@@ -410,7 +431,8 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
           <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 min-w-[180px]">
             {isLive(i) && i.balanceCents > 0 && act('Record payment', { kind: 'pay', inv: i })}
             {isLive(i) && i.balanceCents > 0 && act('Tax withheld', { kind: 'wht', inv: i })}
-            {isLive(i) && left && (left.amount > 0 || left.tax > 0) && act('Credit note', { kind: 'credit', inv: i })}
+            {isLive(i) && i.kind === 'invoice' && left && (left.amount > 0 || left.tax > 0) && act('Credit note', { kind: 'credit', inv: i })}
+            {i.kind === 'statement' && isLive(i) && <span className="text-[10px] text-white/40">No credit note: refund the bill at the till</span>}
             {isLive(i) && i.balanceCents < 0 && i.paidCents > 0 && act('Refund', { kind: 'refund', inv: i })}
             {isLive(i) && i.canRequestWriteOff && act('Write off', { kind: 'writeoff', inv: i }, true)}
             {waitingFull?.canApprove && act('Approve write-off', { kind: 'decide', mode: 'approve', writeOff: waitingFull })}
@@ -498,7 +520,7 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
 function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void }) {
   const done = useDone(onClose)
   const [f, setF] = useState({
-    customerName: '', customerEmail: '', customerPhone: '', customerNtn: '', conceptId: '',
+    customerName: '', customerEmail: '', customerPhone: '', customerNtn: '', conceptId: '', customerAccountId: '',
     issueDate: today(), dueDate: plusDays(today(), 30), description: '', amount: '', tax: '0',
   })
   const [err, setErr] = useState('')
@@ -510,8 +532,15 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
     queryFn: () => api.get<TaxPreview>(`/accounting/receivables/tax-preview${f.conceptId ? `?conceptId=${f.conceptId}` : ''}`),
     staleTime: 60_000,
   })
+  const { data: clientList } = useQuery({
+    queryKey: ['receivables', 'client-options'],
+    queryFn: () => api.get<{ items: ClientOption[] }>('/accounting/customer-accounts'),
+    staleTime: 60_000,
+  })
+  const clients = (clientList?.items ?? []).filter((c) => c.status !== 'closed')
   const save = useMutation({
     mutationFn: () => api.post('/accounting/receivables', {
+      customerAccountId: f.customerAccountId || null,
       customerName: f.customerName, customerEmail: f.customerEmail || undefined, customerPhone: f.customerPhone || undefined,
       customerNtn: f.customerNtn || undefined, conceptId: f.conceptId || null,
       issueDate: f.issueDate, dueDate: f.dueDate, description: f.description,
@@ -529,6 +558,10 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
         <L t="Email"><input className={inp} value={f.customerEmail} onChange={set('customerEmail')} /></L>
         <L t="Phone"><input className={inp} value={f.customerPhone} onChange={set('customerPhone')} /></L>
         <L t="NTN"><input className={inp} value={f.customerNtn} onChange={set('customerNtn')} /></L>
+        {clients.length > 0 && (
+          <div className="sm:col-span-2"><L t="On-account client (optional)"><Select className={inp} value={f.customerAccountId} onChange={set('customerAccountId')}>
+            <option value="">None</option>{clients.map((c) => <option key={c.id} value={c.id}>{clientName(c)}</option>)}</Select></L></div>
+        )}
         <L t="Brand"><Select className={inp} value={f.conceptId} onChange={set('conceptId')}>
           <option value="">—</option>{concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></L>
         <L t="Issued"><input type="date" className={inp} value={f.issueDate} onChange={set('issueDate')} /></L>
@@ -844,13 +877,15 @@ function Void({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   return (
     <Modal title={`Void ${inv.number}`} onClose={onClose}>
       <p className="text-sm text-white/60">
-        {isNote
+        {inv.kind === 'statement'
+          ? 'This voids the statement and releases its bills back to the client, so they can be billed on a new statement.'
+          : isNote
           ? `This withdraws the credit note: ${inv.originalNumber ?? 'the invoice'} owes ${fmtPkrWhole(inv.totalCents)} again, and the ledger entry is reversed.`
           : 'This reverses the invoice in the ledger. It stays on record as void.'}
       </p>
       <div className="mt-4"><L t="Reason"><input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Raised in error" /></L></div>
       {err && <p className="text-xs text-s-red mt-3">{err}</p>}
-      <Buttons busy={go.isPending} disabled={reason.trim().length < 3} label={isNote ? 'Void credit note' : 'Void invoice'} busyLabel="Voiding…" onGo={() => go.mutate()} onClose={onClose} danger />
+      <Buttons busy={go.isPending} disabled={reason.trim().length < 3} label={isNote ? 'Void credit note' : inv.kind === 'statement' ? 'Void statement' : 'Void invoice'} busyLabel="Voiding…" onGo={() => go.mutate()} onClose={onClose} danger />
     </Modal>
   )
 }

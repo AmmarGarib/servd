@@ -42,7 +42,10 @@ export interface ModulePage {
 
 export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // ── CEO (decision D2): approvals, companies, logins & access, company rules
-  approvals:      [{ label: 'Approvals', href: '/ceo/approvals', icon: '✓', hint: 'Everything waiting on you, from every module' }],
+  approvals:      [
+    { label: 'Approvals', href: '/ceo/approvals', icon: '✓', hint: 'Everything waiting on you, from every module' },
+    { label: 'Hand-over', href: '/ceo/approvals/hand-over', sub: true, hint: 'Who approves what on your behalf' },
+  ],
   business_info:  [
     { label: 'Locations', href: '/configuration/locations', icon: '📍', hint: 'Kitchen address and map pin' },
     { label: 'Delivery zones', href: '/configuration/delivery-zones', sub: true, hint: 'Beyond the last zone, delivery is refused' },
@@ -50,6 +53,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   tenants:        [
     { label: 'Add a company or brand', href: '/onboarding' },
     { label: 'Domains', href: '/configuration/domains', sub: true },
+    { label: 'Head offices', href: '/ceo/head-offices', sub: true, hint: 'Shared staff and costs recharged to the companies' },
   ],
   // CEO home: a top-down view of every department, first in the Dashboards section.
   ceo_overview:   [{ label: 'Home', href: '/home', icon: '⌂', lead: true }],
@@ -135,10 +139,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   tables:         [{ label: 'Floor plan', href: '/floorplan', icon: '🪑' }],
   dispatch:       [{ label: 'Dispatch', href: '/dispatch', icon: '🛵' }],
   riders:         [{ label: 'Riders', href: '/riders' }],
-  // emergency_overrides: PARKED with delivery (owner, 2026-10-13 —
-  // .handoff/parked/2026-10-14/PARKED.md). The module id stays (Module
-  // Access, workspaces), but there is no page yet, so no link: staff
-  // "Delivered" still works as before until delivery resumes.
+  emergency_overrides: [{ label: 'Emergency overrides', href: '/emergency-overrides', hint: 'Send the hand-over code to the rider; log food a rider brought back' }],
 
   // ── Finance
   finance_pl:     [
@@ -149,6 +150,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Accounting', href: '/accounting', icon: '📊' },
     { label: 'Ledger', href: '/accounting/ledger', sub: true },
     { label: 'Journal entry', href: '/accounting/journal', sub: true },
+    { label: 'Journal requests', href: '/accounting/journal?tab=requests', sub: true },
     { label: 'Trial balance', href: '/accounting/trial-balance', sub: true },
     { label: 'Balance sheet', href: '/accounting/balance-sheet', sub: true },
     { label: 'Cash flow', href: '/accounting/cash-flow', sub: true },
@@ -168,6 +170,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     // its history) as well as the Stock count link under Inventory.
     { label: 'Opening stock count', href: '/inventory/count', sub: true, hint: "The first count of a company's stock — posted to owner's capital (3010)" },
     { label: 'Receivables', href: '/accounting/receivables', sub: true },
+    { label: 'On-account clients', href: '/accounting/receivables/clients', sub: true, hint: 'Corporate clients who pay monthly — credit limits, QR cards, statements' },
     { label: 'Sales tax return', href: '/accounting/sales-tax-return', sub: true },
     { label: 'Statutory payments', href: '/accounting/statutory', sub: true },
     { label: 'Inter-company', href: '/accounting/intercompany', sub: true },
@@ -302,13 +305,15 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion, at the FIFO price of the lots being cooked; modifiers carry their own recipes; till sales book COGS per brand at shift close. Every dish has a Packaging section: it counts on takeaway and delivery, on every order of a brand whose service vessel is packaging (Stackd), and on a dine-in line only when staff tap "Box given". The Q factor is the only plate allowance — menu pricing, never booked. One price per item across channels; no combos.',
   procurement: 'One PO system and one receiving path: each receipt line opens a FIFO lot, held on 2015 until its bill clears it ("Received, not billed" lists what is open; a write-off needs the CEO). A bill\'s stock lines link to their receipt; equipment goes through CapEx, never a bill. One AP aging tied to ledger AP. No requisition step, payment run or WHT certificate.',
   food_safety: 'Temperature limits with corrective actions and cleaning tasks, per company. No inspection export, no overdue reminders, not yet per outlet in the UI.',
-  reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it.',
-  accounting: 'One ledger feed and one period-close checklist (only the CEO may close over an overridable block, with a reason; reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Bad debts are written off directly, each approved by the CEO; there is no doubtful-debt provision.',
+  reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it. Rider COD not handed in sits on 1351 and blocks the month close until the CEO approves; writing off a rider debt is not built.',
+  accounting: 'One ledger feed and one period-close checklist (only the CEO may close over an overridable block, with a reason; reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Bad debts are written off directly, each approved by the CEO; there is no doubtful-debt provision. On-account clients pay by QR card at the cash tax class and get monthly statements (not tax invoices). Head-office costs not recharged show as "Company overhead (unallocated)".',
   finance_pl: 'From the ledger. Shared cost reaches a brand only through allocation runs; the rest is one head-office line (decision 22).',
   capital: 'A CapEx line names its supplier; a paid instalment is an advance on 1340, with income tax withheld at the supplier\'s filer rate and input tax by authority. Capitalising a delivered item onto the fixed-asset register needs the CEO\'s approval; Quick buy (bank only) buys, pays and asks for capitalisation in one step. Old capital-ledger rows are read-only history.',
   reports: 'Food cost variance is its own module (food_cost), linked from Reports. The demand forecast predicts items, not covers, so it cannot drive a rota.',
   food_cost: 'Actual vs recipe at the FIFO price of the lots cooked, split food / drinks / packaging, with material cost by order type and brand. Per-outlet actual waits for per-outlet stock (the next build); periods before the FIFO cut-over have no lot data.',
-  crm: 'Segments are per company, computed nightly; bans, loyalty settings and tiers are per company.',
+  dispatch: 'A delivery is completed with the customer\'s code; the staff "Delivered" override is managers-only and only while the company\'s code-only switch is off.',
+  riders: 'Riders belong to one company and carry another\'s orders only under a fleet agreement. No earnings or payouts yet; the app polls for offers.',
+  crm: 'Segments, loyalty settings and tiers are per company, computed nightly. Customer strikes and bans are servd-wide (owner, 2026-10-15); a banned customer may appeal when appeals are switched on.',
   campaigns: 'Email and WhatsApp only. No scheduled sends — a campaign is a draft until sent — and opens and clicks are not linked to orders.',
   storefront: 'Nothing publishes without the CEO (decision 41).',
   staff_hr: 'HR is the person master; each company can replace its forms in /hr/formats. Leave counts calendar days (weekly offs and holidays are not skipped); file fields take a link, not an upload.',
@@ -325,7 +330,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
  * workspace homes and /modules hide a section made only of them instead of
  * showing an empty "No admin page" card.
  */
-export const PARKED_MODULES: ReadonlySet<string> = new Set<string>(['emergency_overrides'])
+export const PARKED_MODULES: ReadonlySet<string> = new Set<string>([])
 
 /** True when every module of a section is parked (the section is hidden). */
 export function isParkedSection(modules: readonly string[]): boolean {
@@ -360,6 +365,8 @@ export function gapsForModules(modules: readonly string[]): Array<{ module: stri
  */
 export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
   '/w', '/me', '/account', '/help', '/login', '/kds/login', '/reset-password', '/supplier',
+  // A head-office login's own landing page (D1).
+  '/head-office',
   // The admin's one punch screen (decision 32) — "Me" and kiosk mode. Its API
   // (/time-clock/status, punch-in/out, kiosk/punch) is ALL_STAFF and punches
   // only the caller (or the employee whose code + PIN is entered), so every

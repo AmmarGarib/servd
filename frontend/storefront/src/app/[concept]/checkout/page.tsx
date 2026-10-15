@@ -8,6 +8,7 @@ import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed, track, armPurchase } from '../../../lib/analytics'
 import DeliveryPin, { type LatLng } from '../../../components/checkout/DeliveryPin'
+import { BlockedNotice } from '../../../components/account/BlockedNotice'
 import { fulfilmentFor, type FulfilmentOption } from '../../../lib/fulfilment'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -168,6 +169,10 @@ export default function CheckoutPage() {
   const [notes,   setNotes]   = useState('')
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
+  // A BANNED answer (quote or place order): the cart stays, and with appeals on
+  // BlockedNotice shows the account-wide block + appeal form (renders nothing
+  // while appeals are off, so today's BANNED message is all there is).
+  const [banned,  setBanned]  = useState(false)
 
   const [account,    setAccount]    = useState<AccountInfo | null>(null)
   const [promoCode,  setPromoCode]  = useState('')
@@ -374,6 +379,7 @@ export default function CheckoutPage() {
               setPaymentNotice(err.message ?? 'That payment method isn’t available. Please pay with cash.')
               return
             }
+            if (err?.code === 'BANNED') setBanned(true)
             setQuote(null)
             setQuoteError(err?.message ?? 'Could not price your order')
             setQuoteErrorCode(err?.code ?? '')
@@ -611,6 +617,7 @@ export default function CheckoutPage() {
             setQuoteError(d.error.message ?? 'This kitchen is closed right now.')
             setQuoteErrorCode('BRAND_CLOSED')
           }
+          if (d?.error?.code === 'BANNED') setBanned(true)
           throw new Error(d?.error?.message ?? 'Failed to place order')
         }
         const order = await res.json() as { id: string; totalCents?: number; giftCardError?: { message?: string } | null }
@@ -1247,6 +1254,7 @@ export default function CheckoutPage() {
             <span>{error}</span>
           </div>
         )}
+        {banned && <BlockedNotice conceptSlug={slug} />}
 
         {/* ── Trust strip — per the CRO skill: address the three top
               objections ("will this work for me / what if it doesn't /

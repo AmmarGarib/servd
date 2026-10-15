@@ -59,6 +59,7 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 | `journal_request` | `GET /accounting/journal-requests?status=submitted` | `POST /accounting/journal-requests/:id/approve`, `/reject` (note) | admin; kind post is Finance's (hand-over locked, A22), kind reverse the CEO's alone. Not listed while the route 404s |
 | `ho_recharge` | `GET /accounting/intercompany/recharge-runs?status=submitted` | `POST /accounting/intercompany/recharge-runs/:id/approve` (tick-boxes `postInOpenPeriod`, `acknowledgeWarnings`), `/reject` (note) | admin, or the head office's Finance delegate (head-office-wide hand-over only). Not listed while the route 404s |
 | `connector_change` | `GET /connectors/change-requests?status=submitted` | `POST /connectors/change-requests/:id/approve`, `/reject` (note) | admin, or a Dev delegate. Not listed while the route 404s |
+| `on_account_client` | `GET /accounting/customer-accounts?pending=1` (`onAccountProvider.ts`) | `POST /accounting/customer-accounts/:id/approve`, `/reject` (note required) | admin only: new corporate clients and every credit-limit increase (decreases and suspensions apply at once). Provider `delegable: false`; `assertNotSelfApproval` on the requester, the CEO exempt; 409 `NOTHING_PENDING`. Facts: client, OA number, new vs current limit, terms, brands, requested by |
 
 `approverRoles` and `delegable` in `providers.ts` come from the rights
 registry (`lib/approvalRights.ts` `APPROVAL_RIGHTS`, below) — the one copy of
@@ -85,6 +86,19 @@ over either; the old HOD step (`cash_request_hod`) is retired.
 but has no provider (the on-account clients feature and its route are
 parked). The inbox lists only registered providers, so nothing else is
 needed; the resume adds the provider.
+
+**RESUMED (owner, 2026-10-15):** `on_account_client` now has its provider
+(`onAccountProvider.ts`, registered in `APPROVAL_PROVIDERS`). It stays CEO-only.
+
+### Delegable flags of the head-office and on-account providers
+
+| type | provider `delegable` | why |
+|---|---|---|
+| `journal_request` | kind post: **false** (locked, `DELEGATION_ENABLED.journal_request = false`, A22); kind reverse is `ceo` section | a manual journal is the CEO's to release |
+| `ho_recharge` | **true**, but only by a head-office-wide Finance hand-over (never one company) | the monthly recharge run; the CEO keeps the role path |
+| `connector_change` | **true** (Dev section, module `api_pos`) | a Dev delegate may approve a POS connector change |
+| `on_account_client` | **false** | CEO section, never handed over |
+
 
 ## Adding a type
 

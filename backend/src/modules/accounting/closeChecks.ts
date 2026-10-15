@@ -44,6 +44,9 @@ import { cardPayoutCloseChecks } from '../reconciliation/cardPayouts.js'
 import { prepaidCloseChecks } from './prepaidReleases.js'
 import { inventoryCloseChecks } from '../reports/foodCost.js'
 import { stockDifferenceCloseCheck } from '../stockDifferences/service.js'
+import { headOfficeCloseChecks } from '../headOffices/closeChecks.js'
+import { codCloseCheck } from '../reconciliation/codCloseCheck.js'
+import { onAccountCloseChecks } from './onAccountCloseChecks.js'
 
 /** A close never looks further back than this many months (the oldest are dropped). */
 export const MAX_CLOSE_MONTHS = 24
@@ -407,6 +410,10 @@ export const CLOSE_CHECKS: CloseCheck[] = [
   // stock_differences_pending (H20: waste / count differences still in 1290). All warn, overridable.
   ...inventoryCloseChecks,
   stockDifferenceCloseCheck,
+  // Resumed 2026-10-15: head-office recharges, COD not handed in (blocks until the CEO approves), on-account tie-out.
+  ...headOfficeCloseChecks,
+  codCloseCheck,
+  ...onAccountCloseChecks,
 ]
 
 /** The key of the block a throwing check becomes. */

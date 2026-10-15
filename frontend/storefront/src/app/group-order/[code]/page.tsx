@@ -22,6 +22,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticLink } from '@/components/ui/MagneticButton'
 import { useCustomerAuth } from '../../../store/customerAuth'
+import { BlockedNotice } from '../../../components/account/BlockedNotice'
 import { formatBrandName } from '../../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -44,10 +45,11 @@ interface MenuResponse { categories: Category[]; ordering?: Ordering }
 interface ApiError { error?: { code?: string; message?: string } }
 
 /** The server's own words for the cases a customer can act on. */
-async function errorMessage(res: Response, fallback: string): Promise<string> {
+async function errorMessage(res: Response, fallback: string, onCode?: (code: string | undefined) => void): Promise<string> {
   const body = await res.json().catch(() => null) as ApiError | null
   const code = body?.error?.code
   const message = body?.error?.message
+  onCode?.(code)
   if (message && (code === 'BRAND_CLOSED' || code === 'ITEM_UNAVAILABLE' || code === 'GROUP_LOCKED'
     || code === 'GROUP_CANCELLED' || code === 'NO_ITEMS' || code === 'ITEM_NOT_PRICED')) return message
   return fallback
@@ -83,6 +85,9 @@ export default function GroupOrderRoom() {
   const [notice, setNotice] = useState<string | null>(null)
   const [ordering, setOrdering] = useState<Ordering | null>(null)
   const [busy, setBusy] = useState(false)
+  // The server said BANNED: show the account-wide block + appeal form (nothing while appeals are off).
+  const [banned, setBanned] = useState(false)
+  const noteBan = (code: string | undefined) => { if (code === 'BANNED') setBanned(true) }
 
   // Group orders are auth-gated server-side (anonymous submit was an unpaid-
   // kitchen-ticket primitive). If we don't have a token, bounce to login and
@@ -149,7 +154,7 @@ export default function GroupOrderRoom() {
       headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({ menuItemId: item.id, quantity: 1 }),
     })
-    if (!res.ok) setNotice(await errorMessage(res, `Couldn't add ${item.name}. Please try again.`))
+    if (!res.ok) setNotice(await errorMessage(res, `Couldn't add ${item.name}. Please try again.`, noteBan))
   }
   const removeItem = async (id: string) => {
     await fetch(`${API_URL}/api/v1/group-orders/${code}/items/${id}`, {
@@ -168,7 +173,7 @@ export default function GroupOrderRoom() {
       if (!res.ok) {
         const body = await res.clone().json().catch(() => null) as ApiError | null
         const fixable = body?.error?.code === 'ITEM_UNAVAILABLE' || body?.error?.code === 'ITEM_NOT_PRICED'
-        const message = await errorMessage(res, "Couldn't send the group order. Please try again.")
+        const message = await errorMessage(res, "Couldn't send the group order. Please try again.", noteBan)
         setNotice(fixable ? `${message} Whoever added it can remove it, then send the group again.` : message)
         // Refresh the menu and the open/closed line to match what the server said.
         const fresh = await loadMenu(go.concept.slug)
@@ -253,6 +258,7 @@ export default function GroupOrderRoom() {
           {notice && (
             <p role="alert" className="text-sm font-semibold mb-3 text-[color:var(--servd-ink)] border-l-2 border-[color:var(--servd-green)] pl-2">{notice}</p>
           )}
+          {banned && <BlockedNotice conceptSlug={go.concept.slug} className="mb-3" />}
           <div className="border-t border-[color:var(--servd-line)] pt-2 mb-3 text-sm space-y-0.5">
             <div className="flex justify-between"><span>Subtotal</span><span>{fmt(quote?.itemTotalCents ?? 0)}</span></div>
             <div className="flex justify-between text-[color:var(--servd-mute)]"><span>Tax</span><span>{fmt(quote?.taxCents ?? 0)}</span></div>

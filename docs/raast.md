@@ -59,7 +59,8 @@ already counted the money as in the bank**. Use this table.
 |---|---|---|
 | Who | Approvers (finance, management, owner, CEO) | **CEO only.** Finance, management and owners may **ask** (Void request, with a reason); the CEO voids or turns the ask down. |
 | The bill | Any closed bill whose sale is **on the books** (the till shift is closed and posted, or the order completed) | A **cancelled or rejected** bill, and **no entry ever debited the bank** for this money |
-| Ledger | Posts **Dr a contra account / Cr the bank it should have reached** (the receipt's receiving account). The contra is chosen when you press it: **1110** customer owes (the default), **8010** cash short, or **1350** staff owes | **Posts nothing** |
+| Ledger | Posts **Dr a contra account / Cr the bank it should have reached** (the receipt's receiving account). The contra is chosen when you press it: **1115** customer owes / till clearing (the default; **1110** for a company
+that has not been cut over yet), **8010** cash short, or **1350** staff owes | **Posts nothing** |
 | The reference | Stays used | Stays used: the same transfer can never pay another bill |
 | Month close | The receipt no longer blocks the close | A voided receipt no longer blocks the close or the daily flag |
 
@@ -69,7 +70,9 @@ How to choose:
    when the till shift closed with the Raast money in it, or the order
    completed on the website. If **yes**, the books say "the bank has this
    money", so if it never arrived use **Not received**. The loss goes to the
-   contra you choose (almost always **1110**, the customer owes it).
+   contra you choose (almost always the **till-clearing** account, "customer
+   owes": **1110** for entries made before the till-clearing cut-over, **1115**
+   after it; see below).
 2. Was the bill **cancelled** (or rejected) and the money **never** put on the
    books as bank money (the drawer holding it is closed, nothing refused is
    waiting to be re-posted, and no refund was paid back against it)? Then
@@ -104,8 +107,13 @@ statement line on a different account still never matches (422), and finance
 handles a payment that landed in the wrong place with the normal match, fix
 reference or resolve actions. Till clearing (cancelled tickets whose money is
 owed back, card tenders that failed after the close, Raast "customer owes"
-write-offs) stays on account **1110**, exactly as before; there is no separate
-till-clearing account.
+write-offs) is **till clearing**. Before the company's one-time cut-over it sat
+on **1110**; after it, all new till clearing posts to **1115 Till Clearing**
+and the old balance has been moved from 1110 to 1115 (the CEO's split, see
+`docs/on-account.md`). 1110 now means money owed by corporate clients and
+ordinary invoices only. Entries posted before the cut-over are not rewritten:
+a "not received" write-off already booked to 1110 stays there until the
+cut-over moves it, and its reversal mirrors its own lines.
 
 ## Bank SMS matching (optional, off until the CEO switches it on)
 

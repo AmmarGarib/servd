@@ -11,6 +11,7 @@ import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
 import { brandAccent, conceptHeroImage, formatBrandName } from '../../lib/concept'
 import { getLiveKits } from '../../lib/brandKitFetch'
 import { conceptsOrFallback, fetchLiveConcepts, fitSentences, inBrandOrder, joinNames } from '../../lib/liveConcepts'
+import { BlockedNotice } from '../../components/account/BlockedNotice'
 import { GroupOrderEntryClient } from './GroupOrderEntryClient'
 
 export const dynamic = 'force-dynamic'
@@ -44,5 +45,10 @@ export default async function GroupOrderEntryPage() {
     heroImage: conceptHeroImage(c, 'card'),
   }))
 
-  return <GroupOrderEntryClient brands={brandCards} />
+  return (
+    <>
+      <div className="container-narrow" style={{ paddingTop: '1rem' }}><BlockedNotice /></div>
+      <GroupOrderEntryClient brands={brandCards} />
+    </>
+  )
 }

@@ -10,6 +10,10 @@
 // approves it. "Same as paid" is not offered when the order took Raast and
 // another tender — the refund must say which, so the reference is never
 // missing.
+//
+// On account: a bill charged to a client's account goes back to that account
+// ("Back to the client's account") — the only option for an all-on-account
+// bill (refundTendersOf lists only the tenders the order was paid with).
 
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -143,6 +147,12 @@ export function RefundOptions({ payments, source, amountCents, value, onChange, 
             {isManager ? 'A manager approves every Raast refund — that is you.' : 'A manager approves every Raast refund — you will be asked for a manager’s PIN.'}
           </p>
         </div>
+      )}
+      {value.method === 'on_account' && (
+        <p className="text-xs text-s-muted">
+          This bill was charged to a client&rsquo;s account. The refund goes back to that account as a credit on its next
+          statement — no money leaves a drawer.
+        </p>
       )}
       {value.method === 'keenu_qr' && (
         <p className="text-xs text-s-muted">Keenu QR is retired — this older sale is refunded the way it was paid: send it back through Keenu first, servd records it here.</p>

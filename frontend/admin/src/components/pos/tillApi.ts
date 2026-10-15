@@ -44,6 +44,8 @@ export const TENDER_LABEL: Readonly<Record<string, string>> = {
   split: 'Split',
   wallet: 'Wallet',
   gift_card: 'Gift card',
+  // A named corporate client's bill, charged to its account (OnAccountPanel) — not money in the drawer.
+  on_account: 'On account',
 }
 export function tenderLabel(m: string): string {
   return TENDER_LABEL[m] ?? m.replace(/_/g, ' ')
@@ -84,6 +86,10 @@ export interface TillOrder {
   serviceChargeCents: number
   discountCents: number
   tipCents?: number
+  /** Promo / wallet credit on the bill (GET /orders/:id) — an on-account charge takes a bill with neither. */
+  promoCodeId?: string | null
+  promoDiscountCents?: number
+  walletAmountCents?: number
   placedAt: string
   /** dine_in | takeout | delivery — "Box given" is for dine_in lines only. */
   fulfilmentType?: string | null
@@ -304,6 +310,8 @@ export function tillErrorMessage(e: unknown, fallback = 'Something went wrong �
     if (e.code === 'VALIDATION_ERROR') return 'The till sent something the server could not accept. Reload the till and try again; if it keeps happening, call a manager.'
     const raast = raastErrorText(e)
     if (raast) return raast
+    const onAccount = onAccountErrorText(e)
+    if (onAccount) return onAccount
     if (e.status === 0 || e.code === 'PORTFOLIO_WRITE_CANCELLED') return e.message
     return e.message || fallback
   }
@@ -972,6 +980,13 @@ export interface ZReportExtras {
   raastMatchedCents?: number
   /** Raast takings on tickets the CEO voided ("never booked") — left out of the sales and the refund due. */
   raastVoidedCents?: number
+  /**
+   * Bills charged to on-account clients on this drawer — a sale, but no money
+   * in the drawer (billed to each client's account). Absent while on account is off.
+   */
+  onAccountSales?: number
+  onAccountCount?: number
+  onAccountByClient?: Array<{ number: string; name: string; cents: number; count: number }>
   /** Card / cash tips inside the takings — staff money (2095), not sales. */
   tipsCents?: number
   /** Takings (cash + card) less tips. */
@@ -1054,6 +1069,13 @@ export function zReportLines(r: ZReportFigures, fmt: (c: number) => string): ZLi
       // A Raast receipt is the cashier's word (or the bank SMS) until the bank
       // statement shows the money — finance matches it.
       lines.push({ label: 'of which not on a bank statement yet', value: fmt(provisional), tone: 'amber' })
+    }
+  }
+  if ((r.onAccountSales ?? 0) > 0 || (r.onAccountCount ?? 0) > 0) {
+    // Billed to clients' accounts: in the takings, never in the drawer (the close debits each client).
+    lines.push({ label: `On account${r.onAccountCount ? ` (${r.onAccountCount})` : ''}`, value: fmt(r.onAccountSales ?? 0), tone: 'text' })
+    for (const c of r.onAccountByClient ?? []) {
+      lines.push({ label: `${c.number} ${c.name}${c.count > 1 ? ` (${c.count})` : ''}`, value: fmt(c.cents), tone: 'subtext' })
     }
   }
   lines.push({ label: 'Wallet', value: fmt(r.walletSales), tone: 'text' })
@@ -1395,4 +1417,178 @@ export function isLocalRaastPayment(orderId: string): boolean {
   if (at == null) return false
   if (Date.now() - at > LOCAL_RAAST_MS) { localRaast.delete(orderId); return false }
   return true
+}
+
+// ─── On account (corporate clients; backend pos/onAccountRoutes.ts) ─────────
+//
+// A named corporate client's bill, charged to its account with the client's
+// card (a QR / code the cashier scans). The till offers it only when the
+// order's company has an active client AND its till clearing is cut over
+// (GET /pos/on-account/enabled) — off everywhere until finance switches it on.
+//
+//   GET  /pos/on-account/enabled?orderId          → { enabled }
+//   POST /pos/on-account/lookup { orderId, code }  → the client, its credit, the bill, what would refuse it
+//   GET  /pos/orders/:id/on-account/quote          → the bill at the CASH rate (an on-account bill's rate)
+//   POST /pos/orders/:id/on-account { shiftId, code, reference?, idempotencyKey }
+//                                                  → { payment, charge, orderCompleted, fiscal, srb, replayed }
+//
+// The card code is a bearer secret: it travels only in request BODIES, is
+// never put in a URL, a query key, a log or an error, and the panel forgets it
+// as soon as the charge is sent or the panel closes. No manager PIN: the card,
+// the client's credit limit and the client's signature on the bill are the control.
+
+/** The bill an on-account charge takes (quoteOrderForTender(…, 'on_account')). */
+export interface OnAccountQuote {
+  orderId: string
+  status: string
+  tender: 'cash' | 'card'
+  repriced: boolean
+  taxRatePct: number | null
+  taxCents: number
+  serviceChargeCents: number
+  deliveryFeeCents?: number
+  deliveryFeeTaxCents?: number
+  discountCents: number
+  tipCents: number
+  totalCents: number
+  paidCents: number
+  dueCents: number
+}
+
+/** What would refuse the charge right now (the server's code, words and figures). */
+export interface OnAccountBlock { code: string; message: string; details?: unknown }
+
+/** POST /pos/on-account/lookup — the client the card names in the ORDER's company. */
+export interface OnAccountLookup {
+  account: {
+    id: string
+    number: string
+    legalName: string
+    limitCents: number
+    exposureCents: number
+    availableCents: number
+    /** The client asks for a reference (PO number / who signed) on every bill. */
+    requiresReference: boolean
+  }
+  card: { id: string; label: string; hint: string }
+  quote: OnAccountQuote
+  blocked: OnAccountBlock | null
+}
+
+export interface OnAccountChargeResult {
+  payment: { id: string; amountCents: number; method: string; status: string; gatewayRef?: string | null }
+  charge: { id: string } | null
+  orderCompleted: boolean
+  fiscal?: FiscalView | null
+  replayed?: boolean
+}
+
+/** GET /pos/on-account/enabled — false on an API without on account (the tender stays hidden). */
+export async function onAccountEnabled(orderId: string): Promise<boolean> {
+  try {
+    const r = await api.get<{ enabled: boolean }>(`/pos/on-account/enabled?orderId=${encodeURIComponent(orderId)}`)
+    return r?.enabled === true
+  } catch (e) {
+    if (isMissingRoute(e)) return false
+    throw e
+  }
+}
+
+/** Whether to offer "On account" on this order. Any failure reads as "no" — the tender is never offered on a guess. */
+export function useOnAccountEnabled(orderId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['pos', 'on-account-enabled', orderId],
+    queryFn: () => onAccountEnabled(orderId!),
+    enabled: !!orderId && enabled,
+    staleTime: 30_000,
+    retry: false,
+    meta: { inlineErrors: true },
+  })
+}
+
+/** POST /pos/on-account/lookup. The code goes in the body only. */
+export function lookupOnAccount(orderId: string, code: string): Promise<OnAccountLookup> {
+  return api.post<OnAccountLookup>('/pos/on-account/lookup', { orderId, code })
+}
+
+/** GET /pos/orders/:id/on-account/quote — the bill at the cash rate. */
+export function onAccountQuote(orderId: string): Promise<OnAccountQuote> {
+  return api.get<OnAccountQuote>(`/pos/orders/${encodeURIComponent(orderId)}/on-account/quote`)
+}
+
+/**
+ * POST /pos/orders/:id/on-account — charge the whole bill to the client.
+ * `idempotencyKey`: one per submission (newOnAccountKey), reused only by a
+ * retry of that same submission, so a double tap or a lost answer never
+ * bills the client twice.
+ */
+export function chargeOnAccount(orderId: string, body: {
+  shiftId: string
+  code: string
+  reference?: string | null
+  idempotencyKey: string
+}): Promise<OnAccountChargeResult> {
+  const reference = body.reference?.trim()
+  return api.post<OnAccountChargeResult>(`/pos/orders/${encodeURIComponent(orderId)}/on-account`, {
+    shiftId: body.shiftId,
+    code: body.code,
+    ...(reference && { reference: reference.slice(0, 80) }),
+    idempotencyKey: body.idempotencyKey,
+  })
+}
+
+/** A fresh idempotency key for ONE on-account submission. */
+export function newOnAccountKey(): string {
+  return `oa-${newIdempotencyKey().replace(/^pos-/, '')}`
+}
+
+function centsOf(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+/** Cashier copy for an on-account refusal (with the server's figures), or null when the code is not one. */
+export function onAccountErrorText(e: { code?: string | null; message?: string; details?: unknown }): string | null {
+  const d = (e.details ?? {}) as Record<string, unknown>
+  switch (e.code) {
+    case 'ON_ACCOUNT_CARD_UNKNOWN':
+      return 'That card is not a client card of this company. Check the card, or take payment another way.'
+    case 'ON_ACCOUNT_CARD_REVOKED':
+      return 'That client card has been cancelled. Ask the client for their current card, or take payment another way.'
+    case 'ON_ACCOUNT_NOT_HERE':
+      return 'On account is for bills settled at the till (counter sales and dine-in). Delivery and pickup orders are paid another way.'
+    case 'ON_ACCOUNT_WHOLE_BILL':
+      return 'On account takes the whole bill in one go. It cannot take a part-paid, split or tipped bill, or one with a promo, wallet, gift card or loyalty credit on it.'
+    case 'ON_ACCOUNT_RATE': {
+      const rate = centsOf(d['taxRatePct']); const cash = centsOf(d['cashRatePct'])
+      return rate != null && cash != null
+        ? `This bill is priced at ${rate}% GST, not the ${cash}% cash rate an on-account bill takes. Take payment another way, or ask a manager.`
+        : 'This bill could not be priced at the cash rate for an on-account charge. Take payment another way.'
+    }
+    case 'TILL_CLEARING_NOT_SPLIT':
+      return 'On account is not switched on for this company yet (finance has to finish its set-up). Take payment another way.'
+    case 'ON_ACCOUNT_NOT_ACTIVE':
+      return 'This client account is not active. Take payment another way.'
+    case 'ON_ACCOUNT_BRAND_NOT_ALLOWED':
+      return 'This client may not be billed on account at this brand. Take payment another way.'
+    case 'ON_ACCOUNT_OVERDUE': {
+      const bal = centsOf(d['balanceCents'])
+      const num = typeof d['statementNumber'] === 'string' ? d['statementNumber'] : null
+      const due = typeof d['dueDate'] === 'string' ? new Date(d['dueDate']).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : null
+      const parts = [num && `statement ${num}`, bal != null && `${fmtPkr(bal)} owed`, due && `due ${due}`].filter(Boolean)
+      return `This client has an overdue bill${parts.length ? ` (${parts.join(', ')})` : ''}. Take payment another way until it is settled.`
+    }
+    case 'ON_ACCOUNT_OVER_LIMIT': {
+      const bill = centsOf(d['billCents']); const avail = centsOf(d['availableCents']); const limit = centsOf(d['limitCents'])
+      return bill != null && avail != null && limit != null
+        ? `This bill of ${fmtPkr(bill)} would take the client over its credit limit: ${fmtPkr(avail)} is left of ${fmtPkr(limit)}. Take payment another way.`
+        : 'This bill would take the client over its credit limit. Take payment another way.'
+    }
+    case 'ON_ACCOUNT_REFERENCE_REQUIRED':
+      return 'This client needs a reference on every bill (a PO number or who signed). Type it, then charge again.'
+    case 'ON_ACCOUNT_REFUND_INSTEAD':
+      return 'This bill was charged to a client account. Refund it back to the client’s account instead of voiding a line.'
+    case 'ON_ACCOUNT_NOT_PARKABLE':
+      return 'An on-account bill is not money taken at the till. Refund it back to the client’s account.'
+  }
+  return null
 }

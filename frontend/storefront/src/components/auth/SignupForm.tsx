@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
+import { BlockedNotice, fetchBlocks, type AccountBlock } from '../account/BlockedNotice'
 import { ErrorToast } from '../ui/ErrorToast'
 import { MagneticButton } from '../ui/MagneticButton'
 import { NETWORK_ERROR, customerErrorMessage, postAuthDest, useAuthReturnPath, withReturnPath, type ApiErrorBody } from './authFlow'
@@ -47,6 +48,10 @@ export function SignupForm({
   const loginHref = withReturnPath('/login', useAuthReturnPath())
 
   const [step,    setStep]    = useState<'details' | 'otp'>('details')
+  // A blocked account is told so right after sign-in (appeals on); the way
+  // forward is one button. Empty / null while appeals are off.
+  const [blocked, setBlocked] = useState<AccountBlock[] | null>(null)
+  const proceed = () => { if (onSuccess) onSuccess(); else router.replace(postAuthDest()) }
 
   const [name,     setName]     = useState('')
   const [email,    setEmail]    = useState('')
@@ -169,8 +174,11 @@ export function SignupForm({
       }
       setAuth(data.token, data.customer.id)
       // Honour ?next=/?return= (checkout / order tracker) — same-origin only.
-      if (onSuccess) onSuccess()
-      else router.replace(postAuthDest())
+      // Sign-in is never refused. If the account is blocked (and the CEO's
+      // appeals switch is on) show the notice first, with a way to carry on.
+      const blocks = await fetchBlocks(data.token)
+      if (blocks.length > 0) { setBlocked(blocks); return }
+      proceed()
     } finally {
       setLoading(false)
     }
@@ -193,6 +201,14 @@ export function SignupForm({
     color: busy ? 'rgba(255,255,255,0.6)' : 'var(--servd-on-green)',
     boxShadow: busy ? 'none' : '0 8px 24px rgba(0,0,0,0.25)',
   })
+
+  if (blocked) {
+    return (
+      <div className="rounded-2xl p-1">
+        <BlockedNotice blocks={blocked} onContinue={proceed} />
+      </div>
+    )
+  }
 
   return (
     <>

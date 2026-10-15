@@ -144,12 +144,51 @@ note on the same money would lower revenue and output tax a second time and push
 refused with `WRITTEN_OFF_FIRST`. Recover or reverse the write-off first if the
 customer is really owed a credit.
 
+## Statements for corporate clients on account
+
+A client that eats on account (`docs/on-account.md`) is billed **once a month
+by a statement**, not by an invoice per bill. A statement is a receivable
+document (`AR-ST-<year>-<n>`) listed with your invoices, with these rules:
+
+- **It is not a tax invoice and posts nothing.** Each bill was already a
+  sale, taxed and filed with the fiscal POS when it was charged at the till;
+  the statement only collects the money. Issuing, emailing or voiding one
+  creates no journal entry.
+- **What it holds:** the client's charges up to the period end (Karachi
+  midnight) whose sale is **already on the books** (the till shift is closed
+  and posted). A bill from a drawer still open stays "not billed yet" and
+  goes on the next statement. One statement per client per period
+  (`STATEMENT_EXISTS`); nothing to bill gives `NOTHING_TO_BILL`.
+- **Issue:** Finance, on the client page or with "Issue statements" for the
+  whole company (ACTIVE company only). **Send** emails the statement HTML to
+  the client's contact; finance clicks it, nothing is automatic, and a test
+  company or the practice copy sends nothing. Due date = issue date + the
+  client's terms (default 30 days).
+- **Payments, withholding and refunds work as on an invoice**, per statement
+  (no auto-allocation across statements): *Dr bank / Cr 1110* in the client's
+  company. Income tax the client withholds is a withholding entry; **sales tax
+  the client withholds** (H13, 1335) is allowed when the statement's bills
+  belong to one authority, and refused with `STATEMENT_MIXED_AUTHORITY` if they
+  span FBR and SRB brands (record it per authority by hand).
+- **No credit note on a statement** (`STATEMENT_CREDIT_AT_TILL`). Refund the
+  bill at the till, so the fiscal return files; the refund goes back to the
+  account and lowers the statement automatically.
+- **Void** is allowed only while nothing has been paid, withheld, credited or
+  written off; it frees the charges for the next statement.
+- **Write-off of a statement** follows the CEO rule above (G12/H15): the CEO
+  approves; *Dr 6160 / Cr 1110* for the full amount including tax. The 6160
+  debit is **split per brand** in proportion to the statement's bills. The
+  client is **suspended automatically** on any approved write-off and only the
+  CEO can reactivate it. Recovery and a bounced recovery work as for an
+  invoice. Credit-note-after-write-off limits apply the same way.
+
 ## Who can do what
 
 | Action | Who |
 |---|---|
 | Raise an invoice, receive, refund, credit note, record withholding, reverse, void | Finance, management, owner, CEO |
 | Ask for a write-off, record a recovery | Finance, management, owner, CEO |
+| Issue, send or void a client statement | Finance, management, owner, CEO (not the F&B manager) |
 | Approve or reject a write-off | **CEO only** (never skipped, whoever asks) |
 | Cancel a waiting request | The person who asked, or any of the roles above |
 

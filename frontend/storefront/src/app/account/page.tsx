@@ -37,6 +37,7 @@ const EMPTY_ADDR: AddressForm = { label: '', address: '', isDefault: false, pin:
 
 // STATUS_CONFIG moved to lib/orderStatus.ts so /orders + /[concept]/order/[id]
 // share the same colours and labels. statusFor handles unknown statuses.
+import { BlockedNotice } from '../../components/account/BlockedNotice'
 import { statusFor } from '../../lib/orderStatus'
 import { formatBrandName } from '../../lib/concept'
 const TIER_COLOR: Record<string, string> = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#ffd700' }
@@ -271,6 +272,9 @@ export default function AccountPage() {
             {firstName ? `Hi, ${firstName}.` : 'Welcome back.'}
           </h1>
         </div>
+
+        {/* ── Blocked account (renders nothing unless a block is in force and appeals are on) ── */}
+        {token && <BlockedNotice />}
 
         {/* ── Unverified contact — the second channel for when WhatsApp drops ── */}
         {token && (

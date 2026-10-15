@@ -83,6 +83,8 @@ interface RaastReceiptRow {
   ageDays: number
   ledgerCode: string
   writeOffEntryId: string | null
+  /** The company's current till-clearing code, when the server sends it. */
+  tillClearingCode?: string | null
   bankAccount: { id: string; name: string; bankName: string | null; last4: string | null }
   statementLine: StatementLineRef | null
   /** A pending (or past) ask for the CEO's void. */
@@ -190,10 +192,12 @@ const ALERT_STATUS_LABEL: Record<string, string> = {
   dismissed: 'Not a sale',
 }
 
-/** The write-off contras (raast.ts WRITE_OFF_CONTRAS) — 1110 first, the default. */
-type Contra = '1110' | '8010' | '1350'
+/** The write-off contras. 'owes' = the customer still owes it (till clearing): the
+ *  server resolves the company's CURRENT code (1110 before the cut-over, 1115
+ *  after), so the page never sends or hard-codes it. */
+type Contra = 'owes' | '8010' | '1350'
 const CONTRA_LABEL: Record<Contra, string> = {
-  '1110': 'Customer owes (1110 till clearing)',
+  owes: 'Customer owes (till clearing)',
   '8010': 'Loss (8010)',
   '1350': 'Staff owes (1350)',
 }
@@ -612,10 +616,10 @@ function ReferencePanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRo
 
 function UnreceivedPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; onDone: (t: string) => void; onCancel: () => void }) {
   const [reason, setReason] = useState('')
-  const [contra, setContra] = useState<Contra>('1110')
+  const [contra, setContra] = useState<Contra>('owes')
   const writeOff = useMutation({
-    mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/unreceived`, { reason: reason.trim(), contraAccountCode: contra }, { tenantId: receipt.tenantId }),
-    onSuccess: () => onDone(`Bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}) written off as not received: Dr ${contra} / Cr ${receipt.ledgerCode}. If the money turns up on a later statement, matching it reverses this.`),
+    mutationFn: () => api.post(`/reconciliation/raast/receipts/${receipt.id}/unreceived`, { reason: reason.trim(), ...(contra === 'owes' ? {} : { contraAccountCode: contra }) }, { tenantId: receipt.tenantId }),
+    onSuccess: () => onDone(`Bill #${receipt.orderRef}'s Raast payment (${fmtPkr(receipt.amountCents)}) written off as not received: Dr ${contra === 'owes' ? (receipt.tillClearingCode ?? 'till clearing') : contra} / Cr ${receipt.ledgerCode}. If the money turns up on a later statement, matching it reverses this.`),
   })
   return (
     <div className="space-y-2 text-xs max-w-xl">

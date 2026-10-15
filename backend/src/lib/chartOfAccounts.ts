@@ -17,8 +17,8 @@
 // Reserved ranges (never put a template code in them; the owner of each
 // range creates its accounts lazily, per company, with `controlledBy` set):
 //
-//   1400–1449  Due from <company> — head-office books (D1, not built yet;
-//              headOffices module, controlledBy 'head_office')
+//   1400–1449  Reserved and unused (head-office pairs use the 1450 / 2150
+//              inter-company pair accounts, D1 2026-10-15)
 //   1450–1499  Due from <company> — inter-company pair accounts (H30;
 //              intercompany/accounts.ts ensurePairAccounts, controlledBy
 //              'intercompany')
@@ -26,13 +26,12 @@
 //              depreciation) and 1591–1599 accumulated depreciation per
 //              class. Template accounts, controlledBy 'fixed_asset' — only
 //              the register / CapEx post to them (journal.ts).
-//   2100–2149  Due to <head office> — company books (D1, lazy)
+//   2100–2149  Reserved and unused (as 1400–1449)
 //   2150–2199  Due to <company> — inter-company pair accounts (lazy)
-//   6200–6249  Head office charges — company books (D1, lazy)
-//   6990–6999  Costs recharged to group companies (the provider / head-office
-//              side). 6990 itself is a TEMPLATE account, the ONE recovery
-//              account shared by H30 fleet recharges and D1 head-office
-//              recharges.
+//   6200–6249  Head office charges — company books (created by headOffices, lazy)
+//   6990       Costs recharged to group companies (the provider / head-office
+//              side): a TEMPLATE account, the ONE recovery account shared by
+//              H30 fleet recharges and D1 head-office recharges. 6991–6999 unused.
 //
 // Codes outside the template (the lazy pair / head-office accounts above,
 // an operator's own accounts) are never required and never added here.
@@ -63,8 +62,8 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1015', name: 'Cash in POS Drawer',                 type: 'asset',     description: 'Open-shift drawer floats and takings before deposit' },
   { code: '1020', name: 'Bank — Operating Account',           type: 'asset' },
   { code: '1030', name: 'Card / Gateway Receivable',          type: 'asset',     description: 'Keenu / JazzCash / Easypaisa awaiting settlement' },
-  { code: '1110', name: 'Customer Accounts Receivable',       type: 'asset' },
-  { code: '1115', name: 'Till Clearing',                      type: 'asset',     description: 'Reserved for the till-clearing split (parked with on-account clients): nothing posts here yet — till balances and Raast write-offs stay on 1110 until it is resumed' },
+  { code: '1110', name: 'Customer Accounts Receivable',       type: 'asset',     description: 'Invoices, statements and booked on-account charges (and legacy till clearing until the company\'s till-clearing cut-over)' },
+  { code: '1115', name: 'Till Clearing',                      type: 'asset',     description: "Till bills not settled on their drawer, money owed back on cancelled tickets, card tenders failed after the close, Raast customer-owes write-offs — used once the company's till-clearing cut-over is done; never invoiced customer balances (1110)" },
   { code: '1210', name: 'Inventory — Food',                   type: 'asset' },
   { code: '1220', name: 'Inventory — Beverage',               type: 'asset' },
   { code: '1230', name: 'Inventory — Packaging',              type: 'asset' },

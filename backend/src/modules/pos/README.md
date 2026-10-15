@@ -36,3 +36,38 @@ A Raast receipt the CEO voided is **not money taken**. `refundDueOf` (refund due
 - Every item void and every whole-order cancel/void of a rung-up order needs a manager (their own login or a same-company manager PIN); `approverId` always recorded.
 - Tills take exactly Cash, Card – Keenu and Raast QR (`lib/tenders.ts`); card and Raast are the one digital tax group.
 - A new path that completes an order calls `bumpCustomerRollups` and goes through `completeOrder`.
+
+## On account at the till (`onAccountRoutes.ts`, `onAccountTender.ts`)
+
+Charges a whole bill to a corporate client's account by scanning its QR card
+(runbook `docs/on-account.md`). Registered as a second `/pos` plugin; roles
+`CASHIERS`; not module-gated. **Off per company** until finance has created a
+client and the CEO has approved it.
+
+| Route | Body / query | What it does |
+|---|---|---|
+| `GET /pos/on-account/enabled` | `?orderId` | `{ enabled }`: true when the order's company has at least one active client. The till hides the button otherwise. |
+| `POST /pos/on-account/lookup` | `{ orderId, code }` (rate limit 20/min per user) | Resolves the card code inside the order's company only. Unknown: 404 `ON_ACCOUNT_CARD_UNKNOWN` (never says it exists elsewhere). Revoked: 409 `ON_ACCOUNT_CARD_REVOKED` and one `on_account_card_revoked_used` flag per card per Karachi day. Returns the client's name, available credit and whether a reference is required. |
+| `GET /pos/orders/:orderId/on-account/quote` | | The bill re-priced at the cash rate, and whether it can be charged. |
+| `POST /pos/orders/:orderId/on-account` | `{ shiftId, code, reference?, idempotencyKey }` | The charge. One transaction: order lock, replay check, whole-bill and eligibility checks, re-price (`['on_account']`, rate must equal `taxRateCash` else 409 `ON_ACCOUNT_RATE`), client lock, `assertChargeableTx`, a paid `on_account` Payment, the `CustomerAccountCharge`, then `applyCoverageTx` (must complete the order, else 409 `ON_ACCOUNT_NOT_HERE` and everything rolls back). After the transaction `afterTillSale` -> `completeOrder` files the one fiscal sale (buyer = the client). **No manager PIN.** |
+
+Refusals: `ON_ACCOUNT_NOT_ACTIVE`, `ON_ACCOUNT_BRAND_NOT_ALLOWED`,
+`ON_ACCOUNT_OVERDUE` (a statement past due plus the client's grace),
+`ON_ACCOUNT_OVER_LIMIT`, `ON_ACCOUNT_WHOLE_BILL` (anything already paid or
+pending, or a tip, promo, wallet, gift card, loyalty credit or split portion),
+`ON_ACCOUNT_NOT_HERE` (delivery, pickup, not a till bill, offline),
+`ON_ACCOUNT_REFERENCE_REQUIRED` (422).
+
+- **Scope:** the order is found with `scopeTenantWhere(req, 'write')`; the card
+  is looked up with the order's company only; the charge, payment and fiscal
+  document carry that company. A foreign order is 404.
+- **The card code never reaches logs or the audit trail** (redacted in the
+  route's log serializer; audit `order.on_account_charge` carries the card
+  hint only).
+- **Tax:** an on-account bill is the cash tax class; no loyalty is awarded.
+- **Refunds** of an on-account bill go through the one refund engine, to the
+  account only (`applyChargeRefundTx` inside `writeRefundTx`); `refundDueOf`
+  and `refundDueCents` exclude `on_account`.
+- **Ledger:** the client's debt is *Dr 1110* per client at the shift close (or
+  `order.complete` on the web path); all other till clearing is on **1115**.
+

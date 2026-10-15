@@ -64,6 +64,21 @@ export interface Job {
   pickedUpAt: string | null
   arrivedAt: string | null
   otpAttemptsLeft: number
+  /** Emergency override: a manager sent the code to this rider's WhatsApp.
+   *  `code` is only present when it was sent to THIS rider (a fallback). */
+  handover?: { rerouted: boolean; reroutedAt: string | null; code: string | null; whatsappSent: boolean }
+  /** The last problem this rider reported at the door, if any. */
+  doorProblem?: { kind: DoorProblemKind; at: string } | null
+  /** True when the order's company delivers by code only (door problems are on). */
+  doorProblemEnabled?: boolean
+}
+
+export type DoorProblemKind = 'no_code' | 'refused' | 'unreachable'
+
+export interface ShiftResponse {
+  rider: RiderPublic
+  /** COD cash the rider holds and has not handed in (going off shift only). A reminder, never a block. */
+  cashHeldCents?: number
 }
 
 export interface RiderSessionResponse {
@@ -287,13 +302,15 @@ export const riderApi = {
 
   me: () => riderFetch<{ rider: RiderPublic }>('/rider/me'),
   setShift: (online: boolean) =>
-    riderFetch<{ rider: RiderPublic }>('/rider/shift', { method: 'POST', body: { online } }),
+    riderFetch<ShiftResponse>('/rider/shift', { method: 'POST', body: { online } }),
   jobs: () => riderFetch<{ jobs: Job[] }>('/rider/jobs'),
   job: (orderId: string) => riderFetch<{ job: Job }>(`/rider/jobs/${enc(orderId)}`),
   step: (orderId: string, action: StepAction, body: Pos & { reason?: string }) =>
     riderFetch<{ job?: Job; ok?: boolean }>(`/rider/jobs/${enc(orderId)}/${action}`, { method: 'POST', body }),
   deliver: (orderId: string, otp: string, pos: Pos) =>
     riderFetch<DeliverResult>(`/rider/jobs/${enc(orderId)}/deliver`, { method: 'POST', body: { otp, ...pos } }),
+  reportDoorProblem: (orderId: string, kind: DoorProblemKind, pos: Pos & { note?: string }) =>
+    riderFetch<unknown>(`/rider/jobs/${enc(orderId)}/door-problem`, { method: 'POST', body: { kind, ...pos } }),
   location: (fix: RiderFix) => riderFetch<unknown>('/rider/location', { method: 'POST', body: fix }),
 }
 

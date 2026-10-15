@@ -164,6 +164,8 @@ const PAYMENT_COLORS: Record<string, string> = {
   easypaisa:        'text-green-700 bg-green-100/20',
   raast:            'text-success bg-s-teal/15',
   keenu_qr:         'text-s-muted bg-s-surface',
+  // A client's bill charged to its account — billed, not money in a drawer.
+  on_account:       'text-s-purple bg-s-purple-dim',
   comp:             'text-s-muted bg-s-surface',
   wallet:           'text-s-amber bg-s-amber/10',
 }
@@ -208,19 +210,23 @@ const STATUS_CTA: Record<string, string> = {
 // tenders here, exactly as the server's refundDueOf leaves it out
 // (isDrawerReceipt).
 
-const HAND_BACK_TENDERS: readonly RefundTender[] = ['cash', 'card', 'raast', 'keenu_qr']
-const HAND_BACK_LABEL: Record<RefundTender, string> = { cash: 'Cash', card: 'Card – Keenu', raast: 'Raast QR', keenu_qr: 'Keenu QR (retired)' }
+// On account is never handed back here: it was never money in a drawer — a
+// cancelled on-account bill goes back to the client's account (the server's
+// refundDueOf leaves it out the same way).
+type HandBackTender = Exclude<RefundTender, 'on_account'>
+const HAND_BACK_TENDERS: readonly HandBackTender[] = ['cash', 'card', 'raast', 'keenu_qr']
+const HAND_BACK_LABEL: Record<HandBackTender, string> = { cash: 'Cash', card: 'Card – Keenu', raast: 'Raast QR', keenu_qr: 'Keenu QR (retired)' }
 
 type OrderPayment = OrderDetail['payments'][number]
 
 function isDrawerReceipt(p: OrderPayment): boolean {
-  if (p.amountCents <= 0 || !p.shiftId || p.method === 'comp') return false
+  if (p.amountCents <= 0 || !p.shiftId || p.method === 'comp' || p.method === 'on_account') return false
   // A Raast receipt the CEO voided ("never booked") is not money in the drawer.
   if (p.method === 'raast' && p.raastReceipt?.status === 'voided') return false
   return p.status === 'paid' || (p.status === 'pending' && (p.method === 'card' || p.method === 'keenu_qr') && !!p.gatewayRef)
 }
 
-function moneyTakenOf(order: OrderDetail): { dueCents: number; byTender: Array<{ method: RefundTender; leftCents: number }>; latest: RefundTender | null } {
+function moneyTakenOf(order: OrderDetail): { dueCents: number; byTender: Array<{ method: HandBackTender; leftCents: number }>; latest: HandBackTender | null } {
   if (!ENDED.has(order.status)) return { dueCents: 0, byTender: [], latest: null }
   const receipts = order.payments.filter(isDrawerReceipt)
   const refunds = order.payments.filter((p) => p.status === 'refunded' && p.amountCents < 0)
@@ -235,7 +241,7 @@ function moneyTakenOf(order: OrderDetail): { dueCents: number; byTender: Array<{
   const latest = [...receipts]
     .filter((p) => (HAND_BACK_TENDERS as readonly string[]).includes(p.method))
     .sort((a, b) => +new Date(b.processedAt ?? b.createdAt ?? 0) - +new Date(a.processedAt ?? a.createdAt ?? 0))[0]
-  return { dueCents: Math.max(0, taken - handedBack), byTender, latest: (latest?.method as RefundTender | undefined) ?? null }
+  return { dueCents: Math.max(0, taken - handedBack), byTender, latest: (latest?.method as HandBackTender | undefined) ?? null }
 }
 
 function handBackErrorMessage(e: unknown): string {
@@ -270,7 +276,7 @@ function MoneyTakenModal({
   const taken = moneyTakenOf(order)
   const policy = useRefundPolicy()
   const needsPhoto = !!policy.data?.requirePhotoEvidence
-  const [method, setMethod] = useState<RefundTender | ''>(() =>
+  const [method, setMethod] = useState<HandBackTender | ''>(() =>
     taken.byTender.length === 1 ? taken.byTender[0]!.method
       : taken.byTender.find((t) => t.method === taken.latest)?.method ?? taken.byTender[0]?.method ?? '')
   const leftOnMethod = taken.byTender.find((t) => t.method === method)?.leftCents ?? 0
@@ -362,7 +368,7 @@ function MoneyTakenModal({
       ...(method === 'raast' && { gatewayRef: raastRef.trim() }),
     }) as Promise<RefundResult & { refundDueLeftCents?: number }>,
     onSuccess: (r) => {
-      const how = HAND_BACK_LABEL[method as RefundTender] ?? method
+      const how = HAND_BACK_LABEL[method as HandBackTender] ?? method
       const left = r.refundDueLeftCents ?? Math.max(0, taken.dueCents - amountCents)
       onDone(`Refunded ${fmtPkr(amountCents)} by ${method === 'raast' ? `Raast QR (ref ${raastRef.trim().toUpperCase()})` : how.toLowerCase()} and booked. ${left > 0 ? `${fmtPkr(left)} is still owed back on this ticket.` : 'Nothing more is owed back on this ticket.'}`)
       onClose()
@@ -415,7 +421,7 @@ function MoneyTakenModal({
   const machineState = progress ? terminalRefundText(progress) : null
 
   /** A new way to hand it back: the amount follows the new most; an old machine answer is cleared. */
-  function changeWay(next: { method?: RefundTender; cardVia?: 'machine' | 'record' }) {
+  function changeWay(next: { method?: HandBackTender; cardVia?: 'machine' | 'record' }) {
     if (next.method) setMethod(next.method)
     if (next.cardVia) setCardVia(next.cardVia)
     setAmountInput(null)
@@ -438,7 +444,7 @@ function MoneyTakenModal({
           <div>
             <label htmlFor="due-method" className="text-xs text-s-muted block mb-1">Hand it back by</label>
             <Select id="due-method" value={method} disabled={!!following || cardRefund.isPending}
-              onChange={(e) => changeWay({ method: e.target.value as RefundTender })}
+              onChange={(e) => changeWay({ method: e.target.value as HandBackTender })}
               className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none disabled:opacity-60">
               {taken.byTender.map((t) => (
                 <option key={t.method} value={t.method}>{HAND_BACK_LABEL[t.method]} — {fmtPkr(Math.min(t.leftCents, taken.dueCents))} taken</option>
@@ -1313,6 +1319,9 @@ export default function OrderDetailPage() {
                           {paymentMethodLabel(p.method)}
                         </span>
                         {p.method === 'raast' && <RaastPaymentNote payment={p} />}
+                        {p.method === 'on_account' && p.gatewayRef && (
+                          <p className="text-[10px] text-s-muted mt-1">Client account <span className="font-mono">{p.gatewayRef}</span></p>
+                        )}
                       </div>
                       <div className="text-right">
                         <span className={`font-mono text-sm font-bold ${p.raastReceipt?.status === 'voided' ? 'text-s-muted line-through' : 'text-primary-ink'}`}>{fmtPkrWhole(p.amountCents)}</span>

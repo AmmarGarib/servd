@@ -196,7 +196,17 @@ How servd builds the figures:
   - `cash` that is still **pending** — the cash a rider collects on a
     cash-on-delivery order, which servd files at completion with the rest
     of the bill;
-  - `comp` — a complimentary amount.
+  - `comp` — a complimentary amount;
+  - `on_account` — a **credit sale** to a corporate client: the whole bill
+    is charged to the client's account (their QR card was scanned at the
+    till) and the money comes later, on a monthly statement. It counts as
+    **cash mode** (`payment.mode` `cash`, the 15% cash rate) and is the only
+    tender on the bill (never split with another). **FBR `PaymentMode` for a
+    credit sale is sent as 2 (cash) and is still to be confirmed with the
+    vendor** (open question OA-FBR-MODE). The client is the `buyer` (below),
+    and the sale is filed once, when the bill is charged, never again when
+    the client pays the statement. A refund of such a sale goes back to the
+    client's account, so its fiscal refund carries tender `on_account`.
   Accept a method you do not recognise; never reject the document for it.
 - `payment.mode` is `cash` only when every paid tender is cash. It is `card`
   when every paid tender is a card, Raast QR, Keenu QR (older sales) or the
@@ -208,7 +218,11 @@ How servd builds the figures:
 - `registrations` lists the authorities and POS ids this sale must be filed
   under. When it holds more than one authority (for example SRB and FBR), file
   with each one and return the extra numbers in `extraNumbers`.
-- `buyer` is present only when the customer gave an NTN or CNIC.
+- `buyer` is present only when the customer gave an NTN or CNIC, **and
+  always on an `on_account` sale**: it is the corporate client
+  (`legalName`, plus `ntn` / `cnic` when the client has them). A client with
+  neither still has a `legalName`; the vendor must accept a named buyer with
+  no NTN.
 - `servdInvoiceNumber` is servd's own internal invoice number, when there is
   one. It is a reference only, never the fiscal number.
 - A dry run from the setup screen carries `"test": true` and a `documentId`
@@ -242,7 +256,10 @@ fields:
 `payment.tenders` holds the one tender the money went back by: `cash`,
 `card`, `raast` (sent back by bank transfer from the account the Raast
 payment came into) or, for a sale made before 2026-10-12, `keenu_qr`. A
-refund of a sale paid only by Raast QR defaults to `raast`.
+refund of a sale paid only by Raast QR defaults to `raast`. A refund of a
+sale charged to a client's account goes back by `on_account` (it reduces
+what the client owes; no cash or card moves) and carries the same `buyer`
+as the sale.
 
 The refund is split in proportion to the sale. The tax returned is
 `round(sale tax × refund ÷ sale total)`, and tip, service charge, the

@@ -35,6 +35,9 @@ interface OrderStatus {
   /** The hand-over code for the rider at the door (docs/rider-app.md). The
    *  API sends it to the order's own customer, on delivery orders only. */
   deliveryOtp?: string | null
+  /** True when the hand-over code was moved to the rider (the customer cannot
+   *  give it): the API then sends no code and this line replaces the code block. */
+  handoverRerouted?: boolean
   /** The order's own stored figures (H9) — the API sends them as columns.
    *  taxCents is ALL the GST charged: the food's AND the delivery fee's.
    *  Optional so an older API still renders. */
@@ -281,7 +284,12 @@ export default function OrderStatusPage() {
         </div>
 
         {/* ── Delivery hand-over code ── */}
-        {handoverCode ? <DeliveryCode code={handoverCode} riderName={order.rider?.name ?? null} /> : null}
+        {order.handoverRerouted === true && jobOpen ? (
+          <div className="rounded-2xl px-4 py-3.5 text-sm font-semibold"
+            style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)', color: 'var(--servd-ink)' }}>
+            Your rider has the code for this order.
+          </div>
+        ) : handoverCode ? <DeliveryCode code={handoverCode} riderName={order.rider?.name ?? null} /> : null}
 
         {/* ── Progress steps ── */}
         {!isCancelled && (

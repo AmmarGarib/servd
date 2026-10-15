@@ -198,6 +198,13 @@ function ZReportView({ report, onClose }: { report: ClosedZReport; onClose: () =
           ))}
         </div>
 
+        {(report.onAccountSales ?? 0) > 0 && (
+          <p className="rounded-lg border border-kds-border px-4 py-3 text-xs text-kds-subtext">
+            On account ({fmtPkrWhole(report.onAccountSales ?? 0)}): billed to each client&rsquo;s account, listed by client above.
+            It is in the takings but not in the drawer — the client pays it on their statement.
+          </p>
+        )}
+
         {refundDue > 0 && (
           <div className="rounded-lg border border-kds-amber bg-kds-amber/10 px-4 py-3 text-sm">
             <p className="font-bold text-kds-amber">Refund due: {fmtPkrWhole(refundDue)}</p>

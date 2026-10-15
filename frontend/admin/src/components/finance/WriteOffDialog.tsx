@@ -83,6 +83,8 @@ export interface WriteOffInvoice {
   customerName: string
   totalCents: number
   balanceCents: number
+  /** 'statement' = an on-account client's statement (server field). */
+  kind?: string
 }
 
 export const WRITE_OFF_STATUS: Record<WriteOffStatus, { label: string; color: string }> = {
@@ -351,6 +353,12 @@ export function WriteOffDialog({ invoice, onClose, onDone }: {
         <strong className="text-white/90"> The CEO approves every write-off.</strong> Once approved, the amount (sales tax included) comes off what we are owed
         and is booked as a bad debt. The sales tax already declared on the invoice is not refunded.
       </p>
+      {invoice.kind === 'statement' && (
+        <p className="text-sm text-white/60 mt-2">
+          This is a client statement: once approved, <strong className="text-white/90">the client is suspended</strong> and the bad-debt expense is
+          split by brand, in proportion to each brand&apos;s share of the bills on the statement.
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-3 mt-4">
         <Field t="Amount to write off (PKR)">
           <div className="flex gap-1">

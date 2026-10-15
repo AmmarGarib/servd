@@ -12,6 +12,7 @@ import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../lib/blocks'
 import { breadcrumbSchema, jsonLdScript } from '../../lib/jsonLd'
 import { conceptsOrFallback, fetchLiveConcepts, fitSentences } from '../../lib/liveConcepts'
+import { BlockedNotice } from '../../components/account/BlockedNotice'
 import { ManagedPage } from '../../sections/ManagedPage'
 import { PageSurface } from '../../sections/pageSurface'
 import { bookableNames, takesReservations } from '../../sections/servd/reservable'
@@ -50,6 +51,7 @@ export default async function ReservePage() {
   return (
     <PageSurface slug="servd:reserve">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
+      <div className="container-narrow" style={{ paddingTop: '1rem' }}><BlockedNotice /></div>
       <ManagedPage slug="servd:reserve" {...(live.length > 0 && { concepts: live })} />
     </PageSurface>
   )
