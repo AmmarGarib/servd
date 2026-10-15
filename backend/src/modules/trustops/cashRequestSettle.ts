@@ -506,9 +506,12 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
         actor: { id: viewer.id, role: viewer.role },
         stockAllowed,
       })
-      return replaceSpendLinesTx(tx, v, resolved, viewer.id, body.note)
+      const r = await replaceSpendLinesTx(tx, v, resolved, viewer.id, body.note)
+      return { ...r, overrides: resolved.filter((l) => l.equipmentOverride) }
     })
     await auditVoucher(req, 'spend', v, { settlementId: done.settlementId, spentCents: done.totalCents, lines: body.lines.length })
+    // An equipment override is decided here (the reason is not stored on the line), so it is flagged here.
+    if (done.overrides.length) await flagOverrides(v, viewer.id, done.overrides)
     return detailOf(v.id, viewer)
   })
 
@@ -635,6 +638,8 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
           conceptId: await cashRequestBrandTx(tx, v.id), actor,
         })
         topUpMovementId = extra.movement.id
+      } else if ((body.changeCents ?? 0) > 0) {
+        throw new AppError('CHANGE_MISMATCH', `The lines come to exactly the PKR ${(cur.amountCents / 100).toFixed(2)} paid — there is no change`, 422)
       }
       // Stock lines → a settled goods receipt; capex lines → CapEx cash payments (bridged through 1011).
       await bookCashLinesTx(tx, {

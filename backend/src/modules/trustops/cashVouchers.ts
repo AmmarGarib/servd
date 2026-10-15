@@ -212,7 +212,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
   return {
     canEdit: EDITABLE.includes(s) && (raiser || viewer.keeper),
     canEditCategory: (EDITABLE.includes(s) && (raiser || viewer.keeper)) || (viewer.keeper && (WAIT_CEO.includes(s) || s === 'approved')),
-    canEditDiscount: viewer.financeApprover && (EDITABLE.includes(s) || WAIT_CEO.includes(s)),
+    canEditDiscount: viewer.financeApprover && (EDITABLE.includes(s) || (WAIT_CEO.includes(s) && !own)),
     canSignHod: false,
     canFinanceApprove: financeStep,
     canApprove: ceoStep && v.financeApprovedById !== me && v.hodSignedById !== me,
@@ -820,6 +820,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       throw new AppError('BOX_PICK_KEEPERS_ONLY', 'Only finance or a manager picks the cash box — the cashier picks it when paying', 403)
     }
     if (wantsDiscount && !viewer.financeApprover) throw new AppError('DISCOUNT_FINANCE_ONLY', 'Only finance sets a discount', 403)
+    // Once finance has approved it, the money is never changed by whoever raised or holds it (separation of duties).
+    if (!EDITABLE.includes(v.status) && (wantsDiscount || body.amountCents !== undefined) && isOwn(viewer, v)) throw selfApprove()
 
     const data: Prisma.CashVoucherUncheckedUpdateManyInput = {}
     if (body.boxId) await openBoxOf(v.tenantId, body.boxId)
@@ -918,16 +920,22 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   // Never the raiser / holder (409 SELF_APPROVE), never the login that gave
   // the finance approval or a legacy HOD signature (409 SAME_SIGNER).
   fastify.post<{ Params: { id: string } }>('/:id/approve', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    // The amount the CEO saw (inbox / detail screen). A finance edit after the screen loaded → 409, never a silent
+    // approval of a different amount. Omitted = the amount read here, still pinned in the claim below.
+    const seen = z.object({ amountCents: z.number().int().optional() }).parse(req.body ?? {})
     const v = await loadVoucher(req, req.params.id)
     const me = req.staffUser!.id
     if (!WAIT_CEO.includes(v.status)) throw wrongStatus('VOUCHER_NOT_FINANCE_APPROVED', v, 'the CEO approves after finance')
+    if (seen.amountCents !== undefined && seen.amountCents !== v.amountCents) {
+      throw new AppError('AMOUNT_CHANGED', `Cash request ${v.number} now pays ${v.amountCents / 100} — reload it and approve again`, 409)
+    }
     if (v.preparedById === me || v.payeeUserId === me) throw selfApprove()
     if (v.financeApprovedById === me || v.hodSignedById === me) {
       throw new AppError('SAME_SIGNER', 'You gave the first approval on this voucher — a different person must give the final approval', 409)
     }
     const now = new Date()
     const res = await prisma.cashVoucher.updateMany({
-      where: { AND: [{ id: v.id, status: v.status }, notMe('financeApprovedById', me), notMe('hodSignedById', me)] },
+      where: { AND: [{ id: v.id, status: v.status, amountCents: v.amountCents, discountCents: v.discountCents }, notMe('financeApprovedById', me), notMe('hodSignedById', me)] },
       data: { status: 'approved', directorSignedById: me, directorSignedAt: now },
     })
     if (res.count === 0) throw new AppError('VOUCHER_NOT_FINANCE_APPROVED', `Cash request ${v.number} was changed by someone else — reload it`, 409)

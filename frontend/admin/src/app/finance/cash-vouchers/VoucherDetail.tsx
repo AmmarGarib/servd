@@ -141,7 +141,7 @@ export function VoucherDetail({ id }: { id: string }) {
             {v.canFinanceApprove && <span className="text-xs font-bold text-white/60">Finance approval is below.</span>}
             {v.canApprove && (
               <button disabled={act.isPending} className={primaryBtn}
-                onClick={() => { if (window.confirm(`Approve ${v.number}: PKR ${formatPkr(v.amountCents)} for ${holder}? The cashier may then pay it.`)) run('approve') }}>
+                onClick={() => { if (window.confirm(`Approve ${v.number}: PKR ${formatPkr(v.amountCents)} for ${holder}? The cashier may then pay it.`)) run('approve', { amountCents: v.amountCents }) }}>
                 Approve (CEO)
               </button>
             )}

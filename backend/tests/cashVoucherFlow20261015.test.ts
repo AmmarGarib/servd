@@ -553,3 +553,52 @@ describe("company B never reaches company A's voucher", () => {
     expect(await prisma.exceptionFlag.count({ where: { entityId: v.id, kind: 'cash_request_receipts_overdue' } })).toBe(1)
   })
 })
+
+// ─── Review gate (2026-10-15): stock / capex at verification, own money, exact change ───
+
+describe('review gate', () => {
+  it('stock and capex lines at verification: Dr 12x0 + CapEx 1340, 1357 and 1011 net to zero, tie-out holds', async () => {
+    const tomato = (await prisma.inventoryItem.create({ data: { name: `${P} Tomato`, unit: 'kg', tenantId: T.A, currentStock: 0, category: 'produce' } })).id
+    const proj = (await prisma.capexProject.create({ data: { tenantId: T.A, name: `${P} fit-out` } })).id
+    const cl = (await prisma.capexLine.create({ data: { projectId: proj, scope: 'Equipment', item: 'Blender', unitCostCents: 500_000 } })).id
+    const start1357 = await balanceOf('1357')
+    const start1011 = await balanceOf('1011')
+    const v = await paid({ amountCents: 9_000 })
+    await upload('cookA', v.id)
+    const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {
+      lines: [
+        { kind: 'stock', inventoryItemId: tomato, quantity: 2, unit: 'kg', amountCents: 3_000, description: 'Tomatoes' },
+        { kind: 'capex', capexLineId: cl, amountCents: 5_000, description: 'Blender' },
+      ],
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json()).toMatchObject({ spentCents: 8_000, changeCents: 1_000, topUpCents: 0 })
+    expect(await entry(`cashvoucher.post:${v.id}`)).toEqual([['1011', 'debit', 5_000], ['1210', 'debit', 3_000], ['1357', 'credit', 8_000]])
+    const capexLine = await prisma.pettyCashSpendLine.findFirstOrThrow({ where: { tenantId: T.A, kind: 'capex', capexLineId: cl } })
+    expect(await entry(`capex.payment:${capexLine.capexPaymentId}`)).toEqual([['1011', 'credit', 5_000], ['1340', 'debit', 5_000]])
+    expect(await balanceOf('1357')).toBe(start1357)
+    // 1011: −9,000 pay, +1,000 change; the CapEx bridge nets to zero.
+    expect(await balanceOf('1011')).toBe(start1011 - 8_000)
+    expect((await pettyCashTieOut([T.A]))[0]).toMatchObject({ ok: true })
+  })
+
+  it('whoever raised or holds a voucher never changes its money after finance approval; change on an exact spend is refused', async () => {
+    // finA2 raises a request for itself; finA approves; finA2 may not lift the gross while it waits for the CEO.
+    const own = await raise('finA2', { amountCents: 4_000 })
+    await ok('finA', 'POST', `${V}/${own.id}/finance-approve`)
+    const up = await call('finA2', 'PATCH', `${V}/${own.id}`, { grossCents: 9_000 })
+    expect(up.statusCode, up.body).toBe(409)
+    expect(up.json().error.code).toBe('SELF_APPROVE')
+    // Another finance person still may set a discount.
+    expect((await call('finA', 'PATCH', `${V}/${own.id}`, { discountCents: 500 })).statusCode).toBe(200)
+
+    const v = await paid({ amountCents: 2_000 })
+    await upload('cookA', v.id)
+    const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {
+      lines: [{ categoryKey: 'transport', amountCents: 2_000, description: 'Taxi' }], changeCents: 300,
+    })
+    expect(r.statusCode, r.body).toBe(422)
+    expect(r.json().error.code).toBe('CHANGE_MISMATCH')
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('disbursed')
+  })
+})

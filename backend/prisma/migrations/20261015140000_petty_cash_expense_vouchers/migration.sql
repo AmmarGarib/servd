@@ -35,13 +35,14 @@ ALTER TABLE "cash_vouchers"
 CREATE UNIQUE INDEX "cash_vouchers_postedJournalEntryId_key" ON "cash_vouchers"("postedJournalEntryId");
 CREATE INDEX "cash_vouchers_tenantId_kind_status_idx" ON "cash_vouchers"("tenantId", "kind", "status");
 
+ALTER TABLE "cash_voucher_attachments" ADD COLUMN "fileName" TEXT;
+
+-- 1357 Petty Cash Vouchers Awaiting Documents is added to every company's chart by ensureChartOfAccounts at boot
+-- (lib/chartOfAccounts.ts; required code, so /health checks it).
+
+-- ─── SQL-only objects (tests/setup.ts reads from here to the end: no ';' inside a statement, no trailing comments)
 -- amount paid = gross − discount; a discount is never negative and never the whole amount.
 ALTER TABLE "cash_vouchers" ADD CONSTRAINT "cash_vouchers_discount_chk" CHECK (
   "discountCents" >= 0
   AND ("grossCents" IS NULL AND "discountCents" = 0 OR "grossCents" IS NOT NULL AND "grossCents" = "amountCents" + "discountCents")
 );
-
-ALTER TABLE "cash_voucher_attachments" ADD COLUMN "fileName" TEXT;
-
--- 1357 Petty Cash Vouchers Awaiting Documents is added to every company's chart by ensureChartOfAccounts at boot
--- (lib/chartOfAccounts.ts; required code, so /health checks it).

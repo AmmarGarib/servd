@@ -7,15 +7,16 @@
 //             reason (10-500 characters) and 1-5 evidence files (JPEG / PNG /
 //             WebP / PDF, ≤ 3 MB each, lib/evidenceFile.ts). One open request
 //             per invoice (409 WRITE_OFF_OPEN); never more than the balance
-//             (409 WRITE_OFF_EXCEEDS_BALANCE). A credit note, a void invoice
-//             (or a parked on-account statement) → 409. A request the CEO
-//             raises applies at once — the CEO is the final authority
-//             (owner decision 27).
+//             (409 WRITE_OFF_EXCEEDS_BALANCE). A credit note or a void invoice
+//             → 409. An on-account client's statement (kind 'statement') is
+//             written off like an invoice. A request the CEO raises applies at
+//             once — the CEO is the final authority (owner decision 27).
 //   approve   the CEO (role admin) only. Separation of duties goes through
 //             lib/separation-of-duties.ts assertNotSelfApproval (the CEO is
-//             exempt). One transaction: lock the invoice → claim requested →
-//             approved → the amount is still ≤ the balance (a payment may have
-//             come in since: 409) → writtenOffCents += amount → post → status.
+//             exempt). One transaction: lock the client (if any) → lock the
+//             invoice → claim requested → approved → the amount is still ≤ the
+//             balance (a payment may have come in since: 409) → writtenOffCents
+//             += amount → post → status → suspend the client.
 //   reject    the CEO, with a note. cancel: the requester or any requester role.
 //   recover   money received later on a written-off amount: the write-off's
 //             recoveredCents and the invoice's paidCents go up, writtenOffCents
@@ -28,6 +29,9 @@
 //       Dr 6160 Bad Debts (the invoice's brand) / Cr 1110 — the full amount,
 //       tax included (no sales-tax bad-debt relief). Dated at approval; a
 //       closed period → 422 PERIOD_LOCKED and nothing is saved.
+//       A STATEMENT splits the Dr 6160 per brand, pro rata to the net
+//       (amount − refunded) of the charges it billed; the rounding remainder
+//       goes on the largest line. Cr 1110 stays one line.
 //   receivable.write_off_recovery:<paymentId>
 //       Dr 1110 / Cr 6160, and with it
 //   receivable.payment:<paymentId>
@@ -37,13 +41,19 @@
 //       descriptions and the money line's memo carry the method and the
 //       payment reference # (required for every method — owner, 2026-10-14).
 //
-// Lock order: the invoice row first (lockInvoice), then the write-off row —
-// the same as every route in routes.ts. Files are decoded before the
-// transaction opens. Corporate clients on account are PARKED (owner,
-// 2026-10-13): no statement split, no client lock, no client suspension.
+// Client suspension: any approved write-off on an on-account client's invoice
+// or statement suspends the client (status 'suspended', statusReason
+// 'bad_debt_written_off') in the same transaction, so the till refuses its
+// next charge (ON_ACCOUNT_NOT_ACTIVE). Only the CEO reactivates a client. A
+// closed client stays closed.
+//
+// Lock order (receivables/onAccount.ts LOCK ORDER): the client account first
+// (lockAccountTx) when the invoice has one, then the invoice row
+// (lockInvoice), then the write-off row — on request, approve and recover.
+// Files are decoded before the transaction opens.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import type { Prisma, ReceivableWriteOff, UserRole } from '@prisma/client'
+import type { Prisma, ReceivableInvoice, ReceivableWriteOff, UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
@@ -58,6 +68,8 @@ import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { decodeEvidenceFile, sendEvidence, EVIDENCE_MAX_BYTES } from '../../lib/evidenceFile.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { findInScope, lockInvoice, restatus, assertLiveInvoice, balanceOf, totalOf, receiptMethodIn, receiptMemo } from './routes.js'
+import { STATEMENT } from './ledger.js'
+import { chargeNetCents, lockAccountTx } from './onAccount.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -184,6 +196,60 @@ function isOneOpenClash(err: unknown): boolean {
   if (e.code === 'P2002') return true
   return typeof e.message === 'string' && e.message.includes('receivable_write_offs_one_open')
 }
+/** statusReason written on a client suspended by an approved write-off. */
+export const BAD_DEBT_SUSPENSION_REASON = 'bad_debt_written_off'
+
+/**
+ * Lock the invoice's on-account client (when it has one, in the invoice's
+ * company), then the invoice — the shared LOCK ORDER. `invoiceId`'s
+ * customerAccountId never changes after issue, so reading it unlocked first
+ * is safe. Returns the locked invoice and the locked client id (or null).
+ */
+async function lockClientThenInvoice(tx: Tx, invoiceId: string): Promise<{ inv: ReceivableInvoice; accountId: string | null }> {
+  const head = await tx.receivableInvoice.findUniqueOrThrow({ where: { id: invoiceId }, select: { tenantId: true, customerAccountId: true } })
+  let accountId: string | null = null
+  if (head.customerAccountId) {
+    const acct = await lockAccountTx(tx, head.customerAccountId)
+    // Never touch another company's client, whatever the row says.
+    if (acct.tenantId === head.tenantId) accountId = acct.id
+  }
+  const inv = await lockInvoice(tx, invoiceId)
+  return { inv, accountId }
+}
+
+export interface DebitLine { conceptId: string | null; amountCents: number }
+
+/**
+ * Split `amountCents` across brands pro rata to `weights` (net cents per
+ * brand). Each share is floored; the remainder goes to the line with the
+ * largest weight (ties: the first). Zero-weight brands get no line; with no
+ * positive weight at all, one line on `fallbackConceptId`. Σ = amountCents.
+ */
+export function splitProRata(amountCents: number, weights: Array<{ conceptId: string; weightCents: number }>, fallbackConceptId: string | null): DebitLine[] {
+  const live = weights.filter((w) => w.weightCents > 0)
+  const total = live.reduce((t, w) => t + w.weightCents, 0)
+  if (live.length === 0 || total <= 0) return [{ conceptId: fallbackConceptId, amountCents }]
+  const lines = live.map((w) => ({ conceptId: w.conceptId, amountCents: Math.floor((amountCents * w.weightCents) / total), weight: w.weightCents }))
+  const given = lines.reduce((t, l) => t + l.amountCents, 0)
+  let largest = 0
+  for (let i = 1; i < lines.length; i++) if (lines[i]!.weight > lines[largest]!.weight) largest = i
+  lines[largest]!.amountCents += amountCents - given
+  return lines.filter((l) => l.amountCents > 0).map(({ conceptId, amountCents: a }) => ({ conceptId, amountCents: a }))
+}
+
+/** The Dr 6160 lines of a write-off: one on the invoice's brand, or per brand of the statement's charges. */
+async function badDebtLines(tx: Tx, inv: ReceivableInvoice, amountCents: number): Promise<DebitLine[]> {
+  if (inv.kind !== STATEMENT) return [{ conceptId: inv.conceptId, amountCents }]
+  const charges = await tx.customerAccountCharge.findMany({
+    where: { tenantId: inv.tenantId, statementInvoiceId: inv.id },
+    select: { conceptId: true, amountCents: true, refundedCents: true },
+    orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
+  })
+  const byBrand = new Map<string, number>()
+  for (const c of charges) byBrand.set(c.conceptId, (byBrand.get(c.conceptId) ?? 0) + chargeNetCents(c))
+  return splitProRata(amountCents, [...byBrand].map(([conceptId, weightCents]) => ({ conceptId, weightCents })), inv.conceptId)
+}
+
 const writeOffOpen = () => new AppError('WRITE_OFF_OPEN', 'A write-off of this invoice is already waiting for the CEO — decide or cancel that one first', 409)
 
 // ─── Approve (the one place a write-off reaches the books) ───────────────────
@@ -195,9 +261,9 @@ const writeOffOpen = () => new AppError('WRITE_OFF_OPEN', 'A write-off of this i
  * dated now → status. Anything refused (a payment took the balance below the
  * amount, a missing 6160, a period closed through today) rolls all of it back.
  */
-async function applyWriteOffTx(tx: Tx, writeOffId: string, actorId: string, note: string | null): Promise<void> {
+async function applyWriteOffTx(tx: Tx, writeOffId: string, actorId: string, note: string | null): Promise<{ suspendedAccountId: string | null }> {
   const pending = await tx.receivableWriteOff.findUniqueOrThrow({ where: { id: writeOffId } })
-  const inv = await lockInvoice(tx, pending.invoiceId)
+  const { inv, accountId } = await lockClientThenInvoice(tx, pending.invoiceId)
   assertLiveInvoice(inv)
   const now = new Date()
   const claimed = await tx.receivableWriteOff.updateMany({
@@ -210,6 +276,7 @@ async function applyWriteOffTx(tx: Tx, writeOffId: string, actorId: string, note
   if (amount > balance) throw exceedsBalance(balance)
   await assertTemplateAccounts(tx, inv.tenantId, [BAD_DEBTS, RECEIVABLE])
   await tx.receivableInvoice.update({ where: { id: inv.id }, data: { writtenOffCents: { increment: amount } } })
+  const debits = await badDebtLines(tx, inv, amount)
   const posted = await postJournalEntry({
     tenantId: inv.tenantId,
     sourceType: 'receivable.write_off',
@@ -218,12 +285,32 @@ async function applyWriteOffTx(tx: Tx, writeOffId: string, actorId: string, note
     entryDate: now,
     postedBy: actorId,
     lines: [
-      { accountCode: BAD_DEBTS, type: 'debit', amountCents: amount, conceptId: inv.conceptId },
+      ...debits.map((d) => ({ accountCode: BAD_DEBTS, type: 'debit' as const, amountCents: d.amountCents, conceptId: d.conceptId })),
       { accountCode: RECEIVABLE, type: 'credit', amountCents: amount, conceptId: inv.conceptId },
     ],
   }, { tx })
   await tx.receivableWriteOff.update({ where: { id: writeOffId }, data: { journalEntryId: posted.entryId } })
   await restatus(tx, inv.id)
+  // The client is suspended with the write-off (a closed client stays closed).
+  let suspendedAccountId: string | null = null
+  if (accountId) {
+    const s = await tx.customerAccount.updateMany({
+      where: { id: accountId, tenantId: inv.tenantId, status: { not: 'closed' } },
+      data: { status: 'suspended', statusReason: BAD_DEBT_SUSPENSION_REASON },
+    })
+    if (s.count > 0) suspendedAccountId = accountId
+  }
+  return { suspendedAccountId }
+}
+
+/** Audit row for a client suspended by a write-off (after commit). */
+async function auditSuspension(req: FastifyRequest, tenantId: string, accountId: string | null, writeOffId: string): Promise<void> {
+  if (!accountId) return
+  await audit({
+    category: 'accounting', action: 'customer_account.suspend', entity: 'CustomerAccount', entityId: accountId,
+    ...staffOf(req), tenantId, after: { status: 'suspended', statusReason: BAD_DEBT_SUSPENSION_REASON },
+    metadata: { writeOffId },
+  })
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -297,9 +384,10 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
     if (ceo) await assertTemplateAccounts(prisma, found.tenantId, [BAD_DEBTS, RECEIVABLE])
 
     let created: ReceivableWriteOff
+    let suspendedAccountId: string | null = null
     try {
       created = await prisma.$transaction(async (tx) => {
-        const inv = await lockInvoice(tx, found.id)
+        const { inv } = await lockClientThenInvoice(tx, found.id)
         assertLiveInvoice(inv)
         const open = await tx.receivableWriteOff.findFirst({ where: { invoiceId: inv.id, status: 'requested' }, select: { id: true } })
         if (open) throw writeOffOpen()
@@ -319,7 +407,7 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
         })
         // The CEO is the final authority (decision 27): their own request
         // needs no second signature and is applied in the same transaction.
-        if (ceo) await applyWriteOffTx(tx, w.id, me.id, 'Raised by the CEO — applied at once')
+        if (ceo) suspendedAccountId = (await applyWriteOffTx(tx, w.id, me.id, 'Raised by the CEO — applied at once')).suspendedAccountId
         return w
       })
     } catch (err) {
@@ -331,6 +419,7 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
       entity: 'ReceivableWriteOff', entityId: created.id, ...staffOf(req), tenantId: found.tenantId,
       after: { invoiceId: found.id, invoiceNumber: found.number, amountCents: body.amountCents, reason: body.reason, files: files.length, appliedAtOnce: ceo },
     })
+    await auditSuspension(req, found.tenantId, suspendedAccountId, created.id)
     return reply.status(201).send(await reload(created.id, me))
   })
 
@@ -348,12 +437,13 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
       entityId: w.id,
     })
     const me = callerOf(req)
-    await prisma.$transaction((tx) => applyWriteOffTx(tx, w.id, me.id, body.note || null))
+    const { suspendedAccountId } = await prisma.$transaction((tx) => applyWriteOffTx(tx, w.id, me.id, body.note || null))
     await audit({
       category: 'accounting', action: 'receivable.write_off.approve', entity: 'ReceivableWriteOff', entityId: w.id,
       ...staffOf(req), tenantId: w.tenantId, before: { status: w.status }, after: { status: 'approved', note: body.note ?? null },
       metadata: { invoiceId: w.invoiceId, amountCents: toCents(w.amountCents) },
     })
+    await auditSuspension(req, w.tenantId, suspendedAccountId, w.id)
     return reload(w.id, me)
   })
 
@@ -425,7 +515,7 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
     const me = callerOf(req)
 
     const payment = await prisma.$transaction(async (tx) => {
-      const inv = await lockInvoice(tx, w.invoiceId)
+      const { inv } = await lockClientThenInvoice(tx, w.invoiceId)
       assertLiveInvoice(inv)
       const cur = await tx.receivableWriteOff.findUniqueOrThrow({ where: { id: w.id } })
       if (cur.status !== 'approved') throw new AppError('WRITE_OFF_NOT_APPROVED', `Only an approved write-off can be recovered — this one is ${cur.status}`, 409)

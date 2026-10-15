@@ -133,6 +133,9 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // (receivable_invoices_one_statement_per_period).
   for (const statement of migrationSection('20261015120100_on_account_resume',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // Cash vouchers (2026-10-15): cash_vouchers_discount_chk (amount paid = gross − discount).
+  for (const statement of migrationSection('20261015140000_petty_cash_expense_vouchers',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
 }
 
 /**

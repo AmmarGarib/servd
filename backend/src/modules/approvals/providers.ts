@@ -599,7 +599,7 @@ const cashVouchers: ApprovalProvider = {
         waitingSince: iso(r.financeApprovedAt ?? r.hodSignedAt ?? r.createdAt),
         link: `/finance/cash-vouchers?id=${encodeURIComponent(r.id)}`,
         actions: cashRequestActions(base, {
-          kind: 'approve', label: 'Final approval', method: 'POST', path: `${base}/approve`, body: {},
+          kind: 'approve', label: 'Final approval', method: 'POST', path: `${base}/approve`, body: { amountCents: r.amountCents },
           confirm: 'Give the final approval? The cashier may then pay it; the expense is booked when finance verifies the documents.',
           ...(own
             ? { disabledReason: 'You raised or hold this voucher — someone else must approve it' }

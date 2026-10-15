@@ -380,6 +380,7 @@ const ERROR_WORDS: Record<string, string> = {
   ALREADY_PAID: 'This request is already paid.',
   INSUFFICIENT_FLOAT: "The cash box doesn't hold enough — top it up first.",
   SAME_SIGNER: 'The CEO must be a different person from the finance approver.',
+  AMOUNT_CHANGED: 'Finance changed the amount after you opened this voucher — reload it and approve again.',
   SELF_SIGN_HOD: 'You hold this cash — your HOD signs it, not you.',
   NOT_HOD: 'Only the HOD of the person who holds the cash (their reporting manager), finance or a manager can sign this.',
   NOT_YOURS: "This request is not one you raised, hold, sign or pay.",

@@ -16,6 +16,12 @@
 //   flags     canApprove / canReject / canCancel / canRecover per role.
 //   Two companies throughout: B gets 404 on every A write-off route; a write-off
 //   binds to the invoice's company; a foreign bank → 422.
+//   On-account clients (company C): a statement write-off locks the client
+//   before the statement, splits Dr 6160 per brand pro rata to the billed
+//   charges' net (remainder on the largest line) with one Cr 1110, and
+//   suspends the client (statusReason bad_debt_written_off) so the till
+//   refuses it; a client's ordinary invoice suspends it too; B gets 404; a
+//   closed period → 422 with nothing saved and the client still active.
 //
 // Requires a disposable database (DATABASE_URL must contain "test").
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -28,6 +34,8 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError, errorResponse } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { receivableRoutes } from '../src/modules/receivables/routes.js'
+import { assertChargeableTx, lockAccountTx } from '../src/modules/receivables/onAccount.js'
+import { tillClearingCutoverKey } from '../src/modules/accounting/tillClearingCode.js'
 
 const RUN = Math.random().toString(36).slice(2, 8)
 // The PKT calendar day — the date a person in Karachi types (5 h ahead of UTC).
@@ -486,5 +494,184 @@ describe('the AR subledger ties to the 1110 balance', () => {
     const wos = await prisma.receivableWriteOff.findMany({ where: { tenantId: tenantA, status: 'approved' } })
     const expected6160 = wos.reduce((t, w) => t + Number(w.amountCents) - Number(w.recoveredCents), 0)
     expect(await netDebit(tenantA, '6160')).toBe(expected6160)
+  })
+})
+
+// ─── On-account clients: statements and suspension ──────────────────────────
+
+describe('on-account client write-offs', () => {
+  let tenantC: string, conceptC1: string, conceptC2: string
+  let seq = 0
+
+  beforeAll(async () => {
+    tenantC = (await prisma.tenant.create({ data: { name: 'BD C', slug: `bd-c-${RUN}` } })).id
+    await ensureChartOfAccounts(tenantC)
+    conceptC1 = (await prisma.concept.create({ data: { name: 'C one', slug: `bd-c1-${RUN}`, type: 'restaurant', tenantId: tenantC, province: 'SD' } })).id
+    conceptC2 = (await prisma.concept.create({ data: { name: 'C two', slug: `bd-c2-${RUN}`, type: 'restaurant', tenantId: tenantC, province: 'SD' } })).id
+    await mkStaff('ceoC', 'admin', tenantC)
+    await mkStaff('finC', 'finance', tenantC)
+    // The company is cut over, so the till would take on-account charges.
+    await prisma.setting.create({ data: { key: tillClearingCutoverKey(tenantC), value: new Date().toISOString() } })
+  })
+
+  async function client() {
+    seq++
+    return prisma.customerAccount.create({
+      data: { tenantId: tenantC, number: `OA-${RUN}-${seq}`, legalName: `Client ${RUN} ${seq}`, creditLimitCents: 1_000_000, status: 'active', createdById: userId.finC! },
+    })
+  }
+  async function chargeOn(accountId: string, conceptId: string, amountCents: number, refundedCents = 0) {
+    const o = await prisma.order.create({ data: { conceptId, source: 'servd', fulfilmentType: 'dine_in', status: 'completed', totalCents: amountCents, taxRatePct: 15 } })
+    const p = await prisma.payment.create({ data: { orderId: o.id, method: 'on_account', amountCents, status: 'paid' } })
+    return prisma.customerAccountCharge.create({
+      data: { tenantId: tenantC, accountId, orderId: o.id, paymentId: p.id, conceptId, amountCents, refundedCents, chargedById: userId.finC! },
+    })
+  }
+  /** A statement billing the given charges (total = Σ net), as issueStatementTx leaves it. */
+  async function statement(accountId: string, charges: Array<{ id: string; amountCents: number; refundedCents: number }>, kind = 'statement') {
+    seq++
+    const total = charges.reduce((t, c) => t + c.amountCents - c.refundedCents, 0)
+    const st = await prisma.receivableInvoice.create({
+      data: {
+        tenantId: tenantC, customerAccountId: accountId, kind, number: `AR-ST-T-${RUN}-${seq}`, customerName: 'Client',
+        issueDate: new Date(), dueDate: new Date(Date.now() + 30 * 86_400_000), description: 'Statement',
+        amountCents: total, taxCents: 0, status: 'open', ...(kind === 'invoice' ? { conceptId: conceptC1 } : {}),
+      },
+    })
+    for (const c of charges) await prisma.customerAccountCharge.update({ where: { id: c.id }, data: { statementInvoiceId: st.id } })
+    return st
+  }
+  const tillRefusal = async (accountId: string) => {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const a = await lockAccountTx(tx, accountId)
+        await assertChargeableTx(tx, a, { conceptId: conceptC1, billCents: 1_000 })
+      })
+      return null
+    } catch (err) {
+      return err instanceof AppError ? err.code : String(err)
+    }
+  }
+
+  it('splits Dr 6160 per brand pro rata (remainder on the largest), one Cr 1110, and suspends the client — the till then refuses it', async () => {
+    const acct = await client()
+    expect(await tillRefusal(acct.id)).toBeNull()
+    const c1 = await chargeOn(acct.id, conceptC1, 25_000, 5_000) // net 20 000
+    const c2 = await chargeOn(acct.id, conceptC2, 13_333) // net 13 333
+    const st = await statement(acct.id, [c1, c2])
+    expect(Number(st.amountCents)).toBe(33_333)
+
+    const r = (await request('finC', st.id, 10_000)).json() as Row
+    expect(r.status).toBe('requested')
+    // Asking does not suspend.
+    expect((await prisma.customerAccount.findUniqueOrThrow({ where: { id: acct.id } })).status).toBe('active')
+    expect((await call('finC', 'POST', `${WO}/${r.id}/approve`, {})).statusCode).toBe(403)
+
+    const ok = await call('ceoC', 'POST', `${WO}/${r.id}/approve`, { note: 'Client wound up' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const lines = (await entry(tenantC, `receivable.write_off:${r.id}`))!
+    const dr = lines.filter((l) => l.code === '6160' && l.type === 'debit')
+    // 10 000 × 20 000 / 33 333 = 6 000.06 → 6 000 (+1 remainder, the largest); 10 000 × 13 333 / 33 333 = 3 999.9 → 3 999.
+    expect(dr.find((l) => l.conceptId === conceptC1)!.amount).toBe(6_001)
+    expect(dr.find((l) => l.conceptId === conceptC2)!.amount).toBe(3_999)
+    expect(dr).toHaveLength(2)
+    const cr = lines.filter((l) => l.code === '1110')
+    expect(cr).toHaveLength(1)
+    expect(cr[0]).toMatchObject({ type: 'credit', amount: 10_000 })
+
+    const after = await prisma.receivableInvoice.findUniqueOrThrow({ where: { id: st.id } })
+    expect(Number(after.writtenOffCents)).toBe(10_000)
+    expect(after.status).toBe('partial')
+    const a = await prisma.customerAccount.findUniqueOrThrow({ where: { id: acct.id } })
+    expect(a).toMatchObject({ status: 'suspended', statusReason: 'bad_debt_written_off' })
+    expect(await tillRefusal(acct.id)).toBe('ON_ACCOUNT_NOT_ACTIVE')
+    const log = await prisma.auditLog.findFirst({ where: { action: 'customer_account.suspend', entityId: acct.id } })
+    expect(log?.tenantId).toBe(tenantC)
+  })
+
+  it('locks the client before the statement: approve waits on the client row while the statement stays unlocked', async () => {
+    const acct = await client()
+    const c1 = await chargeOn(acct.id, conceptC1, 8_000)
+    const st = await statement(acct.id, [c1])
+    const r = (await request('finC', st.id, 8_000)).json() as Row
+
+    let release!: () => void
+    const gate = new Promise<void>((res) => { release = res })
+    let held!: () => void
+    const isHeld = new Promise<void>((res) => { held = res })
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${acct.id} FOR UPDATE`
+      held()
+      await gate
+    }, { timeout: 30_000, maxWait: 10_000 })
+    await isHeld
+    let done = false
+    const approving = call('ceoC', 'POST', `${WO}/${r.id}/approve`, {}).then((res) => { done = true; return res })
+    await new Promise((res) => setTimeout(res, 400))
+    expect(done).toBe(false)
+    // The approver is queued on the client, so it has NOT taken the statement yet.
+    const free = await prisma.$transaction(async (tx) => {
+      try {
+        await tx.$queryRaw`SELECT id FROM receivable_invoices WHERE id = ${st.id} FOR UPDATE NOWAIT`
+        return true
+      } catch {
+        return false
+      }
+    })
+    expect(free).toBe(true)
+    release()
+    await holder
+    const res = await approving
+    expect(res.statusCode, res.body).toBe(200)
+    // The whole statement on its one brand.
+    const lines = (await entry(tenantC, `receivable.write_off:${r.id}`))!
+    expect(lines.filter((l) => l.code === '6160')).toEqual([{ code: '6160', type: 'debit', amount: 8_000, conceptId: conceptC1 }])
+    expect((await prisma.receivableInvoice.findUniqueOrThrow({ where: { id: st.id } })).status).toBe('written_off')
+  })
+
+  it('a write-off of a client\'s ordinary invoice suspends the client too (the CEO\'s own request, applied at once)', async () => {
+    const acct = await client()
+    const inv = await statement(acct.id, [{ id: (await chargeOn(acct.id, conceptC1, 5_000)).id, amountCents: 5_000, refundedCents: 0 }], 'invoice')
+    const res = await request('ceoC', inv.id, 5_000)
+    expect(res.statusCode, res.body).toBe(201)
+    expect((res.json() as Row).status).toBe('approved')
+    const lines = (await entry(tenantC, `receivable.write_off:${(res.json() as Row).id}`))!
+    expect(lines.find((l) => l.code === '6160')).toMatchObject({ amount: 5_000, conceptId: conceptC1 })
+    expect(await prisma.customerAccount.findUniqueOrThrow({ where: { id: acct.id } })).toMatchObject({ status: 'suspended', statusReason: 'bad_debt_written_off' })
+  })
+
+  it('company B gets 404 on a client statement and its write-off', async () => {
+    const acct = await client()
+    const st = await statement(acct.id, [await chargeOn(acct.id, conceptC2, 3_000)])
+    expect((await request('finB', st.id, 1_000)).statusCode).toBe(404)
+    const r = (await request('finC', st.id, 1_000)).json() as Row
+    expect((await call('ceoB', 'POST', `${WO}/${r.id}/approve`, {})).statusCode).toBe(404)
+    expect((await call('ceoB', 'POST', `${WO}/${r.id}/reject`, { note: 'not yours' })).statusCode).toBe(404)
+    const list = (await call('ceoB', 'GET', WO)).json() as { items: Array<{ id: string }> }
+    expect(list.items.some((x) => x.id === r.id)).toBe(false)
+    expect((await prisma.receivableWriteOff.findUniqueOrThrow({ where: { id: r.id } })).status).toBe('requested')
+    expect((await prisma.customerAccount.findUniqueOrThrow({ where: { id: acct.id } })).status).toBe('active')
+  })
+
+  it('a closed period: 422, nothing saved and the client still active', async () => {
+    const acct = await client()
+    const st = await statement(acct.id, [await chargeOn(acct.id, conceptC1, 4_000), await chargeOn(acct.id, conceptC2, 2_000)])
+    const r = (await request('finC', st.id, 6_000)).json() as Row
+    const lock = await prisma.periodLock.create({
+      data: { tenantId: tenantC, lockedThrough: new Date(Date.now() + 2 * 86_400_000), lockedBy: userId.ceoC! },
+    })
+    try {
+      const res = await call('ceoC', 'POST', `${WO}/${r.id}/approve`, {})
+      expect(res.statusCode).toBe(422)
+      expect(res.json().error.code).toBe('PERIOD_LOCKED')
+      expect((await prisma.receivableWriteOff.findUniqueOrThrow({ where: { id: r.id } })).status).toBe('requested')
+      const s = await prisma.receivableInvoice.findUniqueOrThrow({ where: { id: st.id } })
+      expect(Number(s.writtenOffCents)).toBe(0)
+      expect(s.status).toBe('open')
+      expect(await entry(tenantC, `receivable.write_off:${r.id}`)).toBeNull()
+      expect((await prisma.customerAccount.findUniqueOrThrow({ where: { id: acct.id } })).status).toBe('active')
+    } finally {
+      await prisma.periodLock.delete({ where: { id: lock.id } })
+    }
   })
 })
