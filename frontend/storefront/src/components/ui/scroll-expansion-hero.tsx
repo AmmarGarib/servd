@@ -130,6 +130,9 @@ const HERO_LOADER_CELLS = [
   'var(--servd-green-soft)', 'var(--servd-on-purple)', 'var(--servd-on-purple)',
 ];
 
+/** Progress per pixel of scrollbar movement: about half a screen of dragging expands the hero. */
+const SCROLLBAR_FACTOR = 0.0025
+
 /** Keys that scroll the page down — they expand the hero instead. */
 const EXPAND_KEYS = new Set(['PageDown', ' ', 'Spacebar', 'ArrowDown', 'End']);
 
@@ -226,15 +229,32 @@ const ScrollExpandMedia = ({
     setHydrated(true);
   }, []);
 
-  // Scroll: small scrolls (scrollbar) snap back so the hero plays; a big jump
-  // finishes it. Also tracks "at the top" for the listeners below. A scroll
-  // listener never blocks scrolling, so it stays for the life of the hero.
+  // Scroll: while the hero is collapsed, a scroll the wheel / touch / keys did
+  // not cancel (dragging the scrollbar, a middle-click autoscroll) drives the
+  // expansion like the wheel does: the distance moved becomes progress and the
+  // page is put back at the top, so the hero plays instead of being skipped.
+  // A big jump (an anchor link far down) finishes it. Also tracks "at the top"
+  // for the listeners below. A scroll listener never blocks scrolling, so it
+  // stays for the life of the hero.
+  const progressRef = useRef(0);
+  progressRef.current = scrollProgress;
   useEffect(() => {
     const handleScroll = (): void => {
       setAtTop(window.scrollY <= 5);
       if (mediaFullyExpanded) return;
-      if (window.scrollY > window.innerHeight * 0.5) expandNow();
-      else window.scrollTo(0, 0);
+      const moved = window.scrollY;
+      if (moved > window.innerHeight * 0.5) { expandNow(); return; }
+      if (moved <= 0) return;
+      window.scrollTo(0, 0);
+      const next = Math.min(progressRef.current + moved * SCROLLBAR_FACTOR, 1);
+      progressRef.current = next;
+      setScrollProgress(next);
+      if (next >= 1) {
+        setMediaFullyExpanded(true);
+        setShowContent(true);
+      } else if (next < 0.75) {
+        setShowContent(false);
+      }
     };
     if (!mediaFullyExpanded && window.scrollY > window.innerHeight * 0.5) expandNow();
     setAtTop(window.scrollY <= 5);
