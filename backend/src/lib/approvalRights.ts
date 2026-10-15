@@ -575,6 +575,28 @@ export async function delegationCovering(
   return { ...d, section: d.section as DelegableSection }
 }
 
+/**
+ * The viewer AS DELEGATE: their live, still-eligible delegations (with the
+ * types each covers) and the live links of those head offices — what the inbox
+ * runs delegationCovers against, so it lists exactly what delegationCovering
+ * would let the approve route accept. Null when they hold none.
+ */
+export async function liveDelegationsOfDelegate(userId: string): Promise<{
+  delegations: Array<LiveDelegation & { types: ApprovalType[] }>
+  linked: Map<string, Set<string>>
+} | null> {
+  if (!userId) return null
+  const rows = await serviceClient.approvalDelegation.findMany({
+    where: { delegateUserId: userId, ...liveDelegationWhere() },
+    select: DELEGATION_SELECT,
+    orderBy: { createdAt: 'asc' },
+  })
+  const live = await stillEligible(rows)
+  if (live.length === 0) return null
+  const linked = await liveCompaniesOf(uniq(live.map((d) => d.tenantId)))
+  return { delegations: live.map((d) => ({ ...d, section: d.section as DelegableSection })), linked }
+}
+
 /** The tenants each live delegation covers for each type (the HO itself + its live companies, or the one company). */
 function coverOf(d: { tenantId: string; companyTenantId: string | null; types: readonly ApprovalType[] }, linked: ReadonlyMap<string, ReadonlySet<string>>): Map<ApprovalType, Set<string>> {
   const out = new Map<ApprovalType, Set<string>>()

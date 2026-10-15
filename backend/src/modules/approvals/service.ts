@@ -77,8 +77,10 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
       const keepRole = (id: string) => byRole && (p.spansMemberCompanies ? member.has(id) || inView.has(id) : inView.has(id))
       const kept: Kept[] = []
       for (const i of rows) {
-        if (i.tenantId === null || keepRole(i.tenantId)) kept.push({ item: i, byDelegation: false })
-        else if (del?.has(i.tenantId)) kept.push({ item: i, byDelegation: true })
+        // A company-less row is CEO-only by definition (shared servd:* pages,
+        // company-less recipes and logins): kept only on the role path.
+        if ((i.tenantId === null && byRole) || (i.tenantId !== null && keepRole(i.tenantId))) kept.push({ item: i, byDelegation: false })
+        else if (i.tenantId !== null && del?.has(i.tenantId)) kept.push({ item: i, byDelegation: true })
       }
       // Other companies of the user's own: counted (never listed) so the page
       // can point at "All companies".
@@ -90,39 +92,74 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
     }
   }))
 
-  // Every kept item gets its section.
+  // Every kept item gets its section — before any hand-over check, which
+  // depends on it (a password-role login, a reversal, a company-less row → 'ceo').
   for (const r of results) for (const { item } of r.kept) item.section ??= sectionOf(item.type, { tenantId: item.tenantId })
-
-  // A delegate never sees their own submissions (separation of duties).
-  if (!isAdmin) {
-    for (const r of results) r.kept = r.kept.filter((k) => !(k.byDelegation && (k.item.submittedByIds ?? []).includes(ctx.user.id)))
-  }
 
   // Company role approvers (not the CEO): an item that came through a head
   // office is the CEO's or that head office's delegate's (A3) — not theirs.
   // Stock transfers are exempt; per-item types (HR steps, the HOD signature)
-  // are decided by their own module's queue.
+  // are decided by their own module's queue. One that their own hand-over may
+  // cover becomes a hand-over candidate, checked below like every other.
+  const throughOf = new Map<ApprovalItem, string[]>()
   if (!isAdmin) {
-    const subject: Array<{ r: (typeof results)[number]; k: Kept }> = []
+    const subject: Kept[] = []
     for (const r of results) {
       const right = APPROVAL_RIGHTS[r.p.type]
       if (right.exemptThroughHeadOffice || right.perItem) continue
-      for (const k of r.kept) if (!k.byDelegation && k.item.tenantId) subject.push({ r, k })
+      for (const k of r.kept) if (!k.byDelegation && k.item.tenantId) subject.push(k)
     }
     if (subject.length) {
-      const through = await throughHeadOfficeBatch(subject.map(({ k }) => ({
+      const through = await throughHeadOfficeBatch(subject.map((k) => ({
         tenantId: k.item.tenantId, submittedByIds: k.item.submittedByIds ?? [], viaHeadOfficeId: k.item.viaHeadOfficeId ?? null,
         submittedAt: k.item.waitingSince,
       })))
       const drop = new Set<Kept>()
-      subject.forEach(({ k }, n) => {
-        if ((through[n] ?? []).length === 0) return
-        // Still theirs when their own hand-over covers it.
+      subject.forEach((k, n) => {
+        const ids = through[n] ?? []
+        throughOf.set(k.item, ids)
+        if (ids.length === 0) return
         if (delegatedTenants.get(k.item.type)?.has(k.item.tenantId!)) { k.byDelegation = true; return }
         drop.add(k)
       })
       if (drop.size) for (const r of results) r.kept = r.kept.filter((k) => !drop.has(k))
     }
+  }
+
+  // Items kept by a hand-over (spec §7.6, A4, A13): only when one of the
+  // viewer's own live delegations covers the item exactly as the approve
+  // route's delegationCovering will — section (never 'ceo'), ownership, every
+  // touched company, and A13 (an item through another head office is not
+  // theirs). Never their own submissions (separation of duties). This runs
+  // AFTER the through-head-office block, so items it moved here are checked too.
+  const delegatedKept = results.flatMap((r) => r.kept.filter((k) => k.byDelegation))
+  if (delegatedKept.length) {
+    const own = delegations.asDelegate ? await delegations.asDelegate(ctx.user.id) : null
+    const candidates = own && own.delegations.length
+      ? delegatedKept.filter((k) => !(k.item.submittedByIds ?? []).includes(ctx.user.id) && k.item.section !== 'ceo' && k.item.tenantId)
+      : []
+    const need = candidates.filter((k) => APPROVAL_RIGHTS[k.item.type].ownership === 'company' && !throughOf.has(k.item))
+    if (need.length) {
+      const through = await throughHeadOfficeBatch(need.map((k) => ({
+        tenantId: k.item.tenantId, submittedByIds: k.item.submittedByIds ?? [], viaHeadOfficeId: k.item.viaHeadOfficeId ?? null,
+        submittedAt: k.item.waitingSince,
+      })))
+      need.forEach((k, n) => throughOf.set(k.item, through[n] ?? []))
+    }
+    const keep = new Set<Kept>()
+    for (const k of candidates) {
+      const i = k.item
+      const headOfficeOwned = APPROVAL_RIGHTS[i.type].ownership === 'head_office'
+      const owner = headOfficeOwned ? (i.ownerTenantId ?? i.tenantId!) : i.tenantId!
+      const base = i.touchesTenantIds?.length ? i.touchesTenantIds : [i.tenantId!]
+      const touches = headOfficeOwned ? Array.from(new Set([...base, i.tenantId!])) : base
+      const item = {
+        tenantId: owner, touchesTenantIds: touches, section: i.section,
+        throughHeadOfficeIds: headOfficeOwned ? [] : (throughOf.get(i) ?? []),
+      }
+      if (own!.delegations.some((d) => delegationCovers(d, i.type, item, own!.linked))) keep.add(k)
+    }
+    for (const r of results) r.kept = r.kept.filter((k) => !k.byDelegation || keep.has(k))
   }
 
   // The CEO: what a live hand-over covers is "handed over".

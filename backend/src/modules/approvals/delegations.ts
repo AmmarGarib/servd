@@ -23,7 +23,7 @@ import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { headOfficeReach, liveLink } from '../../lib/headOffice.js'
 import {
   APPROVAL_RIGHTS, APPROVAL_SECTIONS, APPROVAL_SECTION_TITLES, DELEGABLE_SECTIONS, allLiveDelegations, delegableTypesOf,
-  delegatedTenantsByType, delegationEnabled, liveDelegationWhere,
+  delegatedTenantsByType, delegationEnabled, liveDelegationWhere, liveDelegationsOfDelegate,
   type ApprovalSection, type ApprovalType, type LiveDelegation,
 } from '../../lib/approvalRights.js'
 
@@ -39,6 +39,13 @@ export interface ApprovalDelegations {
   typesFor(userId: string, tenantIds: readonly string[]): Promise<ReadonlySet<ApprovalType>>
   /** Per type, every company this user's live hand-overs cover. */
   tenantsByType?(userId: string): Promise<ReadonlyMap<ApprovalType, ReadonlySet<string>>>
+  /**
+   * The viewer AS DELEGATE: their own live delegations + the live links, so the
+   * inbox keeps a hand-over item only when delegationCovers passes (section,
+   * ownership, A13) — exactly what the approve route will accept. Absent or
+   * null = no item is kept by delegation (fails closed).
+   */
+  asDelegate?(userId: string): Promise<HandOverIndex | null>
   /** CEO view: the live hand-overs of the head offices the viewer belongs to (null = none). */
   handedOver?(viewer: { id: string; role: string; memberTenantIds: readonly string[] }): Promise<HandOverIndex | null>
 }
@@ -47,6 +54,7 @@ export interface ApprovalDelegations {
 export const NO_DELEGATIONS: ApprovalDelegations = {
   async typesFor() { return new Set<ApprovalType>() },
   async tenantsByType() { return new Map() },
+  async asDelegate() { return null },
   async handedOver() { return null },
 }
 
@@ -57,6 +65,10 @@ export const LIVE_DELEGATIONS: ApprovalDelegations = {
   },
   async tenantsByType(userId) {
     return delegatedTenantsByType(userId)
+  },
+  async asDelegate(userId) {
+    const own = await liveDelegationsOfDelegate(userId)
+    return own ? { delegations: own.delegations.map((d) => ({ ...d, delegateName: null })), linked: own.linked } : null
   },
   async handedOver(viewer) {
     if (viewer.role !== 'admin' || viewer.memberTenantIds.length === 0) return null
