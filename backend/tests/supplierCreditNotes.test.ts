@@ -109,9 +109,9 @@ beforeAll(async () => {
   await prisma.operationsConfig.create({ data: { scope: 'global', scopeId: null, tenantId: tenantA, withholdingTaxEnabled: true, withholdingTaxPct: 0.045 } })
   invalidateSetupCache()
 
-  supA  = (await prisma.supplier.create({ data: { name: 'A Mills', tenantId: tenantA, paymentTermsDays: 10 } })).id
-  supA2 = (await prisma.supplier.create({ data: { name: 'A Dairy', tenantId: tenantA, paymentTermsDays: 10 } })).id
-  supB  = (await prisma.supplier.create({ data: { name: 'B Farms', tenantId: tenantB, paymentTermsDays: 10 } })).id
+  supA  = (await prisma.supplier.create({ data: { name: 'A Mills', tenantId: tenantA, paymentTermsDays: 10, filerStatus: 'filer' } })).id
+  supA2 = (await prisma.supplier.create({ data: { name: 'A Dairy', tenantId: tenantA, paymentTermsDays: 10, filerStatus: 'filer' } })).id
+  supB  = (await prisma.supplier.create({ data: { name: 'B Farms', tenantId: tenantB, paymentTermsDays: 10, filerStatus: 'filer' } })).id
   flour = (await prisma.inventoryItem.create({ data: { name: 'Flour', unit: 'kg', tenantId: tenantA, currentStock: 0, unitCostCents: 1_000 } })).id
   oil   = (await prisma.inventoryItem.create({ data: { name: 'Oil', unit: 'l', tenantId: tenantA, currentStock: 0, unitCostCents: 500 } })).id
 

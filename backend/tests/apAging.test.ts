@@ -86,11 +86,12 @@ beforeAll(async () => {
   // A withholds 4.5% at source; B does not withhold.
   await prisma.operationsConfig.create({ data: { scope: 'global', scopeId: null, tenantId: tenantA, withholdingTaxEnabled: true, withholdingTaxPct: 0.045 } })
   invalidateSetupCache()
+  // Suppliers are confirmed filers: an unknown status would pay the non-filer rate (H33).
 
-  supA   = (await prisma.supplier.create({ data: { name: 'Mill Co', tenantId: tenantA, paymentTermsDays: 10 } })).id
-  supA2  = (await prisma.supplier.create({ data: { name: 'Dairy Co', tenantId: tenantA, paymentTermsDays: 10, openingBalanceCents: 70_000 } })).id
-  orphan = (await prisma.supplier.create({ data: { name: 'Nobody Ltd', tenantId: null, paymentTermsDays: 10 } })).id
-  await prisma.supplier.create({ data: { name: 'B Veg', tenantId: tenantB, paymentTermsDays: 10 } })
+  supA   = (await prisma.supplier.create({ data: { name: 'Mill Co', tenantId: tenantA, paymentTermsDays: 10, filerStatus: 'filer' } })).id
+  supA2  = (await prisma.supplier.create({ data: { name: 'Dairy Co', tenantId: tenantA, paymentTermsDays: 10, filerStatus: 'filer', openingBalanceCents: 70_000 } })).id
+  orphan = (await prisma.supplier.create({ data: { name: 'Nobody Ltd', tenantId: null, paymentTermsDays: 10, filerStatus: 'filer' } })).id
+  await prisma.supplier.create({ data: { name: 'B Veg', tenantId: tenantB, paymentTermsDays: 10, filerStatus: 'filer' } })
 
   await mkUser('ceo', 'admin', tenantA)
   await mkUser('fin', 'finance', tenantA)
