@@ -53,6 +53,24 @@
 // one expense line in the voucher's category (H3). Only a row already booked
 // as an advance (lineless, 1355) reads back 1355 as its paid account.
 //
+// Cash vouchers since 2026-10-15 (owner: "expense should be booked after docs
+// verification by finance"; CashVoucher.expenseOnVerify true): the pay is a
+// LINELESS spend on 1357 Petty Cash Vouchers Awaiting Documents —
+// Dr 1357 / Cr 1011 (pettyCash.ts nature 'voucher_hold'), so
+// cashRequestPaidAccountTx reads back 1357. Nothing is expensed until finance
+// verifies the supporting documents; then ONE entry
+// 'cashvoucher.post:<voucherId>' (postCashVoucherVerifiedTx) books the spend
+// lines out of the hold:
+//   an expense line   Dr <its 6xxx> / Cr 1357
+//   a stock line      Dr 12x0 / Cr 1357 (the settled receipt)
+//   a capex line      its own CapEx payment Dr 1340 / Cr 1011, bridged here
+//                     with Dr 1011 / Cr 1357 (capexCashCreditFor)
+// Change handed back at verification is a 'cash_request' top-up Dr 1011 /
+// Cr 1357; an overspend paid at verification is a second hold Dr 1357 /
+// Cr 1011 — so 1357 nets to zero per voucher once it is posted. The lines live
+// on the voucher's one settlement row (no entry of its own: a settlement of
+// such a voucher is booked by the voucher's entry, never 'cashvoucher.settle').
+//
 // The posting goes through syncSourcePosting, so a finance reclass of a spend
 // line reverses the live entry (today) and reposts it on the live entry's own
 // date; a replay is a no-op. The movement's journalEntryId is (re-)stamped
@@ -473,6 +491,14 @@ async function planEntry(tx: Tx, m: MovementForPosting): Promise<PlannedEntry | 
         }
       }
       if (!m.accountCode) throw needsClassification(m)
+      if (m.accountCode === ACCT.VOUCHERS_AWAITING_DOCS) {
+        const hMemo = voucher ? `${voucher.number} paid to ${voucher.payeeName} — documents awaited`.slice(0, 250) : memo
+        return {
+          sourceType: 'pettycash.spend', sourceId: m.id,
+          description: `Cash voucher${voucher ? ` ${voucher.number}` : ''} paid from petty cash — ${m.box.name} (held until finance verifies the documents)`.slice(0, 250),
+          lines: pair(m.accountCode, pc, hMemo, hMemo),
+        }
+      }
       const advance = m.accountCode === ACCT.CASH_ADVANCES
       const dMemo = advance && voucher ? `${voucher.number} advance to ${voucher.payeeName}`.slice(0, 250) : memo
       return {
@@ -679,10 +705,13 @@ export async function postCashVoucherSettlementTx(
     where: { id: settlementId },
     include: {
       lines: { orderBy: { createdAt: 'asc' } },
-      voucher: { select: { id: true, tenantId: true, number: true, payeeName: true, conceptId: true } },
+      voucher: { select: { id: true, tenantId: true, number: true, payeeName: true, conceptId: true, expenseOnVerify: true } },
     },
   })
   if (!st) throw new NotFoundError('CashVoucherSettlement', settlementId)
+  // A voucher paid under the 2026-10-15 flow: its lines are booked by the
+  // voucher's ONE verification entry (never a settlement entry of their own).
+  if (st.voucher.expenseOnVerify) return postCashVoucherVerifiedTx(tx, st.voucherId, opts)
   const tenantId = st.voucher.tenantId
   const paid = await cashRequestPaidAccountTx(tx, st.voucherId)
   // The brand the pay was booked under — the credit out of the paid account
@@ -729,6 +758,87 @@ export async function postCashVoucherSettlementTx(
   return { entryId: r.entryId }
 }
 
+// ─── Cash vouchers, 2026-10-15 flow: the expense booked at verification ─────
+
+/** The entry key prefix of a verified cash voucher: 'cashvoucher.post:<voucherId>'. */
+export const CASH_VOUCHER_POST_SOURCE = 'cashvoucher.post'
+
+/**
+ * Book verified cash voucher `voucherId` inside `tx`, in the voucher's
+ * company: ONE entry 'cashvoucher.post:<voucherId>' that moves what finance
+ * verified out of 1357 (see the header): Dr each expense / stock line's
+ * account (brand = the line's, else the brand the pay was booked under) and
+ * Dr 1011 for capex lines (their CapEx payment credited 1011) / Cr 1357 for
+ * the whole spend under the pay's brand. Nothing before the voucher is
+ * 'posted' (entryId null). Idempotent; a reclassed line reverses the live
+ * entry and reposts it on its own date. Stamps postedJournalEntryId.
+ * 422 PERIOD_LOCKED rolls the caller's transaction back.
+ */
+export async function postCashVoucherVerifiedTx(
+  tx: Tx,
+  voucherId: string,
+  opts: RepostOptions = {},
+): Promise<{ entryId: string | null }> {
+  const v = await tx.cashVoucher.findUnique({
+    where: { id: voucherId },
+    select: {
+      id: true, tenantId: true, number: true, payeeName: true, purpose: true, status: true, expenseOnVerify: true,
+      postedAt: true, postedById: true, postedJournalEntryId: true,
+    },
+  })
+  if (!v) throw new NotFoundError('CashVoucher', voucherId)
+  if (!v.expenseOnVerify) {
+    throw new AppError('NOT_A_VERIFIED_VOUCHER', `Cash request ${v.number} was expensed when it was paid (H3) — it has no verification entry`, 409)
+  }
+  if (v.status !== 'posted' || !v.postedAt) return { entryId: null }
+  const settlements = await tx.cashVoucherSettlement.findMany({
+    where: { voucherId: v.id, tenantId: v.tenantId },
+    include: { lines: { orderBy: { createdAt: 'asc' } } },
+    orderBy: { seq: 'asc' },
+  })
+  const concept = await cashRequestBrandTx(tx, v.id)
+  const lines: JournalLineInput[] = []
+  let credit = 0
+  let bridge = 0
+  for (const st of settlements) {
+    for (const l of st.lines) {
+      credit += l.amountCents
+      if (l.kind === 'capex') { bridge += l.amountCents; continue }
+      lines.push({
+        accountCode: l.accountCode, type: 'debit', amountCents: l.amountCents,
+        memo: `${v.number}: ${l.description}`.slice(0, 250), conceptId: l.conceptId ?? concept,
+      })
+    }
+  }
+  if (bridge > 0) {
+    lines.push({ accountCode: ACCT.PETTY_CASH, type: 'debit', amountCents: bridge, memo: `${v.number}: equipment moved to CapEx`, conceptId: concept })
+  }
+  assertInt4Fits(credit, 'The verified spend')
+  let desired: { description: string; entryDate: Date; lines: JournalLineInput[] } | null = null
+  if (credit > 0) {
+    lines.push({
+      accountCode: ACCT.VOUCHERS_AWAITING_DOCS, type: 'credit', amountCents: credit,
+      memo: `${v.number} documents verified (${v.payeeName})`.slice(0, 250), conceptId: concept,
+    })
+    await assertTemplateAccounts(tx, v.tenantId, lines.map((l) => l.accountCode))
+    const noted = withLateNote(`Cash voucher ${v.number} — documents verified: ${v.purpose}`.slice(0, 250), lines, opts.memoNote)
+    desired = { description: noted.description, entryDate: opts.entryDate ?? v.postedAt, lines: noted.lines }
+  }
+  const r = await syncSourcePosting({
+    tenantId: v.tenantId,
+    sourceType: CASH_VOUCHER_POST_SOURCE,
+    id: v.id,
+    desired,
+    postedBy: opts.postedBy ?? v.postedById ?? 'system',
+    reason: `Cash voucher ${v.number} spend lines changed`,
+    tx,
+  }, { keepLiveDate: !opts.entryDate })
+  if (r.entryId !== v.postedJournalEntryId) {
+    await tx.cashVoucher.update({ where: { id: v.id }, data: { postedJournalEntryId: r.entryId } })
+  }
+  return { entryId: r.entryId }
+}
+
 // ─── Tie-out ────────────────────────────────────────────────────────────────
 
 export interface PettyCashTieOutRow {
@@ -737,6 +847,9 @@ export interface PettyCashTieOutRow {
   ledger1011Cents: number
   openAdvancesCents: number
   ledger1355Cents: number
+  /** Cash vouchers paid under the 2026-10-15 flow, documents not yet verified (Σ amount). */
+  heldVouchersCents: number
+  ledger1357Cents: number
   unbookedMovements: number
   /** Boxes whose float is not explained by their movements and has no opening entry (the history backfill books them). */
   boxesWithoutOpening: number
@@ -746,7 +859,8 @@ export interface PettyCashTieOutRow {
 /**
  * Per company: Σ box floats against the 1011 balance, open legacy cash
  * advances (disbursed vouchers booked as an advance: amount − settled −
- * returned − converted) against 1355,
+ * returned − converted) against 1355, paid vouchers awaiting documents
+ * (2026-10-15 flow) against 1357,
  * and the movements not yet on the books. `ok` only when all three agree.
  */
 export async function pettyCashTieOut(tenantIds: string[]): Promise<PettyCashTieOutRow[]> {
@@ -754,12 +868,12 @@ export async function pettyCashTieOut(tenantIds: string[]): Promise<PettyCashTie
   for (const tenantId of tenantIds) {
     const boxes = await prisma.pettyCashBox.findMany({ where: { tenantId }, select: { id: true, floatCents: true } })
     const floatsCents = boxes.reduce((s, b) => s + b.floatCents, 0)
-    const ledger = await ledgerBalancesByCode(tenantId, [ACCT.PETTY_CASH, ACCT.CASH_ADVANCES])
+    const ledger = await ledgerBalancesByCode(tenantId, [ACCT.PETTY_CASH, ACCT.CASH_ADVANCES, ACCT.VOUCHERS_AWAITING_DOCS])
     // Only a legacy voucher the history backfill booked as an advance sits on
     // 1355 (its pay movement is lineless, counter account 1355); a cash
     // request paid since H3 was expensed when paid and owes 1355 nothing.
     const vouchers = await prisma.cashVoucher.findMany({
-      where: { tenantId, status: 'disbursed', pettyCashMovementId: { not: null } },
+      where: { tenantId, status: 'disbursed', pettyCashMovementId: { not: null }, expenseOnVerify: false },
       select: { amountCents: true, settledCents: true, returnedCents: true, convertedCents: true, pettyCashMovementId: true },
     })
     const advanceMoves = vouchers.length
@@ -789,9 +903,19 @@ export async function pettyCashTieOut(tenantIds: string[]): Promise<PettyCashTie
     }
     const ledger1011Cents = ledger.get(ACCT.PETTY_CASH) ?? 0
     const ledger1355Cents = ledger.get(ACCT.CASH_ADVANCES) ?? 0
+    // 2026-10-15 flow: every paid voucher whose documents are not verified yet
+    // holds exactly its amount on 1357 (the verification books it out, change
+    // and an overspend included, in one transaction).
+    const held = await prisma.cashVoucher.aggregate({
+      where: { tenantId, status: 'disbursed', expenseOnVerify: true, pettyCashMovementId: { not: null } },
+      _sum: { amountCents: true },
+    })
+    const heldVouchersCents = held._sum.amountCents ?? 0
+    const ledger1357Cents = ledger.get(ACCT.VOUCHERS_AWAITING_DOCS) ?? 0
     out.push({
-      tenantId, floatsCents, ledger1011Cents, openAdvancesCents, ledger1355Cents, unbookedMovements, boxesWithoutOpening,
-      ok: floatsCents === ledger1011Cents && openAdvancesCents === ledger1355Cents && unbookedMovements === 0 && boxesWithoutOpening === 0,
+      tenantId, floatsCents, ledger1011Cents, openAdvancesCents, ledger1355Cents, heldVouchersCents, ledger1357Cents, unbookedMovements, boxesWithoutOpening,
+      ok: floatsCents === ledger1011Cents && openAdvancesCents === ledger1355Cents && heldVouchersCents === ledger1357Cents
+        && unbookedMovements === 0 && boxesWithoutOpening === 0,
     })
   }
   return out

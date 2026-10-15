@@ -24,7 +24,7 @@ import { PENDING_LAYOUTS_KEY } from '../../../components/storefront/ApprovalsPan
 import { APPROVALS_INBOX_KEY, APPROVALS_ROOT, type ApprovalTypeSummary } from '../approvalsData'
 
 interface Action {
-  kind: 'approve' | 'reject'
+  kind: 'approve' | 'reject' | 'return'
   label: string
   method: 'POST' | 'PATCH'
   path: string
@@ -241,7 +241,9 @@ function ItemCard({ item, typeLabel, showCompany, onDone, onOpenHr }: {
             className="rounded-lg px-3 py-1.5 text-xs font-black disabled:opacity-50"
             style={a.kind === 'approve'
               ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
-              : { background: 'transparent', border: '1px solid var(--erp-danger)', color: 'var(--erp-danger)' }}>
+              : a.kind === 'return'
+                ? { background: 'transparent', border: '1px solid var(--border-strong)', color: 'rgb(var(--fg-rgb) / 0.8)' }
+                : { background: 'transparent', border: '1px solid var(--erp-danger)', color: 'var(--erp-danger)' }}>
             {a.label}
           </button>
         ))}
@@ -270,7 +272,9 @@ function ItemCard({ item, typeLabel, showCompany, onDone, onOpenHr }: {
               className="rounded-lg px-3 py-1.5 text-xs font-black disabled:opacity-50"
               style={pending.kind === 'approve'
                 ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
-                : { background: 'var(--erp-danger)', color: 'var(--erp-on-secondary)' }}>
+                : pending.kind === 'return'
+                  ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+                  : { background: 'var(--erp-danger)', color: 'var(--erp-on-secondary)' }}>
               {pending.label}
             </button>
             <button onClick={() => { setPending(null); setText('') }} className="text-xs font-bold text-white/50 px-2">Cancel</button>

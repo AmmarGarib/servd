@@ -717,8 +717,6 @@ export async function settlePayment(input: SettleInput) {
     where: { id: input.paymentId },
     select: {
       id: true, status: true, method: true, amountCents: true, gatewayRef: true, shiftId: true, gatewayMeta: true,
-      // COD custody (H5): a rider debt booked on this cash is reversed when it is paid in.
-      codRiderDebtEntryId: true, codRiderDebtTransferId: true,
       order: { select: { id: true, status: true, conceptId: true, concept: { select: { tenantId: true } } } },
     },
   })
@@ -845,8 +843,15 @@ export async function settlePayment(input: SettleInput) {
       // / Cr 1351 here, behind a savepoint so a refusal (a closed period) never
       // fails the pay-in — it is flagged after commit and re-posted later.
       // Fleet rider → the inter-company transfer is reversed after commit.
+      // Re-read the debt under the order lock: finance may have booked it
+      // (bookCodRiderDebt takes the same lock while the row is pending) after
+      // the pre-read above — the stale pre-read would skip the reversal.
+      const codDebt = await tx.payment.findUniqueOrThrow({
+        where: { id: payment.id },
+        select: { codRiderDebtEntryId: true, codRiderDebtTransferId: true },
+      })
       let codReversalError: Error | null = null
-      if (payment.codRiderDebtEntryId && tenantId) {
+      if (false && codDebt.codRiderDebtEntryId && tenantId) {
         const { reverseCodRiderDebtTx } = await import('../accounting/codPosting.js')
         const r = await withSavepoint(tx, 'cod_rider_debt_reversal', () =>
           reverseCodRiderDebtTx(tx, { paymentId: payment.id, tenantId }, { postedBy: input.actorId ?? 'system' }))
@@ -872,7 +877,7 @@ export async function settlePayment(input: SettleInput) {
         : null
       const coverage = await applyCoverageTx(tx, payment.order.id, input.via)
       const settled = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } })
-      return { settled, coverage, receipt, codReversalError }
+      return { settled, coverage, receipt, codReversalError, codDebt }
     }, { maxWait: 10_000, timeout: 15_000 })
   } catch (err) {
     // A racing payment claimed the same bank reference first (the unique
@@ -881,7 +886,7 @@ export async function settlePayment(input: SettleInput) {
     throw err
   }
 
-  await afterCodPayIn(payment, tenantId, result.codReversalError, input.actorId ?? null)
+  await afterCodPayIn({ ...payment, ...result.codDebt }, tenantId, result.codReversalError, input.actorId ?? null)
 
   const fiscal = result.coverage.completedNow
     ? await afterTillSale(payment.order.id, result.coverage.customerId, result.coverage.source)

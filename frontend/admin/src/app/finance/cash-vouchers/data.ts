@@ -20,27 +20,71 @@ export const CV_BASE = '/trustops/cash-vouchers'
 /** Every cash-request read starts with this key, so one invalidation refreshes all. */
 export const CV_ROOT = 'cash-vouchers'
 
-export type VoucherStatus = 'draft' | 'hod_signed' | 'approved' | 'disbursed' | 'rejected' | 'cancelled' | 'settled' | 'converted'
-/** The step shown (the stored status, with 'disbursed' split into paid / receipts in / needs review). */
+export type VoucherStatus =
+  | 'draft' | 'hod_signed' | 'submitted' | 'finance_approved' | 'returned' | 'approved' | 'disbursed' | 'posted'
+  | 'rejected' | 'cancelled' | 'settled' | 'converted'
+/** The step shown. Server `stage` may add words; unknown ones render as plain text. */
 export type RequestStage =
-  | 'draft' | 'hod_signed' | 'approved' | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
+  | 'submitted' | 'finance_approved' | 'returned' | 'approved' | 'missing_docs' | 'awaiting_verification' | 'posted'
+  | 'draft' | 'hod_signed' | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
 
 /** The words and the badge for each step (globals.css s-badge-*): green = good news, amber = waiting, red = bad. */
 export const STAGE_META: Record<RequestStage, { label: string; badge: string }> = {
-  draft:        { label: 'Waiting for HOD',          badge: 's-badge-muted' },
-  hod_signed:   { label: 'Waiting for director',     badge: 's-badge-amber' },
-  approved:     { label: 'Approved — to pay',        badge: 's-badge-purple' },
-  paid:         { label: 'Paid — receipts due',      badge: 's-badge-amber' },
-  receipts_in:  { label: 'Receipts in',              badge: 's-badge-teal' },
-  settled:      { label: 'Settled',                  badge: 's-badge-green' },
-  needs_review: { label: 'Needs review',             badge: 's-badge-red' },
-  rejected:     { label: 'Rejected',                 badge: 's-badge-red' },
-  cancelled:    { label: 'Cancelled',                badge: 's-badge-muted' },
-  converted:    { label: 'Converted',                badge: 's-badge-muted' },
+  submitted:        { label: 'Waiting for finance',     badge: 's-badge-amber' },
+  finance_approved: { label: 'Waiting for CEO',         badge: 's-badge-amber' },
+  returned:         { label: 'Returned for correction', badge: 's-badge-red' },
+  approved:         { label: 'Approved — to pay',       badge: 's-badge-purple' },
+  missing_docs:     { label: 'Paid — documents missing', badge: 's-badge-red' },
+  awaiting_verification: { label: 'Documents in — finance to verify', badge: 's-badge-teal' },
+  posted:           { label: 'Verified & booked',       badge: 's-badge-green' },
+  // Legacy rows (before the 2026-10-15 flow)
+  draft:        { label: 'Waiting for finance',  badge: 's-badge-amber' },
+  hod_signed:   { label: 'Waiting for CEO',      badge: 's-badge-amber' },
+  paid:         { label: 'Paid — receipts due',  badge: 's-badge-amber' },
+  receipts_in:  { label: 'Receipts in',          badge: 's-badge-teal' },
+  settled:      { label: 'Settled',              badge: 's-badge-green' },
+  needs_review: { label: 'Needs review',         badge: 's-badge-red' },
+  rejected:     { label: 'Rejected',             badge: 's-badge-red' },
+  cancelled:    { label: 'Cancelled',            badge: 's-badge-muted' },
+  converted:    { label: 'Converted',            badge: 's-badge-muted' },
 }
 
 export function stageMeta(s: string) {
   return STAGE_META[s as RequestStage] ?? { label: s.replace(/_/g, ' '), badge: 's-badge-muted' }
+}
+
+/**
+ * The step to show for a row: from the stored status first (so it is right
+ * whatever words the server's `stage` uses), the server's `stage` for the
+ * legacy paid / settled sub-steps.
+ */
+export function stageOf(v: Pick<CashVoucher, 'status' | 'stage' | 'expenseOnVerify' | 'supportingCount'>): string {
+  switch (v.status) {
+    case 'draft': case 'submitted': return 'submitted'
+    case 'hod_signed': case 'finance_approved': return 'finance_approved'
+    case 'disbursed':
+      if (v.expenseOnVerify) return (v.supportingCount ?? 0) > 0 ? 'awaiting_verification' : 'missing_docs'
+      return v.stage ?? 'paid'
+    default: return v.status
+  }
+}
+
+export interface SupportingDoc {
+  id: string; fileName?: string | null; mime: string; sizeBytes: number; createdAt: string
+  uploadedById?: string | null; uploadedByName?: string | null; kind?: string
+}
+
+export interface HistoryRow { id?: string; at?: string; createdAt?: string; action: string; actorName?: string | null; summary?: string | null; before?: unknown; after?: unknown; note?: string | null }
+
+export interface Dashboard {
+  waitingFinance: { count: number; cents: number }
+  waitingCeo: { count: number; cents: number }
+  returned: { count: number; cents: number }
+  approvedUnpaid: { count: number; cents: number }
+  missingDocs: { count: number; cents: number }
+  awaitingVerification: { count: number; cents: number }
+  docsOverdue: { count: number; cents: number }
+  postedThisMonth: { count: number; cents: number }
 }
 
 export interface ReceiptMeta { id: string; mime: string; sizeBytes: number; createdAt: string; uploadedById?: string; settlementId?: string | null }
@@ -71,10 +115,32 @@ export interface CashVoucher {
   categoryAccountCode?: string | null
   conceptId: string | null
   department: string | null
+  /** The amount PAID (total = gross − discount). */
   amountCents: number
+  kind?: 'request' | 'expense'
+  grossCents?: number | null
+  discountCents?: number
+  /** Server wording, "Rupees … only". */
+  amountInWords?: string
   boxId: string | null
   status: VoucherStatus
   stage: RequestStage
+  expenseOnVerify?: boolean
+  supportingCount?: number
+  supporting?: SupportingDoc[]
+  financeApprovedById?: string | null
+  financeApprovedAt?: string | null
+  financeApprovedByName?: string | null
+  submittedAt?: string | null
+  returnedAt?: string | null
+  returnedByName?: string | null
+  returnNote?: string | null
+  returnCount?: number
+  docsVerifiedAt?: string | null
+  docsVerifiedByName?: string | null
+  postedAt?: string | null
+  postedByName?: string | null
+  postedJournalEntryId?: string | null
   preparedById: string
   hodSignedById: string | null
   hodSignedAt: string | null
@@ -119,8 +185,12 @@ export interface CashVoucher {
   canEdit: boolean
   canEditCategory: boolean
   canSignHod: boolean
+  canFinanceApprove?: boolean
   canApprove: boolean
+  canReturn?: boolean
   canReject: boolean
+  canUpload?: boolean
+  canVerify?: boolean
   canCancel: boolean
   canPay: boolean
   canUploadReceipts: boolean
@@ -133,6 +203,9 @@ export interface CashVoucher {
   payMovement?: { id: string; amountCents: number; createdAt: string; journalEntryId: string | null; boxId: string } | null
   settlements?: Settlement[]
 }
+
+/** What the paper calls the payee: a holder (request) or an outside payee (expense). */
+export const isExpenseKind = (v: Pick<CashVoucher, 'kind'>) => v.kind === 'expense'
 
 /** The cashier: the name stamped when it was paid, else the box's custodian now. */
 export function cashierOf(v: CashVoucher): string | null {
@@ -156,34 +229,41 @@ function asOne(r: unknown): CashVoucher {
   return (o['voucher'] && typeof o['voucher'] === 'object' ? o['voucher'] : r) as CashVoucher
 }
 
-/** Pages read for the register: 200 a page (the API's most), newest first. */
-const PAGE = 200
-const MAX_PAGES = 10
+/** The list views the server knows (GET /trustops/cash-vouchers?view=). */
+export type ListView =
+  | 'mine' | 'finance' | 'ceo' | 'returned' | 'to_pay' | 'missing_docs' | 'awaiting_verification' | 'posted'
+  | 'overdue' | 'receipts_due' | 'settled' | 'needs_review' | 'all'
 
-/**
- * Every request this login may see (all statuses — the page counts and
- * filters them by the capability flags). Follows the pages up to
- * MAX_PAGES × PAGE (`truncated` past that). `keeper` = the server says this
- * login runs petty cash.
- */
-export function useVouchers() {
+/** One view of the register (newest first, up to 200). `keeper` = the server says this login runs petty cash. */
+export function useVouchers(view: ListView) {
   return useQuery({
-    queryKey: [CV_ROOT, 'list'],
+    queryKey: [CV_ROOT, 'list', view],
     queryFn: async () => {
-      const all: CashVoucher[] = []
-      let cursor: string | null = null
-      let keeper = false
-      for (let i = 0; i < MAX_PAGES; i++) {
-        const qs: string = `?limit=${PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
-        const r: { items?: CashVoucher[]; nextCursor?: string | null; keeper?: boolean } = await api.get(`${CV_BASE}${qs}`)
-        keeper = !!r.keeper
-        all.push(...(r.items ?? []))
-        cursor = r.nextCursor ?? null
-        if (!cursor) return { items: all, truncated: false, keeper }
-      }
-      return { items: all, truncated: true, keeper }
+      const r: { items?: CashVoucher[]; nextCursor?: string | null; keeper?: boolean } =
+        await api.get(`${CV_BASE}?view=${view}&limit=200`)
+      return { items: r.items ?? [], truncated: !!r.nextCursor, keeper: !!r.keeper }
     },
     refetchInterval: 60_000,
+  })
+}
+
+/** The dashboard counts and PKR totals (company-scoped; staff see their own). */
+export function useDashboard() {
+  return useQuery<Dashboard>({
+    queryKey: [CV_ROOT, 'dashboard'],
+    queryFn: () => api.get(`${CV_BASE}/dashboard`),
+    refetchInterval: 60_000,
+    retry: false,
+  })
+}
+
+/** The voucher's audit trail, oldest first. */
+export function useHistory(id: string) {
+  return useQuery<{ items?: HistoryRow[] } | HistoryRow[]>({
+    queryKey: [CV_ROOT, 'history', id],
+    queryFn: () => api.get(`${CV_BASE}/${id}/history`),
+    enabled: !!id,
+    retry: false,
   })
 }
 
@@ -259,10 +339,22 @@ export function useStaffNames() {
 // ─── Error words ────────────────────────────────────────────────────────────
 
 const ERROR_WORDS: Record<string, string> = {
+  SELF_APPROVE: 'You cannot approve your own request — another finance login does.',
+  NOT_APPROVED: 'Print, PDF and Excel are available once the CEO has approved.',
+  DOCS_REQUIRED: 'Upload at least one supporting document before verifying.',
+  ALREADY_POSTED: 'This voucher is already verified and booked.',
+  NOT_FINANCE: 'Only finance can do that.',
+  VOUCHER_NOT_RETURNED: 'Only a returned voucher can be resubmitted.',
+  VOUCHER_NOT_SUBMITTED: 'This voucher has moved on — reload to see where it is.',
+  BAD_STATE: 'This voucher has moved on — reload to see where it is.',
+  TOO_MANY_DOCUMENTS: 'A voucher takes at most 20 supporting documents.',
+  BAD_DOCUMENT: 'That file type is not accepted. Use PDF, JPG, PNG, WebP, Excel, Word, PowerPoint, CSV or TXT up to 5 MB.',
+  DISCOUNT_TOO_LARGE: 'The discount cannot be more than the amount.',
+  PAYEE_REQUIRED: 'Name the payee.',
   VOUCHER_NOT_APPROVED: 'The director has not approved this request yet — it can be paid only after approval.',
   ALREADY_PAID: 'This request is already paid.',
   INSUFFICIENT_FLOAT: "The cash box doesn't hold enough — top it up first.",
-  SAME_SIGNER: 'The director must be a different person from the HOD who signed.',
+  SAME_SIGNER: 'The CEO must be a different person from the finance approver.',
   SELF_SIGN_HOD: 'You hold this cash — your HOD signs it, not you.',
   NOT_HOD: 'Only the HOD of the person who holds the cash (their reporting manager), finance or a manager can sign this.',
   NOT_YOURS: "This request is not one you raised, hold, sign or pay.",
@@ -282,7 +374,7 @@ const ERROR_WORDS: Record<string, string> = {
   AMOUNT_TOO_LARGE: 'That amount is too large for a cash request.',
   CONCEPT_NOT_IN_COMPANY: "That brand belongs to another company — pick one of the request's company's brands.",
   PAYEE_NOT_IN_COMPANY: "That login is not a member of this request's company.",
-  VOUCHER_NOT_DRAFT: 'Only a request still waiting for its HOD can be edited — finance may change the category until it is paid.',
+  VOUCHER_NOT_DRAFT: 'This voucher can no longer be edited here — it has moved on.',
   VOUCHER_CHANGED: 'Someone else changed this request — reload to see where it is.',
   VOUCHER_NOT_HOD_SIGNED: 'This request has moved on — reload to see where it is.',
   VOUCHER_NOT_CANCELLABLE: 'Only a request that is not yet paid can be cancelled.',
@@ -318,7 +410,7 @@ export function errorWords(e: unknown): string {
   if (e instanceof ApiError) {
     const known = ERROR_WORDS[e.code]
     // These carry useful specifics from the server (sizes, the float, the amounts).
-    if (known && ['BAD_PHOTO', 'BAD_FILE', 'INSUFFICIENT_FLOAT', 'RECEIPTS_OVER_REQUEST', 'OVER_REMAINING', 'UNIT_MISMATCH'].includes(e.code) && e.message) {
+    if (known && ['BAD_PHOTO', 'BAD_FILE', 'BAD_DOCUMENT', 'INSUFFICIENT_FLOAT', 'RECEIPTS_OVER_REQUEST', 'OVER_REMAINING', 'UNIT_MISMATCH'].includes(e.code) && e.message) {
       return `${known} (${e.message})`
     }
     if (known) return known

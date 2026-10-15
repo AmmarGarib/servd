@@ -32,6 +32,35 @@ vi.mock('../src/lib/notify.js', async (orig) => ({
   sendEmail: async (to: string, _s: string, body: string) => { notices.push({ to, body }) },
 }))
 
+// Test hook: runs right after the next orderComplaint.findFirst through the
+// app's `prisma` (simulates a lift landing between the PATCH's read and write).
+let afterNextComplaintRead: (() => Promise<void>) | null = null
+vi.mock('../src/lib/prisma.js', async (orig) => {
+  const mod = await orig<typeof import('../src/lib/prisma.js')>()
+  const wrapDelegate = (d: object) => new Proxy(d, {
+    get(target, m) {
+      const v = Reflect.get(target, m) as unknown
+      if (m === 'findFirst' && typeof v === 'function') {
+        return async (...args: unknown[]) => {
+          const row = await (v as (...a: unknown[]) => Promise<unknown>).apply(target, args)
+          const hook = afterNextComplaintRead
+          if (hook) { afterNextComplaintRead = null; await hook() }
+          return row
+        }
+      }
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+    },
+  })
+  const prismaProxy = new Proxy(mod.prisma, {
+    get(target, k) {
+      const v = Reflect.get(target, k) as unknown
+      if (k === 'orderComplaint') return wrapDelegate(v as object)
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+    },
+  })
+  return { ...mod, prisma: prismaProxy }
+})
+
 const Fastify = (await import('fastify')).default
 const { ZodError } = await import('zod')
 const bcrypt = (await import('bcryptjs')).default
@@ -297,6 +326,45 @@ describe('the help-desk queue', () => {
     const res = await asStaff('mgrA', 'PATCH', `/complaints/${id}`, { status: 'resolved' })
     expect(res.statusCode).toBe(409)
     expect(res.json().error.code).toBe('APPEAL_DECIDED_BY_LIFT')
+  })
+
+  it('a lift landing between the PATCH read and its write → 409 APPEAL_ALREADY_DECIDED, no notice, stays resolved', async () => {
+    const c = await mkCustomer('race', [conceptA])
+    const ban = await mkBan(c, tenantA)
+    const id = (await appeal(c.id, ban.id)).json().appealId as string
+    // The PATCH reads the open appeal; the lift resolves it right after.
+    let lifted = 0
+    afterNextComplaintRead = async () => {
+      const lift = await asStaff('mgrA', 'POST', `/crm/bans/${ban.id}/lift`, { reason: 'Number changed hands' })
+      lifted = lift.statusCode
+    }
+    const before = notices.length
+    const res = await asStaff('mgrA', 'PATCH', `/complaints/${id}`, { status: 'closed' })
+    afterNextComplaintRead = null
+    expect(lifted).toBe(200)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe('APPEAL_ALREADY_DECIDED')
+    expect(notices.slice(before).some((n) => /stays in place/.test(n.body))).toBe(false)
+    const row = await prisma.orderComplaint.findUniqueOrThrow({ where: { id } })
+    expect(row.status).toBe('resolved')
+    expect(row.resolution).toMatch(/^Block lifted/)
+  })
+
+  it('two concurrent declines: one closes, the other → 409, one notice', async () => {
+    const c = await mkCustomer('race2', [conceptA])
+    const ban = await mkBan(c, tenantA)
+    const id = (await appeal(c.id, ban.id)).json().appealId as string
+    const before = notices.length
+    const [r1, r2] = await Promise.all([
+      asStaff('mgrA', 'PATCH', `/complaints/${id}`, { status: 'closed' }),
+      asStaff('mgrA', 'PATCH', `/complaints/${id}`, { status: 'closed' }),
+    ])
+    // Interleaved, the loser's conditional write misses (409); serialised, the
+    // second is a no-op re-save of 'closed' (200). Either way: one notice.
+    for (const r of [r1, r2]) expect([200, 409], r.body).toContain(r.statusCode)
+    expect([r1.statusCode, r2.statusCode]).toContain(200)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(notices.slice(before).filter((n) => /stays in place/.test(n.body))).toHaveLength(1)
   })
 
   it('fnb_manager (complaints, no crm) lifts through the widened gate and the appeal resolves', async () => {

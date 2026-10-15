@@ -178,3 +178,55 @@ describe('settling a COD row whose rider debt was booked', () => {
     expect(await openFlags(x.paymentId)).toHaveLength(0)
   })
 })
+
+// The debt is decided under the order lock, never from settle's pre-read:
+// finance books the rider debt AFTER the till's pre-read of the payment row
+// but BEFORE the till takes the order lock — the pay-in must still reverse it.
+describe('a rider debt booked between the till\'s pre-read and its claim', () => {
+  const lockWaiters = async () => {
+    const rows = await prisma.$queryRaw<Array<{ n: bigint | number }>>`
+      SELECT count(*) AS n FROM pg_stat_activity
+       WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%FOR UPDATE%'`
+    return Number(rows[0]!.n)
+  }
+  const waitFor = async (n: number) => {
+    for (let i = 0; i < 200; i += 1) {
+      if ((await lockWaiters()) >= n) return
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    throw new Error(`never saw ${n} lock waiter(s)`)
+  }
+
+  it('own rider: the pay-in still posts the reversal (re-read under the lock)', async () => {
+    const x = await mkCod(riderA)
+    let release!: () => void
+    const released = new Promise<void>((r) => { release = r })
+    let locked!: () => void
+    const isLocked = new Promise<void>((r) => { locked = r })
+    // Hold the order's row lock so both the booking and the pay-in queue behind it.
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${x.orderId} FOR UPDATE`
+      locked()
+      await released
+    }, { maxWait: 10_000, timeout: 30_000 })
+    await isLocked
+    // 1) finance's booking pre-reads (no debt yet) and waits for the lock first …
+    const booking = book(x.paymentId, { id: finA.id, role: 'finance', memberTenantIds: [A] })
+    await waitFor(1)
+    // 2) … then the till pre-reads the row (still no debt) and queues behind it.
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: x.paymentId } })).codRiderDebtEntryId).toBeNull()
+    const settling = payIn(x.paymentId, x.amount)
+    await waitFor(2)
+    release()
+    await holder
+    expect(await booking).toMatchObject({ ok: true })
+    const r = await settling
+    expect(r.payment.status).toBe('paid')
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: x.paymentId } })).codRiderDebtEntryId).toBeTruthy()
+    expect(await entryLines(A, `cod.rider_debt.reversal:${x.paymentId}`)).toEqual(expect.arrayContaining([
+      { code: '1010', type: 'debit', cents: x.amount, conceptId: brandA },
+      { code: '1351', type: 'credit', cents: x.amount, conceptId: brandA },
+    ]))
+    expect(await openFlags(x.paymentId)).toHaveLength(0)
+  }, 60_000)
+})

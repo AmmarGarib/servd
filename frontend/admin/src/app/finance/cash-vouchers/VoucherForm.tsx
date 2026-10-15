@@ -1,83 +1,84 @@
 'use client'
-// Request cash / edit a request. Saving makes (or updates) a request waiting
-// for its HOD — no signature, no cash. The category is the expense the cash is
-// booked to when it is paid (H3: expensed at payment; receipts kept for the
-// file). Finance or a manager may also name someone else as the holder, pick
-// an explicit 6xxx account and the cash box; everyone else asks for
-// themselves and the cashier picks the box when paying.
+// Request cash (any login) / New payee voucher (finance) / edit a returned or
+// waiting voucher.
+//
+//   • Request cash — particulars, amount, expense category, brand, department.
+//     Saving creates the voucher and sends it to FINANCE at once.
+//   • New payee voucher — finance raises a voucher for an outside payee: payee,
+//     date, particulars, expense account, amount, discount (total = amount −
+//     discount, with the words live), brand, department; sent to the CEO
+//     (default) or to finance.
+//   • Edit — the same fields on an existing voucher (after it is returned, or
+//     while it still waits for finance); the detail page then resubmits.
 
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { formatBrandName } from '../../../lib/brandName'
-import { useAuthStore } from '../../../store/auth'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { amountInWords, formatPkr } from './amountInWords'
 import {
-  CV_BASE, dateInput, errorWords, todayKarachi, useBrands, useCategories, usePettyBoxes, useStaffNames,
-  type CashVoucher,
+  CV_BASE, dateInput, errorWords, todayKarachi, useBrands, useCategories, usePettyBoxes, type CashVoucher,
 } from './data'
 import { ErrorBanner, Field, Footer, Modal, fieldCls, primaryBtn } from './ui'
 import { Select } from '@/components/ui/Select'
 
-export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
-  /** Editing this request; omitted = a new one. */
+export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSaved }: {
+  /** 'request' = ask for cash; 'expense' = finance raises a payee voucher. Ignored when editing (the voucher's own kind). */
+  mode?: 'request' | 'expense'
+  /** Editing this voucher; omitted = a new one. */
   voucher?: CashVoucher
-  /** The server says this login runs petty cash (finance / the manager tiers). */
+  /** The server says this login runs petty cash / finance. */
   isKeeper: boolean
   onClose: () => void
   onSaved: (v: CashVoucher) => void
 }) {
   const editing = !!voucher
-  const me = useAuthStore((s) => s.user)
-  // Once the HOD has signed, finance may still change the category and the box — nothing else.
-  const categoryOnly = editing && voucher!.status !== 'draft'
+  const expense = editing ? voucher!.kind === 'expense' : mode === 'expense'
   const { data: cats } = useCategories()
   const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
   const { data: brands = [] } = useBrands()
-  const { data: boxes = [] } = usePettyBoxes()
-  const { data: staff = [] } = useStaffNames()
   const { data: chart = [] } = useQuery<Array<{ code: string; name: string; isActive: boolean; tenantId: string | null }>>({
     queryKey: ['chart-of-accounts'],
     queryFn: () => api.get('/setup/chart-of-accounts'),
     enabled: isKeeper,
     retry: false, meta: { background: true }, staleTime: 300_000,
   })
+  // Finance may also pick the cash box on a voucher it edits — kept from the old form.
+  usePettyBoxes()
 
-  const [amountCents, setAmountCents] = useState(voucher?.amountCents ?? 0)
+  const startGross = voucher ? (voucher.grossCents ?? voucher.amountCents + (voucher.discountCents ?? 0)) : 0
+  const [grossCents, setGrossCents] = useState(startGross)
+  const [discountCents, setDiscountCents] = useState(voucher?.discountCents ?? 0)
   const [purpose, setPurpose] = useState(voucher?.purpose ?? '')
   const [category, setCategory] = useState(voucher?.category ?? '')
   const [conceptId, setConceptId] = useState(voucher?.conceptId ?? '')
   const [department, setDepartment] = useState(voucher?.department ?? '')
   const [voucherDate, setVoucherDate] = useState(voucher ? dateInput(voucher.voucherDate) : todayKarachi())
-  const [holderUserId, setHolderUserId] = useState(voucher?.payeeUserId ?? me?.id ?? '')
-  const [payeeName, setPayeeName] = useState(voucher?.payeeName ?? '')
-  const [boxId, setBoxId] = useState(voucher?.boxId ?? '')
+  const [payeeName, setPayeeName] = useState(expense ? (voucher?.payeeName ?? '') : '')
+  const [sendTo, setSendTo] = useState<'ceo' | 'finance'>('ceo')
 
   const tenantId = voucher?.tenantId ?? null
-  const companyBoxes = boxes.filter((b) => b.isActive && (!tenantId || b.tenantId === tenantId))
   const companyBrands = brands.filter((b) => !tenantId || !b.tenantId || b.tenantId === tenantId)
   const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
   const isCode = /^\d{4}$/.test(category)
-  const ready = amountCents > 0 && !!purpose.trim() && !!category
+  const totalCents = Math.max(0, grossCents - discountCents)
+  const discountOk = discountCents >= 0 && discountCents < grossCents
+  const ready = grossCents > 0 && !!purpose.trim() && !!category && (!expense || !!payeeName.trim()) && discountOk
 
   const save = useMutation({
     mutationFn: () => {
       const cat = isCode ? { categoryKey: null, accountCode: category } : { categoryKey: category, accountCode: null }
-      const body: Record<string, unknown> = categoryOnly
-        ? { ...cat, ...(isKeeper && boxId !== (voucher!.boxId ?? '') ? { boxId: boxId || null } : {}) }
-        : {
-          voucherDate,
-          purpose: purpose.trim(),
-          ...cat,
-          conceptId: conceptId || null,
-          department: department.trim() || null,
-          amountCents,
-          ...(isKeeper && holderUserId && holderUserId !== voucher?.payeeUserId ? { holderUserId } : {}),
-          ...(payeeName.trim() && payeeName.trim() !== voucher?.payeeName ? { payeeName: payeeName.trim() } : {}),
-          ...(isKeeper && (!editing || boxId !== (voucher!.boxId ?? '')) && boxId ? { boxId } : {}),
-        }
-      // An edit is pinned to the request's company, so the "All companies" view never asks.
+      const body: Record<string, unknown> = {
+        voucherDate,
+        purpose: purpose.trim(),
+        ...cat,
+        conceptId: conceptId || null,
+        department: department.trim() || null,
+        ...(expense
+          ? { kind: 'expense', payeeName: payeeName.trim(), grossCents, discountCents, ...(editing ? {} : { sendTo }) }
+          : { amountCents: grossCents }),
+      }
       const extra = tenantId ? { tenantId } : undefined
       return editing
         ? api.patch<CashVoucher>(`${CV_BASE}/${voucher!.id}`, body, extra)
@@ -87,38 +88,58 @@ export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
     onSuccess: (v) => onSaved(v),
   })
 
+  const title = editing ? `Edit ${voucher!.number}` : expense ? 'New payee voucher' : 'Request cash'
   return (
-    <Modal title={editing ? (categoryOnly ? `Category of ${voucher!.number}` : `Edit ${voucher!.number}`) : 'Request cash'} onClose={onClose} wide>
-      {!categoryOnly && (
-        <p className="text-xs text-white/50">
-          Saving sends it to your HOD. Nothing leaves a cash box until the HOD and the director have signed and the cashier pays it.
-          Keep the receipts — you upload them here afterwards.
-        </p>
+    <Modal title={title} onClose={onClose} wide>
+      <p className="text-xs text-white/50">
+        {expense
+          ? (sendTo === 'ceo' || editing
+            ? 'Finance prepares it, so it goes straight to the CEO for approval. After approval the cashier pays the payee.'
+            : 'It goes to finance — another finance login approves it before the CEO.')
+          : editing
+            ? 'Fix what was returned, then resubmit it from the voucher page.'
+            : 'Saving creates the voucher and sends it to finance now. Then the CEO approves, the cashier pays you, and you upload the supporting documents.'}
+      </p>
+
+      {expense && (
+        <Field label="Payee *" hint="The vendor or person being paid.">
+          <input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} maxLength={120} className={fieldCls} autoFocus />
+        </Field>
       )}
 
-      {!categoryOnly && (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Amount (PKR) *">
-              <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
-            </Field>
-            <Field label="Needed on *">
-              <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className={fieldCls} />
-            </Field>
-          </div>
-          {amountCents > 0 && (
-            <p className="-mt-1 text-[11px] text-white/55">PKR {formatPkr(amountCents)} — {amountInWords(amountCents)}</p>
-          )}
-          <Field label="What is it for? *">
-            <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} maxLength={500}
-              placeholder="e.g. Cleaning supplies for the outlet" className={fieldCls} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label={expense ? 'Amount (PKR) *' : 'Amount needed (PKR) *'}>
+          <MoneyInput value={grossCents} onChange={setGrossCents} className={fieldCls} autoFocus={!expense} ariaLabel="Amount in rupees" />
+        </Field>
+        <Field label={expense ? 'Date *' : 'Needed on *'}>
+          <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className={fieldCls} />
+        </Field>
+      </div>
+
+      {expense && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Discount (PKR)">
+            <MoneyInput value={discountCents} onChange={setDiscountCents} className={fieldCls} ariaLabel="Discount in rupees" />
           </Field>
-        </>
+          <Field label="Total to pay (PKR)">
+            <div className={`${fieldCls} font-black tabular-nums`} aria-live="polite">{formatPkr(totalCents, { decimals: true })}</div>
+          </Field>
+        </div>
+      )}
+      {!discountOk && grossCents > 0 && <p className="text-xs text-s-red font-bold">The discount must be less than the amount.</p>}
+      {totalCents > 0 && (
+        <p className="-mt-1 text-[11px] text-white/55">PKR {formatPkr(totalCents)} — {amountInWords(totalCents)}</p>
       )}
 
-      <Field label="Expense category *" hint="The cash is booked to this when it is paid. Receipts that show something else (stock, equipment, another category) move it there.">
+      <Field label={expense ? 'Particulars *' : 'What is it for? *'}>
+        <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} maxLength={500}
+          placeholder={expense ? 'e.g. Generator repair — invoice 1042' : 'e.g. Cleaning supplies for the outlet'} className={fieldCls} />
+      </Field>
+
+      <Field label={expense ? 'Expense account *' : 'Expense category *'}
+        hint="The expense is booked here when finance verifies the documents.">
         <Select value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
-          <option value="">— pick a category —</option>
+          <option value="">— pick {expense ? 'an account' : 'a category'} —</option>
           {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
           {isKeeper && expenseAccounts.length > 0 && (
             <optgroup label="Another expense account">
@@ -128,53 +149,34 @@ export function VoucherForm({ voucher, isKeeper, onClose, onSaved }: {
         </Select>
       </Field>
 
-      {!categoryOnly && (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Brand">
-              <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
-                <option value="">— company-wide —</option>
-                {companyBrands.map((b) => <option key={b.id} value={b.id}>{formatBrandName(b.name)}</option>)}
-              </Select>
-            </Field>
-            <Field label="Department">
-              <input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Optional" className={fieldCls} />
-            </Field>
-          </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Brand">
+          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
+            <option value="">— company-wide —</option>
+            {companyBrands.map((b) => <option key={b.id} value={b.id}>{formatBrandName(b.name)}</option>)}
+          </Select>
+        </Field>
+        <Field label="Department">
+          <input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Optional" className={fieldCls} />
+        </Field>
+      </div>
 
-          {isKeeper && staff.length > 0 ? (
-            <Field label="Who takes the cash" hint="They bring the receipts back. Their HOD signs the request.">
-              <Select value={holderUserId} onChange={(e) => setHolderUserId(e.target.value)} className={fieldCls}>
-                {me && <option value={me.id}>Me</option>}
-                {staff.filter((u) => u.id !== me?.id && (!tenantId || !u.tenantId || u.tenantId === tenantId)).map((u) => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
-              </Select>
-            </Field>
-          ) : (
-            <p className="text-xs text-white/50">You take the cash and bring the receipts back.</p>
-          )}
-          <Field label="Name on the voucher" hint="Leave empty to print the holder's name.">
-            <input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} maxLength={120} placeholder="Optional" className={fieldCls} />
-          </Field>
-        </>
-      )}
-
-      {isKeeper && (
-        <Field label="Paid from (cash box)" hint="Optional — otherwise the cashier picks the box when paying.">
-          <Select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
-            <option value="">— the cashier picks —</option>
-            {companyBoxes.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}{b.custodianName ? ` — ${b.custodianName}` : ''} · PKR {formatPkr(b.floatCents)}</option>
-            ))}
+      {expense && !editing && (
+        <Field label="Send to">
+          <Select value={sendTo} onChange={(e) => setSendTo(e.target.value as 'ceo' | 'finance')} className={fieldCls}>
+            <option value="ceo">The CEO (finance has prepared it)</option>
+            <option value="finance">Finance — another finance login approves first</option>
           </Select>
         </Field>
       )}
 
       {save.error && <ErrorBanner message={errorWords(save.error)} />}
       <Footer onCancel={onClose} primary={
-        <button onClick={() => save.mutate()} disabled={save.isPending || !ready} className={primaryBtn}>
-          {save.isPending ? 'Saving…' : editing ? 'Save' : 'Send to my HOD'}
+        <button onClick={() => { save.reset(); save.mutate() }} disabled={save.isPending || !ready} className={primaryBtn}>
+          {save.isPending ? 'Saving…'
+            : editing ? 'Save'
+              : expense ? (sendTo === 'ceo' ? 'Send to the CEO' : 'Send to finance')
+                : 'Send to finance'}
         </button>
       } />
     </Modal>

@@ -1,10 +1,12 @@
 'use client'
-// The printed cash payment voucher — format v1 (owner, 2026-10-13: "make a
-// format right now basis what u think, then will change format of it later").
+// The printed cash expense voucher — standard layout (2026-10-15): company,
+// voucher no. and date, payee, particulars, account, amount / discount / total,
+// amount in words, and signature boxes (Requested, Finance, CEO, Paid by,
+// Received by). A4 portrait. (Format v1 was the A5 cash payment voucher.)
 // A cash request prints as this paper (CV numbers): who raised it, who takes
 // the cash, the category it is booked to, and when the receipts are due.
 //
-// A5 landscape. One component draws it for the on-screen preview and for the
+// One component draws it for the on-screen preview and for the
 // print, which goes through window.print(): <PrintPortal> mounts a second copy
 // straight under <body>, and the @media print rules hide everything else, so
 // only the voucher is on the paper.
@@ -25,17 +27,17 @@ const PRINT_CSS = `
 .cv-print-root { display: none; }
 .cv-sheet { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 @media print {
-  @page { size: A5 landscape; margin: 5mm; }
+  @page { size: A4 portrait; margin: 8mm; }
   html, body { background: var(--surface) !important; height: auto !important; overflow: visible !important; }
   body > *:not(.cv-print-root) { display: none !important; }
   .cv-print-root { display: block !important; }
-  .cv-print-root .cv-sheet { box-shadow: none !important; border-radius: 0 !important; margin: 0 !important; }
+  .cv-print-root .cv-sheet { box-shadow: none !important; border-radius: 0 !important; margin: 0 !important; border: 0 !important; }
 }
 `
 
 /** What the paper says across itself, if anything. */
 export function watermarkFor(status: string): string[] | null {
-  if (status === 'draft' || status === 'hod_signed') return ['NOT APPROVED', 'DO NOT PAY']
+  if (['draft', 'hod_signed', 'submitted', 'finance_approved', 'returned'].includes(status)) return ['NOT APPROVED', 'DO NOT PAY']
   if (status === 'rejected' || status === 'cancelled') return ['VOID']
   return null
 }
@@ -81,81 +83,96 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
   const mark = watermarkFor(v.status)
   const brand = v.conceptName ? formatBrandName(v.conceptName) : null
   const brandDept = [brand, v.department].filter(Boolean).join(' · ') || '—'
-  const hodSigned = !!v.hodSignedAt
-  const dirSigned = !!v.directorSignedAt
+  const discount = v.discountCents ?? 0
+  const gross = v.grossCents ?? v.amountCents + discount
+  const total = v.amountCents
+  const words = v.amountInWords || amountInWords(total)
+  const financeAt = v.financeApprovedAt ?? v.hodSignedAt ?? null
+  const financeBy = v.financeApprovedByName ?? v.hodSignedByName ?? null
   const cashier = cashierOf(v)
+  const payee = v.kind === 'expense' ? v.payeeName : (v.holderName ?? v.payeeName)
+  const th: React.CSSProperties = { textAlign: 'left', fontSize: '8pt', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: muted, padding: '2mm 3mm', borderBottom: `1.5px solid ${rule}` }
+  const td: React.CSSProperties = { padding: '2.2mm 3mm', fontSize: '10.5pt', borderBottom: `1px solid ${hair}` }
 
   return (
     <div className="cv-sheet" style={{
-      position: 'relative', width: '198mm', minHeight: '128mm', boxSizing: 'border-box', padding: '6mm 7mm 4.5mm',
+      position: 'relative', width: '194mm', minHeight: '270mm', boxSizing: 'border-box', padding: '10mm 11mm 8mm',
       background: 'var(--surface)', color: ink, fontFamily: "'Inter', system-ui, sans-serif",
       border: `1px solid ${hair}`, borderRadius: '2mm', overflow: 'hidden', breakInside: 'avoid', pageBreakInside: 'avoid',
-      display: 'flex', flexDirection: 'column', gap: '2.6mm',
+      display: 'flex', flexDirection: 'column', gap: '5mm',
     }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '6mm', borderBottom: '2px solid var(--erp-secondary)', paddingBottom: '2.5mm' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '6mm', borderBottom: '2px solid var(--erp-secondary)', paddingBottom: '4mm' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: '14pt', fontWeight: 900, letterSpacing: '-0.01em', color: ink, lineHeight: 1.1 }}>{companyName || ' '}</div>
-          <div style={{ fontSize: '7.5pt', color: muted, marginTop: '0.8mm' }}>Internal voucher</div>
+          <div style={{ fontSize: '17pt', fontWeight: 900, letterSpacing: '-0.01em', color: ink, lineHeight: 1.1 }}>{companyName || ' '}</div>
+          <div style={{ fontSize: '8.5pt', color: muted, marginTop: '1mm' }}>Internal voucher</div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: '12pt', fontWeight: 900, letterSpacing: '0.12em', color: 'var(--erp-primary-ink)' }}>CASH PAYMENT VOUCHER</div>
-          <div style={{ display: 'flex', gap: '5mm', justifyContent: 'flex-end', marginTop: '1.2mm' }}>
-            <div><Label>Voucher No.</Label><div style={{ fontSize: '10.5pt', fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{v.number}</div></div>
-            <div><Label>Date</Label><div style={{ fontSize: '10.5pt', fontWeight: 700 }}>{fmtDate(v.voucherDate)}</div></div>
+          <div style={{ fontSize: '14pt', fontWeight: 900, letterSpacing: '0.1em', color: 'var(--erp-primary-ink)' }}>CASH EXPENSE VOUCHER</div>
+          <div style={{ display: 'flex', gap: '6mm', justifyContent: 'flex-end', marginTop: '2mm' }}>
+            <div><Label>Voucher No.</Label><div style={{ fontSize: '12pt', fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{v.number}</div></div>
+            <div><Label>Date</Label><div style={{ fontSize: '12pt', fontWeight: 700 }}>{fmtDate(v.voucherDate)}</div></div>
           </div>
         </div>
       </div>
 
-      {/* Pay to + amount */}
-      <div style={{ display: 'flex', gap: '5mm', alignItems: 'stretch' }}>
-        <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2.2mm' }}>
-          <FieldBox label="Pay to" value={v.payeeName} />
-          <div style={{ display: 'flex', gap: '5mm' }}>
-            <FieldBox label="Brand / Department" value={brandDept} />
-            <FieldBox label="Category" value={categoryLabel} />
-          </div>
-        </div>
-        <div style={{ width: '52mm', flexShrink: 0, border: `1.5px solid ${rule}`, borderRadius: '1.5mm', padding: '2mm 3mm', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <Label>Amount (PKR)</Label>
-          <div style={{ fontSize: '17pt', fontWeight: 900, letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums', lineHeight: 1.15 }}>
-            {formatPkr(v.amountCents, { decimals: true })}
-          </div>
+      {/* Payee and coding */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '3.5mm' }}>
+        <FieldBox label="Payee" value={payee} size="11.5pt" />
+        <FieldBox label="Particulars" value={v.purpose} minH="14mm"
+          size={v.purpose.length > 320 ? '8.5pt' : v.purpose.length > 160 ? '9.5pt' : '11pt'} />
+        <div style={{ display: 'flex', gap: '6mm' }}>
+          <FieldBox label="Expense account" value={categoryLabel} />
+          <FieldBox label="Brand / Department" value={brandDept} />
         </div>
       </div>
 
-      <FieldBox label="Amount in words" value={amountInWords(v.amountCents)} />
-      {/* Up to 500 characters: a long purpose steps down so the voucher stays on one A5 sheet. */}
-      <FieldBox label="Purpose" value={v.purpose} minH="9mm" size={v.purpose.length > 320 ? '7.5pt' : v.purpose.length > 160 ? '8.5pt' : '10pt'} />
-      <div style={{ display: 'flex', gap: '5mm' }}>
+      {/* Amounts */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', border: `1px solid ${hair}` }}>
+        <thead>
+          <tr><th style={th}>Description</th><th style={{ ...th, textAlign: 'right', width: '45mm' }}>Amount (PKR)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td style={td}>Amount</td><td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatPkr(gross, { decimals: true })}</td></tr>
+          <tr><td style={td}>Less: discount</td><td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{discount > 0 ? `(${formatPkr(discount, { decimals: true })})` : '—'}</td></tr>
+          <tr>
+            <td style={{ ...td, fontWeight: 900, borderBottom: 0, background: 'rgb(var(--ink-rgb) / 0.04)' }}>Total payable</td>
+            <td style={{ ...td, fontWeight: 900, fontSize: '13pt', textAlign: 'right', borderBottom: 0, fontVariantNumeric: 'tabular-nums', background: 'rgb(var(--ink-rgb) / 0.04)' }}>
+              {formatPkr(total, { decimals: true })}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <FieldBox label="Amount in words" value={words} size="10.5pt" />
+
+      <div style={{ display: 'flex', gap: '6mm' }}>
         <FieldBox label="Raised by" value={v.preparedByName ?? '—'} />
         <FieldBox label="Paid from (cash box)" value={v.boxName ?? '—'} />
-        <FieldBox label="Cashier" value={cashier ?? '—'} />
-        <FieldBox label="Receipts due by" value={v.dueBy ? fmtDate(v.dueBy) : '—'} />
+        <FieldBox label="Documents due by" value={v.dueBy ? fmtDate(v.dueBy) : '—'} />
       </div>
 
       {/* Signatures */}
-      <div style={{ display: 'flex', gap: '2.5mm', marginTop: '0.5mm' }}>
-        <SignBlock title="Prepared & signed — HOD" name={hodSigned ? (v.hodSignedByName ?? '—') : null}
-          line={hodSigned ? 'Signed in servd' : 'Not signed yet'} when={hodSigned ? fmtDateTime(v.hodSignedAt) : null} />
-        <SignBlock title="Approved — Director" name={dirSigned ? (v.directorSignedByName ?? '—') : null}
-          line={dirSigned ? 'Signed in servd' : 'Not approved yet'} when={dirSigned ? fmtDateTime(v.directorSignedAt) : null} />
-        <SignBlock title="Cash paid by — Cashier" name={cashier} line={' '} when="Date: ____________" />
-        <SignBlock title="Received by — Payee" name={v.payeeName} line={' '} when="Date: ____________" />
+      <div style={{ display: 'flex', gap: '2.5mm', marginTop: 'auto' }}>
+        <SignBlock title="Requested by" name={v.preparedByName ?? null} line={'Raised in servd'} when={fmtDateTime(v.submittedAt ?? v.createdAt)} />
+        <SignBlock title="Finance" name={financeAt ? financeBy : null} line={financeAt ? 'Approved in servd' : 'Not approved yet'} when={financeAt ? fmtDateTime(financeAt) : null} />
+        <SignBlock title="CEO" name={v.directorSignedAt ? (v.directorSignedByName ?? '—') : null}
+          line={v.directorSignedAt ? 'Approved in servd' : 'Not approved yet'} when={v.directorSignedAt ? fmtDateTime(v.directorSignedAt) : null} />
+        <SignBlock title="Paid by" name={cashier} line={' '} when="Date: ____________" />
+        <SignBlock title="Received by" name={payee} line={' '} when="Date: ____________" />
       </div>
 
       {/* Footer */}
-      <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', gap: '4mm', borderTop: `1px solid ${hair}`, paddingTop: '1.5mm', fontSize: '6.5pt', color: muted }}>
-        <span>Generated by servd. Cash is paid only once the director has approved. Upload the receipts in servd &rarr; Finance &rarr; Cash requests by the due date.</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4mm', borderTop: `1px solid ${hair}`, paddingTop: '2mm', fontSize: '7pt', color: muted }}>
+        <span>Generated by servd. Cash is paid only once the CEO has approved; the expense is booked when finance verifies the supporting documents.</span>
         <span style={{ flexShrink: 0 }}>{v.disbursedAt ? `Paid ${fmtDate(v.disbursedAt)}` : ''}</span>
       </div>
 
       {mark && (
         <div aria-hidden style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
           <div style={{
-            transform: 'rotate(-22deg)', textAlign: 'center', fontWeight: 900, lineHeight: 1.05, letterSpacing: '0.04em',
+            transform: 'rotate(-30deg)', textAlign: 'center', fontWeight: 900, lineHeight: 1.05, letterSpacing: '0.04em',
             color: 'color-mix(in srgb, var(--erp-danger) 30%, transparent)',
-            fontSize: mark.length === 1 ? '96pt' : '40pt',
+            fontSize: mark.length === 1 ? '110pt' : '46pt',
             border: '3px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)', borderRadius: '3mm', padding: '2mm 6mm',
           }}>
             {mark.map((l) => <div key={l}>{l}</div>)}

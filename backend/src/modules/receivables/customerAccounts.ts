@@ -137,7 +137,16 @@ const PatchBody = z.object({
   reason: z.string().trim().max(500).optional(),
 })
 
-const NoteBody = z.object({ note: z.string().trim().max(500).optional() }).default({})
+/**
+ * The CEO's decision applies what the CEO saw, never a later edit: the inbox
+ * (and the client page) send the row's `updatedAt` and the limit shown, and
+ * the approval is refused (409 REQUEST_CHANGED) when either moved since.
+ */
+const ApproveBody = z.object({
+  note: z.string().trim().max(500).optional(),
+  expectedUpdatedAt: z.string().datetime().optional(),
+  creditLimitCents: zMoneyCents('Credit limit', { sign: 'positive' }).optional(),
+}).default({})
 const RejectBody = z.object({ note: z.string().trim().min(3, 'Say why').max(500) })
 const CardBody = z.object({ label: z.string().trim().min(1).max(60) })
 const RevokeBody = z.object({ reason: z.string().trim().min(3, 'Say why').max(200) })
@@ -244,6 +253,8 @@ async function shapeRows(accounts: CustomerAccount[], me: Caller, now = new Date
       approvedByName: a.approvedById ? nameOf.get(a.approvedById) ?? null : null,
       approvedAt: a.approvedAt,
       lastRemindedAt: a.lastRemindedAt,
+      /** Echo back as `expectedUpdatedAt` on approve — a later edit refuses the approval. */
+      updatedAt: a.updatedAt,
       // Exposure (what the client owes now) and the room left under the limit.
       unbilledCents: exposure.unbilledCents,
       invoicesDueCents: exposure.invoicesDueCents,
@@ -626,12 +637,20 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
   // ── The CEO decides: a new client, or a limit increase ──
   app.post<{ Params: { id: string } }>('/:id/approve', ceo, async (req) => {
     const found = await findAccount(req, req.params.id, 'write')
-    const body = NoteBody.parse(req.body ?? {})
+    const body = ApproveBody.parse(req.body ?? {})
     const me = req.staffUser!
     const { kind, before, after } = await prisma.$transaction(async (tx) => {
       const a = await lockAccountTx(tx, found.id)
       const kind = pendingOf(a)
       if (!kind) throw new AppError('NOTHING_PENDING', 'Nothing on this client is waiting for approval — reload it', 409)
+      // Apply only what the CEO saw: any edit since (limit, terms, brands…) refuses it.
+      const shownLimit = kind === 'new_client' ? toCents(a.creditLimitCents) : toCents(a.requestedCreditLimitCents!)
+      if (
+        (body.expectedUpdatedAt !== undefined && new Date(body.expectedUpdatedAt).getTime() !== a.updatedAt.getTime())
+        || (body.creditLimitCents !== undefined && body.creditLimitCents !== shownLimit)
+      ) {
+        throw new AppError('REQUEST_CHANGED', 'This request changed since you opened it, reload it', 409)
+      }
       await assertNotSelfApproval({
         tenantId: a.tenantId, actor: { id: me.id, role: me.role },
         creatorId: kind === 'new_client' ? a.createdById : a.limitRequestedById,

@@ -47,6 +47,8 @@ interface ClientRow {
   requestedById: string | null
   requestedByName: string | null
   approveBlockedReason?: string | null
+  /** Sent back on approve so a later edit refuses it (409 REQUEST_CHANGED). */
+  updatedAt: string
 }
 
 export const onAccountClients: ApprovalProvider = {
@@ -92,7 +94,8 @@ export const onAccountClients: ApprovalProvider = {
         link: `${LINK}/${encodeURIComponent(r.id)}`,
         actions: [
           {
-            kind: 'approve', label: 'Approve', method: 'POST', path: `${BASE}/${r.id}/approve`, body: {},
+            kind: 'approve', label: 'Approve', method: 'POST', path: `${BASE}/${r.id}/approve`,
+            body: { expectedUpdatedAt: r.updatedAt, creditLimitCents: newLimit },
             confirm: isNew
               ? 'Approve this client? Finance can then issue its cards and the tills can charge it up to its limit.'
               : `Raise this client's limit to ${pkr(newLimit)}?`,

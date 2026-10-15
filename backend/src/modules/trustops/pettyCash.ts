@@ -12,10 +12,12 @@
 //     postPettyCashMovementTx) — inside the caller's transaction, so a closed
 //     period (422 PERIOD_LOCKED) rolls the movement and the float back
 //     together:
-//       recordPettyCashSpendTx    — a spend (manual, a bill paid in cash, or a
-//                                   cash request paid: expensed to its
-//                                   category, H3). THE one way money leaves a
-//                                   box. Its lines may be expense, STOCK (a
+//       recordPettyCashSpendTx    — a spend (manual, a bill paid in cash, a
+//                                   legacy cash request paid: expensed to its
+//                                   category, H3; a cash voucher paid since
+//                                   2026-10-15: held on 1357 until finance
+//                                   verifies its documents). THE one way
+//                                   money leaves a box. Its lines may be expense, STOCK (a
 //                                   settled goods receipt, Dr 12x0) or CAPEX
 //                                   (a CapEx cash payment, Dr 1340).
 //       recordPettyCashTopupTx    — a top-up (Garibsons cashier, safe, bank,
@@ -232,7 +234,7 @@ export interface PettyCashSpendInput {
   supplierPaymentId?: string | null
 }
 
-export type SpendNature = 'expense' | 'bill'
+export type SpendNature = 'expense' | 'bill' | 'voucher_hold'
 
 export interface PettyCashSpendOptions {
   /**
@@ -243,6 +245,11 @@ export interface PettyCashSpendOptions {
    *               category (pettyCashPosting.ts cashRequestPayLine, H3).
    *   'bill'    — paid a supplier bill (`supplierPaymentId`; the payment
    *               booked Dr 2010 / Cr 1010, this books Dr 1010 / Cr 1011).
+   *   'voucher_hold' — a cash voucher paid under the 2026-10-15 flow
+   *               (cashVouchers.ts, `cashVoucherId` required, no lines): Dr
+   *               1357 Petty Cash Vouchers Awaiting Documents / Cr 1011. The
+   *               expense is booked only when finance verifies the documents
+   *               (pettyCashPosting.ts postCashVoucherVerifiedTx).
    * Omitted: 'bill' when supplierPaymentId is set, else 'expense'.
    */
   nature?: SpendNature
@@ -305,6 +312,14 @@ export async function recordPettyCashSpendTx(
     }
     if (input.lines?.length) throw new AppError('LINES_ON_BILL', 'A spend that pays a supplier bill has no expense lines', 400)
     accountCode = ACCT.CASH_ON_HAND
+  } else if (nature === 'voucher_hold') {
+    if (!input.cashVoucherId) throw new AppError('CASH_VOUCHER_REQUIRED', 'A voucher hold must name its cash voucher', 400)
+    if (input.lines?.length || input.supplierPaymentId) {
+      throw new AppError('LINES_ON_VOUCHER_HOLD', 'A cash voucher paid before its documents are verified has no expense lines', 400)
+    }
+    const v = await tx.cashVoucher.findUnique({ where: { id: input.cashVoucherId }, select: { tenantId: true } })
+    if (!v || v.tenantId !== box.tenantId) throw new AppError('BOX_NOT_IN_COMPANY', 'A cash voucher is paid from a box of its own company', 422)
+    accountCode = ACCT.VOUCHERS_AWAITING_DOCS
   } else {
     throw new AppError('BAD_SPEND_NATURE', `Unknown spend nature "${String(nature)}"`, 400)
   }
