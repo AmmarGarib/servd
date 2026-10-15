@@ -31,6 +31,9 @@ import { requireAuth, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
 import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, delegatedTenantsByType, type ApprovalGrant } from '../../lib/approvalRights.js'
 import { viaHeadOfficeForSubmit, widenRls } from '../../lib/headOffice.js'
 import { audit } from '../../lib/audit.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 import { AppError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
@@ -523,9 +526,18 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     await assertLensLayoutAllowed(req, row.tenantId, 'discarding this draft')
     if (row.liveVersion === 0) {
       // Conditional: a first publish landing between the read and the delete
-      // (it already synced a kit to the brand) must not lose its row.
-      const gone = await prisma.siteLayout.deleteMany({ where: { id: row.id, liveVersion: 0 } })
-      if (gone.count === 0) throw new ConflictError('This was published while you were discarding it. Reload and try again.')
+      // (it already synced a kit to the brand) must not lose its row. The page
+      // (a draft only, never live) goes to the Trash in the same transaction; a
+      // lost race throws, which rolls the Trash entry back with it.
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.site_layout, entityId: row.id, tenantId: row.tenantId,
+          title: row.title ?? row.slug, subtitle: `${row.slug} · draft, never published`, reason: trashReasonOf(req),
+          snapshot: takeSnapshot('SiteLayout', row),
+        })
+        const gone = await tx.siteLayout.deleteMany({ where: { id: row.id, liveVersion: 0 } })
+        if (gone.count === 0) throw new ConflictError('This was published while you were discarding it. Reload and try again.')
+      })
     } else {
       await prisma.siteLayout.update({
         where: { id: row.id },
@@ -726,12 +738,24 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     // Removing a brand kit puts the brand's Concept back to its pre-kit
     // values in the same transaction (the conditional delete makes a
     // concurrent publish lose cleanly).
+    // The page goes to the Trash first (finding F8: its publish history and A/B
+    // counters used to be erased): the row, every version and every stat are
+    // kept whole in the entry, in the same transaction as the delete.
     const restored = await prisma.$transaction(async (tx) => {
+      const [versions, stats] = await Promise.all([
+        tx.siteLayoutVersion.findMany({ where: { layoutId: row.id }, orderBy: { version: 'asc' } }),
+        tx.siteLayoutStat.findMany({ where: { layoutId: row.id } }),
+      ])
+      await moveToTrash(tx, req, {
+        type: TRASH_MARKETING.site_layout, entityId: row.id, tenantId: row.tenantId,
+        title: row.title ?? row.slug, subtitle: `${row.slug} · v${row.liveVersion}`, reason: trashReasonOf(req),
+        snapshot: takeSnapshot('SiteLayout', row, { SiteLayoutVersion: versions, SiteLayoutStat: stats }),
+      })
       const gone = await tx.siteLayout.deleteMany({ where: { id: row.id, liveVersion: row.liveVersion } })
-      if (gone.count === 0) return null
+      // A publish landing meanwhile wins; throwing rolls the Trash entry back too.
+      if (gone.count === 0) throw new ConflictError('The page was published again while you were removing it. Reload and try again.')
       return unapplyKitTx(tx, row)
     })
-    if (restored === null) throw new ConflictError('The page was published again while you were removing it. Reload and try again.')
     await audit({
       category: 'identity', ...actor(req),
       action: 'site_layout.delete', entity: 'SiteLayout', entityId: row.id,

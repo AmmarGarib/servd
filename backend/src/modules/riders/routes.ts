@@ -28,6 +28,8 @@ import { normalisePhone } from '../auth/otp.js'
 import { revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { audit } from '../../lib/audit.js'
 import { withdrawOffer } from '../dispatch/service.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { TRASH_COMPANY, inTrashConflict } from '../trash/providers/masters/company.js'
 
 const riderSchema = z.object({
   name: z.string().min(1),
@@ -43,12 +45,26 @@ const riderSchema = z.object({
   notes: z.string().optional(),
 })
 
-/** Turn the unique-phone violation into a clear 409. */
-function phoneTaken(err: unknown): never {
-  if ((err as { code?: string }).code === 'P2002') {
-    throw new AppError('PHONE_TAKEN', 'Another rider already uses this phone number', 409)
+/**
+ * Turn the unique-phone violation into a clear 409 — IN_TRASH when the number
+ * belongs to a rider in the Trash of a company the operator is in (restore
+ * them instead), else PHONE_TAKEN.
+ */
+function phoneTaken(req: FastifyRequest, phone: string | undefined) {
+  return async (err: unknown): Promise<never> => {
+    if ((err as { code?: string }).code === 'P2002') {
+      const holder = phone
+        ? await serviceClient.rider.findUnique({ where: { phone }, select: { id: true, tenantId: true, deletedAt: true } })
+        : null
+      if (holder?.deletedAt) {
+        const visible = !!holder.tenantId && (req.staffUser?.memberTenantIds ?? []).includes(holder.tenantId)
+        const inTrash = await inTrashConflict(TRASH_COMPANY.rider, holder.id, visible, 'A rider with this phone number')
+        if (inTrash) throw inTrash
+      }
+      throw new AppError('PHONE_TAKEN', 'Another rider already uses this phone number', 409)
+    }
+    throw err
   }
-  throw err
 }
 
 // Helper: assert a Rider exists in the caller's company scope, or throw 404.
@@ -242,7 +258,7 @@ export async function riderRoutes(fastify: FastifyInstance) {
     const body = riderSchema.parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before adding a rider', 422)
-    const rider = await prisma.rider.create({ data: { ...body, tenantId } }).catch(phoneTaken)
+    const rider = await prisma.rider.create({ data: { ...body, tenantId } }).catch(phoneTaken(req, body.phone))
     return reply.status(201).send(rider)
   })
 
@@ -253,7 +269,7 @@ export async function riderRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = riderSchema.partial().parse(req.body)
       const rider = await loadRiderInScope(req, req.params.id, 'write')
-      const updated = await prisma.rider.update({ where: { id: rider.id }, data: body }).catch(phoneTaken)
+      const updated = await prisma.rider.update({ where: { id: rider.id }, data: body }).catch(phoneTaken(req, body.phone))
       // A new number is a new sign-in identity: whoever held the old one is out.
       if (body.phone && body.phone !== rider.phone) await revokeAllForSubject(rider.id)
       return updated
@@ -266,7 +282,19 @@ export async function riderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const rider = await loadRiderInScope(req, req.params.id, 'write')
-      await prisma.rider.update({ where: { id: rider.id }, data: { deletedAt: new Date(), isActive: false } })
+      // To the Trash (type `rider`); a restore brings them back inactive.
+      await serviceClient.$transaction(async (tx) => {
+        const [jobs, orders] = await Promise.all([
+          tx.riderJobEvent.count({ where: { riderId: rider.id }, take: 1 }),
+          tx.order.count({ where: { riderId: rider.id }, take: 1 }),
+        ])
+        await moveToTrash(tx, req, {
+          type: TRASH_COMPANY.rider, entityId: rider.id, tenantId: rider.tenantId,
+          title: rider.name, subtitle: rider.phone, reason: trashReasonOf(req),
+          meta: { previous: { isActive: rider.isActive }, everUsed: jobs + orders > 0 },
+        })
+        await tx.rider.update({ where: { id: rider.id }, data: { deletedAt: new Date(), isActive: false } })
+      })
       // Their rider-app session ends now, not when the token expires (the
       // rider guard re-checks the row too — this is the belt to its braces).
       await revokeAllForSubject(rider.id)

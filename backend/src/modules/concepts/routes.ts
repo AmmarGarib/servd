@@ -2,7 +2,9 @@ import { UNREGISTERED_PROVINCES } from '../accounting/taxAuthorities.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { TRASH_COMPANY, inTrashConflict } from '../trash/providers/masters/company.js'
 import type { UserRole } from '@prisma/client'
 import { requireAuth, MANAGERS, CASHIERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
@@ -482,6 +484,13 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     const body = createConceptSchema.parse(req.body)
     // A head office never has brands (D1 §6.7): 422 HEAD_OFFICE_HAS_NO_BRANDS.
     await assertTradingCompany(req.staffUser!.tenantId)
+    // A slug held by a brand in the Trash → 409 IN_TRASH (restore it instead).
+    const holder = await serviceClient.concept.findUnique({ where: { slug: body.slug }, select: { id: true, tenantId: true, deletedAt: true } })
+    if (holder?.deletedAt) {
+      const visible = !!holder.tenantId && (req.staffUser!.memberTenantIds ?? []).includes(holder.tenantId)
+      const err = await inTrashConflict(TRASH_COMPANY.brand, holder.id, visible, 'A brand with this web address')
+      if (err) throw err
+    }
     const concept = await prisma.concept.create({
       data: { ...body, tenantId: req.staffUser!.tenantId! },
     })
@@ -555,14 +564,24 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   })
 
   // DELETE /concepts/:id (soft delete) — must belong to active tenant
+  // It goes to the Trash (modules/trash, type `brand`): the CEO restores it —
+  // switched off — or archives it; a brand is never erased (orders, ledger).
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
-    const owned = await prisma.concept.findFirst({
-      where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+    const owned = await serviceClient.concept.findFirst({
+      where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+      select: { id: true, name: true, slug: true, tenantId: true, isActive: true },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
-    await prisma.concept.update({
-      where: { id: req.params.id },
-      data: { deletedAt: new Date(), isActive: false },
+    await serviceClient.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: TRASH_COMPANY.brand, entityId: owned.id, tenantId: owned.tenantId, conceptId: owned.id,
+        title: owned.name, subtitle: owned.slug, reason: trashReasonOf(req),
+        meta: { previous: { isActive: owned.isActive } },
+      })
+      await tx.concept.update({
+        where: { id: owned.id },
+        data: { deletedAt: new Date(), isActive: false },
+      })
     })
     return reply.status(204).send()
   })

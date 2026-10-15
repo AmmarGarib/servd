@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 
 // Stations are brand-anchored (Station.conceptId) — their company is the
 // brand's company. Reads are view-aware (the active company, or every company
@@ -159,15 +160,21 @@ export async function stationRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const owned = await prisma.station.findFirst({
       where: await ownedStationWhere(req, req.params.id, 'write'),
-      select: { id: true, name: true },
+      select: { id: true, name: true, isActive: true, conceptId: true, concept: { select: { tenantId: true } } },
     })
     if (!owned) throw new NotFoundError('Station', req.params.id)
 
     await assertStationIdle(owned, 'delete it')
 
-    await prisma.station.update({
-      where: { id: owned.id },
-      data: { deletedAt: new Date(), isActive: false },
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'station', entityId: owned.id, tenantId: owned.concept.tenantId, conceptId: owned.conceptId,
+        title: owned.name, reason: trashReasonOf(req), meta: { previous: { isActive: owned.isActive } },
+      })
+      await tx.station.update({
+        where: { id: owned.id },
+        data: { deletedAt: new Date(), isActive: false },
+      })
     })
     return reply.status(204).send()
   })

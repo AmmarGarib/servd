@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { assertConceptOwned } from '../../lib/tenantScope.js'
+import { assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { emitItem86d } from '../../lib/ws.js'
 import { seedAvailability } from '../../lib/reservation.js'
 
@@ -236,7 +237,8 @@ export async function menuRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // DELETE /menu/items/:id
+  // DELETE /menu/items/:id — soft delete + a Trash entry (one transaction).
+  // Restore / "delete forever" live in the Trash (modules/trash).
   fastify.delete<{ Params: { id: string } }>(
     '/items/:id',
     { preHandler: requireAuth(...MANAGERS) },
@@ -245,13 +247,17 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
+        include: { concept: { select: { tenantId: true } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Item not found in your active company' } })
-      await prisma.menuItem.update({
-        where: { id: req.params.id },
-        data: { deletedAt: new Date() },
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'menu_item', entityId: owned.id, tenantId: owned.concept.tenantId, conceptId: owned.conceptId,
+          title: owned.name, parent: { type: 'category', id: owned.categoryId }, reason: trashReasonOf(req),
+        })
+        await tx.menuItem.update({ where: { id: owned.id }, data: { deletedAt: new Date() } })
       })
       return reply.status(204).send()
     },
@@ -303,7 +309,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
           deletedAt: null,
           concept: { tenantId: { in: req.staffUser!.memberTenantIds }, deletedAt: null },
         },
-        include: { _count: { select: { items: { where: { deletedAt: null } } } } },
+        include: { _count: { select: { items: { where: { deletedAt: null } } } }, concept: { select: { tenantId: true } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in a company you have access to' } })
       if (owned._count.items > 0) {
@@ -312,7 +318,13 @@ export async function menuRoutes(fastify: FastifyInstance) {
           message: `Delete or move the ${owned._count.items} item(s) in this category first.`,
         }})
       }
-      await prisma.category.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'category', entityId: owned.id, tenantId: owned.concept.tenantId, conceptId: owned.conceptId,
+          title: owned.name, reason: trashReasonOf(req),
+        })
+        await tx.category.update({ where: { id: owned.id }, data: { deletedAt: new Date() } })
+      })
       return reply.status(204).send()
     },
   )
@@ -345,13 +357,17 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          menuItem: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+          menuItem: { concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
         },
+        include: { menuItem: { select: { name: true, conceptId: true, concept: { select: { tenantId: true } } } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Modifier group not found in your active company' } })
-      await prisma.modifierGroup.update({
-        where: { id: req.params.id },
-        data: { deletedAt: new Date() },
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'modifier_group', entityId: owned.id, tenantId: owned.menuItem.concept.tenantId, conceptId: owned.menuItem.conceptId,
+          title: owned.name, subtitle: owned.menuItem.name, parent: { type: 'menu_item', id: owned.menuItemId }, reason: trashReasonOf(req),
+        })
+        await tx.modifierGroup.update({ where: { id: owned.id }, data: { deletedAt: new Date() } })
       })
       return reply.status(204).send()
     },

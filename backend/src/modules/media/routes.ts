@@ -5,6 +5,9 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, MARKETING_TEAM } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 import { FONT_FAMILY_RE, cleanFontFamily } from '../siteLayouts/schemas.js'
 
 /** A font family is written inside a quoted CSS string on the storefront: a
@@ -267,10 +270,19 @@ export async function mediaRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const asset = await prisma.mediaAsset.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-        select: { id: true },
       })
       if (!asset) throw new NotFoundError('MediaAsset', req.params.id)
-      await prisma.mediaAsset.delete({ where: { id: asset.id } })
+      // Row only: the stored file is not deleted today and stays that way, so a
+      // restore brings back a working asset. The row is kept whole in the Trash.
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.media_asset, entityId: asset.id, tenantId: asset.tenantId, conceptId: asset.conceptId,
+          title: asset.name || asset.filename, subtitle: asset.kind, reason: trashReasonOf(req),
+          parent: asset.conceptId ? { type: 'brand', id: asset.conceptId } : null,
+          snapshot: takeSnapshot('MediaAsset', asset),
+        })
+        await tx.mediaAsset.delete({ where: { id: asset.id } })
+      })
       return reply.status(204).send()
     },
   )

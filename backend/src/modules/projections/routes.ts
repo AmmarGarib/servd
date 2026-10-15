@@ -20,13 +20,15 @@ import { requireAuth, FINANCE_TEAM } from '../auth/middleware.js'
 // works them as well as the manager tiers. Who actually gets in is narrowed by
 // the 'projections' module (lib/moduleAccess.ts gates /projections): by
 // default the CEO, owners, management and finance — not the FOH/BOH managers.
-const PROJECTION_TEAM = FINANCE_TEAM
+export const PROJECTION_TEAM = FINANCE_TEAM
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { requireActiveCompany, assertConceptAttachable, assertConceptOfCompany } from '../financePlanning/companyRefs.js'
 import { monthlyLabourCents } from './labour.js'
 import { PLAN_LABELS } from '../../lib/labour-budget.js'
 import { toCents } from '../../lib/money.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 
 const brandInputSchema = z.object({
   conceptId:           z.string(),
@@ -387,8 +389,18 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
 
   // ── Delete a scenario ─────────────────────────────────────────────────
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...PROJECTION_TEAM) }, async (req) => {
-    const projection = await findProjectionInScope(req, req.params.id, 'write')
-    await prisma.projection.delete({ where: { id: projection.id } })
+    const found = await findProjectionInScope(req, req.params.id, 'write')
+    // Trash (owner, 2026-10-15): the scenario and its brand inputs are kept in the entry.
+    const projection = await prisma.projection.findUniqueOrThrow({ where: { id: found.id }, include: { brands: true } })
+    const { brands, ...row } = projection
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'projection', entityId: projection.id, tenantId: projection.tenantId,
+        title: projection.name, subtitle: `${brands.length} brand${brands.length === 1 ? '' : 's'}`,
+        reason: trashReasonOf(req), snapshot: takeSnapshot('Projection', row, { ProjectionBrandInput: brands }),
+      })
+      await tx.projection.delete({ where: { id: projection.id } })
+    })
     return { ok: true }
   })
 }

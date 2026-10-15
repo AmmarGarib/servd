@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
+import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { TRASH_COMPANY, locationEverUsed } from '../trash/providers/masters/company.js'
 import { publicBrandWhere } from '../../lib/publicBrands.js'
 
 function slugify(s: string): string {
@@ -51,10 +54,15 @@ async function assertConceptsBelongTo(tenantId: string, conceptIds: string[]): P
  * have yet (no address typed, no pin dropped) leaves the brand's existing
  * value alone, so a half-filled location never blanks a live storefront.
  */
-export async function syncConceptLocationMirror(conceptIds: string[]): Promise<void> {
+export async function syncConceptLocationMirror(
+  conceptIds: string[],
+  // A transaction that just changed the links (the Trash's location restore)
+  // passes itself, so the mirror reads its own uncommitted links.
+  db: Prisma.TransactionClient | typeof serviceClient = serviceClient,
+): Promise<void> {
   const ids = Array.from(new Set(conceptIds))
   for (const conceptId of ids) {
-    const link = await serviceClient.conceptLocation.findFirst({
+    const link = await db.conceptLocation.findFirst({
       where: { conceptId, location: { deletedAt: null, isActive: true } },
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
       select: { location: { select: { address: true, latitude: true, longitude: true } } },
@@ -65,7 +73,7 @@ export async function syncConceptLocationMirror(conceptIds: string[]): Promise<v
     if (loc.address && loc.address.trim()) data.address = loc.address.trim()
     if (loc.latitude != null && loc.longitude != null) { data.latitude = loc.latitude; data.longitude = loc.longitude }
     if (Object.keys(data).length === 0) continue
-    await serviceClient.concept.updateMany({ where: { id: conceptId, deletedAt: null }, data })
+    await db.concept.updateMany({ where: { id: conceptId, deletedAt: null }, data })
   }
 }
 
@@ -230,21 +238,31 @@ export async function locationRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const existing = await prisma.location.findFirst({
-        where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
-        select: { id: true, concepts: { select: { conceptId: true } } },
+      const existing = await serviceClient.location.findFirst({
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+        select: { id: true, name: true, city: true, tenantId: true, concepts: { select: { conceptId: true, isPrimary: true } } },
       })
       if (!existing) throw new NotFoundError('Location', req.params.id)
 
-      await prisma.$transaction([
+      // To the Trash (type `location`): the brand links are kept in the entry
+      // so a restore can put them back (same company, live brands only).
+      await serviceClient.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_COMPANY.location, entityId: existing.id, tenantId: existing.tenantId,
+          title: existing.name, subtitle: existing.city ?? null, reason: trashReasonOf(req),
+          meta: {
+            brandLinks: existing.concepts.map((c) => ({ conceptId: c.conceptId, isPrimary: c.isPrimary })),
+            everUsed: await locationEverUsed(tx, existing.id),
+          },
+        })
         // Unlink brands so the location stops being a candidate anywhere
         // (nearest-branch picker, order fallback) — the row itself stays.
-        prisma.conceptLocation.deleteMany({ where: { locationId: existing.id } }),
-        prisma.location.update({
+        await tx.conceptLocation.deleteMany({ where: { locationId: existing.id } })
+        await tx.location.update({
           where: { id: existing.id },
           data: { deletedAt: new Date(), isActive: false },
-        }),
-      ])
+        })
+      })
       // Brands that were here fall back to their next kitchen, if any.
       await syncConceptLocationMirror(existing.concepts.map((c) => c.conceptId))
       return reply.status(204).send()

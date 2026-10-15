@@ -17,6 +17,8 @@ import { activeTenantId } from '../../lib/tenantScope.js'
 import { normalisePhone } from '../auth/otp.js'
 import { csv } from '../accounting/csv.js'
 import { audit } from '../../lib/audit.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import {
   HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, withSystemFields, ORG_UNIT_KINDS, DOCUMENT_TYPES,
@@ -57,7 +59,7 @@ import { headOfficeSetupApplied } from '../headOffices/books.js'
 import { workLocationRoutes, syncPrimaryWorkLocation } from './workLocations.js'
 import { attendanceTrackingRoutes } from './attendanceTracking.js'
 
-const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
+export const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 /** The HR back office under /hr/records (audit PPL-R2-01). lib/moduleAccess.ts
  *  cannot gate that prefix — self-service and HOD steps share it — so the
  *  admin handlers carry the module check themselves: the CEO's Module Access
@@ -1414,9 +1416,19 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrDocument.update({ where: { id: doc.id }, data: { verifiedById: req.staffUser!.id, verifiedAt: new Date() } })
   })
   fastify.delete<{ Params: { id: string } }>('/documents/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
-    const doc = await prisma.hrDocument.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    const doc = await prisma.hrDocument.findFirst({ where: { id: req.params.id, ...writeTenants(req) }, include: { employee: { select: { fullName: true } } } })
     if (!doc) throw new NotFoundError('Document', req.params.id)
-    await prisma.hrDocument.delete({ where: { id: doc.id } })
+    // Trash (owner, 2026-10-15): the row is kept in the entry, then deleted.
+    const { employee, ...row } = doc
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'hr_document', entityId: doc.id, tenantId: doc.tenantId,
+        title: `${doc.title || doc.docType} — ${employee.fullName}`, subtitle: doc.docType,
+        reason: trashReasonOf(req),
+        snapshot: takeSnapshot('HrDocument', row),
+      })
+      await tx.hrDocument.delete({ where: { id: doc.id } })
+    })
     return reply.status(204).send()
   })
   fastify.get('/documents/types', { preHandler: requireAuth(...HR_ADMIN) }, async () => DOCUMENT_TYPES)
@@ -2109,7 +2121,17 @@ export async function hrRoutes(fastify: FastifyInstance) {
       await assertHoMayPropose(req, run.tenantId, run.createdById === me && run.preparedByIds.every((id) => id === me), 'deleting a payroll someone else prepared')
     }
     if (run.status !== 'draft') throw new AppError('NOT_DRAFT', 'Only a draft payroll can be deleted', 409)
-    await prisma.hrPayrollRun.delete({ where: { id: run.id } })
+    // Trash (owner, 2026-10-15): the draft and its payslips are kept in the entry.
+    const slips = await prisma.hrPayslip.findMany({ where: { runId: run.id } })
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'hr_payroll_run', entityId: run.id, tenantId: run.tenantId,
+        title: `Payroll ${run.period} (draft)`, subtitle: `${slips.length} payslips`, reason: trashReasonOf(req),
+        snapshot: takeSnapshot('HrPayrollRun', run, { HrPayslip: slips }),
+        meta: { period: run.period },
+      })
+      await tx.hrPayrollRun.delete({ where: { id: run.id } })
+    })
     return reply.status(204).send()
   })
 
@@ -2162,7 +2184,17 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   // Back to the built-in default: the company's own version is removed.
   fastify.delete<{ Params: { key: string } }>('/letters/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
-    await prisma.hrLetterTemplate.deleteMany({ where: { tenantId: activeTenant(req), key: req.params.key } })
+    const tenantId = activeTenant(req)
+    const row = await prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key: req.params.key } } })
+    if (!row) return reply.status(204).send()
+    // Trash (owner, 2026-10-15): the company's own wording is kept in the entry.
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: 'hr_letter', entityId: row.id, tenantId, title: row.title, subtitle: row.key,
+        reason: trashReasonOf(req), snapshot: takeSnapshot('HrLetterTemplate', row), meta: { key: row.key },
+      })
+      await tx.hrLetterTemplate.delete({ where: { id: row.id } })
+    })
     return reply.status(204).send()
   })
 

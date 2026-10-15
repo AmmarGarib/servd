@@ -17,6 +17,9 @@ import { assertPaymentMethodAvailable, availablePaymentMethods } from './payment
 import { assertOpenForOrders, orderingState, orderTime, sectionVisibleAt } from './serviceHours.js'
 import { publicBrandWhere, isTestCompanyOf } from '../../lib/publicBrands.js'
 import { walletBalanceAt, holdWalletForCheckout, attachHoldToOrder, releaseWalletHold, spendWalletOnOrder } from '../wallet/service.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 
 
 // Snap rider coordinates to a ~110m grid before returning to customers.
@@ -1889,10 +1892,17 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const owned = await prisma.storefrontPromo.findFirst({
         where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-        select: { id: true },
       })
       if (!owned) throw new NotFoundError('StorefrontPromo', req.params.id)
-      await prisma.storefrontPromo.delete({ where: { id: owned.id } })
+      // Hard delete, kept whole in the Trash (snapshot).
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.storefront_promo, entityId: owned.id, tenantId: owned.tenantId,
+          title: owned.headline, subtitle: owned.badge, reason: trashReasonOf(req),
+          snapshot: takeSnapshot('StorefrontPromo', owned),
+        })
+        await tx.storefrontPromo.delete({ where: { id: owned.id } })
+      })
       return reply.status(204).send()
     },
   )

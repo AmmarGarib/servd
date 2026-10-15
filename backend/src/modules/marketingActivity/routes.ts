@@ -113,7 +113,7 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
         prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstClickedAt: { not: null }, campaign: t } }).catch(() => 0),
         prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstOpenedAt: { not: null }, campaign: t } }).catch(() => 0),
         // Promos
-        prisma.promoCode.count({ where: { createdAt: { gte: since }, ...conceptScoped } }).catch(() => 0),
+        prisma.promoCode.count({ where: { createdAt: { gte: since }, deletedAt: null, ...conceptScoped } }).catch(() => 0),
         // Promo redemptions (impact)
         prisma.promoCodeUsage.count({ where: { usedAt: { gte: since }, promoCode: conceptScoped } }).catch(() => 0),
         // Calendar / content posts

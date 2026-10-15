@@ -22,6 +22,7 @@ import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 
 const floorSchema = z.object({
   conceptId:     z.string().uuid(),
@@ -70,6 +71,7 @@ async function findOwnedFloor(req: FastifyRequest, id: string, mode: ScopeMode) 
   const floor = await prisma.floor.findFirst({
     where: {
       id,
+      deletedAt: null, // a trashed floor is restored from the Trash, not edited
       concept: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
     },
   })
@@ -139,10 +141,17 @@ export async function floorRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const existing = await findOwnedFloor(req, req.params.id, 'write')
-      await prisma.$transaction([
-        prisma.table.updateMany({ where: { floorId: existing.id }, data: { floorId: null } }),
-        prisma.floor.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } }),
-      ])
+      const concept = await prisma.concept.findUnique({ where: { id: existing.conceptId }, select: { tenantId: true } })
+      await prisma.$transaction(async (tx) => {
+        // Restore relinks exactly the live tables that sat on it (Trash meta).
+        const liveTables = await tx.table.findMany({ where: { floorId: existing.id, deletedAt: null }, select: { id: true } })
+        await moveToTrash(tx, req, {
+          type: 'floor', entityId: existing.id, tenantId: concept?.tenantId ?? null, conceptId: existing.conceptId,
+          title: existing.name, reason: trashReasonOf(req), meta: { tableIds: liveTables.map((t) => t.id) },
+        })
+        await tx.table.updateMany({ where: { floorId: existing.id }, data: { floorId: null } })
+        await tx.floor.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })
+      })
       return reply.status(204).send()
     },
   )
@@ -197,10 +206,24 @@ export async function floorRoutes(fastify: FastifyInstance) {
       }).parse(req.body)
 
       const floor = await findOwnedFloor(req, req.params.id, 'write')
+      const concept = body.clearExisting
+        ? await prisma.concept.findUnique({ where: { id: floor.conceptId }, select: { tenantId: true } })
+        : null
 
       await prisma.$transaction(async (tx) => {
         if (body.clearExisting) {
-          await tx.table.deleteMany({ where: { floorId: floor.id } })
+          // Soft delete (was a hard deleteMany that threw P2003 -> 500 for any
+          // table an order or reservation pointed at). Each replaced table goes
+          // to the Trash under its floor, so "Apply layout" can be undone.
+          const old = await tx.table.findMany({ where: { floorId: floor.id, deletedAt: null } })
+          for (const t of old) {
+            await moveToTrash(tx, req, {
+              type: 'table', entityId: t.id, tenantId: concept?.tenantId ?? null, conceptId: t.conceptId,
+              title: t.label, subtitle: t.floorSection || null, parent: { type: 'floor', id: floor.id },
+              reason: 'Replaced by a layout template', meta: { floorId: floor.id },
+            })
+          }
+          if (old.length) await tx.table.updateMany({ where: { id: { in: old.map((t) => t.id) } }, data: { deletedAt: new Date() } })
         }
         for (const t of body.tables) {
           await tx.table.create({

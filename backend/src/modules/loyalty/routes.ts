@@ -1,4 +1,7 @@
 import { scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -262,7 +265,15 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
           error: { code: 'TIER_IN_USE', message: `${assigned} customers are on this tier — toggle Active off instead of deleting.` },
         })
       }
-      await prisma.tierConfig.delete({ where: { id: req.params.id } })
+      // Hard delete, kept whole in the Trash (snapshot); a restore needs the slug free.
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.tier_config, entityId: tier.id, tenantId: tier.tenantId,
+          title: tier.displayName || tier.tier, subtitle: `Tier ${tier.tier}${tier.isPaid ? ' · paid' : ''}`, reason: trashReasonOf(req),
+          snapshot: takeSnapshot('TierConfig', tier),
+        })
+        await tx.tierConfig.delete({ where: { id: tier.id } })
+      })
       return reply.status(204).send()
     },
   )

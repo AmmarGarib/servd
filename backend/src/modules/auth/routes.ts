@@ -40,6 +40,8 @@ import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
 import { generateStaffPassword } from '../../lib/generatePassword.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { TRASH_COMPANY, inTrashConflict } from '../trash/providers/masters/company.js'
 import {
   check as checkRateLimit,
   claim as claimRateLimit,
@@ -166,6 +168,24 @@ async function signInAudit(
 /** Why a sign-in failed, as a short code — never the message, never the input. */
 function failReason(err: unknown): string {
   return err instanceof AppError ? err.code.toLowerCase() : 'error'
+}
+
+/**
+ * The email of a new login is held by a login in the Trash → 409 IN_TRASH so
+ * the screen offers "Restore it instead" (the CEO restores logins). Named only
+ * to someone in one of its companies (a company-less login: the CEO); anything
+ * else keeps EMAIL_TAKEN (null here).
+ */
+async function loginInTrash(req: FastifyRequest, holderId: string): Promise<AppError | null> {
+  const h = await prisma.user.findUnique({
+    where: { id: holderId },
+    select: { id: true, deletedAt: true, tenantId: true, tenantMemberships: { select: { tenantId: true } } },
+  })
+  if (!h?.deletedAt) return null
+  const companies = [h.tenantId, ...h.tenantMemberships.map((m) => m.tenantId)].filter(Boolean) as string[]
+  const mine = new Set(req.staffUser?.memberTenantIds ?? [])
+  const visible = companies.length ? companies.some((t) => mine.has(t)) : req.staffUser?.role === 'admin'
+  return inTrashConflict(TRASH_COMPANY.login, h.id, visible, 'A login with that email')
 }
 
 export async function authRoutes(fastify: FastifyInstance) {
@@ -1044,7 +1064,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
     const email = normaliseStaffEmail(typedEmail)
     const taken = await prisma.user.findUnique({ where: { email }, select: { id: true } })
-    if (taken) throw new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
+    if (taken) throw (await loginInTrash(req, taken.id)) ?? new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
 
     // The employee record, if given, must be this company's and not already
     // linked to a login. It is linked on APPROVAL, not now.
@@ -1860,8 +1880,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     if (!isStaffEmail(body.email)) {
       return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
     }
-    if (await prisma.user.findUnique({ where: { email: normaliseStaffEmail(body.email!) }, select: { id: true } })) {
-      throw new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
+    const emailHolder = await prisma.user.findUnique({ where: { email: normaliseStaffEmail(body.email!) }, select: { id: true } })
+    if (emailHolder) {
+      throw (await loginInTrash(req, emailHolder.id)) ?? new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
     }
 
     // Floor roles sign in only with a code to this number; one number is one
@@ -2235,9 +2256,18 @@ export async function authRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
       const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true })
-      await prisma.user.update({
-        where: { id: target.id },
-        data: softDeleteData(),
+      // To the Trash (type `login`, CEO only): a restore brings it back
+      // SUSPENDED, and the sessions revoked below stay dead.
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_COMPANY.login, entityId: target.id, tenantId: auditCompanyOf(target),
+          title: target.name || target.email || 'Login', subtitle: target.email, reason: trashReasonOf(req),
+          meta: { previous: { accountStatus: target.accountStatus, isActive: target.isActive }, role: target.role, companies: target.companies },
+        })
+        await tx.user.update({
+          where: { id: target.id },
+          data: softDeleteData(),
+        })
       })
       await revokeAllForSubject(target.id) // kill the deleted user's sessions now
       await audit({

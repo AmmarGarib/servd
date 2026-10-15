@@ -29,6 +29,9 @@ import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { REQUIRED_ACCOUNT_CODES } from '../../lib/chartOfAccounts.js'
 import { ACCT, revenueCodeForConcept } from '../accounting/journal.js'
 import { AUTHORITY_LIST } from '../accounting/taxAuthorities.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_SETUP } from '../trash/providers/masters/setup.js'
 import {
   scopeTenantWhere, assertConceptOwned, conceptIdsInScope, conceptWhere, type ScopeMode,
   activeTenantId as requireActiveTenant,
@@ -316,10 +319,18 @@ export async function setupRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/modifier-templates/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const existing = await prisma.modifierTemplate.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true },
+      select: { id: true, tenantId: true, name: true, isActive: true, _count: { select: { options: true } } },
     })
     if (!existing) throw new NotFoundError('ModifierTemplate', req.params.id)
-    await prisma.modifierTemplate.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })
+    // To the Trash (owner, 2026-10-15): the options stay on the row, so a restore is complete.
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: TRASH_SETUP.modifier_template, entityId: existing.id, tenantId: existing.tenantId,
+        title: existing.name, subtitle: `${existing._count.options} option${existing._count.options === 1 ? '' : 's'}`,
+        reason: trashReasonOf(req), meta: { previous: { isActive: existing.isActive } },
+      })
+      await tx.modifierTemplate.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })
+    })
     return reply.status(204).send()
   })
 
@@ -415,10 +426,18 @@ export async function setupRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/delivery-zones/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const existing = await prisma.deliveryZone.findFirst({
       where: { id: req.params.id, ...(await brandRowWhere(req, undefined, 'write')) },
-      select: { id: true },
     })
     if (!existing) throw new NotFoundError('DeliveryZone', req.params.id)
-    await prisma.deliveryZone.delete({ where: { id: existing.id } })
+    // Hard delete, but the row is kept whole in the Trash (snapshot) first.
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: TRASH_SETUP.delivery_zone, entityId: existing.id, tenantId: existing.tenantId, conceptId: existing.conceptId,
+        title: existing.name, subtitle: `Fee ${(existing.feeCents / 100).toFixed(0)}`, reason: trashReasonOf(req),
+        parent: existing.conceptId ? { type: 'brand', id: existing.conceptId } : null,
+        snapshot: takeSnapshot('DeliveryZone', existing),
+      })
+      await tx.deliveryZone.delete({ where: { id: existing.id } })
+    })
     return reply.status(204).send()
   })
 
@@ -467,10 +486,18 @@ export async function setupRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/notification-templates/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const existing = await prisma.notificationTemplate.findFirst({
       where: { id: req.params.id, ...(await brandRowWhere(req, undefined, 'write')) },
-      select: { id: true },
     })
     if (!existing) throw new NotFoundError('NotificationTemplate', req.params.id)
-    await prisma.notificationTemplate.delete({ where: { id: existing.id } })
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: TRASH_SETUP.notification_template, entityId: existing.id, tenantId: existing.tenantId, conceptId: existing.conceptId,
+        title: `${existing.event} (${existing.channel}, ${existing.language})`, subtitle: existing.subject ?? null,
+        reason: trashReasonOf(req),
+        parent: existing.conceptId ? { type: 'brand', id: existing.conceptId } : null,
+        snapshot: takeSnapshot('NotificationTemplate', existing),
+      })
+      await tx.notificationTemplate.delete({ where: { id: existing.id } })
+    })
     return reply.status(204).send()
   })
 
@@ -598,13 +625,28 @@ export async function setupRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req, reply) => {
     const existing = await prisma.bankAccount.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true },
+      select: { id: true, tenantId: true, name: true, bankName: true, accountCode: true, isActive: true, raastDefault: true },
     })
     if (!existing) throw new NotFoundError('BankAccount', req.params.id)
     // A deleted account stops receiving Raast: no longer the company default
     // (brand overrides pointing at it fall back to the default — the resolver
-    // ignores deleted accounts).
-    await prisma.bankAccount.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false, raastDefault: false } })
+    // ignores deleted accounts). It goes to the Trash and is NEVER erasable
+    // (it names a chart code); a restore does not make it the Raast default again.
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: TRASH_SETUP.bank_account, entityId: existing.id, tenantId: existing.tenantId,
+        title: existing.name, subtitle: [existing.bankName, existing.accountCode].filter(Boolean).join(' · ') || null,
+        reason: trashReasonOf(req),
+        meta: { previous: { isActive: existing.isActive }, wasRaastDefault: existing.raastDefault },
+      })
+      await tx.bankAccount.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false, raastDefault: false } })
+    })
+    await audit({
+      category: 'accounting', action: 'bank_account.delete', entity: 'BankAccount', entityId: existing.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: existing.tenantId,
+      before: { isActive: existing.isActive, raastDefault: existing.raastDefault },
+      metadata: { name: existing.name, accountCode: existing.accountCode },
+    })
     return reply.status(204).send()
   })
 
@@ -767,10 +809,20 @@ export async function setupRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/custom-fields/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const existing = await prisma.customFieldDefinition.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true },
     })
     if (!existing) throw new NotFoundError('CustomField', req.params.id)
-    await prisma.customFieldDefinition.delete({ where: { id: existing.id } })
+    // The delete used to cascade away every stored value (finding F8): the
+    // values now travel with the field in the Trash and come back with it.
+    await prisma.$transaction(async (tx) => {
+      const values = await tx.customFieldValue.findMany({ where: { fieldId: existing.id } })
+      await moveToTrash(tx, req, {
+        type: TRASH_SETUP.custom_field, entityId: existing.id, tenantId: existing.tenantId,
+        title: existing.label, subtitle: `${existing.scope} · ${existing.key} · ${values.length} value${values.length === 1 ? '' : 's'}`,
+        reason: trashReasonOf(req),
+        snapshot: takeSnapshot('CustomFieldDefinition', existing, { CustomFieldValue: values }),
+      })
+      await tx.customFieldDefinition.delete({ where: { id: existing.id } })
+    })
     return reply.status(204).send()
   })
 
@@ -826,10 +878,18 @@ export async function setupRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/scheduled-reports/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const existing = await prisma.scheduledReport.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await brandRowWhere(req, undefined, 'write')) },
-      select: { id: true },
+      select: { id: true, tenantId: true, conceptId: true, name: true, reportType: true, isActive: true },
     })
     if (!existing) throw new NotFoundError('ScheduledReport', req.params.id)
-    await prisma.scheduledReport.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })
+    await prisma.$transaction(async (tx) => {
+      await moveToTrash(tx, req, {
+        type: TRASH_SETUP.scheduled_report, entityId: existing.id, tenantId: existing.tenantId, conceptId: existing.conceptId,
+        title: existing.name, subtitle: existing.reportType, reason: trashReasonOf(req),
+        parent: existing.conceptId ? { type: 'brand', id: existing.conceptId } : null,
+        meta: { previous: { isActive: existing.isActive } },
+      })
+      await tx.scheduledReport.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })
+    })
     return reply.status(204).send()
   })
 

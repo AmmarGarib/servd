@@ -5,6 +5,9 @@ import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { AppError } from '../../lib/errors.js'
 import { assertConceptOwned, conceptIdsInScope } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 
 const createDiscountSchema = z.object({
   conceptId: z.string().uuid().optional(),
@@ -115,7 +118,24 @@ export async function discountRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Discount not found in your active company' } })
-      await prisma.sectionDiscount.delete({ where: { id: req.params.id } })
+      // Hard delete, but the row is kept whole in the Trash (snapshot) first.
+      // SectionDiscount has no company column: the brand's company is the row's.
+      await prisma.$transaction(async (tx) => {
+        const brand = owned.conceptId
+          ? await tx.concept.findUnique({ where: { id: owned.conceptId }, select: { tenantId: true, name: true } })
+          : null
+        const category = owned.categoryId
+          ? await tx.category.findUnique({ where: { id: owned.categoryId }, select: { name: true } })
+          : null
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.discount, entityId: owned.id, tenantId: brand?.tenantId ?? null, conceptId: owned.conceptId,
+          title: `${owned.discountPercent}% off${category ? ` ${category.name}` : ' all dishes'}`,
+          subtitle: brand?.name ?? null, reason: trashReasonOf(req),
+          parent: owned.conceptId ? { type: 'brand', id: owned.conceptId } : null,
+          snapshot: takeSnapshot('SectionDiscount', owned),
+        })
+        await tx.sectionDiscount.delete({ where: { id: owned.id } })
+      })
       return reply.status(204).send()
     },
   )

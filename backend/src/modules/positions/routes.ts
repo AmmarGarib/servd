@@ -31,6 +31,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, HR_TEAM } from '../auth/middleware.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import type { UserRole } from '@prisma/client'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { budgetedLabour, PLAN_LABELS } from '../../lib/labour-budget.js'
@@ -355,11 +356,19 @@ export async function positionRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: POSITION_EDIT_GUARD }, async (req) => {
     // Soft-archive so historical reports still resolve names/salaries.
     // Another company's seat (or a missing one) is 404, not a P2025 500.
-    const seat = await prisma.position.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true } })
+    const seat = await prisma.position.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
     if (!seat) throw new NotFoundError('Position', req.params.id)
-    await prisma.position.update({
-      where: { id: seat.id },
-      data: { status: 'archived' },
+    // Trash (owner, 2026-10-15): "delete" stays an archive; the entry remembers
+    // the status it had so Restore puts it back.
+    await prisma.$transaction(async (tx) => {
+      if (seat.status !== 'archived') {
+        await moveToTrash(tx, req, {
+          type: 'position', entityId: seat.id, tenantId: seat.tenantId, conceptId: seat.conceptId,
+          title: seat.title, subtitle: seat.headcount > 1 ? `${seat.headcount} seats` : null,
+          reason: trashReasonOf(req), meta: { previous: { status: seat.status } },
+        })
+      }
+      await tx.position.update({ where: { id: seat.id }, data: { status: 'archived' } })
     })
     return { ok: true }
   })

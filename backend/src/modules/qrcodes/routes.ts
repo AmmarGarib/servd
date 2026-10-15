@@ -5,6 +5,9 @@ import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 
 // Company scoping: QR codes are brand-anchored (conceptId), so ownership is
 // resolved through the brand: qrCode → concept → tenant. Every operator
@@ -179,7 +182,17 @@ export async function qrCodeRoutes(fastify: FastifyInstance) {
     { preHandler: marketingGuard },
     async (req, reply) => {
       const existing = await findOwnedQr(req, req.params.id, 'write')
-      await prisma.qrCode.delete({ where: { id: existing.id } })
+      // Hard delete, kept whole in the Trash (same id on restore, so a printed code works again).
+      await prisma.$transaction(async (tx) => {
+        const brand = await tx.concept.findUnique({ where: { id: existing.conceptId }, select: { tenantId: true, name: true } })
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.qr_code, entityId: existing.id, tenantId: brand?.tenantId ?? null, conceptId: existing.conceptId,
+          title: existing.label, subtitle: `${brand?.name ?? 'Brand'} · ${existing.scanCount} scans`, reason: trashReasonOf(req),
+          parent: { type: 'brand', id: existing.conceptId },
+          snapshot: takeSnapshot('QrCode', existing),
+        })
+        await tx.qrCode.delete({ where: { id: existing.id } })
+      })
       return reply.status(204).send()
     },
   )

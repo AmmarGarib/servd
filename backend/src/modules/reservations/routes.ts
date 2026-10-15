@@ -20,6 +20,8 @@ import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
@@ -1649,7 +1651,18 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       })
       if (!existing) throw new NotFoundError('Blockout', req.params.id)
       await assertConceptAccess(req.staffUser!, existing.conceptId)
-      await prisma.conceptBlockout.delete({ where: { id: existing.id } })
+      // Trash (owner, 2026-10-15): kept in the entry, then deleted.
+      const brand = await prisma.concept.findUnique({ where: { id: existing.conceptId }, select: { name: true, tenantId: true } })
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'concept_blockout', entityId: existing.id, tenantId: brand?.tenantId ?? null, conceptId: existing.conceptId,
+          title: `${existing.kind === 'closure' ? 'Closure' : 'Reduced capacity'} — ${existing.startTime.toISOString().slice(0, 16).replace('T', ' ')}`,
+          subtitle: [brand?.name, existing.reason].filter(Boolean).join(' — ') || null,
+          parent: { type: 'brand', id: existing.conceptId }, reason: trashReasonOf(req),
+          snapshot: takeSnapshot('ConceptBlockout', existing),
+        })
+        await tx.conceptBlockout.delete({ where: { id: existing.id } })
+      })
       return reply.status(204).send()
     },
   )

@@ -5,6 +5,9 @@ import type { FastifyRequest } from 'fastify'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, type ScopeMode, activeTenantId } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 
 const EVENT_TYPES = ['social_post','menu_change','seasonal_ingredient','deal','shoot','event_promo','reminder','task'] as const
 const EVENT_STATUSES = ['draft','scheduled','live','done','cancelled'] as const
@@ -165,8 +168,19 @@ export async function calendarRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      await findEventInScope(req, req.params.id, 'write')
-      await prisma.contentEvent.delete({ where: { id: req.params.id } })
+      const event = await findEventInScope(req, req.params.id, 'write')
+      // Hard delete, but the event AND its social post (which cascades) are kept
+      // whole in the Trash (finding F8: the post used to be lost with it).
+      await prisma.$transaction(async (tx) => {
+        const post = await tx.socialPost.findUnique({ where: { eventId: event.id } })
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.content_event, entityId: event.id, tenantId: event.tenantId, conceptId: event.conceptId,
+          title: event.title, subtitle: `${event.type}${post ? ` · ${post.platform} post` : ''}`, reason: trashReasonOf(req),
+          parent: event.conceptId ? { type: 'brand', id: event.conceptId } : null,
+          snapshot: takeSnapshot('ContentEvent', event, post ? { SocialPost: [post] } : {}),
+        })
+        await tx.contentEvent.delete({ where: { id: event.id } })
+      })
       return reply.status(204).send()
     },
   )

@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 
 const TABLE_STATUSES = ['available', 'seated', 'ordered', 'eating', 'check', 'reserved'] as const
 
@@ -110,7 +111,19 @@ export async function tableRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const table = await findOwnedTable(req, req.params.id)
-      await prisma.table.update({ where: { id: table.id }, data: { deletedAt: new Date() } })
+      const concept = await prisma.concept.findUnique({ where: { id: table.conceptId }, select: { tenantId: true } })
+      const floor = table.floorId
+        ? await prisma.floor.findFirst({ where: { id: table.floorId, deletedAt: null }, select: { id: true } })
+        : null
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'table', entityId: table.id, tenantId: concept?.tenantId ?? null, conceptId: table.conceptId,
+          title: table.label, subtitle: table.floorSection || null, reason: trashReasonOf(req),
+          parent: floor ? { type: 'floor', id: floor.id } : null,
+          meta: { floorId: floor?.id ?? null },
+        })
+        await tx.table.update({ where: { id: table.id }, data: { deletedAt: new Date() } })
+      })
       return reply.status(204).send()
     },
   )

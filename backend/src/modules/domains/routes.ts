@@ -5,7 +5,9 @@ import { promises as dns } from 'dns'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
-import { assertConceptOwned } from '../../lib/tenantScope.js'
+import { assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { TRASH_COMPANY, inTrashConflict } from '../trash/providers/masters/company.js'
 import { refreshDomainOrigins } from './hostCache.js'
 
 const STOREFRONT_TARGET = process.env['SERVD_STOREFRONT_HOST'] ?? 'storefront.servd.pk'
@@ -57,8 +59,17 @@ export async function domainRoutes(fastify: FastifyInstance) {
       throw new AppError('BAD_HOSTNAME', 'Enter only the hostname (e.g. order.mubarakbiryani.pk) — no scheme, port, or path', 400)
     }
 
-    const dup = await prisma.domain.findUnique({ where: { hostname: body.hostname } })
-    if (dup) throw new AppError('HOSTNAME_TAKEN', 'That hostname is already configured', 409)
+    const dup = await serviceClient.domain.findUnique({ where: { hostname: body.hostname }, select: { id: true, tenantId: true, deletedAt: true } })
+    if (dup) {
+      // Held by a domain in the Trash → 409 IN_TRASH so the screen offers
+      // "Restore it instead" (named only to someone in its company).
+      if (dup.deletedAt) {
+        const visible = !!dup.tenantId && (req.staffUser!.memberTenantIds ?? []).includes(dup.tenantId)
+        const err = await inTrashConflict(TRASH_COMPANY.domain, dup.id, visible, 'This hostname')
+        if (err) throw err
+      }
+      throw new AppError('HOSTNAME_TAKEN', 'That hostname is already configured', 409)
+    }
 
     // The domain binds to the ACTIVE company, so its brand (if any) must be
     // one of that company's — not of any company the operator belongs to.
@@ -170,13 +181,21 @@ export async function domainRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const owned = await prisma.domain.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId },
+      const owned = await serviceClient.domain.findFirst({
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'create')) },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Domain not found in your active company' } })
-      await prisma.domain.update({
-        where: { id: req.params.id },
-        data: { deletedAt: new Date(), status: 'disabled' },
+      // To the Trash (type `domain`); a restore brings it back `pending`.
+      await serviceClient.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_COMPANY.domain, entityId: owned.id, tenantId: owned.tenantId, conceptId: owned.conceptId,
+          title: owned.hostname, subtitle: owned.purpose, reason: trashReasonOf(req),
+          meta: { previous: { status: owned.status } },
+        })
+        await tx.domain.update({
+          where: { id: owned.id },
+          data: { deletedAt: new Date(), status: 'disabled' },
+        })
       })
       await refreshDomainOrigins()
       return reply.status(204).send()

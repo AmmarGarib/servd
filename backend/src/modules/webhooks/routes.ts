@@ -14,6 +14,7 @@ import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { handleWaMessage, type WaIncomingMessage } from '../../adapters/whatsapp/conversation.js'
 import { sandboxBlocks } from '../../lib/sandbox.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { promises as dns } from 'dns'
 import {
   parseConversationIdFromAddress,
@@ -383,7 +384,7 @@ export async function webhookRoutes(fastify: FastifyInstance) {
 // really closes it (wave 3 review W3C-RV-2). Every MANAGERS role that holds
 // the page by default (owner, management, manager, foh_management) keeps it;
 // boh_management and fnb_manager, which never had the page, are refused.
-const WEBHOOK_ADMINS = [...MANAGERS, ...CONNECTOR_ADMINS]
+export const WEBHOOK_ADMINS = [...MANAGERS, ...CONNECTOR_ADMINS]
 const webhookGuard = [requireAuth(...WEBHOOK_ADMINS), requireModule('integrations')]
 
 // These endpoints let operators register, inspect and test the outbound
@@ -550,9 +551,17 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
       if (!existing) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
       }
-      await prisma.webhookSubscription.update({
-        where: { id: req.params.id },
-        data: { deletedAt: new Date(), isActive: false },
+      // To the Trash (type `webhook`); a restore brings it back switched off.
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: 'webhook', entityId: existing.id, tenantId: existing.tenantId,
+          title: existing.url, subtitle: existing.events.join(', ') || null, reason: trashReasonOf(req),
+          meta: { previous: { isActive: existing.isActive } },
+        })
+        await tx.webhookSubscription.update({
+          where: { id: existing.id },
+          data: { deletedAt: new Date(), isActive: false },
+        })
       })
       return reply.status(204).send()
     },

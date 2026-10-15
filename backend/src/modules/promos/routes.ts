@@ -5,6 +5,8 @@ import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, type ScopeMode, activeTenantId } from '../../lib/tenantScope.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 
 // discountValue units (ONL-01, lib/promoEval.ts): a 'percentage' promo stores
 // the percent (0 < v ≤ 100); a 'fixed' promo stores PAISA (cents), a whole
@@ -54,7 +56,7 @@ const createPromoSchema = z.object({
 
 
 async function findPromoInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
-  const promo = await prisma.promoCode.findFirst({ where: { id, ...(await scopeTenantWhere(req, mode)) } })
+  const promo = await prisma.promoCode.findFirst({ where: { id, deletedAt: null, ...(await scopeTenantWhere(req, mode)) } })
   if (!promo) throw new NotFoundError('PromoCode', id)
   return promo
 }
@@ -76,6 +78,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
     async (req) => {
       return prisma.promoCode.findMany({
         where: {
+          deletedAt: null, // a trashed code lives in the Trash, not in this list
           ...(await scopeTenantWhere(req, 'read')),
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
           ...(req.query.active === 'true' && { isActive: true }),
@@ -96,7 +99,9 @@ export async function promoRoutes(fastify: FastifyInstance) {
     // New promos bind to the ACTIVE company; a brand, if named, must be its.
     const tenantId = activeTenantId(req)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
-    if (await prisma.promoCode.findFirst({ where: { tenantId, code: body.code }, select: { id: true } })) throw CODE_TAKEN()
+    // Only LIVE codes clash: one in the Trash does not block a new code with the
+    // same text (restoring the old one then asks for a new code, TRASH_CLASH).
+    if (await prisma.promoCode.findFirst({ where: { tenantId, code: body.code, deletedAt: null }, select: { id: true } })) throw CODE_TAKEN()
     try {
       const promo = await prisma.promoCode.create({ data: { ...body, tenantId, startAt: new Date(body.startAt), endAt: new Date(body.endAt) } })
       return reply.status(201).send(promo)
@@ -127,7 +132,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
       }
       if (body.code !== undefined && body.code !== owned.code) {
         const clash = await prisma.promoCode.findFirst({
-          where: { tenantId: owned.tenantId, code: body.code, id: { not: owned.id } },
+          where: { tenantId: owned.tenantId, code: body.code, deletedAt: null, id: { not: owned.id } },
           select: { id: true },
         })
         if (clash) throw CODE_TAKEN()
@@ -149,8 +154,21 @@ export async function promoRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: marketingGuard },
     async (req, reply) => {
-      await findPromoInScope(req, req.params.id, 'write')
-      await prisma.promoCode.delete({ where: { id: req.params.id } })
+      const promo = await findPromoInScope(req, req.params.id, 'write')
+      // To the Trash (owner, 2026-10-15). Orders and usages point at a code, so
+      // it is soft-deleted AND switched off: even an older image after a
+      // rollback (which ignores deletedAt) cannot redeem it. A used code is
+      // never erased for good (providers/masters/marketing.ts).
+      await prisma.$transaction(async (tx) => {
+        await moveToTrash(tx, req, {
+          type: TRASH_MARKETING.promo_code, entityId: promo.id, tenantId: promo.tenantId, conceptId: promo.conceptId,
+          title: promo.code,
+          subtitle: promo.discountType === 'percentage' ? `${promo.discountValue}% off` : `PKR ${(promo.discountValue / 100).toFixed(0)} off`,
+          reason: trashReasonOf(req),
+          meta: { previous: { isActive: promo.isActive } },
+        })
+        await tx.promoCode.update({ where: { id: promo.id }, data: { deletedAt: new Date(), isActive: false } })
+      })
       return reply.status(204).send()
     },
   )

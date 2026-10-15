@@ -15,6 +15,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import type { UserRole } from '@prisma/client'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
@@ -211,9 +212,20 @@ export async function contributionRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const existing = await findEditable(req, req.params.id)
     // Soft-end: keep history but stop counting toward live totals.
-    await prisma.tenantContribution.update({
-      where: { id: existing.id },
-      data: { isActive: false, endedAt: new Date() },
+    // Trash (owner, 2026-10-15): "delete" stays an end; the entry remembers the
+    // state it had so Restore re-opens it. Filed under the paying company.
+    await prisma.$transaction(async (tx) => {
+      if (existing.isActive) {
+        await moveToTrash(tx, req, {
+          type: 'tenant_contribution', entityId: existing.id, tenantId: existing.sourceTenantId,
+          title: existing.label, subtitle: `${existing.category}`, reason: trashReasonOf(req),
+          meta: { previous: { isActive: true, endedAt: existing.endedAt ? existing.endedAt.toISOString() : null }, destinationTenantId: existing.destinationTenantId },
+        })
+      }
+      await tx.tenantContribution.update({
+        where: { id: existing.id },
+        data: { isActive: false, endedAt: new Date() },
+      })
     })
     return { ok: true }
   })

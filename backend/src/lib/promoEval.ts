@@ -84,7 +84,8 @@ export async function evaluatePromo(input: PromoEvalInput): Promise<PromoEval> {
   const fail = (reason: PromoEvalFailure, message: string): PromoEval => ({ ok: false, reason, message })
   if (!code || !input.tenantId) return fail('INVALID_PROMO', 'Promo code is invalid or expired')
 
-  const promo = await prisma.promoCode.findFirst({ where: { code, tenantId: input.tenantId } })
+  // A promo in the Trash (deletedAt set) is never redeemable.
+  const promo = await prisma.promoCode.findFirst({ where: { code, tenantId: input.tenantId, deletedAt: null } })
   const now = input.now ?? new Date()
   if (!promo || !promo.isActive) return fail('INVALID_PROMO', 'Promo code is invalid or expired')
   if (promo.startAt > now) return fail('PROMO_NOT_STARTED', 'Promo code is not yet active')

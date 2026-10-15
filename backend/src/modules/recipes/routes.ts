@@ -22,6 +22,8 @@ import {
 } from '../../lib/approvalRights.js'
 import { toCents } from '../../lib/money.js'
 import { audit } from '../../lib/audit.js'
+import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
 
 // Every cost on this module comes from lib/recipeCost.ts — THE plate cost the
 // ledger books as COGS and the stock depletion explodes. That is: each
@@ -1919,7 +1921,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      await assertRecipeInScope(req, req.params.id)
+      const owned = await assertRecipeInScope(req, req.params.id)
       // A prep recipe another recipe still uses can't go: deleting it would
       // null that ingredient line, which the recipe_ingredients_one_source
       // check rejects (a 500), and silently dropping the line would change
@@ -1933,10 +1935,43 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         const names = [...new Set(usedBy.map((u) => u.recipe.name ?? u.recipe.menuItem?.name ?? 'a recipe'))]
         throw new AppError('RECIPE_IN_USE', `This prep recipe is used in ${names.join(', ')}. Remove it from ${names.length === 1 ? 'that recipe' : 'those recipes'} first.`, 409)
       }
-      // deleteMany for idempotency — repeated DELETEs (React Query refetch
-      // race, browser preflight oddities) on an already-gone row would throw
-      // Prisma P2025 → 500. deleteMany silently no-ops.
-      await prisma.recipe.deleteMany({ where: { id: req.params.id } })
+      // A step that was ever fired on the KDS has OrderItemStep rows (FK
+      // restrict): the cascade would throw P2003 -> 500. Say so instead.
+      const fired = await prisma.orderItemStep.count({ where: { recipeStep: { recipeId: req.params.id } } })
+      if (fired > 0) {
+        throw new AppError('RECIPE_IN_USE', 'This recipe has been cooked on the kitchen screens, so it cannot be deleted. Take it off the menu (set it inactive) instead.', 409)
+      }
+      // The recipe, its lines, steps and test cooks go to the Trash as a
+      // snapshot (same ids on restore) in the same transaction as the delete.
+      // deleteMany for idempotency — repeated DELETEs on an already-gone row
+      // would throw Prisma P2025 -> 500.
+      await prisma.$transaction(async (tx) => {
+        const recipe = await tx.recipe.findUnique({
+          where: { id: req.params.id },
+          include: {
+            ingredients: true, recipeSteps: true, testAttempts: true,
+            menuItem: { select: { name: true, conceptId: true, concept: { select: { tenantId: true } } } },
+          },
+        })
+        if (!recipe) return
+        const { ingredients, recipeSteps, testAttempts, menuItem, ...row } = recipe
+        const companies = await recipeCompanies(req, owned)
+        const conceptId = menuItem?.conceptId
+          ?? (recipe.pendingMenuItem as { conceptId?: string } | null)?.conceptId
+          ?? null
+        await moveToTrash(tx, req, {
+          type: 'recipe', entityId: recipe.id, tenantId: owned.ownerTenantId ?? companies[0] ?? null, conceptId,
+          title: recipe.name ?? menuItem?.name ?? 'Recipe',
+          subtitle: recipe.kind === 'plate' ? 'Plate recipe' : recipe.kind === 'component' ? 'Sub-recipe' : 'Add-on recipe',
+          reason: trashReasonOf(req),
+          snapshot: takeSnapshot('Recipe', row as Record<string, unknown>, {
+            RecipeIngredient: ingredients as Array<Record<string, unknown>>,
+            RecipeStep: recipeSteps as Array<Record<string, unknown>>,
+            RecipeTestAttempt: testAttempts as Array<Record<string, unknown>>,
+          }),
+        })
+        await tx.recipe.deleteMany({ where: { id: req.params.id } })
+      })
       return reply.status(204).send()
     },
   )
@@ -2264,6 +2299,15 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             dependents,
           },
         })
+      }
+      // Fired on the KDS before? OrderItemStep keeps the row (FK restrict) —
+      // answer 409 instead of a 500.
+      const fired = await prisma.orderItemStep.count({ where: { recipeStepId: req.params.stepId } })
+      if (fired > 0) {
+        return reply.status(409).send({ error: {
+          code: 'RECIPE_STEP_IN_USE',
+          message: 'This step has already been cooked on the kitchen screens, so it cannot be removed. Edit its words instead.',
+        } })
       }
       await prisma.recipeStep.delete({ where: { id: req.params.stepId } })
       return reply.status(204).send()
