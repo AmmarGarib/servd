@@ -33,6 +33,7 @@ import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_C
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { childRolesFor } from '../../lib/workspaces.js'
+import { withoutCeoOnlyModules } from '../../lib/moduleAccess.js'
 import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
@@ -2000,7 +2001,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       // which is also "back to role default."
       if (body.permissionAllow != null) data.permissionAllow = body.permissionAllow
       if (body.permissionDeny  != null) data.permissionDeny  = body.permissionDeny
-      if (body.moduleAllow     != null) data.moduleAllow     = body.moduleAllow
+      // CEO-only modules (Brands) are never granted per user either.
+      if (body.moduleAllow     != null) data.moduleAllow     = withoutCeoOnlyModules(body.moduleAllow)
       if (body.moduleDeny      != null) data.moduleDeny      = body.moduleDeny
       if (body.stationIds      != null) data.stationIds      = body.stationIds
 

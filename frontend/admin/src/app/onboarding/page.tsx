@@ -580,7 +580,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
                 <p className="font-bold text-white/90 text-sm">{b.name}</p>
                 <p className="text-xs text-white/45 font-mono truncate">{b.conceptStatement ?? `/${b.slug}`}</p>
               </div>
-              <Link href={`/marketing/brands?id=${encodeURIComponent(b.id)}`}
+              <Link href={`/ceo/brands?id=${encodeURIComponent(b.id)}`}
                 className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white shrink-0">
                 Edit
               </Link>

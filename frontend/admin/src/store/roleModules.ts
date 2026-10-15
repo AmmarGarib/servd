@@ -28,12 +28,15 @@ interface RoleModulesResponse {
   defaults: Partial<Record<AppRole, ModuleId[]>>
   overrides: Partial<Record<AppRole, ModuleId[]>>
   modules: ModuleId[]
+  /** Modules no role but the CEO may hold (Brands) — the matrix locks them. */
+  ceoOnlyModules?: ModuleId[]
 }
 
 interface State {
   defaults: Partial<Record<AppRole, ModuleId[]>>
   overrides: Partial<Record<AppRole, ModuleId[]>>
   allModules: ModuleId[]
+  ceoOnlyModules: ModuleId[]
   hydrate: (r: RoleModulesResponse) => void
   setRoleModules: (role: AppRole, modules: ModuleId[]) => Promise<void>
   resetRole: (role: AppRole) => Promise<void>
@@ -52,7 +55,8 @@ export const useRoleModules = create<State>()((set, get) => ({
   defaults: {},
   overrides: {},
   allModules: [],
-  hydrate: (r) => set({ defaults: r.defaults ?? {}, overrides: r.overrides ?? {}, allModules: r.modules ?? [] }),
+  ceoOnlyModules: [],
+  hydrate: (r) => set({ defaults: r.defaults ?? {}, overrides: r.overrides ?? {}, allModules: r.modules ?? [], ceoOnlyModules: r.ceoOnlyModules ?? [] }),
   setRoleModules: async (role, modules) => {
     if (role === 'admin') return                          // CEO is immutable
     await putRole(role, modules)

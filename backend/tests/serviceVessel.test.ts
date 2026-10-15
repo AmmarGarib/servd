@@ -8,7 +8,8 @@
 //   - the company route that makes a brand (POST /tenants/apply-template)
 //     without it → 400; with it → stored on that brand;
 //   - PATCH by company B on A's brand → 404, nothing changes;
-//   - PATCH by A writes the 'concept.service_vessel' audit with from / to and
+//   - PATCH is CEO only (Brands, 2026-10-14): A's management → 403;
+//   - PATCH by A's CEO writes the 'concept.service_vessel' audit with from / to and
 //     the "applies from now on" note, on the BRAND's company; a PATCH that
 //     leaves the vessel alone writes no such audit;
 //   - GET returns it;
@@ -117,21 +118,28 @@ describe('PATCH /concepts/:id serviceVessel', () => {
     expect(await prisma.auditLog.count({ where: { action: 'concept.service_vessel', entityId: A.conceptId } })).toBe(0)
   })
 
+  it('management is refused (Brands is CEO only, 2026-10-14) — 403, nothing changes', async () => {
+    const r = await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'packaging' })
+    expect(r.statusCode).toBe(403)
+    expect(r.json().error.code).toBe('BRAND_CEO_ONLY')
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).serviceVessel).toBe('plate')
+  })
+
   it('a bad value → 400', async () => {
-    expect((await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'tray' })).statusCode).toBe(400)
+    expect((await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'tray' })).statusCode).toBe(400)
   })
 
   it('a change is audited with from / to on the brand\'s company; an earlier line keeps its snapshot, a later line takes the new vessel', async () => {
     const before = await ring(A.conceptId, A.items.nihari)
     expect(before.serviceVessel).toBe('plate')
 
-    const r = await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'packaging' })
+    const r = await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'packaging' })
     expect(r.statusCode).toBe(200)
     expect(r.json().serviceVessel).toBe('packaging')
     const audits = await prisma.auditLog.findMany({ where: { action: 'concept.service_vessel', entityId: A.conceptId } })
     expect(audits).toHaveLength(1)
     expect(audits[0]!.tenantId).toBe(A.tenantId)
-    expect(audits[0]!.userId).toBe(mgrA.id)
+    expect(audits[0]!.userId).toBe(ceoA.id)
     expect(audits[0]!.before).toEqual({ serviceVessel: 'plate' })
     expect(audits[0]!.after).toEqual({ serviceVessel: 'packaging' })
     expect(JSON.stringify(audits[0]!.metadata)).toMatch(/from now on/i)
@@ -143,8 +151,8 @@ describe('PATCH /concepts/:id serviceVessel', () => {
   })
 
   it('a PATCH that does not change the vessel writes no vessel audit', async () => {
-    expect((await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'packaging', heroTagline: 'same vessel' })).statusCode).toBe(200)
-    expect((await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, { heroTagline: 'no vessel field' })).statusCode).toBe(200)
+    expect((await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'packaging', heroTagline: 'same vessel' })).statusCode).toBe(200)
+    expect((await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, { heroTagline: 'no vessel field' })).statusCode).toBe(200)
     expect(await prisma.auditLog.count({ where: { action: 'concept.service_vessel', entityId: A.conceptId } })).toBe(1)
   })
 })

@@ -37,6 +37,13 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
   // edit the company-wide rules (selfie / geofence, tip split, service
   // charge), so it must stay a CEO-owned workspace — tested.
   // Head offices join "Companies" when head office is built.
+  //
+  // Brands (owner, 2026-10-14: "the brand editor needs to be moved to CEO
+  // stuff, because a lot of this stuff is not marketing related"): the brand
+  // record — name, legal / tax, POS ids, vessel, contact, brief — is the
+  // CEO's ONLY. 'brands' is a CEO-only module (CEO_ONLY_MODULES in
+  // lib/moduleAccess.ts) and PATCH /concepts is admin-only. Marketing keeps
+  // Storefront and the Brand kit (both still CEO-approved).
   {
     id: 'ceo',
     title: 'CEO',
@@ -46,6 +53,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       { key: 'overview',  title: 'Overview',                    modules: ['ceo_overview'] },
       { key: 'approvals', title: 'Approvals',                   modules: ['approvals'] },
       { key: 'companies', title: 'Companies & head offices',    modules: ['tenants', 'business_info', 'onboarding'] },
+      { key: 'brands',    title: 'Brands',                      modules: ['brands'] },
       { key: 'access',    title: 'Logins & access',             modules: ['role_management', 'role_modules'] },
       { key: 'rules',     title: 'Company rules',               modules: ['configuration', 'settings'] },
     ],
@@ -101,7 +109,8 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     sections: [
       { key: 'workspace', title: 'Workspace',      modules: ['marketing_workspace', 'calendar', 'analytics', 'brand_dashboard'] },
       { key: 'customers', title: 'Customers',      modules: ['crm', 'campaigns', 'promos', 'complaints', 'reviews'] },
-      { key: 'brand',     title: 'Brand & site',   modules: ['brands', 'storefront'] },
+      // The brand records moved to CEO → Brands (owner, 2026-10-14).
+      { key: 'brand',     title: 'Brand & site',   modules: ['storefront'] },
     ],
   },
   {

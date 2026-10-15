@@ -106,7 +106,23 @@ export function isRetiredModuleId(id: string): boolean { return RETIRED_SET.has(
 //     legacy manager.
 const API_WHATSAPP_ONLY = ['api_whatsapp']
 const API_CONNECTORS = ['api_whatsapp', 'api_pos']
-const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m))
+
+// CEO-ONLY modules: no role but the CEO (role admin) may hold them — not by
+// default, not through a saved Module Access row, not through a user's
+// moduleAllow. effectiveModulesForUser drops them for every other role, the
+// Module Access save and the staff save strip them, and their routes check
+// role admin themselves, so a stale row can never re-open one.
+//   brands — CEO → Brands, the one brand editor (owner, 2026-10-14: "the
+//     brand editor needs to be moved to CEO stuff, because a lot of this
+//     stuff is not marketing related"). PATCH /concepts is admin-only.
+export const CEO_ONLY_MODULES: readonly string[] = ['brands']
+const CEO_ONLY_SET = new Set<string>(CEO_ONLY_MODULES)
+/** Drop the CEO-only modules from a non-admin module list. */
+export function withoutCeoOnlyModules(modules: readonly string[]): string[] {
+  return modules.filter((m) => !CEO_ONLY_SET.has(m))
+}
+
+const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m) && !CEO_ONLY_SET.has(m))
 // 'manager' mirrors 'management' for everything EXCEPT the accounting trail,
 // the API connectors, the Finance pre-bill register (none of whose routes
 // admit the legacy role) and Emergency overrides.
@@ -122,7 +138,7 @@ const MANAGER_MODULES = MANAGEMENT_MODULES.filter(
 // — the routes do not admit owner, so neither does the sidebar. Emergency
 // overrides are an on-shift tool (see above), not the co-owner's.
 const OWNER_MODULES = ALL_MODULES.filter(
-  (m) => !['role_management', 'role_modules', 'accounting_audit', 'emergency_overrides'].includes(m) && !API_CONNECTORS.includes(m),
+  (m) => !['role_management', 'role_modules', 'accounting_audit', 'emergency_overrides'].includes(m) && !API_CONNECTORS.includes(m) && !CEO_ONLY_SET.has(m),
 )
 // The books' own audit trail — period closes, manual journals, wage rates,
 // tip-pool postings. Per the owner: the CEO and the exec (management) only.
@@ -163,12 +179,12 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   procurement: ['procurement', 'inventory', 'reports'],
   marketing: [
     'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront',
+    'calendar', 'media', 'promos', 'analytics', 'storefront',
   ],
   brand_manager: [
     'brand_dashboard',
     'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront',
+    'calendar', 'media', 'promos', 'analytics', 'storefront',
   ],
   fnb_manager: [
     'fnb_dashboard',
@@ -239,6 +255,18 @@ export const MODULE_GRANTS: readonly string[] = [
 ]
 export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 
+// ── Modules TAKEN AWAY from saved rows (once) ───────────────────────────────
+// The mirror of MODULE_GRANTS: when a module leaves every non-admin role, the
+// saved RoleModuleAccess rows and users' moduleAllow that still list it are
+// cleaned once (marker in `settings`). Enforcement does not depend on it —
+// CEO_ONLY_MODULES are dropped on every read — this keeps the Module Access
+// matrix and the staff screen honest. Each entry has a stable key.
+export const MODULE_REVOKES: ReadonlyArray<{ key: string; modules: readonly string[] }> = [
+  // Brands moved to the CEO workspace, CEO only (owner, 2026-10-14).
+  { key: 'brands-ceo-only-20261014', modules: ['brands'] },
+]
+export const MODULE_REVOKES_MARKER_KEY = 'moduleAccess.revokesApplied'
+
 /** Non-admin roles whose defaults hold `moduleId` — who a grant adds it for. */
 export function rolesGrantedByDefault(moduleId: string): UserRole[] {
   return (Object.keys(DEFAULT_MODULE_ACCESS) as UserRole[])
@@ -286,12 +314,57 @@ export async function applyModuleGrants(): Promise<{ applied: string[]; roles: U
   return { applied: pending, roles: [...touched] }
 }
 
+/**
+ * Apply every pending MODULE_REVOKES entry once: strip its modules from every
+ * saved role row and from every user's moduleAllow. Conditional updates
+ * (only rows that still list the module) and a union marker, so it is
+ * idempotent and safe to run from two processes at once. moduleDeny is left
+ * alone (a deny of a module nobody holds is harmless).
+ */
+export async function applyModuleRevokes(): Promise<{ applied: string[]; roleRows: number; users: number }> {
+  const marker = await prisma.setting.findUnique({ where: { key: MODULE_REVOKES_MARKER_KEY } })
+  const done = new Set(parseMarker(marker?.value))
+  const pending = MODULE_REVOKES.filter((r) => !done.has(r.key))
+  if (pending.length === 0) return { applied: [], roleRows: 0, users: 0 }
+
+  let roleRows = 0
+  let users = 0
+  for (const rev of pending) {
+    for (const moduleId of rev.modules) {
+      const rows = await prisma.roleModuleAccess.findMany({ where: { modules: { has: moduleId } }, select: { id: true, modules: true } })
+      for (const r of rows) {
+        // Conditional on the row still listing it — a concurrent run is a no-op.
+        const u = await prisma.roleModuleAccess.updateMany({
+          where: { id: r.id, modules: { has: moduleId } },
+          data: { modules: r.modules.filter((m) => m !== moduleId) },
+        })
+        roleRows += u.count
+      }
+      const people = await prisma.user.findMany({ where: { moduleAllow: { has: moduleId } }, select: { id: true, moduleAllow: true } })
+      for (const p of people) {
+        const u = await prisma.user.updateMany({
+          where: { id: p.id, moduleAllow: { has: moduleId } },
+          data: { moduleAllow: p.moduleAllow.filter((m) => m !== moduleId) },
+        })
+        users += u.count
+      }
+    }
+  }
+  const value = JSON.stringify([...new Set([...done, ...pending.map((r) => r.key)])])
+  await prisma.setting.createMany({ data: [{ key: MODULE_REVOKES_MARKER_KEY, value }], skipDuplicates: true })
+  await prisma.setting.update({ where: { key: MODULE_REVOKES_MARKER_KEY }, data: { value } })
+  invalidateModuleAccessCache()
+  return { applied: pending.map((r) => r.key), roleRows, users }
+}
+
 // Once per process, before the first override read. Fails open (the next
 // process tries again); the boot call in index.ts normally got there first.
 let grantsOnce: Promise<void> | null = null
 function ensureModuleGrants(): Promise<void> {
   if (!grantsOnce) {
-    grantsOnce = applyModuleGrants().then(() => undefined, () => { grantsOnce = null })
+    grantsOnce = applyModuleGrants()
+      .then(() => applyModuleRevokes())
+      .then(() => undefined, () => { grantsOnce = null })
   }
   return grantsOnce
 }
@@ -316,6 +389,7 @@ export async function effectiveModulesForUser(user: {
   const base = new Set(knownModulesOnly(overrides.get(user.role) ?? DEFAULT_MODULE_ACCESS[user.role] ?? []))
   for (const m of knownModulesOnly(user.moduleAllow ?? [])) base.add(m)
   for (const m of user.moduleDeny ?? []) base.delete(m)
+  for (const m of CEO_ONLY_MODULES) base.delete(m)   // never through a row or an allow
   return base
 }
 

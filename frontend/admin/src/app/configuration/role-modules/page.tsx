@@ -25,6 +25,9 @@ import { useWorkspaceDefs } from '../../../hooks/useWorkspaces'
 export default function RoleModulesPage() {
   const { data: me } = usePermissions()
   const overrides = useRoleModules((s) => s.overrides)
+  // CEO-only modules (Brands, owner 2026-10-14): never granted to another
+  // role — the server drops them from a save, so the cells are locked.
+  const ceoOnly = useRoleModules((s) => s.ceoOnlyModules)
   const setRoleModules = useRoleModules((s) => s.setRoleModules)
   const resetRole = useRoleModules((s) => s.resetRole)
   const resetAll = useRoleModules((s) => s.resetAll)
@@ -71,12 +74,14 @@ export default function RoleModulesPage() {
   }
 
   function toggleModule(role: AppRole, mod: ModuleId) {
+    if (ceoOnly.includes(mod)) return
     const current = new Set(modulesForRole(role, overrides))
     if (current.has(mod)) current.delete(mod); else current.add(mod)
     setRoleModules(role, Array.from(current))
   }
 
   function toggleSection(role: AppRole, sectionModuleIds: ModuleId[]) {
+    sectionModuleIds = sectionModuleIds.filter((id) => !ceoOnly.includes(id))
     const current = new Set(modulesForRole(role, overrides))
     const allOn = sectionModuleIds.every((id) => current.has(id))
     if (allOn) {
@@ -227,6 +232,16 @@ export default function RoleModulesPage() {
                           const effective = modulesForRole(r.value, overrides)
                           const enabled = effective.includes(m.id)
                           const isCustom = overrides[r.value] !== undefined
+                          const locked = ceoOnly.includes(m.id)
+                          if (locked) {
+                            return (
+                              <td key={`${m.id}-${r.value}`}
+                                className="px-2 py-2 text-center border-l border-white/[0.03] text-[9px] text-white/35"
+                                title="CEO only — no other role can be given this module">
+                                CEO
+                              </td>
+                            )
+                          }
                           return (
                             <td key={`${m.id}-${r.value}`}
                               className="px-2 py-2 text-center border-l border-white/[0.03]">

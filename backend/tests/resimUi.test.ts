@@ -6,11 +6,10 @@
 //             `payments`, and the payment step read order.payments.filter.
 //             The REAL admin till helpers (tillApi.ts) are run against the
 //             REAL ring-up answer — only the browser API client is mocked.
-//   R2-UI-03  the Brand Editor (/marketing/brands) for the 'brands' module
-//             holders (marketing, brand_manager): GET /concepts?view=brand and
-//             a PATCH limited to the marketing fields, any company the
-//             operator belongs to ('write' scope; RV-U-01), audited; management keeps the full PATCH. HR's Rota reads the
-//             picker view. Two companies throughout.
+//   R2-UI-03  HR's Rota reads the picker view. (The marketing tier of the
+//             Brand Editor is gone: Brands is CEO only since 2026-10-14 —
+//             /ceo/brands, GET ?view=brand and PATCH /concepts answer 403
+//             BRAND_CEO_ONLY to every other role.) Two companies throughout.
 //   R2-UI-05  the Z-report screen's rows (zReportLines): takings, money taken
 //             on cancelled tickets, refunds, net sales, signed short/over.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
@@ -152,193 +151,120 @@ describe('R2-UI-03 — HR rota brand list (picker view)', () => {
   })
 })
 
-describe('R2-UI-03 — Brand Editor for the marketing tier', () => {
-  const FORBIDDEN_READ = ['taxRate', 'taxRateCash', 'taxRateCard', 'strn', 'ntn', 'fbrPosId', 'srbPosId', 'province',
-    'invoiceLegalName', 'invoiceAddress', 'invoicePrefix', 'forecastPortionsPerMonth', 'storefrontLayout']
+// Brands moved to the CEO workspace, CEO only (owner, 2026-10-14: "the brand
+// editor needs to be moved to CEO stuff, because a lot of this stuff is not
+// marketing related"). The marketing tier (R2-UI-03) and management's full
+// edit are gone: GET ?view=brand and PATCH /concepts/:id answer 403
+// BRAND_CEO_ONLY to every other role, whatever its modules.
+describe('Brand Editor — CEO only (2026-10-14)', () => {
+  let ceoA: Who
+  beforeAll(async () => { ceoA = await mkUser('rsui-ceoA', 'admin', A.tenantId) })
 
-  it('marketing and brand_manager list their own company\'s brands with the editor row, no tax/legal/POS fields', async () => {
-    for (const who of [marketingA, brandMgrA]) {
-      const r = await req(who, 'GET', '/concepts?view=brand&includeInactive=1')
-      expect(r.statusCode, r.body).toBe(200)
-      const rows = r.json() as Array<Record<string, unknown>>
-      expect(rows.map((c) => c.id).sort()).toEqual([A.conceptId, conceptA2].sort())
-      for (const row of rows) {
-        expect(row.brandEditorAccess).toBe('marketing')
-        expect(row.tenantId).toBe(A.tenantId)
-        expect(row).toHaveProperty('description')
-        for (const f of FORBIDDEN_READ) expect(row).not.toHaveProperty(f)
+  it('marketing, brand_manager and management are refused the editor read and every PATCH; nothing is written', async () => {
+    const before = await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })
+    for (const who of [marketingA, brandMgrA, managerA, marketingDenied, hrA, cashierA2]) {
+      const list = await req(who, 'GET', '/concepts?view=brand&includeInactive=1')
+      expect(list.statusCode, `${who.role}: ${list.body}`).toBe(403)
+      expect((await req(who, 'GET', `/concepts/${A.conceptId}?view=brand`)).statusCode).toBe(403)
+      for (const body of [{ description: 'nope' }, { taxRateCash: 1 }, { name: 'Renamed' }, { sameAs: ['https://x.com/a'] }]) {
+        const p = await req(who, 'PATCH', `/concepts/${A.conceptId}`, body)
+        expect(p.statusCode, `${who.role}: ${p.body}`).toBe(403)
+        expect(p.json().error.code).toBe('BRAND_CEO_ONLY')
       }
     }
+    expect(await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).toEqual(before)
   })
 
-  it('company B\'s brand is 404 to company A\'s marketing (read and write)', async () => {
-    expect((await req(marketingA, 'GET', `/concepts/${B.conceptId}?view=brand`)).statusCode).toBe(404)
-    const p = await req(marketingA, 'PATCH', `/concepts/${B.conceptId}`, { description: 'hijack' })
-    expect(p.statusCode, p.body).toBe(404)
-    const b = await prisma.concept.findUniqueOrThrow({ where: { id: B.conceptId }, select: { description: true } })
-    expect(b.description).not.toBe('hijack')
-  })
-
-  it('marketing saves the marketing fields; the change is audited with the company', async () => {
-    const body = {
-      description: 'Scratch café and market', heroTagline: 'stack it up',
-      conceptStatement: 'A café', cuisine: 'Café', priceTier: 'mid', daypartFocus: ['breakfast'], competitors: ['X'],
-      brandVoice: 'Warm',
+  it('a role re-granted brands (saved row or per-user allow) still cannot write: the server enforces admin', async () => {
+    await prisma.roleModuleAccess.upsert({
+      where: { role: 'marketing' }, create: { role: 'marketing', modules: ['storefront', 'brands'] }, update: { modules: ['storefront', 'brands'] },
+    })
+    await prisma.user.update({ where: { id: managerA.id }, data: { moduleAllow: ['brands'] } })
+    invalidateModuleAccessCache()
+    try {
+      expect((await req(marketingA, 'PATCH', `/concepts/${A.conceptId}`, { description: 're-granted' })).statusCode).toBe(403)
+      expect((await req(managerA, 'PATCH', `/concepts/${A.conceptId}`, { description: 're-granted' })).statusCode).toBe(403)
+      expect((await req(marketingA, 'GET', '/concepts?view=brand')).statusCode).toBe(403)
+    } finally {
+      await prisma.roleModuleAccess.deleteMany({ where: { role: 'marketing' } })
+      await prisma.user.update({ where: { id: managerA.id }, data: { moduleAllow: [] } })
+      invalidateModuleAccessCache()
     }
-    const kitBefore = await prisma.concept.findUniqueOrThrow({
-      where: { id: A.conceptId }, select: { primaryColor: true, logoUrl: true, wordmarkUrl: true, mascotUrl: true },
-    })
-    // The brand's look (colour, logo, wordmark, mascot) is the brand kit's:
-    // a PATCH carrying any of it is refused whole (review-back-admin-3).
-    const kitTry = await req(marketingA, 'PATCH', `/concepts/${A.conceptId}`, {
-      ...body, primaryColor: '#7C2946', wordmarkUrl: '/marketing/w.png', mascotUrl: '', logoUrl: 'https://media.example/l.png',
-    })
-    expect(kitTry.statusCode, kitTry.body).toBe(403)
-    expect(kitTry.json().error.code).toBe('KIT_FIELD_CEO_ONLY')
-    expect((await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).description).not.toBe('Scratch café and market')
-    const r = await req(marketingA, 'PATCH', `/concepts/${A.conceptId}`, body)
+  })
+
+  it('the CEO reads the full rows (every one marked full) and saves the whole brand, audited with the company', async () => {
+    const r = await req(ceoA, 'GET', '/concepts?view=brand&includeInactive=1')
     expect(r.statusCode, r.body).toBe(200)
-    expect(r.json().brandEditorAccess).toBe('marketing')
-    expect(r.json()).not.toHaveProperty('taxRateCash')
-    const row = await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })
-    expect(row.description).toBe('Scratch café and market')
-    expect(row.heroTagline).toBe('stack it up')
-    expect({ primaryColor: row.primaryColor, logoUrl: row.logoUrl, wordmarkUrl: row.wordmarkUrl, mascotUrl: row.mascotUrl }).toEqual(kitBefore)
-    // Untouched management fields.
-    expect(row.taxRateCash).toBe(15)
-    expect(row.isActive).toBe(true)
-    const log = await prisma.auditLog.findFirst({ where: { entityId: A.conceptId, action: 'concept.marketing_update' }, orderBy: { createdAt: 'desc' } })
-    expect(log).not.toBeNull()
-    expect(log!.tenantId).toBe(A.tenantId)
-    expect(log!.userId).toBe(marketingA.id)
-    expect((log!.after as Record<string, unknown>).description).toBe('Scratch café and market')
-  })
-
-  it.each([
-    ['taxRateCash', 0], ['taxRateCard', 0], ['taxRate', 0], ['strn', 'X'], ['ntn', 'X'], ['fbrPosId', 1], ['srbPosId', 1],
-    ['tenantId', 'other'], ['slug', 'new-slug'], ['isActive', false], ['name', 'Renamed'], ['whatsapp', '923000000000'],
-    ['storefrontVisible', false], ['forecastPortionsPerMonth', 1], ['invoicePrefix', 'Z-'], ['storefrontLayout', []],
-  ])('marketing cannot change %s — the whole PATCH is refused', async (field, value) => {
-    const before = await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })
-    const r = await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { description: 'should not land', [field]: value })
-    expect(r.statusCode, r.body).toBe(403)
-    expect(r.json().error.code).toBe('FIELD_NOT_ALLOWED')
-    const after = await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })
-    expect(after).toEqual(before)
-  })
-
-  it('a bad value is a 400, not a partial save', async () => {
-    const r = await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { priceTier: 'javascript:alert(1)' })
-    expect(r.statusCode).toBe(400)
-    // Kit fields are refused before validation for anyone but the CEO.
-    const r2 = await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'javascript:alert(1)' })
-    expect(r2.statusCode).toBe(403)
-  })
-
-  it('without the brands module (CEO untick / moduleDeny, or a role without it) the editor is closed', async () => {
-    for (const who of [marketingDenied, hrA, cashierA2]) {
-      expect((await req(who, 'GET', '/concepts?view=brand')).statusCode).toBe(403)
-      expect((await req(who, 'PATCH', `/concepts/${A.conceptId}`, { description: 'nope' })).statusCode).toBe(403)
-    }
-    // Plain /concepts is still management / till only.
-    expect((await req(marketingA, 'GET', '/concepts')).statusCode).toBe(403)
-  })
-
-  it('company B\'s marketing edits only B\'s brands', async () => {
-    const r = await req(marketingB, 'GET', '/concepts?view=brand')
-    expect((r.json() as Array<{ id: string }>).map((c) => c.id).sort()).toEqual([B.conceptId, conceptB2].sort())
-    expect((await req(marketingB, 'PATCH', `/concepts/${B.conceptId}`, { description: 'B copy' })).statusCode).toBe(200)
-    expect((await req(marketingB, 'PATCH', `/concepts/${A.conceptId}`, { description: 'B on A' })).statusCode).toBe(404)
-  })
-
-  it('management keeps the full editor: full rows, full PATCH, never a non-member company', async () => {
-    const r = await req(managerA, 'GET', '/concepts?view=brand&includeInactive=1')
-    expect(r.statusCode).toBe(200)
     const rows = r.json() as Array<Record<string, unknown>>
+    expect(rows.map((c) => c.id)).toEqual(expect.arrayContaining([A.conceptId, conceptA2]))
     expect(rows.every((c) => c.brandEditorAccess === 'full')).toBe(true)
     expect(rows[0]).toHaveProperty('taxRateCash')
-    const p = await req(managerA, 'PATCH', `/concepts/${conceptA2}`, { taxRateCash: 16, name: 'Second A renamed' })
+    const p = await req(ceoA, 'PATCH', `/concepts/${conceptA2}?view=brand`, { taxRateCash: 16, name: 'Second A renamed', description: 'CEO copy' })
     expect(p.statusCode, p.body).toBe(200)
+    expect(p.json().brandEditorAccess).toBe('full')
     const row = await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })
     expect(row.taxRateCash).toBe(16)
     expect(row.name).toBe('Second A renamed')
-    const log = await prisma.auditLog.findFirst({ where: { entityId: conceptA2, action: 'concept.update' } })
+    expect(row.description).toBe('CEO copy')
+    const log = await prisma.auditLog.findFirst({ where: { entityId: conceptA2, action: 'concept.update' }, orderBy: { createdAt: 'desc' } })
     expect(log?.tenantId).toBe(A.tenantId)
-    expect((await req(managerA, 'PATCH', `/concepts/${B.conceptId}`, { taxRateCash: 1 })).statusCode).toBe(404)
+    expect(log?.userId).toBe(ceoA.id)
+  })
+
+  it('company B\'s brand is 404 to company A\'s CEO (read and write)', async () => {
+    expect((await req(ceoA, 'GET', `/concepts/${B.conceptId}?view=brand`)).statusCode).toBe(404)
+    const p = await req(ceoA, 'PATCH', `/concepts/${B.conceptId}`, { description: 'hijack' })
+    expect(p.statusCode, p.body).toBe(404)
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: B.conceptId } })).description).not.toBe('hijack')
   })
 
   // RV-U-01: editing an EXISTING brand is 'write' scope — every company the
-  // operator belongs to — not 'create' (active company only). The Brand
-  // Editor lists a member company's brands in All-companies view, and the
-  // admin client sends no x-servd-active-tenant on PATCH, so a save must land.
-  it('a multi-company CEO / management / marketing saves a member company\'s brand; a non-member still 404s', async () => {
-    const multi: Who[] = []
-    for (const role of ['admin', 'management', 'marketing']) {
-      const w = await mkUser(`rsui-multi-${role}`, role, A.tenantId)
-      await prisma.tenantMember.create({ data: { userId: w.id, tenantId: B.tenantId } })
-      multi.push(w)
-    }
-    invalidateModuleAccessCache()
-    for (const who of multi) {
-      const list = await req(who, 'GET', '/concepts?view=brand&includeInactive=1', undefined, { 'x-servd-portfolio': '1' })
-      expect(list.statusCode, list.body).toBe(200)
-      const ids = (list.json() as Array<{ id: string }>).map((c) => c.id)
-      expect(ids).toContain(B.conceptId)
-      expect(ids).toContain(A.conceptId)
-      const text = `saved by ${who.role}`
-      const p = await req(who, 'PATCH', `/concepts/${conceptB2}?view=brand`, { description: text })
-      expect(p.statusCode, `${who.role}: ${p.body}`).toBe(200)
-      const row = await prisma.concept.findUniqueOrThrow({ where: { id: conceptB2 }, select: { description: true, tenantId: true } })
-      expect(row.description).toBe(text)
-      expect(row.tenantId).toBe(B.tenantId) // never moved
-      const log = await prisma.auditLog.findFirst({ where: { entityId: conceptB2, userId: who.id }, orderBy: { createdAt: 'desc' } })
-      expect(log?.tenantId).toBe(B.tenantId) // stamped with the brand's company
-    }
-    // Same roles WITHOUT a membership in B: 404, nothing written.
-    for (const who of [marketingA, managerA]) {
-      const p = await req(who, 'PATCH', `/concepts/${conceptB2}`, { description: 'non-member' })
-      expect(p.statusCode, p.body).toBe(404)
-    }
-    expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptB2 } })).description).not.toBe('non-member')
+  // CEO belongs to — not 'create' (active company only).
+  it('a multi-company CEO saves a member company\'s brand, stamped with that company', async () => {
+    const multi = await mkUser('rsui-multi-admin', 'admin', A.tenantId)
+    await prisma.tenantMember.create({ data: { userId: multi.id, tenantId: B.tenantId } })
+    const list = await req(multi, 'GET', '/concepts?view=brand&includeInactive=1', undefined, { 'x-servd-portfolio': '1' })
+    expect(list.statusCode, list.body).toBe(200)
+    const ids = (list.json() as Array<{ id: string }>).map((c) => c.id)
+    expect(ids).toEqual(expect.arrayContaining([A.conceptId, B.conceptId]))
+    const p = await req(multi, 'PATCH', `/concepts/${conceptB2}?view=brand`, { description: 'saved by the CEO' })
+    expect(p.statusCode, p.body).toBe(200)
+    const row = await prisma.concept.findUniqueOrThrow({ where: { id: conceptB2 }, select: { description: true, tenantId: true } })
+    expect(row.description).toBe('saved by the CEO')
+    expect(row.tenantId).toBe(B.tenantId)
+    const log = await prisma.auditLog.findFirst({ where: { entityId: conceptB2, userId: multi.id }, orderBy: { createdAt: 'desc' } })
+    expect(log?.tenantId).toBe(B.tenantId)
+    // A non-member CEO still 404s.
+    expect((await req(ceoA, 'PATCH', `/concepts/${conceptB2}`, { description: 'non-member' })).statusCode).toBe(404)
   })
 
-  it('a staffer with no company at all is denied, never "no filter"', async () => {
-    const orphan = await mkUser('rsui-orphan-mgmt', 'management', null)
+  it('a CEO with no company at all is denied, never "no filter"', async () => {
+    const orphan = await mkUser('rsui-orphan-ceo', 'admin', null)
     expect((await req(orphan, 'PATCH', `/concepts/${A.conceptId}`, { description: 'orphan' })).statusCode).toBe(404)
-    const orphanMkt = await mkUser('rsui-orphan-mkt', 'marketing', null)
-    invalidateModuleAccessCache()
-    expect((await req(orphanMkt, 'PATCH', `/concepts/${A.conceptId}`, { description: 'orphan' })).statusCode).toBe(404)
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).description).not.toBe('orphan')
   })
 
-  // RV-U-02: one logoUrl rule for both tiers. A root-relative logo (what the
-  // uploader returns when R2_PUBLIC_URL is unset) saved by marketing must not
-  // make management's next full save — which resends logoUrl — fail with 400.
-  // Since the brand kit (review-back-admin-3) only the CEO may PATCH logoUrl;
-  // management and marketing get 403 KIT_FIELD_CEO_ONLY.
-  it('a root-relative logo is accepted (CEO); management can no longer resend logoUrl', async () => {
-    const ceoA = await mkUser('rsui-ceoA', 'admin', A.tenantId)
+  it('logo URLs: root-relative accepted, script / data refused, \'\' clears, absent leaves it', async () => {
     const m = await req(ceoA, 'PATCH', `/concepts/${conceptA2}?view=brand`, { logoUrl: '/marketing/logo.png', taxRateCash: 15, phone: '0300' })
     expect(m.statusCode, m.body).toBe(200)
-    const full = await req(managerA, 'PATCH', `/concepts/${conceptA2}?view=brand`, { logoUrl: '/marketing/logo.png', taxRateCash: 15, phone: '0300' })
-    expect(full.statusCode, full.body).toBe(403)
-    expect((await req(marketingA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: '/marketing/logo.png' })).statusCode).toBe(403)
-    const row = await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })
-    expect(row.logoUrl).toBe('/marketing/logo.png')
-    expect(row.taxRateCash).toBe(15)
-    // The full schema still refuses script/data URLs and still clears on ''.
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })).logoUrl).toBe('/marketing/logo.png')
     expect((await req(ceoA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'javascript:alert(1)' })).statusCode).toBe(400)
     expect((await req(ceoA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: 'data:image/png;base64,AAAA' })).statusCode).toBe(400)
     expect((await req(ceoA, 'PATCH', `/concepts/${conceptA2}`, { logoUrl: '' })).statusCode).toBe(200)
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })).logoUrl).toBeNull()
-    // An absent logoUrl leaves the stored one alone.
     await prisma.concept.update({ where: { id: conceptA2 }, data: { logoUrl: '/marketing/keep.png' } })
-    expect((await req(managerA, 'PATCH', `/concepts/${conceptA2}`, { phone: '0301' })).statusCode).toBe(200)
+    expect((await req(ceoA, 'PATCH', `/concepts/${conceptA2}`, { phone: '0301' })).statusCode).toBe(200)
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: conceptA2 } })).logoUrl).toBe('/marketing/keep.png')
   })
-})
 
-// ─── R2-UI-05 ────────────────────────────────────────────────────────────────
+  it('the shell picker and the storefront view stay open to their roles', async () => {
+    expect((await req(marketingA, 'GET', '/concepts?view=picker')).statusCode).toBe(200)
+    expect((await req(marketingA, 'GET', '/concepts?view=storefront')).statusCode).toBe(200)
+    expect((await req(managerA, 'GET', '/concepts')).statusCode).toBe(200)
+    // Plain /concepts is still management / till only.
+    expect((await req(marketingA, 'GET', '/concepts')).statusCode).toBe(403)
+  })
+})
 
 describe('R2-UI-05 — the Z-report screen reconciles', () => {
   // The finding's drawer: a 1,725 pickup paid cash then cancelled and refunded

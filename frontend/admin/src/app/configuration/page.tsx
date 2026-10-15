@@ -68,7 +68,7 @@ export default function ConfigurationHubPage() {
 
   const tiles: Tile[] = [
     // ── Core ──────────────────────────────────────────────────────────────
-    { href: '/marketing/brands',  icon: '🏷', title: 'Brands',
+    { href: '/ceo/brands',  icon: '🏷', title: 'Brands',
       desc: 'The one brand editor — identity, contact, brief, storefront copy, cash / card GST, tax registration.',
       category: 'core', status: conceptsReady ? 'ready' : 'incomplete',
       hint: conceptsReady ? `${concepts.length} concepts configured` : 'Add at least one concept' },

@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 // that job, and this route stays only so old links and bookmarks land
 // somewhere useful:
 //   Concepts (brands, GST cash/card, visibility, delete, retired brands)
-//                         → Storefront → Brands (/marketing/brands)
+//                         → CEO → Brands (/ceo/brands)
 //   Stations              → Kitchen → KDS Config (/kds/config)
 //   Staff                 → Workforce (/workforce)
 //   Printer               → Configuration → Receipts (/configuration/receipts)
@@ -12,5 +12,5 @@ import { redirect } from 'next/navigation'
 //   Language              → Configuration → Language (/configuration/language)
 // Adding a brand or a company is the setup wizard (/onboarding).
 export default function SettingsRedirect() {
-  redirect('/marketing/brands')
+  redirect('/ceo/brands')
 }

@@ -413,23 +413,24 @@ describe('public per-slug read', () => {
 })
 
 describe('Concept PATCH: the kit owns the brand\'s look', () => {
-  it('logoUrl / wordmarkUrl / mascotUrl / primaryColor are CEO-only; other fields still save', async () => {
+  it('the brand record (look included) is CEO-only since Brands moved to the CEO (2026-10-14)', async () => {
     const b = await brand('brand-patch', tenantA, { primaryColor: '#444444' })
     const id = (await prisma.concept.findUniqueOrThrow({ where: { slug: b } })).id
     const patch = (who: U, payload: object) =>
       app.inject({ method: 'PATCH', url: `/api/v1/concepts/${id}`, headers: auth(who), payload })
     for (const field of ['logoUrl', 'wordmarkUrl', 'mascotUrl']) {
-      const r = await patch(marketer, { [field]: 'https://cdn.example.com/x.png' })
-      expect(r.statusCode, field).toBe(403)
-      expect(r.json().error.code).toBe('KIT_FIELD_CEO_ONLY')
-      expect((await patch(managerA, { [field]: 'https://cdn.example.com/x.png' })).statusCode, field).toBe(403)
+      for (const who of [marketer, managerA]) {
+        const r = await patch(who, { [field]: 'https://cdn.example.com/x.png' })
+        expect(r.statusCode, field).toBe(403)
+        expect(r.json().error.code).toBe('BRAND_CEO_ONLY')
+      }
     }
     expect((await patch(marketer, { primaryColor: '#ff0000' })).statusCode).toBe(403)
     expect((await patch(managerA, { primaryColor: '#ff0000', phone: '0300' })).statusCode).toBe(403)
     expect((await concept(b)).primaryColor).toBe('#444444')
-    // Copy still saves for the marketing tier and management.
-    expect((await patch(marketer, { heroTagline: 'new line' })).statusCode).toBe(200)
-    expect((await patch(managerA, { phone: '0300' })).statusCode).toBe(200)
+    // Copy no longer saves for the marketing tier or management either.
+    expect((await patch(marketer, { heroTagline: 'new line' })).statusCode).toBe(403)
+    expect((await patch(managerA, { phone: '0300' })).statusCode).toBe(403)
     // The CEO may still set them.
     expect((await patch(ceo, { primaryColor: '#555555' })).statusCode).toBe(200)
     expect((await concept(b)).primaryColor).toBe('#555555')

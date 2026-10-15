@@ -5,7 +5,7 @@
 //    narrow fields, active only — so the Pages tab, Library brand picker and
 //    pop-up brand targeting are no longer empty. Never another company's
 //    brands; no write widening. Plain GET /concepts stays 403 for them
-//    (SFQ-RV-2): the Brand Editor (/marketing/brands) fills its whole form
+//    (SFQ-RV-2): the Brand Editor (/ceo/brands, CEO only) fills its whole form
 //    from it, and a narrow row there reads as a wiped brand.
 //  - With no R2 account the presigned upload host is
 //    `<bucket>.undefined.r2.cloudflarestorage.com` (SFQ-RV-1) — the shape the

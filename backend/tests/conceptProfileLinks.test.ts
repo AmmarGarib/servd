@@ -1,17 +1,16 @@
 // The brand's public profiles (SEO round 1, owner 2026-10-14):
 // Concept.sameAs (https profile URLs, ≤ 12) + Concept.googleMapsUrl, edited in
-// Marketing → Brands by whoever edits the brand's marketing fields (management
-// on the full form, the 'brands' module holder on the marketing form).
+// CEO → Brands (CEO only since 2026-10-14).
 //
 // What this guards (two companies):
-//   - the marketing tier and management of company A save A's links; blanks
-//     and repeats are dropped, '' clears the Maps link; the write is audited;
-//   - company B (CEO and marketing) cannot set A's links → 404, nothing changes;
+//   - company A's CEO saves A's links; blanks and repeats are dropped, ''
+//     clears the Maps link; the write is audited; marketing / management 403;
+//   - company B's CEO cannot set A's links → 404 (B's marketing 403);
 //   - a link that is not https (http:, javascript:, a bare word, credentials)
 //     or more than 12 links → 422 INVALID_PROFILE_LINK, nothing changes;
 //   - POST /concepts with links binds the brand to the ACTIVE company;
 //   - the public payloads (/storefront/concepts, /storefront/:slug/menu)
-//     carry both fields; the marketing tier's other limits are unchanged.
+//     carry both fields.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -59,9 +58,9 @@ beforeAll(async () => {
 
 afterAll(async () => { await app?.close() })
 
-describe('company A edits its own brand profiles', () => {
-  it('the marketing tier saves them (cleaned) and the change is audited on the brand\'s company', async () => {
-    const r = await call(mktA, 'PATCH', `/concepts/${A.conceptId}`, {
+describe('company A edits its own brand profiles (CEO → Brands, CEO only)', () => {
+  it('the CEO saves them (cleaned) and the change is audited on the brand\'s company', async () => {
+    const r = await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, {
       sameAs: [' https://instagram.com/brand_a ', '', 'https://facebook.com/branda', 'https://instagram.com/brand_a'],
       googleMapsUrl: 'https://maps.app.goo.gl/abc123',
     })
@@ -72,30 +71,34 @@ describe('company A edits its own brand profiles', () => {
       googleMapsUrl: 'https://maps.app.goo.gl/abc123',
     })
     const log = await prisma.auditLog.findFirst({
-      where: { action: 'concept.marketing_update', entityId: A.conceptId },
+      where: { action: 'concept.update', entityId: A.conceptId },
       orderBy: { createdAt: 'desc' },
     })
     expect(log?.tenantId).toBe(A.tenantId)
   })
 
-  it('the brand editor read (?view=brand) returns them to the marketing tier', async () => {
-    const r = await call(mktA, 'GET', `/concepts/${A.conceptId}?view=brand`)
+  it('the brand editor read (?view=brand) returns them to the CEO', async () => {
+    const r = await call(ceoA, 'GET', `/concepts/${A.conceptId}?view=brand`)
     expect(r.statusCode).toBe(200)
     expect(r.json().sameAs).toHaveLength(2)
     expect(r.json().googleMapsUrl).toBe('https://maps.app.goo.gl/abc123')
   })
 
-  it('management saves them on the full form; an empty Maps link clears it', async () => {
-    const r = await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, {
+  it('an empty Maps link clears it', async () => {
+    const r = await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, {
       sameAs: ['https://www.tiktok.com/@branda'], googleMapsUrl: '',
     })
     expect(r.statusCode).toBe(200)
     expect(await links(A.conceptId)).toEqual({ sameAs: ['https://www.tiktok.com/@branda'], googleMapsUrl: null })
   })
 
-  it('the marketing tier is still refused contact fields alongside the links (403, nothing applied)', async () => {
-    const r = await call(mktA, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://x.com/branda'], phone: '+923001112223' })
-    expect(r.statusCode).toBe(403)
+  it('marketing and management are refused (403 BRAND_CEO_ONLY), nothing applied', async () => {
+    for (const who of [mktA, mgrA]) {
+      const r = await call(who, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://x.com/branda'] })
+      expect(r.statusCode).toBe(403)
+      expect(r.json().error.code).toBe('BRAND_CEO_ONLY')
+      expect((await call(who, 'GET', `/concepts/${A.conceptId}?view=brand`)).statusCode).toBe(403)
+    }
     expect((await links(A.conceptId)).sameAs).toEqual(['https://www.tiktok.com/@branda'])
   })
 })
@@ -108,15 +111,15 @@ describe('company B cannot set A\'s links', () => {
     expect(await links(A.conceptId)).toEqual(before)
   })
 
-  it('B\'s marketing → 404, nothing changes', async () => {
+  it('B\'s marketing → 403 (never the editor), nothing changes', async () => {
     const before = await links(A.conceptId)
     const r = await call(mktB, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://instagram.com/hijack'] })
-    expect(r.statusCode).toBe(404)
+    expect(r.statusCode).toBe(403)
     expect(await links(A.conceptId)).toEqual(before)
   })
 
-  it('B\'s marketing saves on B\'s own brand', async () => {
-    const r = await call(mktB, 'PATCH', `/concepts/${B.conceptId}`, { sameAs: ['https://instagram.com/brand_b'] })
+  it('B\'s CEO saves on B\'s own brand', async () => {
+    const r = await call(ceoB, 'PATCH', `/concepts/${B.conceptId}`, { sameAs: ['https://instagram.com/brand_b'] })
     expect(r.statusCode).toBe(200)
     expect((await links(B.conceptId)).sameAs).toEqual(['https://instagram.com/brand_b'])
     expect((await links(A.conceptId)).sameAs).toEqual(['https://www.tiktok.com/@branda'])
@@ -135,9 +138,9 @@ describe('only https links, at most 12', () => {
     ['Maps link data:', { googleMapsUrl: 'data:text/html,hi' }],
   ]
   for (const [label, body] of bad) {
-    it(`${label} → 422 INVALID_PROFILE_LINK, nothing changes (marketing and management)`, async () => {
+    it(`${label} → 422 INVALID_PROFILE_LINK, nothing changes`, async () => {
       const before = await links(A.conceptId)
-      for (const who of [mktA, mgrA]) {
+      for (const who of [ceoA]) {
         const r = await call(who, 'PATCH', `/concepts/${A.conceptId}`, body)
         expect(r.statusCode).toBe(422)
         expect(r.json().error.code).toBe('INVALID_PROFILE_LINK')

@@ -223,7 +223,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Discounts', href: '/discounts', sub: true },
     { label: 'QR codes', href: '/qrcodes', sub: true },
   ],
-  brands:         [{ label: 'Brands', href: '/marketing/brands', icon: '🏷', hint: 'The one brand editor' }],
+  brands:         [{ label: 'Brands', href: '/ceo/brands', icon: '🏷', hint: 'The one brand editor — CEO only' }],
   analytics:      [{ label: 'Analytics', href: '/analytics', icon: '📊' }],
   storefront:     [{ label: 'Storefront', href: '/storefront', icon: '◩', hint: 'Pages, pop-ups, library, approvals' }],
 

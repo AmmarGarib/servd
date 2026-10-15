@@ -9,6 +9,8 @@ import {
   isKnownModuleId,
   isRetiredModuleId,
   knownModulesOnly,
+  withoutCeoOnlyModules,
+  CEO_ONLY_MODULES,
   invalidateModuleAccessCache,
   effectiveModulesForUser,
 } from '../../lib/moduleAccess.js'
@@ -82,7 +84,10 @@ export async function permissionRoutes(fastify: FastifyInstance) {
     const rows = await prisma.roleModuleAccess.findMany({ select: { role: true, modules: true } })
     return {
       defaults:  DEFAULT_MODULE_ACCESS,
-      overrides: Object.fromEntries(rows.map((r) => [r.role, knownModulesOnly(r.modules)])),
+      overrides: Object.fromEntries(rows.map((r) => [r.role, withoutCeoOnlyModules(knownModulesOnly(r.modules))])),
+      // Modules no role but the CEO may hold (Brands): the Module Access
+      // matrix shows them locked; a save that lists them drops them.
+      ceoOnlyModules: CEO_ONLY_MODULES,
       modules:   MODULE_IDS,
       roles: {
         all:        ALL_ROLES,
@@ -124,7 +129,10 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       if (unknown.length) {
         return reply.status(400).send({ error: { code: 'UNKNOWN_MODULE', message: `Unknown module id(s): ${unknown.join(', ')}` } })
       }
-      modules = Array.from(new Set(knownModulesOnly(body.modules)))
+      // CEO-only modules (Brands) are never granted to another role: dropped
+      // quietly, like a retired id, so a matrix that still shows one ticked
+      // saves the rest (effectiveModulesForUser would ignore it anyway).
+      modules = Array.from(new Set(withoutCeoOnlyModules(knownModulesOnly(body.modules))))
     }
 
     // Read the outgoing allow-list first — "what changed" is the whole value of

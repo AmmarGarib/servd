@@ -816,6 +816,9 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         // (images, videos, fonts, copy): slug / id are global, so a straight
         // repoint — a brand kit's library: fonts move with it.
         tx.siteLayout, tx.mediaAsset,
+        // Feedback and the public contact inbox (SEO round 1): contact
+        // messages carry only the company, brand feedback the brand's company.
+        tx.feedbackEntry,
       ]
       for (const model of repoint) {
         await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })

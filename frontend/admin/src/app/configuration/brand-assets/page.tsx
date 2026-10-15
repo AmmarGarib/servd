@@ -5,8 +5,8 @@ import { redirect } from 'next/navigation'
 // storefront or anywhere else ever read them. Each now has one home, per
 // brand:
 //   social links   → Storefront hub → the brand's footer page (brand:<slug>:footer)
-//   WhatsApp       → Storefront → Brands → Contact (Concept.whatsapp)
-//   brand voice    → Storefront → Brands → Brief (Concept.brandVoice)
+//   WhatsApp       → CEO → Brands → Contact (Concept.whatsapp)
+//   brand voice    → CEO → Brands → Brief (Concept.brandVoice)
 // Kept as a redirect for old links.
 export default function BrandAssetsRedirect() {
   redirect('/storefront')

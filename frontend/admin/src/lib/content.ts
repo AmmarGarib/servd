@@ -200,7 +200,7 @@ export interface ConceptLite {
 // and management, with the narrow brand fields only (id, name, slug, company,
 // logo, colour). Its own query key: plain GET /concepts stays management/till
 // only, so a narrow row never lands in a page that edits brands (the Brand
-// Editor at /marketing/brands would show it as a blank brand).
+// Editor at /ceo/brands would show it as a blank brand).
 export const STOREFRONT_BRANDS_KEY = ['concepts', 'storefront'] as const
 
 // ─── API ───────────────────────────────────────────────────────────────────

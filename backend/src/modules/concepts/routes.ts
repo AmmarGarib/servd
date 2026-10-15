@@ -32,10 +32,9 @@ const TILL_CONCEPT_SELECT = {
 // enough to list its pages, pick it in the Library and target a pop-up at it.
 // Nothing else — no tax, legal, strategy or layout fields. Opt-in by query on
 // purpose: plain GET /concepts stays management/till only, so the narrow row
-// never reaches a page that edits brands. (The Brand Editor at
-// /marketing/brands, in marketing's sidebar through the 'brands' module, fills
-// its whole form from GET /concepts — a narrow row there reads as a wiped
-// brand.) The Storefront Pages tab, Library brand picker and pop-up brand
+// never reaches a page that edits brands. (The Brand Editor at /ceo/brands,
+// CEO only, fills its whole form from GET /concepts — a narrow row there
+// reads as a wiped brand.) The Storefront Pages tab, Library brand picker and pop-up brand
 // targeting call it; before, they called the managers/till list, so marketing
 // saw no brand pages and a red "Role not allowed" toast.
 const STOREFRONT_CONCEPT_SELECT = {
@@ -67,33 +66,20 @@ const PICKER_CONCEPT_SELECT = {
   primaryColor: true,
 } satisfies Prisma.ConceptSelect
 
-// The Brand Editor (/marketing/brands) for the marketing tier — roles that
-// hold the 'brands' module without being management (marketing,
-// brand_manager by default; CLAUDE.md: Concept.description is edited in
-// admin → Marketing → Brands). R2-UI-03: the editor read the managers-only
-// list, so marketing saw no brands and could not save any.
+// The Brand Editor (CEO → Brands, /ceo/brands) is the CEO's ONLY (owner,
+// 2026-10-14: "the brand editor needs to be moved to CEO stuff, because a lot
+// of this stuff is not marketing related"). PATCH /concepts and the editor's
+// read (?view=brand) answer 403 BRAND_CEO_ONLY to every other role — the
+// marketing tier that used to edit copy / brief / profile links here
+// (R2-UI-03) is gone, and so is management's full edit. 'brands' is a
+// CEO-only module (lib/moduleAccess.ts CEO_ONLY_MODULES), so no saved Module
+// Access row or per-user allow can re-open it; this route checks the role
+// itself anyway.
 //
-// BRAND_MARKETING_FIELDS is the ONE allow-list of what that tier may WRITE
-// (logoUrl / wordmarkUrl / mascotUrl / primaryColor stay listed for the
-// editor's READ, but a PATCH of them is CEO-only — assertKitFieldsCeoOnly):
-// the brand's public copy, artwork, colour and strategy brief. Everything
-// else stays with management — name, slug, type, isActive, tenant, the tax
-// rates and tender split, STRN/NTN/province/invoice details, FBR/SRB POS ids,
-// forecast portions (opex denominator), storefront visibility, reservations,
-// the guest-facing contact numbers (a WhatsApp number is where customers'
-// messages go) and the storefront layout. A PATCH that carries any of those
-// is refused whole (403 FIELD_NOT_ALLOWED), never partly applied.
-export const BRAND_MARKETING_FIELDS = [
-  'description', 'heroTagline',
-  'logoUrl', 'wordmarkUrl', 'mascotUrl', 'primaryColor',
-  'conceptStatement', 'cuisine', 'heroProduct', 'anchoringExperience',
-  'targetCustomer', 'priceTier', 'daypartFocus', 'competitors',
-  'differentiator', 'brandVoice',
-  // The brand's public profiles (SEO round 1, owner 2026-10-14): social
-  // profile links + the Google Maps / Business Profile link. Read by the
-  // storefront's Restaurant JSON-LD (sameAs / hasMap) and Elsewhere links.
-  'sameAs', 'googleMapsUrl',
-] as const
+// Other screens that set ONE brand setting do it through their own routes,
+// not this one: POS ids (PUT /connectors/fiscal/brand-pos-ids), the look
+// (Storefront → Brand kit publish, CEO-approved), the Raast receiving account
+// (/setup), the kitchen address mirror (/locations).
 
 /** Most profile links a brand may list (sameAs). */
 export const MAX_PROFILE_LINKS = 12
@@ -163,105 +149,15 @@ function assertProfileLinks(body: unknown): void {
   }
 }
 
-// What the marketing tier READS in the Brand Editor: the fields it edits plus
-// the public, read-only context the form shows (name, slug, status, guest
-// contact, the kitchen mirror). No tax, legal, POS id, forecast or layout.
-const BRAND_EDITOR_CONCEPT_SELECT = {
-  id: true,
-  tenantId: true,
-  name: true,
-  slug: true,
-  type: true,
-  // Read-only here: only management changes the service vessel (PATCH, full form).
-  serviceVessel: true,
-  isActive: true,
-  storefrontVisible: true,
-  reservationsEnabled: true,
-  phone: true,
-  whatsapp: true,
-  email: true,
-  addressLocality: true,
-  address: true,
-  latitude: true,
-  longitude: true,
-  ...Object.fromEntries(BRAND_MARKETING_FIELDS.map((f) => [f, true])) as Record<(typeof BRAND_MARKETING_FIELDS)[number], true>,
-} satisfies Prisma.ConceptSelect
-
 /** True for the management tier — they get the full brand row. */
 function isManager(role: UserRole): boolean {
   return MANAGERS.includes(role)
 }
 
-/** True when the caller holds the 'brands' module (role default/override,
- *  + moduleAllow, − moduleDeny — the same source as the central gate). */
-async function holdsBrandsModule(req: FastifyRequest): Promise<boolean> {
-  const su = req.staffUser!
-  if (su.role === 'admin') return true
-  const u = await prisma.user.findUnique({ where: { id: su.id }, select: { moduleAllow: true, moduleDeny: true } })
-  const modules = await effectiveModulesForUser({ role: su.role, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
-  return modules.has('brands')
-}
-
-/** The Brand Editor's access: management edits the whole brand, a 'brands'
- *  module holder only the marketing fields; anyone else 403. */
-/** The brand's look on the Concept — primaryColor, logoUrl, wordmarkUrl,
- *  mascotUrl — is written by the brand kit's publish (CEO-approved, in
- *  Storefront → Brand kit), never straight from a PATCH. Only the CEO (role
- *  admin) may still PATCH them; anyone else sending one is refused whole
- *  (403 KIT_FIELD_CEO_ONLY), never partly applied (review-back-admin-3).
- *  POST /concepts keeps primaryColor as a new brand's starting colour. */
-function assertKitFieldsCeoOnly(req: FastifyRequest): void {
+/** The Brand Editor (PATCH /concepts/:id, GET ?view=brand): the CEO only. */
+function assertBrandEditor(req: FastifyRequest): void {
   if (req.staffUser!.role === 'admin') return
-  const body = req.body
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return
-  const sent = KIT_CONCEPT_FIELDS.filter((k) => (body as Record<string, unknown>)[k] !== undefined)
-  if (sent.length > 0) {
-    throw new AppError(
-      'KIT_FIELD_CEO_ONLY',
-      `${sent.join(', ')} ${sent.length === 1 ? 'is' : 'are'} set by the brand kit. Change ${sent.length === 1 ? 'it' : 'them'} in Storefront → Brand kit; the CEO approves the change.`,
-      403,
-    )
-  }
-}
-
-async function brandEditorAccess(req: FastifyRequest): Promise<'full' | 'marketing'> {
-  if (isManager(req.staffUser!.role)) return 'full'
-  if (await holdsBrandsModule(req)) return 'marketing'
-  throw new ForbiddenError(`Role '${req.staffUser!.role}' is not allowed for this resource`)
-}
-
-const brandMarketingSchema = z.object({
-  description:         z.string().max(2000).nullable().optional(),
-  heroTagline:         z.string().max(120).nullable().optional(),
-  logoUrl:             brandArtworkUrlSchema(),
-  wordmarkUrl:         brandArtworkUrlSchema(),
-  mascotUrl:           brandArtworkUrlSchema(),
-  primaryColor:        z.string().regex(/^#[0-9a-fA-F]{3,8}$/, 'A hex colour like #87c540').nullable().optional(),
-  conceptStatement:    z.string().max(280).nullable().optional(),
-  cuisine:             z.string().max(60).nullable().optional(),
-  heroProduct:         z.string().max(120).nullable().optional(),
-  anchoringExperience: z.string().max(280).nullable().optional(),
-  targetCustomer:      z.string().max(280).nullable().optional(),
-  priceTier:           z.enum(['budget', 'mid', 'premium', 'luxury']).nullable().optional(),
-  daypartFocus:        z.array(z.string().max(40)).max(10).optional(),
-  competitors:         z.array(z.string().max(80)).max(10).optional(),
-  differentiator:      z.string().max(280).nullable().optional(),
-  brandVoice:          z.string().max(500).nullable().optional(),
-  sameAs:              sameAsSchema,
-  googleMapsUrl:       googleMapsUrlSchema,
-}).strict()
-
-// Same rule as brandArtworkUrl below (http(s) or root-relative, '' clears),
-// as a function so the marketing schema can sit above it.
-function brandArtworkUrlSchema() {
-  return z
-    .string()
-    .max(2048)
-    .refine((v) => v === '' || /^https?:\/\//i.test(v) || v.startsWith('/'), { message: 'Must be an http(s) URL or a root-relative path' })
-    .optional()
-    .nullable()
-    // An absent key stays absent (undefined = "leave it"); '' / null clear it.
-    .transform((v) => (v === undefined ? undefined : v || null))
+  throw new AppError('BRAND_CEO_ONLY', 'Brands are edited by the CEO only (CEO → Brands).', 403)
 }
 
 /** Which brand view the caller gets. Read-only either way — every write route
@@ -320,8 +216,8 @@ const createConceptSchema = z.object({
   }),
   description: z.string().optional(),
   // Same rule as the wordmark/mascot below (and the Brand Editor's marketing
-  // tier): the uploader can hand back a root-relative path, and a value the
-  // marketing tier saved must not make management's next full save 400.
+  // tier, now retired): the uploader can hand back a root-relative path, and
+  // a value saved earlier must not make the CEO's next full save 400.
   logoUrl: brandArtworkUrl,
   primaryColor: z.string().optional(),
   taxRate: z.number().min(0).max(100).default(17),
@@ -366,8 +262,8 @@ const createConceptSchema = z.object({
   googleMapsUrl:       googleMapsUrlSchema,
 })
 
-// Full brand-edit schema — the ONE brand writer (admin → Storefront → Brands,
-// /marketing/brands). Adds tax / FBR / SRB, contact and isActive on top of the
+// Full brand-edit schema — the ONE brand writer (CEO → Brands, /ceo/brands;
+// CEO only). Adds tax / FBR / SRB, contact and isActive on top of the
 // base creation fields. Slug is omitted intentionally — slug changes break
 // URLs + storefront SEO; expose it as a separate admin-only operation later.
 //
@@ -524,20 +420,9 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       })
     }
     const includeInactive = req.query.includeInactive === '1'
-    // ?view=brand — the Brand Editor. Management: the full rows (below).
-    // A 'brands' module holder: the editor's row (BRAND_EDITOR_CONCEPT_SELECT),
-    // its companies in read scope; retired brands too when asked. It saves
-    // only in a company it belongs to ('write' scope, PATCH below).
-    // Each row says which form the caller gets (brandEditorAccess).
+    // ?view=brand — the Brand Editor (CEO → Brands): the CEO only, full rows.
     const brandEditor = wantsBrandEditor(req.query)
-    if (brandEditor && (await brandEditorAccess(req)) === 'marketing') {
-      const rows = await prisma.concept.findMany({
-        where: { deletedAt: null, ...(includeInactive ? {} : { isActive: true }), ...(await scopeTenantWhere(req, 'read')) },
-        orderBy: { name: 'asc' },
-        select: BRAND_EDITOR_CONCEPT_SELECT,
-      })
-      return rows.map((c) => ({ ...c, brandEditorAccess: 'marketing' as const }))
-    }
+    if (brandEditor) assertBrandEditor(req)
     const view = brandEditor ? 'full' : await conceptView(req, wantsStorefront(req.query))
     if (view !== 'full') {
       return prisma.concept.findMany({
@@ -569,14 +454,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // tenantFilter is null for a staffer with no company, and `tenantId: null`
   // would match every company-less brand.
   fastify.get<{ Params: { id: string }; Querystring: { view?: string } }>('/:id', { preHandler: requireAuth() }, async (req) => {
-    if (wantsBrandEditor(req.query) && (await brandEditorAccess(req)) === 'marketing') {
-      const concept = await prisma.concept.findFirst({
-        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
-        select: BRAND_EDITOR_CONCEPT_SELECT,
-      })
-      if (!concept) throw new NotFoundError('Concept', req.params.id)
-      return { ...concept, brandEditorAccess: 'marketing' as const }
-    }
+    if (wantsBrandEditor(req.query)) assertBrandEditor(req)
     const view = wantsBrandEditor(req.query) ? 'full' : await conceptView(req, wantsStorefront(req.query))
     const where = { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'read')) }
     const concept = view === 'full'
@@ -600,59 +478,12 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(concept)
   })
 
-  // PATCH /concepts/:id — management edits the whole brand (the full schema
-  // below); a 'brands' module holder (marketing, brand_manager — the Brand
-  // Editor) edits ONLY BRAND_MARKETING_FIELDS. Either way the brand must be in
-  // a company the operator belongs to ('write' scope — a foreign id 404s),
-  // and the change is audited.
+  // PATCH /concepts/:id — the Brand Editor (CEO → Brands): the CEO only
+  // (owner, 2026-10-14). The brand must be in a company the CEO belongs to
+  // ('write' scope — a foreign id 404s), and the change is audited.
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth() }, async (req, reply) => {
-    const access = await brandEditorAccess(req)
-    assertKitFieldsCeoOnly(req)
+    assertBrandEditor(req)
     assertProfileLinks(req.body)
-    if (access === 'marketing') {
-      const body = req.body
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        throw new AppError('VALIDATION_ERROR', 'Send the brand fields to change', 400)
-      }
-      // Refuse the whole request when it carries a field outside the
-      // marketing allow-list — never apply part of it.
-      const allowed = new Set<string>(BRAND_MARKETING_FIELDS)
-      const refused = Object.keys(body).filter((k) => !allowed.has(k) && (body as Record<string, unknown>)[k] !== undefined)
-      if (refused.length) {
-        throw new AppError(
-          'FIELD_NOT_ALLOWED',
-          `Only management can change: ${refused.join(', ')}. The Brand Editor saves copy, artwork, colour and the brand brief.`,
-          403,
-        )
-      }
-      const data = brandMarketingSchema.parse(body)
-      const owned = await prisma.concept.findFirst({
-        // 'write': editing an EXISTING brand → any company the operator
-        // belongs to (the Brand Editor lists every member company's brands in
-        // All-companies view). Foreign rows and a company-less staffer 404.
-        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-        select: BRAND_EDITOR_CONCEPT_SELECT,
-      })
-      if (!owned) throw new NotFoundError('Concept', req.params.id)
-      const updated = await prisma.concept.update({
-        where: { id: owned.id },
-        data,
-        select: BRAND_EDITOR_CONCEPT_SELECT,
-      })
-      const changed = Object.keys(data) as (keyof typeof data)[]
-      await audit({
-        category: 'identity',
-        action: 'concept.marketing_update',
-        entity: 'Concept',
-        entityId: owned.id,
-        userId: req.staffUser!.id,
-        userEmail: req.staffUser!.email,
-        tenantId: owned.tenantId,
-        before: Object.fromEntries(changed.map((k) => [k, (owned as Record<string, unknown>)[k]])),
-        after: Object.fromEntries(changed.map((k) => [k, (updated as Record<string, unknown>)[k]])),
-      })
-      return { ...updated, brandEditorAccess: 'marketing' as const }
-    }
     assertNoMovedFields(req.body)
     const body = updateConceptSchema.parse(req.body)
     // Verify the concept belongs to a company the operator is a member of

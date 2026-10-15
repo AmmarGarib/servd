@@ -289,7 +289,7 @@ async function main() {
 
   console.log('\n🎉 GS Foods seed complete.')
   console.log('\nNext steps in the app:')
-  console.log('  • /marketing/brands         → tweak brand copy + logos')
+  console.log('  • /ceo/brands               → tweak brand copy (CEO only)')
   console.log('  • /crm/segments             → see all 20 customer segments')
   console.log('  • /inventory                → 100+ ingredients with category + seasonality')
   console.log('  • /procurement              → 4 vendors with contact info')

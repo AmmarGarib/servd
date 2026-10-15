@@ -27,7 +27,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: 'Where do I configure tax / FBR / SRB?',
-    a: 'Cash and card GST rates, STRN, NTN and the invoice legal name are per brand in Marketing → Brands → Tax registration. Filing goes through the fiscal POS: Dev → API → POS connector holds the driver, the brand POS IDs, go-live and every submission. Each completed (full & final) sale is sent to the fiscal POS through the POS connector; a pre-bill is never sent. Anything not filed yet stays visible on that page and is retried automatically.',
+    a: 'Cash and card GST rates, STRN, NTN and the invoice legal name are per brand in CEO → Brands → Tax registration. Filing goes through the fiscal POS: Dev → API → POS connector holds the driver, the brand POS IDs, go-live and every submission. Each completed (full & final) sale is sent to the fiscal POS through the POS connector; a pre-bill is never sent. Anything not filed yet stays visible on that page and is retried automatically.',
   },
   {
     q: 'Can I run the KDS in Urdu?',

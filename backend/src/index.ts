@@ -1036,6 +1036,17 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[access] module grants skipped: ${(err as Error).message}`)
   }
+  // Modules taken away from every non-admin role (MODULE_REVOKES — e.g.
+  // 'brands', CEO only since 2026-10-14) leave the saved rows and users'
+  // moduleAllow once. Enforcement never waits on this (CEO_ONLY_MODULES are
+  // dropped on every read); the lazy run in roleOverrides() retries.
+  try {
+    const { applyModuleRevokes } = await import('./lib/moduleAccess.js')
+    const r = await applyModuleRevokes()
+    if (r.applied.length) fastify.log.info(`[access] module revokes ${r.applied.join(', ')} applied: ${r.roleRows} role row(s), ${r.users} user(s)`)
+  } catch (err) {
+    fastify.log.warn(`[access] module revokes skipped: ${(err as Error).message}`)
+  }
   // Completion recovery (W4-FISCAL-2) counts only orders completed after this
   // marker — written once, by the first boot of this code — so history from
   // before the fiscal outbox is never re-completed or late-filed.

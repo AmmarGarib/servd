@@ -87,7 +87,7 @@ function BrandIds({ data, canEdit }: { data: ConnectorsOverview; canEdit: boolea
           </table>
         </div>
       )}
-      <p className="text-[11px] text-s-muted">The province is set on the brand (Marketing → Brands → Tax registration).</p>
+      <p className="text-[11px] text-s-muted">The province is set on the brand (CEO → Brands → Tax registration).</p>
       {canEdit && (
         <div className="flex flex-wrap items-center gap-3">
           <button className="s-btn-primary" disabled={dirty.length === 0 || badRows.length > 0 || m.isPending} onClick={() => m.mutate()}>
