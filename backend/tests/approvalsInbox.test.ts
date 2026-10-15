@@ -977,7 +977,7 @@ describe('sections, hand-over and the new providers (D3)', () => {
         expect(ceo.handedOverItems?.map((i) => i.id)).toEqual(['comp-a'])
         // The delegate: only comp-a — never the CEO-only or the two-company one.
         const ctx = {
-          user: { id: U['hoCook']!.id, role: 'procurement' as never }, tenantIds: [HO], memberTenantIds: [HO],
+          user: { id: U['hoCook']!.id, role: 'fnb_manager' as never }, tenantIds: [HO], memberTenantIds: [HO],
           delegated: await LIVE_DELEGATIONS.tenantsByType!(U['hoCook']!.id), read: async () => null,
         }
         const del = await collectApprovals(ctx, { providers: [fake], delegations: LIVE_DELEGATIONS })

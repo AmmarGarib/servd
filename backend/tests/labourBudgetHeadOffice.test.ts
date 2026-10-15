@@ -233,7 +233,12 @@ describe('the setup wizard runs: planning identical, now from head-office charge
     expect(afterB.summary.headOfficeChargesMonthlyCents).toBe(K(500))
     // The commissary contribution still counts; the head_office one does not.
     expect(afterB.b.outgoingContributionMonthlyCents).toBe(K(20))
-    expect(afterB.b.contributions.map((c) => c.id)).toEqual([commissaryId])
+    // The retired head_office row is still listed, flagged ended, never summed.
+    expect(afterB.b.contributions.map((c) => [c.id, c.ended === true])).toEqual([[commissaryId, false], [hoContribId, true]])
+    expect(afterB.b.contributions.find((c) => c.id === hoContribId)).toMatchObject({ direction: 'outgoing', monthlyCents: K(500), ended: true })
+    expect(afterA.b.contributions.find((c) => c.id === hoContribId)).toMatchObject({ direction: 'incoming', ended: true })
+    expect(afterB.summary.contributions.find((c: { id: string }) => c.id === hoContribId)).toMatchObject({ ended: true })
+    expect(afterB.summary.contributions.find((c: { id: string }) => c.id === commissaryId).ended).toBeUndefined()
     expect(afterA.b.incomingContributionMonthlyCents).toBe(K(20))
 
     const proj = (await call('ceoB', 'GET', `/projections/${projB}/computed`)).json()
@@ -282,7 +287,11 @@ describe('contributions after the setup', () => {
     expect((await budgetedLabour([C])).incomingContributionMonthlyCents).toBe(K(12))
     const link = await call('ceo', 'POST', `/head-offices/${HO}/companies`, { companyTenantId: D })
     expect(link.statusCode, link.body).toBe(201)
-    expect((await budgetedLabour([C])).incomingContributionMonthlyCents).toBe(0)
+    const cAfter = await budgetedLabour([C])
+    expect(cAfter.incomingContributionMonthlyCents).toBe(0)
+    // Replaced by the link: listed as ended, not summed.
+    expect(cAfter.contributions.find((c) => c.id === dHo.id)).toMatchObject({ direction: 'incoming', ended: true })
+    expect(cAfter.netMonthlyCents).toBe(cAfter.shareMonthlyCents + cAfter.headOfficeChargesMonthlyCents - cAfter.rechargedOutMonthlyCents)
     // D is linked but not in the % table yet: no charge.
     expect((await budgetedLabour([D])).headOfficeChargesMonthlyCents).toBe(0)
     const listed = (await call('bossC', 'GET', '/positions/contributions')).json()
