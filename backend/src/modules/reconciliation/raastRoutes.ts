@@ -10,7 +10,11 @@
 //   POST  /receipts/:id/unmatch      undo a match (APPROVERS)
 //   PATCH /receipts/:id/reference    fix a typed reference (APPROVERS — M4)
 //   POST  /receipts/:id/unreceived   write off as never received (APPROVERS;
-//                                    contra 1110 customer owes by default)
+//                                    contra by default "the customer owes
+//                                    it" = the company's till clearing,
+//                                    resolved server-side: 1110 before the
+//                                    CEO's cut-over, 1115 after; 8010 loss;
+//                                    1350 staff owes)
 //   POST  /receipts/:id/resolve      clear a needs-attention receipt whose
 //                                    bill is closed (APPROVERS — RV-FIN-1)
 //   POST  /receipts/:id/void-request ask the CEO to void a receipt whose sale
@@ -376,9 +380,10 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/receipts/:id/unreceived', { preHandler: requireAuth(...APPROVERS) }, async (req) => {
     const body = z.object({
       reason: reasonSchema,
-      // 1110 the customer still owes it (till clearing lives on 1110 while the
-      // 1115 split is PARKED with on-account clients) / 8010 a loss / 1350 staff owes.
-      contraAccountCode: z.enum(WRITE_OFF_CONTRAS).default('1110'),
+      // 1115 (or the legacy 1110) the customer still owes it — posted to the
+      // company's CURRENT till-clearing code; omitted = that default, resolved
+      // server-side (raast.ts writeOffUnreceived) / 8010 a loss / 1350 staff owes.
+      contraAccountCode: z.enum(WRITE_OFF_CONTRAS).optional(),
     }).parse(req.body)
     const r = await receiptForWrite(req, req.params.id)
     const res = await writeOffUnreceived({ receiptId: r.id, actorId: req.staffUser!.id, reason: body.reason, contraAccountCode: body.contraAccountCode })
@@ -387,7 +392,7 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null,
       before: { status: r.status },
       after: { status: res.receipt.status, writeOffEntryId: res.entryId },
-      metadata: { receiptTenantId: r.tenantId, orderId: r.orderId, bankRef: r.bankRef, amountCents: r.amountCents, contraAccountCode: body.contraAccountCode, ledgerCode: r.ledgerCode, reason: body.reason },
+      metadata: { receiptTenantId: r.tenantId, orderId: r.orderId, bankRef: r.bankRef, amountCents: r.amountCents, contraAccountCode: res.contraAccountCode, contraRequested: body.contraAccountCode ?? null, ledgerCode: r.ledgerCode, reason: body.reason },
     })
     return viewOne(req, r.id)
   })

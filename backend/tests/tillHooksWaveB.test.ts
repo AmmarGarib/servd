@@ -24,6 +24,7 @@ import { postShiftClose } from '../src/modules/accounting/shiftPosting.js'
 import { voidNeverBooked } from '../src/modules/reconciliation/raast.js'
 import { priceOrder } from '../src/lib/pricing.js'
 import { setFiscalKicker } from '../src/connectors/fiscal/outbox.js'
+import { tillClearingCutoverKey } from '../src/modules/accounting/tillClearingCode.js'
 import {
   prisma, mkCompany, mkUser, buildApp, caller, openDrawer, mkRaastAccount, resetConnectorCache,
   type Company, type Who,
@@ -218,6 +219,30 @@ describe('a cancelled delivery ticket whose home drawer booked it live: the unwi
     expect(await prisma.journalLine.count({ where: { account: { tenantId: A.tenantId } } })).toBe(aLinesBefore)
     // A's manager cannot hand back B's ticket.
     expect((await call(mgrA, 'POST', `/pos/orders/${order.id}/refund`, { amountCents: 1_000, reason: 'Not mine', method: 'cash' })).statusCode).toBe(404)
+  })
+  it('after the company\'s till-clearing cut-over: the close, the unwind and the hand-back use 1115; 1110 is untouched', async () => {
+    const run = randomBytes(3).toString('hex')
+    const C = await mkCompany(`thw-c-${run}`)
+    const cashierC = await mkUser(`thw-cashier-c-${run}`, 'cashier', C.tenantId)
+    const mgrC = await mkUser(`thw-mgr-c-${run}`, 'foh_management', C.tenantId)
+    await prisma.setting.create({ data: { key: tillClearingCutoverKey(C.tenantId), value: new Date().toISOString() } })
+    const { order, price, shiftId } = await cancelledDeliveryTicket(C, cashierC, mgrC)
+    const unwind = await linesOf(C.tenantId, [`order.cancel_unwind:${order.id}`])
+    expect(amt(unwind, '4110', 'debit')).toBe(FEE)
+    expect(amt(unwind, '1115', 'credit')).toBe(price.totalCents)
+    expect(unwind.filter((l) => l.code === '1110')).toEqual([])
+    const both = await linesOf(C.tenantId, [`shift.close:${shiftId}`, `order.cancel_unwind:${order.id}`])
+    expect(nonZero(both)).toEqual({ '1015': 50_000, '1115': -50_000 })
+
+    const drawer = await openDrawer(C, mgrC)
+    const r = await call(mgrC, 'POST', `/pos/orders/${order.id}/refund`, { amountCents: 50_000, reason: 'Cancelled — handed back', method: 'cash', shiftId: drawer })
+    expect(r.statusCode, r.body).toBe(200)
+    const refund = await prisma.payment.findFirstOrThrow({ where: { orderId: order.id, status: 'refunded' } })
+    const handBack = await linesOf(C.tenantId, [`order.refund:${refund.id}`])
+    expect(amt(handBack, '1115', 'debit')).toBe(50_000)
+    expect(handBack.filter((l) => l.code === '1110')).toEqual([])
+    const all = await linesOf(C.tenantId, [`shift.close:${shiftId}`, `order.cancel_unwind:${order.id}`, `order.refund:${refund.id}`])
+    expect(nonZero(all)).toEqual({})
   })
 })
 

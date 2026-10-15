@@ -503,6 +503,9 @@ describe('ONL-R2-06: nothing due leaves no PKR 0 cash row', () => {
     expect(orderIds).not.toContain(legacy.id)
     expect(orderIds).not.toContain(r.json().id)
     expect(due.json().payments.every((p: { amountCents: number }) => p.amountCents > 0)).toBe(true)
+    // lib/cod.ts status on every row: no rider carried it → at the counter, never a rider debt.
+    const owedRow = due.json().payments.find((p: { order: { id: string } }) => p.order.id === owed.id)
+    expect(owedRow).toMatchObject({ status: 'at_counter', riderOwes: null, overdue: false })
     // B sees none of A's.
     const dueB = await asStaff('mgrB', 'GET', '/pos/cod-due')
     expect(dueB.json().payments.map((p: { order: { id: string } }) => p.order.id)).not.toContain(owed.id)

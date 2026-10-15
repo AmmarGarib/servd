@@ -1,0 +1,87 @@
+// The period-close check for cash on delivery (H5; owner decision
+// DLV-COD-close, 2026-10-15: "Month closing require CEO/Finance approval if
+// any amount is pending anywhere, no proceeding further until approval is
+// obtained").
+//
+// key 'cod_with_rider', severity BLOCK, overridable — only the CEO closes
+// over it, with acknowledge { keys, reason ≥ 10 } (the one close-override
+// mechanism in accounting/routes.ts; recorded on PeriodLock.overrides and
+// flagged 'period_close_override'). It runs for EVERY company — a
+// switched-on (code-only) company and any other company that has COD money
+// pending — and reads only ctx.tenantId's rows.
+//
+// It counts every COD payment (lib/cod.ts codDueWhere: cash, still pending,
+// amount > 0, a completed non-till order) whose order completed on or before
+// the close date and that is still not paid into a drawer: with the rider,
+// overdue, booked as owed by the rider (1351 — booked, but the cash is still
+// out) or a pickup's cash not yet at the counter. The detail splits them by
+// status; the link is Finance → Reconciliation → Cash on delivery.
+// The orchestrator adds codCloseCheck to CLOSE_CHECKS (accounting/closeChecks.ts).
+
+import type { Prisma } from '@prisma/client'
+import type { CloseCheck } from '../accounting/closeCheckTypes.js'
+import { fmtPktDate } from '../accounting/dates.js'
+import { codDueWhere, codStatusOf, type CodStatus } from '../../lib/cod.js'
+import { toCents } from '../../lib/money.js'
+
+const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
+const STATUS_WORDS: Record<CodStatus, string> = {
+  with_rider: 'with the rider',
+  overdue: 'overdue with the rider',
+  rider_owes: 'booked as owed by the rider',
+  at_counter: 'pickup cash not at the counter',
+}
+
+export const codCloseCheck: CloseCheck = {
+  key: 'cod_with_rider',
+  severity: 'block',
+  overridable: true,
+  async run(ctx) {
+    const base = codDueWhere({ tenantId: ctx.tenantId })
+    const rows = await ctx.db.payment.findMany({
+      where: {
+        ...base,
+        order: {
+          ...(base.order as Prisma.OrderWhereInput),
+          OR: [
+            { completedAt: { lte: ctx.newLock } },
+            { completedAt: null, placedAt: { lte: ctx.newLock } },
+          ],
+        },
+      },
+      select: {
+        amountCents: true, createdAt: true, codRiderDebtAt: true,
+        order: { select: { fulfilmentType: true, riderId: true, deliveredAt: true, completedAt: true } },
+      },
+    })
+    if (rows.length === 0) return null
+    // Status at the period end (overdue = past the pay-in time by then).
+    const by = new Map<CodStatus, { n: number; cents: number }>()
+    let cents = 0
+    for (const p of rows) {
+      const st = codStatusOf(p, p.order, ctx.newLock)
+      const s = by.get(st) ?? { n: 0, cents: 0 }
+      s.n++; s.cents += toCents(p.amountCents)
+      by.set(st, s)
+      cents += toCents(p.amountCents)
+    }
+    const parts = (['overdue', 'with_rider', 'rider_owes', 'at_counter'] as CodStatus[])
+      .filter((k) => by.has(k))
+      .map((k) => `${by.get(k)!.n} ${STATUS_WORDS[k]} (${pkr(by.get(k)!.cents)})`)
+    return {
+      key: 'cod_with_rider',
+      severity: 'block',
+      title: 'Cash on delivery still pending',
+      detail: `${plural(rows.length, 'cash-on-delivery payment')}, ${pkr(cents)}, on orders completed up to ${fmtPktDate(ctx.newLock)} `
+        + `${rows.length === 1 ? 'has' : 'have'} not been paid into a drawer: ${parts.join('; ')}. `
+        + 'Take the cash in on the till or settle it on Finance → Reconciliation → Cash on delivery. '
+        + 'Only the CEO can close over this, with a reason.',
+      count: rows.length,
+      cents,
+      link: '/reconciliation?tab=cod',
+      overridable: true,
+    }
+  },
+}

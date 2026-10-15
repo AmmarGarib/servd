@@ -48,7 +48,8 @@ import {
 import { ingestOrder } from '../../modules/orders/service.js'
 import { orderingState, sectionVisibleAt, assertItemsServedAt } from '../../modules/storefront/serviceHours.js'
 import { findCustomerByPhone } from '../../lib/customer-channels.js'
-import { assertNotBannedAtCompany } from '../../lib/strikes.js'
+import { assertNotBannedAtCompany, activeBanAtCompany } from '../../lib/strikes.js'
+import { banAppealsEnabled, createBanAppeal } from '../../modules/complaints/appeals.js'
 import { AppError } from '../../lib/errors.js'
 import { fmtPkr as fmtPkrShared } from '../../modules/accounting/csv.js'
 import { formatBrandName } from '../../lib/brandName.js'
@@ -157,6 +158,9 @@ async function closedMessages(now: Date): Promise<string[]> {
 const GREETING = /^(hi+|hello|hey+|start|order|salaam|salam|assalam\w*|aoa)\b/
 const BRAND_KEYWORD = /^(menu|brands?|switch|change brand|kitchens?)\b/
 const SWITCH_ANSWER = /^(yes|y|no|n|keep|switch)\b/
+/** Top-level keyword: ask the help desk to review a block (only while appeals are on). */
+const APPEAL_KEYWORD = /^appeal\b/
+const APPEAL_HINT = 'Reply APPEAL to ask our help desk to review this.'
 
 const norm = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '')
 
@@ -260,6 +264,12 @@ export async function handleWaMessage(phone: string, incoming: WaIncomingMessage
       await dropClosedBrand(phone, session)
       if (!isGreeting && !listId.startsWith('brand:')) return sendBrandMenu(phone, session)
     }
+  }
+
+  // "APPEAL" — only while the CEO has customer appeals switched on; while off
+  // the word falls through to the flow exactly as before.
+  if (typed !== '' && APPEAL_KEYWORD.test(typed) && (await banAppealsEnabled())) {
+    return handleAppeal(phone, session)
   }
 
   if (!session || isGreeting) {
@@ -483,6 +493,9 @@ function setBrand(session: WaSession, brand: OrderingBrand) {
  */
 async function chooseBrand(phone: string, session: WaSession, brand: OrderingBrand): Promise<unknown> {
   const name = formatBrandName(brand.name)
+  // A blocked customer is told when the brand is PICKED, not after building a
+  // cart (placeOrder checks again).
+  if (await refuseIfBanned(phone, session, brand)) return
   if (session.cart.length > 0 && session.conceptId && session.conceptId !== brand.id) {
     const from = await prisma.concept.findUnique({ where: { id: session.conceptId }, select: { name: true } })
     session.pendingConceptId = brand.id
@@ -957,6 +970,10 @@ export async function placeOrder(phone: string, session: WaSession) {
     // tell the customer rather than going silent. The session stays, so "hi"
     // starts again.
     console.error(`[whatsapp] order for ${phone.slice(-4)} not placed:`, (err as Error).message)
+    if (err instanceof AppError && err.code === 'BANNED') {
+      await sendText(phone, await bannedReply(err), replyScope(session))
+      return
+    }
     const why = err instanceof AppError && CUSTOMER_FACING.has(err.code) ? `${err.message}\n\n` : ''
     await sendText(phone, `${why}Sorry, we could not place that order just now. Send "hi" to start again.`, replyScope(session))
     return
@@ -968,6 +985,78 @@ export async function placeOrder(phone: string, session: WaSession) {
     phone,
     `*Order Placed* at ${formatBrandName(concept.name)}.\n\nReference: *${orderRef}*\n\nPlease come to the counter to collect it. Thank you.`, replyScope(session),
   )
+}
+
+// ─── Blocked customers and appeals ───────────────────────────────────────────
+
+/**
+ * The BANNED reply. Unchanged while appeals are off; with them on it adds the
+ * APPEAL hint. Placed before 'Send "hi"' to keep today's wording otherwise.
+ */
+async function bannedReply(err: AppError): Promise<string> {
+  const hint = (await banAppealsEnabled().catch(() => false)) ? `\n\n${APPEAL_HINT}` : ''
+  return `${err.message}${hint}\n\nSorry, we could not place that order just now. Send "hi" to start again.`
+}
+
+async function sessionMatch(phone: string, session: WaSession | null) {
+  const customer = session?.customerId
+    ? await prisma.customer.findUnique({ where: { id: session.customerId }, select: { email: true } })
+    : null
+  return { customerId: session?.customerId ?? null, email: customer?.email ?? null, phone }
+}
+
+/**
+ * Check the ban when a brand is picked. Banned → the BANNED reply (with the
+ * APPEAL hint while appeals are on), nothing else changes in the session. A
+ * failed check (not a ban) never blocks the pick — placeOrder checks again.
+ */
+async function refuseIfBanned(phone: string, session: WaSession, brand: OrderingBrand): Promise<boolean> {
+  try {
+    await assertNotBannedAtCompany({ ...(await sessionMatch(phone, session)), tenantId: brand.tenantId, intent: 'order' })
+    return false
+  } catch (err) {
+    if (err instanceof AppError && err.code === 'BANNED') {
+      const hint = (await banAppealsEnabled().catch(() => false)) ? `\n\n${APPEAL_HINT}` : ''
+      await saveSession(session)
+      await sendText(phone, `${err.message}${hint}`, customerScope(brand.tenantId))
+      return true
+    }
+    console.error(`[whatsapp] ban check at brand pick failed for ${phone.slice(-4)}:`, (err as Error).message)
+    return false
+  }
+}
+
+/**
+ * "APPEAL": open a help-desk appeal against the sender's block (contactPhone =
+ * the sender; the brand of the session, if any, is a hint the server checks).
+ * One open appeal per block — a second APPEAL says it is already with the desk.
+ */
+async function handleAppeal(phone: string, session: WaSession | null): Promise<unknown> {
+  const scope = replyScope(session)
+  const match = await sessionMatch(phone, session)
+  const ban = await activeBanAtCompany({ ...match, tenantId: session?.tenantId ?? null }).catch(() => null)
+    ?? await activeBanAtCompany({ ...match, tenantId: null }).catch(() => null)
+  if (!ban) {
+    return sendText(phone, 'Your servd account is not blocked. Send "hi" to order.', scope)
+  }
+  try {
+    await createBanAppeal({
+      banId: ban.id,
+      customerId: session?.customerId ?? undefined,
+      contactPhone: phone,
+      conceptId: session?.conceptId ?? undefined,
+      reason: 'other',
+      message: 'Appeal sent from WhatsApp',
+      via: 'whatsapp',
+    })
+  } catch (err) {
+    if (err instanceof AppError && (err.code === 'APPEAL_OPEN' || err.code === 'APPEAL_TOO_SOON')) {
+      return sendText(phone, err.message, scope)
+    }
+    console.error(`[whatsapp] appeal for ${phone.slice(-4)} not created:`, (err as Error).message)
+    return sendText(phone, 'Sorry, we could not send your request just now. Please try again later.', scope)
+  }
+  return sendText(phone, 'Thank you. Your request is with our help desk. We will review the block on your servd account and get back to you on this number.', scope)
 }
 
 async function handleCartText(phone: string, session: WaSession): Promise<unknown> {

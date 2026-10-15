@@ -121,7 +121,8 @@ describe('GET /reports/by-tender', () => {
     // Cash = cash in a drawer; the pending COD is its own row (finance gaps item 1).
     expect(by.get('cash')).toMatchObject({ amountCents: 100_000 + 10_000, payments: 2, orders: 2, label: 'Cash' })
     expect(by.get('cod_with_rider')).toMatchObject({ amountCents: 90_000, payments: 1, orders: 1, label: 'Cash on delivery – with rider' })
-    expect(body.cod).toEqual({ paidInCents: 0, paidInCount: 0, withRiderCents: 90_000, withRiderCount: 1, notCollectedCents: 0, notCollectedCount: 0 })
+    // riderOwes* (H5: booked to the rider); notCollected* are the deprecated aliases (same values).
+    expect(body.cod).toEqual({ paidInCents: 0, paidInCount: 0, withRiderCents: 90_000, withRiderCount: 1, riderOwesCents: 0, riderOwesCount: 0, notCollectedCents: 0, notCollectedCount: 0 })
     expect(by.get('card')).toMatchObject({ amountCents: 200_000 + 80_000, orders: 2, label: 'Card – Keenu' })
     expect(by.get('raast')).toMatchObject({ amountCents: 300_000 + 150_000 + 50_000 + 20_000, payments: 4, orders: 4, label: 'Raast QR' })
     expect(by.get('keenu_qr')).toMatchObject({ amountCents: 40_000, label: 'Keenu QR (retired)' })
@@ -165,6 +166,43 @@ describe('GET /reports/by-tender', () => {
 
     const empty = await call(financeA, '/reports/by-tender?dateFrom=2026-10-01&dateTo=2026-10-02')
     expect(empty.json()).toMatchObject({ tenders: [], totalCents: 0, refunds: [] })
+  })
+
+  it('COD booked to the rider is its own row (cod_rider_owes), and on-account bills list after Raast', async () => {
+    // Another day, so the first test's figures are untouched.
+    const DAY2 = '2026-10-11'
+    const at = (h: number) => new Date(`${DAY2}T${String(h).padStart(2, '0')}:00:00Z`)
+    const move = (id: string) => prisma.order.update({ where: { id }, data: { placedAt: at(9), completedAt: at(10) } })
+    const rider = await prisma.rider.create({ data: { name: 'Report Rider', phone: `92340${Date.now() % 10_000_000}`, tenantId: A.tenantId } })
+    // Delivered COD finance booked as owed by the rider (1351).
+    const owed = await mkOrder(A, { items: item(A, 45_000), taxCents: 0, taxRatePct: 15, totalCents: 45_000, payments: [{ method: 'cash', amountCents: 45_000, status: 'pending' }] })
+    await prisma.order.update({ where: { id: owed }, data: { source: 'servd', fulfilmentType: 'delivery', riderId: rider.id, deliveredAt: at(10) } })
+    await prisma.payment.updateMany({ where: { orderId: owed }, data: { codRiderDebtAt: at(23), codRiderDebtById: financeA.id } })
+    await move(owed)
+    // Delivered COD still with the rider.
+    const withRider = await mkOrder(A, { items: item(A, 15_000), taxCents: 0, taxRatePct: 15, totalCents: 15_000, payments: [{ method: 'cash', amountCents: 15_000, status: 'pending' }] })
+    await prisma.order.update({ where: { id: withRider }, data: { source: 'servd', fulfilmentType: 'delivery', riderId: rider.id, deliveredAt: at(10) } })
+    await move(withRider)
+    // An on-account bill and a Raast sale.
+    const oa = await mkOrder(A, { items: item(A, 25_000), taxCents: 0, taxRatePct: 15, totalCents: 25_000 })
+    await prisma.payment.create({ data: { orderId: oa, method: 'on_account', amountCents: 25_000, status: 'paid', processedAt: at(10) } })
+    await move(oa)
+    await move(await mkOrder(A, { items: item(A, 10_000), taxCents: 0, taxRatePct: 8, totalCents: 10_000, payments: [{ method: 'raast', amountCents: 10_000 }] }))
+
+    const r = await call(financeA, `/reports/by-tender?dateFrom=${DAY2}&dateTo=${DAY2}`)
+    expect(r.statusCode, r.body).toBe(200)
+    const body = r.json()
+    expect(body.tenders.map((t: Row) => t.tender)).toEqual(['cod_with_rider', 'cod_rider_owes', 'raast', 'on_account'])
+    const by = new Map<string, Row>(body.tenders.map((t: Row) => [t.tender, t]))
+    expect(by.get('cod_rider_owes')).toMatchObject({ amountCents: 45_000, payments: 1, orders: 1, label: 'Cash on delivery – owed by rider' })
+    expect(by.get('cod_with_rider')).toMatchObject({ amountCents: 15_000, label: 'Cash on delivery – with rider' })
+    expect(by.get('on_account')).toMatchObject({ amountCents: 25_000, orders: 1, label: 'On account' })
+    expect(body.cod).toEqual({
+      paidInCents: 0, paidInCount: 0, withRiderCents: 15_000, withRiderCount: 1,
+      riderOwesCents: 45_000, riderOwesCount: 1, notCollectedCents: 45_000, notCollectedCount: 1,
+    })
+    expect(body.totalCents).toBe(45_000 + 15_000 + 25_000 + 10_000)
+    expect(by.has('cod_not_collected')).toBe(false)
   })
 })
 

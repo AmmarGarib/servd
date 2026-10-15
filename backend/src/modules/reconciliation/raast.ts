@@ -38,12 +38,15 @@
 // the same lock, so a receipt's state is never overwritten by a race.
 //
 // Ledger. A write-off ('not received') posts 'raast.unreceived:<receiptId>'
-// in the receipt's company: Dr contra (1110 customer owes — till clearing
-// lives on 1110 today / 8010 loss / 1350 staff owes) / Cr the receiving bank's
-// code — both memos start with RAAST_RECEIPTS_MEMO, so the generic matcher
-// never pairs them. (The 1110 → 1115 till-clearing split is PARKED with
-// on-account clients, owner 2026-10-13; reversals always mirror their own
-// entry's lines.) A receipt written off and later found on a statement
+// in the receipt's company: Dr contra (the customer owes it — the company's
+// till-clearing code, tillClearingCodeTx: 1110 until the CEO's 1110 → 1115
+// cut-over, 1115 after it / 8010 loss / 1350 staff owes) / Cr the receiving
+// bank's code — both memos start with RAAST_RECEIPTS_MEMO, so the generic
+// matcher never pairs them. Entries already posted are never touched here:
+// a reversal mirrors its own entry's lines (a pre-cut-over 1110 write-off
+// reverses on 1110, and the daily till-clearing mover — accounting/
+// tillClearing.ts moveLateTillLines — carries that onto 1115). A receipt
+// written off and later found on a statement
 // reverses that entry first
 // ('raast.unreceived.reversal:<…>'). A second write-off after a reversal gets
 // its own sourceId (`<receiptId>:2`, …) — a posting is idempotent per
@@ -55,7 +58,8 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { toCents } from '../../lib/money.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { fmtPktDate } from '../accounting/dates.js'
-import { postJournalEntry, reverseJournalEntry, TILL_CLEARING_CODES } from '../accounting/journal.js'
+import { ACCT, postJournalEntry, reverseJournalEntry, TILL_CLEARING_CODES } from '../accounting/journal.js'
+import { tillClearingCodeTx } from '../accounting/tillClearingCode.js'
 import { RAAST_RECEIPTS_MEMO, REFUND_DUE_PREFIX } from '../accounting/orderPosting.js'
 import { lockRaastTx } from '../../connectors/raast/lock.js'
 import { cleanBankRef, normalizeBankRef, refInText } from '../../connectors/raast/reference.js'
@@ -77,13 +81,18 @@ export const MATCHABLE_STATUSES: RaastReceiptStatus[] = ['provisional', 'unrecei
 /** Receipts finance still has to clear before a period closes (S6). */
 export const OPEN_FINANCE_STATUSES: RaastReceiptStatus[] = ['provisional', 'needs_attention']
 /**
- * The contra accounts a write-off may use: 1110 (the customer still owes it —
- * till clearing lives on 1110 while the 1115 split is PARKED with on-account
- * clients, owner 2026-10-13), 8010 a loss, 1350 recovered from staff. The
- * first is the default.
+ * The contra accounts a write-off may use: 1115 (the customer still owes it —
+ * till clearing), 8010 a loss, 1350 recovered from staff, and the legacy
+ * '1110' an older screen may still send. '1115' and '1110' both mean "the
+ * customer owes it" and post to the company's CURRENT till-clearing code
+ * (tillClearingCodeTx — 1110 before the CEO's cut-over, 1115 after it), so a
+ * write-off never lands on the wrong side of the split. Omitted, that is the
+ * default (resolved server-side, never a static code).
  */
-export const WRITE_OFF_CONTRAS = ['1110', '8010', '1350'] as const
+export const WRITE_OFF_CONTRAS = ['1115', '8010', '1350', '1110'] as const
 export type WriteOffContra = (typeof WRITE_OFF_CONTRAS)[number]
+/** The contras that mean "the customer still owes it" (till clearing). */
+const TILL_CLEARING_CONTRAS: ReadonlySet<string> = new Set([ACCT.TILL_CLEARING, ACCT.CUSTOMER_AR])
 /** Who may ask the CEO to void a receipt (the void itself is the CEO's — role admin). */
 export const RAAST_VOID_REQUESTERS: readonly string[] = ['admin', 'owner', 'management', 'finance']
 
@@ -479,8 +488,8 @@ export async function unmatchReceipt(input: { receiptId: string; actorId: string
  *   - any other order, live: only its completion debits the bank
  *     ('order.complete:<orderId>') — a drawer close books non-till CASH only;
  *   - any other order, cancelled / rejected: only a drawer close that held
- *     its money as a refund due (Cr till clearing — 1110 today;
- *     TILL_CLEARING_CODES also holds 1115 for the parked split —
+ *     its money as a refund due (Cr till clearing — 1110 before the
+ *     company's cut-over, 1115 after; TILL_CLEARING_CODES holds both —
  *     'REFUND DUE …' naming the order).
  */
 export async function saleBookedTx(db: Db, r: RaastReceipt): Promise<boolean> {
@@ -512,8 +521,11 @@ export async function saleBookedTx(db: Db, r: RaastReceipt): Promise<boolean> {
 }
 
 export async function writeOffUnreceived(input: {
-  receiptId: string; actorId: string; reason: string; contraAccountCode: WriteOffContra; db?: typeof defaultPrisma
-}): Promise<{ receipt: RaastReceipt; entryId: string }> {
+  receiptId: string; actorId: string; reason: string
+  /** Omitted → the company's till-clearing code (the customer owes it). */
+  contraAccountCode?: WriteOffContra | null
+  db?: typeof defaultPrisma
+}): Promise<{ receipt: RaastReceipt; entryId: string; contraAccountCode: string }> {
   const db = input.db ?? defaultPrisma
   return db.$transaction(async (tx) => {
     const head = await tx.raastReceipt.findUnique({ where: { id: input.receiptId }, select: { tenantId: true } })
@@ -526,6 +538,11 @@ export async function writeOffUnreceived(input: {
     if (!(await saleBookedTx(tx, r))) {
       throw new AppError('RAAST_SALE_NOT_BOOKED', 'The sale is not on the books yet (its till shift is still open, or its posting failed) — close the shift first, then mark it not received', 409)
     }
+    // "The customer owes it" goes to the company's till-clearing code as it
+    // stands now (read inside the transaction): 1110 before the cut-over, 1115 after.
+    const contra = !input.contraAccountCode || TILL_CLEARING_CONTRAS.has(input.contraAccountCode)
+      ? await tillClearingCodeTx(tx, r.tenantId)
+      : input.contraAccountCode
     const prior = await tx.journalEntry.count({ where: { tenantId: r.tenantId, reference: { startsWith: `${WRITE_OFF_SOURCE}:${r.id}` } } })
     const sourceId = prior === 0 ? r.id : `${r.id}:${prior + 1}`
     const memo = `${RAAST_RECEIPTS_MEMO} — not received, Ref ${r.bankRef ?? '-'} order #${orderRefOf(r.orderId)}`
@@ -537,7 +554,7 @@ export async function writeOffUnreceived(input: {
       postedBy: input.actorId,
       reference: r.bankRef ?? undefined,
       lines: [
-        { accountCode: input.contraAccountCode, type: 'debit', amountCents: r.amountCents, memo, conceptId: r.conceptId },
+        { accountCode: contra, type: 'debit', amountCents: r.amountCents, memo, conceptId: r.conceptId },
         { accountCode: r.ledgerCode, type: 'credit', amountCents: r.amountCents, memo, conceptId: r.conceptId },
       ],
     }, { tx })
@@ -547,7 +564,7 @@ export async function writeOffUnreceived(input: {
     })
     if (claimed.count === 0) throw new AppError('RAAST_RECEIPT_CHANGED', 'The receipt changed meanwhile — refresh and try again', 409)
     await resolveRaastFlagsTx(tx, r.tenantId, ['raast_statement_mismatch', 'raast_unconfirmed', 'raast_needs_attention'], 'RaastReceipt', r.id, `Written off as not received: ${input.reason}`)
-    return { receipt: await tx.raastReceipt.findUniqueOrThrow({ where: { id: r.id } }), entryId: posted.entryId }
+    return { receipt: await tx.raastReceipt.findUniqueOrThrow({ where: { id: r.id } }), entryId: posted.entryId, contraAccountCode: contra }
   }, TX_OPTS)
 }
 

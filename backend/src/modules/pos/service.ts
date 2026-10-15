@@ -12,10 +12,11 @@ import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLim
 import { shiftTenantId, assertShiftOf, shiftOfCompany } from '../../lib/tenantScope.js'
 import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, raastTotalCents, TENDER_ROUNDING_CENTS } from '../accounting/shiftPosting.js'
 import {
-  postRefundPayment, refundDueCents, isShiftReceipt, isVoidedRaast, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf,
+  postRefundPayment, refundDueCents, isShiftReceipt, isVoidedRaast, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf, onAccountOf,
   raastLedgerCodeOf, GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX,
 } from '../accounting/orderPosting.js'
-import { postJournalEntry, ACCT, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
+import { postJournalEntry, ACCT, TILL_CLEARING_CODES, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
+import { tillClearingCodeTx } from '../accounting/tillClearingCode.js'
 import { EXPENSE_PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { wasteSoldLineTx } from '../inventory/voidWaste.js'
 import { ensureOrderDepleted, returnVoidedLineStockTx } from '../orders/stock.js'
@@ -34,6 +35,7 @@ import { getConnector, terminalDriverOf } from '../../connectors/registry.js'
 import { enqueueFiscalRefundTx, kickFiscal } from '../../connectors/fiscal/outbox.js'
 import { fiscalViewForOrder, legacySrbAlias, type FiscalView } from '../../connectors/fiscal/view.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { withSavepoint } from '../../lib/savepoint.js'
 import { INT4_MAX_CENTS, sumCents, toCents } from '../../lib/money.js'
 // Raast QR (2026-10-12): the till's ONE tender set, the per-company Raast lock
 // (taken FIRST, before the order lock — M2/M3) and the receipt side of a
@@ -715,6 +717,8 @@ export async function settlePayment(input: SettleInput) {
     where: { id: input.paymentId },
     select: {
       id: true, status: true, method: true, amountCents: true, gatewayRef: true, shiftId: true, gatewayMeta: true,
+      // COD custody (H5): a rider debt booked on this cash is reversed when it is paid in.
+      codRiderDebtEntryId: true, codRiderDebtTransferId: true,
       order: { select: { id: true, status: true, conceptId: true, concept: { select: { tenantId: true } } } },
     },
   })
@@ -836,6 +840,18 @@ export async function settlePayment(input: SettleInput) {
         },
       })
       if (claimed.count === 0) throw new AppError('ALREADY_SETTLED', 'Payment is not pending', 409)
+      // COD custody (H5): the rider handed in cash finance had booked as owed
+      // by the rider. Own rider → 'cod.rider_debt.reversal:<paymentId>' Dr 1010
+      // / Cr 1351 here, behind a savepoint so a refusal (a closed period) never
+      // fails the pay-in — it is flagged after commit and re-posted later.
+      // Fleet rider → the inter-company transfer is reversed after commit.
+      let codReversalError: Error | null = null
+      if (payment.codRiderDebtEntryId && tenantId) {
+        const { reverseCodRiderDebtTx } = await import('../accounting/codPosting.js')
+        const r = await withSavepoint(tx, 'cod_rider_debt_reversal', () =>
+          reverseCodRiderDebtTx(tx, { paymentId: payment.id, tenantId }, { postedBy: input.actorId ?? 'system' }))
+        if (!r.ok) codReversalError = r.error
+      }
       // The Raast receipt, in this transaction: provisional until the bank
       // statement matches it.
       const receipt = isRaast
@@ -856,7 +872,7 @@ export async function settlePayment(input: SettleInput) {
         : null
       const coverage = await applyCoverageTx(tx, payment.order.id, input.via)
       const settled = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } })
-      return { settled, coverage, receipt }
+      return { settled, coverage, receipt, codReversalError }
     }, { maxWait: 10_000, timeout: 15_000 })
   } catch (err) {
     // A racing payment claimed the same bank reference first (the unique
@@ -864,6 +880,8 @@ export async function settlePayment(input: SettleInput) {
     if (isRaast) await raastRefConflict(prisma, err, tenantId, raastRef?.ref ?? null)
     throw err
   }
+
+  await afterCodPayIn(payment, tenantId, result.codReversalError, input.actorId ?? null)
 
   const fiscal = result.coverage.completedNow
     ? await afterTillSale(payment.order.id, result.coverage.customerId, result.coverage.source)
@@ -875,6 +893,48 @@ export async function settlePayment(input: SettleInput) {
     ...tillFiscal(fiscal),
     raast: result.receipt ? [raastTenderView(result.receipt)] : [],
   }
+}
+
+/**
+ * COD custody (H5), after the pay-in committed — never fails the settle:
+ *   - an own rider's reversal refused inside the pay-in (its savepoint rolled
+ *     back) is flagged posting_failed 'cod.rider_debt.reversal', which the
+ *     re-poster (codRiderDebtReversalReposter) posts once the cause is fixed;
+ *   - a fleet rider's inter-company transfer is reversed now in both books
+ *     (reverseCodRiderDebtAfterCommit, idempotent); a refusal is flagged the same way.
+ */
+async function afterCodPayIn(
+  payment: { id: string; amountCents: number; codRiderDebtEntryId: string | null; codRiderDebtTransferId: string | null; order: { id: string; conceptId: string } },
+  tenantId: string | null,
+  inTxError: Error | null,
+  actorId: string | null,
+): Promise<void> {
+  if (!payment.codRiderDebtEntryId && !payment.codRiderDebtTransferId) return
+  let error = inTxError
+  if (!error && payment.codRiderDebtTransferId) {
+    try {
+      const { reverseCodRiderDebtAfterCommit } = await import('../accounting/codPosting.js')
+      await reverseCodRiderDebtAfterCommit(payment.id)
+    } catch (err) {
+      error = err as Error
+    }
+  }
+  if (!error) return
+  const { flagPostingFailed } = await import('../accounting/journal.js')
+  const code = error instanceof AppError ? error.code : 'ERROR'
+  await flagPostingFailed({
+    tenantId,
+    sourceType: 'cod.rider_debt.reversal',
+    sourceId: payment.id,
+    entityType: 'Payment',
+    entityId: payment.id,
+    reason: `${code}: ${error.message}`,
+    title: `A rider's cash-on-delivery pay-in did not clear the rider's debt (${code})`,
+    conceptId: payment.order.conceptId,
+    actorId,
+    amountCents: payment.amountCents,
+    metadata: { orderId: payment.order.id, fleet: !!payment.codRiderDebtTransferId, code },
+  })
 }
 
 /** The order columns the tender pricing reads. */
@@ -945,9 +1005,11 @@ export async function repriceForTenderTx(tx: Tx, order: TenderPricedOrder, metho
  * order if it is paid with `method`: the same rule processPayment applies
  * (re-priced for the tender while nothing is paid yet, else the stored total,
  * minus what is already covered). Writes nothing. Raast QR is the digital tax
- * group, priced at the card rate (lib/pricing tenderOf → 'card').
+ * group, priced at the card rate (lib/pricing tenderOf → 'card'). An
+ * on-account client's bill is priced at the CASH rate (tenderOf('on_account')
+ * → 'cash') — the rate the on-account charge asserts after its re-price.
  */
-export async function quoteOrderForTender(orderId: string, method: 'cash' | 'card' | 'raast') {
+export async function quoteOrderForTender(orderId: string, method: 'cash' | 'card' | 'raast' | 'on_account') {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: { payments: { select: { status: true, amountCents: true } } },
@@ -1546,6 +1608,25 @@ export async function getZReport(shiftId: string) {
     .filter((p) => p.method === 'comp' && p.status === 'paid')
     .reduce((s, p) => s + p.amountCents, 0)
 
+  // On-account clients' bills charged on this drawer: no money in the drawer
+  // — billed to the client's account (the close debits 1110 per client) — but
+  // a sale this drawer took, so in totalSales. Per client from the charge
+  // row's gatewayMeta.onAccount (orderPosting.onAccountOf).
+  const onAccountPaid = payments.filter((p) => p.method === 'on_account' && p.status === 'paid' && p.amountCents > 0)
+  const onAccountSales = onAccountPaid.reduce((s, p) => s + p.amountCents, 0)
+  const onAccountCount = onAccountPaid.length
+  const byClient = new Map<string, { accountId: string; number: string; name: string; cents: number; count: number }>()
+  for (const p of onAccountPaid) {
+    const c = onAccountOf(p)
+    const row = byClient.get(c.accountId) ?? { accountId: c.accountId, number: c.number, name: c.name, cents: 0, count: 0 }
+    row.cents += p.amountCents
+    row.count += 1
+    byClient.set(c.accountId, row)
+  }
+  const onAccountByClient = [...byClient.values()]
+    .sort((a, b) => b.cents - a.cents || a.number.localeCompare(b.number))
+    .map(({ number, name, cents, count }) => ({ number, name, cents, count }))
+
   // Refund rows carry a NEGATIVE amountCents. Summing them raw produced a
   // negative "voids", and every consumer then SUBTRACTED it — so a refund
   // *added* to revenue and *raised* expected cash, showing double takings and
@@ -1553,7 +1634,7 @@ export async function getZReport(shiftId: string) {
   const refundedPayments = payments.filter((p) => p.status === 'refunded')
   const voids = refundedPayments.reduce((s, p) => s + Math.abs(p.amountCents), 0)
 
-  const totalSales = cashSales + cardSales + raastSales + walletSales
+  const totalSales = cashSales + cardSales + raastSales + walletSales + onAccountSales
   // Orders, tax, discounts, tips and service charge are the till orders this
   // drawer books, split by the one sale formula (accounting/shiftPosting.ts
   // summariseShiftSales → computeSaleAccounting) — the figures the shift's
@@ -1640,8 +1721,13 @@ export async function getZReport(shiftId: string) {
     raastVoidedCents,
     walletSales,
     compSales,
+    /** On-account clients' bills charged here (billed to the client, no money in the drawer). */
+    onAccountSales,
+    onAccountCount,
+    /** Per client: its OA number, name, the cents charged here and how many bills. */
+    onAccountByClient,
     voids,
-    /** cash + card + Raast + wallet. */
+    /** cash + card + Raast + wallet + on account. */
     totalSales,
     totalOrders,
     totalDiscounts,
@@ -2008,6 +2094,13 @@ export async function voidOrderItem(input: VoidInput) {
       },
     })
     assertVoidable(order.status)
+    // An on-account client's bill completes the order when it is charged, so
+    // an open order carrying a paid on-account row should not exist — if one
+    // does, its money goes back through a refund to the account (which
+    // credits the charge and its statement), never a line void.
+    if (order.payments.some((p) => p.method === 'on_account' && p.status === 'paid' && p.amountCents > 0)) {
+      throw new AppError('ON_ACCOUNT_REFUND_INSTEAD', 'This bill was charged to a client account — refund it to the account instead of voiding a line', 409)
+    }
     // A card / online payment in flight was started for the current amount.
     if (order.payments.some((p) => p.status === 'pending' && p.splitGroup == null && (p.method === 'card' || p.method === 'keenu_qr'))) {
       throw new AppError('PAYMENT_IN_PROGRESS', 'A card payment is in progress for this bill — wait for it, then refund the item', 409)
@@ -2717,6 +2810,9 @@ async function writeRefundTx(tx: Tx, r: {
    */
   raast?: RaastRefundSource | null
 }): Promise<{ payment: Payment; entryId: string }> {
+  // An on-account refund names the client it goes back to (the charge row's
+  // gatewayMeta.onAccount), so receipts and statements read it like the charge.
+  const onAccount = r.method === 'on_account' ? await onAccountMetaTx(tx, r.orderId) : null
   const payment = await tx.payment.create({
     data: {
       orderId: r.orderId,
@@ -2733,6 +2829,7 @@ async function writeRefundTx(tx: Tx, r: {
         },
         ...(r.terminalChargeId && { terminalChargeId: r.terminalChargeId }),
         ...(r.raast && { raast: { receiptId: r.raast.receiptId, bankAccountId: r.raast.bankAccountId, ledgerCode: r.raast.ledgerCode } }),
+        ...(onAccount && { onAccount }),
       },
       processedAt: new Date(),
     },
@@ -2743,7 +2840,27 @@ async function writeRefundTx(tx: Tx, r: {
   if (!posted.entryId) {
     throw new AppError('REFUND_NOT_POSTED', `The refund could not be booked: ${posted.reason ?? 'unknown'}`, 422)
   }
+  // Back to an on-account client's account: the charge's refundedCents and,
+  // when it is already on a statement, the statement's credit — in THIS
+  // transaction, so a refused posting (above) or a refusal here rolls the
+  // whole refund back. Every writer of an on-account refund row comes here.
+  if (r.method === 'on_account') {
+    const { applyChargeRefundTx } = await import('../receivables/onAccount.js')
+    await applyChargeRefundTx(tx, { orderId: r.orderId, refundPaymentId: payment.id, amountCents: r.amountCents })
+  }
   return { payment, entryId: posted.entryId }
+}
+
+/** The client an order was charged to on account: its paid on_account row's gatewayMeta.onAccount, or null. */
+async function onAccountMetaTx(tx: Tx, orderId: string): Promise<Prisma.InputJsonObject | null> {
+  const charged = await tx.payment.findFirst({
+    where: { orderId, method: 'on_account', status: 'paid', amountCents: { gt: 0 } },
+    orderBy: { createdAt: 'desc' },
+    select: { gatewayMeta: true },
+  })
+  const meta = charged?.gatewayMeta
+  const oa = meta && typeof meta === 'object' && !Array.isArray(meta) ? (meta as Prisma.JsonObject)['onAccount'] : null
+  return oa && typeof oa === 'object' && !Array.isArray(oa) ? (oa as Prisma.InputJsonObject) : null
 }
 
 /**
@@ -2843,6 +2960,9 @@ export async function assertRefundAllowed(input: {
  * cash refund without one is refused.
  */
 async function refundDrawerOf(input: RefundInput, tenantId: string, method: RefundMethod): Promise<string | null> {
+  // Back to an on-account client's account: no money leaves a drawer, so the
+  // refund row sits on no drawer (no cash-drawer rule, never in a close).
+  if (method === 'on_account') return null
   let shiftId = input.shiftId ?? null
   if (!shiftId) {
     const own = await prisma.shift.findFirst({
@@ -2875,11 +2995,13 @@ function refundDueOf(order: { status: string; payments: DuePayment[] }) {
   // A Raast tender whose receipt the CEO voided as never booked is no money
   // taken (orderPosting.refundDueCents excludes it the same way): nothing goes
   // back for it and it is no hand-back option.
-  const taken = order.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && REFUNDABLE_TENDERS.has(p.method) && !isVoidedRaast(p) && isShiftReceipt(p))
+  // An on-account charge is no money taken (orderPosting.refundDueCents leaves
+  // it out the same way): nothing is owed back for it on a cancelled ticket.
+  const taken = order.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && p.method !== 'on_account' && REFUNDABLE_TENDERS.has(p.method) && !isVoidedRaast(p) && isShiftReceipt(p))
   const refunds = order.payments.filter((p) => p.status === 'refunded' && p.amountCents < 0)
   const byMethod = new Map<string, number>()
   for (const p of taken) byMethod.set(p.method, (byMethod.get(p.method) ?? 0) + p.amountCents)
-  for (const r of refunds) byMethod.set(r.method, (byMethod.get(r.method) ?? 0) - Math.abs(r.amountCents))
+  for (const r of refunds) if (r.method !== 'on_account') byMethod.set(r.method, (byMethod.get(r.method) ?? 0) - Math.abs(r.amountCents))
   const latest = [...taken].sort((a, b) => +(b.processedAt ?? b.createdAt) - +(a.processedAt ?? a.createdAt))[0]
   return {
     due,
@@ -2964,8 +3086,13 @@ export const CANCEL_UNWIND_SOURCE = 'order.cancel_unwind'
 // the receipt; a Raast refund row carries it in gatewayMeta.raast), never on
 // 1030 — so the codes are per order.
 
-/** Where every cancelled ticket's money can sit: balanced against, never unwound (plus its Raast bank codes — moneyAccountsOf). */
-const BASE_MONEY_ACCOUNTS: readonly string[] = [ACCT.CASH_ON_HAND, ACCT.CASH_DRAWER, ACCT.CARD_RECEIVABLE, ACCT.CUSTOMER_AR]
+/**
+ * Where every cancelled ticket's money can sit: balanced against, never
+ * unwound (plus its Raast bank codes — moneyAccountsOf). Till clearing is 1110
+ * until the company's cut-over and 1115 after it (tillClearingCodeTx); both
+ * stay listed so lines booked either side of the cut-over are money lines.
+ */
+const BASE_MONEY_ACCOUNTS: readonly string[] = [ACCT.CASH_ON_HAND, ACCT.CASH_DRAWER, ACCT.CARD_RECEIVABLE, ACCT.CUSTOMER_AR, ACCT.TILL_CLEARING]
 
 type ParkRow = { method: string; gatewayMeta?: unknown; raastReceipt?: { ledgerCode: string } | null }
 
@@ -2980,6 +3107,11 @@ type ParkRow = { method: string; gatewayMeta?: unknown; raastReceipt?: { ledgerC
  * 1030).
  */
 function parkAccountOf(p: ParkRow): string {
+  // An on-account client's bill completes its order and is no money taken —
+  // it is never parked on a cancelled ticket (refunds go back to the account).
+  if (p.method === 'on_account') {
+    throw new AppError('ON_ACCOUNT_NOT_PARKABLE', 'An on-account bill is not money taken at the till — refund it to the client account', 409)
+  }
   if (p.method === 'cash') return ACCT.CASH_ON_HAND
   if (p.method === 'raast') return raastLedgerCodeOf(p)
   return ACCT.CARD_RECEIVABLE
@@ -3075,13 +3207,15 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
     // This close saw the ticket cancelled: it holds the receipts as a refund due (Cr 1110).
     const dueLine = await tx.journalLine.findFirst({
       where: {
-        journalEntryId: close.id, type: 'credit', account: { tenantId, code: ACCT.CUSTOMER_AR },
+        // 1110 before the company's till-clearing cut-over, 1115 after (legacy closes stay found).
+        journalEntryId: close.id, type: 'credit', account: { tenantId, code: { in: TILL_CLEARING_CODES } },
         AND: [{ memo: { startsWith: REFUND_DUE_PREFIX } }, { memo: { contains: order.id } }],
       },
       select: { id: true },
     })
     if (dueLine) continue
-    const here = receipts.filter((p) => p.shiftId === shiftId && p.method !== 'comp')
+    // A comp is not money; nor is an on-account charge (never parked — parkAccountOf).
+    const here = receipts.filter((p) => p.shiftId === shiftId && p.method !== 'comp' && p.method !== 'on_account')
 
     if (order.source !== 'pos') {
       // Non-till: its cash moved 1010 → 1015 (Cr 1010); its card and its
@@ -3172,11 +3306,11 @@ function parkedLeft(parked: Parked, used: Parked): Parked {
   return left
 }
 
-/** Takes up to `cents` from what is left parked on `code`; the rest is 1110. */
-function takeParked(left: Parked, code: string, cents: number): Array<{ accountCode: string; cents: number }> {
+/** Takes up to `cents` from what is left parked on `code`; the rest is till clearing (`tillClearing`: 1110, or 1115 after the cut-over). */
+function takeParked(left: Parked, code: string, cents: number, tillClearing: string): Array<{ accountCode: string; cents: number }> {
   const fromPark = Math.max(0, Math.min(left.get(code) ?? 0, cents))
   left.set(code, (left.get(code) ?? 0) - fromPark)
-  return [{ accountCode: code, cents: fromPark }, { accountCode: ACCT.CUSTOMER_AR, cents: cents - fromPark }]
+  return [{ accountCode: code, cents: fromPark }, { accountCode: tillClearing, cents: cents - fromPark }]
 }
 
 /**
@@ -3191,14 +3325,15 @@ async function postCancelledUnwindTx(tx: Tx, order: CancelledBooksOrder, tenantI
   if (books.reverse.length === 0) return null
   const left = parkedLeft(books.parked, await parkedUsedTx(tx, tenantId, order, exceptRefundId))
   const memo = `Cancelled order ${order.id} — owed back to the customer, not a sale`
+  const tillClearing = await tillClearingCodeTx(tx, tenantId)
   const signed: SignedLine[] = [...books.reverse]
   // Each reversed sale-refund share is debited where its tender's money is parked.
   for (const d of books.shareDebits) {
-    for (const t of takeParked(left, d.code, d.cents)) signed.push({ ...t, conceptId: order.conceptId, memo })
+    for (const t of takeParked(left, d.code, d.cents, tillClearing)) signed.push({ ...t, conceptId: order.conceptId, memo })
   }
-  // What the sale reversal leaves is the ticket's money, now owed back: 1110.
+  // What the sale reversal leaves is the ticket's money, now owed back: till clearing.
   const rest = signed.reduce((t, l) => t + l.cents, 0)
-  signed.push({ accountCode: ACCT.CUSTOMER_AR, cents: -rest, conceptId: order.conceptId, memo })
+  signed.push({ accountCode: tillClearing, cents: -rest, conceptId: order.conceptId, memo })
   const lines = toJournalLines(signed)
   if (lines.length === 0) return null
   const res = await postJournalEntry({
@@ -3235,7 +3370,7 @@ async function bookCancelledHandBackTx(tx: Tx, refundPaymentId: string, postedBy
   const books = await cancelledTicketBooksTx(tx, tenantId, order, payment.id)
   const left = parkedLeft(books.parked, await parkedUsedTx(tx, tenantId, order, payment.id))
   const memo = `Refund due handed back — cancelled order ${order.id}`
-  const signed: SignedLine[] = takeParked(left, parkAccountOf(payment), amount)
+  const signed: SignedLine[] = takeParked(left, parkAccountOf(payment), amount, await tillClearingCodeTx(tx, tenantId))
     .map((t) => ({ ...t, conceptId: order.conceptId, memo }))
   signed.push({ accountCode: refundCreditAccount(payment), cents: -amount, conceptId: order.conceptId, memo })
   // Dr 1030 / Cr 1030 for card (or Dr bank / Cr bank for Raast) a pre-cancel
