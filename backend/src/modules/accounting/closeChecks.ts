@@ -19,6 +19,8 @@
 //                            (or unknown) and that the backfill dry run does not already list
 //   trial_balance    block   the company's trial balance does not balance — NEVER overridable
 //   bank_unmatched   warn    bank statement lines up to the lock still unmatched
+//   vouchers_awaiting_docs block  cash vouchers paid on or before the lock whose documents finance has
+//                            not verified — their cash still sits on 1357, the expense unbooked
 //
 // A check that throws becomes a block keyed 'check_failed:<its key>' (the CEO
 // may override it, with a reason, like any other block) — a broken check never
@@ -357,8 +359,39 @@ const bankUnmatchedCheck: CloseCheck = {
   },
 }
 
+const vouchersAwaitingDocsCheck: CloseCheck = {
+  key: 'vouchers_awaiting_docs',
+  severity: 'block',
+  overridable: true,
+  async run(ctx) {
+    // 2026-10-15 flow: a voucher paid in or before the period whose supporting
+    // documents finance has not verified still holds its cash on 1357 — the
+    // period's expense is not booked yet.
+    const r = await ctx.db.cashVoucher.aggregate({
+      where: { tenantId: ctx.tenantId, status: 'disbursed', expenseOnVerify: true, disbursedAt: { lte: ctx.newLock } },
+      _count: { _all: true },
+      _sum: { amountCents: true },
+    })
+    const count = r._count._all
+    if (count === 0) return null
+    const cents = r._sum.amountCents ?? 0
+    return {
+      key: 'vouchers_awaiting_docs',
+      severity: 'block',
+      title: 'Cash vouchers awaiting documents',
+      detail: `${plural(count, 'cash voucher')} paid on or before ${fmtPktDate(ctx.newLock)} (${pkr(cents)}) ${count === 1 ? 'has' : 'have'} not had ${count === 1 ? 'its' : 'their'} supporting documents verified, `
+        + 'so the cash still sits on 1357 and the expense is not booked. Verify them on Finance → Cash vouchers, or close anyway.',
+      count,
+      cents,
+      link: '/finance/cash-vouchers?view=awaiting_verification',
+      overridable: true,
+    }
+  },
+}
+
 export const CORE_CLOSE_CHECKS: CloseCheck[] = [
   raastCheck, openTillsCheck, unpostedShiftsCheck, unpostedOrdersCheck, postingFailedCheck, trialBalanceCheck, bankUnmatchedCheck,
+  vouchersAwaitingDocsCheck,
 ]
 
 /** EVERY period-close check, in the order the checklist shows them. */

@@ -187,6 +187,15 @@ export interface CutoverResult {
   reason?: 'zero' | 'already_cut_over'
 }
 
+/** Postgres 55P03 lock_not_available (lock_timeout), however Prisma wraps it. */
+function isLockNotAvailable(err: unknown): boolean {
+  const e = err as { code?: unknown; meta?: { code?: unknown; message?: unknown }; message?: unknown } | null
+  if (!e) return false
+  if (e.code === '55P03' || e.meta?.code === '55P03') return true
+  const msg = `${typeof e.message === 'string' ? e.message : ''} ${typeof e.meta?.message === 'string' ? e.meta.message : ''}`
+  return /55P03|lock_not_available|canceling statement due to lock timeout/i.test(msg)
+}
+
 /**
  * The CEO's one-time cut-over of `tenantId` (see the header). Idempotent on
  * the marker. `actor` is the user id ('system' never runs it on its own).
@@ -210,6 +219,9 @@ export async function cutoverTillClearing(
       // Every posting already writing to journal_entries commits before the
       // balance is read; one that starts now waits for the marker (and then
       // posts to 1115, or — if it read 1110 first — is moved by the daily job).
+      // The lock covers every company's journal: never queue behind a long
+      // writer (every new posting would then queue behind US) — give up fast.
+      await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '5s'")
       await tx.$executeRawUnsafe('LOCK TABLE journal_entries IN SHARE MODE')
       const at = new Date()
       const byConcept = await tillNetByConcept(tx, tenantId)
@@ -244,6 +256,11 @@ export async function cutoverTillClearing(
         : { status: 'cut_over' as const, cutoverAt: at, entryId, movedCents: x }
     }, { maxWait: 15_000, timeout: 60_000 })
   } catch (err) {
+    // A busy table is not a refused posting: no flag (a flag's reposter would
+    // later run the cut-over unattended) — the CEO simply tries again.
+    if (isLockNotAvailable(err)) {
+      throw new AppError('TILL_CLEARING_BUSY', 'The books are busy — try the cut-over again in a minute', 409)
+    }
     await flagPostingFailed({
       tenantId,
       sourceType: TILL_SPLIT_SOURCE, sourceId: tenantId,

@@ -90,7 +90,7 @@ import { fmtPktDate } from '../accounting/dates.js'
 import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
 import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
-import { lockAccountTx } from './onAccount.js'
+import { chargeNetCents, lockAccountTx } from './onAccount.js'
 import {
   INVOICE, CREDIT_NOTE, STATEMENT, LIVE_KINDS, WHT_METHOD, ST_WITHHELD_METHOD,
   totalOf, balanceOf, statusFor, paymentKind, sourceOfPayment, lockInvoice, restatus, nextNumber, withNumberRetry,
@@ -564,6 +564,11 @@ export async function receivableRoutes(fastify: FastifyInstance) {
     }
 
     const row = await prisma.$transaction(async (tx) => {
+      // A statement: lock order client account → statement (onAccount.ts), so
+      // a till refund on one of its bills cannot move while we read them.
+      if (salesTax && found.kind === STATEMENT && found.customerAccountId) {
+        await lockAccountTx(tx, found.customerAccountId)
+      }
       const inv = await lockInvoice(tx, found.id)
       assertLiveInvoice(inv)
       if (salesTax) {
@@ -579,7 +584,21 @@ export async function receivableRoutes(fastify: FastifyInstance) {
             _sum: { amountCents: true },
           }),
         ])
-        const leftCents = toCents(inv.taxCents) - sumCents(credited._sum.taxCents) - sumCents(withheld._sum.amountCents)
+        // A statement's tax is its bills' tax AS IT NOW STANDS: a till refund
+        // after billing only raises creditedCents, so take each bill's tax
+        // pro rata to what is still charged (the same rule as issueStatementTx).
+        let taxNowCents = toCents(inv.taxCents)
+        if (inv.kind === STATEMENT) {
+          const charges = await tx.customerAccountCharge.findMany({
+            where: { tenantId: inv.tenantId, statementInvoiceId: inv.id },
+            select: { amountCents: true, taxCents: true, refundedCents: true },
+          })
+          taxNowCents = charges.reduce(
+            (t, c) => t + (c.amountCents > 0 ? Math.round((c.taxCents * chargeNetCents(c)) / c.amountCents) : 0),
+            0,
+          )
+        }
+        const leftCents = taxNowCents - sumCents(credited._sum.taxCents) - sumCents(withheld._sum.amountCents)
         if (body.amountCents > leftCents) {
           throw new AppError(
             'OVER_SALES_TAX_WITHHOLDING',

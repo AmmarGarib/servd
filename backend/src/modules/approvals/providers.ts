@@ -516,44 +516,73 @@ const stockTransfers: ApprovalProvider = {
   },
 }
 
-// ── Cash requests ────────────────────────────────────────────────────────────
-// trustops/cashVouchers.ts (the cash_vouchers table IS the cash request; H3:
-// the pay is booked to the request's category). Two steps reach the inbox:
+// ── Cash vouchers (2026-10-15 flow) ─────────────────────────────────────────
+// trustops/cashVouchers.ts (the cash_vouchers table IS the cash request /
+// voucher). Two steps reach the inbox, each with Approve, Return for
+// correction (note) and Reject (note):
 //
-//  • waiting for the director: GET /trustops/cash-vouchers?status=hod_signed
-//    (ALL_STAFF; the module's own visibility), POST /:id/approve — ADMIN_ONLY,
-//    never the login that signed as HOD (409 SAME_SIGNER: listed with Approve
-//    disabled, Reject stays) — and /:id/reject (note).
-//  • waiting for the HOD: GET /trustops/cash-vouchers?view=hod (drafts this
-//    login may sign — the holder's reporting manager, or a cash keeper), POST
-//    /:id/sign-hod and /:id/reject (note). Per item: the route decides who
-//    signs (canSignHod), so there are no approver roles.
+//  • waiting for finance: GET /trustops/cash-vouchers?view=finance (finance
+//    approvers; legacy drafts included), POST /:id/finance-approve — never on
+//    one's own voucher (canFinanceApprove; the route answers 409 SELF_APPROVE).
+//    Type cash_request_finance (role finance). The retired HOD step
+//    (cash_request_hod) has no provider.
+//  • waiting for the CEO: GET /trustops/cash-vouchers?view=ceo
+//    (finance_approved + legacy hod_signed), POST /:id/approve — ADMIN_ONLY,
+//    never the raiser / holder (409 SELF_APPROVE) nor the login that gave the
+//    first approval (409 SAME_SIGNER): listed with Approve disabled, Return
+//    and Reject stay.
 
 type CashRequestRow = {
   id: string; tenantId: string; number: string; voucherDate: string; payeeName: string; purpose: string
-  amountCents: number; category: string | null; categoryKey: string | null; categoryAccountCode: string | null
+  kind?: 'request' | 'expense'; amountCents: number; grossCents?: number | null; discountCents?: number
+  category: string | null; categoryKey: string | null; categoryAccountCode: string | null
   department: string | null; conceptName: string | null; boxName: string | null
   holderName: string | null; preparedByName: string | null
   hodSignedById: string | null; hodSignedByName: string | null; hodSignedAt: string | null; createdAt: string
-  canSignHod?: boolean; canApprove?: boolean
-  preparedById?: string | null
+  financeApprovedById?: string | null; financeApprovedByName?: string | null; financeApprovedAt?: string | null
+  submittedAt?: string | null; returnCount?: number
+  canFinanceApprove?: boolean; canApprove?: boolean
+  preparedById?: string | null; payeeUserId?: string | null
 }
 
 const cashRequestTitle = (r: CashRequestRow) => `${r.number} — ${r.holderName ?? r.payeeName} — ${pkr(r.amountCents)}`
 const cashRequestCategory = (r: CashRequestRow) =>
   (r.categoryKey ? human(r.categoryKey) : null) ?? (r.categoryAccountCode ? `Account ${r.categoryAccountCode}` : null) ?? r.category
+const cashRequestFacts = (r: CashRequestRow, extra: Array<[string, string | null | undefined]> = []) => facts([
+  ['Voucher', r.number],
+  [r.kind === 'expense' ? 'Payee' : 'Holder', r.holderName ?? r.payeeName],
+  ...((r.discountCents ?? 0) > 0
+    ? [['Gross', pkr(r.grossCents ?? r.amountCents + (r.discountCents ?? 0))], ['Discount', pkr(r.discountCents ?? 0)]] as Array<[string, string]>
+    : []),
+  ['Amount', pkr(r.amountCents)],
+  ['For', r.purpose],
+  ['Expense account', cashRequestCategory(r)],
+  ['Brand', r.conceptName],
+  ['Department', r.department],
+  ['Raised by', r.preparedByName],
+  ...extra,
+])
+const cashRequestActions = (base: string, approve: ApprovalItem['actions'][number]): ApprovalItem['actions'] => [
+  approve,
+  { kind: 'return', label: 'Return for correction', method: 'POST', path: `${base}/return`, body: {},
+    input: { field: 'note', label: 'What needs correcting', required: true } },
+  { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+    input: { field: 'note', label: 'Reason', required: true } },
+]
 
 const cashVouchers: ApprovalProvider = {
   type: 'cash_voucher',
   label: 'Cash requests',
   module: 'accounting',
-  link: '/finance/cash-vouchers',
+  link: '/finance/cash-vouchers?view=ceo',
   ...rightsOf('cash_voucher'),
   async load(ctx) {
-    const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?status=hod_signed&limit=200')
+    const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?view=ceo&limit=200')
     if (res === null) return null
     return res.items.map((r): ApprovalItem => {
       const base = `/trustops/cash-vouchers/${r.id}`
+      const own = r.preparedById === ctx.user.id || r.payeeUserId === ctx.user.id
+      const firstSigner = r.financeApprovedById === ctx.user.id || r.hodSignedById === ctx.user.id
       return {
         type: 'cash_voucher',
         id: r.id,
@@ -561,70 +590,56 @@ const cashVouchers: ApprovalProvider = {
         submittedByIds: idList(r.preparedById),
         title: cashRequestTitle(r),
         subtitle: r.purpose,
-        facts: facts([
-          ['Request', r.number],
-          ['Holder', r.holderName ?? r.payeeName],
-          ['Amount', pkr(r.amountCents)],
-          ['For', r.purpose],
-          ['Category', cashRequestCategory(r)],
-          ['Brand', r.conceptName],
-          ['Department', r.department],
+        facts: cashRequestFacts(r, [
           ['Paid from', r.boxName],
-          ['Raised by', r.preparedByName],
+          ['Finance approved by', r.financeApprovedByName],
           ['HOD signed by', r.hodSignedByName],
         ]),
         amountCents: r.amountCents,
-        waitingSince: iso(r.hodSignedAt ?? r.createdAt),
+        waitingSince: iso(r.financeApprovedAt ?? r.hodSignedAt ?? r.createdAt),
         link: `/finance/cash-vouchers?id=${encodeURIComponent(r.id)}`,
-        actions: [
-          { kind: 'approve', label: 'Approve as director', method: 'POST', path: `${base}/approve`, body: {},
-            confirm: 'Approve this cash request? The cashier may then pay it; it is booked to its category when paid.',
-            ...(r.hodSignedById === ctx.user.id && { disabledReason: 'You signed this as HOD — a different person must sign as director' }) },
-          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
-            input: { field: 'note', label: 'Reason', required: true } },
-        ],
+        actions: cashRequestActions(base, {
+          kind: 'approve', label: 'Final approval', method: 'POST', path: `${base}/approve`, body: {},
+          confirm: 'Give the final approval? The cashier may then pay it; the expense is booked when finance verifies the documents.',
+          ...(own
+            ? { disabledReason: 'You raised or hold this voucher — someone else must approve it' }
+            : firstSigner
+              ? { disabledReason: r.hodSignedById === ctx.user.id
+                ? 'You signed this as HOD — a different person must give the final approval'
+                : 'You gave the finance approval — a different person must give the final approval' }
+              : {}),
+        }),
       }
     })
   },
 }
 
-const cashRequestsHod: ApprovalProvider = {
-  type: 'cash_request_hod',
-  label: 'Cash requests to sign (HOD)',
+const cashRequestsFinance: ApprovalProvider = {
+  type: 'cash_request_finance',
+  label: 'Cash vouchers — finance approval',
   module: 'accounting',
-  link: '/finance/cash-vouchers?view=hod',
-  ...rightsOf('cash_request_hod'),
+  link: '/finance/cash-vouchers?view=finance',
+  ...rightsOf('cash_request_finance'),
   async load(ctx) {
-    const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?view=hod&limit=200')
+    const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?view=finance&limit=200')
     if (res === null) return null
-    return res.items.filter((r) => r.canSignHod).map((r): ApprovalItem => {
+    return res.items.filter((r) => r.canFinanceApprove).map((r): ApprovalItem => {
       const base = `/trustops/cash-vouchers/${r.id}`
       return {
-        type: 'cash_request_hod',
+        type: 'cash_request_finance',
         id: r.id,
         tenantId: r.tenantId,
-        submittedByIds: idList(r.preparedById),
+        submittedByIds: idList(r.preparedById, r.payeeUserId),
         title: cashRequestTitle(r),
         subtitle: r.purpose,
-        facts: facts([
-          ['Request', r.number],
-          ['Holder', r.holderName ?? r.payeeName],
-          ['Amount', pkr(r.amountCents)],
-          ['For', r.purpose],
-          ['Category', cashRequestCategory(r)],
-          ['Brand', r.conceptName],
-          ['Department', r.department],
-          ['Raised by', r.preparedByName],
-        ]),
+        facts: cashRequestFacts(r, [['Returned before', r.returnCount ? String(r.returnCount) : null]]),
         amountCents: r.amountCents,
-        waitingSince: iso(r.createdAt),
+        waitingSince: iso(r.submittedAt ?? r.createdAt),
         link: `/finance/cash-vouchers?id=${encodeURIComponent(r.id)}`,
-        actions: [
-          { kind: 'approve', label: 'Sign as HOD', method: 'POST', path: `${base}/sign-hod`, body: {},
-            confirm: 'Sign this cash request as HOD? It then goes to the director.' },
-          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
-            input: { field: 'note', label: 'Reason', required: true } },
-        ],
+        actions: cashRequestActions(base, {
+          kind: 'approve', label: 'Approve (finance)', method: 'POST', path: `${base}/finance-approve`, body: {},
+          confirm: 'Approve this voucher for finance? It then goes to the CEO for the final approval.',
+        }),
       }
     })
   },
@@ -1169,7 +1184,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   payrollRuns,
   tipPools,
   stockTransfers,
-  cashRequestsHod,
+  cashRequestsFinance,
   cashVouchers,
   fixedAssetRequests,
   intercompanyTransfers,

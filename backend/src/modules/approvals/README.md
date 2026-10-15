@@ -48,8 +48,8 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 | `payroll_run` | `GET /hr/payroll/runs` (drafts) | `POST /hr/payroll/runs/:id/approve` | admin, owner, management (never whoever prepared it) |
 | `tip_pool` | `GET /tip-pools` (window over, or posted) | opens /tip-pools (post / pay need review) | admin, owner |
 | `stock_transfer` | `GET /stock-transfers?status=requested` | `PATCH /stock-transfers/:id/approve`, `/cancel` | managers |
-| `cash_request_hod` | `GET /trustops/cash-vouchers?view=hod` (rows with `canSignHod`) | `POST /trustops/cash-vouchers/:id/sign-hod`, `/reject` (note) | per item: the holder's reporting manager or a cash keeper (the route decides; never the holder) |
-| `cash_voucher` ("Cash requests") | `GET /trustops/cash-vouchers?status=hod_signed` | `POST /trustops/cash-vouchers/:id/approve`, `/reject` (note) | admin — the director (never the login that signed as HOD: Approve disabled, 409 SAME_SIGNER) |
+| `cash_request_finance` ("Cash vouchers — finance approval") | `GET /trustops/cash-vouchers?view=finance` (rows with `canFinanceApprove`) | `POST /trustops/cash-vouchers/:id/finance-approve`, `/return` (note), `/reject` (note) | finance (role finance with the accounting module; never on a voucher they raised or hold — 409 SELF_APPROVE). Replaces the retired `cash_request_hod` (2026-10-15; the type id still parses, no provider) |
+| `cash_voucher` ("Cash requests") | `GET /trustops/cash-vouchers?view=ceo` (finance_approved + legacy hod_signed) | `POST /trustops/cash-vouchers/:id/approve`, `/return` (note), `/reject` (note) | admin — the final approval (never the raiser / holder: 409 SELF_APPROVE; never the login that gave the finance approval or a legacy HOD signature: Approve disabled, 409 SAME_SIGNER) |
 | `fixed_asset_request` | `GET /accounting/fixed-assets/requests?status=pending` | `POST /accounting/fixed-assets/requests/:id/approve`, `/reject` (note) | admin (finance asks: disposal, scrap, write-down, capitalisation …) |
 | `intercompany_transfer` | `GET /accounting/intercompany/transfers?status=submitted` | `POST /accounting/intercompany/transfers/:id/approve`, `/reject` (note) | admin who belongs to BOTH companies (otherwise listed with the buttons disabled); the item sits in whichever of its two companies is in view |
 | `bad_debt` | `GET /accounting/receivables/write-offs?status=requested` | `POST /accounting/receivables/write-offs/:id/approve`, `/reject` (note) | admin — the CEO approves every write-off (G12 / H15); no requester-based disabled button: the CEO is exempt from self-approval (decision 27) and the route's `assertNotSelfApproval` decides |
@@ -78,8 +78,8 @@ waits as a `fixed_asset_request`.)
 `delegable` is false for the CEO-section types (cash requests for the
 director, fixed-asset requests, write-offs, Raast voids, GRNI, stock
 differences, on-account clients): each approve route checks role `admin`
-itself. The HOD step (`cash_request_hod`) is per item, like HR steps, and is
-never handed over.
+itself. Finance's cash-voucher step (`cash_request_finance`) is never handed
+over either; the old HOD step (`cash_request_hod`) is retired.
 
 **PARKED (owner, 2026-10-13):** `on_account_client` stays in `APPROVAL_TYPES`
 but has no provider (the on-account clients feature and its route are
@@ -112,7 +112,8 @@ queue routes and the hand-over catalogue all read it.
 | `payroll_run` | hr | staff_hr | admin, owner, management | approve / lock / reopen | staff_hr |
 | `tip_pool` | finance | payroll | admin, owner | post / pay | payroll |
 | `stock_transfer` | operations | inventory | managers | **never** (the company's managers; exempt from the through-head-office rule) | — |
-| `cash_request_hod` | finance | accounting | per item (the HOD) | **never** | — |
+| `cash_request_finance` | finance | accounting | finance | **never** | — |
+| `cash_request_hod` (retired) | finance | accounting | — | **never** | — |
 | `intercompany_transfer` | finance | accounting | admin | head-office pairs only (owned by the head office, A4); company ↔ company is CEO-only | accounting |
 | `journal_request` | finance; **ceo** for kind reverse | accounting | admin | kind post — **locked** (`DELEGATION_ENABLED.journal_request = false`, A22) | accounting |
 | `ho_recharge` | finance | accounting | admin | head-office-wide hand-overs only | accounting |

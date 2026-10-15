@@ -851,7 +851,7 @@ export async function settlePayment(input: SettleInput) {
         select: { codRiderDebtEntryId: true, codRiderDebtTransferId: true },
       })
       let codReversalError: Error | null = null
-      if (false && codDebt.codRiderDebtEntryId && tenantId) {
+      if (codDebt.codRiderDebtEntryId && tenantId) {
         const { reverseCodRiderDebtTx } = await import('../accounting/codPosting.js')
         const r = await withSavepoint(tx, 'cod_rider_debt_reversal', () =>
           reverseCodRiderDebtTx(tx, { paymentId: payment.id, tenantId }, { postedBy: input.actorId ?? 'system' }))

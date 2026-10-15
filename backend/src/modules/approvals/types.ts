@@ -16,7 +16,8 @@ export interface ApprovalFact { label: string; value: string }
 
 /** One button on an item: a call to the module's own route. */
 export interface ApprovalAction {
-  kind: 'approve' | 'reject'
+  /** 'return' = send back for correction (a note is required); shown like a reject. */
+  kind: 'approve' | 'reject' | 'return'
   label: string
   method: 'POST' | 'PATCH'
   /** The module's existing route, relative to /api/v1. */

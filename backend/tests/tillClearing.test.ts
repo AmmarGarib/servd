@@ -311,6 +311,30 @@ describe('a refused cut-over (locked period) and the re-poster', () => {
     expect(await tillClearingCutoverAt(prisma, B.tenantId)).toBeNull()
   })
 
+  it('a busy journal (another writer holds ROW EXCLUSIVE) answers 409 TILL_CLEARING_BUSY: no marker, no flag', async () => {
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let locked!: () => void
+    const isLocked = new Promise<void>((r) => { locked = r })
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('LOCK TABLE journal_entries IN ROW EXCLUSIVE MODE')
+      locked()
+      await held
+    }, { timeout: 30_000 })
+    await isLocked
+    try {
+      const res = await call(ceoB, 'POST', '/accounting/till-clearing/cutover', { reason: 'CA confirmed the 1115 split for B' })
+      expect(res.statusCode, res.body).toBe(409)
+      expect(res.json().error.code).toBe('TILL_CLEARING_BUSY')
+    } finally {
+      release()
+      await holder
+    }
+    expect(await tillClearingCutoverAt(prisma, B.tenantId)).toBeNull()
+    expect(await net(B.tenantId, '1115')).toBe(0)
+    expect(await prisma.exceptionFlag.count({ where: { kind: 'posting_failed', tenantId: B.tenantId, entityType: 'Tenant', entityId: B.tenantId } })).toBe(0)
+  }, 30_000)
+
   it('B\'s CEO cuts over B only (the active company), never A or C', async () => {
     const a1115 = await net(A.tenantId, '1115')
     const res = await call(ceoB, 'POST', '/accounting/till-clearing/cutover', { reason: 'CA confirmed the 1115 split for B' })

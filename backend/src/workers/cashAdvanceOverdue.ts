@@ -1,5 +1,10 @@
-// Cash requests whose receipts are overdue — the daily flag (H3, Hasnain
-// 2026-10-14: "expense at payment; receipts kept for the file").
+// Cash vouchers whose supporting documents are overdue — the daily flag (H3,
+// Hasnain 2026-10-14; the 2026-10-15 flow: the cash waits on 1357 until
+// finance verifies the documents, so a voucher with none is chased).
+//
+// 2026-10-15 flow (expenseOnVerify true): a paid voucher past its dueBy with
+// NO supporting document is flagged once — the holder's request or a
+// finance-raised payee voucher alike. Legacy H3 rows: as below.
 //
 // A cash request is expensed to its category the moment it is paid
 // (accounting/pettyCashPosting.ts cashRequestPayLine), so nothing is left to
@@ -31,8 +36,10 @@ export async function runCashAdvanceOverdueOnce(now: Date = new Date()): Promise
       status: 'disbursed' as const,
       dueBy: { lt: now },
       overdueFlaggedAt: null,
-      payeeUserId: { not: null },
-      attachments: { none: { kind: 'receipt' } },
+      OR: [
+        { expenseOnVerify: false, payeeUserId: { not: null }, attachments: { none: { kind: 'receipt' } } },
+        { expenseOnVerify: true, attachments: { none: { kind: 'supporting' } } },
+      ],
     }
     const companies = await prisma.cashVoucher.findMany({ where: due, distinct: ['tenantId'], select: { tenantId: true } })
     for (const { tenantId } of companies) {
@@ -41,7 +48,7 @@ export async function runCashAdvanceOverdueOnce(now: Date = new Date()): Promise
           where: { ...due, tenantId },
           select: {
             id: true, tenantId: true, number: true, payeeName: true, purpose: true, conceptId: true, dueBy: true,
-            amountCents: true, settledCents: true, returnedCents: true, convertedCents: true,
+            amountCents: true, settledCents: true, returnedCents: true, convertedCents: true, expenseOnVerify: true,
           },
           orderBy: { dueBy: 'asc' },
         })
@@ -59,9 +66,11 @@ export async function runCashAdvanceOverdueOnce(now: Date = new Date()): Promise
             conceptId: v.conceptId,
             kind: 'cash_request_receipts_overdue',
             severity: 'medium',
-            title: `Receipts overdue on cash request ${v.number} (${v.payeeName})`.slice(0, 200),
-            description: `${v.payeeName} took PKR ${(open / 100).toFixed(0)} for "${v.purpose}" and no receipt was uploaded by ${v.dueBy!.toISOString().slice(0, 10)}. `
-              + 'The cash was booked to its category when paid; the receipts are needed for the file.',
+            title: `Supporting documents overdue on cash voucher ${v.number} (${v.payeeName})`.slice(0, 200),
+            description: `${v.payeeName} was paid PKR ${(open / 100).toFixed(0)} for "${v.purpose}" and no supporting document was uploaded by ${v.dueBy!.toISOString().slice(0, 10)}. `
+              + (v.expenseOnVerify
+                ? 'The cash waits on 1357 (vouchers awaiting documents) — the expense is booked only once finance verifies the documents.'
+                : 'The cash was booked to its category when paid; the receipts are needed for the file.'),
             entityType: 'CashVoucher',
             entityId: v.id,
             amountCents: open,
@@ -73,7 +82,7 @@ export async function runCashAdvanceOverdueOnce(now: Date = new Date()): Promise
         console.error(`[cashAdvanceOverdue] company ${tenantId} failed:`, (err as Error).message)
       }
     }
-    if (flagged > 0) console.info(`[cashAdvanceOverdue] ${flagged} cash request(s) flagged: receipts overdue`)
+    if (flagged > 0) console.info(`[cashAdvanceOverdue] ${flagged} cash voucher(s) flagged: supporting documents overdue`)
     return { flagged }
   } finally {
     running = false

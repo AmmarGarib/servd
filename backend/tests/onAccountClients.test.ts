@@ -37,6 +37,7 @@ const { tillClearingCutoverKey } = await import('../src/modules/accounting/tillC
 const { hashCardCode, normalizeCardCode, cardHintOf } = await import('../src/lib/onAccountCard.js')
 const { onAccountClients } = await import('../src/modules/approvals/onAccountProvider.js')
 const { APPROVAL_PROVIDERS } = await import('../src/modules/approvals/providers.js')
+const { toCents } = await import('../src/lib/money.js')
 
 const RUN = Math.random().toString(36).slice(2, 8)
 const CA = '/accounting/customer-accounts'
@@ -440,5 +441,50 @@ describe('approvals provider', () => {
     expect(b.every((i) => i.tenantId === tB)).toBe(true)
     // fnb_manager's queue read is refused → the type is not theirs at all.
     expect(await onAccountClients.load(ctx('fnbA'))).toBeNull()
+  })
+
+  it('approving applies only what the CEO saw: a later edit is 409 REQUEST_CHANGED and nothing changes', async () => {
+    const ctx = (who: string) => ({
+      user: { id: uid[who]!, role: 'admin' as const },
+      tenantIds: [tA], memberTenantIds: [tA],
+      async read<T>(path: string): Promise<T | null> {
+        const res = await call(who, 'GET', `${CA}${path.slice(CA.length)}`)
+        return res.statusCode >= 400 ? null : (res.json() as T)
+      },
+    })
+    const approveOf = async (id: string) => {
+      const item = (await onAccountClients.load(ctx('ceoA')))!.find((i) => i.id === id)!
+      return item.actions.find((a) => a.kind === 'approve')!
+    }
+    // A limit increase: the CEO opens the inbox at 300k, finance then asks for 3M.
+    const raise = await create('ceoA', { legalName: `Stale Raise ${RUN}`, creditLimitCents: 100_000_00 })
+    await call('finA', 'PATCH', `${CA}/${raise.id}`, { creditLimitCents: 300_000_00 })
+    const seen = await approveOf(raise.id)
+    expect(seen.body).toMatchObject({ creditLimitCents: 300_000_00, expectedUpdatedAt: expect.any(String) })
+    await call('finA', 'PATCH', `${CA}/${raise.id}`, { creditLimitCents: 3_000_000_00 })
+    const stale = await call('ceoA', 'POST', seen.path, seen.body)
+    expect(stale.statusCode, stale.body).toBe(409)
+    expect(stale.json().error.code).toBe('REQUEST_CHANGED')
+    const still = await prisma.customerAccount.findUniqueOrThrow({ where: { id: raise.id } })
+    expect(toCents(still.creditLimitCents)).toBe(100_000_00)
+    expect(toCents(still.requestedCreditLimitCents!)).toBe(3_000_000_00)
+    // Only the limit sent (no timestamp) is checked too.
+    expect((await call('ceoA', 'POST', seen.path, { creditLimitCents: 300_000_00 })).statusCode).toBe(409)
+    // Reloaded, the CEO approves what is now shown.
+    const fresh = await approveOf(raise.id)
+    const ok = await call('ceoA', 'POST', fresh.path, fresh.body)
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json()).toMatchObject({ creditLimitCents: 3_000_000_00, pending: null })
+
+    // A new client: terms edited after the inbox loaded → the stale approval is refused.
+    const newClient = await create('finA', { legalName: `Stale New ${RUN}`, creditLimitCents: 200_000_00 })
+    const seenNew = await approveOf(newClient.id)
+    await new Promise((r) => setTimeout(r, 5))
+    await call('finA', 'PATCH', `${CA}/${newClient.id}`, { termsDays: 90 })
+    const staleNew = await call('ceoA', 'POST', seenNew.path, seenNew.body)
+    expect(staleNew.statusCode, staleNew.body).toBe(409)
+    expect((await prisma.customerAccount.findUniqueOrThrow({ where: { id: newClient.id } })).status).toBe('pending')
+    const okNew = await approveOf(newClient.id)
+    expect((await call('ceoA', 'POST', okNew.path, okNew.body)).json()).toMatchObject({ status: 'active', termsDays: 90 })
   })
 })

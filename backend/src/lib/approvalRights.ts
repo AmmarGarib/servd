@@ -59,7 +59,8 @@ export const APPROVAL_TYPES = [
   'bad_debt',              // a receivable write-off — the CEO approves every one
   'raast_void',            // a Raast receipt "void, never booked" — CEO only
   'grni_writeoff',         // writing off goods received but never billed
-  'cash_request_hod',      // a cash request waiting for its HOD's signature
+  'cash_request_hod',      // RETIRED 2026-10-15 (the HOD step is gone) — kept so saved links and filters still parse
+  'cash_request_finance',  // a cash voucher waiting for finance's approval (2026-10-15 flow)
   'stock_difference',      // a waste / count difference waiting in 1290 for the CEO (H20)
   // Head office (D1/D3, 2026-10-15).
   'journal_request',       // a manual journal finance prepared (kind post / reverse)
@@ -189,8 +190,15 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   cash_request_hod: {
-    // The per-item HOD signature: the route decides who signs; never handed over.
+    // RETIRED 2026-10-15: finance replaced the HOD signature (cash_request_finance). No provider lists it.
     label: 'Cash requests to sign (HOD)', section: 'finance', queueModule: 'accounting', roles: [], perItem: true,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  cash_request_finance: {
+    // Finance's approval of a cash voucher (POST /trustops/cash-vouchers/:id/finance-approve): role finance holding
+    // the accounting module (the CEO may also act, but then never gives the final approval on the same voucher —
+    // the CEO's own step is cash_voucher). Never handed over.
+    label: 'Cash vouchers — finance approval', section: 'finance', queueModule: 'accounting', roles: ['finance'],
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   stock_difference: {
@@ -891,7 +899,8 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       return subject({ companyIds: locs.map((l) => l.tenantId), ownerTenantId: from, submitterIds: [s.requestedById], viaHeadOfficeId: null, status: s.status, submittedAt: s.requestedAt })
     }
     case 'cash_voucher':
-    case 'cash_request_hod': {
+    case 'cash_request_hod':
+    case 'cash_request_finance': {
       const c = await db.cashVoucher.findUnique({ where: { id }, select: { tenantId: true, preparedById: true, payeeUserId: true, status: true, createdAt: true } })
       return c && subject({ companyIds: [c.tenantId], ownerTenantId: c.tenantId, submitterIds: [c.preparedById, c.payeeUserId], viaHeadOfficeId: null, status: c.status, submittedAt: c.createdAt })
     }

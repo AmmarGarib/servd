@@ -366,6 +366,29 @@ describe('void, bulk issue, withholding and invoices naming a client', () => {
     expect(await prisma.receivablePayment.count({ where: { invoiceId: ms.id } })).toBe(0)
   })
 
+  it('sales tax withheld after a part till refund is capped at the tax still charged (409 OVER_SALES_TAX_WITHHOLDING)', async () => {
+    const client = await mkClient(tA)
+    const c = await charge(client.id, tA, brandSD, 11_500, 1_500)
+    const st = (await issue('finA', client.id)).json() as Statement
+    expect(st.taxCents).toBe(1_500)
+    // Half of the bill is refunded at the till after billing.
+    const refund = await prisma.payment.create({ data: { orderId: c.orderId, method: 'on_account', amountCents: -5_750, status: 'refunded' } })
+    await prisma.$transaction((tx) => applyChargeRefundTx(tx, { orderId: c.orderId, refundPaymentId: refund.id, amountCents: 5_750 }))
+    // Balance 5,750; tax still charged 750. 751 is over; 750 is the cap.
+    const over = await call('finA', 'POST', `${AR}/${st.id}/withholding`, { kind: 'sales_tax', amountCents: 751, date: today() })
+    expect(over.statusCode, over.body).toBe(409)
+    expect(over.json().error.code).toBe('OVER_SALES_TAX_WITHHOLDING')
+    expect(over.json().error.details).toMatchObject({ leftCents: 750 })
+    expect(await prisma.receivablePayment.count({ where: { invoiceId: st.id } })).toBe(0)
+    const ok = await call('finA', 'POST', `${AR}/${st.id}/withholding`, { kind: 'sales_tax', amountCents: 500, date: today() })
+    expect(ok.statusCode, ok.body).toBe(201)
+    // The live st_withheld row comes off the cap too: 250 left.
+    const again = await call('finA', 'POST', `${AR}/${st.id}/withholding`, { kind: 'sales_tax', amountCents: 251, date: today() })
+    expect(again.statusCode).toBe(409)
+    expect(again.json().error.code).toBe('OVER_SALES_TAX_WITHHOLDING')
+    expect((await call('finA', 'POST', `${AR}/${st.id}/withholding`, { kind: 'sales_tax', amountCents: 250, date: today() })).statusCode).toBe(201)
+  })
+
   it('an invoice may name a client of the ACTIVE company only; its name and NTN are copied', async () => {
     const a = await mkClient(tA)
     const b = await mkClient(tB, { createdById: uid.finB! })
