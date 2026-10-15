@@ -187,6 +187,40 @@ describe('money taken on a cancelled ticket can be handed back against the refun
     expect(refundDueCents({ status: 'cancelled', payments: [{ method: 'card', status: 'paid', amountCents: 700, gatewayRef: 'KEENU-1', shiftId: null }] })).toBe(0)
     // Part already handed back.
     expect(refundDueCents({ status: 'cancelled', payments: [paid, { method: 'cash', status: 'refunded', amountCents: -400, gatewayRef: null, shiftId: 'S2' }] })).toBe(600)
+    // An on-account charge is not money taken — nothing to hand back.
+    expect(refundDueCents({ status: 'cancelled', payments: [paid, { method: 'on_account', status: 'paid', amountCents: 900, gatewayRef: 'OA-0001', shiftId: 'S1' }] })).toBe(1_000)
+  })
+
+  it('after the company\'s till-clearing cut-over the refund due and its hand-back use 1115, not 1110', async () => {
+    const tenantX = (await prisma.tenant.create({ data: { name: 'Follow X', slug: `lf-x-${RUN}` } })).id
+    await ensureChartOfAccounts(tenantX)
+    const conceptX = (await prisma.concept.create({ data: { name: 'Cut over', slug: `lf-x-${RUN}`, type: 'restaurant', tenantId: tenantX, province: 'SD' } })).id
+    const { tillClearingCutoverKey } = await import('../src/modules/accounting/tillClearingCode.js')
+    await prisma.setting.create({ data: { key: tillClearingCutoverKey(tenantX), value: new Date().toISOString() } })
+    const shift = await freshShift(tenantX)
+    const order = await prisma.order.create({
+      data: {
+        conceptId: conceptX, source: 'pos', status: 'received', totalCents: 11_500, taxCents: 1_500, taxRatePct: 15,
+        items: { create: [{ name: 'Cancelled', quantity: 1, unitPriceCents: 10_000 }] },
+      },
+    })
+    await prisma.payment.create({ data: { orderId: order.id, shiftId: shift.id, method: 'cash', amountCents: 11_500, status: 'paid', processedAt: new Date() } })
+    await prisma.order.update({ where: { id: order.id }, data: { status: 'cancelled' } })
+    await closeAndPost(shift.id, 11_500)
+    const close = (await entry(tenantX, `shift.close:${shift.id}`))!
+    expect(amt(close, '1115', 'credit')).toBe(11_500)
+    expect(amt(close, '1110', 'credit')).toBe(0)
+    const next = await freshShift(tenantX)
+    const refund = await prisma.payment.create({
+      data: { orderId: order.id, shiftId: next.id, method: 'cash', amountCents: -11_500, status: 'refunded', processedAt: new Date() },
+    })
+    expect((await postRefundPayment(refund.id)).posted).toBe(true)
+    const back = (await entry(tenantX, `order.refund:${refund.id}`))!
+    expect(amt(back, '1115', 'debit')).toBe(11_500)
+    expect(amt(back, '1110', 'debit')).toBe(0)
+    // Company A (no marker) is unaffected.
+    const { tillClearingCodeTx } = await import('../src/modules/accounting/tillClearingCode.js')
+    expect(await tillClearingCodeTx(prisma, tenantA)).toBe('1110')
   })
 })
 

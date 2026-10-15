@@ -279,7 +279,7 @@ export async function computeCompanySegments(tenantId: string): Promise<{ slug: 
 
 /** Every company, every segment. */
 export async function computeAllSegments(tenantIds?: string[]): Promise<{ tenantId: string; slug: string; count: number }[]> {
-  const companies = tenantIds ?? (await prisma.tenant.findMany({ select: { id: true } })).map((t) => t.id)
+  const companies = tenantIds ?? (await prisma.tenant.findMany({ where: { kind: 'company' }, select: { id: true } })).map((t) => t.id)
   const out: { tenantId: string; slug: string; count: number }[] = []
   for (const tenantId of companies) {
     for (const r of await computeCompanySegments(tenantId)) out.push({ tenantId, ...r })

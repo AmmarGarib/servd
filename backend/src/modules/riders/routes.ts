@@ -113,7 +113,7 @@ export async function riderRoutes(fastify: FastifyInstance) {
         orderBy: { updatedAt: 'desc' },
       }),
       serviceClient.tenant.findMany({
-        where: { id: { in: memberIds }, deletedAt: null },
+        where: { id: { in: memberIds }, deletedAt: null, kind: 'company' },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
@@ -142,6 +142,11 @@ export async function riderRoutes(fastify: FastifyInstance) {
       where: { id: { in: [body.providerTenantId, body.clientTenantId] }, deletedAt: null },
     })
     if (tenants !== 2) throw new NotFoundError('Company')
+    // A head office trades nothing and has no riders (D1/D3, A24).
+    const headOffices = await serviceClient.tenant.count({
+      where: { id: { in: [body.providerTenantId, body.clientTenantId] }, kind: 'head_office' },
+    })
+    if (headOffices > 0) throw new AppError('FLEET_HEAD_OFFICE', 'A head office has no riders and no customers — a fleet agreement is only between companies', 422)
 
     const key = { providerTenantId: body.providerTenantId, clientTenantId: body.clientTenantId }
     const before = await serviceClient.fleetAgreement.findUnique({

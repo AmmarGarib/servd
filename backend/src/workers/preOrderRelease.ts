@@ -20,7 +20,7 @@ let running = false
 
 /** One pass over every company. Returns how many pre-orders were released. */
 export async function runPreOrderReleaseTick(now: Date = new Date()): Promise<number> {
-  const companies = await prisma.tenant.findMany({ where: { deletedAt: null }, select: { id: true } })
+  const companies = await prisma.tenant.findMany({ where: { deletedAt: null, kind: 'company' }, select: { id: true } })
   let released = 0
   for (const c of companies) {
     try {

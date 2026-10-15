@@ -296,9 +296,15 @@ export async function awardOrderPoints(orderId: string): Promise<CreditResult | 
   try {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, status: true, customerId: true, totalCents: true, concept: { select: { slug: true, tenantId: true } } },
+      select: {
+        id: true, status: true, customerId: true, totalCents: true, concept: { select: { slug: true, tenantId: true } },
+        payments: { where: { method: 'on_account', status: 'paid' }, select: { id: true }, take: 1 },
+      },
     })
     if (!order || !order.customerId || order.status !== 'completed') return null
+    // Decision OA-LOYALTY: a bill charged to an on-account client earns no
+    // points — the client's company pays it, not the diner.
+    if (order.payments.length > 0) return null
     const tenantId = order.concept.tenantId
     const settings = await loadLoyaltySettings(tenantId)
     const points = await calculatePointsEarned(order.totalCents, tenantId)

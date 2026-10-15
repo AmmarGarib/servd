@@ -1,6 +1,6 @@
 // Who marketing can reach — ONE definition, used by campaigns and by every
 // automated message (workers/loyaltyTriggers.ts). Nothing else may filter an
-// audience on marketingOptOutAt / bannedAt by hand; the triggers used to, and
+// audience on marketingOptOutAt / a ban flag by hand; the triggers used to, and
 // banned customers kept getting birthday and win-back messages while the
 // milestone note even went to people who had unsubscribed.
 //
@@ -20,14 +20,14 @@ const API_BASE = () => process.env['API_URL'] ?? 'http://localhost:3001'
 
 /**
  * Platform-level reachability, for automated messages that no one company
- * sends (birthday, activation, first-order welcome, milestones, referrals):
- * not deleted, not unsubscribed, and under no active ban anywhere (bannedAt is
- * the synced "some company has an active ban" flag — we cannot tell which
- * company's customer a platform message speaks for, so any ban excludes).
+ * sends (activation, first-order welcome, second-order nudge): not deleted
+ * and not unsubscribed. Bans are per company (owner decision 15) and are NOT
+ * read here: Customer.bannedAt says "some company has a ban", which must not
+ * silence another company's message. A caller that knows the sending company
+ * checks activeBanAtCompany / reachableAtCompany for it.
  */
 export const reachableCustomer: Prisma.CustomerWhereInput = {
   deletedAt: null,
-  bannedAt: null,
   marketingOptOutAt: null,
 }
 

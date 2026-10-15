@@ -49,7 +49,7 @@ export async function recomputeCustomerRollups(
       _max: { updatedAt: true },
     }),
     tx.orderComplaint.aggregate({
-      where: { customerId },
+      where: { customerId, kind: 'complaint' }, // ban appeals are not complaints
       _count: { _all: true },
       _max: { createdAt: true },
     }),

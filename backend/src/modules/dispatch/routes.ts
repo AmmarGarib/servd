@@ -25,7 +25,12 @@
 //     while (and only while) they carry one of the operator's orders — and
 //     then only those orders.
 //   - The customer's hand-over code is stripped from every order this module
-//     returns unless the operator is admin / management (lib/deliveryOtp.ts).
+//     returns unless the operator is admin / management — and from every
+//     order of a company with code-only delivery on, for every role
+//     (lib/deliveryOtp.ts, lib/deliveryRules.ts).
+//   - Code-only delivery (per company, lib/deliveryRules.ts, default OFF):
+//     ON, there is no staff "Delivered" — POST /orders/:id/delivered is 404 —
+//     and the board says so per order (`codeOnly`) so the admin hides it.
 //
 // This is the one set of rider-assignment routes (the rules live in
 // ./service.ts). /riders keeps the roster (create / edit / history / rating /
@@ -43,6 +48,7 @@ import {
   assignRider, unassignRider, markDelivered, setRiderStatus, recordRiderFix, riderFixSchema, stillWithRiderWhere,
 } from './service.js'
 import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
+import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
 
 // Company-scoped rider lookup. Goes through scopeTenantWhere rather than the
 // raw tenantFilter so a staff user with no company resolves to an empty
@@ -59,10 +65,14 @@ async function findRiderInScope(req: FastifyRequest, id: string, mode: ScopeMode
 async function findOrderInScope(req: FastifyRequest, id: string) {
   const order = await prisma.order.findFirst({
     where: { id, deletedAt: null, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-    select: { id: true },
+    select: { id: true, concept: { select: { tenantId: true } } },
   })
-  if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
-  return order
+  if (!order) throw notFound()
+  return { id: order.id, tenantId: order.concept.tenantId }
+}
+
+function notFound(): AppError {
+  return new AppError('NOT_FOUND', 'Order not found in your active company', 404)
 }
 
 export async function dispatchRoutes(fastify: FastifyInstance) {
@@ -161,16 +171,29 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
             placedAt: true, estimatedPickup: true, fulfilmentType: true,
             riderAssignedAt: true, riderAcceptedAt: true, pickedUpAt: true, arrivedAt: true,
             deliveryOtpAttempts: true,
-            concept: { select: { name: true, slug: true } },
+            // Emergency override: the code was sent to this rider — the
+            // order is pinned to them until delivered.
+            handoverReroutedAt: true, handoverRerouteRiderId: true,
+            concept: { select: { name: true, slug: true, tenantId: true } },
           },
           orderBy: { placedAt: 'desc' },
         },
       },
     })
     const inScope = new Set(typeof scope.tenantId === 'string' ? [scope.tenantId] : scope.tenantId.in)
+    // Code-only delivery per ORDER's company: the admin hides "Delivered" on
+    // those orders (the route would answer 404).
+    const orderTenants = [...new Set(riders.flatMap((r) => r.orders.map((o) => o.concept.tenantId)).filter((t): t is string => !!t))]
+    const codeOnlyTenants = new Set<string>()
+    for (const t of orderTenants) if (await codeOnlyDelivery(serviceClient, t)) codeOnlyTenants.add(t)
     const now = Date.now()
-    return riders.map(({ tenantId, ...r }) => ({
+    return riders.map(({ tenantId, orders, ...r }) => ({
       ...r,
+      orders: orders.map(({ concept: { tenantId: orderTenantId, ...concept }, ...o }) => ({
+        ...o,
+        concept,
+        codeOnly: !!orderTenantId && codeOnlyTenants.has(orderTenantId),
+      })),
       // True for a rider of another company carrying our orders under a
       // fleet agreement — the board can label them.
       fleetPartner: !tenantId || !inScope.has(tenantId),
@@ -191,7 +214,8 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
       // assignRider.
       const rider = await findRiderInScope(req, body.riderId, 'write')
       if (!rider) throw new NotFoundError('Rider', body.riderId)
-      return redactDeliveryOtp(await assignRider(order.id, rider.id), req.staffUser!.role)
+      const codeOnly = await codeOnlyDelivery(serviceClient, order.tenantId)
+      return redactDeliveryOtp(await assignRider(order.id, rider.id), req.staffUser!.role, codeOnly)
     },
   )
 
@@ -202,7 +226,8 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const order = await findOrderInScope(req, req.params.id)
-      return redactDeliveryOtp(await unassignRider(order.id), req.staffUser!.role)
+      const codeOnly = await codeOnlyDelivery(serviceClient, order.tenantId)
+      return redactDeliveryOtp(await unassignRider(order.id), req.staffUser!.role, codeOnly)
     },
   )
 
@@ -214,11 +239,14 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
   // code has locked or the rider never accepted — otherwise 409
   // RIDER_CLOSES_WITH_CODE (service.ts markDelivered staffClose). Older orders
   // keep the old rule. Pressing it again on a delivered order is not an error.
+  // A company with code-only delivery ON has no staff "Delivered": 404, as if
+  // the route did not exist (it is deleted once every live company is on).
   fastify.post<{ Params: { id: string } }>(
     '/orders/:id/delivered',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const order = await findOrderInScope(req, req.params.id)
+      if (await codeOnlyDelivery(serviceClient, order.tenantId)) throw notFound()
       const r = await markDelivered(order.id, {
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
         staffClose: { manager: MANAGERS.includes(req.staffUser!.role) },

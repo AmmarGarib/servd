@@ -124,6 +124,15 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // default Raast receiving account per company.
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "raast_receipts_one_awaiting_per_order" ON "raast_receipts" ("orderId") WHERE "status" = 'awaiting'`)
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "bank_accounts_one_raast_default_per_company" ON "bank_accounts" ("tenantId") WHERE "raastDefault" = true AND "deletedAt" IS NULL`)
+  // Head office (D1/D3): the partial uniques head_office_links_one_live and
+  // recharge_runs_one_open, and every CHECK of the new tables — read from the
+  // migration's SQL-only section (RLS stays out, as above).
+  for (const statement of migrationSection('20261015120000_head_office',
+    '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // On-account resume: one live statement per client and period
+  // (receivable_invoices_one_statement_per_period).
+  for (const statement of migrationSection('20261015120100_on_account_resume',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
 }
 
 /**

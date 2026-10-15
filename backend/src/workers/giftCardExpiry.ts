@@ -33,7 +33,7 @@ export async function runGiftCardExpiryOnce(now: Date = new Date()): Promise<num
   let held = 0
   let failed = 0
   try {
-    const companies = await prisma.tenant.findMany({ where: { isActive: true, deletedAt: null }, select: { id: true } })
+    const companies = await prisma.tenant.findMany({ where: { isActive: true, deletedAt: null, kind: 'company' }, select: { id: true } })
     for (const c of companies) {
       try {
         const r = await expireDueGiftCards(c.id, now, prisma)

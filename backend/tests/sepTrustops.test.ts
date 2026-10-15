@@ -18,6 +18,7 @@ import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import { runOnce as runShrinkageTrend } from '../src/workers/shrinkageTrend.js'
 import { runOnce as runRiderScoring } from '../src/workers/riderScoring.js'
+import { setCodeOnlyDelivery } from '../src/lib/deliveryRules.js'
 
 let tenantA: string
 let tenantB: string
@@ -119,6 +120,32 @@ describe('delivery OTP is scoped through the order\'s brand', () => {
     }
     const flag = await prisma.exceptionFlag.findFirst({ where: { kind: 'lost_package', entityId: o.id } })
     expect(flag?.tenantId).toBe(tenantA)
+  })
+})
+
+describe('delivery OTP with code-only delivery switched ON for A', () => {
+  const sw = (on: boolean) => prisma.$transaction((tx) => setCodeOnlyDelivery(tx, { tenantId: tenantA, on, actorId: users.mgrA!.id, reason: 'code-only switch test' }))
+
+  it('nobody reads A\'s code (404, the CEO included); B is unaffected; verify still works; the lock points at Emergency overrides', async () => {
+    await sw(true)
+    try {
+      const o = await deliveryOrder(conceptA, '3579')
+      expect((await call('mgrA', 'GET', `/trustops/orders/${o.id}/otp`)).statusCode).toBe(404)
+      expect((await call('mgrB', 'GET', `/trustops/orders/${o.id}/otp`)).statusCode).toBe(404)
+      const b = await deliveryOrder(conceptB, '8642')
+      expect((await call('mgrB', 'GET', `/trustops/orders/${b.id}/otp`)).json().otp).toBe('8642')
+
+      const locked = await deliveryOrder(conceptA, '1357')
+      await prisma.order.update({ where: { id: locked.id }, data: { deliveryOtpAttempts: 5 } })
+      const res = await call('mgrA', 'POST', `/trustops/orders/${locked.id}/verify-otp`, { otp: '1357' })
+      expect(res.statusCode).toBe(423)
+      expect(res.json().error.message).toContain('Emergency overrides')
+
+      expect((await call('mgrA', 'POST', `/trustops/orders/${o.id}/verify-otp`, { otp: '3579' })).statusCode).toBe(200)
+      expect((await prisma.order.findUnique({ where: { id: o.id } }))!.deliveryOtpVerifiedAt).toBeInstanceOf(Date)
+    } finally {
+      await sw(false)
+    }
   })
 })
 

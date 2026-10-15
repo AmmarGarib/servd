@@ -8,6 +8,7 @@ import { calculatePointsValue } from '../lib/loyaltySettings.js'
 import { creditPoints, creditPointsTx, bookEarn, loyaltyProgram } from '../modules/loyalty/service.js'
 import { formatBrandName } from '../lib/brandName.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
+import { activeBanAtCompany } from '../lib/strikes.js'
 import { realCompanyOrderWhere } from '../lib/testCompany.js'
 
 // Automated customer messages and point bonuses.
@@ -180,7 +181,7 @@ export async function runBirthdayTriggers(today = new Date()) {
 // nightly by modules/crm/segmentComputation.ts. Once per company per 30 days.
 async function runWinBackTriggers() {
   const { segmentMemberIds } = await import('../modules/crm/segmentComputation.js')
-  const companies = await prisma.tenant.findMany({ select: { id: true } })
+  const companies = await prisma.tenant.findMany({ where: { kind: 'company' }, select: { id: true } })
   for (const { id: tenantId } of companies) {
     const lapsed = await segmentMemberIds('lapsed', [tenantId])
     if (lapsed.length === 0) continue
@@ -259,7 +260,9 @@ async function runEncourageSecondOrderTrigger() {
     if (alreadySent) continue
 
     const msg = `${customer.name ?? 'Hey'}! You loved your first order — ready for your second? Order again and get Rs. 100 off with code SECOND100.`
-    await reach(customer, 'Ready for round 2? 🍔', `<p>${msg}</p>`, msg, await firstOrderTenantId(customer.id)).catch(() => {})
+    const t2 = await firstOrderTenantId(customer.id)
+    if (t2 && await activeBanAtCompany({ customerId: customer.id, email: customer.email, phone: customer.phone, tenantId: t2 })) continue
+    await reach(customer, 'Ready for round 2? 🍔', `<p>${msg}</p>`, msg, t2).catch(() => {})
 
     await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType: 'second_order' } })
   }
@@ -294,7 +297,9 @@ async function runFirstOrderWelcomeTrigger() {
       <p>If anything was off — and even if it wasn't — we'd love to hear from you. Reply to this email any time.</p>
       <p>Cooking with care,<br/>The servd team</p>`
 
-    await reach(c, 'Thanks for your first order 🍽', html, sms, await firstOrderTenantId(c.id)).catch(() => {})
+    const t1 = await firstOrderTenantId(c.id)
+    if (t1 && await activeBanAtCompany({ customerId: c.id, email: c.email, phone: c.phone, tenantId: t1 })) continue
+    await reach(c, 'Thanks for your first order 🍽', html, sms, t1).catch(() => {})
 
     await prisma.triggerLog.create({ data: { customerId: c.id, triggerType: 'welcome' } })
   }
@@ -304,12 +309,13 @@ async function runFirstOrderWelcomeTrigger() {
 // "Did we make it right?" — gives the customer a chance to feel heard, gives
 // the manager a chance to catch a botched recovery before it becomes a bad
 // review. Idempotent via OrderComplaint.followUpSentAt.
-async function runComplaintFollowUpTrigger() {
+export async function runComplaintFollowUpTrigger() {
   const oneDayAgo  = new Date(Date.now() - 24 * 3_600_000)
   const fourDaysAgo = new Date(Date.now() - 4 * 86_400_000)
 
   const complaints = await prisma.orderComplaint.findMany({
     where: {
+      kind: 'complaint', // a ban appeal is not a complaint to follow up
       status: 'resolved',
       resolvedAt: { gte: fourDaysAgo, lte: oneDayAgo },
       followUpSentAt: null,
@@ -371,7 +377,7 @@ export async function runSpendMilestoneTrigger() {
     { threshold: 25_000_000, label: 'PKR 250,000', bonus: 1500 },
   ] as const
   const reachable = reachabilityCache()
-  const companies = await prisma.tenant.findMany({ select: { id: true, name: true } })
+  const companies = await prisma.tenant.findMany({ where: { kind: 'company' }, select: { id: true, name: true } })
 
   for (const { id: tenantId, name: company } of companies) {
     for (const m of MILESTONES_CENTS) {
@@ -460,7 +466,7 @@ export async function runReferralRewardTrigger() {
     },
     select: {
       id: true, name: true, phoneVerifiedAt: true,
-      referredBy: { select: { id: true, name: true, email: true, phone: true, marketingOptOutAt: true, bannedAt: true } },
+      referredBy: { select: { id: true, name: true, email: true, phone: true, marketingOptOutAt: true } },
     },
     take: 100,
   })
@@ -537,7 +543,9 @@ export async function runReferralRewardTrigger() {
     await bookEarn(referrerTx)
 
     // Notify the referrer, when marketing may reach them.
-    if (referrer.bannedAt || referrer.marketingOptOutAt) continue
+    // Only a ban held by the company that paid the bonus silences this note.
+    if (referrer.marketingOptOutAt) continue
+    if (await activeBanAtCompany({ customerId: referrer.id, email: referrer.email, phone: referrer.phone, tenantId })) continue
     const msg = `${referee.name ?? 'Your friend'} just placed their first order using your code — you've got ${REFERRER_BONUS} loyalty points (${await pointsWorth(REFERRER_BONUS, tenantId)} off your next order). Thanks for the love.`
     await reach(referrer, `Your friend ordered — points credited`, `<p>${msg}</p>`, msg, tenantId).catch(() => {})
   }

@@ -42,8 +42,10 @@ export function invalidateSetupCache(): void { cache.clear() }
 export async function primaryTenantId(): Promise<string | null> {
   const cached = getCached<string | null>('primary-tenant')
   if (cached !== null) return cached
+  // A head office (D1) is never the "primary" company: it has no brands,
+  // sales or till, so a company-less reader must fall back to a trading one.
   const t = await prisma.tenant.findFirst({
-    where: { isActive: true, deletedAt: null },
+    where: { isActive: true, deletedAt: null, kind: 'company' },
     orderBy: { createdAt: 'asc' },
     select: { id: true },
   })

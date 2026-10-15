@@ -230,7 +230,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
 
       // 3. Complaint cluster — same category 3+ times in window
       const complaints = await prisma.orderComplaint.findMany({
-        where: { conceptId: { in: conceptIds }, createdAt: { gte: since } },
+        where: { conceptId: { in: conceptIds }, kind: 'complaint', createdAt: { gte: since } },
         select: { category: true },
       })
       const byCategory: Record<string, number> = {}

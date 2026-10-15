@@ -30,8 +30,16 @@ export interface TenantScope {
  * `req.staffUser` (which must already be populated by the auth middleware)
  * and the `x-servd-portfolio` header.
  *
+ * Portfolio ("All companies") = every company the caller is a member of
+ * (`memberTenantIds`, the middleware's one membership read — no second
+ * TenantMember query here), plus — on GET/HEAD only — every company reached
+ * through a head office (`reachTenantIds`, read-only). On a write the
+ * portfolio is members ∪ [submitTenantId] (amendment A2): a forged or stray
+ * `x-servd-portfolio: 1` on a POST must never let a 'read'-mode lookup in a
+ * write route resolve a reached company's row.
+ *
  * Cached per-request inside the FastifyRequest so a single route handler
- * that touches multiple tables doesn't refetch the membership list.
+ * that touches multiple tables doesn't recompute it.
  */
 export async function resolveTenantScope(req: FastifyRequest): Promise<TenantScope> {
   // Cheap cache so a handler with 3 queries doesn't pay 3× the DB cost.
@@ -49,14 +57,23 @@ export async function resolveTenantScope(req: FastifyRequest): Promise<TenantSco
       tenantId:  activeTenant,
     }
   } else {
-    // Portfolio mode: pull every tenant the user is a member of, plus the
-    // active tenant as a safety net (in case the membership row was deleted
-    // but the user.tenantId still points at it) — unless it is a test
-    // company (below).
-    const memberships = await prisma.tenantMember.findMany({
-      where: { userId: req.staffUser.id },
-      select: { tenantId: true },
-    })
+    const su = req.staffUser
+    const isRead = ['GET', 'HEAD'].includes((req.method ?? 'GET').toUpperCase())
+    // Every member company, plus the active company as a safety net (in
+    // case the membership row was deleted but the user.tenantId still
+    // points at it) — unless it is a test company (below).
+    const all = new Set<string>(su.memberTenantIds ?? [])
+    if (isRead) {
+      for (const id of su.reachTenantIds ?? []) all.add(id)
+      if (activeTenant) all.add(activeTenant)
+    } else {
+      if (su.submitTenantId) all.add(su.submitTenantId)
+      // A write's active company is a member company (or the lens company
+      // on a submit route, added just above) — never a bare reached one.
+      if (activeTenant && ((su.memberTenantIds ?? []).includes(activeTenant) || activeTenant === su.submitTenantId)) {
+        all.add(activeTenant)
+      }
+    }
     // Test companies (lib/testCompany.ts) are left out of "All companies"
     // totals — EVERY one, the active company included ("never counted in All
     // companies totals"). Their own data shows in the single-company view.
@@ -64,10 +81,8 @@ export async function resolveTenantScope(req: FastifyRequest): Promise<TenantSco
     // alone) does the active company stay, so the page isn't empty-scoped by
     // accident. Never affects 'write' / 'create' modes.
     const tests = await testTenantIds()
-    const all = new Set<string>(memberships.map((m) => m.tenantId))
-    if (activeTenant) all.add(activeTenant)
     const ids = new Set<string>(Array.from(all).filter((id) => !tests.has(id)))
-    if (ids.size === 0 && activeTenant) ids.add(activeTenant)
+    if (ids.size === 0 && activeTenant && all.has(activeTenant)) ids.add(activeTenant)
     scope = {
       portfolio: true,
       tenantIds: Array.from(ids),
@@ -96,11 +111,19 @@ export function tenantWhere(scope: TenantScope): { tenantId: string } | { tenant
 //   • 'read'   — view-aware: the active company, or every company the
 //                operator belongs to when "All companies" is on.
 //   • 'write'  — editing/deleting an EXISTING row: every company the operator
-//                belongs to (a head-office manager can edit either kitchen).
+//                belongs to (a manager in both companies can edit either
+//                kitchen), plus the head-office lens company on an
+//                HO_SUBMIT_ROUTES write (submitTenantId). Never a company
+//                merely reached through a head office.
 //   • 'create' — binding a NEW row / attaching a brand to a new row: the
-//                active company only (x-servd-active-tenant aware). Never let
-//                a create span companies — that is exactly how GS Foods'
+//                active company only (x-servd-active-tenant aware; on a
+//                head-office submit route that is the lens company). Never
+//                let a create span companies — that is exactly how GS Foods'
 //                kitchen ended up carrying a GSX Viva brand.
+//
+// Checks that must stay MEMBER-ONLY (tenants PATCH / merge, contributions,
+// /tenants/switch, every company picker on a write) read
+// `req.staffUser.memberTenantIds` directly — never these helpers.
 
 export type ScopeMode = 'read' | 'write' | 'create'
 
@@ -112,7 +135,8 @@ export async function scopeTenantWhere(req: FastifyRequest, mode: ScopeMode = 'r
   if (!su) return { tenantId: { in: [] } }
   if (mode === 'create') return su.tenantId ? { tenantId: su.tenantId } : { tenantId: { in: [] } }
   if (mode === 'write') {
-    const ids = su.memberTenantIds
+    const ids = [...(su.memberTenantIds ?? [])]
+    if (su.submitTenantId && !ids.includes(su.submitTenantId)) ids.push(su.submitTenantId)
     return ids.length === 1 ? { tenantId: ids[0]! } : { tenantId: { in: ids } }
   }
   return tenantWhere(await resolveTenantScope(req))

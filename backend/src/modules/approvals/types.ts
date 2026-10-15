@@ -7,29 +7,10 @@
 
 import type { UserRole } from '@prisma/client'
 
-export const APPROVAL_TYPES = [
-  'staff_login',
-  'storefront_publish',
-  'purchase_order',
-  'recipe',
-  'hr_request',
-  'payroll_run',
-  'tip_pool',
-  'stock_transfer',
-  'cash_voucher',
-  // Finance wave B (2026-10-14). Each type's provider lands with its module
-  // (approvals/providers.ts); until then the type is accepted as a filter and
-  // lists nothing.
-  'fixed_asset_request',   // disposal / scrap / write-down / capitalisation — finance asks, the CEO approves
-  'intercompany_transfer', // a due-to / due-from transfer between two group companies
-  'on_account_client',     // a new on-account client or a credit-limit change
-  'bad_debt',              // a receivable write-off — the CEO approves every one
-  'raast_void',            // a Raast receipt "void, never booked" — CEO only
-  'grni_writeoff',         // writing off goods received but never billed
-  'cash_request_hod',      // a cash request waiting for its HOD's signature
-  'stock_difference',      // a waste / count difference waiting in 1290 for the CEO (H20)
-] as const
-export type ApprovalType = (typeof APPROVAL_TYPES)[number]
+// The one list lives in lib/approvalRights.ts with the rights registry
+// (APPROVAL_RIGHTS: section, role path, hand-over rules per type).
+export { APPROVAL_TYPES, APPROVAL_SECTIONS, type ApprovalType, type ApprovalSection } from '../../lib/approvalRights.js'
+import type { ApprovalType, ApprovalSection } from '../../lib/approvalRights.js'
 
 export interface ApprovalFact { label: string; value: string }
 
@@ -48,6 +29,9 @@ export interface ApprovalAction {
   confirm?: string
   /** Shown instead of the button when the route would refuse it now. */
   disabledReason?: string
+  /** Tick-boxes sent as `field: true` in the body when ticked (a recharge run's
+   *  "post in the open month", "I have read the warnings"). */
+  options?: Array<{ field: string; label: string; kind: 'checkbox' }>
 }
 
 export interface ApprovalItem {
@@ -69,6 +53,18 @@ export interface ApprovalItem {
   /** The module's own row, when its screen component renders it in place
    *  (HR requests open in the HR record view). */
   record?: unknown
+  /** The approval section it is decided in (lib/approvalRights.ts sectionOf). */
+  section?: ApprovalSection
+  /** Creator / submitter / preparers — never its approver (the CEO excepted). */
+  submittedByIds?: string[]
+  /** The head office it came through (A3), when known. */
+  viaHeadOfficeId?: string | null
+  /** Every company it touches, when more than `tenantId` (a transfer's two sides, a run's companies). */
+  touchesTenantIds?: string[]
+  /** A head-office-owned item's owner (a recharge run's or a head-office pair's head office). */
+  ownerTenantId?: string | null
+  /** CEO view: a live hand-over covers it — the delegate decides it unless the CEO does first. */
+  handedOverTo?: { userId: string; name: string | null; endsAt: string | null; delegationId: string }
 }
 
 export interface ApprovalTypeSummary {
@@ -85,14 +81,36 @@ export interface ApprovalTypeSummary {
   elsewhere?: number
   /** The module's queue could not be read just now (5xx) — the count is unknown. */
   error?: true
+  /** The approval section of the type (lib/approvalRights.ts). */
+  section?: ApprovalSection
+  /** CEO view: items of the type handed over to a delegate (not in `count`). */
+  handedOver?: number
+}
+
+/** One approval section of the inbox (spec §7.6). */
+export interface ApprovalSectionSummary {
+  id: ApprovalSection
+  title: string
+  count: number
+  /** CEO view: items covered by a live hand-over (collapsed; not in `count`). */
+  handedOver: number
+  /** CEO view: who holds the section now. */
+  delegates: Array<{ userId: string; name: string | null; endsAt: string | null; headOfficeId: string; companyTenantId: string | null }>
 }
 
 export interface ApprovalInbox {
+  /** Waiting on this person — handed-over items are never in it. */
   total: number
   /** Sum of `elsewhere` over the types. */
   elsewhere: number
   types: ApprovalTypeSummary[]
   items: ApprovalItem[]
+  /** Per section (only sections with a listed type or a hand-over). */
+  sections?: ApprovalSectionSummary[]
+  /** CEO view: items a live hand-over covers (counted here, not in total). */
+  handedOver?: number
+  /** CEO default view: the handed-over items, collapsed per section (`?view=all` lists them in `items`). */
+  handedOverItems?: ApprovalItem[]
 }
 
 /** What a provider gets to read its module's queue as the signed-in user. */
@@ -104,6 +122,10 @@ export interface ProviderContext {
   /** Every company the user belongs to (req.staffUser.memberTenantIds) — the
    *  outer bound for a type that spans companies (spansMemberCompanies). */
   memberTenantIds: string[]
+  /** Companies the user reaches through a head office (lib/headOffice.ts). Default none. */
+  reachTenantIds?: string[]
+  /** Per type, the companies a live hand-over covers for this user — kept whatever the view. Default none. */
+  delegated?: ReadonlyMap<ApprovalType, ReadonlySet<string>>
   /**
    * GET one of the module's OWN routes as this user (same session, same
    * company headers). Null when that route refuses the user (401/403/404) —
@@ -121,8 +143,8 @@ export interface ApprovalProvider {
   /**
    * Who the module's approve route admits today (its requireAuth role list),
    * or null when the module decides per item (HR request steps: the reporting
-   * manager, HR or management). The default rule; a delegation (later) is
-   * consulted alongside it — see delegations.ts.
+   * manager, HR or management). Read from APPROVAL_RIGHTS (the one copy). A
+   * live delegation is consulted alongside it — see delegations.ts.
    */
   approverRoles: readonly UserRole[] | null
   /** For per-item types: the roles that see the type even when it is empty. */
@@ -135,7 +157,7 @@ export interface ApprovalProvider {
    * still bounded by memberTenantIds and labelled by company.
    */
   spansMemberCompanies?: boolean
-  /** May the CEO hand this type to a head-office person later (D3)? */
+  /** May the CEO hand this type to a head-office person (D3)? From APPROVAL_RIGHTS. */
   delegable: boolean
   /** The waiting items, or null when the module's queue route refuses this
    *  user (role, module access) — then the type is not theirs at all. */

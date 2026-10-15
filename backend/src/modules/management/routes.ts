@@ -219,7 +219,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
           _avg: { rating: true }, _count: true,
         }),
         prisma.orderComplaint.count({
-          where: { ...(conceptId ? { conceptId } : {}), concept, status: { in: ['open', 'in_progress'] } },
+          where: { ...(conceptId ? { conceptId } : {}), concept, kind: 'complaint', status: { in: ['open', 'in_progress'] } },
         }),
       ])
 
@@ -269,13 +269,14 @@ export async function managementRoutes(fastify: FastifyInstance) {
           where: {
             ...(conceptId ? { conceptId } : {}),
             concept,
+            kind: 'complaint',
             category: { in: ['quality', 'wrong_item', 'missing_item'] },
             createdAt: { gte: from, lte: to },
           },
         }),
         prisma.orderComplaint.groupBy({
           by: ['category'],
-          where: { ...(conceptId ? { conceptId } : {}), concept, createdAt: { gte: from, lte: to } },
+          where: { ...(conceptId ? { conceptId } : {}), concept, kind: 'complaint', createdAt: { gte: from, lte: to } },
           _count: true,
         }),
         prisma.orderReview.aggregate({

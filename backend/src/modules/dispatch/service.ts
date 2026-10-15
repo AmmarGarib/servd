@@ -37,7 +37,15 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { fleetMayCarry } from '../../lib/fleet.js'
 import { emitRiderLocation } from '../../lib/ws.js'
-import { DELIVERY_OTP_MAX_ATTEMPTS } from '../../lib/deliveryOtp.js'
+import { DELIVERY_OTP_MAX_ATTEMPTS, generateDeliveryOtp } from '../../lib/deliveryOtp.js'
+import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
+import { normalisePhone } from '../auth/otp.js'
+import { sendText } from '../../lib/whatsapp.js'
+import { audit } from '../../lib/audit.js'
+import { flagException } from '../../lib/exceptions.js'
+import { orderRefOf } from '../../lib/orderRef.js'
+import { formatBrandName } from '../../lib/brandName.js'
+import { lockOrderForStock } from '../orders/stock.js'
 
 /** Order statuses in which an assigned rider still has the order to carry. */
 export const RIDER_ACTIVE_STATUSES = ['received', 'confirmed', 'preparing', 'ready'] as const
@@ -98,6 +106,11 @@ export interface JobEventInput {
   lat?: number | null
   lng?: number | null
   note?: string | null
+  /**
+   * The staff user behind an override event (code_rerouted, returned). Null
+   * for rider and system steps.
+   */
+  actorId?: string | null
 }
 
 function eventData(e: JobEventInput): Prisma.RiderJobEventUncheckedCreateInput | null {
@@ -116,6 +129,7 @@ function eventData(e: JobEventInput): Prisma.RiderJobEventUncheckedCreateInput |
     lat: e.lat ?? null,
     lng: e.lng ?? null,
     note: e.note ? e.note.slice(0, 500) : null,
+    actorId: e.actorId ?? null,
   }
 }
 
@@ -137,6 +151,25 @@ function alreadyDelivered(): AppError {
 
 function orderChanged(): AppError {
   return new AppError('ORDER_CHANGED', "This order's rider changed just now — refresh and try again", 409)
+}
+
+function codeWithRider(): AppError {
+  return new AppError(
+    'CODE_WITH_RIDER',
+    "The customer's hand-over code was sent to this order's rider, so the order stays with that rider until it is delivered or returned",
+    409,
+  )
+}
+
+/**
+ * A rerouted, undelivered order is pinned to the rider who holds the code
+ * (rerouteHandoverCode). The where-clause half of that rule, for the claims:
+ * the order may move only to `riderId` (or nowhere, when undefined).
+ */
+function notPinnedAwayWhere(riderId?: string): Prisma.OrderWhereInput {
+  return riderId
+    ? { OR: [{ handoverReroutedAt: null }, { handoverRerouteRiderId: riderId }] }
+    : { handoverReroutedAt: null }
 }
 
 const ENDED_STATUSES = ['cancelled', 'rejected', 'refunded'] as const
@@ -166,11 +199,17 @@ export async function assignRider(
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, deletedAt: null },
-    select: { id: true, status: true, riderId: true, deliveredAt: true, concept: { select: { tenantId: true } } },
+    select: {
+      id: true, status: true, riderId: true, deliveredAt: true,
+      handoverReroutedAt: true, handoverRerouteRiderId: true,
+      concept: { select: { tenantId: true } },
+    },
   })
   if (!order) throw new NotFoundError('Order', orderId)
   if (order.deliveredAt) throw alreadyDelivered()
   if (opts.expectRiderId !== undefined && order.riderId !== opts.expectRiderId) throw orderChanged()
+  // The code was sent to a rider: the order stays with that rider.
+  if (order.handoverReroutedAt && order.handoverRerouteRiderId !== riderId) throw codeWithRider()
   const rider = await prisma.rider.findFirst({ where: { id: riderId, deletedAt: null } })
   if (!rider || !rider.isActive) throw new NotFoundError('Rider', riderId)
   const orderTenantId = order.concept.tenantId
@@ -201,10 +240,17 @@ export async function assignRider(
       where: {
         id: order.id, riderId: order.riderId, deletedAt: null, deliveredAt: null,
         status: { notIn: [...ENDED_STATUSES] },
+        ...notPinnedAwayWhere(rider.id),
       },
       data: { riderId: rider.id, riderAssignedAt: now, riderAcceptedAt: null, pickedUpAt: null, arrivedAt: null },
     })
-    if (claimed.count === 0) throw orderChanged()
+    if (claimed.count === 0) {
+      const fresh = await tx.order.findUnique({
+        where: { id: order.id }, select: { handoverReroutedAt: true, handoverRerouteRiderId: true, deliveredAt: true },
+      })
+      if (fresh?.handoverReroutedAt && !fresh.deliveredAt && fresh.handoverRerouteRiderId !== rider.id) throw codeWithRider()
+      throw orderChanged()
+    }
     // …and the rider, on the status we checked: one who went off shift (or,
     // for the auto-dispatcher, got busy) since that read is not put back to
     // work. Throwing rolls the order claim back.
@@ -260,17 +306,30 @@ export interface TakeOffOptions {
  * says, so a no-op is a no-op (no event, rider untouched). The rider goes back
  * to 'available' if this was their last order in hand. A delivered order is
  * 409: its rider is history.
+ *
+ * A rerouted order (the customer's code was sent to its rider —
+ * rerouteHandoverCode) is pinned to that rider until delivered: a plain call
+ * (a dispatcher's unassign) is 409 CODE_WITH_RIDER; a guarded call (any
+ * onlyIf* — the offer timer, a rider going off shift, an ended fleet
+ * agreement, a decline) is a quiet no-op, never an error, so the system loops
+ * carry on.
  */
 export async function takeRiderOff(orderId: string, opts: TakeOffOptions = {}) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, deletedAt: null },
     select: {
       id: true, riderId: true, riderAcceptedAt: true, pickedUpAt: true, deliveredAt: true,
+      handoverReroutedAt: true,
       concept: { select: { tenantId: true } },
     },
   })
   if (!order) throw new NotFoundError('Order', orderId)
   if (order.deliveredAt) throw alreadyDelivered()
+  const guarded = !!(opts.onlyIfRiderId || opts.onlyIfNotAccepted || opts.onlyIfNotPickedUp)
+  if (order.handoverReroutedAt && order.riderId) {
+    if (!guarded) throw codeWithRider()
+    return { order: await prisma.order.findUniqueOrThrow({ where: { id: order.id } }), changed: false }
+  }
   const prevRiderId = order.riderId
   const skip =
     !prevRiderId
@@ -283,12 +342,17 @@ export async function takeRiderOff(orderId: string, opts: TakeOffOptions = {}) {
   return prisma.$transaction(async (tx) => {
     const res = await tx.order.updateMany({
       where: {
-        id: order.id, riderId: prevRiderId, deliveredAt: null,
+        id: order.id, riderId: prevRiderId, deliveredAt: null, handoverReroutedAt: null,
         ...(opts.onlyIfNotAccepted ? { riderAcceptedAt: null } : {}),
         ...(opts.onlyIfNotPickedUp ? { pickedUpAt: null } : {}),
       },
       data: { riderId: null, riderAssignedAt: null, riderAcceptedAt: null, pickedUpAt: null, arrivedAt: null },
     })
+    if (res.count === 0 && !guarded) {
+      // Rerouted between the read and the claim: pinned now.
+      const fresh = await tx.order.findUnique({ where: { id: order.id }, select: { handoverReroutedAt: true, deliveredAt: true } })
+      if (fresh?.handoverReroutedAt && !fresh.deliveredAt) throw codeWithRider()
+    }
     if (res.count > 0) {
       const prev = await tx.rider.findUnique({ where: { id: prevRiderId! }, select: { tenantId: true } })
       await jobEventTx(tx, {
@@ -355,6 +419,13 @@ export async function releaseRiderFromEndedOrder(orderId: string, reason: string
 // rider app's 423 says "a manager marks it delivered"), or the rider never
 // accepted (a rider without the app, handed the order by the dispatcher).
 // Orders from before the rider app (no riderAssignedAt) keep the old rule.
+//
+// All of this applies ONLY to a company whose code-only switch is OFF
+// (lib/deliveryRules.ts codeOnlyDelivery, the default). With it ON a delivery
+// completes only with the customer's code (owner rule 2026-10-13): markDelivered
+// refuses any call without a verified code (409 CODE_REQUIRED), and a locked
+// code is resolved by sending it to the rider (rerouteHandoverCode). The staff
+// path and these helpers are deleted once every live company is switched on.
 
 type StaffCloseState = { riderAssignedAt: Date | null; riderAcceptedAt: Date | null; deliveryOtpAttempts: number }
 
@@ -392,6 +463,11 @@ function staffMayCloseWhere(manager: boolean): Prisma.OrderWhereInput {
   }
 }
 
+/** 409 CODE_REQUIRED: a code-only company's delivery closed without the customer's code. */
+function codeRequired(): AppError {
+  return new AppError('CODE_REQUIRED', "A delivery completes only with the customer's code", 409)
+}
+
 /**
  * The rider dropped the order off — decision 8: THIS is when a delivery is
  * complete (expo handing the bag to the rider is not). Three doors come here:
@@ -419,6 +495,10 @@ function staffMayCloseWhere(manager: boolean): Prisma.OrderWhereInput {
  *               or the rider never accepted (staffMayClose). Checked before
  *               anything is written, and again in the delivered claim, so a
  *               rider accepting at the same moment wins.
+ *
+ * Code-only companies (lib/deliveryRules.ts codeOnlyDelivery ON): any call
+ * without `otpVerified: true` is 409 CODE_REQUIRED, before anything is read
+ * or written — staffClose included.
  */
 export async function markDelivered(
   orderId: string,
@@ -434,11 +514,12 @@ export async function markDelivered(
     where: { id: orderId, deletedAt: null },
     select: {
       id: true, status: true, riderId: true, deliveredAt: true,
-      riderAssignedAt: true, riderAcceptedAt: true, deliveryOtpAttempts: true,
+      riderAssignedAt: true, riderAcceptedAt: true, deliveryOtpAttempts: true, handoverReroutedAt: true,
       concept: { select: { tenantId: true } },
     },
   })
   if (!order) throw new NotFoundError('Order', orderId)
+  if (opts.otpVerified !== true && (await codeOnlyDelivery(prisma, order.concept.tenantId))) throw codeRequired()
   const staffClose = opts.staffClose
   if (staffClose) {
     // The role first: on a rider-app job this is a manager's call, delivered
@@ -507,7 +588,7 @@ export async function markDelivered(
         tenantId: order.concept.tenantId, riderTenantId: r.tenantId,
         lat: opts.lat, lng: opts.lng,
         note: opts.otpVerified
-          ? 'hand-over code verified'
+          ? `hand-over code verified${order.handoverReroutedAt ? ' (code sent to the rider by a manager)' : ''}`
           : staffClose && order.riderAssignedAt
             ? `marked delivered by a manager — ${order.riderAcceptedAt ? 'hand-over code locked' : 'rider never accepted'}`
             : 'marked delivered by staff',
@@ -518,6 +599,183 @@ export async function markDelivered(
   })
   const fresh = await prisma.order.findUniqueOrThrow({ where: { id: order.id } })
   return { order: fresh, alreadyDelivered: !delivered }
+}
+
+// ─── Emergency override: send the hand-over code to the rider ───────────────
+//
+// Owner rule 2026-10-13: a delivery completes only with the customer's code.
+// When the customer cannot (or will not) give it at the door — the code
+// locked, the customer's phone is dead — a manager sends the code to the
+// RIDER's own number (Emergency overrides). The rider collects any cash first
+// and enters the code in the app as usual, so the order still closes through
+// markDelivered with a verified code. Once per order; the order is then pinned
+// to that rider (assignRider / takeRiderOff → CODE_WITH_RIDER).
+//
+// The route lives in the Emergency overrides module; it resolves the order
+// through the operator's write scope (foreign → 404) before calling here.
+// Reads and writes go through serviceClient: a fleet rider's row belongs to
+// another company and is hidden by RLS.
+
+export interface OverrideActor {
+  id: string
+  email?: string | null
+  tenantId?: string | null
+}
+
+function rerouteMessage(brand: string, orderId: string, code: string): string {
+  return `${brand} order ${orderRefOf(orderId)}: the customer's hand-over code is ${code}. `
+    + 'Collect any cash first, then enter the code in the rider app.'
+}
+
+/** Best-effort WhatsApp to the rider (staff: no customer scope; the sandbox funnel still applies). */
+async function sendCodeToRider(phone: string, brand: string, orderId: string, code: string): Promise<boolean> {
+  try {
+    await sendText(phone, rerouteMessage(brand, orderId, code))
+    return true
+  } catch (err) {
+    console.warn(`[dispatch] hand-over code to rider failed for order ${orderRefOf(orderId)}: ${(err as Error).message}`)
+    return false
+  }
+}
+
+/**
+ * Send the customer's hand-over code to the order's rider. A fresh code is
+ * minted (the old one stops working), the wrong-code count is reset (the old
+ * count kept in handoverRerouteAttempts), a `code_rerouted` job event names the
+ * manager, and a high exception + audit row land in the ORDER's company.
+ */
+export async function rerouteHandoverCode(
+  orderId: string,
+  a: { actor: OverrideActor; reason: string },
+): Promise<{ ok: true; sentToRider: boolean; riderPhoneHint: string }> {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, deletedAt: null },
+    select: {
+      id: true, status: true, fulfilmentType: true, deliveredAt: true, riderId: true,
+      riderAssignedAt: true, pickedUpAt: true, handoverReroutedAt: true, deliveryOtpAttempts: true,
+      conceptId: true, totalCents: true,
+      concept: { select: { name: true, tenantId: true } },
+    },
+  })
+  if (!order) throw new NotFoundError('Order', orderId)
+  if (order.fulfilmentType !== 'delivery') {
+    throw new AppError('NOT_A_DELIVERY', 'Only a delivery order has a hand-over code to send to a rider', 422)
+  }
+  if (order.deliveredAt) throw alreadyDelivered()
+  if (order.status !== 'ready') {
+    throw new AppError('NOT_READY', `Order is ${order.status} — the code can only be sent while the order is out for delivery`, 409)
+  }
+  if (!order.riderId) throw new AppError('NO_RIDER', 'This order has no rider to send the code to', 422)
+  if (order.riderAssignedAt && !order.pickedUpAt) {
+    throw new AppError('NOT_PICKED_UP', 'The rider has not picked this order up yet', 409)
+  }
+  if (order.handoverReroutedAt) {
+    throw new AppError('ALREADY_REROUTED', 'The code was already sent to the rider for this order — use Resend', 409)
+  }
+  const riderId = order.riderId
+  const rider = await prisma.rider.findUnique({ where: { id: riderId }, select: { id: true, phone: true, tenantId: true } })
+  if (!rider) throw new AppError('NO_RIDER', 'This order has no rider to send the code to', 422)
+  const phone = rider.phone ? normalisePhone(rider.phone) : ''
+  if (phone.length < 11) {
+    throw new AppError('RIDER_HAS_NO_PHONE', "The rider has no usable phone number to send the code to", 422)
+  }
+  const reason = a.reason.trim().slice(0, 500)
+  let attemptsBefore = order.deliveryOtpAttempts
+  const code = generateDeliveryOtp()
+  const now = new Date()
+
+  await prisma.$transaction(async (tx) => {
+    await lockOrderForStock(tx, order.id)
+    // The count under the order lock, not the earlier read: a rider's guess
+    // in between must not be lost from the snapshot.
+    const locked = await tx.order.findUnique({ where: { id: order.id }, select: { deliveryOtpAttempts: true } })
+    attemptsBefore = locked?.deliveryOtpAttempts ?? attemptsBefore
+    const claimed = await tx.order.updateMany({
+      where: { id: order.id, handoverReroutedAt: null, deliveredAt: null, riderId, status: 'ready', deletedAt: null },
+      data: {
+        deliveryOtp: code,
+        handoverReroutedAt: now,
+        handoverRerouteRiderId: riderId,
+        handoverRerouteAttempts: attemptsBefore,
+        deliveryOtpAttempts: 0,
+      },
+    })
+    if (claimed.count === 0) throw orderChanged()
+    await jobEventTx(tx, {
+      type: 'code_rerouted', riderId, orderId: order.id,
+      tenantId: order.concept.tenantId, riderTenantId: rider.tenantId,
+      actorId: a.actor.id, note: reason || 'hand-over code sent to the rider',
+    })
+  })
+
+  const brand = formatBrandName(order.concept.name)
+  const sentToRider = await sendCodeToRider(phone, brand, order.id, code)
+  const ref = orderRefOf(order.id)
+  await audit({
+    category: 'identity',
+    action: 'delivery.code_rerouted',
+    entity: 'Order',
+    entityId: order.id,
+    userId: a.actor.id,
+    userEmail: a.actor.email ?? null,
+    tenantId: order.concept.tenantId,
+    metadata: { reason, riderId, riderTenantId: rider.tenantId, attemptsBefore, sentToRider },
+  })
+  await flagException({
+    tenantId: order.concept.tenantId,
+    conceptId: order.conceptId,
+    kind: 'delivery_code_rerouted',
+    severity: 'high',
+    title: `Hand-over code sent to the rider on order ${ref}`,
+    description: `A manager sent the customer's hand-over code to the rider's own number (reason: ${reason || 'none given'}). `
+      + 'Check that the customer really received the food and that any cash was collected.',
+    entityType: 'Order',
+    entityId: order.id,
+    actorId: a.actor.id,
+    amountCents: order.totalCents,
+    metadata: { riderId, attemptsBefore, sentToRider },
+  })
+  return { ok: true, sentToRider, riderPhoneHint: phone.slice(-3) }
+}
+
+/**
+ * Resend the rerouted code — the SAME code, to the SAME rider
+ * (handoverRerouteRiderId). Accepts the actor itself or `{ actor }`.
+ */
+export async function resendReroutedCode(
+  orderId: string,
+  actorOrArgs: OverrideActor | { actor: OverrideActor },
+): Promise<{ ok: true; sentToRider: boolean }> {
+  const actor: OverrideActor = 'actor' in actorOrArgs ? actorOrArgs.actor : actorOrArgs
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, deletedAt: null },
+    select: {
+      id: true, deliveredAt: true, deliveryOtp: true, handoverReroutedAt: true, handoverRerouteRiderId: true,
+      concept: { select: { name: true, tenantId: true } },
+    },
+  })
+  if (!order) throw new NotFoundError('Order', orderId)
+  if (!order.handoverReroutedAt || !order.handoverRerouteRiderId || !order.deliveryOtp) {
+    throw new AppError('NOT_REROUTED', 'The code has not been sent to a rider on this order yet', 409)
+  }
+  if (order.deliveredAt) throw alreadyDelivered()
+  const rider = await prisma.rider.findUnique({ where: { id: order.handoverRerouteRiderId }, select: { phone: true } })
+  const phone = rider?.phone ? normalisePhone(rider.phone) : ''
+  if (phone.length < 11) {
+    throw new AppError('RIDER_HAS_NO_PHONE', 'The rider has no usable phone number to send the code to', 422)
+  }
+  const sentToRider = await sendCodeToRider(phone, formatBrandName(order.concept.name), order.id, order.deliveryOtp)
+  await audit({
+    category: 'identity',
+    action: 'delivery.code_resent',
+    entity: 'Order',
+    entityId: order.id,
+    userId: actor.id,
+    userEmail: actor.email ?? null,
+    tenantId: order.concept.tenantId,
+    metadata: { riderId: order.handoverRerouteRiderId, sentToRider },
+  })
+  return { ok: true, sentToRider }
 }
 
 /** Set the rider's own availability — the one writer (admin /dispatch, /riders, tablet, rider app). */

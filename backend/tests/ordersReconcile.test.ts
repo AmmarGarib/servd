@@ -27,6 +27,7 @@ import { priceOrder, tenderOf, tenderOfPayments, allocateTaxCents, gstRatePct } 
 import { completeOrder, completionDoor, updateOrderStatus, ingestOrder } from '../src/modules/orders/service.js'
 import { createPosOrder, processPayment } from '../src/modules/pos/service.js'
 import { markDelivered } from '../src/modules/dispatch/service.js'
+import { setCodeOnlyDelivery } from '../src/lib/deliveryRules.js'
 import { mkRaastAccount } from './connectorsFixtures.js'
 import { expoRoutes } from '../src/modules/expo/routes.js'
 import { orderRoutes } from '../src/modules/orders/routes.js'
@@ -353,6 +354,23 @@ describe('decision 8 — who completes an order', () => {
     expect(row.deliveryOtpVerifiedAt).toBeInstanceOf(Date)
     expect(row.deliveredAt).toBeInstanceOf(Date)
     expect(await claims(o.id)).toBe(1)
+  })
+
+  it('code-only delivery ON: completion needs the verified code; a staff close completes nothing', async () => {
+    await prisma.$transaction((tx) => setCodeOnlyDelivery(tx, { tenantId: tenantA, on: true, actorId: cashierId, reason: 'code-only test window' }))
+    try {
+      const rider = await prisma.rider.create({ data: { tenantId: tenantA, name: 'R2', phone: '+923110009002', status: 'busy', isActive: true } })
+      const o = await order({ fulfilmentType: 'delivery', riderId: rider.id, deliveryOtp: '2468' })
+      await expect(markDelivered(o.id, { actor: { id: cashierId } })).rejects.toMatchObject({ code: 'CODE_REQUIRED', statusCode: 409 })
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('ready')
+      expect(await claims(o.id)).toBe(0)
+      const d = await markDelivered(o.id, { otpVerified: true, actor: { id: cashierId } })
+      expect(d.order.status).toBe('completed')
+      expect(d.order.deliveryOtpVerifiedAt).toBeInstanceOf(Date)
+      expect(await claims(o.id)).toBe(1)
+    } finally {
+      await prisma.$transaction((tx) => setCodeOnlyDelivery(tx, { tenantId: tenantA, on: false, actorId: cashierId, reason: 'code-only test window' }))
+    }
   })
 
   it('an OTP for an order the kitchen has not finished is refused, and nothing completes', async () => {

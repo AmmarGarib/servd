@@ -33,7 +33,7 @@ export async function runOnce(): Promise<{ checked: number; flagged: number; sho
   // One sweep per company: each company's counts, judged over that company's
   // own trend window, flagged into that company's inbox. Counts and items
   // with no company are nobody's and are skipped.
-  const tenants = await prisma.tenant.findMany({ where: { deletedAt: null }, select: { id: true } })
+  const tenants = await prisma.tenant.findMany({ where: { deletedAt: null, kind: 'company' }, select: { id: true } })
   let checked = 0
   let flagged = 0
   let shortfallFlagged = 0

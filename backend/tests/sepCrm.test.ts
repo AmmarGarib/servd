@@ -177,7 +177,7 @@ describe('customer notes and conversations', () => {
   })
 })
 
-// ─── #29 strikes and bans (decision 15) ──────────────────────────────────────
+// ─── #29 strikes and bans (decision 15; tenantId column since wave B) ─────────
 
 describe('strikes and bans belong to the company that raised them', () => {
   it("B cannot strike or ban A's customer", async () => {
@@ -188,6 +188,8 @@ describe('strikes and bans belong to the company that raised them', () => {
   it("A's strike on a shared customer is invisible to B and not reversible by B", async () => {
     expect((await call('mgrA', 'POST', '/crm/strikes', { customerId: custShared, kind: 'other', reason: 'rude' })).statusCode).toBe(201)
     const strike = await prisma.customerStrike.findFirst({ where: { customerId: custShared } })
+    // Stamped with the ACTIVE company (column, not attribution).
+    expect(strike!.tenantId).toBe(tenantA)
     const nlB = await call('mgrB', 'GET', '/crm/naughty-list')
     expect(ids(nlB.json())).not.toContain(custShared)
     const nlA = await call('mgrA', 'GET', '/crm/naughty-list')
@@ -199,13 +201,33 @@ describe('strikes and bans belong to the company that raised them', () => {
   it("A's ban on a shared customer is not listed or liftable by B", async () => {
     const ban = await call('mgrA', 'POST', '/crm/bans', { customerId: custShared, reason: 'dine and dash' })
     expect(ban.statusCode).toBe(201)
+    expect(ban.json().tenantId).toBe(tenantA)
     const id = ban.json().id
     expect(ids((await call('mgrB', 'GET', '/crm/bans')).json())).not.toContain(id)
     expect(ids((await call('mgrA', 'GET', '/crm/bans')).json())).toContain(id)
     const nlB = await call('mgrB', 'GET', '/crm/naughty-list')
     expect(ids(nlB.json())).not.toContain(custShared)
     expect((await call('mgrB', 'POST', `/crm/bans/${id}/lift`, { reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrB', 'POST', `/crm/bans/${id}/release-contact`, { contact: 'phone', reason: 'new number' })).statusCode).toBe(404)
     expect((await call('mgrA', 'POST', `/crm/bans/${id}/lift`, { reason: 'paid up' })).statusCode).toBe(200)
+  })
+
+  it('the company column wins over the old attribution', async () => {
+    // A strike stamped with B's company, though recorded by A's manager on a
+    // shared customer: it is B's, not A's.
+    const s = await prisma.customerStrike.create({
+      data: { customerId: custShared, kind: 'other', severity: 1, tenantId: tenantB, recordedById: users.mgrA!.id },
+    })
+    expect((await call('mgrA', 'POST', `/crm/strikes/${s.id}/reverse`, { reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrB', 'POST', `/crm/strikes/${s.id}/reverse`, { reason: 'ok' })).statusCode).toBe(200)
+    // A ban stamped with B's company though raised by A's manager.
+    const b = await prisma.customerBan.create({
+      data: { customerId: custShared, reason: 'x', tenantId: tenantB, bannedById: users.mgrA!.id },
+    })
+    expect(ids((await call('mgrA', 'GET', '/crm/bans')).json())).not.toContain(b.id)
+    expect(ids((await call('mgrB', 'GET', '/crm/bans')).json())).toContain(b.id)
+    expect((await call('mgrA', 'POST', `/crm/bans/${b.id}/lift`, { reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrB', 'POST', `/crm/bans/${b.id}/lift`, { reason: 'ok' })).statusCode).toBe(200)
   })
 })
 

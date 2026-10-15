@@ -663,3 +663,163 @@ describe('resilience', () => {
     expect(res.total).toBe(0)
   })
 })
+
+// ── D3 head office: sections, hand-over and the new providers (2026-10-15) ──
+describe('sections, hand-over and the new providers (D3)', () => {
+  type Full = Inbox & {
+    sections: Array<{ id: string; title: string; count: number; handedOver: number; delegates: Array<{ userId: string }> }>
+    handedOver: number
+    handedOverItems?: Array<{ type: string; id: string; handedOverTo?: { userId: string; name: string | null } }>
+    types: Array<{ type: string; count: number; section?: string; handedOver?: number }>
+    items: Inbox['items'] & Array<{ section?: string; submittedByIds?: string[]; handedOverTo?: unknown }>
+  }
+
+  it('with no head office and no hand-over: sections add up to the total, nothing is handed over', async () => {
+    const body = (await inbox('admin')).json() as Full
+    expect(body.handedOver).toBe(0)
+    expect(body.handedOverItems).toBeUndefined()
+    expect(body.sections.reduce((n, s) => n + s.count, 0)).toBe(body.total)
+    expect(body.types.find((t) => t.type === 'purchase_order')).toMatchObject({ section: 'procurement' })
+    expect(body.types.find((t) => t.type === 'cash_voucher')).toMatchObject({ section: 'ceo' })
+    expect(body.sections.find((s) => s.id === 'procurement')).toMatchObject({ title: 'Procurement' })
+    const supplier = await prisma.supplier.findFirstOrThrow({ where: { tenantId: T.A } })
+    const fresh = await prisma.purchaseOrder.create({ data: { supplierId: supplier.id, status: 'pending_approval', totalCents: 1_000_00, createdBy: U['hodA']!.id } })
+    const poItem = ((await inbox('admin')).json() as Full).items.find((i) => i.id === fresh.id)!
+    expect(poItem).toMatchObject({ section: 'procurement', submittedByIds: [U['hodA']!.id] })
+    // ?section= narrows the items, not the counts.
+    const only = (await inbox('admin', {}, '?section=procurement')).json() as Full
+    expect(new Set(only.items.map((i) => i.section))).toEqual(new Set(['procurement']))
+    expect(only.total).toBe(body.total + 1)
+    await prisma.purchaseOrder.update({ where: { id: fresh.id }, data: { status: 'cancelled' } })
+    expect((await inbox('admin', {}, '?section=nope')).statusCode).toBe(400)
+  })
+
+  it('a password-role login sits in the CEO section; a floor login in Operations', async () => {
+    const floor = await prisma.user.create({ data: { name: `${P} floor`, email: `${P}.floor@apx.pk`, password: 'x', role: 'cashier', tenantId: T.A, isActive: true, accountStatus: 'pending' } })
+    const office = await prisma.user.create({ data: { name: `${P} office`, email: `${P}.office@apx.pk`, password: 'x', role: 'finance', tenantId: T.A, isActive: true, accountStatus: 'pending' } })
+    try {
+      const body = (await inbox('admin')).json() as Full
+      expect(body.items.find((i) => i.id === floor.id)?.section).toBe('operations')
+      expect(body.items.find((i) => i.id === office.id)?.section).toBe('ceo')
+    } finally {
+      await prisma.user.deleteMany({ where: { id: { in: [floor.id, office.id] } } })
+    }
+  })
+
+  describe('with a head office serving company A', () => {
+    let HO = ''
+    let delegationId = ''
+    let recipeId = ''
+    let poId = ''
+    beforeAll(async () => {
+      HO = (await prisma.tenant.create({ data: { name: 'Approvals HO', slug: `${P}-ho`, kind: 'head_office' } })).id
+      await prisma.headOfficeLink.create({ data: { tenantId: HO, companyTenantId: T.A, createdById: U['admin']!.id } })
+      await prisma.tenantMember.create({ data: { userId: U['admin']!.id, tenantId: HO, role: 'member' } })
+      await mkUser('hoBuyer', 'procurement', [HO])
+      await mkUser('hoChef', 'boh_management', [HO, T.A])   // A3: a dual member
+      const concept = await prisma.concept.findFirstOrThrow({ where: { tenantId: T.A } })
+      recipeId = (await prisma.recipe.create({ data: { status: 'pending_approval', pendingMenuItem: { conceptId: concept.id, name: `${P} ho plate` }, submittedById: U['hoChef']!.id, submittedAt: new Date() } })).id
+      const supplier = await prisma.supplier.findFirstOrThrow({ where: { tenantId: T.A } })
+      poId = (await prisma.purchaseOrder.create({ data: { supplierId: supplier.id, status: 'pending_approval', totalCents: 9_000_00, createdBy: U['hodA']!.id } })).id
+      delegationId = (await prisma.approvalDelegation.create({
+        data: { tenantId: HO, companyTenantId: T.A, section: 'procurement', delegateUserId: U['hoBuyer']!.id, grantedById: U['admin']!.id, note: 'test' },
+      })).id
+    })
+    afterAll(async () => {
+      await prisma.approvalDelegation.updateMany({ where: { id: delegationId }, data: { revokedAt: new Date() } })
+      await prisma.headOfficeLink.updateMany({ where: { tenantId: HO }, data: { endedAt: new Date() } })
+      await prisma.tenantMember.deleteMany({ where: { userId: U['admin']!.id, tenantId: HO } })
+    })
+
+    it("the CEO's handed-over items are collapsed per section, counted apart from the total; ?view=all lists them inline", async () => {
+      const body = (await inbox('admin')).json() as Full
+      const po = body.types.find((t) => t.type === 'purchase_order')!
+      const handed = body.handedOverItems ?? []
+      expect(handed.map((i) => i.type)).toEqual(handed.map(() => 'purchase_order'))
+      expect(handed.some((i) => i.id === poId)).toBe(true)
+      expect(handed.find((i) => i.id === poId)!.handedOverTo).toMatchObject({ userId: U['hoBuyer']!.id, name: `${P} hoBuyer` })
+      expect(body.items.some((i) => i.id === poId)).toBe(false)
+      expect(po.count).toBe(0)
+      expect(po.handedOver).toBe(handed.length)
+      expect(body.handedOver).toBe(handed.length)
+      expect(body.total).toBe(body.types.reduce((n, t) => n + t.count, 0))
+      const section = body.sections.find((s) => s.id === 'procurement')!
+      expect(section).toMatchObject({ count: 0, handedOver: handed.length })
+      expect(section.delegates.map((d) => d.userId)).toEqual([U['hoBuyer']!.id])
+      // Other sections are untouched.
+      expect(body.types.find((t) => t.type === 'cash_voucher')!.count).toBe(1)
+
+      const all = (await inbox('admin', {}, '?view=all')).json() as Full
+      expect(all.items.find((i) => i.id === poId)?.handedOverTo).toBeTruthy()
+      expect(all.handedOverItems).toBeUndefined()
+      expect(all.total).toBe(body.total)
+    })
+
+    it('company B\'s CEO is unaffected (not a member of the head office)', async () => {
+      const b = (await inbox('adminB')).json() as Full
+      expect(b.handedOver).toBe(0)
+      expect(b.types.find((t) => t.type === 'purchase_order')!.count).toBe(1)
+    })
+
+    it('A3: a company co-owner no longer sees an item a head-office member submitted; the CEO does', async () => {
+      const owner = (await inbox('owner')).json() as Full
+      expect(owner.items.some((i) => i.id === recipeId)).toBe(false)
+      const ceo = (await inbox('admin', {}, '?view=all')).json() as Full
+      expect(ceo.items.some((i) => i.id === recipeId)).toBe(true)
+    })
+
+    it("a delegate sees the covered company's items whatever the view, never their own submissions", async () => {
+      const provider = APPROVAL_PROVIDERS.find((p) => p.type === 'purchase_order')!
+      const rows = [
+        { type: 'purchase_order' as const, id: 'po-theirs', tenantId: T.A, title: 'x', facts: [], waitingSince: null, link: null, actions: [], submittedByIds: [U['hodA']!.id] },
+        { type: 'purchase_order' as const, id: 'po-mine', tenantId: T.A, title: 'x', facts: [], waitingSince: null, link: null, actions: [], submittedByIds: [U['hoBuyer']!.id] },
+        { type: 'purchase_order' as const, id: 'po-b', tenantId: T.B, title: 'x', facts: [], waitingSince: null, link: null, actions: [], submittedByIds: [] },
+      ]
+      const fake = { ...provider, async load() { return rows } }
+      const { LIVE_DELEGATIONS } = await import('../src/modules/approvals/delegations.js')
+      const ctx = {
+        user: { id: U['hoBuyer']!.id, role: 'procurement' as never }, tenantIds: [HO], memberTenantIds: [HO],
+        delegated: await LIVE_DELEGATIONS.tenantsByType!(U['hoBuyer']!.id), read: async () => null,
+      }
+      const res = await collectApprovals(ctx, { providers: [fake], delegations: LIVE_DELEGATIONS })
+      expect(res.items.map((i) => i.id)).toEqual(['po-theirs'])
+      expect(res.types[0]).toMatchObject({ type: 'purchase_order', count: 1 })
+      // Without the hand-over, nothing.
+      const none = await collectApprovals({ ...ctx, delegated: new Map() }, { providers: [fake] })
+      expect(none.types).toEqual([])
+    })
+  })
+
+  it('new providers are not listed while their queue routes 404, and map rows once they answer', async () => {
+    const types = ((await counts('admin')).json() as Inbox).types.map((t) => t.type)
+    for (const t of ['journal_request', 'ho_recharge', 'connector_change']) expect(types, t).not.toContain(t)
+    const get = (t: string) => APPROVAL_PROVIDERS.find((p) => p.type === t)!
+    expect(get('journal_request')).toMatchObject({ module: 'accounting', delegable: true, approverRoles: ['admin'] })
+    expect(get('ho_recharge')).toMatchObject({ module: 'accounting', delegable: true })
+    expect(get('connector_change')).toMatchObject({ module: 'api_pos', delegable: true })
+    const read = async <R,>(path: string): Promise<R | null> => {
+      if (path.startsWith('/accounting/journal-requests?status=submitted')) return { items: [
+        { id: 'jr-1', tenantId: T.A, kind: 'post', status: 'submitted', description: 'Accrue rent', reference: null, entryDate: '2026-09-30', totalCents: 50_000_00, preparedById: U['finance']!.id, submittedAt: '2026-10-01T10:00:00Z' },
+        { id: 'jr-2', tenantId: T.A, kind: 'reverse', status: 'submitted', description: 'Undo accrual', reference: null, entryDate: null, totalCents: 50_000_00, preparedById: U['finance']!.id, submittedAt: '2026-10-02T10:00:00Z' },
+      ] } as R
+      if (path.startsWith('/accounting/intercompany/recharge-runs?status=submitted')) return { runs: [
+        { id: 'run-1', tenantId: T.A, headOfficeName: 'HO', period: '2026-09', kind: 'monthly', status: 'submitted', baseCents: 100_00, rechargedCents: 100_00, retainedCents: 0, warnings: ['Payroll edited after lock'], submittedAt: '2026-10-03T10:00:00Z', lines: [{ companyTenantId: T.A, amountCents: 100_00 }] },
+      ] } as R
+      if (path.startsWith('/connectors/change-requests?status=submitted')) return [
+        { id: 'cc-1', tenantId: T.A, kind: 'fiscal', status: 'submitted', patch: { baseUrl: 'https://x' }, preparedById: U['it']!.id, preparedAt: '2026-10-04T10:00:00Z' },
+      ] as R
+      return null
+    }
+    const ctx = { user: { id: U['admin']!.id, role: 'admin' as never }, tenantIds: [T.A], memberTenantIds: [T.A, T.B], read }
+    const res = await collectApprovals(ctx, { providers: [get('journal_request'), get('ho_recharge'), get('connector_change')] })
+    const by = (id: string) => res.items.find((i) => i.id === id)! as Full['items'][number] & { actions: Array<{ path: string; options?: Array<{ field: string }> }> }
+    expect(by('jr-1')).toMatchObject({ section: 'finance', submittedByIds: [U['finance']!.id] })
+    expect(by('jr-2')).toMatchObject({ section: 'ceo' })
+    expect(by('jr-1').actions.map((a) => a.path)).toEqual(['/accounting/journal-requests/jr-1/approve', '/accounting/journal-requests/jr-1/reject'])
+    expect(by('run-1').actions[0]!.options!.map((o) => o.field)).toEqual(['postInOpenPeriod', 'acknowledgeWarnings'])
+    expect(by('run-1').actions[0]!.path).toBe('/accounting/intercompany/recharge-runs/run-1/approve')
+    expect(by('cc-1').actions[0]!.path).toBe('/connectors/change-requests/cc-1/approve')
+    expect(res.types.map((t) => t.type).sort()).toEqual(['connector_change', 'ho_recharge', 'journal_request'])
+    expect(res.total).toBe(4)
+  })
+})

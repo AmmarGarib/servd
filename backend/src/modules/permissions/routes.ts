@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -17,6 +17,10 @@ import {
 import { ALL_ROLES, ASSIGNABLE_ROLES, LEGACY_ROLES, OVERRIDE_APPROVERS } from '../../lib/roles.js'
 import { audit } from '../../lib/audit.js'
 import { WORKSPACES, workspacesForUser, childRolesFor } from '../../lib/workspaces.js'
+import { serviceClient } from '../../lib/prisma.js'
+import { AppError } from '../../lib/errors.js'
+import { reachTenantIds, reachVia } from '../../lib/headOffice.js'
+import { liveDelegations } from '../../lib/approvalRights.js'
 
 // ── Access control is MODULE ACCESS (owner decision 34, 2026-09-27) ─────────
 //
@@ -63,6 +67,9 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       // modules they hold) and which roles they may invite logins for.
       workspaces: workspacesForUser(role, modules),
       childRoles: childRolesFor(role),
+      // Head office (D1/D3, spec §6 / §10): all empty / false until the CEO
+      // links a head office, so today's screens are unchanged.
+      ...(await headOfficeView(req)),
     }
   })
 
@@ -168,4 +175,79 @@ export async function permissionRoutes(fastify: FastifyInstance) {
     })
     return { ok: true, role: body.role, modules }
   })
+}
+
+// ── Head-office view for GET /permissions/me ────────────────────────────────
+//
+//   headOffices — the head offices the caller is a member of
+//   reach       — companies reached through them and NOT a member of (the
+//                 lens set; read-only, submit-for-approval only)
+//   delegations — the caller's live approval hand-overs (lib/approvalRights.ts)
+//   headOfficeSetupApplied — the CEO's setup wizard has run for some head
+//                 office (switches retiring isHeadOffice / cost-share UIs)
+//
+// Names are read on serviceClient: the ids come from the auth middleware's
+// own membership and reach lookups, and the RLS client would hide a reached
+// company's tenant row from a single-company context.
+async function headOfficeView(req: FastifyRequest) {
+  const su = req.staffUser!
+  const members = su.memberTenantIds ?? []
+  const reachIds = reachTenantIds(req)
+
+  const headOfficeRows = members.length > 0
+    ? await serviceClient.tenant.findMany({
+        where: { id: { in: members }, kind: 'head_office', deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      })
+    : []
+
+  const viaIds = new Set<string>()
+  for (const c of reachIds) for (const h of reachVia(req, c)) viaIds.add(h)
+  const nameRows = reachIds.length + viaIds.size > 0
+    ? await serviceClient.tenant.findMany({ where: { id: { in: [...reachIds, ...viaIds] } }, select: { id: true, name: true } })
+    : []
+  const nameOf = new Map(nameRows.map((r) => [r.id, r.name]))
+  const reach = reachIds
+    .map((companyId) => ({
+      companyId,
+      name: nameOf.get(companyId) ?? '',
+      via: reachVia(req, companyId).map((id) => ({ id, name: nameOf.get(id) ?? '' })),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  let delegations: Array<{ id: string; section: string; scopeName: string; endsAt: Date | null }> = []
+  try {
+    const live = await liveDelegations(su.id)
+    const scopeIds = new Set<string>()
+    for (const d of live) { scopeIds.add(d.tenantId); if (d.companyTenantId) scopeIds.add(d.companyTenantId) }
+    const scopeRows = scopeIds.size > 0
+      ? await serviceClient.tenant.findMany({ where: { id: { in: [...scopeIds] } }, select: { id: true, name: true } })
+      : []
+    const scopeName = new Map(scopeRows.map((r) => [r.id, r.name]))
+    delegations = live.map((d) => ({
+      id: d.id,
+      section: d.section,
+      scopeName: d.companyTenantId
+        ? (scopeName.get(d.companyTenantId) ?? '')
+        : `${scopeName.get(d.tenantId) ?? 'Head office'} (all companies)`,
+      endsAt: d.endsAt,
+    }))
+  } catch (err) {
+    // HO-B2 builds liveDelegations in the same wave; until it lands the
+    // stub throws NOT_BUILT and there are simply no hand-overs to show.
+    if (!(err instanceof AppError && err.code === 'NOT_BUILT')) throw err
+  }
+
+  const applied = await serviceClient.headOfficeBooks.findFirst({
+    where: { setupAppliedAt: { not: null } },
+    select: { tenantId: true },
+  })
+
+  return {
+    headOffices: headOfficeRows,
+    reach,
+    delegations,
+    headOfficeSetupApplied: applied !== null,
+  }
 }

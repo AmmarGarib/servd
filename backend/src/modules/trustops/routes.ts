@@ -35,6 +35,7 @@ import {
 } from '../../lib/tenantScope.js'
 import { cashVarianceLimitCents } from '../../lib/drawer.js'
 import { generateDeliveryOtp, deliveryOtpMatches, DELIVERY_OTP_READERS, DELIVERY_OTP_MAX_ATTEMPTS } from '../../lib/deliveryOtp.js'
+import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
 import type { Prisma, UserRole } from '@prisma/client'
 import { orderRefOf } from '../../lib/orderRef.js'
 
@@ -255,12 +256,17 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // admin / management ONLY (docs/rider-app.md): anyone who can read the code
   // can "deliver" without going to the door. The customer gets their own code
   // from GET /storefront/orders/:id and on WhatsApp at pick-up.
+  // A company with code-only delivery ON (lib/deliveryRules.ts): 404 for
+  // every role, the CEO included — reading the code would be a disguised
+  // "Delivered" (owner rule 2026-10-13). A stuck door is resolved by sending
+  // the code to the rider (Emergency overrides).
   fastify.get<{ Params: { id: string } }>(
     '/orders/:id/otp',
     { preHandler: requireAuth(...(DELIVERY_OTP_READERS as UserRole[])) },
     async (req) => {
       // Scoped through the order's brand → company: a foreign order is 404.
       const order = await findOrderInScope(req, req.params.id, { id: true, deliveryOtp: true, source: true, status: true })
+      if (await codeOnlyDelivery(prisma, order.concept.tenantId)) throw new NotFoundError('Order', req.params.id)
       // Generate OTP on first read if missing (defensive)
       if (!order.deliveryOtp) {
         const otp = generateDeliveryOtp()
@@ -277,7 +283,9 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // for a rider without the app. Same budget as the rider app: each try takes
   // an attempt slot BEFORE the compare (dispatch/service claimHandoverAttempt),
   // DELIVERY_OTP_MAX_ATTEMPTS in total across both doors, then 423 OTP_LOCKED
-  // — a manager completes a locked order through /dispatch/orders/:id/delivered.
+  // — a manager completes a locked order through /dispatch/orders/:id/delivered
+  // (code-only OFF), or sends the code to the rider (code-only ON, Emergency
+  // overrides — which resets the budget).
   // It used to have no lock at all (any staff role could walk all 10,000 codes
   // and record a fake "hand-over code verified") and wrote back a stale
   // absolute count that could lower the rider app's. 3+ failures still raise a
@@ -297,9 +305,12 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       const { claimHandoverAttempt, releaseHandoverAttempt, markDelivered } = await import('../dispatch/service.js')
       const slot = await claimHandoverAttempt(order.id, DELIVERY_OTP_MAX_ATTEMPTS)
       if (!slot.claimed) {
+        const codeOnly = await codeOnlyDelivery(prisma, order.concept.tenantId)
         throw new AppError(
           'OTP_LOCKED',
-          'Too many wrong codes on this order. A manager has to mark it delivered from Dispatch.',
+          codeOnly
+            ? 'Too many wrong codes on this order. Ask a manager to send the code to the rider (Emergency overrides).'
+            : 'Too many wrong codes on this order. A manager has to mark it delivered from Dispatch.',
           423,
         )
       }
@@ -313,7 +324,9 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
             kind: 'lost_package',
             severity: 'high',
             title: `OTP failed 3+ times on order ${orderRefOf(order.id)}`,
-            description: `Rider attempted delivery hand-off ${attempts} times without correct OTP. Either customer dispute or rider attempting to deliver to wrong recipient. Investigate before marking delivered.`,
+            description: `${attempts} wrong hand-over codes were entered on this delivery. The customer may be disputing it, `
+              + 'or the rider may be at the wrong door. Call the customer before anything else; if they really cannot give the code, '
+              + 'a manager can send it to the rider (Emergency overrides) or log the food as returned.',
             entityType: 'Order',
             entityId: order.id,
             actorId: order.riderId ?? req.staffUser!.id,

@@ -7,10 +7,11 @@
 // reading or touching anything, so company B cannot read, message, credit,
 // strike or ban someone who has only ever dealt with company A.
 //
-// Strikes, bans and conversations carry no tenantId column yet, so they are
-// attributed through their relations here (source order/reservation, the staff
-// member who raised them). See the report for the schema change that retires
-// these fallbacks.
+// Strikes and bans carry a tenantId column (wave B, 2026-10-14): a row with it
+// set belongs to that company and nothing else. Only legacy rows the migration
+// could not stamp (NULL) are attributed through their relations here (source
+// order/reservation, the staff member who raised them). Conversations still
+// have no company column and are attributed in crm/routes.ts.
 
 import type { FastifyRequest } from 'fastify'
 import type { Prisma } from '@prisma/client'
@@ -87,10 +88,11 @@ export function userOfCompanies(t: TenantIdWhere): Prisma.UserWhereInput {
 
 // ─── Strikes ────────────────────────────────────────────────────────────────
 
-type StrikeRow = { id: string; customerId: string; sourceType: string | null; sourceId: string | null; recordedById: string | null }
+type StrikeRow = { id: string; customerId: string; sourceType: string | null; sourceId: string | null; recordedById: string | null; tenantId: string | null }
 
 /**
- * The companies each strike belongs to, by precedence:
+ * The companies each strike belongs to: its tenantId column when set (the one
+ * company). For a legacy NULL row only, by precedence:
  *   source order/reservation → that brand's company;
  *   else (a manual strike) → the companies of the staff member who recorded it;
  *   else (a system strike with no source, legacy) → null, meaning "any company
@@ -98,17 +100,20 @@ type StrikeRow = { id: string; customerId: string; sourceType: string | null; so
  * Each fallback applies only when the field above it is empty.
  */
 export async function strikeCompanies(strikes: StrikeRow[]): Promise<Map<string, Set<string> | null>> {
-  const orderIds = strikes.filter((s) => s.sourceType === 'order' && s.sourceId).map((s) => s.sourceId!)
-  const resIds = strikes.filter((s) => s.sourceType === 'reservation' && s.sourceId).map((s) => s.sourceId!)
+  const out = new Map<string, Set<string> | null>()
+  for (const s of strikes) if (s.tenantId) out.set(s.id, new Set([s.tenantId]))
+  const legacy = strikes.filter((s) => !s.tenantId)
+  if (legacy.length === 0) return out
+  const orderIds = legacy.filter((s) => s.sourceType === 'order' && s.sourceId).map((s) => s.sourceId!)
+  const resIds = legacy.filter((s) => s.sourceType === 'reservation' && s.sourceId).map((s) => s.sourceId!)
   const [orders, reservations, users] = await Promise.all([
     orderIds.length ? prisma.order.findMany({ where: { id: { in: orderIds } }, select: { id: true, concept: { select: { tenantId: true } } } }) : [],
     resIds.length ? prisma.reservation.findMany({ where: { id: { in: resIds } }, select: { id: true, concept: { select: { tenantId: true } } } }) : [],
-    companiesOfUsers(strikes.filter((s) => !s.sourceType && s.recordedById).map((s) => s.recordedById!)),
+    companiesOfUsers(legacy.filter((s) => !s.sourceType && s.recordedById).map((s) => s.recordedById!)),
   ])
   const orderT = new Map(orders.map((o) => [o.id, o.concept.tenantId]))
   const resT = new Map(reservations.map((r) => [r.id, r.concept.tenantId]))
-  const out = new Map<string, Set<string> | null>()
-  for (const s of strikes) {
+  for (const s of legacy) {
     if (s.sourceType === 'order' && s.sourceId) {
       const t = orderT.get(s.sourceId)
       out.set(s.id, new Set(t ? [t] : []))
@@ -133,22 +138,26 @@ export function inCompanies(companies: Set<string> | null | undefined, scope: st
 
 // ─── Bans ───────────────────────────────────────────────────────────────────
 
-type BanRow = { id: string; customerId: string | null; bannedById: string | null }
+type BanRow = { id: string; customerId: string | null; bannedById: string | null; tenantId: string | null }
 
 /**
- * The companies each ban belongs to: a staff-raised ban → the companies of the
+ * The companies each ban belongs to: its tenantId column when set. For a legacy
+ * NULL row only: a staff-raised ban → the companies of the
  * staff member who raised it; an auto-ban (bannedById null, promoted from
  * strikes) → the companies of that customer's strikes. Decision 15: a ban
  * applies only to — and is only liftable by — the company that raised it.
  */
 export async function banCompanies(bans: BanRow[]): Promise<Map<string, Set<string> | null>> {
   const out = new Map<string, Set<string> | null>()
-  const users = await companiesOfUsers(bans.filter((b) => b.bannedById).map((b) => b.bannedById!))
-  const autoCustomers = [...new Set(bans.filter((b) => !b.bannedById && b.customerId).map((b) => b.customerId!))]
+  for (const b of bans) if (b.tenantId) out.set(b.id, new Set([b.tenantId]))
+  const legacy = bans.filter((b) => !b.tenantId)
+  if (legacy.length === 0) return out
+  const users = await companiesOfUsers(legacy.filter((b) => b.bannedById).map((b) => b.bannedById!))
+  const autoCustomers = [...new Set(legacy.filter((b) => !b.bannedById && b.customerId).map((b) => b.customerId!))]
   const strikes = autoCustomers.length
     ? await prisma.customerStrike.findMany({
         where: { customerId: { in: autoCustomers }, reversedAt: null },
-        select: { id: true, customerId: true, sourceType: true, sourceId: true, recordedById: true },
+        select: { id: true, customerId: true, sourceType: true, sourceId: true, recordedById: true, tenantId: true },
       })
     : []
   const sc = await strikeCompanies(strikes)
@@ -161,7 +170,7 @@ export async function banCompanies(bans: BanRow[]): Promise<Map<string, Set<stri
     for (const t of c ?? []) merged.add(t)
     byCustomer.set(s.customerId, merged)
   }
-  for (const b of bans) {
+  for (const b of legacy) {
     if (b.bannedById) out.set(b.id, users.get(b.bannedById) ?? new Set())
     else if (b.customerId) out.set(b.id, byCustomer.has(b.customerId) ? byCustomer.get(b.customerId)! : null)
     else out.set(b.id, new Set())

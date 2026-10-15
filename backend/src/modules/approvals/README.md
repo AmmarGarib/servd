@@ -56,23 +56,30 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 | `raast_void` | `GET /reconciliation/raast/receipts?voidRequested=1` | `POST /reconciliation/raast/receipts/:id/void` (reason ≥ 10), `/void-request/reject` (note) | admin; a receipt that can no longer be voided shows the route's own reason on a disabled button |
 | `grni_writeoff` | `GET /procurement/grni?writeOffRequested=1` | `POST /procurement/grni/:receiptLineId/write-off/approve`, `/write-off/reject` (note) | admin |
 | `stock_difference` | `GET /accounting/stock-differences?status=pending` (one row per 1290 suspense line) | `POST /accounting/stock-differences/approve` `{lineIds:[id]}`, `POST /accounting/stock-differences/:id/query` (note) | admin — waste and count differences wait in 1290 until the CEO approves them into cost of sales (H20). Until that route exists it answers 404 and the type is not listed |
+| `journal_request` | `GET /accounting/journal-requests?status=submitted` | `POST /accounting/journal-requests/:id/approve`, `/reject` (note) | admin; kind post is Finance's (hand-over locked, A22), kind reverse the CEO's alone. Not listed while the route 404s |
+| `ho_recharge` | `GET /accounting/intercompany/recharge-runs?status=submitted` | `POST /accounting/intercompany/recharge-runs/:id/approve` (tick-boxes `postInOpenPeriod`, `acknowledgeWarnings`), `/reject` (note) | admin, or the head office's Finance delegate (head-office-wide hand-over only). Not listed while the route 404s |
+| `connector_change` | `GET /connectors/change-requests?status=submitted` | `POST /connectors/change-requests/:id/approve`, `/reject` (note) | admin, or a Dev delegate. Not listed while the route 404s |
 
-`approverRoles` in `providers.ts` mirrors each approve route's `requireAuth`
-list. It only narrows (a queue route wider than its approve route — the
-storefront list, the payroll register, stock transfers — never shows an item
-the person could not act on). It never widens: the route still decides.
+`approverRoles` and `delegable` in `providers.ts` come from the rights
+registry (`lib/approvalRights.ts` `APPROVAL_RIGHTS`, below) — the one copy of
+each approve route's role list. It only narrows (a queue route wider than its
+approve route — the storefront list, the payroll register, stock transfers —
+never shows an item the person could not act on). It never widens: the route
+still decides.
 
 Not in the inbox, on purpose: manager-PIN overrides at the till (real time,
-not a queue); period reopen, manual journals, journal reversal and bank-line
-adjustments (the CEO / approvers act directly — there is no "request" state
-to approve). If one of those gains a request step, it becomes a provider
+not a queue); period reopen, direct manual journals, journal reversal and
+bank-line adjustments (the CEO / approvers act directly — there is no
+"request" state to approve). Manual journals finance PREPARES are journal
+requests (`journal_request`). If one of those gains a request step, it becomes a provider
 here. (Capitalising a CapEx line became one: finance's capitalisation now
 waits as a `fixed_asset_request`.)
 
-`delegable` is false for every finance wave B type: each approve route checks
-role `admin` itself (fixed-asset events, inter-company, write-offs, Raast
-voids, GRNI, stock differences), so a delegate could not act on them. The HOD
-step (`cash_request_hod`) is per item, like HR steps.
+`delegable` is false for the CEO-section types (cash requests for the
+director, fixed-asset requests, write-offs, Raast voids, GRNI, stock
+differences, on-account clients): each approve route checks role `admin`
+itself. The HOD step (`cash_request_hod`) is per item, like HR steps, and is
+never handed over.
 
 **PARKED (owner, 2026-10-13):** `on_account_client` stays in `APPROVAL_TYPES`
 but has no provider (the on-account clients feature and its route are
@@ -83,17 +90,112 @@ needed; the resume adds the provider.
 
 One provider in `providers.ts`: read the module's existing queue route with
 `ctx.read`, return `null` when it refuses, map rows to `ApprovalItem`s whose
-actions call the module's existing routes. Add it to `APPROVAL_TYPES`, add a
-two-company test in `tests/approvalsInbox.test.ts`.
+actions call the module's existing routes, with `...rightsOf('<type>')` for
+its roles and hand-over, and `submittedByIds` on each item. Add the type to
+`APPROVAL_TYPES` AND its entry to `APPROVAL_RIGHTS` and `approvalSubject` in
+`lib/approvalRights.ts` (tested: every type has both), and a two-company test
+in `tests/approvalsInbox.test.ts`.
 
-## Hand-over to HODs (later)
+## The rights registry (`lib/approvalRights.ts`)
 
-`delegations.ts` is the seam: `ApprovalDelegations.typesFor(userId,
-tenantIds)` is consulted per type next to `approverRoles`. Today it returns
-nothing. When head office exists, a per-company `ApprovalDelegation` table
-plugs in there — AND each delegable type's approve and queue routes must
-accept the delegate (an `assertCanApprove(req, type, tenantId)` helper on the
-same table). Until both are done a delegate sees nothing: the safe failure.
+`APPROVAL_RIGHTS` is the ONE registry: one entry per type in `APPROVAL_TYPES`
+(which lives there too; `types.ts` re-exports it). Providers, approve routes,
+queue routes and the hand-over catalogue all read it.
+
+| type | section | queue module | role path | hand-over | delegate must hold |
+|---|---|---|---|---|---|
+| `staff_login` | operations (floor roles); **ceo** for every password role | role_management | admin | floor logins only | staff_directory |
+| `storefront_publish` | marketing; **ceo** for shared (no-company) pages | storefront | admin | company pages — **locked** (`DELEGATION_ENABLED.storefront_publish = false`) | storefront |
+| `purchase_order` | procurement | procurement | admin | yes | procurement |
+| `recipe` | operations; **ceo** when it has no company (A21) | recipes | admin, owner | yes | recipes |
+| `hr_request` | hr | staff_hr | per step | the final step | staff_hr |
+| `payroll_run` | hr | staff_hr | admin, owner, management | approve / lock / reopen | staff_hr |
+| `tip_pool` | finance | payroll | admin, owner | post / pay | payroll |
+| `stock_transfer` | operations | inventory | managers | **never** (the company's managers; exempt from the through-head-office rule) | — |
+| `cash_request_hod` | finance | accounting | per item (the HOD) | **never** | — |
+| `intercompany_transfer` | finance | accounting | admin | head-office pairs only (owned by the head office, A4); company ↔ company is CEO-only | accounting |
+| `journal_request` | finance; **ceo** for kind reverse | accounting | admin | kind post — **locked** (`DELEGATION_ENABLED.journal_request = false`, A22) | accounting |
+| `ho_recharge` | finance | accounting | admin | head-office-wide hand-overs only | accounting |
+| `connector_change` | dev | api_pos | admin | yes | api_pos |
+| `cash_voucher`, `fixed_asset_request`, `bad_debt`, `raast_void`, `grni_writeoff`, `stock_difference`, `on_account_client` | **ceo** | — | admin | **never** | — |
+
+Sections (`APPROVAL_SECTIONS`): `ceo`, `operations`, `procurement`,
+`finance`, `marketing`, `hr`, `dev`. Titles are the workspaces' own
+(procurement: "Procurement"). The section is explicit per type (A23) —
+`sectionOf(type, item)` moves an item to `ceo` by what it is.
+
+**Who may approve** (`assertCanApprove`, spec §7.4 as amended):
+
+1. **Role path:** the role is in the registry's list, every company the item
+   touches is one the caller belongs to, and the caller is the CEO **or** the
+   item did not come through a head office. Through head office (A3) = a
+   stored `viaHeadOfficeId`, or a submitter who is a non-admin member of a
+   head office whose link to the company was live when it was submitted —
+   being a member of the company too does not exempt them. Stock transfers
+   are exempt.
+2. **Delegation path:** the type is delegable, switched on, not CEO-only for
+   this item, and a LIVE hand-over covers it. Company-owned types: one
+   hand-over covers every company the item touches. Head-office-owned types
+   (`ho_recharge`, `intercompany_transfer`): the hand-over's head office owns
+   it (A4). An item that came through a head office goes only to THAT head
+   office's delegate (A13).
+3. **Separation of duties:** a non-admin among the item's submitters gets 403
+   `SELF_APPROVAL_BLOCKED` and a `self_approval` flag
+   (`separation-of-duties.ts assertNotAmongSubmitters`).
+4. **Denied:** 403 `APPROVAL_NOT_YOURS` when the company is one the caller
+   belongs to, reaches or holds a hand-over in; otherwise 404.
+5. **Rows:** `approvalSubject(type, id)` reads the item's companies,
+   submitters and status on serviceClient BEFORE the check (A5); on success
+   the RLS context is widened to the item's companies and the module re-reads
+   its row through `prisma`. `approvalInputOf(type, id, subject)` builds the
+   check (item-level CEO-only included). Every decision of a delegable type
+   writes `approval.decide` through `auditApproval`.
+
+Queue routes list `approvalQueueTenantIds(req, type)`: (companies in view ∩
+member companies, when the role list admits the caller) ∪ the companies a
+live hand-over covers, whatever the view.
+
+## Hand-over (delegation)
+
+The CEO hands a SECTION of a head office's companies (one company, or
+head-office-wide = the head office and every company LIVE-linked to it at the
+moment of use) to an active, non-admin member of that head office who holds
+the module. Routes (`delegationRoutes.ts`, CEO only unless noted):
+
+- `POST /approvals/delegations` `{headOfficeId, companyTenantId?, section,
+  approvalTypes?, delegateUserId, endsAt?, note}` — checks in order: 404 (not
+  a head office, or the CEO is not a member), 422 `COMPANY_NOT_LINKED`, 422
+  `SECTION_NOT_DELEGABLE` / `SECTION_NOT_YET_DELEGABLE`, 422
+  `TYPE_NOT_IN_SECTION`, 422 `DELEGATE_NOT_ELIGIBLE`, 422
+  `DELEGATE_LACKS_MODULE`, 422 `ENDS_AT_IN_PAST`, then — for company-owned
+  types — one head office per (company, section) under
+  `pg_advisory_xact_lock(hashtext('delegation:'||section))`: 409
+  `SECTION_HANDED_TO_OTHER_HEAD_OFFICE`. "All types" of a section with a
+  locked type stores the switched-on types explicitly, so flipping a constant
+  never widens an old grant.
+- `POST /approvals/delegations/:id/revoke {reason}` — a second revoke → 409.
+- `GET /approvals/delegations` (any login: the CEO sees every hand-over of
+  their head offices; others their own), `GET /approvals/delegations/eligible?
+  headOfficeId&section`, `GET /approvals/catalog` (any login).
+
+Rows are never edited or deleted (revoke + grant again). Every use is checked
+live: not revoked, inside its window, the delegate active, still a member of
+the head office, still holding the module, the link live. Ending a link
+revokes that company's hand-overs in the same transaction
+(`revokeDelegationsForUnlinkTx`, A12); `hoWideDelegationsOf(hoId)` lists the
+head-office-wide ones a new link would extend. Audit:
+`approval.delegation.grant|revoke` (identity trail).
+
+**Inbox:** the CEO's items covered by a live hand-over (whose delegate did not
+submit them) carry `handedOverTo` and are collapsed per section
+(`handedOverItems`, `sections[].handedOver`, `handedOver`) — never in `total`;
+`?view=all` lists them inline. A delegate sees the covered companies' items
+whatever the view, never their own submissions. Company role approvers no
+longer see items that came through a head office. `GET /approvals?type&
+section&view`. With no head office and no hand-over, the inbox is exactly as
+before. `delegations.ts` is the seam: `LIVE_DELEGATIONS` (the default) reads
+the table through `lib/approvalRights.ts`; `NO_DELEGATIONS` stays the test
+default.
 
 ## Registration
 

@@ -430,7 +430,7 @@ function invalidManagerPin(): AppError {
   return new AppError('INVALID_MANAGER_PIN', 'That PIN does not belong to an active manager of this company', 403)
 }
 
-function idempotencyKeyReused(): AppError {
+export function idempotencyKeyReused(): AppError {
   return new AppError('IDEMPOTENCY_KEY_REUSED', 'That idempotency key belongs to a different request — generate a new one', 409)
 }
 
@@ -448,7 +448,7 @@ export async function lockOrderTx(tx: Tx, orderId: string): Promise<void> {
 const ENDED: ReadonlySet<string> = new Set(['completed', 'refunded', 'cancelled', 'rejected'])
 
 /** FOH-09: a ticket that was cancelled, rejected or refunded takes no money. */
-function assertTakesMoney(status: string): void {
+export function assertTakesMoney(status: string): void {
   if (status === 'cancelled' || status === 'rejected' || status === 'refunded') {
     throw new AppError('ORDER_NOT_OPEN', `This order is ${status} — it cannot take a payment`, 409)
   }
@@ -519,7 +519,7 @@ async function completeTillSaleTx(
 }
 
 /** Receipts that cover the bill: paid rows, positive amounts (comps included). */
-function coveredCents(payments: Array<{ status: string; amountCents: number }>): number {
+export function coveredCents(payments: Array<{ status: string; amountCents: number }>): number {
   return payments.filter((p) => p.status === 'paid' && p.amountCents > 0).reduce((t, p) => t + p.amountCents, 0)
 }
 
@@ -533,7 +533,7 @@ function coveredCents(payments: Array<{ status: string; amountCents: number }>):
  * rider's cash paid into the drawer or an online payment confirmed by the
  * gateway never completes them here.
  */
-async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'gateway'): Promise<{ covered: boolean; completedNow: boolean; customerId: string | null; source: string }> {
+export async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'gateway'): Promise<{ covered: boolean; completedNow: boolean; customerId: string | null; source: string }> {
   const order = await tx.order.findUniqueOrThrow({
     where: { id: orderId },
     include: { payments: { select: { id: true, status: true, amountCents: true } } },
@@ -569,7 +569,7 @@ async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'gateway')
  * notice. Exactly once per order, and it never fails the sale. Returns the
  * sale's fiscal view for the till (a replay reads the current one).
  */
-async function afterTillSale(
+export async function afterTillSale(
   orderId: string,
   _customerId?: string | null,
   _source?: string,
@@ -655,7 +655,7 @@ async function assertChargeMatchesTx(tx: Tx, chargeId: string, expect: {
 }
 
 /** The till's fiscal answer (spec §8.4): the view plus the deprecated `srb` alias for one release. */
-function tillFiscal(fiscal: FiscalView | null): { fiscal: FiscalView | null; srb: ReturnType<typeof legacySrbAlias> } {
+export function tillFiscal(fiscal: FiscalView | null): { fiscal: FiscalView | null; srb: ReturnType<typeof legacySrbAlias> } {
   return { fiscal, srb: legacySrbAlias(fiscal) }
 }
 
@@ -894,7 +894,7 @@ type TenderPricedOrder = Pick<
  * a till sale, or customer credits (promo, wallet, gift card, tip) already
  * sit on its total — re-pricing would drop them.
  */
-async function tenderPriceOf(db: Tx, order: TenderPricedOrder, methods: Array<string | null | undefined>): Promise<OrderPrice | null> {
+export async function tenderPriceOf(db: Tx, order: TenderPricedOrder, methods: Array<string | null | undefined>): Promise<OrderPrice | null> {
   if (order.taxRatePct == null) return null
   const { isTillSale } = await import('../orders/service.js')
   if (!isTillSale(order)) return null
@@ -924,7 +924,7 @@ async function tenderPriceOf(db: Tx, order: TenderPricedOrder, methods: Array<st
  * Re-price an unpaid till sale for its tender inside the caller's
  * transaction (tenderPriceOf, then write it). Returns the order's total due.
  */
-async function repriceForTenderTx(tx: Tx, order: TenderPricedOrder, methods: Array<string | null | undefined>): Promise<number> {
+export async function repriceForTenderTx(tx: Tx, order: TenderPricedOrder, methods: Array<string | null | undefined>): Promise<number> {
   const price = await tenderPriceOf(tx, order, methods)
   if (!price) return order.totalCents
   await tx.order.update({
@@ -1004,7 +1004,7 @@ export async function prepareSplitTx(
 }
 
 /** The submission key a payment row was taken under (gatewayMeta.idempotencyKey). */
-function paymentKeyOf(p: Pick<Payment, 'gatewayMeta'>): string | null {
+export function paymentKeyOf(p: Pick<Payment, 'gatewayMeta'>): string | null {
   const meta = p.gatewayMeta as { idempotencyKey?: unknown } | null
   return typeof meta?.idempotencyKey === 'string' ? meta.idempotencyKey : null
 }

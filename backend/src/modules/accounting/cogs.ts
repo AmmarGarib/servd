@@ -29,7 +29,7 @@ import { sumCents } from '../../lib/money.js'
 import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { ORDER_COGS_KINDS, readFifoCutoverAt } from '../../lib/stockLedger.js'
 import { cogsForSoldLines } from '../../lib/recipeCost.js'
-import { ACCT, type JournalLineInput } from './journal.js'
+import { ACCT, TILL_CLEARING_CODES, type JournalLineInput } from './journal.js'
 
 type Db = Prisma.TransactionClient | PrismaClient
 
@@ -163,7 +163,8 @@ export async function orderCostBookedAt(db: Db, tenantId: string, orderId: strin
   if (!close) return null
   const due = await db.journalLine.findFirst({
     where: {
-      journalEntryId: close.id, type: 'credit', account: { tenantId, code: ACCT.CUSTOMER_AR },
+      // Till clearing: 1110 before the company's cut-over, 1115 after it.
+      journalEntryId: close.id, type: 'credit', account: { tenantId, code: { in: TILL_CLEARING_CODES } },
       AND: [{ memo: { startsWith: REFUND_DUE_PREFIX } }, { memo: { contains: order.id } }],
     },
     select: { id: true },
@@ -172,8 +173,9 @@ export async function orderCostBookedAt(db: Db, tenantId: string, orderId: strin
   const dead = order.status === 'cancelled' || order.status === 'rejected'
   if (dead && order.cancelledAt && order.cancelledAt <= close.createdAt) {
     // Posted after the cancel: the close treated it as no sale. With money it
-    // holds a REFUND DUE (above); with none (a comp, a voided Raast) nothing.
-    const money = order.payments.some((p) => p.shiftId === home && p.amountCents > 0 && p.method !== 'comp' && !isVoidedRaast(p) && isShiftReceipt(p))
+    // holds a REFUND DUE (above); with none (a comp, an on-account charge, a
+    // voided Raast) nothing.
+    const money = order.payments.some((p) => p.shiftId === home && p.amountCents > 0 && p.method !== 'comp' && p.method !== 'on_account' && !isVoidedRaast(p) && isShiftReceipt(p))
     if (!money) return null
   }
   return close.createdAt

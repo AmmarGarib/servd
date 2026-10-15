@@ -686,8 +686,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
   //   - pickup / dine-in ordered online → COMPLETED here, through the one
   //     completion routine (ledger, invoice, FBR/SRB, loyalty, rollups).
   //   - delivery → NOT completed: the bag is with the rider; the order
-  //     completes when the rider marks it delivered or the customer's OTP is
-  //     verified (POST /dispatch/orders/:id/delivered, /trustops verify-otp).
+  //     completes when the customer's hand-over code is entered (rider app
+  //     POST /rider/jobs/:id/deliver, or staff /trustops verify-otp). Only a
+  //     company with code-only delivery OFF (lib/deliveryRules.ts) still has
+  //     the staff "Delivered" (POST /dispatch/orders/:id/delivered).
   //   - a till sale (rung at the POS, or a group bill) → NOT completed: it
   //     completes when it is paid at the till.
   // Either way the hand-off is recorded ('expo.handoff' audit row), which is

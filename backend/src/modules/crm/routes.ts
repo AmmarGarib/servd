@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, MARKETING_TEAM, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
-import { sendEmail, whatsappNumber } from '../../lib/notify.js'
+import { sendEmail, sendPhoneMessage, whatsappNumber } from '../../lib/notify.js'
+import { audit } from '../../lib/audit.js'
 import { sendText } from '../../lib/whatsapp.js'
 import { reachableAtCompany, companyAudience, unsubscribeUrl } from '../../lib/marketingAudience.js'
 import { WAITLIST_AUDIENCE, WAITLIST_AUDIENCE_NAME, waitlistMemberWhere, staffModules } from '../waitlist/service.js'
@@ -13,7 +14,7 @@ import {
 } from './segmentComputation.js'
 import { deliverToCustomer } from '../../lib/customer-channels.js'
 import { testCompanyBlocks, customerScope } from '../../lib/outboundScope.js'
-import { scopeTenantWhere, assertConceptOwned, conceptIdsInScope, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, assertConceptOwned, conceptIdsInScope, activeTenantId, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { walletBalancesOf, balanceInView } from '../wallet/service.js'
 import {
   customerOfCompanies, findCustomerInScope, tenantIdsOf,
@@ -240,7 +241,7 @@ async function bansInScope(customerIds: string[], scope: string[]): Promise<Map<
   const now = new Date()
   const bans = await prisma.customerBan.findMany({
     where: { customerId: { in: customerIds }, liftedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
-    select: { id: true, customerId: true, bannedById: true, reason: true, bannedAt: true },
+    select: { id: true, customerId: true, bannedById: true, tenantId: true, reason: true, bannedAt: true },
     orderBy: { bannedAt: 'desc' },
   })
   const bc = await banCompanies(bans)
@@ -448,7 +449,8 @@ export async function crmRoutes(fastify: FastifyInstance) {
           },
         }),
         prisma.orderComplaint.findMany({
-          where: { customerId: customer.id, status: { in: ['open', 'in_progress'] }, ...inCo },
+          // Complaints only — a ban appeal is not a service complaint.
+          where: { customerId: customer.id, kind: 'complaint', status: { in: ['open', 'in_progress'] }, ...inCo },
           orderBy: { createdAt: 'desc' },
           take: 5,
           select: {
@@ -475,7 +477,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
           take: 50,
           select: {
             id: true, kind: true, severity: true, reason: true, recordedAt: true, reversedAt: true, expiresAt: true,
-            customerId: true, sourceType: true, sourceId: true, recordedById: true,
+            customerId: true, sourceType: true, sourceId: true, recordedById: true, tenantId: true,
           },
         }),
       ])
@@ -485,7 +487,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const recentStrikes = strikeRows
         .filter((st) => inCompanies(sc.get(st.id), scope, true))
         .slice(0, 5)
-        .map(({ customerId: _c, sourceType: _t, sourceId: _s, recordedById: _r, ...rest }) => rest)
+        .map(({ customerId: _c, sourceType: _t, sourceId: _s, recordedById: _r, tenantId: _tid, ...rest }) => rest)
 
       // This company's segments and this company's ban only.
       const ban = (await bansInScope([customer.id], scope)).get(customer.id) ?? null
@@ -950,9 +952,9 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
   // GET /crm/naughty-list — operator inbox. Customers of THIS company with
   // strikes or bans that THIS company raised (decision 15: a ban applies only
-  // to the company that raised it), sorted by severity. Strikes/bans carry no
-  // company column yet; they are attributed through their source order /
-  // reservation or the staff member who raised them (crm/customerScope.ts).
+  // to the company that raised it), sorted by severity. Strikes and bans carry
+  // their company (tenantId); legacy NULL rows are attributed through their
+  // source order / reservation or the staff member (crm/customerScope.ts).
   fastify.get<{ Querystring: { kind?: string; bannedOnly?: string } }>(
     '/naughty-list',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -991,7 +993,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
         }),
         prisma.customerBan.findMany({
           where: { customerId: { in: ids } },
-          select: { id: true, customerId: true, bannedById: true, bannedAt: true, liftedAt: true, expiresAt: true },
+          select: { id: true, customerId: true, bannedById: true, tenantId: true, bannedAt: true, liftedAt: true, expiresAt: true },
         }),
       ]) : [[], []]
       const [sc, bc] = await Promise.all([strikeCompanies(strikeRows), banCompanies(banRows)])
@@ -1038,38 +1040,43 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // POST /crm/strikes — manually record a strike (operator's call).
   // Used when something happens IRL that the system can't auto-detect:
   // verbal abuse to staff, dine-and-dash, etc. Only against a customer of
-  // the ACTIVE company; the strike is attributed to it through recordedById.
+  // the ACTIVE company; the strike is stamped with it (tenantId) and counts
+  // toward THAT company's three strikes only. 'cod_unpaid' is no longer a
+  // manual kind (old rows stay readable).
   fastify.post(
     '/strikes',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = z.object({
         customerId: z.string().uuid(),
-        kind:       z.enum(['reservation_no_show', 'cod_unpaid', 'cod_refused', 'chargeback', 'other']),
+        kind:       z.enum(['reservation_no_show', 'cod_refused', 'chargeback', 'other']),
         severity:   z.number().int().min(1).max(3).default(1),
         reason:     z.string().max(500),
       }).parse(req.body)
 
       await findCustomerInScope(req, body.customerId, 'create')
+      const tenantId = activeTenantId(req, 'a strike belongs to one company')
       const { recordStrike } = await import('../../lib/strikes.js')
-      await recordStrike({
+      const result = await recordStrike({
         customerId:   body.customerId,
         kind:         body.kind,
         severity:     body.severity,
         reason:       body.reason,
         recordedById: req.staffUser!.id,
+        tenantId,
       })
-      const customer = await prisma.customer.findUnique({
-        where: { id: body.customerId },
-        select: { strikeCount: true, bannedAt: true },
-      })
-      return reply.status(201).send({ ok: true, customer })
+      if (!result.recorded) throw new AppError('STRIKE_NOT_RECORDED', 'The strike could not be recorded — try again.', 500)
+      // This company's view: its own active weight and its own ban.
+      const { activeStrikeWeightAt } = await import('../../lib/strikes.js')
+      const strikeCount = await activeStrikeWeightAt(prisma, body.customerId, tenantId)
+      const ban = (await bansInScope([body.customerId], [tenantId])).get(body.customerId) ?? null
+      return reply.status(201).send({ ok: true, banId: result.banId ?? null, customer: { strikeCount, bannedAt: ban?.bannedAt ?? null } })
     },
   )
 
   // POST /crm/strikes/:id/reverse — manager forgives a strike. If reversing
-  // drops the customer below the ban threshold, the auto-ban is auto-lifted.
-  // Only a strike this company raised (404 otherwise).
+  // drops THAT company's weight below the threshold, its auto-ban is lifted.
+  // Only a strike of this company (404 otherwise).
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/strikes/:id/reverse',
     { preHandler: requireAuth(...MANAGERS) },
@@ -1077,13 +1084,20 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const body = z.object({ reason: z.string().max(500) }).parse(req.body)
       const strike = await prisma.customerStrike.findUnique({
         where: { id: req.params.id },
-        select: { id: true, customerId: true, sourceType: true, sourceId: true, recordedById: true },
+        select: { id: true, customerId: true, sourceType: true, sourceId: true, recordedById: true, tenantId: true },
       })
       if (!strike) throw new NotFoundError('Strike', req.params.id)
       const t = await scopeTenantWhere(req, 'write')
-      const customerOk = !!(await prisma.customer.findFirst({ where: { id: strike.customerId, ...customerOfCompanies(t) }, select: { id: true } }))
-      const sc = await strikeCompanies([strike])
-      if (!customerOk || !inCompanies(sc.get(strike.id), tenantIdsOf(t), customerOk)) throw new NotFoundError('Strike', req.params.id)
+      const scope = tenantIdsOf(t)
+      let ok: boolean
+      if (strike.tenantId) {
+        ok = scope.includes(strike.tenantId)
+      } else {
+        const customerOk = !!(await prisma.customer.findFirst({ where: { id: strike.customerId, ...customerOfCompanies(t) }, select: { id: true } }))
+        const sc = await strikeCompanies([strike])
+        ok = customerOk && inCompanies(sc.get(strike.id), scope, customerOk)
+      }
+      if (!ok) throw new NotFoundError('Strike', req.params.id)
       const { reverseStrike } = await import('../../lib/strikes.js')
       const result = await reverseStrike(req.params.id, req.staffUser!.id, body.reason)
       return result
@@ -1099,8 +1113,8 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const activeOnly = req.query.activeOnly === '1' || req.query.activeOnly === 'true'
       const t = await scopeTenantWhere(req, 'read')
 
-      // Candidates: bans on this company's customers, plus watchlist bans
-      // (no customer) raised by this company's staff.
+      // Candidates: this company's bans (tenantId), plus legacy NULL rows on
+      // this company's customers or raised by this company's staff.
       const staff = await prisma.user.findMany({ where: userOfCompanies(t), select: { id: true } })
       const bans = await prisma.customerBan.findMany({
         where: {
@@ -1109,8 +1123,9 @@ export async function crmRoutes(fastify: FastifyInstance) {
             OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
           }),
           AND: [{ OR: [
-            { customer: customerOfCompanies(t) },
-            { customerId: null, bannedById: { in: staff.map((u) => u.id) } },
+            t,
+            { tenantId: null, customer: customerOfCompanies(t) },
+            { tenantId: null, customerId: null, bannedById: { in: staff.map((u) => u.id) } },
           ] }],
         },
         include: {
@@ -1125,48 +1140,100 @@ export async function crmRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /crm/bans/:id/lift — operator lifts a ban (forgives the customer).
-  // Requires a reason for the audit trail. Only a ban this company raised.
+  /**
+   * The ban, when it is one of the request's companies' in `mode` — else 404.
+   * A ban with a company column is that company's; a legacy NULL ban is
+   * attributed the old way (and only the CEO may change it: liftBanTx /
+   * releaseBanContactTx answer 403 LEGACY_BAN_ADMIN_ONLY to anyone else).
+   */
+  async function findBanInScope(req: FastifyRequest, id: string, mode: 'read' | 'write') {
+    const ban = await prisma.customerBan.findUnique({
+      where: { id },
+      include: { customer: { select: { id: true, name: true, email: true, phone: true } } },
+    })
+    if (!ban) throw new NotFoundError('Ban', id)
+    const t = await scopeTenantWhere(req, mode)
+    const scope = tenantIdsOf(t)
+    if (ban.tenantId) {
+      if (!scope.includes(ban.tenantId)) throw new NotFoundError('Ban', id)
+      return ban
+    }
+    const customerOk = ban.customerId
+      ? !!(await prisma.customer.findFirst({ where: { id: ban.customerId, ...customerOfCompanies(t) }, select: { id: true } }))
+      : true
+    const bc = await banCompanies([ban])
+    if (!customerOk || !inCompanies(bc.get(ban.id), scope, customerOk)) throw new NotFoundError('Ban', id)
+    return ban
+  }
+
+  // POST /crm/bans/:id/lift — lift a ban (forgive the customer, or grant an
+  // appeal). Requires a reason for the audit trail. Only a ban of this
+  // company (404); a legacy NULL-company ban → CEO only (403). The company's
+  // strikes stay (owner Q6). Linked open appeals resolve; the customer is told.
+  // The module gate opens this path to 'complaints' holders too (lib/moduleAccess.ts).
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/bans/:id/lift',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const body = z.object({ reason: z.string().max(500) }).parse(req.body)
-      const ban = await prisma.customerBan.findUnique({ where: { id: req.params.id } })
-      if (!ban) throw new NotFoundError('Ban', req.params.id)
-      const t = await scopeTenantWhere(req, 'write')
-      const customerOk = ban.customerId
-        ? !!(await prisma.customer.findFirst({ where: { id: ban.customerId, ...customerOfCompanies(t) }, select: { id: true } }))
-        : true
-      const bc = await banCompanies([ban])
-      if (!customerOk || !inCompanies(bc.get(ban.id), tenantIdsOf(t), customerOk)) throw new NotFoundError('Ban', req.params.id)
-      if (ban.liftedAt) return ban
-
-      const updated = await prisma.customerBan.update({
-        where: { id: ban.id },
-        data:  {
-          liftedAt:    new Date(),
-          liftedById:  req.staffUser!.id,
-          liftReason:  body.reason,
-        },
-      })
-      // Sync the denormalized customer flags — only when no other ban on the
-      // customer is still active (another company's ban stays in force).
-      // isBlacklisted is written for old readers only; nothing here reads it.
-      if (ban.customerId) {
-        const now = new Date()
-        const stillBanned = await prisma.customerBan.findFirst({
-          where: { customerId: ban.customerId, liftedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
-          select: { id: true },
+      const body = z.object({ reason: z.string().min(1).max(500) }).parse(req.body)
+      const ban = await findBanInScope(req, req.params.id, 'write')
+      const wasActive = !ban.liftedAt
+      const { liftBanTx } = await import('../../lib/strikes.js')
+      await prisma.$transaction((tx) => liftBanTx(tx, {
+        banId: ban.id, actorId: req.staffUser!.id, reason: body.reason, actorRole: req.staffUser!.role,
+      }))
+      const updated = await prisma.customerBan.findUniqueOrThrow({ where: { id: ban.id } })
+      if (wasActive) {
+        await audit({
+          category: 'identity', action: 'customer_ban.lift', entity: 'CustomerBan', entityId: ban.id,
+          userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: ban.tenantId ?? req.staffUser!.tenantId ?? null,
+          metadata: { reason: body.reason, customerId: ban.customerId, auto: ban.bannedById === null },
         })
-        if (!stillBanned) {
-          await prisma.customer.update({
-            where: { id: ban.customerId },
-            data:  { bannedAt: null, isBlacklisted: false, blacklistReason: null },
-          })
-        }
+        notifyBanLifted(ban).catch((err) => console.error(`[crm/bans] lift notice failed for ban ${ban.id}:`, (err as Error).message))
       }
       return updated
+    },
+  )
+
+  /** Tell the customer their block at a company is lifted (after commit; best effort). */
+  async function notifyBanLifted(ban: { tenantId: string | null; phone: string | null; email: string | null; customer: { phone: string | null; email: string | null; name: string | null } | null }) {
+    const company = ban.tenantId
+      ? (await prisma.tenant.findUnique({ where: { id: ban.tenantId }, select: { name: true } }))?.name ?? null
+      : null
+    const where = company ? ` at ${company}` : ''
+    const text = `Good news: your block${where} has been lifted. You can order and book again.`
+    const scope = customerScope(ban.tenantId)
+    const phone = ban.customer?.phone ?? ban.phone
+    const email = ban.customer?.email ?? ban.email
+    if (phone) await sendPhoneMessage(phone, text, 'ban.lifted', scope)
+    if (email) await sendEmail(email, 'Your block has been lifted', `<p>${escapeHtml(text)}</p>`, 'ban.lifted', scope)
+  }
+
+  // POST /crm/bans/:id/release-contact — release ONE contact from a ban
+  // (owner Q7: a recycled phone number). Clears it on the ban AND on the banned
+  // customer's account, so the next sign-in with it is a fresh account. The
+  // ban stays in force on the old account. MANAGERS (the module gate also
+  // opens it to 'complaints' holders); this company's ban only (404); audited.
+  fastify.post<{ Params: { id: string }; Body: { contact: 'phone' | 'email'; reason: string } }>(
+    '/bans/:id/release-contact',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const body = z.object({
+        contact: z.enum(['phone', 'email']),
+        reason:  z.string().trim().min(5).max(300),
+      }).parse(req.body)
+      const ban = await findBanInScope(req, req.params.id, 'write')
+      const { releaseBanContactTx } = await import('../../lib/strikes.js')
+      const { released } = await prisma.$transaction((tx) => releaseBanContactTx(tx, {
+        banId: ban.id, contact: body.contact, actorId: req.staffUser!.id, reason: body.reason, actorRole: req.staffUser!.role,
+      }))
+      await audit({
+        category: 'identity', action: 'customer_ban.release_contact', entity: 'CustomerBan', entityId: ban.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: ban.tenantId ?? req.staffUser!.tenantId ?? null,
+        // Never the contact itself in the trail — only which kind was released.
+        metadata: { contact: body.contact, reason: body.reason, customerId: ban.customerId, hadValue: !!released },
+      })
+      return prisma.customerBan.findUniqueOrThrow({ where: { id: ban.id } })
     },
   )
 
@@ -1174,7 +1241,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // naughty list. The ONE way to block a customer (owner decision 15: it
   // applies at the active company's brands only; lift it with
   // /crm/bans/:id/lift). Only a customer of the ACTIVE company; the ban is
-  // attributed to it through bannedById.
+  // stamped with that company (tenantId).
   fastify.post(
     '/bans',
     { preHandler: requireAuth(...MANAGERS) },
@@ -1206,15 +1273,17 @@ export async function crmRoutes(fastify: FastifyInstance) {
       // A known customer must be one this company has served. (An unknown
       // contact becomes a watchlist entry with no customer attached.)
       const known = customerId ? await findCustomerInScope(req, customerId, 'create') : null
+      const tenantId = activeTenantId(req, 'a block belongs to one company')
       // One active ban per customer per company is enough: blocking twice
       // returns the ban already in force.
       if (known) {
-        const existing = (await bansInScope([known.id], tenantIdsOf(await scopeTenantWhere(req, 'create')))).get(known.id)
+        const existing = (await bansInScope([known.id], [tenantId])).get(known.id)
         if (existing) return reply.status(200).send(await prisma.customerBan.findUnique({ where: { id: existing.id } }))
       }
 
       const ban = await prisma.customerBan.create({
         data: {
+          tenantId,
           customerId,
           // The fingerprints come from the customer record when the body names
           // only the customer. A ban with no email or phone never matched the
@@ -1227,12 +1296,11 @@ export async function crmRoutes(fastify: FastifyInstance) {
         },
       })
       if (customerId) {
-        await prisma.customer.update({
-          where: { id: customerId },
-          data:  { bannedAt: new Date(), isBlacklisted: true, blacklistReason: body.reason },
-        })
+        const { syncCustomerBanMirror } = await import('../../lib/strikes.js')
+        await syncCustomerBanMirror(prisma, customerId)
       }
       return reply.status(201).send(ban)
     },
   )
 }
+

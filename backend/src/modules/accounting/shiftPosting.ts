@@ -29,7 +29,7 @@
 //     decision 4), so it is 1030 from the moment of sale; an older row still
 //     'pending' with a reference is debited to 1030 too (memo'd "awaiting
 //     gateway confirmation"), and postPosCardFailure moves a tender the
-//     gateway fails after the close to 1110.
+//     gateway fails after the close to till clearing.
 //   • Raast QR (2026-10-12) is a transfer straight into the company's bank:
 //     one debit per receiving-bank code (the RaastReceipt's ledgerCode
 //     snapshot), memo'd RAAST_RECEIPTS_MEMO so bank reconciliation matches
@@ -38,20 +38,25 @@
 //     (RAAST_ACCOUNT_UNKNOWN → the posting_failed flag) — it is never booked
 //     to a guessed account. A Raast refund always posts its own entry (Cr
 //     the bank), so the close never books one.
+//   • An on-account client's bill (method 'on_account', 2026-10-15) is no
+//     money in the drawer: it is debited to 1110 Customer receivable, one
+//     line per client memo'd ON_ACCOUNT_MEMO (the client's invoiced balance,
+//     billed on the monthly statement) — never 1030, never drawer cash.
 //   • Whatever of the order was NOT received on its home drawer (a split
 //     still open, a failed card, a part paid on another drawer) is debited to
-//     1110 Customer receivable; a receipt for that order on another drawer
-//     credits 1110 back. A difference within the till's 2-paisa tender
+//     till clearing (tillClearingCodeTx: 1110 Customer receivable until the
+//     company's cut-over, 1115 Till Clearing after it); a receipt for that
+//     order on another drawer credits it back. A difference within the till's 2-paisa tender
 //     tolerance is rounding, to 8010.
 //   • An online / non-till order paid at the drawer is already booked by its
 //     own order.complete entry, so the shift books only the cash moving into
 //     the drawer (Dr 1015 / Cr 1010) — it used to book that sale a second time.
 //   • A CANCELLED or REJECTED order was never sold (FOH-09): money taken on
 //     one is not revenue or tax. It is debited where it sits (1015 / 1030 /
-//     the Raast receiving bank) and credited to 1110 Customer accounts
-//     receivable — a credit balance there is the customer's money we owe back
+//     the Raast receiving bank) and credited to till clearing (1110 Customer
+//     receivable until the cut-over, then 1115) — a credit balance there is the customer's money we owe back
 //     ("refund due"), one line per order naming it — until it is handed back:
-//     the refund row on the cancelled order books Dr 1110 / Cr 1015, 1030 or
+//     the refund row on the cancelled order books Dr till clearing / Cr 1015, 1030 or
 //     the bank (postRefundPayment, LEDGER-R5). It used to be booked as a sale
 //     and its tax.
 //
@@ -82,10 +87,11 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { tillClearingCodeTx } from './tillClearingCode.js'
 import {
   computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, isVoidedRaast, outputTaxCodeFor, withTenderTips,
-  GIFT_CARD_LIABILITY, REFUND_DUE_PREFIX, refundDueMemo, RAAST_RECEIPTS_MEMO, raastLedgerCodeOrNull, raastAccountUnknown,
+  GIFT_CARD_LIABILITY, REFUND_DUE_PREFIX, onAccountOf, refundDueMemo, RAAST_RECEIPTS_MEMO, raastLedgerCodeOrNull, raastAccountUnknown,
   type SaleOrderFields, type TaxJurisdiction,
 } from './orderPosting.js'
 import { drawerExpectationOf } from '../../lib/drawer.js'
@@ -204,9 +210,18 @@ export interface ShiftSales {
    */
   raastUnknown: Array<{ paymentId: string; orderId: string; cents: number }>
   compCents: number
-  /** Home orders not fully received on this drawer (Dr 1110). */
+  /**
+   * On-account clients' bills on this drawer (Payment.method 'on_account',
+   * read from gatewayMeta.onAccount) — Dr 1110 per client, memo'd
+   * ON_ACCOUNT_MEMO. Never drawer cash, never 1030.
+   */
+  onAccount: {
+    cents: number
+    byAccount: Map<string, OnAccountTotals>
+  }
+  /** Home orders not fully received on this drawer (Dr till clearing). */
   unsettledCents: number
-  /** Receipts here for till orders booked by another drawer (Cr 1110). */
+  /** Receipts here for till orders booked by another drawer (Cr till clearing). */
   settledElsewhereCents: number
   /** Net sub-tolerance differences (+ = received more than billed). */
   roundingCents: number
@@ -215,7 +230,7 @@ export interface ShiftSales {
   /**
    * Money taken here on cancelled / rejected orders (FOH-09) — not a sale:
    * Dr 1015 (cash) / 1030 (card, the retired Keenu QR) / the receiving bank
-   * (Raast QR, per code), Cr 1110 refund due to the customer.
+   * (Raast QR, per code), Cr till clearing — refund due to the customer.
    */
   cancelledPaid: {
     cashCents: number
@@ -224,9 +239,28 @@ export interface ShiftSales {
     /** Raast QR per receiving-bank code. */
     raastByCode: Map<string, RaastCodeTotals>
     orderIds: string[]
-    /** Per order — one Cr 1110 line each, naming the order (the refund engine looks for it). */
+    /** Per order — one Cr till-clearing line each, naming the order (the refund engine looks for it). */
     byOrder: Array<{ orderId: string; cents: number }>
   }
+}
+
+/** One on-account client's bills on a drawer. */
+export interface OnAccountTotals {
+  /** The client's number (OA-0003) and legal name, as the till charged them. */
+  number: string
+  name: string
+  cents: number
+  /** The orders charged (each once). */
+  orderIds: string[]
+}
+
+function addOnAccount(out: ShiftSales['onAccount'], orderId: string, p: ShiftOrderPaymentRow): void {
+  const c = onAccountOf(p)
+  const cur = out.byAccount.get(c.accountId) ?? { number: c.number, name: c.name, cents: 0, orderIds: [] }
+  cur.cents += p.amountCents
+  if (!cur.orderIds.includes(orderId)) cur.orderIds.push(orderId)
+  out.byAccount.set(c.accountId, cur)
+  out.cents += p.amountCents
 }
 
 /** Sum of the cents on every code. */
@@ -268,6 +302,7 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     byConcept: new Map(),
     totals: { orders: 0, revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0 },
     cashCents: 0, cardPaidCents: 0, cardAwaitingCents: 0, raastByCode: new Map(), raastUnknown: [], compCents: 0,
+    onAccount: { cents: 0, byAccount: new Map() },
     unsettledCents: 0, settledElsewhereCents: 0, roundingCents: 0, nonTillCashCents: 0,
     cancelledPaid: { cashCents: 0, cardCents: 0, raastByCode: new Map(), orderIds: [], byOrder: [] },
   }
@@ -288,7 +323,8 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
       // rule as orderPosting refundDueCents.)
       let cents = 0
       for (const p of here) {
-        if (p.method === 'comp' || isVoidedRaast(p)) continue
+        // An on-account charge is no money either: nothing was taken to give back.
+        if (p.method === 'comp' || p.method === 'on_account' || isVoidedRaast(p)) continue
         if (p.method === 'cash') out.cancelledPaid.cashCents += p.amountCents
         // Raast: held on the receiving bank it went into, never 1030.
         else if (p.method === 'raast') addRaast(out.cancelledPaid.raastByCode, out.raastUnknown, order.id, p)
@@ -317,12 +353,15 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
       // Raast QR (always 'paid' here — a pending Raast portion is not a
       // receipt): the receiving bank's code, before the card branch.
       else if (p.method === 'raast') addRaast(out.raastByCode, out.raastUnknown, order.id, p)
+      // An on-account client's bill: Dr 1110 per client — before the card
+      // fallback, so it can never become 1030.
+      else if (p.method === 'on_account') addOnAccount(out.onAccount, order.id, p)
       else if (p.status === 'paid') out.cardPaidCents += p.amountCents
       else out.cardAwaitingCents += p.amountCents
     }
 
     if (homeShiftOf(order) !== shiftId) {
-      // Booked by its home drawer, which left the unreceived part in 1110.
+      // Booked by its home drawer, which left the unreceived part in till clearing.
       out.settledElsewhereCents += receivedHere
       continue
     }
@@ -354,7 +393,7 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     const gap = sa.totalChargedCents - receivedHere
     if (Math.abs(gap) <= TENDER_ROUNDING_CENTS) out.roundingCents -= gap
     else if (gap > 0) out.unsettledCents += gap
-    else out.settledElsewhereCents += -gap   // received more here than billed: credit 1110
+    else out.settledElsewhereCents += -gap   // received more here than billed: credit till clearing
   }
 
   for (const b of out.byConcept.values()) {
@@ -443,8 +482,9 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   const cashRefundsToBook = refundsToBook
     .filter((p) => p.method === 'cash')
     .reduce((t, p) => t + Math.abs(p.amountCents), 0)
+  // An on-account refund always posts its own entry (Cr 1110, postRefundPayment) — never a card refund.
   const cardRefundsToBook = refundsToBook
-    .filter((p) => p.method !== 'cash' && p.method !== 'comp' && p.method !== 'raast')
+    .filter((p) => p.method !== 'cash' && p.method !== 'comp' && p.method !== 'raast' && p.method !== 'on_account')
     .reduce((t, p) => t + Math.abs(p.amountCents), 0)
   const payoutsToBook = payoutRows
     .filter((m) => !ownPosted.has(m.id))
@@ -452,6 +492,8 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
 
   const lines: JournalLineInput[] = []
   const tag = `(shift ${shiftId.slice(0, 8)})`
+  // Till clearing: 1110 until the company's cut-over, 1115 after it.
+  const tillClearing = await tillClearingCodeTx(prisma, tenantId)
 
   // ── Debits: receipts on this drawer and contra-revenue ──────────────────
   if (sales.cashCents > 0) {
@@ -476,11 +518,18 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   if (sales.compCents > 0) {
     lines.push({ accountCode: ACCT.COMPS, type: 'debit', amountCents: sales.compCents, memo: `POS comps ${tag}` })
   }
+  // On-account clients: one Dr 1110 per client, memo'd ON_ACCOUNT_MEMO
+  // (the cut-over leaves these where they are — they are invoiced balances).
+  for (const [, a] of [...sales.onAccount.byAccount.entries()].sort(([x], [y]) => x.localeCompare(y))) {
+    if (a.cents <= 0) continue
+    const refs = a.orderIds.map((id) => `#${orderRefOf(id)}`).join(', ')
+    lines.push({ accountCode: ACCT.CUSTOMER_AR, type: 'debit', amountCents: a.cents, memo: `${ON_ACCOUNT_MEMO} — ${a.number} ${a.name} — ${refs} ${tag}`.slice(0, 250) })
+  }
   if (sales.unsettledCents > 0) {
-    lines.push({ accountCode: ACCT.CUSTOMER_AR, type: 'debit', amountCents: sales.unsettledCents, memo: `Till orders not settled on this drawer ${tag}` })
+    lines.push({ accountCode: tillClearing, type: 'debit', amountCents: sales.unsettledCents, memo: `Till orders not settled on this drawer ${tag}` })
   }
   if (sales.settledElsewhereCents > 0) {
-    lines.push({ accountCode: ACCT.CUSTOMER_AR, type: 'credit', amountCents: sales.settledElsewhereCents, memo: `Received for till orders booked on another drawer ${tag}` })
+    lines.push({ accountCode: tillClearing, type: 'credit', amountCents: sales.settledElsewhereCents, memo: `Received for till orders booked on another drawer ${tag}` })
   }
   if (sales.roundingCents !== 0) {
     const amountCents = Math.abs(sales.roundingCents)
@@ -494,9 +543,9 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     lines.push({ accountCode: ACCT.CASH_ON_HAND, type: 'credit', amountCents: sales.nonTillCashCents, memo })
   }
   // Money taken on cancelled / rejected orders (FOH-09): not revenue, not tax
-  // — held as a refund due to the customer (credit 1110) until handed back.
-  // One 1110 line per order, naming it in full: handing the money back (a
-  // refund row on the cancelled order) clears exactly that line — Dr 1110 /
+  // — held as a refund due to the customer (credit till clearing) until handed
+  // back. One till-clearing line per order, naming it in full: handing the money back (a
+  // refund row on the cancelled order) clears exactly that line — Dr till clearing /
   // Cr drawer, card or the Raast bank (orderPosting.ts postRefundPayment,
   // LEDGER-R5). Raast money is debited to the bank it went into, per code.
   const cp = sales.cancelledPaid
@@ -512,7 +561,7 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
       lines.push({ accountCode: code, type: 'debit', amountCents: r.cents, memo: raastMemo })
     }
     for (const o of cp.byOrder) {
-      lines.push({ accountCode: ACCT.CUSTOMER_AR, type: 'credit', amountCents: o.cents, memo: refundDueMemo(o.orderId, tag) })
+      lines.push({ accountCode: tillClearing, type: 'credit', amountCents: o.cents, memo: refundDueMemo(o.orderId, tag) })
     }
   }
 
@@ -608,7 +657,7 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   const perCode = (m: Map<string, RaastCodeTotals>) => [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([c, v]) => `${c}:${v.cents}`).join(',')
   const diagnostics =
     `cash=${sales.cashCents} card=${sales.cardPaidCents} cardAwaiting=${sales.cardAwaitingCents} ` +
-    `raast=${raastTotalCents(sales.raastByCode)}[${perCode(sales.raastByCode)}] comps=${sales.compCents} ` +
+    `raast=${raastTotalCents(sales.raastByCode)}[${perCode(sales.raastByCode)}] comps=${sales.compCents} onAccount=${sales.onAccount.cents} ` +
     `unsettled=${sales.unsettledCents} settledElsewhere=${sales.settledElsewhereCents} rounding=${sales.roundingCents} ` +
     `nonTillCash=${sales.nonTillCashCents} variance=${cashVariance} drops=${drawer.dropsCents} in=${cashIn} ` +
     `cashRefunds=${cashRefundsToBook} cardRefunds=${cardRefundsToBook} payouts=${payoutsToBook} ` +
@@ -758,7 +807,8 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
 /**
  * A till card / QR tender the gateway FAILED after its drawer was closed.
  * The close booked it to 1030 as awaiting confirmation (see the header); the
- * processor will never pay it, so the customer owes it: Dr 1110 / Cr 1030.
+ * processor will never pay it, so the customer owes it: Dr till clearing
+ * (tillClearingCodeTx — 1110 until the company's cut-over, then 1115) / Cr 1030.
  * No-op while the drawer is still open (the close will leave a failed tender
  * out) and idempotent per payment.
  */
@@ -792,7 +842,7 @@ export async function postPosCardFailure(paymentId: string): Promise<{ posted: b
     description: `Till card payment failed after shift ${payment.shift.id.slice(0, 8)} closed`,
     postedBy: 'system',
     lines: [
-      { accountCode: ACCT.CUSTOMER_AR,     type: 'debit',  amountCents: payment.amountCents, memo, conceptId: payment.order.conceptId },
+      { accountCode: await tillClearingCodeTx(prisma, tenantId), type: 'debit', amountCents: payment.amountCents, memo, conceptId: payment.order.conceptId },
       { accountCode: ACCT.CARD_RECEIVABLE, type: 'credit', amountCents: payment.amountCents, memo, conceptId: payment.order.conceptId },
     ],
   })

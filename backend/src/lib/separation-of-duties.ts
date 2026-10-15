@@ -65,3 +65,20 @@ export async function assertNotSelfApproval(opts: SelfApprovalCheck): Promise<vo
     403,
   )
 }
+
+/**
+ * The same rule over several people (D3, spec §7.4.3): an item's creator,
+ * submitter, preparers and editors — none of them may approve it. The CEO is
+ * exempt; every blocked attempt raises the `self_approval` flag through
+ * assertNotSelfApproval (403 SELF_APPROVAL_BLOCKED). Empty / null ids are
+ * ignored (rows that predate tracking).
+ */
+export async function assertNotAmongSubmitters(
+  actor: { id: string; role: string },
+  submitterIds: ReadonlyArray<string | null | undefined>,
+  ctx: { tenantId?: string | null; action: string; entity: string; entityId: string; message?: string },
+): Promise<void> {
+  if (isSelfApprovalExempt(actor)) return
+  if (!submitterIds.some((id) => !!id && id === actor.id)) return
+  await assertNotSelfApproval({ ...ctx, actor, creatorId: actor.id })
+}

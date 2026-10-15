@@ -50,3 +50,20 @@ export function setRlsContext(patch: Partial<RlsContext>): void {
   if (!ctx) return
   Object.assign(ctx, patch)
 }
+
+/**
+ * Add tenants to the active context's `tenantIds` (deduped, order kept). Used
+ * when a right to touch another company has just been PROVEN for this request
+ * — a head-office lens submit, a delegated approval (lib/headOffice.ts
+ * widenRls). Never call it to "make a query work": the ids must already be
+ * authorised. No-op outside a request, or when `ids` is empty.
+ */
+export function appendRlsTenantIds(ids: readonly string[]): void {
+  const ctx = storage.getStore()
+  if (!ctx) return
+  const add = ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+  if (add.length === 0) return
+  const next = [...(ctx.tenantIds ?? [])]
+  for (const id of add) if (!next.includes(id)) next.push(id)
+  ctx.tenantIds = next
+}

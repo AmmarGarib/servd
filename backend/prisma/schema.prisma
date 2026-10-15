@@ -917,6 +917,7 @@ model User {
   // 6032 management / 6035 riders. Null = derive from role.
   wageAccountCode     String?
   isActive            Boolean       @default(true)
+  viaHeadOfficeId     String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
   deletedAt           DateTime?
@@ -1692,9 +1693,8 @@ model Order {
   deliveryOtp           String?
   deliveryOtpVerifiedAt DateTime?
   deliveryOtpAttempts   Int            @default(0)
-  // Set once by POST /dispatch/orders/:id/delivered — the rider dropped it
-  // off. The claim that makes "mark delivered" count a delivery (and free the
-  // rider) exactly once, while the order keeps its riderId for history.
+  // Completed with the customer's code (rider app or staff Enter code); staff Delivered only while the company's
+  // code-only switch is off (lib/deliveryRules.ts codeOnlyDelivery). The claim that counts a delivery exactly once.
   deliveredAt           DateTime?
   // The CURRENT rider's job stages (rider app v1, docs/rider-app.md). Set by
   // dispatch/service.ts and the rider routes; reset when the rider is taken
@@ -2312,6 +2312,11 @@ model Recipe {
   // a deliberate exception to "unique keys are per company" (the route still resolves the modifier's company first).
   modifierId String? @unique
 
+  // D1/A6: who created it and everyone who edited it (an approver may be none of them).
+  createdById     String?
+  editedByIds     String[] @default([])
+  viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2495,6 +2500,8 @@ model PurchaseOrder {
   cancelledById  String?
   cancelledAt    DateTime?
   cancelReason   String?
+
+  viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2764,6 +2771,10 @@ model Account {
   tenant       Tenant?       @relation("TenantAccounts", fields: [tenantId], references: [id])
   counterparty Tenant?       @relation("AccountCounterparty", fields: [counterpartyTenantId], references: [id], onDelete: Restrict)
   journalLines JournalLine[]
+
+  // Head office (D1): the company-chart "Head office charges" account of a link, and the HO-chart recharge account.
+  headOfficeLinkCharges HeadOfficeLink[]  @relation("HoLinkCharges")
+  rechargeAccountFor    HeadOfficeBooks[] @relation("HoRechargeAccount")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -3077,6 +3088,7 @@ model SiteLayout {
   liveVersion      Int       @default(0)
   updatedById      String?
   publishedAt      DateTime?
+  viaHeadOfficeId  String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -3472,6 +3484,9 @@ model IntercompanyTransfer {
 
   debtor   Tenant @relation("IcTransferDebtor", fields: [tenantId], references: [id], onDelete: Restrict)
   creditor Tenant @relation("IcTransferCreditor", fields: [counterpartyTenantId], references: [id], onDelete: Restrict)
+
+  // D1: the head-office recharge line this 'ho_recharge' charge books (one transfer per run line).
+  rechargeRunLine RechargeRunLine? @relation("RunLineTransfer")
 
   @@unique([tenantId, counterpartyTenantId, sourceRef])
   @@index([tenantId, status, entryDate])
@@ -5211,6 +5226,25 @@ model Tenant {
   cashVoucherSettlements CashVoucherSettlement[] @relation("TenantCashVoucherSettlements")
   pettyCashSpendLines    PettyCashSpendLine[]    @relation("TenantPettyCashSpendLines")
 
+  // Head office (D1, owner 2026-10-11; migration 20261015120000). A head office is a Tenant of kind 'head_office':
+  // its own HR, payroll and books, serving companies through HeadOfficeLink and recharging them monthly. It never
+  // has brands (lib/headOffice.ts assertTradingCompany).
+  kind                  TenantKind           @default(company)
+  headOfficeLinks       HeadOfficeLink[]     @relation("HoLinkHeadOffice")
+  servedByLinks         HeadOfficeLink[]     @relation("HoLinkCompany")
+  headOfficeBooks       HeadOfficeBooks?     @relation("HoBooks")
+  rechargeSplits        RechargeSplit[]      @relation("HoRechargeSplits")
+  splitLines            RechargeSplitLine[]  @relation("SplitLineCompany")
+  rechargeRuns          RechargeRun[]        @relation("HoRechargeRuns")
+  rechargeRunLines      RechargeRunLine[]    @relation("RunLineCompany")
+  hoSplitLines          RechargeSplitLine[]  @relation("SplitLineHeadOffice")
+  hoRunLines            RechargeRunLine[]    @relation("RunLineHeadOffice")
+  delegationsAsHo       ApprovalDelegation[] @relation("DelegationHeadOffice")
+  delegationsForCompany ApprovalDelegation[] @relation("DelegationCompany")
+  journalRequests       JournalRequest[]     @relation("TenantJournalRequests")
+  posConnectorChanges   PosConnectorChange[] @relation("TenantPosConnectorChanges")
+
+  @@index([kind])
   @@map("tenants")
 }
 
@@ -6134,7 +6168,7 @@ model TenantContribution {
   id                  String               @id @default(uuid())
   sourceTenantId      String // who pays
   destinationTenantId String // who receives
-  category            ContributionCategory @default(head_office)
+  category            ContributionCategory @default(other) // D1: no longer defaults to head_office
   monthlyCents        Int // gross amount transferred per month
   label               String // short name: "Viva HO contribution"
   description         String? // longer context if needed
@@ -6498,6 +6532,8 @@ model ReceivableInvoice {
   // Wave B — kind adds 'statement' (an on-account client's monthly statement: AR-ST-YYYY-NNNN, no issue entry, never
   // a tax invoice); status adds 'written_off'. Still due = total − paid − credited − withheld − writtenOff.
   // CHECK receivable_invoices_written_off_chk is SQL only.
+  // SQL only (migration 20261015120100): partial unique receivable_invoices_one_statement_per_period ON (tenantId,
+  // customerAccountId, periodTo) WHERE kind = 'statement' AND status <> 'void' — one live statement per client per period.
   customerAccountId  String?
   periodFrom         DateTime?
   periodTo           DateTime?
@@ -6653,6 +6689,7 @@ model CustomerAccount {
   approvedAt                DateTime?
   createdById               String
   notes                     String?
+  lastRemindedAt            DateTime? // last statement / overdue reminder sent (on-account resume, migration 20261015120100)
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
@@ -6997,6 +7034,7 @@ model HrRecord {
   // stamped so they are applied exactly once.
   appliedAt     DateTime?
   createdById   String?
+  viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -7025,6 +7063,7 @@ model HrPayrollRun {
   lockedAt      DateTime?
   // Marked paid: the wages-payable clearance is posted then.
   paidAt        DateTime?
+  viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -7752,4 +7791,277 @@ model PettyCashSpendLine {
   @@index([movementId])
   @@index([settlementId])
   @@map("petty_cash_spend_lines")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Head office (D1) and HOD approvals with hand-over (D3) — migration 20261015120000_head_office.
+// Spec: .handoff/fixes/D1D3-spec.md as amended (D1D3-amendments.json). Additive and OFF until the CEO creates a head
+// office: no row here exists on live until then. Head-office ↔ company money moves through the EXISTING inter-company
+// engine (IntercompanyTransfer source 'ho_recharge', pair accounts 1450–1499 / 2150–2199) — there are no head-office
+// due-to / due-from columns. CHECK constraints and partial unique indexes named on each model are SQL only (the
+// migration's SQL-only section; tests/setup.ts applies them after db push) and are never re-declared here.
+// BOOKS-06: every money column below is BIGINT paisa (lib/money.ts returns them as JS numbers).
+// ═════════════════════════════════════════════════════════════════════════════
+
+// What a Tenant row is (owner decision D1, 2026-10-11).
+enum TenantKind {
+  company // a trading company: brands, orders, the till
+  head_office // shared-services unit with its own HR, payroll and books; serves companies via HeadOfficeLink and
+  // recharges them monthly. Never has brands.
+}
+
+// One row per (head office, company) LIVE at a time. CEO-only. Ending a link stamps endedAt; re-linking later creates
+// a new row. SQL only: partial unique head_office_links_one_live ON (tenantId, companyTenantId) WHERE endedAt IS NULL
+// (like the tip-pool member indexes — do not re-declare); CHECKs head_office_links_parties_chk (tenantId <>
+// companyTenantId) and head_office_links_period_chk (lastChargedPeriod 'YYYY-MM' or NULL). RLS: either side reads.
+model HeadOfficeLink {
+  id                String    @id @default(uuid())
+  tenantId          String // the head office (kind head_office); owner of the row
+  companyTenantId   String // the served company (kind company)
+  chargesAccountId  String? // company chart: "Head office charges — <HO>" (expense; may be shared by a company's links)
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime? // reach and delegation cover stop at once; balances and history stay
+  lastChargedPeriod String? // 'YYYY-MM', set when ended
+  createdById       String
+  endedById         String?
+  endReason         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  headOffice Tenant            @relation("HoLinkHeadOffice", fields: [tenantId], references: [id], onDelete: Restrict)
+  company    Tenant            @relation("HoLinkCompany", fields: [companyTenantId], references: [id], onDelete: Restrict)
+  charges    Account?          @relation("HoLinkCharges", fields: [chargesAccountId], references: [id], onDelete: Restrict)
+  runLines   RechargeRunLine[]
+
+  @@index([tenantId, endedAt])
+  @@index([companyTenantId, endedAt])
+  @@map("head_office_links")
+}
+
+// One per head office: its recharge account, cost pool, CA confirmation, switch and setup-wizard marker.
+// SQL only: CHECKs head_office_books_enable_chk (NOT rechargeEnabled OR (accountsConfirmedAt AND rechargeFromPeriod))
+// and head_office_books_period_chk.
+model HeadOfficeBooks {
+  tenantId              String    @id // the head office
+  rechargeAccountId     String? // HO chart; default 6990 (expense, credits); the CA may pick a revenue account
+  costPool              Json      @default("{\"include\":[{\"from\":5000,\"to\":6999}],\"includeCodes\":[],\"excludeCodes\":[\"6990\"]}")
+  accountsConfirmedAt   DateTime? // NULL = "Confirm with your CA". Cleared by ANY change to accounts, pool or links
+  accountsConfirmedById String?
+  accountsConfirmedNote String? // the CEO's note
+  taxAnswer             String? // the CA's tax answer (spec §4.10), recorded before recharge can be switched on
+  rechargeEnabled       Boolean   @default(false)
+  rechargeFromPeriod    String? // 'YYYY-MM' = the CA's cutover month
+  requireLockedPayroll  Boolean   @default(true)
+  setupAppliedAt        DateTime? // the setup wizard ran (a second apply → 409 SETUP_ALREADY_DONE)
+  setupAppliedById      String?
+  setupSummary          Json?
+  updatedById           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  tenant          Tenant   @relation("HoBooks", fields: [tenantId], references: [id], onDelete: Restrict)
+  rechargeAccount Account? @relation("HoRechargeAccount", fields: [rechargeAccountId], references: [id], onDelete: Restrict)
+
+  @@map("head_office_books")
+}
+
+// The CEO's % table, versioned by effective month (version for month M = latest effectiveFrom <= M). Each version is
+// written whole; "total <= 100%" is checked in code. SQL only: CHECK recharge_splits_period_chk.
+model RechargeSplit {
+  id            String   @id @default(uuid())
+  tenantId      String // head office
+  effectiveFrom String // 'YYYY-MM'
+  note          String?
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  tenant Tenant              @relation("HoRechargeSplits", fields: [tenantId], references: [id], onDelete: Restrict)
+  lines  RechargeSplitLine[]
+  runs   RechargeRun[]
+
+  @@unique([tenantId, effectiveFrom])
+  @@map("recharge_splits")
+}
+
+// SQL only: CHECK recharge_split_lines_bps_chk (shareBps BETWEEN 1 AND 10000).
+model RechargeSplitLine {
+  id              String @id @default(uuid())
+  splitId         String
+  tenantId        String // head office (denormalised for scoping)
+  companyTenantId String
+  shareBps        Int // 1..10000; sum per split <= 10000 (code)
+
+  split      RechargeSplit @relation(fields: [splitId], references: [id], onDelete: Cascade)
+  company    Tenant        @relation("SplitLineCompany", fields: [companyTenantId], references: [id], onDelete: Restrict)
+  headOffice Tenant        @relation("SplitLineHeadOffice", fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([splitId, companyTenantId])
+  @@index([companyTenantId])
+  @@index([tenantId])
+  @@map("recharge_split_lines")
+}
+
+// The head-office module's own pending record for a month's recharge (or its true-up). SQL only: CHECKs
+// recharge_runs_period_chk / recharge_runs_kind_chk / recharge_runs_status_chk and the partial unique
+// recharge_runs_one_open ON (tenantId, period) WHERE status IN ('draft','submitted').
+model RechargeRun {
+  id                   String    @id @default(uuid())
+  tenantId             String // head office
+  period               String // 'YYYY-MM'
+  kind                 String    @default("monthly") // monthly | true_up
+  status               String    @default("draft") // draft | submitted | posted | rejected | withdrawn | reversed
+  stale                Boolean   @default(false) // the pool moved after preparation
+  splitId              String
+  costPool             Json // pool definition used (snapshot)
+  basis                Json // [{ accountId, code, name, netCents }]
+  poolCents            BigInt // HO net cost for the month at preparation
+  priorCents           BigInt // sum of baseCents of earlier POSTED, non-reversed runs for (tenant, period)
+  baseCents            BigInt // pool - prior: what this run splits
+  rechargedCents       BigInt // sum of lines
+  retainedCents        BigInt // base - sum of lines (stays with the HO)
+  driftAtApprovalCents BigInt? // (pool - prior) recomputed at approval minus baseCents
+  warnings             String[]  @default([])
+  preparedById         String? // null = the worker
+  preparedByIds        String[]  @default([]) // everyone who prepared or edited it (never its approver)
+  preparedAt           DateTime  @default(now())
+  submittedById        String? // null = the worker
+  submittedAt          DateTime?
+  decidedById          String?
+  decidedAt            DateTime?
+  decisionNote         String?
+  decidedVia           String? // role | delegation
+  delegationId         String?
+  postedAt             DateTime?
+  reversedById         String?
+  reversedAt           DateTime?
+  reversalReason       String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant Tenant            @relation("HoRechargeRuns", fields: [tenantId], references: [id], onDelete: Restrict)
+  split  RechargeSplit     @relation(fields: [splitId], references: [id], onDelete: Restrict)
+  lines  RechargeRunLine[]
+
+  @@index([tenantId, period, status])
+  @@index([status, submittedAt])
+  @@map("recharge_runs")
+}
+
+// One company's share of a run; posted as ONE IntercompanyTransfer (source 'ho_recharge') in both books.
+// SQL only: CHECK recharge_run_lines_bps_chk (shareBps BETWEEN 0 AND 10000). RLS: either side reads.
+model RechargeRunLine {
+  id              String    @id @default(uuid())
+  runId           String
+  tenantId        String // head office
+  companyTenantId String
+  linkId          String
+  shareBps        Int
+  amountCents     BigInt // signed: negative = credit to the company (true-up / negative month)
+  transferId      String?   @unique // the IntercompanyTransfer that booked it (globally unique uuid by construction)
+  entryDate       DateTime?
+  postedLate      Boolean   @default(false)
+  memoNote        String?
+
+  run        RechargeRun           @relation(fields: [runId], references: [id], onDelete: Restrict)
+  company    Tenant                @relation("RunLineCompany", fields: [companyTenantId], references: [id], onDelete: Restrict)
+  link       HeadOfficeLink        @relation(fields: [linkId], references: [id], onDelete: Restrict)
+  transfer   IntercompanyTransfer? @relation("RunLineTransfer", fields: [transferId], references: [id], onDelete: Restrict)
+  headOffice Tenant                @relation("RunLineHeadOffice", fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, companyTenantId])
+  @@index([companyTenantId])
+  @@index([tenantId])
+  @@map("recharge_run_lines")
+}
+
+// WHO may decide a section — never items, never decisions. Rows are never edited or deleted: change = revoke + new
+// grant. Checked live on every use (nothing cached). SQL only: CHECKs approval_delegations_section_chk (operations |
+// procurement | finance | marketing | hr | dev — never ceo) and approval_delegations_window_chk (endsAt > startsAt).
+model ApprovalDelegation {
+  id              String    @id @default(uuid())
+  tenantId        String // the head office the delegate belongs to
+  companyTenantId String? // null = the HO itself + every company LIVE-linked to it at the moment of use
+  section         String
+  approvalTypes   String[]  @default([]) // narrows to these delegable types of the section; [] = all
+  delegateUserId  String // plain id (users are soft-deleted; checked live)
+  grantedById     String
+  note            String?
+  startsAt        DateTime  @default(now())
+  endsAt          DateTime? // exclusive
+  revokedAt       DateTime?
+  revokedById     String?
+  revokeReason    String?
+  createdAt       DateTime  @default(now())
+
+  headOffice Tenant  @relation("DelegationHeadOffice", fields: [tenantId], references: [id], onDelete: Restrict)
+  company    Tenant? @relation("DelegationCompany", fields: [companyTenantId], references: [id], onDelete: Restrict)
+
+  @@index([delegateUserId, revokedAt])
+  @@index([tenantId, section, revokedAt])
+  @@index([companyTenantId])
+  @@map("approval_delegations")
+}
+
+// Accounting's own pending state for manual journals (finance prepares; the CEO or a Finance delegate approves).
+// SQL only: CHECKs journal_requests_kind_chk, journal_requests_status_chk, journal_requests_reverse_chk.
+model JournalRequest {
+  id              String    @id @default(uuid())
+  tenantId        String // the books it posts to
+  kind            String    @default("post") // post | reverse (reverse = CEO only)
+  status          String    @default("draft") // draft | submitted | returned | posted | withdrawn
+  description     String
+  reference       String?
+  entryDate       DateTime?
+  lines           Json      @default("[]") // post: [{ accountId, type, amountCents, memo?, conceptId? }] (re-validated on approval)
+  totalCents      BigInt    @default(0)
+  reverseEntryId  String? // reverse: the manual entry to reverse
+  reason          String? // reverse: required
+  preparedById    String
+  preparedByIds   String[]  @default([])
+  preparedAt      DateTime  @default(now())
+  submittedById   String?
+  submittedAt     DateTime?
+  viaHeadOfficeId String? // stamped at submit (A3): the head office it came through, else NULL
+  decidedById     String?
+  decidedAt       DateTime?
+  decisionNote    String?
+  decidedVia      String?
+  delegationId    String?
+  postedEntryId   String?   @unique // journal-entry uuid — globally unique by construction
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant Tenant @relation("TenantJournalRequests", fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@index([preparedById])
+  @@map("journal_requests")
+}
+
+// Connectors' own pending state for IT changes to a company's POS connector (Dev section).
+// SQL only: CHECK pos_connector_changes_status_chk.
+model PosConnectorChange {
+  id               String        @id @default(uuid())
+  tenantId         String
+  kind             ConnectorKind
+  status           String        @default("submitted") // submitted | applied | rejected | withdrawn
+  patch            Json // the PUT /connectors/:kind body minus secrets
+  apiKeyEnc        String? // sealed with lib/secretBox; never returned
+  webhookSecretEnc String?
+  preparedById     String
+  preparedByIds    String[]      @default([])
+  preparedAt       DateTime      @default(now())
+  viaHeadOfficeId  String? // stamped at submit (A3)
+  decidedById      String?
+  decidedAt        DateTime?
+  decisionNote     String?
+  decidedVia       String?
+  delegationId     String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  tenant Tenant @relation("TenantPosConnectorChanges", fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@map("pos_connector_changes")
 }

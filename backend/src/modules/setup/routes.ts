@@ -62,8 +62,23 @@ async function brandRowWhere(
  * /setup/chart-of-accounts/:id isActive:false.) Throws 422 when the books
  * need it — see the route.
  */
-async function assertAccountMayBeSwitchedOff(acc: { tenantId: string | null; code: string; name: string; controlledBy: string | null }): Promise<void> {
+async function assertAccountMayBeSwitchedOff(acc: { id: string; tenantId: string | null; code: string; name: string; controlledBy: string | null }): Promise<void> {
   const label = `${acc.code} ${acc.name}`
+  // Head office (D1, amendment A17): a head office's recharge account, or a
+  // company's "Head office charges — <HO>" account (on any link, ended ones
+  // too — reversing an earlier month still posts there). Switching it off
+  // would make every later recharge approval and reversal fail.
+  const [hoBooks, hoLinks] = await Promise.all([
+    prisma.headOfficeBooks.count({ where: { rechargeAccountId: acc.id } }),
+    prisma.headOfficeLink.count({ where: { chargesAccountId: acc.id } }),
+  ])
+  if (hoBooks > 0 || hoLinks > 0) {
+    throw new AppError(
+      'ACCOUNT_MAPPED_TO_HEAD_OFFICE',
+      `${label} is ${hoBooks > 0 ? "a head office's recharge account" : "a company's head office charges account"} — re-map it on the head office Books tab first (CEO → Head offices)`,
+      422,
+    )
+  }
   if (acc.tenantId) {
     const cls = await prisma.fixedAssetClass.findFirst({
       where: { tenantId: acc.tenantId, isActive: true, OR: [{ costAccountCode: acc.code }, { accumAccountCode: acc.code }] },

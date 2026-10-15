@@ -15,6 +15,8 @@
 //     once the hand-over code has locked or if the rider never accepted —
 //     checked up front AND in the delivered claim; pre-rider-app orders keep
 //     the old rule; a second press is not an error;
+//   - code-only delivery (lib/deliveryRules.ts) switched ON for a company:
+//     no staff close at all (409 CODE_REQUIRED), only a verified code;
 //   - the rider app's own location fix is a claim on the rider being on
 //     shift: off shift, nothing is stored.
 import { describe, it, expect, beforeAll } from 'vitest'
@@ -22,6 +24,7 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { assignRider, unassignRider, markDelivered, recordRiderFix } from '../src/modules/dispatch/service.js'
 import { DELIVERY_OTP_MAX_ATTEMPTS } from '../src/lib/deliveryOtp.js'
 import { runDispatchSweep } from '../src/workers/riderDispatch.js'
+import { setCodeOnlyDelivery } from '../src/lib/deliveryRules.js'
 
 let tenantA: string
 let tenantB: string
@@ -204,6 +207,39 @@ describe('markDelivered as a staff close (POST /dispatch/orders/:id/delivered)',
     const late = await markDelivered(o.id, manager)
     expect(late.alreadyDelivered).toBe(true)
     expect((await prisma.rider.findUniqueOrThrow({ where: { id: r.id } })).totalDeliveries).toBe(1)
+  })
+})
+
+describe('markDelivered with code-only delivery switched ON', () => {
+  it('refuses every staff close, even the old-rule ones; a verified code still delivers', async () => {
+    const tenantOn = (await prisma.tenant.create({ data: { name: 'Fleet On', slug: 'fleet-on' } })).id
+    const conceptOn = (await prisma.concept.create({ data: { name: 'On Kitchen', slug: 'on-kitchen', type: 'restaurant', tenantId: tenantOn } })).id
+    const ceo = await prisma.user.create({ data: { name: 'ceo-on', email: 'ceo-on.dispatch@gsfoods.pk', password: 'x', role: 'admin', tenantId: tenantOn } })
+    await prisma.$transaction((tx) => setCodeOnlyDelivery(tx, { tenantId: tenantOn, on: true, actorId: ceo.id, reason: 'code-only from today' }))
+
+    // Pre-rider-app (no riderAssignedAt) and never-accepted: both were a staff close before.
+    const r = await rider(tenantOn, { status: 'busy' })
+    const legacy = await order(conceptOn, 'ready', { riderId: r.id })
+    await expect(markDelivered(legacy.id, { staffClose: { manager: true } })).rejects.toMatchObject({ code: 'CODE_REQUIRED', statusCode: 409 })
+    await expect(markDelivered(legacy.id)).rejects.toMatchObject({ code: 'CODE_REQUIRED' })
+    const r2 = await rider(tenantOn)
+    const neverAccepted = await order(conceptOn, 'ready')
+    await assignRider(neverAccepted.id, r2.id)
+    await expect(markDelivered(neverAccepted.id, { staffClose: { manager: true } })).rejects.toMatchObject({ code: 'CODE_REQUIRED' })
+    const untouched = await prisma.order.findUniqueOrThrow({ where: { id: neverAccepted.id } })
+    expect(untouched.status).toBe('ready')
+    expect(untouched.deliveredAt).toBeNull()
+
+    const ok = await markDelivered(legacy.id, { otpVerified: true })
+    expect(ok.alreadyDelivered).toBe(false)
+    expect(ok.order.deliveryOtpVerifiedAt).toBeInstanceOf(Date)
+    const ev = await prisma.riderJobEvent.findFirstOrThrow({ where: { orderId: legacy.id, type: 'delivered' } })
+    expect(ev.note).toBe('hand-over code verified')
+
+    // Company A (switch OFF) keeps the old staff close.
+    const ra = await rider(tenantA, { status: 'busy' })
+    const oa = await order(conceptA, 'ready', { riderId: ra.id })
+    expect((await markDelivered(oa.id, { staffClose: { manager: false } })).alreadyDelivered).toBe(false)
   })
 })
 

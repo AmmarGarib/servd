@@ -31,6 +31,7 @@ const { AppError } = await import('../src/lib/errors.js')
 const { MODULE_IDS, DEFAULT_MODULE_ACCESS, MODULE_GRANTS, rolesGrantedByDefault } = await import('../src/lib/moduleAccess.js')
 const { WORKSPACES, UNASSIGNED_MODULE_IDS, CHILD_ROLES } = await import('../src/lib/workspaces.js')
 const { ALL_ROLES } = await import('../src/lib/roles.js')
+const { APPROVAL_SECTIONS, APPROVAL_RIGHTS, APPROVAL_TYPES } = await import('../src/lib/approvalRights.js')
 
 const PREFIX = 'ws-test'
 const PASSWORD = 'CorrectHorse-Battery-9'
@@ -112,6 +113,24 @@ describe('workspace definitions (lib/workspaces.ts)', () => {
     const dev = WORKSPACES.find((w) => w.id === 'dev')!
     expect(dev.sections[0]).toEqual({ key: 'api', title: 'API', modules: ['api_whatsapp', 'api_pos'] })
     expect(dev.sections.find((s) => s.key === 'systems')?.modules).toEqual(['integrations', 'notifications'])
+  })
+
+  it('D3: every approval section is a workspace id (plus procurement, the buying module of Operations); workspaces carry no approvalSection', () => {
+    const ids = new Set(WORKSPACES.map((w) => w.id as string))
+    for (const s of APPROVAL_SECTIONS) {
+      if (s === 'procurement') {
+        const ops = WORKSPACES.find((w) => w.id === 'operations')!
+        expect(ops.sections.some((x) => x.modules.includes('procurement'))).toBe(true)
+      } else expect(ids.has(s), s).toBe(true)
+    }
+    for (const w of WORKSPACES) for (const sec of w.sections) expect((sec as Record<string, unknown>)['approvalSection']).toBeUndefined()
+    // Every approval type's queue module and hand-over module are workspace modules.
+    const inSome = (m: string) => WORKSPACES.some((w) => w.sections.some((x) => x.modules.includes(m)))
+    for (const t of APPROVAL_TYPES) {
+      const r = APPROVAL_RIGHTS[t]
+      expect(inSome(r.queueModule), `${t} ${r.queueModule}`).toBe(true)
+      if (r.mustHoldModule) expect(inSome(r.mustHoldModule), `${t} ${r.mustHoldModule}`).toBe(true)
+    }
   })
 
   it('Voided pre bills sits in Finance with the controls (spec §17.5)', () => {

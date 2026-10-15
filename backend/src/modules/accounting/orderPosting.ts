@@ -21,7 +21,8 @@
 
 import type { Order, Payment, Concept, Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { ACCT, ON_ACCOUNT_MEMO, TILL_CLEARING_CODES, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { tillClearingCodeTx } from './tillClearingCode.js'
 import { cogsLinesForOrders } from './cogs.js'
 import { postLoyaltyReversal } from './loyaltyPosting.js'
 import { restoreOrderWallet } from '../wallet/service.js'
@@ -164,11 +165,35 @@ export function isVoidedRaast(p: { method: string; raastReceipt?: { status?: str
   return p.method === 'raast' && p.raastReceipt?.status === 'voided'
 }
 
+// ─── On-account clients (2026-10-15) ────────────────────────────────────────
+//
+// A named corporate client's bill (Payment.method 'on_account', status paid,
+// gatewayMeta.onAccount {accountId, number, name}) is no money in a drawer: the
+// sale debits 1110 Customer receivable — the client's invoiced balance, billed
+// on the monthly statement — memo'd ON_ACCOUNT_MEMO, never 1030. A refund of
+// it goes back to the account (Cr 1110). It is never a refund due on a
+// cancelled ticket: nothing was taken to hand back.
+
+/** The client a payment row was charged to (gatewayMeta.onAccount {accountId, number, name}). */
+export function onAccountOf(p: { id: string; gatewayMeta?: unknown }): { accountId: string; number: string; name: string } {
+  const meta = p.gatewayMeta
+  const oa = meta && typeof meta === 'object' && !Array.isArray(meta) ? (meta as Record<string, unknown>)['onAccount'] : null
+  const o = oa && typeof oa === 'object' && !Array.isArray(oa) ? oa as Record<string, unknown> : {}
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  // A row without its client on record still debits 1110 — grouped on its own, never dropped.
+  return {
+    accountId: str(o['accountId']) ?? `unknown:${p.id}`,
+    number: str(o['number']) ?? 'OA-?',
+    name: str(o['name']) ?? 'client not on record',
+  }
+}
+
 /**
  * LEDGER-R5 — money taken AT THE TILL on a cancelled / rejected order that is
  * still owed back to the customer: its drawer receipts (isShiftReceipt with a
  * shift, comps excluded — a comp is not money) less the refunds already
- * handed back on it. 0 for any other status. This is what the refund engine
+ * handed back on it. 0 for any other status. An on-account charge is not
+ * money taken (nothing to hand back), like a comp. This is what the refund engine
  * may refund on a cancelled ticket (postRefundPayment books it Dr 1110 refund
  * due / Cr drawer, card or the Raast receiving bank, never revenue and tax),
  * and what a cancel must not
@@ -191,7 +216,7 @@ export function refundDueCents(order: {
 }): number {
   if (order.status !== 'cancelled' && order.status !== 'rejected') return 0
   const taken = order.payments
-    .filter((p) => p.amountCents > 0 && !!p.shiftId && p.method !== 'comp' && !isVoidedRaast(p) && isShiftReceipt(p))
+    .filter((p) => p.amountCents > 0 && !!p.shiftId && p.method !== 'comp' && p.method !== 'on_account' && !isVoidedRaast(p) && isShiftReceipt(p))
     .reduce((t, p) => t + p.amountCents, 0)
   const handedBack = order.payments
     .filter((p) => p.status === 'refunded' && p.amountCents < 0)
@@ -413,6 +438,26 @@ function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsLines: J
       const cents = Math.min(left, raastByCode.get(code)!)
       if (cents <= 0) continue
       lines.push({ accountCode: code, type: 'debit', amountCents: cents, memo: `${RAAST_RECEIPTS_MEMO} — ${conceptMemo}` })
+      left -= cents
+    }
+
+    // On-account clients: the client owes it — Dr 1110, one line per client,
+    // memo'd ON_ACCOUNT_MEMO (an invoiced balance, billed on the statement;
+    // the till-clearing cut-over leaves it where it is). Capped at what is
+    // left, like cash and Raast. Never 1030.
+    const onAccountBy = new Map<string, { number: string; name: string; cents: number }>()
+    for (const p of order.payments) {
+      if (p.method !== 'on_account' || p.status !== 'paid' || p.amountCents <= 0) continue
+      const c = onAccountOf(p)
+      const cur = onAccountBy.get(c.accountId) ?? { number: c.number, name: c.name, cents: 0 }
+      cur.cents += p.amountCents
+      onAccountBy.set(c.accountId, cur)
+    }
+    for (const key of [...onAccountBy.keys()].sort()) {
+      const a = onAccountBy.get(key)!
+      const cents = Math.min(left, a.cents)
+      if (cents <= 0) continue
+      lines.push({ accountCode: ACCT.CUSTOMER_AR, type: 'debit', amountCents: cents, memo: `${ON_ACCOUNT_MEMO} — ${a.number} ${a.name} — ${conceptMemo}`.slice(0, 250) })
       left -= cents
     }
 
@@ -713,7 +758,8 @@ export function shareDebitLines(
 //     Dr 2030 / Cr 2032, tagged with the brand, has moved it), after which
 //     the authority's account carries it.
 //   • LEDGER-R5 — money taken on a cancelled ticket that a shift close held as
-//     a refund due (Cr 1110) is handed back against 1110, not revenue.
+//     a refund due (Cr till clearing: 1110, or 1115 after the company's
+//     cut-over) is handed back against till clearing, not revenue.
 
 export interface SaleBooking {
   /** The sale is on the books: the order's 'order.complete' or its home drawer's 'shift.close' (not as a refund due). */
@@ -745,7 +791,8 @@ export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrde
     db.journalLine.findFirst({
       where: {
         type: 'credit',
-        account: { tenantId, code: ACCT.CUSTOMER_AR },
+        // Till clearing: 1110 before the company's cut-over, 1115 after it.
+        account: { tenantId, code: { in: TILL_CLEARING_CODES } },
         journalEntry: { tenantId, reference: { startsWith: 'shift.close:' } },
         AND: [{ memo: { startsWith: REFUND_DUE_PREFIX } }, { memo: { contains: order.id } }],
       },
@@ -818,12 +865,14 @@ function asBooked<T extends SaleOrderFields>(order: T, giftCardAppliedCents: num
 /**
  * The account a refund's money leaves from: the drawer (or cash on hand) for
  * cash; the receiving bank's code for Raast QR (raastLedgerCodeOf — 422
- * RAAST_ACCOUNT_UNKNOWN when the refund row carries none, never 1030); 1030
- * for card and the retired Keenu QR.
+ * RAAST_ACCOUNT_UNKNOWN when the refund row carries none, never 1030); 1110
+ * for an on-account client's bill (back to the client's account); 1030 for
+ * card and the retired Keenu QR.
  */
 export function refundCreditAccount(p: { id?: string; method: string; shiftId: string | null; gatewayMeta?: unknown; raastReceipt?: { ledgerCode?: string | null } | null }): string {
   if (p.method === 'cash') return p.shiftId ? ACCT.CASH_DRAWER : ACCT.CASH_ON_HAND
   if (p.method === 'raast') return raastLedgerCodeOf(p)
+  if (p.method === 'on_account') return ACCT.CUSTOMER_AR
   return ACCT.CARD_RECEIVABLE
 }
 
@@ -863,7 +912,9 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
   const order = asBooked(payment.order, giftCardAppliedOf(payment.order.giftCardRedemptions), booking)
 
   const amount = Math.abs(payment.amountCents)
-  const memo = `Refund on ${order.concept.slug} #${orderRefOf(order.id)}`
+  // An on-account refund goes back to the client's account (Cr 1110), memo'd
+  // ON_ACCOUNT_MEMO like the charge, so the till-clearing cut-over leaves it.
+  const memo = `${payment.method === 'on_account' ? `${ON_ACCOUNT_MEMO} — ` : ''}Refund on ${order.concept.slug} #${orderRefOf(order.id)}`
   const creditLine = { accountCode: refundCreditAccount(payment), type: 'credit' as const, amountCents: amount, memo, conceptId: order.conceptId }
 
   // LEDGER-R5: money taken on a cancelled / rejected ticket was never a sale.
@@ -873,7 +924,7 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
   // that close will hold it as a refund due. A cancelled order whose sale WAS
   // booked (cancelled after its drawer closed) is refunded like any sale.
   if (order.status === 'cancelled' || order.status === 'rejected') {
-    const onDrawer = order.payments.some((p) => p.shiftId && p.amountCents > 0 && isShiftReceipt(p))
+    const onDrawer = order.payments.some((p) => p.shiftId && p.amountCents > 0 && p.method !== 'on_account' && isShiftReceipt(p))
     if (booking.refundDue || (!booking.booked && onDrawer)) {
       const dueMemo = `Refund due handed back — cancelled order ${order.id}`
       const result = await postJournalEntry({
@@ -884,7 +935,8 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
         entryDate: payment.processedAt ?? new Date(),
         postedBy: options.postedBy ?? 'system',
         lines: [
-          { accountCode: ACCT.CUSTOMER_AR, type: 'debit', amountCents: amount, memo: dueMemo, conceptId: order.conceptId },
+          // Till clearing: 1110 until the company's cut-over, 1115 after it.
+          { accountCode: await tillClearingCodeTx(db, tenantId), type: 'debit', amountCents: amount, memo: dueMemo, conceptId: order.conceptId },
           { ...creditLine, memo: dueMemo },
         ],
       }, { tx: options.tx })

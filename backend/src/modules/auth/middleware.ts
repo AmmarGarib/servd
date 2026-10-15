@@ -13,6 +13,8 @@ import { enforceModuleAccess } from '../../lib/moduleAccess.js'
 import { isAccountActive } from './accountStatus.js'
 import { ALL_ROLES } from '../../lib/roles.js'
 import { testTenantIds } from '../../lib/testCompany.js'
+import { headOfficeReach, rememberReach, routePatternOf, isHoSubmitRoute, isHoPassthrough } from '../../lib/headOffice.js'
+import { AppError } from '../../lib/errors.js'
 
 // Staff access token comes from EITHER a Bearer header (tablet / mobile) OR the
 // httpOnly session cookie (manager web). The web app no longer holds the token
@@ -56,6 +58,17 @@ declare module 'fastify' {
       // whose tenant should be one I can access"). `tenantFilter` is for
       // SELECT filters; `memberTenantIds` is for "do I belong here?" checks.
       memberTenantIds: string[]
+      // Head office (D1, spec §6): companies the caller REACHES through a
+      // head office they are a member of, and is NOT a member of. Empty
+      // unless a live HeadOfficeLink exists. Reads may look at them (the
+      // lens, or portfolio); writes only through HO_SUBMIT_ROUTES.
+      reachTenantIds: string[]
+      // Set when this request views a reached company through the lens
+      // header: the head offices through which it is reached.
+      viaHeadOfficeIds?: string[]
+      // Set on an HO_SUBMIT_ROUTES write through the lens header: the
+      // reached company the proposal binds to (also `tenantId`).
+      submitTenantId?: string
     }
     customer?: { id: string }
   }
@@ -103,34 +116,94 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   const memberTenantIds = new Set<string>(memberships.map((m) => m.tenantId))
   if (u?.tenantId) memberTenantIds.add(u.tenantId)
 
-  // tenantFilter resolves differently for reads vs writes:
-  //   • GET in portfolio view → expand to every tenant I belong to
-  //   • GET single-tenant view → just my active tenant (view-aware)
-  //   • non-GET (PATCH/DELETE/POST gating) → ALWAYS expand to every tenant
-  //     I belong to. A head-office staffer editing a row in Bukhari's
-  //     concept shouldn't get a 404 just because their primary is Clifton
-  //     — they're a member of both, the write should land.
-  let tenantFilter: string | { in: string[] } | null = u?.tenantId ?? null
-  if (memberTenantIds.size > 1 && (portfolio || !isGet)) {
-    tenantFilter = { in: Array.from(memberTenantIds) }
-  }
+  // Head-office reach (D1, spec §6.1): companies served by a head office the
+  // caller is a member of. One serviceClient query, never cached (an ended
+  // link stops reach on the next request), only for callers with
+  // memberships. `reachTenantIds` = reached and NOT a member (the lens set).
+  const reach = memberTenantIds.size > 0 ? await headOfficeReach(Array.from(memberTenantIds)) : new Map<string, string[]>()
+  rememberReach(req, reach)
+  const reachTenantIds = Array.from(reach.keys()).filter((id) => !memberTenantIds.has(id))
+  const reachSet = new Set(reachTenantIds)
 
   // Per-request active-tenant override. When the operator is in portfolio
   // view and uses an inline company picker on a create modal, the frontend
   // sends `x-servd-active-tenant: <id>` so the WRITE lands in the picked
   // company without forcing the session out of portfolio mode. Validated
-  // against the user's tenant memberships — silently ignored if invalid.
-  const headerActive = req.headers['x-servd-active-tenant']
+  // against the user's tenant memberships.
+  //
+  // A REACHED company in the header is the head-office lens (spec §6.2):
+  //   • GET/HEAD           → read that company (effective = header)
+  //   • HO_SUBMIT_ROUTES   → propose in it (effective = submitTenantId = header)
+  //   • HO_PASSTHROUGH     → header ignored (the route resolves the company)
+  //   • anything else      → 403 HEAD_OFFICE_SUBMIT_ONLY
+  // Any OTHER company in the header on a write answers 403
+  // COMPANY_HEADER_NOT_ALLOWED — but only for a caller who has reach (so
+  // nothing changes for anyone until a head office is linked); otherwise it
+  // is ignored as before.
+  const headerRaw = req.headers['x-servd-active-tenant']
+  const header = typeof headerRaw === 'string' && headerRaw ? headerRaw : null
+  const method = (req.method ?? 'GET').toUpperCase()
   let effectiveTenantId = u?.tenantId ?? null
-  if (typeof headerActive === 'string' && headerActive && memberTenantIds.has(headerActive)) {
-    effectiveTenantId = headerActive
+  let viaHeadOfficeIds: string[] | undefined
+  let submitTenantId: string | undefined
+  let lensRead = false
+  if (header && memberTenantIds.has(header)) {
+    effectiveTenantId = header
+  } else if (header && reachSet.has(header)) {
+    const route = routePatternOf(req)
+    if (isGet) {
+      effectiveTenantId = header
+      viaHeadOfficeIds = [...(reach.get(header) ?? [])]
+      lensRead = true
+    } else if (isHoSubmitRoute(method, route)) {
+      effectiveTenantId = header
+      submitTenantId = header
+      viaHeadOfficeIds = [...(reach.get(header) ?? [])]
+    } else if (isHoPassthrough(method, route)) {
+      // ignored: effective stays the caller's own company
+    } else {
+      throw await headOfficeSubmitOnly(header, reach.get(header) ?? [])
+    }
+  } else if (header && !isGet) {
+    const route = routePatternOf(req)
+    if (reachTenantIds.length > 0 && !isHoPassthrough(method, route)) {
+      throw new AppError(
+        'COMPANY_HEADER_NOT_ALLOWED',
+        'You are not a member of the company this change was sent for — pick one of your companies and try again.',
+        403,
+      )
+    }
+    req.log?.debug?.({ userId: payload.sub, route }, 'x-servd-active-tenant names a company the caller is not a member of — ignored')
+  }
+
+  // tenantFilter resolves differently for reads vs writes:
+  //   • GET in portfolio view → every tenant I belong to, plus every company
+  //     I reach through a head office (the lens, read-only)
+  //   • GET single-tenant view → my primary company; the reached company
+  //     when the head-office lens header names one
+  //   • non-GET (PATCH/DELETE/POST gating) → ALWAYS expand to every tenant
+  //     I belong to (plus the lens company on a head-office submit route).
+  //     A head-office staffer editing a row in Bukhari's concept shouldn't
+  //     get a 404 just because their primary is Clifton — they're a member
+  //     of both, the write should land. Reach never widens a write.
+  let tenantFilter: string | { in: string[] } | null = u?.tenantId ?? null
+  if (lensRead && !portfolio) {
+    tenantFilter = effectiveTenantId
+  } else if (portfolio) {
+    const ids = new Set<string>([...memberTenantIds, ...reachTenantIds])
+    if (ids.size > 1) tenantFilter = { in: Array.from(ids) }
+  } else if (!isGet) {
+    const ids = new Set<string>(memberTenantIds)
+    if (submitTenantId) ids.add(submitTenantId)
+    if (ids.size > 1) tenantFilter = { in: Array.from(ids) }
   }
 
   // Test companies (lib/testCompany.ts) are left out of a portfolio READ
-  // ("All companies" totals) — every one, the active company included. If
-  // that leaves nothing (the caller belongs to test companies only), fall
-  // back to the active company so the page isn't empty-scoped by accident.
-  // Writes (non-GET) keep every member company, exactly as before.
+  // ("All companies" totals) — every one, the active company included, and
+  // every reached company. If that leaves nothing (the caller belongs to
+  // test companies only), fall back to the active company so the page isn't
+  // empty-scoped by accident. Writes (non-GET) keep every member company,
+  // exactly as before.
   if (portfolio && typeof tenantFilter === 'object' && tenantFilter !== null) {
     const tests = await testTenantIds()
     if (tests.size > 0) {
@@ -148,6 +221,9 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     tenantId: effectiveTenantId,
     tenantFilter,
     memberTenantIds: Array.from(memberTenantIds),
+    reachTenantIds,
+    ...(viaHeadOfficeIds ? { viaHeadOfficeIds } : {}),
+    ...(submitTenantId ? { submitTenantId } : {}),
   }
 
   // Module-access gate — narrows access on the sensitive financial/reporting
@@ -159,14 +235,30 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     moduleAllow: u.moduleAllow,
     moduleDeny: u.moduleDeny,
   }, req.method)
-  // RLS scope: in single-tenant view, just the active tenant. In portfolio
-  // view (or non-GET writes), expand to every tenant the operator belongs
-  // to — matches how tenantFilter is computed above. Policies use the same
-  // expansion when checking row visibility.
+  // RLS scope: in single-tenant view, just the active tenant (the reached
+  // company through the lens). In portfolio view (or non-GET writes), the
+  // same set as tenantFilter above: member ∪ reach for a portfolio read,
+  // member ∪ [submitTenantId] for a write. Policies use the same expansion
+  // when checking row visibility.
   const rlsTenantIds = (typeof tenantFilter === 'object' && tenantFilter !== null && 'in' in tenantFilter)
     ? tenantFilter.in
     : (effectiveTenantId ? [effectiveTenantId] : [])
   setRlsContext({ tenantIds: rlsTenantIds, staffUserId: payload.sub })
+}
+
+// 403 HEAD_OFFICE_SUBMIT_ONLY for a write through the lens that is not a
+// head-office submit route. Names the company and head office (one query, on
+// the refusal path only).
+async function headOfficeSubmitOnly(companyId: string, hoIds: string[]): Promise<AppError> {
+  const rows = await prisma.tenant.findMany({ where: { id: { in: [companyId, ...hoIds] } }, select: { id: true, name: true } })
+  const name = (id: string) => rows.find((r) => r.id === id)?.name ?? 'that company'
+  const company = name(companyId)
+  const ho = hoIds.length > 0 ? hoIds.map(name).join(', ') : 'head office'
+  return new AppError(
+    'HEAD_OFFICE_SUBMIT_ONLY',
+    `You are viewing ${company} through ${ho}: this change needs a member of ${company} or the CEO. Use 'Send for approval' where the screen offers it.`,
+    403,
+  )
 }
 
 export function requireAuth(...allowedRoles: UserRole[]) {

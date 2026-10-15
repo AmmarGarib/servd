@@ -73,23 +73,24 @@ import { fmtPktDate } from '../accounting/dates.js'
 import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
 import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
+import {
+  INVOICE, CREDIT_NOTE, WHT_METHOD, ST_WITHHELD_METHOD,
+  totalOf, balanceOf, statusFor, paymentKind, sourceOfPayment, lockInvoice, restatus, nextNumber, withNumberRetry,
+} from './ledger.js'
+
+// The subledger's figures and row helpers live in ledger.ts; re-exported here
+// so every existing importer keeps working.
+export {
+  INVOICE, CREDIT_NOTE, STATEMENT, LIVE_KINDS, WHT_METHOD, ST_WITHHELD_METHOD,
+  totalOf, balanceOf, statusFor, paymentKind, sourceOfPayment, lockInvoice, restatus, nextNumber, withNumberRetry,
+} from './ledger.js'
+export type { Figures } from './ledger.js'
 
 type Tx = Prisma.TransactionClient
 
 const RECEIVABLE = ACCT.CUSTOMER_AR          // 1110
 const WHT_RECEIVABLE = ACCT.WHT_RECEIVABLE   // 1330
 const ST_WITHHELD = ACCT.ST_WITHHELD_BY_CUSTOMERS // 1335
-
-export const INVOICE = 'invoice'
-export const CREDIT_NOTE = 'credit_note'
-/** ReceivablePayment.method of a withholding row (income tax the client withheld). */
-export const WHT_METHOD = 'wht'
-/**
- * ReceivablePayment.method of sales tax the CLIENT withheld from us (H13, 1335).
- * Never 'stwh' — that key is OUR withholding as an agent (2041, tax payments).
- */
-export const ST_WITHHELD_METHOD = 'st_withheld'
-const WITHHOLDING_METHODS: ReadonlySet<string> = new Set([WHT_METHOD, ST_WITHHELD_METHOD])
 
 /** A credit note this long after its invoice is flagged for the accountant (sales-tax adjustment window). */
 const CREDIT_NOTE_WARN_DAYS = 180
@@ -128,64 +129,6 @@ export function agingBucket(dueDate: Date, now = new Date()): 'current' | '1-30'
   return '90+'
 }
 
-// ─── The one balance ─────────────────────────────────────────────────────────
-
-interface Figures {
-  kind: string
-  status: string
-  amountCents: DbMoney
-  taxCents: DbMoney
-  paidCents: DbMoney
-  creditedCents: DbMoney
-  whtCents: DbMoney
-  writtenOffCents: DbMoney
-}
-
-export const totalOf = (inv: Pick<Figures, 'amountCents' | 'taxCents'>): number => toCents(inv.amountCents) + toCents(inv.taxCents)
-
-/**
- * What the customer still owes: total − paid − credited − withheld − written
- * off. Negative = the customer is in credit. 0 for a void invoice and for a
- * credit note (its value sits on the invoice it credits).
- */
-export function balanceOf(inv: Figures): number {
-  if (inv.status === 'void' || inv.kind === CREDIT_NOTE) return 0
-  return totalOf(inv) - toCents(inv.paidCents) - toCents(inv.creditedCents) - toCents(inv.whtCents) - toCents(inv.writtenOffCents)
-}
-
-/**
- * An invoice's status from its figures: open (nothing against it), partial,
- * paid (settled with money or withholding received), credited (settled by
- * credit notes alone — nothing was ever received), written_off (settled, and
- * part or all of it was written off as a bad debt — out of aging).
- */
-export function statusFor(inv: Figures): 'open' | 'partial' | 'paid' | 'credited' | 'written_off' {
-  const received = toCents(inv.paidCents) !== 0 || toCents(inv.whtCents) !== 0
-  const writtenOff = toCents(inv.writtenOffCents) !== 0
-  if (balanceOf({ ...inv, status: 'open', kind: INVOICE }) <= 0) {
-    if (writtenOff) return 'written_off'
-    return received ? 'paid' : 'credited'
-  }
-  return received || writtenOff || toCents(inv.creditedCents) !== 0 ? 'partial' : 'open'
-}
-
-/**
- * payment = money received (a write-off recovery too — it carries writeOffId)
- * · withholding = tax the client withheld (income tax 'wht' or sales tax
- * 'st_withheld') · refund = money handed back.
- */
-export function paymentKind(p: Pick<ReceivablePayment, 'method' | 'amountCents'>): 'payment' | 'withholding' | 'refund' {
-  if (WITHHOLDING_METHODS.has(p.method)) return 'withholding'
-  return toCents(p.amountCents) < 0 ? 'refund' : 'payment'
-}
-
-/** The sourceType of a payment row's journal entry ('receivable.payment', 'receivable.wht', 'receivable.st_withheld', 'receivable.refund'). */
-export function sourceOfPayment(p: Pick<ReceivablePayment, 'method' | 'amountCents'>): string {
-  if (p.method === ST_WITHHELD_METHOD) return 'receivable.st_withheld'
-  if (p.method === WHT_METHOD) return 'receivable.wht'
-  return toCents(p.amountCents) < 0 ? 'receivable.refund' : 'receivable.payment'
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** The invoice (or credit note), or 404 — never another company's. */
@@ -195,53 +138,10 @@ export async function findInScope(req: FastifyRequest, id: string): Promise<Rece
   return inv
 }
 
-/** Lock the invoice row for the rest of `tx` and read it fresh. Every change to an invoice's figures takes this first. */
-export async function lockInvoice(tx: Tx, id: string): Promise<ReceivableInvoice> {
-  await tx.$queryRaw`SELECT id FROM receivable_invoices WHERE id = ${id} FOR UPDATE`
-  return tx.receivableInvoice.findUniqueOrThrow({ where: { id } })
-}
-
 /** 409 unless this is a live invoice (not a credit note, not void). */
 export function assertLiveInvoice(inv: ReceivableInvoice): void {
   if (inv.kind !== INVOICE) throw new AppError('NOT_AN_INVOICE', 'This is a credit note — record this against the invoice it credits', 409)
   if (inv.status === 'void') throw new AppError('INVOICE_VOID', 'This invoice has been voided', 409)
-}
-
-/** Write the status the invoice's figures now give. */
-export async function restatus(tx: Tx, id: string): Promise<ReceivableInvoice> {
-  const inv = await tx.receivableInvoice.findUniqueOrThrow({ where: { id } })
-  if (inv.status === 'void' || inv.kind === CREDIT_NOTE) return inv
-  const status = statusFor(inv)
-  return status === inv.status ? inv : tx.receivableInvoice.update({ where: { id }, data: { status } })
-}
-
-async function nextNumber(tx: Tx, tenantId: string, date: Date, kind: string): Promise<string> {
-  const year = date.getUTCFullYear()
-  const prefix = kind === CREDIT_NOTE ? `AR-CN-${year}-` : `AR-${year}-`
-  const last = await tx.receivableInvoice.findFirst({
-    where: { tenantId, number: { startsWith: prefix } },
-    orderBy: { number: 'desc' },
-    select: { number: true },
-  })
-  const n = last ? parseInt(last.number.slice(prefix.length), 10) + 1 : 1
-  return `${prefix}${String(n).padStart(4, '0')}`
-}
-
-/**
- * The number is max+1 per company and prefix; two documents raised at the
- * same instant can pick the same one, and the unique index rejects the
- * second. Retry the whole transaction — it rolls back cleanly, ledger entry
- * included.
- */
-async function withNumberRetry<T>(run: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await run()
-    } catch (err) {
-      if ((err as { code?: string }).code !== 'P2002') throw err
-      if (attempt === 2) throw new AppError('INVOICE_NUMBER', 'Could not allocate an invoice number — try again', 409)
-    }
-  }
 }
 
 /**

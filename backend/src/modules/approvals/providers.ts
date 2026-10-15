@@ -3,19 +3,23 @@
 // access and company scope all apply) and shapes the rows into inbox items
 // whose buttons call the module's EXISTING approve / reject routes.
 //
-// approverRoles mirrors the requireAuth list on each module's approve route
-// (the file and constant are named beside it). The inbox narrows by it only so
-// a type whose queue route is wider than its approve route (the storefront
-// list, the payroll register, stock transfers) never shows an item the user
-// could not act on; the route itself still decides every click.
+// approverRoles and delegable come from lib/approvalRights.ts APPROVAL_RIGHTS —
+// the one copy of each approve route's role list (A23). The inbox narrows by
+// it only so a type whose queue route is wider than its approve route (the
+// storefront list, the payroll register, stock transfers) never shows an item
+// the user could not act on; the route itself still decides every click.
+//
+// Each item carries submittedByIds (creator / submitter / preparers) so the
+// inbox can keep a delegate's own submissions out of their inbox, and the
+// through-head-office rule can tell who sent it (A3).
 //
 // Lookups here (a PO's or recipe's company, a few names) are by ids the
 // module's own route already returned to this user — never a wider read.
 
 import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { ADMIN_ONLY, APPROVERS, MANAGERS } from '../auth/middleware.js'
 import { isSelfApprovalExempt } from '../../lib/separation-of-duties.js'
+import { APPROVAL_RIGHTS, sectionOf } from '../../lib/approvalRights.js'
 import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } from './types.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -48,10 +52,32 @@ async function conceptInfo(ids: Array<string | null | undefined>) {
   return new Map(rows.map((c) => [c.id, { name: c.name, tenantId: c.tenantId }]))
 }
 
-// HR request steps (hr/logic.ts canActOnStep): HR_APPROVERS and MGMT_APPROVERS.
-const HR_STEP_ROLES = ['hr', 'admin', 'owner', 'management'] as UserRole[]
-// hr/routes.ts PAYROLL_APPROVERS.
-const PAYROLL_APPROVERS = ['admin', 'owner', 'management'] as UserRole[]
+/**
+ * The registry's rights for a provider: approverRoles (null for a per-item
+ * type, whose steps' roles are `alwaysListFor`) and delegable.
+ */
+function rightsOf(type: ApprovalType): Pick<ApprovalProvider, 'approverRoles' | 'delegable' | 'alwaysListFor'> {
+  const r = APPROVAL_RIGHTS[type]
+  const roles = r.roles as readonly UserRole[]
+  return r.perItem
+    ? { approverRoles: null, delegable: r.delegable, ...(roles.length ? { alwaysListFor: roles } : {}) }
+    : { approverRoles: roles, delegable: r.delegable }
+}
+
+const idList = (...xs: Array<string | null | undefined | Array<string | null | undefined>>): string[] =>
+  Array.from(new Set(xs.flat().filter((x): x is string => typeof x === 'string' && x.length > 0)))
+
+/** Read a queue that answers a bare array or `{ <key>: [...] }` (new modules, wave 2). */
+function rowsOf<T>(res: unknown, ...keys: string[]): T[] {
+  if (Array.isArray(res)) return res as T[]
+  if (res && typeof res === 'object') {
+    for (const k of [...keys, 'items', 'rows']) {
+      const v = (res as Record<string, unknown>)[k]
+      if (Array.isArray(v)) return v as T[]
+    }
+  }
+  return []
+}
 
 // ── New logins ───────────────────────────────────────────────────────────────
 // auth/routes.ts: GET /auth/staff/pending, PATCH /auth/staff/:id/approve|reject
@@ -61,12 +87,12 @@ const staffLogins: ApprovalProvider = {
   label: 'New logins',
   module: 'role_management',
   link: '/workforce?status=pending',
-  approverRoles: ADMIN_ONLY,
-  delegable: true,
+  ...rightsOf('staff_login'),
   async load(ctx) {
     type Row = {
       id: string; name: string | null; email: string | null; phone: string | null; role: string
       signupReason: string | null; createdAt: string; tenantId: string | null; invitedBy: { id: string; name: string | null } | null
+      viaHeadOfficeId?: string | null
     }
     const rows = await ctx.read<Row[]>('/auth/staff/pending')
     if (rows === null) return null
@@ -74,6 +100,10 @@ const staffLogins: ApprovalProvider = {
       type: 'staff_login',
       id: r.id,
       tenantId: r.tenantId,
+      // A floor login is Operations'; every password login stays the CEO's.
+      section: sectionOf('staff_login', { role: r.role, tenantId: r.tenantId }),
+      submittedByIds: idList(r.invitedBy?.id),
+      viaHeadOfficeId: r.viaHeadOfficeId ?? null,
       title: r.name ?? r.email ?? r.phone ?? 'New login',
       subtitle: human(r.role),
       facts: facts([
@@ -105,12 +135,12 @@ const storefrontPublish: ApprovalProvider = {
   label: 'Website changes',
   module: 'storefront',
   link: '/storefront?tab=approvals',
-  approverRoles: ADMIN_ONLY,
-  delegable: true,
+  ...rightsOf('storefront_publish'),
   async load(ctx) {
     type Row = {
       id: string; slug: string; kind: string; title: string | null; label?: string | null; tenantId: string | null
       liveVersion: number; submittedAt: string | null; submittedBy: { id: string; name: string | null } | null; updatedAt: string
+      draftUpdatedById?: string | null; viaHeadOfficeId?: string | null
     }
     const rows = await ctx.read<Row[]>('/site-layouts?status=pending')
     if (rows === null) return null
@@ -124,6 +154,9 @@ const storefrontPublish: ApprovalProvider = {
         type: 'storefront_publish',
         id: r.id,
         tenantId: r.tenantId,
+        section: sectionOf('storefront_publish', { tenantId: r.tenantId }),
+        submittedByIds: idList(r.submittedBy?.id, r.draftUpdatedById),
+        viaHeadOfficeId: r.viaHeadOfficeId ?? null,
         title: r.label || r.title || r.slug,
         subtitle: r.slug,
         facts: facts([
@@ -153,13 +186,12 @@ const purchaseOrders: ApprovalProvider = {
   label: 'Purchase orders',
   module: 'procurement',
   link: '/procurement',
-  approverRoles: ADMIN_ONLY,
-  delegable: true,
+  ...rightsOf('purchase_order'),
   async load(ctx) {
     type Row = {
       id: string; supplierId: string; totalCents: number; reference: string | null; notes: string | null
       createdBy: string | null; createdAt: string; orderDate: string; expectedDate: string | null
-      supplier: { name: string } | null; lines: unknown[]
+      supplier: { name: string } | null; lines: unknown[]; viaHeadOfficeId?: string | null
     }
     const rows = await ctx.read<Row[]>('/procurement/approvals')
     if (rows === null) return null
@@ -173,6 +205,8 @@ const purchaseOrders: ApprovalProvider = {
       type: 'purchase_order',
       id: r.id,
       tenantId: tenantOf.get(r.id) ?? null,
+      submittedByIds: idList(r.createdBy),
+      viaHeadOfficeId: r.viaHeadOfficeId ?? null,
       title: `${r.supplier?.name ?? 'Supplier'} — ${pkr(r.totalCents)}`,
       subtitle: r.reference,
       facts: facts([
@@ -204,10 +238,12 @@ const recipes: ApprovalProvider = {
   label: 'Recipes',
   module: 'recipes',
   link: '/accounting/recipes/approvals',
-  approverRoles: APPROVERS,
-  delegable: true,
+  ...rightsOf('recipe'),
   async load(ctx) {
-    type Row = { id: string; kind: string; name: string; brand: string | null; submittedById: string | null; submittedAt: string | null }
+    type Row = {
+      id: string; kind: string; name: string; brand: string | null; submittedById: string | null; submittedAt: string | null
+      createdById?: string | null; editedByIds?: string[]; viaHeadOfficeId?: string | null
+    }
     const all = await ctx.read<Row[]>('/recipes/pending-approval')
     if (all === null) return null
     const rows = all.filter((r) => isSelfApprovalExempt(ctx.user) || !r.submittedById || r.submittedById !== ctx.user.id)
@@ -240,6 +276,8 @@ const recipes: ApprovalProvider = {
         // the modifier group). A component recipe has no brand of its own; its
         // company follows the plates that use it (the module scoped it already).
         tenantId: cid ? (concepts.get(cid)?.tenantId ?? null) : null,
+        submittedByIds: idList(r.submittedById, r.createdById, r.editedByIds ?? []),
+        viaHeadOfficeId: r.viaHeadOfficeId ?? null,
         title: r.name,
         subtitle: r.brand,
         facts: facts([
@@ -269,13 +307,11 @@ const hrRequests: ApprovalProvider = {
   label: 'HR requests',
   module: 'staff_hr',
   link: '/ceo/approvals?type=hr_request',
-  approverRoles: null,
-  alwaysListFor: HR_STEP_ROLES,
+  ...rightsOf('hr_request'),
   // /hr/approvals spans every company the user belongs to on purpose (a
   // head-office HOD's steps in each company), and /hr/team's "waiting on you"
   // count is the same list — the inbox keeps them all, labelled by company.
   spansMemberCompanies: true,
-  delegable: true,
   async load(ctx) {
     type Row = {
       id: string; tenantId: string; section: string; label: string; sectionTitle: string
@@ -286,6 +322,7 @@ const hrRequests: ApprovalProvider = {
       data?: Record<string, unknown> | null
       currentStep?: number
       format?: { workflow?: unknown[] } | null
+      createdById?: string | null; viaHeadOfficeId?: string | null
     }
     const rows = await ctx.read<Row[]>('/hr/approvals')
     if (rows === null) return null
@@ -301,6 +338,8 @@ const hrRequests: ApprovalProvider = {
         type: 'hr_request',
         id: r.id,
         tenantId: r.tenantId,
+        submittedByIds: idList(r.createdById),
+        viaHeadOfficeId: r.viaHeadOfficeId ?? null,
         title: `${r.sectionTitle} — ${r.employee?.fullName ?? r.label}`,
         subtitle: r.label,
         facts: facts([
@@ -334,13 +373,13 @@ const payrollRuns: ApprovalProvider = {
   label: 'Payroll',
   module: 'staff_hr',
   link: '/hr/payroll',
-  approverRoles: PAYROLL_APPROVERS,
-  delegable: true,
+  ...rightsOf('payroll_run'),
   async load(ctx) {
     type Row = {
       id: string; tenantId: string; period: string; status: string; createdById: string | null; preparedByIds: string[]
       createdAt: string; updatedAt: string
       totals: { employees?: number; grossCents?: number; netCents?: number; warnings?: string[] } | null
+      viaHeadOfficeId?: string | null
     }
     const rows = await ctx.read<Row[]>('/hr/payroll/runs')
     if (rows === null) return null
@@ -354,6 +393,8 @@ const payrollRuns: ApprovalProvider = {
           type: 'payroll_run',
           id: r.id,
           tenantId: r.tenantId,
+          submittedByIds: idList(r.createdById, r.preparedByIds ?? []),
+          viaHeadOfficeId: r.viaHeadOfficeId ?? null,
           title: `Payroll ${r.period}`,
           subtitle: t.employees != null ? `${t.employees} employees` : null,
           facts: facts([
@@ -384,13 +425,13 @@ const tipPools: ApprovalProvider = {
   label: 'Tip pools',
   module: 'payroll',
   link: '/tip-pools',
-  approverRoles: APPROVERS,
-  delegable: true,
+  ...rightsOf('tip_pool'),
   async load(ctx) {
     type Row = {
       id: string; conceptId: string | null; name: string; periodStart: string; periodEnd: string
       totalTipsCents: number; status: string; createdAt: string; postedAt?: string | null
       _count?: { members: number }
+      createdById?: string | null
     }
     const rows = await ctx.read<Row[]>('/tip-pools')
     if (rows === null) return null
@@ -404,6 +445,7 @@ const tipPools: ApprovalProvider = {
         type: 'tip_pool',
         id: r.id,
         tenantId: c?.tenantId ?? null,
+        submittedByIds: idList(r.createdById),
         title: `${r.name} — ${pkr(r.totalTipsCents)}`,
         subtitle: r.status === 'draft' ? 'Ready to post' : 'Posted — ready to pay out',
         facts: facts([
@@ -432,8 +474,7 @@ const stockTransfers: ApprovalProvider = {
   module: 'inventory',
   // No admin screen lists transfers yet: the inbox is their screen.
   link: '/ceo/approvals?type=stock_transfer',
-  approverRoles: MANAGERS,
-  delegable: false,
+  ...rightsOf('stock_transfer'),
   async load(ctx) {
     type Row = {
       id: string; quantity: number; unit: string; reason: string | null; notes: string | null
@@ -452,6 +493,7 @@ const stockTransfers: ApprovalProvider = {
       type: 'stock_transfer',
       id: r.id,
       tenantId: tenantOf.get(r.fromLocationId) ?? null,
+      submittedByIds: idList(r.requestedById),
       title: `${r.inventoryItem?.name ?? 'Item'} — ${r.quantity} ${r.unit}`,
       subtitle: `${r.fromLocation?.name ?? '?'} → ${r.toLocation?.name ?? '?'}`,
       facts: facts([
@@ -492,6 +534,7 @@ type CashRequestRow = {
   holderName: string | null; preparedByName: string | null
   hodSignedById: string | null; hodSignedByName: string | null; hodSignedAt: string | null; createdAt: string
   canSignHod?: boolean; canApprove?: boolean
+  preparedById?: string | null
 }
 
 const cashRequestTitle = (r: CashRequestRow) => `${r.number} — ${r.holderName ?? r.payeeName} — ${pkr(r.amountCents)}`
@@ -503,8 +546,7 @@ const cashVouchers: ApprovalProvider = {
   label: 'Cash requests',
   module: 'accounting',
   link: '/finance/cash-vouchers',
-  approverRoles: ADMIN_ONLY,
-  delegable: true,
+  ...rightsOf('cash_voucher'),
   async load(ctx) {
     const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?status=hod_signed&limit=200')
     if (res === null) return null
@@ -514,6 +556,7 @@ const cashVouchers: ApprovalProvider = {
         type: 'cash_voucher',
         id: r.id,
         tenantId: r.tenantId,
+        submittedByIds: idList(r.preparedById),
         title: cashRequestTitle(r),
         subtitle: r.purpose,
         facts: facts([
@@ -548,8 +591,7 @@ const cashRequestsHod: ApprovalProvider = {
   label: 'Cash requests to sign (HOD)',
   module: 'accounting',
   link: '/finance/cash-vouchers?view=hod',
-  approverRoles: null,
-  delegable: false,
+  ...rightsOf('cash_request_hod'),
   async load(ctx) {
     const res = await ctx.read<{ items: CashRequestRow[] }>('/trustops/cash-vouchers?view=hod&limit=200')
     if (res === null) return null
@@ -559,6 +601,7 @@ const cashRequestsHod: ApprovalProvider = {
         type: 'cash_request_hod',
         id: r.id,
         tenantId: r.tenantId,
+        submittedByIds: idList(r.preparedById),
         title: cashRequestTitle(r),
         subtitle: r.purpose,
         facts: facts([
@@ -595,8 +638,7 @@ const fixedAssetRequests: ApprovalProvider = {
   label: 'Fixed assets',
   module: 'accounting',
   link: '/accounting/fixed-assets/requests',
-  approverRoles: ADMIN_ONLY,
-  delegable: false,
+  ...rightsOf('fixed_asset_request'),
   async load(ctx) {
     type Row = {
       id: string; tenantId: string; kind: string; kindLabel: string; effectiveDate: string; amountCents: number | null
@@ -604,6 +646,7 @@ const fixedAssetRequests: ApprovalProvider = {
       asset: { id: string; assetTag: string | null; name: string } | null
       pool: { label: string } | null
       capexLine: { item: string; projectName: string } | null
+      requestedById?: string | null
     }
     const res = await ctx.read<{ requests: Row[] }>('/accounting/fixed-assets/requests?status=pending&limit=200')
     if (res === null) return null
@@ -616,6 +659,7 @@ const fixedAssetRequests: ApprovalProvider = {
         type: 'fixed_asset_request',
         id: r.id,
         tenantId: r.tenantId,
+        submittedByIds: idList(r.requestedById),
         title: subject ? `${r.kindLabel} — ${subject}` : r.kindLabel,
         subtitle: r.reason,
         facts: facts([
@@ -653,24 +697,29 @@ const intercompanyTransfers: ApprovalProvider = {
   label: 'Inter-company transfers',
   module: 'accounting',
   link: '/accounting/intercompany?tab=transfers',
-  approverRoles: ADMIN_ONLY,
-  delegable: false,
+  ...rightsOf('intercompany_transfer'),
   async load(ctx) {
     type Row = {
       id: string; tenantId: string; counterpartyTenantId: string; debtorName: string | null; creditorName: string | null
       kind: string; amountCents: number; entryDate: string; memo: string | null
       preparedByName: string | null; preparedAt: string; memberOfBoth: boolean
+      preparedById?: string | null; canApprove?: boolean
     }
     const res = await ctx.read<{ items: Row[] }>('/accounting/intercompany/transfers?status=submitted&limit=200')
     if (res === null) return null
     const inView = new Set(ctx.tenantIds)
     return res.items.map((r): ApprovalItem => {
       const base = `/accounting/intercompany/transfers/${r.id}`
-      const notBoth = r.memberOfBoth ? {} : { disabledReason: 'You are not a member of both companies' }
+      // The module answers canApprove per row once head-office pairs exist
+      // (a delegate of the pair's head office); until then: a member of both.
+      const may = r.canApprove ?? r.memberOfBoth
+      const notBoth = may ? {} : { disabledReason: r.memberOfBoth ? 'This needs the CEO' : 'You are not a member of both companies' }
       return {
         type: 'intercompany_transfer',
         id: r.id,
         tenantId: inView.has(r.tenantId) || !inView.has(r.counterpartyTenantId) ? r.tenantId : r.counterpartyTenantId,
+        touchesTenantIds: [r.tenantId, r.counterpartyTenantId],
+        submittedByIds: idList(r.preparedById),
         title: `${human(r.kind)}: ${r.debtorName ?? 'Company'} owes ${r.creditorName ?? 'company'} — ${pkr(r.amountCents)}`,
         subtitle: r.memo,
         facts: facts([
@@ -707,13 +756,13 @@ const badDebts: ApprovalProvider = {
   label: 'Bad-debt write-offs',
   module: 'accounting',
   link: '/accounting/receivables',
-  approverRoles: ADMIN_ONLY,
-  delegable: false,
+  ...rightsOf('bad_debt'),
   async load(ctx) {
     type Row = {
       id: string; tenantId: string; invoiceId: string; invoiceNumber: string | null; customerName: string | null
       conceptName: string | null; amountCents: number; reason: string; requestedAt: string; requestedByName: string | null
       attachments?: Array<{ id: string }>; invoice: { totalCents: number; balanceCents: number } | null
+      requestedById?: string | null
     }
     const res = await ctx.read<{ items: Row[] }>('/accounting/receivables/write-offs?status=requested&limit=200')
     if (res === null) return null
@@ -724,6 +773,7 @@ const badDebts: ApprovalProvider = {
         type: 'bad_debt',
         id: r.id,
         tenantId: r.tenantId,
+        submittedByIds: idList(r.requestedById),
         title: `${r.invoiceNumber ?? 'Invoice'}${r.customerName ? ` — ${r.customerName}` : ''} — write off ${pkr(r.amountCents)}`,
         subtitle: r.reason,
         facts: facts([
@@ -761,8 +811,7 @@ const raastVoids: ApprovalProvider = {
   label: 'Raast voids',
   module: 'reconciliation',
   link: '/reconciliation?tab=raast',
-  approverRoles: ADMIN_ONLY,
-  delegable: false,
+  ...rightsOf('raast_void'),
   async load(ctx) {
     type Row = {
       id: string; tenantId: string; orderRef: string; brand: string | null; amountCents: number; bankRef: string | null
@@ -816,8 +865,7 @@ const grniWriteOffs: ApprovalProvider = {
   label: 'Received, never billed',
   module: 'procurement',
   link: '/procurement/grni',
-  approverRoles: ADMIN_ONLY,
-  delegable: false,
+  ...rightsOf('grni_writeoff'),
   async load(ctx) {
     type Row = {
       receiptLineId: string; tenantId: string | null; supplierName: string | null; description: string
@@ -836,6 +884,7 @@ const grniWriteOffs: ApprovalProvider = {
         type: 'grni_writeoff',
         id: r.receiptLineId,
         tenantId: r.tenantId,
+        submittedByIds: idList(asker),
         title: `${r.supplierName ?? 'Supplier'} — ${r.description} — ${pkr(r.openValueCents)}`,
         subtitle: r.writeOffRequest?.reason ?? null,
         facts: facts([
@@ -875,8 +924,7 @@ const stockDifferences: ApprovalProvider = {
   label: 'Stock differences',
   module: 'accounting',
   link: '/finance/stock-differences',
-  approverRoles: ADMIN_ONLY,
-  delegable: false,
+  ...rightsOf('stock_difference'),
   async load(ctx) {
     // GET /accounting/stock-differences (stockDifferences/routes.ts): { rows: StockDifferenceRow[] }.
     type Row = {
@@ -915,11 +963,178 @@ const stockDifferences: ApprovalProvider = {
   },
 }
 
+// ── Manual journal requests (head office D1/D3) ──────────────────────────────
+// accounting/journalRequestRoutes.ts (wave 2): GET /accounting/journal-requests?
+// status=submitted, POST /accounting/journal-requests/:id/approve | reject
+// (note). Kind post is Finance's (hand-over locked until the owner confirms,
+// A22); kind reverse is the CEO's alone. Until the route exists it answers 404
+// and the type is not listed.
+const journalRequests: ApprovalProvider = {
+  type: 'journal_request',
+  label: APPROVAL_RIGHTS.journal_request.label,
+  module: 'accounting',
+  link: '/accounting/journal?tab=requests',
+  ...rightsOf('journal_request'),
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; kind: string; status: string; description: string; reference: string | null
+      entryDate: string | null; totalCents: number; preparedById: string; preparedByIds?: string[]; preparedByName?: string | null
+      submittedById?: string | null; submittedAt: string | null; preparedAt?: string; viaHeadOfficeId?: string | null; reason?: string | null
+      lines?: unknown[]
+    }
+    const res = await ctx.read<unknown>('/accounting/journal-requests?status=submitted&limit=200')
+    if (res === null) return null
+    return rowsOf<Row>(res, 'requests').filter((r) => r.status === 'submitted').map((r): ApprovalItem => {
+      const base = `/accounting/journal-requests/${r.id}`
+      const reverse = r.kind === 'reverse'
+      return {
+        type: 'journal_request',
+        id: r.id,
+        tenantId: r.tenantId,
+        section: sectionOf('journal_request', { tenantId: r.tenantId, kind: r.kind }),
+        submittedByIds: idList(r.preparedById, r.submittedById, r.preparedByIds ?? []),
+        viaHeadOfficeId: r.viaHeadOfficeId ?? null,
+        title: `${reverse ? 'Reverse' : 'Journal'}: ${r.description} — ${pkr(r.totalCents)}`,
+        subtitle: r.reference,
+        facts: facts([
+          ['Kind', reverse ? 'Reversal' : 'Manual journal'],
+          ['Amount', pkr(r.totalCents)],
+          ['Date', r.entryDate ? ymd(r.entryDate) : null],
+          ['Lines', r.lines ? String(r.lines.length) : null],
+          ['Reason', r.reason],
+          ['Prepared by', r.preparedByName],
+        ]),
+        amountCents: r.totalCents,
+        waitingSince: iso(r.submittedAt ?? r.preparedAt),
+        link: `/accounting/journal?tab=requests&id=${encodeURIComponent(r.id)}`,
+        actions: [
+          { kind: 'approve', label: reverse ? 'Approve reversal' : 'Approve and post', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: reverse ? 'Reverse this journal entry now?' : 'Post this journal to the books now?' },
+          { kind: 'reject', label: 'Send back', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'What needs to change', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Head-office recharge runs (D1) ───────────────────────────────────────────
+// headOffices/runRoutes.ts (wave 2), mounted at /accounting/intercompany/
+// recharge-runs: GET ?status=submitted, POST /:id/approve {postInOpenPeriod?,
+// acknowledgeWarnings?} | /:id/reject (note). Owned by the head office:
+// handed over head-office-wide only. Until the route exists it answers 404 and
+// the type is not listed.
+const rechargeRuns: ApprovalProvider = {
+  type: 'ho_recharge',
+  label: APPROVAL_RIGHTS.ho_recharge.label,
+  module: 'accounting',
+  link: '/accounting/intercompany?tab=recharges',
+  ...rightsOf('ho_recharge'),
+  async load(ctx) {
+    type Line = { companyTenantId: string; companyName?: string | null; amountCents: number; shareBps?: number }
+    type Row = {
+      id: string; tenantId: string; headOfficeName?: string | null; period: string; kind: string; status: string
+      baseCents: number; rechargedCents: number; retainedCents: number; warnings?: string[]; stale?: boolean
+      preparedById?: string | null; preparedByIds?: string[]; submittedById?: string | null; submittedAt: string | null; preparedAt?: string
+      lines?: Line[]
+    }
+    const res = await ctx.read<unknown>('/accounting/intercompany/recharge-runs?status=submitted')
+    if (res === null) return null
+    return rowsOf<Row>(res, 'runs').filter((r) => r.status === 'submitted').map((r): ApprovalItem => {
+      const base = `/accounting/intercompany/recharge-runs/${r.id}`
+      const warnings = r.warnings ?? []
+      const lines = r.lines ?? []
+      return {
+        type: 'ho_recharge',
+        id: r.id,
+        tenantId: r.tenantId,
+        ownerTenantId: r.tenantId,
+        touchesTenantIds: idList(r.tenantId, lines.map((l) => l.companyTenantId)),
+        submittedByIds: idList(r.preparedById, r.submittedById, r.preparedByIds ?? []),
+        title: `${r.headOfficeName ?? 'Head office'} — ${r.kind === 'true_up' ? 'true-up' : 'recharge'} ${r.period} — ${pkr(r.rechargedCents)}`,
+        subtitle: lines.map((l) => `${l.companyName ?? 'Company'} ${pkr(l.amountCents)}`).join(' · ') || null,
+        facts: facts([
+          ['Period', r.period],
+          ['Kind', r.kind === 'true_up' ? 'True-up' : 'Monthly'],
+          ['Head-office cost', pkr(r.baseCents)],
+          ['Recharged', pkr(r.rechargedCents)],
+          ['Kept by the head office', pkr(r.retainedCents)],
+          ['Warnings', warnings.length ? warnings.join('; ') : null],
+        ]),
+        amountCents: r.rechargedCents,
+        waitingSince: iso(r.submittedAt ?? r.preparedAt),
+        link: `/accounting/intercompany?tab=recharges&run=${encodeURIComponent(r.id)}`,
+        actions: [
+          { kind: 'approve', label: 'Approve and post', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Approve this recharge? It posts in the head office\'s and each company\'s books now.',
+            options: [
+              { field: 'postInOpenPeriod', label: 'If a month is closed, post into the first open month', kind: 'checkbox' },
+              ...(warnings.length ? [{ field: 'acknowledgeWarnings', label: 'I have read the warnings', kind: 'checkbox' as const }] : []),
+            ],
+            ...(r.stale && { disabledReason: 'The costs moved since it was prepared — refresh it first' }) },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── POS connector change requests (Dev, D3) ──────────────────────────────────
+// connectors/changeRequests.ts (wave 2): GET /connectors/change-requests?
+// status=submitted, POST /connectors/change-requests/:id/approve | reject
+// (note). Secrets are never returned. Until the route exists it answers 404
+// and the type is not listed.
+const connectorChanges: ApprovalProvider = {
+  type: 'connector_change',
+  label: APPROVAL_RIGHTS.connector_change.label,
+  module: 'api_pos',
+  link: '/connectors/pos?tab=changes',
+  ...rightsOf('connector_change'),
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; kind: string; status: string; patch?: Record<string, unknown> | null
+      preparedById: string; preparedByIds?: string[]; preparedByName?: string | null; preparedAt: string
+      viaHeadOfficeId?: string | null; secretsIncluded?: boolean
+    }
+    const res = await ctx.read<unknown>('/connectors/change-requests?status=submitted')
+    if (res === null) return null
+    return rowsOf<Row>(res, 'changes', 'requests').filter((r) => r.status === 'submitted').map((r): ApprovalItem => {
+      const base = `/connectors/change-requests/${r.id}`
+      const changed = Object.keys(r.patch ?? {})
+      return {
+        type: 'connector_change',
+        id: r.id,
+        tenantId: r.tenantId,
+        submittedByIds: idList(r.preparedById, r.preparedByIds ?? []),
+        viaHeadOfficeId: r.viaHeadOfficeId ?? null,
+        title: `${r.kind === 'fiscal' ? 'Fiscal POS' : r.kind === 'terminal' ? 'Card machine' : human(r.kind)} settings`,
+        subtitle: changed.length ? `Changes: ${changed.join(', ')}` : null,
+        facts: facts([
+          ['Connector', human(r.kind)],
+          ['Changes', changed.join(', ') || null],
+          ['New keys', r.secretsIncluded ? 'Yes (sealed)' : null],
+          ['Asked by', r.preparedByName],
+        ]),
+        waitingSince: iso(r.preparedAt),
+        link: '/connectors/pos?tab=changes',
+        actions: [
+          { kind: 'approve', label: 'Apply', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: 'Apply these connector settings now?' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+            input: { field: 'note', label: 'Reason', required: true } },
+        ],
+      }
+    })
+  },
+}
+
 // ── On-account clients — PARKED (owner, 2026-10-13) ──────────────────────────
 // APPROVAL_TYPES still lists 'on_account_client' (w0), but the feature and its
 // route are parked: no provider calls /accounting/customer-accounts. Nothing
 // requires a provider per type (the inbox lists only registered providers), so
-// none is registered; the resume adds it here.
+// none is registered; the resume adds it here (OA-clients, wave 2), taking
+// approverRoles / delegable from the registry with ...rightsOf('on_account_client').
 
 /** Every approval type, in the order the inbox shows them. */
 export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
@@ -935,10 +1150,13 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   cashVouchers,
   fixedAssetRequests,
   intercompanyTransfers,
+  rechargeRuns,
+  journalRequests,
   badDebts,
   raastVoids,
   grniWriteOffs,
   stockDifferences,
+  connectorChanges,
 ]
 
 export type { ProviderContext }
