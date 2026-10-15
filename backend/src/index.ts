@@ -760,7 +760,7 @@ async function build() {
       try {
         companies = await prisma.tenant.findMany({ where: { deletedAt: null }, select: { id: true, slug: true, isActive: true }, orderBy: { createdAt: 'asc' } })
       } catch (err) {
-        for (const k of ['fixedAssets', 'pettyCash', 'fifoCutover', 'chartTemplateTypes', 'statutoryReclass', 'cardPayouts']) warnOf(k, err)
+        for (const k of ['fixedAssets', 'pettyCash', 'fifoCutover', 'chartTemplateTypes', 'statutoryReclass', 'cardPayouts', 'unregisteredProvince']) warnOf(k, err)
       }
       const active = companies.filter((t) => t.isActive)
       if (companies.length > 0) {
@@ -831,6 +831,18 @@ async function build() {
                 details.chartTemplateTypes = `${bad.length} account(s) whose type is not what servd expects (codes ${[...new Set(bad.map((r) => r.code))].join(', ')}) — Configuration → Chart of accounts`
               }
             } catch (err) { warnOf('chartTemplateTypes', err) }
+          })(),
+          // Brands still set to a province whose tax authority the company is
+          // not registered with (PRA / KPRA / BRA removed 2026-10-15): their
+          // sales cannot post until the province is changed.
+          (async () => {
+            try {
+              const n = await prisma.concept.count({
+                where: { tenantId: { in: companies.map((t) => t.id) }, deletedAt: null, province: { in: ['PB', 'KP', 'BL'] } },
+              })
+              checks.unregisteredProvince = n ? 'warn' : 'ok'
+              if (n) details.unregisteredProvince = `${n} brand(s) set to Punjab, KP or Balochistan (not registered there) — CEO → Brands, change the province`
+            } catch (err) { warnOf('unregisteredProvince', err) }
           })(),
           // Statutory payables (H7): HR's EOBI / SESSI / salary tax still on
           // 2090 / 2040 until the one-time reclass to 2042/2043/2044 is posted.

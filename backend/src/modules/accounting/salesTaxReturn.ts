@@ -88,7 +88,7 @@ import { homeShiftOf } from './orderPosting.js'
 import { sumCents, toCents } from '../../lib/money.js'
 import { costClassOf, type CostClass } from '../../lib/inventoryClass.js'
 import {
-  AUTHORITIES, AUTHORITY_LIST, TAX_AUTHORITY_KEYS, authorityOfOutputCode, isAuthorityKey, outputTaxCodeFor,
+  AUTHORITIES, AUTHORITY_LIST, TAX_AUTHORITY_KEYS, authorityOfOutputCode, isAuthorityKey, outputTaxCodeFor, isUnregisteredProvince,
   type AuthorityKey,
 } from './taxAuthorities.js'
 // taxPayments.ts imports this file too: use these only inside functions.
@@ -902,7 +902,9 @@ async function rateBreakdown(tenantId: string, from: Date, to: Date, reclassTarg
     const home = o.payments ? homeShiftOf({ payments: o.payments }) : null
     const code = saleTaxAccount.get(o.id)
       ?? (home ? shiftTaxAccount.get(`${home}|${o.conceptId}`) : undefined)
-      ?? outputTaxCodeFor(o.concept)
+      // A legacy brand set to an unregistered province (PB / KP / BL) has no
+      // authority: its unbooked sales show under FBR here and the notes name it.
+      ?? (isUnregisteredProvince(o.concept) ? ACCT.GST_OUTPUT : outputTaxCodeFor(o.concept))
     const at = saleDate.get(o.id) ?? (home ? shiftDate.get(home) : undefined) ?? to
     return routed(code, o.conceptId, at)
   }
@@ -1072,7 +1074,7 @@ export async function misroutedOutputTax(
   to: Date,
   concepts: Array<{ id: string; slug: string; name: string; province: string | null; srbPosId: number | null }>,
 ): Promise<ReclassRow[]> {
-  const provincial = concepts.filter((c) => outputTaxCodeFor(c) !== ACCT.GST_OUTPUT)
+  const provincial = concepts.filter((c) => !isUnregisteredProvince(c) && outputTaxCodeFor(c) !== ACCT.GST_OUTPUT)
   if (provincial.length === 0) return []
   const sums = await db.journalLine.groupBy({
     by: ['conceptId', 'type'],
@@ -1270,7 +1272,7 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   const conceptName = new Map(concepts.map((c) => [c.id, c.name]))
 
   const byAuthority: AuthorityReturn[] = ledger.map(({ a, output, input }) => {
-    const brands = concepts.filter((c) => outputTaxCodeFor(c) === a.outputCode).map((c) => c.slug)
+    const brands = concepts.filter((c) => !isUnregisteredProvince(c) && outputTaxCodeFor(c) === a.outputCode).map((c) => c.slug)
     const fromOrders = byRate.filter((r) => r.authority === a.label).reduce((t, r) => t + r.taxCents, 0)
     const paid = paidFor(a.key)
     const withheld = withheldByCustomers.get(a.key) ?? 0
@@ -1376,6 +1378,10 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   notes.push('Output and input are what was charged and recovered in the period. Tax paid to the authorities (payments recorded here, and entries linked as payments) is left out of them and shown under "Paid for this period"; "Ledger balance at period end" is what the books still owe after every charge and payment up to then.')
   notes.push('Input tax is set off against the same authority\'s output. The one exception (H8, as per SRB eligibility): federal input (1320) on supplier bills for raw materials — stock of the classes ' + CROSS_SETOFF_ELIGIBLE_CLASSES.join(' and ') + ' — may also be set off against a provincial authority\'s output ("Federal input on raw materials claimable against …", and "Net after federal input"). It is one pool per company: what was set off once is never claimed again, for any period or authority, and what FBR is owed takes 1320 first. Set it off when recording the payment ("Federal input set off"). Whether any other input is admissible (e.g. restaurant services at a reduced rate) is for your CA.')
   notes.push('Per-rate figures: sales are the orders booked in the period (online orders on completion, till orders on their drawer\'s close), less the tax the period\'s refunds reversed. Value is the pre-discount item value. "otherOutputCents" is ledger output tax not explained by them (manual journals, B2B invoices, older entries).')
+  const unregistered = concepts.filter((c) => isUnregisteredProvince(c))
+  if (unregistered.length > 0) {
+    notes.push(`${unregistered.map((c) => c.name).join(', ')} ${unregistered.length === 1 ? 'is' : 'are'} set to Punjab, KP or Balochistan, but the company is registered only with FBR and SRB. Their sales are not filed with any authority here — change the brand's province in CEO → Brands (a deleted brand: ask IT).`)
+  }
   notes.push('Supplies are classed by item tax class (standard / custom / zero-rated / exempt), with delivery charges on their own rows. Kept no-show deposits are other income (4210, H10), not a supply. Adjust with your CA before filing.')
   notes.push('Withholding lists income tax withheld from vendors (2040) and sales tax withheld as an agent (2041). Salary tax, EOBI and SESSI are statutory payroll challans — see Statutory Payments.')
 

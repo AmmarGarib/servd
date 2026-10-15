@@ -795,16 +795,19 @@ export async function refundTaxAccountFor(
   saleTaxAccount: string | null,
   taxShareCents: number,
 ): Promise<string> {
-  const current = outputTaxCodeFor(order.concept)
-  if (!saleTaxAccount || saleTaxAccount === current || taxShareCents <= 0) return current
-  const sums = await db.journalLine.groupBy({
-    by: ['type'],
-    _sum: { amountCents: true },
-    where: { conceptId: order.conceptId, account: { tenantId, code: saleTaxAccount }, journalEntry: { tenantId } },
-  })
-  const credit = sumCents(sums.find((s) => s.type === 'credit')?._sum.amountCents)
-  const debit  = sumCents(sums.find((s) => s.type === 'debit')?._sum.amountCents)
-  return credit - debit >= taxShareCents ? saleTaxAccount : current
+  // The sale's own account is tried FIRST: a brand later set to a province we
+  // are not registered with has no current account (outputTaxCodeFor throws),
+  // yet a refund of a sale whose tax still sits where it was booked must work.
+  if (saleTaxAccount && taxShareCents > 0) {
+    const s = await db.journalLine.groupBy({
+      by: ['type'],
+      _sum: { amountCents: true },
+      where: { conceptId: order.conceptId, account: { tenantId, code: saleTaxAccount }, journalEntry: { tenantId } },
+    })
+    const held = sumCents(s.find((x) => x.type === 'credit')?._sum.amountCents) - sumCents(s.find((x) => x.type === 'debit')?._sum.amountCents)
+    if (held >= taxShareCents) return saleTaxAccount
+  }
+  return outputTaxCodeFor(order.concept)
 }
 
 /** The order as a refund should value it: without its gift cards when the sale was booked without them. */

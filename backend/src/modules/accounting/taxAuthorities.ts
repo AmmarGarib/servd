@@ -97,6 +97,25 @@ export function authorityForConcept(concept: TaxJurisdiction | null | undefined)
 }
 
 /**
+ * For READ-ONLY loops over every brand (the sales tax return): the brand's
+ * authority, or null for a brand still set to a province we are not
+ * registered with (a legacy row — the brand routes refuse new ones). The
+ * return lists such a brand in its notes instead of refusing the whole
+ * company's return; postings keep refusing (authorityForConcept).
+ */
+export function registeredAuthorityForConcept(concept: TaxJurisdiction | null | undefined): AuthorityKey | null {
+  const province = concept?.province?.trim().toUpperCase() || null
+  if (province && UNREGISTERED_PROVINCES.has(province)) return null
+  return authorityForConcept(concept)
+}
+
+/** True when the brand is set to a province we are not registered with (PB / KP / BL). */
+export function isUnregisteredProvince(concept: TaxJurisdiction | null | undefined): boolean {
+  const province = concept?.province?.trim().toUpperCase() || null
+  return !!province && UNREGISTERED_PROVINCES.has(province)
+}
+
+/**
  * The output-tax account a brand's sales tax is credited to today (2030 FBR,
  * 2032 SRB). A refund debits the account its
  * SALE credited while that account still holds the brand's tax
