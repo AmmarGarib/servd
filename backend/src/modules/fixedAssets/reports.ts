@@ -22,9 +22,8 @@
 // balances only (no date at all).
 //
 // H24 (accountant, 2026-10-14): no deferred-tax figure is needed — there is
-// deliberately no deferred-tax report or route here. H23: the Third-Schedule
-// rates do not cover smallwares — pooled classes are left out of the tax
-// schedule and listed as "tax treatment to confirm".
+// deliberately no deferred-tax report or route here. Smallwares (pooled
+// classes) are deducted in full for tax in the year bought (H35, 2026-10-15).
 
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
@@ -821,8 +820,9 @@ export async function advancesReport(db: Db, tenantIds: string[], asOf: Date) {
 
 // ─── Tax (H23) — the ACTIVE company ─────────────────────────────────────────
 
-export const TAX_TO_CONFIRM_NOTE =
-  'The ITO Third Schedule rates in servd do not cover smallwares (accountant, H23) — their tax treatment is to be confirmed, so they are left out of this schedule.'
+/** Shown with smallwares in the tax view: their tax treatment (H35). */
+export const SMALLWARES_TAX_NOTE =
+  'Smallwares are deducted in full for tax in the year they are bought (accountant, H35); in the books they are pooled over 24 months.'
 
 function totalsOf(rows: readonly TaxAssetRow[]): TaxTotals {
   const t: TaxTotals = { openingWdvCents: 0, additionsCents: 0, initialAllowanceCents: 0, depreciationCents: 0, disposalProceedsCents: 0, closingWdvCents: 0 }
@@ -838,8 +838,9 @@ function totalsOf(rows: readonly TaxAssetRow[]): TaxTotals {
 }
 
 /**
- * The company's tax depreciation for `taxYear` (tax.ts taxSchedule), with the
- * pooled classes (smallwares) moved out to `toConfirm` (H23).
+ * The company's tax depreciation for `taxYear` (tax.ts taxSchedule). Smallwares
+ * are in it, deducted in full in the year bought (H35). `toConfirm` stays in
+ * the shape, always empty, for older admin builds.
  */
 export async function taxReport(db: Db, tenantId: string, taxYear: number) {
   const [s, classes, tenant] = await Promise.all([
@@ -847,12 +848,11 @@ export async function taxReport(db: Db, tenantId: string, taxYear: number) {
     getAssetClasses(tenantId, db),
     db.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
   ])
-  const pooled = new Set(classes.filter((c) => c.pooled).map((c) => c.key))
   const label = new Map(classes.map((c) => [c.key, c.label]))
-  const kept = s.rows.filter((r) => !pooled.has(r.classKey))
-  const held = s.rows.filter((r) => pooled.has(r.classKey))
+  const kept = s.rows
+  const hasSmallwares = classes.some((c) => c.pooled && kept.some((r) => r.classKey === c.key))
   const byClass = classes
-    .filter((c) => !pooled.has(c.key) && kept.some((r) => r.classKey === c.key))
+    .filter((c) => kept.some((r) => r.classKey === c.key))
     .map((c) => ({ classKey: c.key, label: c.label, ...totalsOf(kept.filter((r) => r.classKey === c.key)) }))
   const rows = kept.map((r) => ({
     assetId: r.assetId, assetTag: r.assetTag, name: r.name, classKey: r.classKey, classLabel: label.get(r.classKey) ?? r.classKey,
@@ -860,12 +860,10 @@ export async function taxReport(db: Db, tenantId: string, taxYear: number) {
     initialAllowanceCents: r.initialAllowanceCents, depreciationCents: r.depreciationCents, disposalProceedsCents: r.disposalProceedsCents,
     closingWdvCents: r.closingWdvCents, frozen: r.frozen ? 'yes' : 'no',
   }))
-  const toConfirm = held.map((r) => ({
-    assetId: r.assetId, assetTag: r.assetTag, name: r.name, classKey: r.classKey, classLabel: label.get(r.classKey) ?? r.classKey, costCents: r.additionsCents || r.openingWdvCents,
-  }))
+  const toConfirm: Array<{ assetId: string; assetTag: string | null; name: string; classKey: string; classLabel: string; costCents: number }> = []
   return {
     tenantId, companyName: tenant?.name ?? '', taxYear, start: pktDay(s.start), end: pktDay(s.end), frozen: s.frozen,
-    rows, byClass, totals: totalsOf(kept), toConfirm, toConfirmNote: toConfirm.length > 0 ? TAX_TO_CONFIRM_NOTE : null,
+    rows, byClass, totals: totalsOf(kept), toConfirm, toConfirmNote: null, smallwaresNote: hasSmallwares ? SMALLWARES_TAX_NOTE : null,
   }
 }
 

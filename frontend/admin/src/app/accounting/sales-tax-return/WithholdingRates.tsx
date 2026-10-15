@@ -98,7 +98,7 @@ export default function WithholdingRates() {
         <p className="text-xs text-s-muted">
           Income tax withheld from vendors when a supplier bill is recorded, or when an OpEx or CapEx payment is made (s.153 / s.155).
           A filer on FBR&apos;s Active Taxpayers List pays the filer rate; a non-filer the higher rate; a supplier with a valid
-          exemption certificate pays none. A vendor whose status is not known is charged the filer rate and flagged
+          exemption certificate pays none. A vendor whose status is not known is charged the non-filer rate until it is confirmed, and flagged
           &quot;Check ATL status&quot;. The switch is on{' '}
           <Link href="/configuration/operations" className="font-semibold underline" style={{ color: 'var(--erp-primary)' }}>Configuration → Operations</Link>.
         </p>

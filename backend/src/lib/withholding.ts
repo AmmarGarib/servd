@@ -25,8 +25,9 @@
 //   • the supplier's exemption certificate valid on the day (whtExemptUntil ≥ at) → 0
 //   • non-filer → the non-filer rate
 //   • filer → the filer rate; unknown (or 'exempt' with no valid certificate)
-//     → the filer rate AND needsAtlCheck (check the vendor on FBR's Active
-//     Taxpayers List — a non-filer owes double)
+//     → the NON-FILER rate until the status is confirmed (Hasnain H33,
+//     2026-10-15) AND needsAtlCheck (check the vendor on FBR's Active
+//     Taxpayers List and set the supplier's status)
 //   whtCents = round(base × rate / 10000), within the money cap.
 
 import type { Prisma } from '@prisma/client'
@@ -164,10 +165,11 @@ export async function computeWithholding(db: Db, a: {
   if (until && until.getTime() >= a.at.getTime()) return nothing('exempt', true)
 
   // 'exempt' without a certificate valid on the day is not proof of anything:
-  // the filer rate, with the ATL check.
+  // treated as unknown. Only a confirmed filer gets the filer rate; unknown
+  // pays the non-filer rate until the status is confirmed (H33), with the ATL check.
   const effective: FilerStatus = status === 'exempt' ? 'unknown' : status
   const rate = cfg.rates[section]
-  const rateBps = effective === 'non_filer' ? rate.nonFilerBps : rate.filerBps
+  const rateBps = effective === 'filer' ? rate.filerBps : rate.nonFilerBps
   const base = Math.max(0, Math.trunc(a.baseCents))
   assertMoneyFits(base, 'The amount withholding is worked out on')
   const whtCents = base > 0 ? applyBps(base, rateBps) : 0

@@ -83,7 +83,7 @@ export default function ClassesPage() {
         </table>
       </section>
       <p className="text-xs text-white/40">
-        Tax rates follow the Third Schedule of the Income Tax Ordinance; smallwares are listed as &ldquo;tax treatment to confirm&rdquo; in the tax view until the accountant confirms how they are treated.
+        Tax rates follow the Third Schedule of the Income Tax Ordinance; smallwares are deducted in full for tax in the year they are bought, and initial allowance applies to kitchen and power equipment only.
       </p>
 
       <section className="space-y-3" aria-label="Register policy">

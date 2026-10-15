@@ -45,8 +45,8 @@
 //     (1320 / 1322) and set off against that authority (H8).
 //   • Federal input on raw materials, cross set-off (H8, Hasnain 2026-10-14,
 //     "as per SRB eligibility"): FBR input (1320) booked on SUPPLIER BILLS for
-//     stock lines whose cost class is in CROSS_SETOFF_ELIGIBLE_CLASSES (food
-//     and drinks — the one switch point) may ALSO be set off against a
+//     stock lines whose cost class is in CROSS_SETOFF_ELIGIBLE_CLASSES (food,
+//     drinks and packaging — the one switch point) may ALSO be set off against a
 //     provincial authority's output (SRB). Pool per company:
 //     eligible federal input booked to date − cross set-offs already recorded
 //     (any period, any authority), never more than 1320 still holds after
@@ -199,13 +199,12 @@ const authorityOfOutput = (code: string) => AUTHORITIES[authorityOfOutputCode(co
 // ─── Federal input on raw materials, cross set-off (H8) ─────────────────────
 
 /**
- * THE switch point (H8, Hasnain 2026-10-14; H34 default): the stock cost
- * classes (lib/inventoryClass.ts) whose federal input tax on supplier bills
- * may be set off against a provincial authority's output — food (meat,
- * chicken, vegetables, dry goods …) and drinks. Add 'packaging' here, and only
- * here, if the CA confirms it is eligible.
+ * THE switch point (H8, Hasnain 2026-10-14; H34 2026-10-14: packaging too):
+ * the stock cost classes (lib/inventoryClass.ts) whose federal input tax on
+ * supplier bills may be set off against a provincial authority's output —
+ * food (meat, chicken, vegetables, dry goods …), drinks and packaging.
  */
-export const CROSS_SETOFF_ELIGIBLE_CLASSES: readonly CostClass[] = ['food', 'beverage']
+export const CROSS_SETOFF_ELIGIBLE_CLASSES: readonly CostClass[] = ['food', 'beverage', 'packaging']
 
 /** A provincial sales-tax authority (every one but FBR). */
 export type ProvincialAuthorityKey = Exclude<AuthorityKey, 'fbr'>

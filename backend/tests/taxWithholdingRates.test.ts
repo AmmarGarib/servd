@@ -180,11 +180,11 @@ describe('computeWithholding — the one rule', () => {
       .toMatchObject({ whtCents: 20_000, rateBps: 2000, filerStatus: 'non_filer', needsAtlCheck: false })
   })
 
-  it('unknown → the filer rate and the ATL check; a snapshot status wins over the supplier\'s', async () => {
+  it('unknown → the NON-filer rate and the ATL check (H33); a snapshot status wins over the supplier\'s', async () => {
     expect(await computeWithholding(prisma, { tenantId: tenantA, supplier: { filerStatus: 'unknown', whtExemptUntil: null }, section: '155', baseCents: 200_000, at }))
-      .toMatchObject({ whtCents: 30_000, rateBps: 1500, filerStatus: 'unknown', needsAtlCheck: true })
+      .toMatchObject({ whtCents: 60_000, rateBps: 3000, filerStatus: 'unknown', needsAtlCheck: true })
     expect(await computeWithholding(prisma, { tenantId: tenantA, supplier: null, section: '153_1_a', baseCents: 50_000, at }))
-      .toMatchObject({ whtCents: 3_000, rateBps: 600, filerStatus: 'unknown', needsAtlCheck: true })
+      .toMatchObject({ whtCents: 6_000, rateBps: 1200, filerStatus: 'unknown', needsAtlCheck: true })
     expect(await computeWithholding(prisma, { tenantId: tenantA, supplier: filer, filerStatus: 'non_filer', section: '153_1_a', baseCents: 50_000, at }))
       .toMatchObject({ whtCents: 6_000, rateBps: 1200, filerStatus: 'non_filer' })
   })
@@ -198,10 +198,10 @@ describe('computeWithholding — the one rule', () => {
       .toMatchObject({ whtCents: 0, exempt: true })
     const after = new Date('2026-10-11T07:00:00Z')
     expect(await computeWithholding(prisma, { tenantId: tenantA, supplier: cert, section: '153_1_c', baseCents: 100_000, at: after }))
-      .toMatchObject({ whtCents: 7_000, rateBps: 700, filerStatus: 'unknown', exempt: false, needsAtlCheck: true })
-    // 'exempt' with no certificate date proves nothing.
+      .toMatchObject({ whtCents: 14_000, rateBps: 1400, filerStatus: 'unknown', exempt: false, needsAtlCheck: true })
+    // 'exempt' with no certificate date proves nothing: unknown → non-filer rate (H33).
     expect(await computeWithholding(prisma, { tenantId: tenantA, supplier: { filerStatus: 'exempt', whtExemptUntil: null }, section: '153_1_c', baseCents: 100_000, at }))
-      .toMatchObject({ whtCents: 7_000, needsAtlCheck: true })
+      .toMatchObject({ whtCents: 14_000, needsAtlCheck: true })
   })
 
   it('the company\'s switch off → 0, whatever the section; another company\'s rates never apply', async () => {

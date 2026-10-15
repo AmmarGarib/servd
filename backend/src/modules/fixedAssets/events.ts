@@ -664,7 +664,7 @@ async function applyDisposal(tx: Tx, event: FixedAssetEvent, payload: Record<str
   const byCode = accumulatedByCode(state)
   const accumulated = sum(byCode)
   const cost = toCents(asset.costCents)
-  // TODO(asset-sale-tax): no output sales tax on asset sales until the CA says otherwise.
+  // No output sales tax when used equipment is sold (Hasnain H41, 2026-10-14).
   const proceeds = p.kind === 'lost' || p.kind === 'stolen' ? 0 : p.proceedsCents
   const money = proceeds > 0
     ? await moneyAccountCode(tx, asset.tenantId, { method: p.method ?? 'bank', bankAccountId: p.bankAccountId ?? null })

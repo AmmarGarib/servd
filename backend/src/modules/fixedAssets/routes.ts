@@ -46,7 +46,7 @@ import { taxSchedule } from './tax.js'
 import { fixedAssetRequestRoutes, shapeEvents, actorOf, ASSET_REQUEST_KINDS, REQUEST_KIND_LABELS } from './requests.js'
 import { fixedAssetPoolRoutes } from './pools.routes.js'
 import {
-  fixedAssetReportRoutes, loadRegister, assetNbvAt, classOfAsset, pktDay, endOfPktDay, TAX_TO_CONFIRM_NOTE, type RegisterData,
+  fixedAssetReportRoutes, loadRegister, assetNbvAt, classOfAsset, pktDay, endOfPktDay, SMALLWARES_TAX_NOTE, type RegisterData,
 } from './reports.js'
 
 const READERS = FINANCIALS_VIEWERS
@@ -502,11 +502,10 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
       period: m.period, amountCents: m.amountCents, status: periodIndex(m.period) <= periodIndex(last) ? 'due' : 'forecast',
     })) : []
 
-    // Tax (H23): a pooled class is not in the schedule (treatment to confirm).
+    // Tax (H23; smallwares deducted in full in the year bought, H35).
     const cls = classOfAsset(data, a)
-    let tax: { toConfirm: boolean; note: string | null; years: unknown[] } = { toConfirm: false, note: null, years: [] }
-    if (cls?.pooled) tax = { toConfirm: true, note: TAX_TO_CONFIRM_NOTE, years: [] }
-    else if (a.status !== 'voided' && !a.splitFromAssetId) {
+    const tax: { toConfirm: boolean; note: string | null; years: unknown[] } = { toConfirm: false, note: cls?.pooled ? SMALLWARES_TAX_NOTE : null, years: [] }
+    if (a.status !== 'voided' && !a.splitFromAssetId) {
       const first = taxYearOf(a.inServiceAt ?? a.acquiredAt).taxYear
       const lastYear = Math.min(taxYearOf(now).taxYear, first + 20)
       for (let y = first; y <= lastYear; y++) {

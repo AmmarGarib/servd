@@ -2,7 +2,7 @@
 //
 // Every class key, its ledger codes (cost and accumulated depreciation, from
 // journal.ts ACCT), its default life (H22) and its tax rates (H23, ITO Third
-// Schedule + 25% initial allowance on eligible plant) live here, and nowhere
+// Schedule + 25% initial allowance on kitchen and power equipment only — H42, 2026-10-15) live here, and nowhere
 // else. `ensureAssetClasses` seeds them per company into FixedAssetClass
 // (only the keys a company is missing, so the CEO's edits to labels, lives and
 // tax rates survive); the register, CapEx, the reports and the admin read the
@@ -45,13 +45,13 @@ export interface AssetClassDefault {
 export const ASSET_CLASS_DEFAULTS: ReadonlyArray<AssetClassDefault> = [
   { key: 'kitchen_equipment',  label: 'Kitchen equipment',          costAccountCode: ACCT.KITCHEN_EQUIPMENT,      accumAccountCode: ACCT.ACC_DEP_KITCHEN,    depreciable: true,  pooled: false, defaultLifeMonths: 60,   taxRateBp: 1500, taxInitialAllowanceBp: 2500 },
   { key: 'furniture_fixtures', label: 'Furniture & fixtures',       costAccountCode: ACCT.FURNITURE_FIXTURES,     accumAccountCode: ACCT.ACC_DEP_FURNITURE,  depreciable: true,  pooled: false, defaultLifeMonths: 84,   taxRateBp: 1500, taxInitialAllowanceBp: 0 },
-  { key: 'it_equipment',       label: 'IT equipment',               costAccountCode: ACCT.IT_EQUIPMENT,           accumAccountCode: ACCT.ACC_DEP_IT,         depreciable: true,  pooled: false, defaultLifeMonths: 36,   taxRateBp: 3000, taxInitialAllowanceBp: 2500 },
+  { key: 'it_equipment',       label: 'IT equipment',               costAccountCode: ACCT.IT_EQUIPMENT,           accumAccountCode: ACCT.ACC_DEP_IT,         depreciable: true,  pooled: false, defaultLifeMonths: 36,   taxRateBp: 3000, taxInitialAllowanceBp: 0 },
   { key: 'vehicles',           label: 'Vehicles',                   costAccountCode: ACCT.VEHICLES,               accumAccountCode: ACCT.ACC_DEP_VEHICLES,   depreciable: true,  pooled: false, defaultLifeMonths: 60,   taxRateBp: 1500, taxInitialAllowanceBp: 0 },
   // Life capped at the lease end when one is given at capitalisation.
   { key: 'leasehold',          label: 'Leasehold improvements',     costAccountCode: ACCT.LEASEHOLD_IMPROVEMENTS, accumAccountCode: ACCT.ACC_DEP_LEASEHOLD,  depreciable: true,  pooled: false, defaultLifeMonths: 120,  taxRateBp: 1000, taxInitialAllowanceBp: 0 },
   { key: 'buildings',          label: 'Buildings',                  costAccountCode: ACCT.BUILDINGS,              accumAccountCode: ACCT.ACC_DEP_BUILDINGS,  depreciable: true,  pooled: false, defaultLifeMonths: 240,  taxRateBp: 1000, taxInitialAllowanceBp: 0 },
   { key: 'power_equipment',    label: 'Generators & power',         costAccountCode: ACCT.POWER_EQUIPMENT,        accumAccountCode: ACCT.ACC_DEP_POWER,      depreciable: true,  pooled: false, defaultLifeMonths: 84,   taxRateBp: 1500, taxInitialAllowanceBp: 2500 },
-  { key: 'office_equipment',   label: 'Office equipment',           costAccountCode: ACCT.OFFICE_EQUIPMENT,       accumAccountCode: ACCT.ACC_DEP_OFFICE,     depreciable: true,  pooled: false, defaultLifeMonths: 60,   taxRateBp: 1500, taxInitialAllowanceBp: 2500 },
+  { key: 'office_equipment',   label: 'Office equipment',           costAccountCode: ACCT.OFFICE_EQUIPMENT,       accumAccountCode: ACCT.ACC_DEP_OFFICE,     depreciable: true,  pooled: false, defaultLifeMonths: 60,   taxRateBp: 1500, taxInitialAllowanceBp: 0 },
   { key: 'smallwares',         label: 'Smallwares (pooled)',        costAccountCode: ACCT.SMALLWARES,             accumAccountCode: ACCT.ACC_DEP_SMALLWARES, depreciable: true,  pooled: true,  defaultLifeMonths: 24,   taxRateBp: 1500, taxInitialAllowanceBp: 0 },
   { key: 'land',               label: 'Land',                       costAccountCode: ACCT.LAND,                   accumAccountCode: null,                    depreciable: false, pooled: false, defaultLifeMonths: null, taxRateBp: 0,    taxInitialAllowanceBp: 0 },
 ]

@@ -148,7 +148,8 @@ export function previewWithholding(i: WhtPreviewInput): WhtPreviewResult {
   }
   const r = i.rates.rates[section]
   if (!r) return { state: 'unknown', whtCents: 0, rateBps: 0, why: 'The withholding is worked out when you save.' }
-  const nonFiler = i.supplier?.filerStatus === 'non_filer'
+  // Only a confirmed filer gets the filer rate; unknown pays the non-filer rate (H33).
+  const nonFiler = i.supplier?.filerStatus !== 'filer'
   const rateBps = nonFiler ? r.nonFilerBps : r.filerBps
   const base = Math.max(0, i.grossCents - i.inputTaxCents)
   const unsure = !i.supplier || i.supplier.filerStatus === 'unknown'
@@ -156,7 +157,7 @@ export function previewWithholding(i: WhtPreviewInput): WhtPreviewResult {
     state: 'estimate',
     whtCents: Math.round((base * rateBps) / 10_000),
     rateBps,
-    why: `${WHT_SECTION_LABEL[section] ?? section} at ${(rateBps / 100).toFixed(rateBps % 100 === 0 ? 0 : 1)}% for a ${nonFiler ? 'non-filer' : 'filer'}${unsure ? ' (the supplier\'s filer status is not known, so the filer rate is used. Check FBR\'s Active Taxpayers List)' : ''}.`,
+    why: `${WHT_SECTION_LABEL[section] ?? section} at ${(rateBps / 100).toFixed(rateBps % 100 === 0 ? 0 : 1)}% for a ${nonFiler ? 'non-filer' : 'filer'}${unsure ? ' (the supplier\'s filer status is not known, so the non-filer rate is used until it is confirmed. Check FBR\'s Active Taxpayers List)' : ''}.`,
   }
 }
 

@@ -5,8 +5,8 @@
 // advances still sitting on 1340, and the tax depreciation schedule. Every
 // report downloads exactly the rows on screen as CSV.
 //
-// Tax view: smallwares are listed as "tax treatment to confirm" (accountant
-// answer H23). There is no deferred-tax figure anywhere (H24).
+// Tax view: smallwares are deducted in full in the year bought (accountant
+// answer H35). There is no deferred-tax figure anywhere (H24).
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -468,6 +468,7 @@ interface TaxData {
   totals: { openingWdvCents: number; additionsCents: number; initialAllowanceCents: number; depreciationCents: number; disposalProceedsCents: number; closingWdvCents: number }
   toConfirm: Array<{ assetId: string; assetTag: string | null; name: string; classLabel: string; costCents: number }>
   toConfirmNote: string | null
+  smallwaresNote?: string | null
 }
 
 function TaxReport({ onError }: { onError: (m: string) => void }) {
@@ -569,6 +570,8 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
               </table>
             </div>
           )}
+
+          {d.smallwaresNote && <p className="text-xs text-white/50">{d.smallwaresNote}</p>}
 
           {d.toConfirm.length > 0 && (
             <section className="rounded-2xl p-4" style={card}>

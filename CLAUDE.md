@@ -914,10 +914,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `chargeThrough` the one path, no switch); smallwares are pooled (H21);
   prepayments sit on 1310 and release monthly (`accounting/prepaidReleases.ts`);
   refundable deposits (1360) only through CapEx. No deferred tax anywhere
-  (H24). Sales tax on disposal proceeds: `TODO(asset-sale-tax)`.
+  (H24). No sales tax on proceeds when used equipment is sold (H41). For
+  TAX, smallwares are deducted in full in the year bought (H35) and the 25%
+  initial allowance is kitchen and power equipment only (H42; office and IT 0%).
 - **Tax:** `accounting/taxAuthorities.ts` is the one authority table; input
   tax is booked by authority (1320 FBR, 1322 SRB — the ONLY two: PRA, KPRA, BRA and their 1321/1323/1324 + 2031/2033/2034 were removed, owner 2026-10-15; brands cannot be set to Punjab, KP or Balochistan). Federal input
-  on food / drink stock may be set off against SRB output (H8:
+  on food, drink and packaging stock (H34) may be set off against SRB output (H8:
   `salesTaxReturn.ts CROSS_SETOFF_ELIGIBLE_CLASSES`; a payment's
   `crossSetOffCents`, never above what is claimable; what is already used is
   read from the LEDGER — `crossSetOffUsedCents`, every Cr 1320 in an entry
@@ -931,8 +933,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   tax a client withholds → 1335, netted in that authority's return (H13).
 - **Withholding and statutory payables:** `lib/withholding.ts` is the one WHT
   resolver; `PUT /accounting/withholding/rates` the only writer of a
-  company's rates (CA placeholders; withholding stays OFF per company until
-  finance switches it on). Salary tax 2042, EOBI 2043, SESSI / PESSI 2044
+  company's rates (confirmed by the accountant, H32; withholding stays OFF per
+  company until finance switches it on). A supplier whose filer status is not
+  known pays the NON-filer rate until confirmed (H33). Salary tax 2042, EOBI 2043, SESSI / PESSI 2044
   (H7): challans go through the tax-payments register; `/accounting/statutory`
   is the one accrued-vs-paid view. OpEx posts the expense with input tax by
   authority and WHT to 2040; budgets compare the expense.

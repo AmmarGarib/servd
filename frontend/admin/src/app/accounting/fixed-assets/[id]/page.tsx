@@ -197,6 +197,7 @@ export default function FixedAssetPage() {
           {/* Tax view */}
           <section className="rounded-2xl p-4" style={card}>
             <p className="text-sm font-black text-white/90">Tax depreciation</p>
+            {data.tax.note && !data.tax.toConfirm && <p className="text-xs text-white/50 mt-1">{data.tax.note}</p>}
             {data.tax.toConfirm ? (
               <p className="text-sm text-white/60 mt-2">Tax treatment to confirm. {data.tax.note}</p>
             ) : data.tax.years.length === 0 ? (

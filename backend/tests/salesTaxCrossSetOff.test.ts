@@ -1,10 +1,11 @@
 // H8 cross set-off (Hasnain, 2026-10-14): federal input (1320) on supplier
-// bills for raw materials — stock of CROSS_SETOFF_ELIGIBLE_CLASSES (food and
-// drinks) — may be set off against a provincial authority's output.
+// bills for raw materials — stock of CROSS_SETOFF_ELIGIBLE_CLASSES (food,
+// drinks and packaging; packaging added by H34, 2026-10-14) — may be set off
+// against a provincial authority's output.
 //
 //   • Eligible = each 1320 line of a bill / credit note × the share of the
 //     document's line value that is eligible stock of the company's own items
-//     (packaging, non-stock lines and another company's item are not); a
+//     (non-stock lines and another company's item are not); a
 //     credit note with no lines takes its bill's share.
 //   • The pool: eligible to date − cross set-offs recorded, within what 1320
 //     holds after what FBR is owed (federal output first). The return shows
@@ -114,8 +115,9 @@ beforeAll(async () => {
   const boxes = await item(tenantA, 'Boxes', 'packaging')
   const bChicken = await item(tenantB, 'B Chicken', 'protein')
 
-  // A, month M1: bill 1 — 80 % eligible (chicken + cola; boxes are packaging): 18,000 × 0.8 = 14,400.
-  const b1 = await bill(tenantA, supplierA, at(`${M1}-05`), 18_000, [{ cents: 60_000, itemId: chicken }, { cents: 20_000, itemId: cola }, { cents: 20_000, itemId: boxes }])
+  // A, month M1: bill 1 — 80 % eligible (chicken + cola + boxes, packaging is eligible since H34;
+  // the 20,000 non-stock line is not): 18,000 × 0.8 = 14,400.
+  const b1 = await bill(tenantA, supplierA, at(`${M1}-05`), 18_000, [{ cents: 40_000, itemId: chicken }, { cents: 20_000, itemId: cola }, { cents: 20_000, itemId: boxes }, { cents: 20_000, expense: '6020' }])
   // Bill 2 — a non-stock line: not eligible (1,000 of 1320).
   await bill(tenantA, supplierA, at(`${M1}-06`), 1_000, [{ cents: 10_000, expense: '6020' }])
   // Bill 3 — a line naming ANOTHER company's item: not eligible (2,000 of 1320).
@@ -145,8 +147,8 @@ beforeAll(async () => {
 }, 60_000)
 
 describe('eligibility (one switch point)', () => {
-  it('food and drinks are eligible; packaging, non-stock lines and another company\'s item are not', async () => {
-    expect([...CROSS_SETOFF_ELIGIBLE_CLASSES]).toEqual(['food', 'beverage'])
+  it('food, drinks and packaging are eligible (H34); non-stock lines and another company\'s item are not', async () => {
+    expect([...CROSS_SETOFF_ELIGIBLE_CLASSES]).toEqual(['food', 'beverage', 'packaging'])
     expect([...CROSS_SETOFF_AUTHORITIES]).toEqual(['srb'])
     expect(await eligibleFederalInputCents(prisma, tenantA, FROM, TO)).toBe(12_960)
     expect(await eligibleFederalInputCents(prisma, tenantB, FROM, TO)).toBe(50_000)
@@ -157,7 +159,7 @@ describe('the return (H8)', () => {
   it('claimable against SRB = the pool, after what FBR is owed; net after it', async () => {
     const r = await salesTaxReturn(tenantA, FROM, TO)
     expect(r.federalCrossSetOff).toMatchObject({
-      eligibleClasses: ['food', 'beverage'],
+      eligibleClasses: ['food', 'beverage', 'packaging'],
       eligibleInPeriodCents: 12_960, eligibleToDateCents: 12_960, usedCents: 0,
       ledgerHeldCents: 19_200, federalOutputOwedCents: 7_000,
       availableCents: 12_200, setOffForPeriodCents: 0, claimableCents: 12_200,
@@ -303,14 +305,14 @@ describe('the route (POST /accounting/sales-tax-return/payments, CSV)', () => {
 // Final gate (answers-3, 2026-10-14): the pool counts cross set-offs from the
 // LEDGER. A hand-posted Dr 203x / Cr 1320 that was never linked, or was
 // unlinked (voidTaxPayment keeps a linked entry), still uses the pool — so
-// ineligible 1320 input (packaging) can never be set off against SRB.
+// ineligible 1320 input (a non-stock line) can never be set off against SRB.
 describe('the pool reads the ledger: unlinked hand-posted set-offs still count', () => {
-  it('eligible 10,000 + packaging 8,000; a manual Cr 1320 10,000 against SRB — linked, unlinked or never linked, nothing is left', async () => {
+  it('eligible 10,000 + non-stock 8,000; a manual Cr 1320 10,000 against SRB — linked, unlinked or never linked, nothing is left', async () => {
     const t = await company('Cross Unlink')
     const u = (await prisma.user.create({ data: { name: 'Fin U', email: `fu.${RUN}@x.test`, password: 'x', role: 'finance', tenantId: t } })).id
     const sup = (await prisma.supplier.create({ data: { name: `U Meat ${RUN}`, tenantId: t } })).id
     await bill(t, sup, at(`${M1}-05`), 10_000, [{ cents: 50_000, itemId: await item(t, 'U Chicken', 'protein') }])
-    await bill(t, sup, at(`${M1}-05`), 8_000, [{ cents: 40_000, itemId: await item(t, 'U Boxes', 'packaging') }])
+    await bill(t, sup, at(`${M1}-05`), 8_000, [{ cents: 40_000, expense: '6020' }])
     await post(t, 'order.complete', randomUUID(), at(`${M1}-10`), [
       { accountCode: '1010', type: 'debit', amountCents: 100_000 },
       { accountCode: '2032', type: 'credit', amountCents: 100_000 },

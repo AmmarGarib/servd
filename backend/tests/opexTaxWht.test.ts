@@ -239,9 +239,9 @@ describe('OpEx payments: input tax by authority + withholding', () => {
     // Input tax named on the payment wins: SRB → 1322.
     const srb = await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, inputTaxCents: 1_000, inputTaxAuthority: 'srb', paidAt: '2026-09-10' })
     expect(amt((await entry(`opex.payment:${srb.json().id}`))!.rows, '1322', 'debit')).toBe(1_000)
-    // An unknown filer status: the filer rate, and the ATL check is asked for.
+    // An unknown filer status: the NON-filer rate until confirmed (H33), and the ATL check is asked for.
     const unk = await call('adminA', 'POST', '/opex/payments', { lineId: plain, ...period(), invoiceCents: 10_000, whtSection: '153_1_b', paidAt: '2026-09-10' })
-    expect(unk.json()).toMatchObject({ whtCents: 900, filerStatus: 'unknown', needsAtlCheck: true })
+    expect(unk.json()).toMatchObject({ whtCents: 1_800, filerStatus: 'unknown', needsAtlCheck: true })
   })
 
   it('a paid payment\'s cash and WHT are facts: a paid-date fix or the input-tax authority alone keeps them, the override and its reason included', async () => {

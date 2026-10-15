@@ -1267,7 +1267,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
                   {quote.data.exempt ? 'Exempt (certificate)' : FILER_LABEL[quote.data.filerStatus] ?? quote.data.filerStatus}
                 </span>
               )}
-              {quote.data.needsAtlCheck && <span className="s-badge-amber text-[10px]" title="The supplier's filer status is not known: the filer rate is used. Check FBR's Active Taxpayers List and update the supplier.">Check ATL status</span>}
+              {quote.data.needsAtlCheck && <span className="s-badge-amber text-[10px]" title="The supplier's filer status is not known: the non-filer rate is used until it is confirmed. Check FBR's Active Taxpayers List and update the supplier.">Check ATL status</span>}
               <span className="text-white/85 font-semibold">Cash to pay {PKR(quote.data.cashCents)}</span>
               <span className="text-white/45">Expense {PKR(quote.data.expenseCents)}</span>
               {wasPaid && <span className="text-white/45">(today&apos;s rate; a paid payment keeps the filer status it was paid under)</span>}

@@ -10,7 +10,10 @@
 //   • later years: rate × opening WDV;
 //   • year of disposal: no depreciation; the proceeds come off the WDV;
 //   • a year the CEO froze (FixedAssetTaxYear rows) is used exactly as frozen,
-//     whatever the class rates say today.
+//     whatever the class rates say today;
+//   • smallwares (pooled classes) are deducted IN FULL in the tax year they are
+//     bought (Hasnain H35, 2026-10-15) — no initial allowance, closing WDV 0 —
+//     while the books keep pooling them over 24 months (H21).
 // Cost is the asset's cost when capitalised (net of claimable input tax).
 // A pool layer split off by a unit transfer is not a new addition — its tax
 // WDV stays on the layer it came from; partial pool write-offs do not move
@@ -109,8 +112,10 @@ function walkAsset(
   if (firstYear > taxYear) return null
   const disposedYear = taxDisposalYear(a)
   if (disposedYear !== null && disposedYear < taxYear) return null
-  const rateBp = cls?.taxRateBp ?? 0
-  const iaBp = cls?.taxInitialAllowanceBp ?? 0
+  // H35: a pooled class (smallwares) is deducted 100% in the year bought.
+  const pooled = !!cls?.pooled
+  const rateBp = pooled ? 10_000 : cls?.taxRateBp ?? 0
+  const iaBp = pooled ? 0 : cls?.taxInitialAllowanceBp ?? 0
   const cost = toCents(a.originalCostCents) > 0 ? toCents(a.originalCostCents) : toCents(a.costCents)
   let wdv = 0
   let row: TaxAssetRow | null = null
@@ -135,6 +140,9 @@ function walkAsset(
     }
     wdv = closing
   }
+  // A fully deducted smallwares item has nothing left to show after its year.
+  if (pooled && row && !row.frozen && row.additionsCents === 0 && row.openingWdvCents === 0
+    && row.disposalProceedsCents === 0 && row.closingWdvCents === 0) return null
   return row
 }
 
@@ -202,12 +210,10 @@ export async function freezeTaxYear(tenantId: string, taxYear: number, frozenByI
     const already = await tx.fixedAssetTaxYear.count({ where: { tenantId, taxYear } })
     if (already > 0) throw new AppError('TAX_YEAR_FROZEN', `Tax year ${taxYear} is already frozen`, 409)
     const s = await taxSchedule(tenantId, taxYear, tx)
-    // H23: the Third Schedule rates do not cover smallwares — pooled classes are
-    // never frozen into the tax register (the report lists them 'to confirm').
-    const pooled = new Set((await getAssetClasses(tenantId, tx)).filter((c) => c.pooled).map((c) => c.key))
-    const rows = s.rows.filter((r) => !r.frozen && !pooled.has(r.classKey))
+    // Smallwares are frozen too: deducted in full in the year bought (H35).
+    const rows = s.rows.filter((r) => !r.frozen)
     const totals = zeroTotals()
-    for (const r of s.rows) if (!pooled.has(r.classKey)) addTo(totals, r)
+    for (const r of s.rows) addTo(totals, r)
     if (rows.length > 0) {
       await tx.fixedAssetTaxYear.createMany({
         data: rows.map((r) => ({
