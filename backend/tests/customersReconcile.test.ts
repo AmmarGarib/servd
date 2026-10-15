@@ -4,7 +4,7 @@
 //
 // Owner decisions exercised: 10 (percentage promos on food only), 12 (one
 // point = PKR 0.10; birthday 500 points), 13 (tiers on lifetime spend), 14
-// (gift cards at the till, same company only), 15 (bans per company), 16
+// (gift cards at the till, same company only), 15 (bans — servd-wide since 2026-10-15), 16
 // (segment definitions), 17 (WhatsApp + email only).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
@@ -325,8 +325,8 @@ describe('one gift-card redeem, same company only', () => {
 
 // ─── Blocking (decision 15) ───────────────────────────────────────────────────
 
-describe('one blocking mechanism, per company', () => {
-  it('the CRM block raises a ban with the customer’s contacts, effective at that company only', async () => {
+describe('one blocking mechanism, servd-wide (owner 2026-10-15)', () => {
+  it('the CRM block raises a ban with the customer’s contacts, effective at every company', async () => {
     const c = await mkCustomer('blocked')
     await mkOrder(conceptA, c.id, 5_000)
     await mkOrder(conceptB, c.id, 5_000)
@@ -336,15 +336,15 @@ describe('one blocking mechanism, per company', () => {
     expect(r.json().phone).toBe(c.phone)
 
     await expect(assertNotBannedAtCompany({ customerId: c.id, tenantId: tenantA, intent: 'order' })).rejects.toMatchObject({ code: 'BANNED' })
-    await expect(assertNotBannedAtCompany({ customerId: c.id, tenantId: tenantB, intent: 'order' })).resolves.toBeUndefined()
+    await expect(assertNotBannedAtCompany({ customerId: c.id, tenantId: tenantB, intent: 'order' })).rejects.toMatchObject({ code: 'BANNED' })
     // Matched on the phone alone too (a fresh account with the same number).
     expect(await activeBanAtCompany({ phone: c.phone, tenantId: tenantA })).not.toBeNull()
 
-    // The CRM shows it to A, not to B; A can unblock.
+    // The CRM shows it to A in full, to B anonymised; A can unblock.
     const a = await call('mgrA', 'GET', `/crm/customers/${c.id}`)
     expect(a.json().activeBan?.id).toBe(r.json().id)
     const b = await call('mgrB', 'GET', `/crm/customers/${c.id}`)
-    expect(b.json().activeBan).toBeNull()
+    expect(b.json().activeBan).toMatchObject({ id: null, otherKitchen: true })
     expect((await call('mgrA', 'POST', `/crm/bans/${r.json().id}/lift`, { reason: 'paid up' })).statusCode).toBe(200)
     await expect(assertNotBannedAtCompany({ customerId: c.id, tenantId: tenantA })).resolves.toBeUndefined()
   })
@@ -356,14 +356,14 @@ describe('one blocking mechanism, per company', () => {
     expect(r.statusCode).toBe(404)
   })
 
-  it("marketing reach excludes a company's own banned customers only", async () => {
+  it('marketing reach excludes a banned customer at every company (servd-wide)', async () => {
     const c = await mkCustomer('reach')
     await mkOrder(conceptA, c.id, 5_000)
     await call('mgrA', 'POST', '/crm/bans', { customerId: c.id, reason: 'abuse' })
     const inA = await prisma.customer.count({ where: { AND: [{ id: c.id }, await reachableAtCompany(tenantA)] } })
     const inB = await prisma.customer.count({ where: { AND: [{ id: c.id }, await reachableAtCompany(tenantB)] } })
     expect(inA).toBe(0)
-    expect(inB).toBe(1)
+    expect(inB).toBe(0)
   })
 })
 

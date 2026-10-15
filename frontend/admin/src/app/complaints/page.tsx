@@ -36,8 +36,10 @@ interface Complaint {
   // Ban appeals (kind 'ban_appeal'): the ban and strikes come from the API for managers only.
   kind?: 'complaint' | 'ban_appeal'
   banId?: string | null
-  ban?: { id: string; reason: string; bannedAt: string; auto: boolean; active: boolean; customer?: { id: string; name: string | null } | null }
-  strikes?: Array<{ kind: string; at: string; reason: string | null; severity?: number | null }>
+  // Servd-wide (owner 2026-10-15): a block raised by another servd kitchen is shown
+  // anonymised and only that kitchen decides it (canDecide false).
+  ban?: { id: string; reason: string; bannedAt: string; auto: boolean; active: boolean; customer?: { id: string; name: string | null } | null; otherKitchen?: boolean; canDecide?: boolean }
+  strikes?: Array<{ kind: string; at: string; reason: string | null; severity?: number | null; where?: string | null }>
 }
 
 interface ComplaintsResponse {
@@ -145,10 +147,10 @@ function AppealCard({ c, canDecide, now }: { c: Complaint; canDecide: boolean; n
           {c.ban.reason && <p>Reason: {c.ban.reason}</p>}
           {c.strikes && c.strikes.length > 0 && (
             <div>
-              <p className="font-semibold text-s-text">Strikes ({c.strikes.length})</p>
+              <p className="font-semibold text-s-text">Strikes across servd ({c.strikes.length})</p>
               <ul className="list-disc pl-4">
                 {c.strikes.map((st, i) => (
-                  <li key={i}>{st.kind.replace(/_/g, ' ')} · {new Date(st.at).toLocaleDateString()}{st.reason ? ` · ${st.reason}` : ''}</li>
+                  <li key={i}>{st.kind.replace(/_/g, ' ')} · {new Date(st.at).toLocaleDateString()}{st.where ? ` · ${st.where}` : ''}{st.reason ? ` · ${st.reason}` : ''}</li>
                 ))}
               </ul>
             </div>
@@ -156,7 +158,10 @@ function AppealCard({ c, canDecide, now }: { c: Complaint; canDecide: boolean; n
         </div>
       )}
       {c.resolution && <p className="text-xs text-primary-ink">Decision: {c.resolution}</p>}
-      {canDecide && !decided && c.banId && (
+      {c.ban?.otherKitchen && !decided && (
+        <p className="text-xs text-s-muted">Raised by another servd kitchen &mdash; only that kitchen can decide this appeal.</p>
+      )}
+      {canDecide && c.ban?.canDecide !== false && !decided && c.banId && (
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             {(Object.keys(APPEAL_ACTIONS) as AppealAction[]).map((a) => (

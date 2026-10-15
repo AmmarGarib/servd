@@ -11,7 +11,8 @@
 //   2. captures a held deposit as a no-show fee (journal: Dr 1030 card /
 //      gateway receivable / Cr 4210 No-show Deposits Kept — other income, no
 //      sales tax, no fiscal document; H10, depositCapture.ts),
-//   3. records a strike on the customer at the reservation's company and
+//   3. records a strike on the customer (stamped with the reservation's
+//      company; it counts toward their servd-wide three strikes) and
 //      refreshes their rollups,
 //   4. offers the freed slot to the next waitlist guest,
 //   5. tells open admin screens.
@@ -85,9 +86,9 @@ export async function markNoShow(reservationId: string, opts: MarkNoShowOptions)
 
   bumpCustomerRollups(row.customerId)
   if (row.customerId) {
-    // The strike is the reservation's company's (its brand's): it counts toward
-    // that company's three strikes only. recordStrike never throws (logs
-    // internally) and would resolve the same company from the source.
+    // The strike is stamped with the reservation's company (its brand's) and
+    // counts toward the customer's servd-wide three strikes. recordStrike never
+    // throws (logs internally) and would resolve the same company from the source.
     const concept = await prisma.concept.findUnique({ where: { id: row.conceptId }, select: { tenantId: true } })
     await recordStrike({
       ...(concept?.tenantId ? { tenantId: concept.tenantId } : {}),

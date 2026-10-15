@@ -826,9 +826,10 @@ export async function authRoutes(fastify: FastifyInstance) {
     const otpVerified = verified.deliveredToPhone
     const emailVerified = verified.deliveredToEmail
 
-    // Bans apply per company (owner decision 15). Signup has no company, so
-    // a banned customer may still hold an account; each company's brands
-    // refuse their orders and bookings at checkout / booking time instead.
+    // Bans are servd-wide (owner, 2026-10-15) and are enforced where the
+    // customer orders or books (checkout / booking time), matched on the
+    // account, its email and its phone — a banned contact gains nothing by
+    // signing up again.
 
     try {
       const result = await customerRegister(

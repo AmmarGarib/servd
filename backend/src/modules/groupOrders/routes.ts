@@ -283,8 +283,8 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       // email, but group-order submit checked neither — so a barred customer
       // could open a group, add the whole order themselves, and fire a kitchen
       // ticket through a door nobody was watching.
-      // One mechanism, per company (owner decision 15): an active CustomerBan
-      // raised by the group's brand's company blocks the submit.
+      // One mechanism, servd-wide (owner, 2026-10-15): an active CustomerBan
+      // raised by any company blocks the submit.
       const submitter0 = await prisma.customer.findUnique({
         where: { id: req.customer!.id },
         select: { email: true, phone: true },

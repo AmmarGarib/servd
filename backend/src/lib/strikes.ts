@@ -20,9 +20,10 @@
 // any active ban). Nothing enforces on them; every check reads CustomerBan
 // through activeBanAtCompany.
 //
-// Who may lift a ban / decide its appeal: the CEO (role admin), or a manager of
-// the company that RAISED it (crm/routes.ts findBanInScope). A legacy NULL-company
-// ban: the CEO only. Other companies see the standing (count, blocked yes/no),
+// Who may lift a ban / decide its appeal: a manager of the company that RAISED
+// it — the CEO included through their membership of that company
+// (crm/routes.ts findBanInScope). A legacy NULL-company ban: the CEO (role
+// admin) only. Other companies see the standing (count, blocked yes/no),
 // never another company's incident details.
 //
 // `recordStrike` is fire-and-forget safe: never let a strike write break the
@@ -306,8 +307,8 @@ export async function reverseStrike(
 
 /**
  * Lift a ban (the CRM "unblock", or an appeal granted). The caller has already
- * checked the actor may decide it — the CEO, or a manager of the company that
- * raised it (crm/routes.ts findBanInScope; 404 / 403 otherwise). A legacy
+ * checked the actor may decide it — a manager of the company that raised it
+ * (crm/routes.ts findBanInScope; 404 otherwise). A legacy
  * NULL-company ban has no raising company, so only the CEO (role admin) may
  * lift it (403 LEGACY_BAN_ADMIN_ONLY). The strikes STAY (owner Q6: lifting
  * on appeal keeps the strike history; they expire after a year). Linked open

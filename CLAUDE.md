@@ -48,8 +48,16 @@ company-scoped FROM THE FIRST COMMIT — not "added later":
   `resolveTenantScope(req)`.
 - **Workers, sockets, notifications:** loop per company; socket rooms are
   per company; messages and webhooks fan out only to the owning company.
-- **Customer-facing:** gift cards, loyalty, promos, bans and segments stay
-  inside the company that issued them.
+- **Customer-facing:** gift cards, loyalty, promos and segments stay
+  inside the company that issued them. **Exception (owner decision
+  2026-10-15): customer strikes, bans and ban appeals are SERVD-WIDE** — they
+  are the customer's account standing, so strikes from every company count
+  together (3 → one auto ban) and an active ban blocks the customer at every
+  brand of every company (`lib/strikes.ts`). Each strike / ban still records
+  the company whose incident it is (`tenantId`); only that company's managers
+  may reverse its strike, lift its ban or decide its appeal (a legacy
+  NULL-company ban: the CEO only), and other companies see its details only as
+  "Another servd kitchen" (standing yes, reason / order / staff no).
 - **Tests:** every new route ships with a two-company test — company B gets
   404 on company A's rows, and creates bind to the active company.
 

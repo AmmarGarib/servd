@@ -2,9 +2,9 @@
 //
 //   - customer strikes and bans move to the target (each still names the
 //     company that raised it; a ban blocks across servd — owner 2026-10-15);
-//   - twin ACTIVE AUTO bans for one customer: the source's is lifted ('merged
-//     into <target>'), so exactly one active auto ban remains on the target
-//     (customer_bans_one_active_auto_per_company holds); manual bans move as-is;
+//   - bans move as-is: one active auto ban per CUSTOMER servd-wide (index
+//     customer_bans_one_active_auto_per_customer), so no twins arise; a lifted
+//     ban in the target stays lifted; manual bans move as-is;
 //   - rider job events move on both columns (the order's company and the
 //     rider's company);
 //   - fleet agreements: one between the two companies ends; one with a third
@@ -65,9 +65,10 @@ describe('delivery and customers move with the company', () => {
     ids.twinCust = twinCust.id
 
     ids.strike = (await prisma.customerStrike.create({ data: { customerId: soloCust.id, kind: 'cod_refused', tenantId: S.id } })).id
-    // Twin active auto bans for one customer.
+    // An active auto ban in the source and an older, LIFTED auto ban in the target for the same customer
+    // (servd-wide: only one may be active per customer).
     ids.banSrcTwin = (await prisma.customerBan.create({ data: { customerId: twinCust.id, phone: twinCust.phone, reason: '3 strikes', tenantId: S.id } })).id
-    ids.banDstTwin = (await prisma.customerBan.create({ data: { customerId: twinCust.id, phone: twinCust.phone, reason: '3 strikes', tenantId: D.id } })).id
+    ids.banDstTwin = (await prisma.customerBan.create({ data: { customerId: twinCust.id, phone: twinCust.phone, reason: '3 strikes', tenantId: D.id, liftedAt: new Date(), liftReason: 'forgiven' } })).id
     // A source-only auto ban and a manual ban for the twin customer.
     ids.banSolo = (await prisma.customerBan.create({ data: { customerId: soloCust.id, reason: '3 strikes', tenantId: S.id } })).id
     ids.banManual = (await prisma.customerBan.create({ data: { customerId: twinCust.id, reason: 'Abusive to rider', tenantId: S.id, bannedById: ceo.id } })).id
@@ -92,23 +93,20 @@ describe('delivery and customers move with the company', () => {
     const res = await merge(S.id, D.id)
     expect(res.statusCode, res.body).toBe(200)
     expect(res.json()).toMatchObject({
-      strikesMoved: 1, bansMoved: 3, bansLifted: 1,
+      strikesMoved: 1, bansMoved: 3, bansLifted: 0,
       jobEventsMoved: 1, jobEventRiderSidesMoved: 1,
       fleetAgreementsEnded: 1, fleetAgreementsMoved: 1, fleetAgreementsSuperseded: 1,
     })
   })
 
-  it('strikes and bans are on the target; twin auto bans leave exactly one active', async () => {
+  it('strikes and bans are on the target; the customer keeps exactly one active auto ban', async () => {
     expect((await prisma.customerStrike.findUniqueOrThrow({ where: { id: ids.strike } })).tenantId).toBe(D.id)
     for (const id of [ids.banSrcTwin!, ids.banDstTwin!, ids.banSolo!, ids.banManual!]) {
       expect((await prisma.customerBan.findUniqueOrThrow({ where: { id } })).tenantId).toBe(D.id)
     }
-    const lifted = await prisma.customerBan.findUniqueOrThrow({ where: { id: ids.banSrcTwin } })
-    expect(lifted.liftedAt).not.toBeNull()
-    expect(lifted.liftedById).toBe(ceo.id)
-    expect(lifted.liftReason).toBe('merged into Dlv Target')
+    expect((await prisma.customerBan.findUniqueOrThrow({ where: { id: ids.banDstTwin } })).liftReason).toBe('forgiven')
     const activeAuto = await prisma.customerBan.findMany({ where: { customerId: ids.twinCust, liftedAt: null, bannedById: null } })
-    expect(activeAuto.map((b) => b.id)).toEqual([ids.banDstTwin])
+    expect(activeAuto.map((b) => b.id)).toEqual([ids.banSrcTwin])
     // The customer stays blocked; the manual ban is untouched.
     expect((await prisma.customerBan.findUniqueOrThrow({ where: { id: ids.banManual } })).liftedAt).toBeNull()
     expect(await prisma.customerStrike.count({ where: { tenantId: S.id } })).toBe(0)

@@ -51,7 +51,7 @@ export default function HeadOfficeHome() {
 
       {headOffices.map((ho) => <HeadOfficeBlock key={ho.id} ho={ho} reach={reach} isCeo={isCeo} />)}
 
-      {headOffices.length === 0 && reach.length > 0 && <ServedList companies={reach.map((r) => ({ id: r.companyId, name: r.name }))} />}
+      {headOffices.length === 0 && reach.length > 0 && <ServedList companies={reach.map((r) => ({ id: r.companyId, name: r.name }))} reach={reach} />}
 
       <Links isCeo={isCeo} hoIds={headOffices.map((h) => h.id)} />
     </div>
@@ -74,8 +74,13 @@ function HandedToYou({ rows }: { rows: MyDelegation[] }) {
   )
 }
 
-function ServedList({ companies }: { companies: Array<{ id: string; name: string }> }) {
+function ServedList({ companies, reach }: { companies: Array<{ id: string; name: string }>; reach: ReachEntry[] }) {
   const { lensId, setLens } = useLens()
+  // Only a company in head-office REACH can be viewed through the lens. A
+  // company this login is a member of is never in reach (useLens would drop
+  // the lens at once, and the header would re-point a member's requests), so
+  // it gets no View button; the company switcher is the way into it.
+  const inReach = (id: string): boolean => reach.some((r) => r.companyId === id)
   return (
     <section className="s-card p-5">
       <h2 className="text-sm font-black text-white/85">Companies you serve</h2>
@@ -86,6 +91,7 @@ function ServedList({ companies }: { companies: Array<{ id: string; name: string
               <span className="flex-1 min-w-0 text-sm font-bold text-white/85 truncate">{c.name}</span>
               {lensId === c.id
                 ? <span className="s-badge-green">Viewing</span>
+                : !inReach(c.id) ? null
                 : <button type="button" onClick={() => setLens(c.id)} className="text-xs font-bold hover:underline" style={{ color: 'var(--erp-primary-ink)' }}>View</button>}
             </li>
           ))}
@@ -121,7 +127,7 @@ function HeadOfficeBlock({ ho, reach, isCeo }: { ho: MyHeadOffice; reach: ReachE
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-black text-white/90">{ho.name}</h2>
-      <ServedList companies={served} />
+      <ServedList companies={served} reach={reach} />
 
       {shares.length > 0 && (
         <div className="s-card p-5">

@@ -19,9 +19,11 @@ import { Select } from '@/components/ui/Select'
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
 // own copy of both (live-counted "smart segments" and a second composer).
 //
-// Blocking a customer raises a ban for the ACTIVE company (POST /crm/bans —
-// owner decision 15: it applies at that company's brands only) and unblocking
-// lifts it; the old isBlacklisted toggle is gone.
+// Blocking a customer raises a ban stamped with the ACTIVE company (POST
+// /crm/bans). A ban is servd-wide (owner, 2026-10-15): it applies at every
+// servd brand. Unblocking lifts this company's ban; a ban another servd kitchen
+// raised shows anonymised (id null) and only that kitchen can lift it. The old
+// isBlacklisted toggle is gone.
 
 // The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts). The marketing roles
 // (marketing, brand_manager) read and work this page, but blocking a customer
@@ -34,7 +36,7 @@ import { Select } from '@/components/ui/Select'
 // payment reference # (required on every method), through the shared
 // <PaymentReceivedFields>. A reference used before is a notice, never a block.
 
-interface ActiveBan { id: string; reason: string; bannedAt: string }
+interface ActiveBan { id: string | null; reason: string; bannedAt: string; otherKitchen?: boolean }
 
 interface Customer {
   id: string; name: string; phone: string | null; email: string | null
@@ -56,7 +58,7 @@ export default function CRMPage() {
   const isManager = managerRoles.has(me?.role ?? '')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [banModal, setBanModal] = useState<{ id: string; name: string; ban: ActiveBan | null } | null>(null)
+  const [banModal, setBanModal] = useState<{ id: string; name: string; ban: ActiveBan | null; elsewhere?: boolean } | null>(null)
   const [banReason, setBanReason] = useState('')
   const [banError, setBanError] = useState<string | null>(null)
   const [walletModal, setWalletModal] = useState<{ id: string; name: string } | null>(null)
@@ -187,7 +189,9 @@ export default function CRMPage() {
             <p className="text-xs text-s-muted">
               {banModal.ban
                 ? `Blocked: ${banModal.ban.reason}. Unblocking lifts this company's ban; the record stays on the naughty list.`
-                : "They won't be able to order or book at this company's brands, and won't receive its campaigns. Other companies are not affected."}
+                : banModal.elsewhere
+                  ? 'Already blocked across servd by another servd kitchen (only that kitchen can lift it). Blocking here adds this company\'s own ban, which stays if theirs is lifted.'
+                  : "They won't be able to order or book at any servd brand, and won't receive campaigns."}
             </p>
             <input value={banReason} onChange={(e) => setBanReason(e.target.value)}
               placeholder={banModal.ban ? 'Why unblock? (required)' : 'Reason (required)'} className={inp} />
@@ -385,13 +389,17 @@ export default function CRMPage() {
                       + Top up wallet
                     </button>
                     <button
-                      onClick={() => setBanModal({ id: customerDetail.id, name: customerDetail.name, ban: customerDetail.activeBan })}
+                      onClick={() => setBanModal({
+                        id: customerDetail.id, name: customerDetail.name,
+                        ban: customerDetail.activeBan?.id ? customerDetail.activeBan : null,
+                        elsewhere: !!customerDetail.activeBan && !customerDetail.activeBan.id,
+                      })}
                       className={`rounded-lg text-xs font-bold px-3 py-1.5 transition-colors ${
-                        customerDetail.activeBan
+                        customerDetail.activeBan?.id
                           ? 'bg-primary/20 text-primary-ink hover:bg-primary/30'
                           : 'bg-s-red/20 text-s-red hover:bg-s-red/30'
                       }`}>
-                      {customerDetail.activeBan ? 'Unblock' : 'Block'}
+                      {customerDetail.activeBan?.id ? 'Unblock' : 'Block'}
                     </button>
                   </div>
                   )}

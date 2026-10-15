@@ -45,7 +45,8 @@ interface CustomerContext {
     reservations:   Array<{ id: string; status: string; partySize: number; startTime: string; isVip: boolean; concept: { name: string; slug: string } }>
     openComplaints: Array<{ id: string; title: string; category: string; status: string; priority: string; createdAt: string; concept: { name: string } }>
     reviews:        Array<{ id: string; rating: number; comment: string | null; tags: string[]; createdAt: string; concept: { name: string } }>
-    strikes:        Array<{ id: string; kind: string; severity: number; reason: string | null; recordedAt: string; reversedAt: string | null; expiresAt: string | null }>
+    // Servd-wide (owner 2026-10-15): otherKitchen = recorded by another servd company, details withheld.
+    strikes:        Array<{ id: string; kind: string; severity: number; reason: string | null; recordedAt: string; reversedAt: string | null; expiresAt: string | null; otherKitchen?: boolean }>
   }
 }
 
@@ -210,7 +211,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
           <div className="flex items-center justify-between mb-2">
             <div className="text-[10px] font-bold uppercase tracking-wider"
               style={{ color: isBanned ? '#b42318' : '#a15c00' }}>
-              {isBanned ? 'Banned · 3 strikes hit' : `Strikes (${data.strikeCount}/3)`}
+              {isBanned ? 'Banned across servd' : `Strikes across servd (${data.strikeCount}/3)`}
             </div>
             <a href="/crm/naughty-list"
               className="text-[10px] text-white/45 hover:text-white/85">manage →</a>
@@ -222,6 +223,7 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
                 <span className="text-white/80 truncate">
                   {s.kind.replace(/_/g, ' ')}
                   {s.severity > 1 && <span className="ml-1 text-rose-700">×{s.severity}</span>}
+                  {s.otherKitchen && <span className="ml-1 text-white/45">· another servd kitchen</span>}
                 </span>
                 <span className="text-white/40 whitespace-nowrap">{humanAgo(s.recordedAt)}</span>
               </div>

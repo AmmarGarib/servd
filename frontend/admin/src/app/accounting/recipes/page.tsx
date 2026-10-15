@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
@@ -236,14 +236,18 @@ export default function RecipesPage() {
   // Submit a testing (iteration) recipe for CEO sign-off — moves it to
   // pending_approval so it appears in /accounting/recipes/approvals. Saves the
   // operator from opening the editor just to hit "Submit for production".
+  // The id of the recipe just sent for approval — the notice shows on that
+  // row only. A second submit restarts the timer.
   const [sentNotice, setSentNotice] = useState<string | null>(null)
+  const sentNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const submitMut = useMutation({
     mutationFn: (id: string) => api.post(`/recipes/${id}/submit`, {}),
-    onSuccess: (res) => {
+    onSuccess: (res, id) => {
       const r = res as { status?: string; viaHeadOfficeId?: string | null } | null
       if (r && ((r.status && ['pending_approval', 'submitted'].includes(r.status)) || r.viaHeadOfficeId)) {
-        setSentNotice('Sent for approval')
-        setTimeout(() => setSentNotice(null), 6000)
+        if (sentNoticeTimer.current) clearTimeout(sentNoticeTimer.current)
+        setSentNotice(id)
+        sentNoticeTimer.current = setTimeout(() => { setSentNotice(null); sentNoticeTimer.current = null }, 6000)
       }
       return qc.invalidateQueries({ queryKey: ['recipes'] })
     },
@@ -629,7 +633,7 @@ export default function RecipesPage() {
                               Submit
                             </button>
                           )}
-                          {sentNotice && <span className="text-[11px] font-bold text-success self-center">{sentNotice}</span>}
+                          {sentNotice === r.id && <span className="text-[11px] font-bold text-success self-center">Sent for approval</span>}
                           <button onClick={() => openEdit(r)}
                             className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-primary/10 transition-colors">
                             Edit

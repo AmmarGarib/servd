@@ -522,9 +522,9 @@ export async function runReferralRewardTrigger() {
       continue
     }
 
-    // Bans are per company: a referrer banned by the company that would pay
-    // earns nothing there (and is not told); the referee is still welcomed and
-    // the referral stamped. A ban held elsewhere does not stop this payout.
+    // Bans are servd-wide (owner, 2026-10-15): a banned referrer earns
+    // nothing (and is not told); the referee is still welcomed and the
+    // referral stamped.
     const referrerBanned = !!(await activeBanAtCompany({ customerId: referrer.id, email: referrer.email, phone: referrer.phone, tenantId }))
 
     // Both bonuses through the loyalty service, in one transaction with the

@@ -21,10 +21,9 @@ const API_BASE = () => process.env['API_URL'] ?? 'http://localhost:3001'
 /**
  * Platform-level reachability, for automated messages that no one company
  * sends (activation, first-order welcome, second-order nudge): not deleted
- * and not unsubscribed. Bans are per company (owner decision 15) and are NOT
- * read here: Customer.bannedAt says "some company has a ban", which must not
- * silence another company's message. A caller that knows the sending company
- * checks activeBanAtCompany / reachableAtCompany for it.
+ * and not unsubscribed. Bans (servd-wide since 2026-10-15) are NOT read here;
+ * a caller that knows the sending company checks activeBanAtCompany /
+ * reachableAtCompany, which read every active ban.
  */
 export const reachableCustomer: Prisma.CustomerWhereInput = {
   deletedAt: null,
@@ -33,8 +32,8 @@ export const reachableCustomer: Prisma.CustomerWhereInput = {
 
 /**
  * Reachability for a message ONE company sends (campaigns, win-back): not
- * deleted, not unsubscribed, and not banned BY THAT COMPANY (owner decision
- * 15 — another company's ban is not this company's business). Combine with
+ * deleted, not unsubscribed, and not banned anywhere on servd (owner,
+ * 2026-10-15: a ban is on the customer's servd account). Combine with
  * `companyAudience` for the brand audience.
  */
 export async function reachableAtCompany(tenantId: string): Promise<Prisma.CustomerWhereInput> {

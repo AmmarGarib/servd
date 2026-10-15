@@ -1158,7 +1158,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // Naughty-list gate. Reject the booking outright if the guest's
       // phone or email matches an active ban — they get the same clean
       // 403 a banned signup gets.
-      // A ban applies at the company that raised it (owner decision 15).
+      // A ban applies servd-wide, whichever company raised it (owner, 2026-10-15).
       const { assertNotBannedAtCompany } = await import('../../lib/strikes.js')
       await assertNotBannedAtCompany({
         email: body.guestEmail ?? null,

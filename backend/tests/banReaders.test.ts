@@ -1,4 +1,4 @@
-// DLV-banreaders — bans are per company, and complaint readers ignore ban appeals.
+// DLV-banreaders — bans are servd-wide (owner 2026-10-15), and complaint readers ignore ban appeals.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 
@@ -34,7 +34,7 @@ async function order(customerId: string, conceptId: string, totalCents: number) 
     } as never,
   })
 }
-// A ban applies to the companies of whoever raised it (modules/crm/customerScope.ts banCompanies).
+// A ban is stamped with the company that raised it and applies at every company.
 const bannerOf = new Map<string, string>()
 async function ban(customerId: string, tenantId: string) {
   let uid = bannerOf.get(tenantId)
@@ -72,14 +72,14 @@ describe('activate (platform welcome, no sending company)', () => {
 })
 
 describe('audience', () => {
-  it('a customer banned at A is out of A audience and in B audience', async () => {
+  it('a customer banned at A is out of A audience and out of B audience', async () => {
     const c = await customer('aud')
     await ban(c.id, tA)
     await prisma.customer.update({ where: { id: c.id }, data: { bannedAt: new Date() } })
     const inA = await prisma.customer.count({ where: { AND: [{ id: c.id }, await reachableAtCompany(tA)] } })
     const inB = await prisma.customer.count({ where: { AND: [{ id: c.id }, await reachableAtCompany(tB)] } })
     expect(inA).toBe(0)
-    expect(inB).toBe(1)
+    expect(inB).toBe(0)
   })
 })
 
@@ -93,14 +93,15 @@ describe('referral', () => {
     await order(referee.id, orderConcept, 100_000)
     return { referrer, referee }
   }
-  it('a referrer banned at A is paid and told at B; at A the referee is paid, the referrer neither paid nor told', async () => {
+  it('a referrer banned at A is neither paid nor told at B or A; the referees are paid', async () => {
     const atB = await referral('refB', cB, tA)
     const atA = await referral('refA', cA, tA)
     sent.length = 0
     await loyalty.runReferralRewardTrigger()
     const earned = (cid: string, t: string) => prisma.loyaltyTransaction.count({ where: { type: 'earn', loyaltyAccount: { tenantId: t, customerId: cid } } })
-    expect(await earned(atB.referrer.id, tB)).toBeGreaterThan(0)
-    expect(sent.some((m) => m.to === mail('refB-referrer'))).toBe(true)
+    expect(await earned(atB.referrer.id, tB)).toBe(0)
+    expect(await earned(atB.referee.id, tB)).toBeGreaterThan(0)
+    expect(sent.some((m) => m.to === mail('refB-referrer'))).toBe(false)
     expect(await earned(atA.referrer.id, tA)).toBe(0)
     expect(await earned(atA.referee.id, tA)).toBeGreaterThan(0)
     expect((await prisma.customer.findUnique({ where: { id: atA.referee.id } }))!.referralRewardCreditedAt).not.toBeNull()

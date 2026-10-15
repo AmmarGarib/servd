@@ -41,6 +41,8 @@ interface Strike {
   expiresAt: string | null
   reversedAt: string | null
   reversalReason: string | null
+  /** Recorded by another servd company: details withheld. */
+  otherKitchen?: boolean
 }
 
 interface Row {
@@ -51,7 +53,9 @@ interface Row {
 }
 
 interface Ban {
-  id: string
+  /** null when another servd kitchen raised it (shown anonymised). */
+  id: string | null
+  otherKitchen?: boolean
   customerId: string | null
   email: string | null
   phone: string | null
@@ -89,8 +93,9 @@ export default function NaughtyListPage() {
         <h1 className="text-2xl font-black text-white/90 mt-2">Naughty list</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Three strikes and you&rsquo;re out. Customers who no-show, refuse cash deliveries, or refuse food at the door rack up strikes.
-          At 3 active strikes their email + phone get added to the ban list and they can&rsquo;t reserve or order at this company&rsquo;s brands again until a manager lifts it.
-          A ban applies only to the company that raised it; the Block button on a customer&rsquo;s CRM profile raises one too.
+          Strikes and bans are on the customer&rsquo;s servd account: strikes from every servd kitchen count together, and at 3 active strikes
+          their email + phone get added to the ban list and they can&rsquo;t reserve or order at any servd brand until the kitchen that raised the ban lifts it.
+          Another kitchen&rsquo;s strikes and bans show here as &ldquo;another servd kitchen&rdquo;; the Block button on a customer&rsquo;s CRM profile raises a ban too.
         </p>
       </header>
 
@@ -238,6 +243,7 @@ function StrikeLine({ strike }: { strike: Strike }) {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <span className="font-bold text-white/85">{fmtKind(strike.kind)}</span>
+          {strike.otherKitchen && <span className="ml-2 text-[10px] text-white/45">· another servd kitchen</span>}
           {strike.severity > 1 && (
             <span className="ml-1.5 text-[9px] font-bold px-1.5 rounded text-rose-700"
               style={{ background: 'rgba(244,63,94,0.15)' }}>×{strike.severity}</span>
@@ -246,7 +252,7 @@ function StrikeLine({ strike }: { strike: Strike }) {
           {isReversed && <span className="ml-2 text-[10px] text-primary-ink">↺ reversed</span>}
           {isExpired && !isReversed && <span className="ml-2 text-[10px] text-white/40">expired</span>}
         </div>
-        {isManager && !isReversed && !isExpired && (
+        {isManager && !isReversed && !isExpired && !strike.otherKitchen && (
           <button onClick={() => setShowForgive(!showForgive)}
             className="text-[10px] text-primary-ink hover:underline whitespace-nowrap">
             forgive
@@ -280,7 +286,8 @@ function LiftBanForm({ customerId }: { customerId: string }) {
     queryFn: () => api.get<Ban[]>('/crm/bans?activeOnly=1'),
     staleTime: 30_000,
   })
-  const ban = bans?.find((b) => b.customerId === customerId && !b.liftedAt)
+  const ban = bans?.find((b) => b.customerId === customerId && !b.liftedAt && !!b.id)
+  const elsewhere = bans?.some((b) => b.customerId === customerId && !b.liftedAt && b.otherKitchen)
 
   const lift = useMutation({
     mutationFn: () => api.post(`/crm/bans/${ban!.id}/lift`, { reason }),
@@ -290,6 +297,7 @@ function LiftBanForm({ customerId }: { customerId: string }) {
     },
   })
 
+  if (!ban && elsewhere) return <p className="text-xs text-white/40">Blocked across servd by another servd kitchen &mdash; only that kitchen can lift it.</p>
   if (!ban) return <p className="text-xs text-white/40">Ban already lifted.</p>
   return (
     <div>
@@ -335,13 +343,13 @@ function BansList() {
       {active.length > 0 && (
         <section>
           <p className="text-[11px] font-black uppercase tracking-[0.2em] text-rose-700 mb-2">Active ({active.length})</p>
-          <div className="space-y-2">{active.map((b) => <BanRow key={b.id} ban={b} />)}</div>
+          <div className="space-y-2">{active.map((b) => <BanRow key={b.id ?? `other-${b.customerId}-${b.bannedAt}`} ban={b} />)}</div>
         </section>
       )}
       {lifted.length > 0 && (
         <section>
           <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/40 mb-2">Lifted / expired ({lifted.length})</p>
-          <div className="space-y-2">{lifted.map((b) => <BanRow key={b.id} ban={b} />)}</div>
+          <div className="space-y-2">{lifted.map((b) => <BanRow key={b.id ?? `other-${b.customerId}-${b.bannedAt}`} ban={b} />)}</div>
         </section>
       )}
     </div>

@@ -1,7 +1,10 @@
-// Strikes and bans per company (owner 2026-10-13; CLAUDE.md: bans stay inside
-// the company that issued them). Three strikes at company A block the customer
-// at A's brands only; company B is unaffected. Two companies, one brand each,
-// a customer who orders at both.
+// Strikes and bans are SERVD-WIDE (owner decision 2026-10-15: "If strikes and
+// bans is about customers accounts then its ok, let it be across servd."). A
+// strike at company A and one at company B count together; a ban raised in A
+// blocks the customer at B too. Each strike / ban still records the company
+// whose incident it is; another company sees those incidents only as
+// "Another servd kitchen". Two companies, one brand each, a customer who
+// orders at both.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -12,7 +15,7 @@ import { AppError } from '../src/lib/errors.js'
 import { crmRoutes } from '../src/modules/crm/routes.js'
 import {
   recordStrike, maybePromoteToBan, reverseStrike, assertNotBannedAtCompany, activeBanAtCompany,
-  bannedCustomerIdsAtCompany, activeStrikeWeightAt,
+  bannedCustomerIdsAtCompany, activeStrikeWeight,
 } from '../src/lib/strikes.js'
 import { markNoShow } from '../src/modules/reservations/noShow.js'
 
@@ -74,52 +77,51 @@ afterAll(async () => {
   await app?.close()
 })
 
-describe('three strikes block per company', () => {
+describe('three strikes block servd-wide', () => {
   let cust: { id: string; phone: string | null }
   const aStrikes: string[] = []
 
-  it('2 strikes at A + 1 at B → no ban; the mirror sums both', async () => {
+  it('1 strike at A + 1 at B count together (weight 2, no ban); each row keeps its company', async () => {
     cust = await customer('three', [conceptA, conceptB])
-    for (let i = 0; i < 2; i++) {
-      const r = await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantA, reason: `a${i}` })
-      expect(r).toMatchObject({ recorded: true, duplicate: false })
-      expect(r.banId).toBeUndefined()
-    }
-    await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantB, reason: 'b0' })
+    const r1 = await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantA, reason: 'a0' })
+    expect(r1).toMatchObject({ recorded: true, duplicate: false })
+    const r2 = await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantB, reason: 'b0' })
+    expect(r2.banId).toBeUndefined()
     expect(await activeBans(cust.id)).toHaveLength(0)
+    expect(await activeStrikeWeight(prisma, cust.id)).toBe(2)
     const c = await prisma.customer.findUniqueOrThrow({ where: { id: cust.id } })
-    expect(c.strikeCount).toBe(3)
+    expect(c.strikeCount).toBe(2)
     expect(c.bannedAt).toBeNull()
     const rows = await prisma.customerStrike.findMany({ where: { customerId: cust.id } })
-    expect(rows.map((r) => r.tenantId).sort()).toEqual([tenantA, tenantA, tenantB].sort())
-    aStrikes.push(...rows.filter((r) => r.tenantId === tenantA).map((r) => r.id))
+    expect(rows.map((r) => r.tenantId).sort()).toEqual([tenantA, tenantB].sort())
+    aStrikes.push(rows.find((r) => r.tenantId === tenantA)!.id)
   })
 
-  it('a third at A → a ban with tenantId A; A refuses with details, B allows', async () => {
-    const r = await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantA, reason: 'a2' })
+  it('a third at B → one ban stamped B (the raising company); refused at A AND B, never naming a company', async () => {
+    const r = await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantB, reason: 'b1' })
     expect(r.recorded).toBe(true)
     expect(r.banId).toBeTruthy()
     const bans = await activeBans(cust.id)
     expect(bans).toHaveLength(1)
-    expect(bans[0]).toMatchObject({ id: r.banId, tenantId: tenantA, bannedById: null, phone: cust.phone })
+    expect(bans[0]).toMatchObject({ id: r.banId, tenantId: tenantB, bannedById: null, phone: cust.phone })
 
-    const err = await assertNotBannedAtCompany({ customerId: cust.id, tenantId: tenantA, intent: 'order' }).catch((e) => e)
-    expect(err).toBeInstanceOf(AppError)
-    expect(err).toMatchObject({ code: 'BANNED', statusCode: 403 })
-    expect(err.details).toEqual({ banId: r.banId, companyName: 'Strikes A Co', appeal: { status: 'none', at: null } })
-    // A fresh account with the same number is refused at A too, never at B.
+    for (const t of [tenantA, tenantB]) {
+      const err = await assertNotBannedAtCompany({ customerId: cust.id, tenantId: t, intent: 'order' }).catch((e) => e)
+      expect(err).toBeInstanceOf(AppError)
+      expect(err).toMatchObject({ code: 'BANNED', statusCode: 403 })
+      expect(err.details).toEqual({ banId: r.banId, companyName: null, appeal: { status: 'none', at: null } })
+    }
+    // A fresh account with the same number is refused everywhere.
     expect(await activeBanAtCompany({ phone: cust.phone, tenantId: tenantA })).not.toBeNull()
-    await expect(assertNotBannedAtCompany({ customerId: cust.id, tenantId: tenantB, intent: 'order' })).resolves.toBeUndefined()
     expect(await bannedCustomerIdsAtCompany(tenantA)).toContain(cust.id)
-    expect(await bannedCustomerIdsAtCompany(tenantB)).not.toContain(cust.id)
+    expect(await bannedCustomerIdsAtCompany(tenantB)).toContain(cust.id)
     expect((await prisma.customer.findUniqueOrThrow({ where: { id: cust.id } })).bannedAt).not.toBeNull()
-    aStrikes.push((await prisma.customerStrike.findFirstOrThrow({ where: { customerId: cust.id, reason: 'a2' } })).id)
   })
 
   it('an open appeal shows in the BANNED details', async () => {
     const ban = (await activeBans(cust.id))[0]!
     const appeal = await prisma.orderComplaint.create({
-      data: { conceptId: conceptA, customerId: cust.id, title: 'Ban appeal', description: 'please', category: 'other', kind: 'ban_appeal', banId: ban.id },
+      data: { conceptId: conceptB, customerId: cust.id, title: 'Ban appeal', description: 'please', category: 'other', kind: 'ban_appeal', banId: ban.id },
     })
     const err = await assertNotBannedAtCompany({ customerId: cust.id, tenantId: tenantA }).catch((e) => e)
     expect(err.details.appeal.status).toBe('open')
@@ -128,22 +130,16 @@ describe('three strikes block per company', () => {
     expect(err2.details.appeal.status).toBe('declined')
   })
 
-  it("reversing an A strike lifts A's auto ban only", async () => {
-    // B reaches three too and gets its own auto ban.
-    await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantB, reason: 'b1' })
-    await recordStrike({ customerId: cust.id, kind: 'other', tenantId: tenantB, reason: 'b2' })
-    expect((await activeBans(cust.id)).map((b) => b.tenantId).sort()).toEqual([tenantA, tenantB].sort())
-
+  it("reversing A's strike drops the servd-wide weight below 3 and lifts B's auto ban", async () => {
     const r = await reverseStrike(aStrikes[0]!, users.mgrA!.id, 'forgiven')
     expect(r.unbanned).toBe(true)
-    const left = await activeBans(cust.id)
-    expect(left.map((b) => b.tenantId)).toEqual([tenantB])
+    expect(await activeBans(cust.id)).toHaveLength(0)
     await expect(assertNotBannedAtCompany({ customerId: cust.id, tenantId: tenantA })).resolves.toBeUndefined()
-    await expect(assertNotBannedAtCompany({ customerId: cust.id, tenantId: tenantB })).rejects.toMatchObject({ code: 'BANNED' })
-    expect(await activeStrikeWeightAt(prisma, cust.id, tenantA)).toBe(2)
+    await expect(assertNotBannedAtCompany({ customerId: cust.id, tenantId: tenantB })).resolves.toBeUndefined()
+    expect(await activeStrikeWeight(prisma, cust.id)).toBe(2)
     const c = await prisma.customer.findUniqueOrThrow({ where: { id: cust.id } })
-    expect(c.strikeCount).toBe(5)
-    expect(c.bannedAt).not.toBeNull()   // B's ban still in force
+    expect(c.strikeCount).toBe(2)
+    expect(c.bannedAt).toBeNull()
   })
 })
 
@@ -163,14 +159,28 @@ describe('promotion details', () => {
     expect(bans[0]!.tenantId).toBe(tenantA)
   })
 
-  it("a staff ban at B does not stop A's auto ban", async () => {
+  it('a staff ban at B already blocks everywhere: three strikes at A add no second ban', async () => {
     const c = await customer('staffB', [conceptA, conceptB])
     const staff = await call('mgrB', 'POST', '/crm/bans', { customerId: c.id, reason: 'rude to staff' })
     expect(staff.statusCode).toBe(201)
     expect(staff.json().tenantId).toBe(tenantB)
-    for (let i = 0; i < 3; i++) await recordStrike({ customerId: c.id, kind: 'other', tenantId: tenantA })
+    await expect(assertNotBannedAtCompany({ customerId: c.id, tenantId: tenantA })).rejects.toMatchObject({ code: 'BANNED' })
+    let last: { banId?: string } = {}
+    for (let i = 0; i < 3; i++) last = await recordStrike({ customerId: c.id, kind: 'other', tenantId: tenantA })
+    expect(last.banId).toBe(staff.json().id)
     const bans = await activeBans(c.id)
-    expect(bans.map((b) => [b.tenantId, b.bannedById === null]).sort()).toEqual([[tenantA, true], [tenantB, false]].sort())
+    expect(bans.map((b) => [b.tenantId, b.bannedById === null])).toEqual([[tenantB, false]])
+  })
+
+  it('racing strikes at TWO companies create one ban', async () => {
+    const c = await customer('race2', [conceptA, conceptB])
+    await recordStrike({ customerId: c.id, kind: 'other', tenantId: tenantA })
+    await recordStrike({ customerId: c.id, kind: 'other', tenantId: tenantB })
+    await Promise.all([
+      recordStrike({ customerId: c.id, kind: 'other', tenantId: tenantA }),
+      recordStrike({ customerId: c.id, kind: 'other', tenantId: tenantB }),
+    ])
+    expect(await activeBans(c.id)).toHaveLength(1)
   })
 
   it('a refused-at-door strike always weighs 1', async () => {
@@ -272,6 +282,66 @@ describe('CRM routes', () => {
     expect(await prisma.auditLog.count({ where: { action: 'customer_ban.release_contact', entityId: banId, tenantId: tenantA } })).toBe(1)
     // Nothing left to release.
     expect((await call('mgrA', 'POST', `/crm/bans/${banId}/release-contact`, { contact: 'phone', reason: 'recycled number' })).statusCode).toBe(409)
+  })
+
+  it("B sees A's incidents only as 'Another servd kitchen'; A's ban blocks at B; only A or the CEO lifts it", async () => {
+    const c = await customer('shared', [conceptA, conceptB])
+    expect((await call('mgrA', 'POST', '/crm/strikes', { customerId: c.id, kind: 'other', reason: 'secret note at A' })).statusCode).toBe(201)
+    const sB = await call('mgrB', 'POST', '/crm/strikes', { customerId: c.id, kind: 'chargeback', reason: 'B note' })
+    expect(sB.statusCode).toBe(201)
+    expect(sB.json().customer.strikeCount).toBe(2)   // servd-wide: A's + B's
+    const aStrike = await prisma.customerStrike.findFirstOrThrow({ where: { customerId: c.id, tenantId: tenantA } })
+
+    type Row = { customer: { id: string; strikeCount: number; bannedAt: string | null }; activeBanId: string | null; banRaisedHere: boolean; strikes: Array<{ id: string; reason: string | null; otherKitchen: boolean; where: string | null }> }
+    const rowAt = async (who: string) => ((await call(who, 'GET', '/crm/naughty-list')).json() as Row[]).find((r) => r.customer.id === c.id)!
+    const atB = await rowAt('mgrB')
+    expect(atB.customer.strikeCount).toBe(2)
+    const aSeenAtB = atB.strikes.find((st) => st.id === aStrike.id)!
+    expect(aSeenAtB).toMatchObject({ reason: null, otherKitchen: true, where: 'Another servd kitchen' })
+    expect(JSON.stringify(atB)).not.toContain('secret note at A')
+    expect(atB.strikes.find((st) => st.id !== aStrike.id)).toMatchObject({ reason: 'B note', otherKitchen: false })
+    // B cannot forgive A's strike.
+    expect((await call('mgrB', 'POST', `/crm/strikes/${aStrike.id}/reverse`, { reason: 'x' })).statusCode).toBe(404)
+
+    // A blocks: the block applies at B's brands too.
+    const ban = await call('mgrA', 'POST', '/crm/bans', { customerId: c.id, reason: 'secret block reason A' })
+    expect(ban.statusCode).toBe(201)
+    const banId = ban.json().id as string
+    await expect(assertNotBannedAtCompany({ customerId: c.id, tenantId: tenantB, intent: 'order' })).rejects.toMatchObject({ code: 'BANNED' })
+
+    // B sees the standing (blocked, count) but not A's ban id or reason.
+    const atB2 = await rowAt('mgrB')
+    expect(atB2.customer.bannedAt).not.toBeNull()
+    expect(atB2.activeBanId).toBeNull()
+    expect(atB2.banRaisedHere).toBe(false)
+    const profB = (await call('mgrB', 'GET', `/crm/customers/${c.id}`)).json()
+    expect(profB.activeBan).toMatchObject({ id: null, otherKitchen: true })
+    const ctxB = (await call('mgrB', 'GET', `/crm/customers/${c.id}/context`)).json()
+    expect(ctxB.bannedAt).not.toBeNull()
+    expect(ctxB.activeBan.id).toBeNull()
+    expect(JSON.stringify(ctxB)).not.toMatch(/secret (note|block reason) at A|secret block reason A/)
+    const bansB = (await call('mgrB', 'GET', '/crm/bans')).json() as Array<{ id: string | null; customerId: string; reason: string; otherKitchen: boolean }>
+    expect(bansB.map((b) => b.id)).not.toContain(banId)
+    expect(bansB.find((b) => b.customerId === c.id)).toMatchObject({ id: null, otherKitchen: true })
+    expect(JSON.stringify(bansB)).not.toContain('secret block reason A')
+    // A sees its own in full.
+    expect((await call('mgrA', 'GET', `/crm/customers/${c.id}`)).json().activeBan).toMatchObject({ id: banId, raisedHere: true })
+    // A's CEO sees A's block in full.
+    const atCeo = (await call('ceoA', 'GET', `/crm/customers/${c.id}/context`)).json()
+    expect(atCeo.activeBan.id).toBe(banId)
+
+    // Only the raising company (or the CEO) lifts it.
+    expect((await call('mgrB', 'POST', `/crm/bans/${banId}/lift`, { reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrA', 'POST', `/crm/bans/${banId}/lift`, { reason: 'paid up' })).statusCode).toBe(200)
+    await expect(assertNotBannedAtCompany({ customerId: c.id, tenantId: tenantB })).resolves.toBeUndefined()
+  })
+
+  it("an admin who is not a member of the raising company cannot lift its ban (company separation holds)", async () => {
+    const c = await customer('ceolift', [conceptA, conceptB])
+    const ban = await call('mgrB', 'POST', '/crm/bans', { customerId: c.id, reason: 'x y z' })
+    expect((await call('ceoA', 'POST', `/crm/bans/${ban.json().id}/lift`, { reason: 'reviewed' })).statusCode).toBe(404)
+    expect((await call('ceoA', 'GET', `/crm/customers/${c.id}`)).json().activeBan).toMatchObject({ id: null, otherKitchen: true })
+    expect((await call('mgrB', 'POST', `/crm/bans/${ban.json().id}/lift`, { reason: 'reviewed' })).statusCode).toBe(200)
   })
 
   it("the profile's open complaints leave out ban appeals", async () => {

@@ -177,36 +177,44 @@ describe('customer notes and conversations', () => {
   })
 })
 
-// ─── #29 strikes and bans (decision 15; tenantId column since wave B) ─────────
+// ─── #29 strikes and bans — servd-wide standing, per-company details ─────────
+// (owner 2026-10-15: strikes and bans are the customer's servd-wide standing;
+// the incident's details and lifting stay with the company that raised it.)
 
-describe('strikes and bans belong to the company that raised them', () => {
+describe('strikes and bans: servd-wide standing, raised-by company decides', () => {
   it("B cannot strike or ban A's customer", async () => {
     expect((await call('mgrB', 'POST', '/crm/strikes', { customerId: custA, kind: 'other', reason: 'x' })).statusCode).toBe(404)
     expect((await call('mgrB', 'POST', '/crm/bans', { customerId: custA, reason: 'nope' })).statusCode).toBe(404)
   })
 
-  it("A's strike on a shared customer is invisible to B and not reversible by B", async () => {
+  it("A's strike on a shared customer counts at B but is anonymised there and not reversible by B", async () => {
     expect((await call('mgrA', 'POST', '/crm/strikes', { customerId: custShared, kind: 'other', reason: 'rude' })).statusCode).toBe(201)
     const strike = await prisma.customerStrike.findFirst({ where: { customerId: custShared } })
     // Stamped with the ACTIVE company (column, not attribution).
     expect(strike!.tenantId).toBe(tenantA)
-    const nlB = await call('mgrB', 'GET', '/crm/naughty-list')
-    expect(ids(nlB.json())).not.toContain(custShared)
+    const nlB = (await call('mgrB', 'GET', '/crm/naughty-list')).json() as Array<{ customer: { id: string; strikeCount: number }; strikes: Array<{ id: string; reason: string | null; where: string | null }> }>
+    const rowB = nlB.find((r) => r.customer.id === custShared)!
+    expect(rowB.customer.strikeCount).toBe(1)
+    expect(rowB.strikes.find((s) => s.id === strike!.id)).toMatchObject({ reason: null, where: 'Another servd kitchen' })
     const nlA = await call('mgrA', 'GET', '/crm/naughty-list')
     expect(ids(nlA.json())).toContain(custShared)
     expect((await call('mgrB', 'POST', `/crm/strikes/${strike!.id}/reverse`, { reason: 'x' })).statusCode).toBe(404)
     expect((await call('mgrA', 'POST', `/crm/strikes/${strike!.id}/reverse`, { reason: 'ok' })).statusCode).toBe(200)
   })
 
-  it("A's ban on a shared customer is not listed or liftable by B", async () => {
+  it("A's ban on a shared customer shows at B only anonymised, and B cannot lift it", async () => {
     const ban = await call('mgrA', 'POST', '/crm/bans', { customerId: custShared, reason: 'dine and dash' })
     expect(ban.statusCode).toBe(201)
     expect(ban.json().tenantId).toBe(tenantA)
     const id = ban.json().id
-    expect(ids((await call('mgrB', 'GET', '/crm/bans')).json())).not.toContain(id)
+    const bansB = (await call('mgrB', 'GET', '/crm/bans')).json() as Array<{ id: string | null; customerId: string; reason: string }>
+    expect(bansB.map((b) => b.id)).not.toContain(id)
+    expect(bansB.find((b) => b.customerId === custShared)).toMatchObject({ id: null, reason: 'Blocked by another servd kitchen' })
     expect(ids((await call('mgrA', 'GET', '/crm/bans')).json())).toContain(id)
-    const nlB = await call('mgrB', 'GET', '/crm/naughty-list')
-    expect(ids(nlB.json())).not.toContain(custShared)
+    const nlB = (await call('mgrB', 'GET', '/crm/naughty-list')).json() as Array<{ customer: { id: string; bannedAt: string | null }; activeBanId: string | null }>
+    const rowB = nlB.find((r) => r.customer.id === custShared)!
+    expect(rowB.customer.bannedAt).not.toBeNull()
+    expect(rowB.activeBanId).toBeNull()
     expect((await call('mgrB', 'POST', `/crm/bans/${id}/lift`, { reason: 'x' })).statusCode).toBe(404)
     expect((await call('mgrB', 'POST', `/crm/bans/${id}/release-contact`, { contact: 'phone', reason: 'new number' })).statusCode).toBe(404)
     expect((await call('mgrA', 'POST', `/crm/bans/${id}/lift`, { reason: 'paid up' })).statusCode).toBe(200)

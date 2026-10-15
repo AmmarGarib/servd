@@ -9,7 +9,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Select } from '../../../../components/ui/Select'
 import {
-  headOfficeApi, monthLabel, monthRange, addMonthsTo, currentMonthPkt,
+  headOfficeApi, monthLabel, monthRange, addMonthsTo, currentMonthPkt, WARNING_BOX_STYLE,
   type BooksView, type CostPool, type HeadOfficeDetail,
 } from '../../../../lib/headOfficeApi'
 import { api } from '../../../../lib/api'
@@ -148,7 +148,7 @@ export default function BooksTab({ hoId, detail, reload }: { hoId: string; detai
         <button type="button" className="s-btn-primary text-xs ml-auto" onClick={() => setConfirming(true)}>{books.confirmed ? 'Confirm again' : 'Confirm with the CA'}</button>
       </div>
       {books.warnings.length > 0 && (
-        <ul className="rounded-xl p-3 text-xs space-y-1" style={{ background: '#f6e2bf', color: '#a15c00' }}>
+        <ul className="rounded-xl p-3 text-xs space-y-1" style={WARNING_BOX_STYLE}>
           {books.warnings.map((w) => <li key={w}>{w}</li>)}
         </ul>
       )}

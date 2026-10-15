@@ -3,14 +3,14 @@
 // first (people, seats, the suggested split, planning before and after), tick
 // any HODs to add as members, then apply. Recharge stays off.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from '../../../../lib/api'
 import { fmtPkr } from '../../../../lib/money'
-import { headOfficeApi, bpsToPct, pctToBps, monthLabel, type PlanningRow } from '../../../../lib/headOfficeApi'
+import { headOfficeApi, bpsToPct, pctToBps, monthLabel, type PlanningRow, WARNING_BOX_STYLE } from '../../../../lib/headOfficeApi'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
@@ -43,11 +43,15 @@ export default function HeadOfficeSetupPage() {
   const [done409, setDone409] = useState(false)
   const p = q.data
 
+  // Seed the split ONCE from the first preview (an empty preview must not loop).
+  const seeded = useRef(false)
   useEffect(() => {
-    if (p && Object.keys(pct).length === 0) {
+    if (!p || seeded.current) return
+    seeded.current = true
+    if (p.suggestedSplit.lines.length > 0) {
       setPct(Object.fromEntries(p.suggestedSplit.lines.map((l) => [l.companyTenantId, bpsToPct(l.shareBps)])))
     }
-  }, [p, pct])
+  }, [p])
 
   const lines = (p?.suggestedSplit.lines ?? []).map((l) => ({ companyTenantId: l.companyTenantId, shareBps: pctToBps(pct[l.companyTenantId] ?? '0') }))
   const total = lines.reduce((a, l) => a + l.shareBps, 0)
@@ -70,7 +74,7 @@ export default function HeadOfficeSetupPage() {
       <p className="text-sm text-white/50 mt-1 max-w-2xl">Preview what would move. Nothing changes until you apply, and recharge stays off.</p>
 
       {(done409 || p?.alreadyApplied) && (
-        <div className="mt-4 rounded-xl p-3 text-sm" style={{ background: '#f6e2bf', color: '#a15c00' }}>
+        <div className="mt-4 rounded-xl p-3 text-sm" style={WARNING_BOX_STYLE}>
           The head office has already been set up from today&rsquo;s records
           {p?.alreadyApplied ? ` (${p.alreadyApplied.name})` : ''}. It can only be done once.{' '}
           {p?.alreadyApplied && <Link href={`/ceo/head-offices/${p.alreadyApplied.headOfficeId}`} className="font-bold underline">Open it</Link>}
@@ -81,7 +85,7 @@ export default function HeadOfficeSetupPage() {
 
       {p && (
         <div className="mt-5 space-y-5">
-          {p.warnings.length > 0 && <ul className="rounded-xl p-3 text-xs space-y-1" style={{ background: '#f6e2bf', color: '#a15c00' }}>{p.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
+          {p.warnings.length > 0 && <ul className="rounded-xl p-3 text-xs space-y-1" style={WARNING_BOX_STYLE}>{p.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
 
           <section className="rounded-2xl p-4" style={card}>
             <h2 className="text-sm font-black text-white/85">{p.hoName} will serve</h2>

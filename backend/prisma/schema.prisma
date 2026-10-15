@@ -1245,7 +1245,7 @@ model CustomerStrike {
   recordedById   String? // staff user id (or null = system)
   recordedAt     DateTime  @default(now())
   // The company whose incident it is (the order's / reservation's brand's company, or the ACTIVE company for a
-  // manual CRM strike). Strikes count and bans apply PER COMPANY (owner 2026-10-13). NULL only for legacy
+  // manual CRM strike). Strikes count and bans apply SERVD-WIDE (owner 2026-10-15); this company decides reversals. NULL only for legacy
   // unattributable rows.
   tenantId       String?
 
@@ -1273,8 +1273,9 @@ model CustomerBan {
   reason     String // free-form: "3 strikes — see strikes table"
   // The company that raised the ban (owner decision 15). Since wave B (2026-10-14) ALWAYS written: the company
   // that raised the ban. A legacy NULL = applies to every company and can be lifted by the CEO (admin) only.
-  // One active AUTO ban per (company, customer) — partial unique index customer_bans_one_active_auto_per_company
-  // in SQL (migration 20261014090000; not declared here).
+  // Bans are SERVD-WIDE (owner, 2026-10-15): a ban raised in one company blocks the customer everywhere; this
+  // column is the company that raised it (it decides lifts and appeals). One active AUTO ban per CUSTOMER — partial
+  // unique index customer_bans_one_active_auto_per_customer in SQL (migration 20261015150000; not declared here).
   tenantId   String?
   bannedById String? // null = auto-promoted by system at 3-strike threshold
   bannedAt   DateTime  @default(now())

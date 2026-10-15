@@ -69,8 +69,16 @@ export function ApprovalActionDialog({ action, tenantId, warnings, onClose, onDo
           ))}
         </div>
       )}
+      {action.confirm && (
+        <p className="mt-2 text-xs font-semibold text-white/75">{action.confirm}</p>
+      )}
       <div className="mt-2 flex gap-2">
-        <button disabled={blocked} onClick={() => run.mutate()}
+        <button disabled={blocked} onClick={() => {
+          // The API asked for a confirmation on this action (e.g. a recharge run
+          // posting in several companies' books): ask before sending.
+          if (action.confirm && !window.confirm(action.confirm)) return
+          run.mutate()
+        }}
           className="rounded-lg px-3 py-1.5 text-xs font-black disabled:opacity-50"
           style={danger
             ? { background: 'var(--erp-danger)', color: 'var(--erp-on-secondary)' }

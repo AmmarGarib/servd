@@ -236,7 +236,7 @@ export const headOfficeApi = {
   runs: (id: string) => api.get<{ items?: RunSummary[] }>(`/accounting/intercompany/recharge-runs?headOfficeId=${e(id)}&limit=24`),
 
   // Reconciliation
-  balances: () => api.get<{ asOf: string | null; pairs: PairBalance[] }>('/accounting/intercompany/balances'),
+  balances: () => api.getAcrossTenants<{ asOf: string | null; pairs: PairBalance[] }>('/accounting/intercompany/balances'),
 
   // The CEO's own companies (for the link picker)
   myCompanies: () => api.get<Array<{ id: string; name: string; kind: 'company' | 'head_office'; isActive?: boolean; isTest?: boolean }>>('/tenants/mine'),
@@ -257,3 +257,9 @@ export function booksStatus(b: { confirmed: boolean; rechargeEnabled: boolean; r
   if (b.confirmed) return { label: 'Confirmed', tone: 'purple' }
   return { label: 'Confirm with your CA', tone: 'amber' }
 }
+
+/** The one warning-box look on the head-office pages (ERP tokens only). */
+export const WARNING_BOX_STYLE = {
+  background: 'color-mix(in srgb, var(--erp-warning) 14%, transparent)',
+  color: 'var(--erp-warning)',
+} as const

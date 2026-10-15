@@ -64,8 +64,18 @@ export function DelegationGrantDialog({ headOfficeId, companyId, onDone, onClose
 
   const chosen = useMemo(() => eligible.find((d) => d.id === person), [eligible, person])
   const wholeHo = !scope
+  const lacks = chosen?.lacks ?? []
+  // The API refuses the WHOLE grant (422 DELEGATE_LACKS_MODULE) if any handed
+  // type needs a module the person lacks; with nothing ticked every enabled
+  // type counts. So those types can't be ticked, and something must be.
+  const needsPick = lacks.length > 0 && types.length === 0
 
   function pickSection(id: string) { setSection(id); setTypes([]); setPerson('') }
+  function pickPerson(id: string) {
+    setPerson(id)
+    const l = eligible.find((d) => d.id === id)?.lacks ?? []
+    if (l.length) setTypes((cur) => cur.filter((t) => !l.includes(t)))
+  }
   function toggle(t: string) { setTypes((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]) }
 
   const grant = useMutation({
@@ -82,7 +92,7 @@ export function DelegationGrantDialog({ headOfficeId, companyId, onDone, onClose
     onError: (e: Error) => setErr(errorText(e)),
   })
 
-  const ready = !!hoId && !!section && !!person && note.trim().length >= 3 && !grant.isPending
+  const ready = !!hoId && !!section && !!person && !needsPick && note.trim().length >= 3 && !grant.isPending
 
   return (
     <Modal title="Hand over approvals" onClose={onClose ?? onDone}>
@@ -99,7 +109,15 @@ export function DelegationGrantDialog({ headOfficeId, companyId, onDone, onClose
         )}
         <div>
           <label className="text-[11px] font-bold text-white/60">Covers</label>
-          <Select value={scope} disabled={!!companyId} onChange={(e) => setScope(e.target.value)}
+          <Select value={scope} disabled={!!companyId} onChange={(e) => {
+            const next = e.target.value
+            setScope(next)
+            // A type the whole head office must hold (ho_recharge) cannot go to one company.
+            if (next && sec) {
+              const hoOnly = new Set(sec.types.filter((t) => t.hoWideOnly).map((t) => t.type))
+              setTypes((cur) => cur.filter((t) => !hoOnly.has(t)))
+            }
+          }}
             className="mt-1 w-full rounded-lg px-2 py-1.5" style={field}>
             <option value="">The whole head office and every company it serves</option>
             {(office?.companies ?? []).map((c) => <option key={c.id} value={c.id}>Only {c.name}</option>)}
@@ -119,7 +137,8 @@ export function DelegationGrantDialog({ headOfficeId, companyId, onDone, onClose
             <label className="text-[11px] font-bold text-white/60">Approval types (none ticked = every type in the section)</label>
             <div className="mt-1 space-y-1.5">
               {sec.types.map((t) => {
-                const blocked = !t.enabled || (t.hoWideOnly && !wholeHo)
+                const lacking = lacks.includes(t.type)
+                const blocked = !t.enabled || (t.hoWideOnly && !wholeHo) || lacking
                 return (
                   <label key={t.type} className="flex items-start gap-2 text-xs text-white/75" style={{ opacity: blocked ? 0.55 : 1 }}>
                     <input type="checkbox" className="mt-0.5" disabled={blocked} checked={types.includes(t.type)} onChange={() => toggle(t.type)} />
@@ -127,6 +146,7 @@ export function DelegationGrantDialog({ headOfficeId, companyId, onDone, onClose
                       {t.label}
                       {!t.enabled && <em className="ml-1 not-italic" style={{ color: 'var(--erp-warning)' }}>{WAITING}</em>}
                       {t.enabled && t.hoWideOnly && !wholeHo && <em className="ml-1 not-italic text-white/45">whole head office only</em>}
+                      {t.enabled && lacking && <em className="ml-1 not-italic" style={{ color: 'var(--erp-warning)' }}>this person needs the module first</em>}
                       {t.note && <span className="ml-1 text-white/45">{t.note}</span>}
                     </span>
                   </label>
@@ -137,14 +157,15 @@ export function DelegationGrantDialog({ headOfficeId, companyId, onDone, onClose
         )}
         <div>
           <label className="text-[11px] font-bold text-white/60">Person</label>
-          <Select value={person} disabled={!hoId || !section} onChange={(e) => setPerson(e.target.value)}
+          <Select value={person} disabled={!hoId || !section} onChange={(e) => pickPerson(e.target.value)}
             className="mt-1 w-full rounded-lg px-2 py-1.5" style={field}>
             <option value="">{hoId && section ? 'Choose a person' : 'Pick a head office and section first'}</option>
             {eligible.map((d) => <option key={d.id} value={d.id}>{d.name ?? d.id} ({d.role})</option>)}
           </Select>
-          {chosen && chosen.lacks.length > 0 && (
+          {lacks.length > 0 && (
             <p className="mt-1 text-[11px]" style={{ color: 'var(--erp-warning)' }}>
-              Lacks the module for {chosen.lacks.length} type{chosen.lacks.length === 1 ? '' : 's'}; those stay with you until they hold it.
+              This person needs the module for {lacks.length} type{lacks.length === 1 ? '' : 's'} before {lacks.length === 1 ? 'it' : 'they'} can be handed to them.
+              Tick the types to hand over (at least one), or give them the module in Module Access first.
             </p>
           )}
         </div>

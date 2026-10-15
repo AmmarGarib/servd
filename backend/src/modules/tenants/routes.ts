@@ -421,7 +421,9 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
  *   - customer_bans: when both companies hold an ACTIVE AUTO ban (bannedById
  *     null, not lifted) for the same customer, the source's is lifted ('merged
  *     into <target>') first — the target's stays, so the customer stays
- *     blocked and customer_bans_one_active_auto_per_company holds; then repoint;
+ *     blocked; then repoint. (Since bans are servd-wide — one active auto ban
+ *     per customer, index customer_bans_one_active_auto_per_customer — twins
+ *     can no longer arise; the lift stays as a guard for old data);
  *   - rider_job_events: tenantId (the order's company) and riderTenantId (the
  *     rider's company) both repoint;
  *   - fleet_agreements: one between the two companies ends (isActive false; a

@@ -754,9 +754,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       ? await walletBalanceAt(concept.tenantId, customerId)
       : 0
 
-    // Ban check — one mechanism (CustomerBan), per company (owner decision
-    // 15): an active ban raised by THIS brand's company, matched on the
-    // customer, their email or their phone. Customer.isBlacklisted is no
+    // Ban check — one mechanism (CustomerBan), servd-wide (owner, 2026-10-15):
+    // an active ban raised by ANY company, matched on the customer, their
+    // email or their phone. Customer.isBlacklisted is no
     // longer read; the CRM block button raises a ban.
     const { assertNotBannedAtCompany } = await import('../../lib/strikes.js')
     await assertNotBannedAtCompany({
@@ -1398,8 +1398,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         marketingOptIn: true, birthdayMmDd: true,
         firstOrderAt: true, lastOrderAt: true,
         totalSpentCents: true,
-        // No global isBlacklisted flag: a block is per company (CustomerBan,
-        // owner decision 15) — the account page reads GET
+        // No isBlacklisted flag: a block is a CustomerBan (servd-wide, owner
+        // 2026-10-15) — the account page reads GET
         // /storefront/account/blocks for the customer's own blocks.
         createdAt: true,
         // Referral fields surfaced so the storefront /account can render the

@@ -241,10 +241,10 @@ export type BanView = { id: string | null; reason: string; bannedAt: Date; raise
  * customer's servd account and applies at every company). A ban raised by one
  * of `scope`'s companies (crm/customerScope.banCompanies attributes legacy NULL
  * rows) is shown in full and preferred; one raised elsewhere is shown only as
- * "blocked by another servd kitchen" — no id, no reason — unless `seeAll` (the
- * CEO, who may lift any block).
+ * "blocked by another servd kitchen" — no id, no reason. (The CEO, a member of
+ * every company, sees each block in full through the company that raised it.)
  */
-async function bansInScope(customerIds: string[], scope: string[], seeAll = false): Promise<Map<string, BanView>> {
+async function bansInScope(customerIds: string[], scope: string[]): Promise<Map<string, BanView>> {
   const out = new Map<string, BanView>()
   if (customerIds.length === 0) return out
   const now = new Date()
@@ -259,7 +259,7 @@ async function bansInScope(customerIds: string[], scope: string[], seeAll = fals
     const here = inCompanies(bc.get(b.id), scope, true)
     const cur = out.get(b.customerId)
     if (cur && (cur.raisedHere || !here)) continue
-    out.set(b.customerId, here || seeAll
+    out.set(b.customerId, here
       ? { id: b.id, reason: b.reason, bannedAt: b.bannedAt, raisedHere: here, otherKitchen: !here }
       : { id: null, reason: `Blocked by ${OTHER_KITCHEN.toLowerCase()}`, bannedAt: b.bannedAt, raisedHere: false, otherKitchen: true })
   }
@@ -272,14 +272,14 @@ type StrikeOut = { id: string; customerId: string; kind: string; severity: numbe
  * Strikes for a staff screen — servd-wide: every strike on the account is
  * listed (they all count), but one another company recorded keeps only its
  * kind, weight and dates: no reason, no source order / reservation, no staff,
- * labelled "Another servd kitchen" (`otherKitchen`). The CEO (`seeAll`) sees all.
+ * labelled "Another servd kitchen" (`otherKitchen`).
  */
-async function strikesForView<T extends StrikeOut>(rows: T[], scope: string[], seeAll = false) {
+async function strikesForView<T extends StrikeOut>(rows: T[], scope: string[]) {
   const sc = await strikeCompanies(rows)
   return rows.map(({ customerId, sourceType: _t, sourceId: _s, recordedById: _r, tenantId: _tid, ...rest }) => {
     const here = inCompanies(sc.get(rest.id), scope, true)
-    return here || seeAll
-      ? { ...rest, customerId, otherKitchen: !here, where: here ? null : OTHER_KITCHEN }
+    return here
+      ? { ...rest, customerId, otherKitchen: false, where: null }
       : { ...rest, customerId, reason: null, otherKitchen: true, where: OTHER_KITCHEN }
   })
 }
@@ -352,7 +352,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
     const customers = await scopedCustomerFigures(req, tenantIdsOf(t), found)
     // Blocked = an active ban anywhere on servd (owner, 2026-10-15); another
     // company's shown anonymised.
-    const bans = await bansInScope(customers.map((c) => c.id), tenantIdsOf(t), req.staffUser!.role === 'admin')
+    const bans = await bansInScope(customers.map((c) => c.id), tenantIdsOf(t))
 
     // PII-export audit + threshold flag — bulk customer reads above the
     // operator's threshold fire a flag so the owner can spot exfiltration.
@@ -411,7 +411,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
       })
       if (!found) throw new NotFoundError('Customer', req.params.id)
       const customer = (await scopedCustomerFigures(req, tenantIdsOf(t), [found]))[0]!
-      const bans = await bansInScope([customer.id], tenantIdsOf(t), req.staffUser!.role === 'admin')
+      const bans = await bansInScope([customer.id], tenantIdsOf(t))
       return {
         ...customer,
         loyaltyAccount: loyaltyAccountInView(customer.loyaltyAccounts, req.staffUser!.tenantId),
@@ -517,12 +517,11 @@ export async function crmRoutes(fastify: FastifyInstance) {
       // Strikes and bans are servd-wide (owner, 2026-10-15): every strike on
       // the account, another company's anonymised ("Another servd kitchen").
       const scope = tenantIdsOf(t)
-      const seeAll = req.staffUser!.role === 'admin'
-      const recentStrikes = (await strikesForView(strikeRows.slice(0, 5), scope, seeAll))
+      const recentStrikes = (await strikesForView(strikeRows.slice(0, 5), scope))
         .map(({ customerId: _c, ...rest }) => rest)
 
       // This company's segments; the servd-wide ban.
-      const ban = (await bansInScope([customer.id], scope, seeAll)).get(customer.id) ?? null
+      const ban = (await bansInScope([customer.id], scope)).get(customer.id) ?? null
       const ours = (slug: string) => scope.some((tid) => slug.endsWith(`.${tid}`))
       return {
         ...customer,
@@ -987,7 +986,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // the customer's servd-wide standing), sorted by severity. The count and the
   // ban are servd-wide; another company's incidents are shown only as
   // "Another servd kitchen" (no reason, no order / reservation, no staff), and
-  // its ban id only to the CEO. Legacy NULL rows are attributed through their
+  // its ban id not at all. Legacy NULL rows are attributed through their
   // source order / reservation or the staff member (crm/customerScope.ts).
   fastify.get<{ Querystring: { kind?: string; bannedOnly?: string } }>(
     '/naughty-list',
@@ -1030,8 +1029,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
           select: { id: true, customerId: true, bannedById: true, tenantId: true, bannedAt: true, liftedAt: true, expiresAt: true },
         }),
       ]) : [[], []]
-      const seeAll = req.staffUser!.role === 'admin'
-      const [strikes, bc] = await Promise.all([strikesForView(strikeRows, scope, seeAll), banCompanies(banRows)])
+      const [strikes, bc] = await Promise.all([strikesForView(strikeRows, scope), banCompanies(banRows)])
       // The servd-wide active ban per customer; the one this company raised wins.
       const activeBan = new Map<string, { bannedAt: Date; id: string; here: boolean }>()
       for (const b of banRows) {
@@ -1055,12 +1053,12 @@ export async function crmRoutes(fastify: FastifyInstance) {
         .map((c) => {
           const list = byCustomer.get(c.id) ?? []
           const active = list.filter((st) => !st.reversedAt && (!st.expiresAt || st.expiresAt > now))
-          // The servd-wide ban; its id only when this company raised it (or the CEO).
+          // The servd-wide ban; its id only when this company raised it.
           const ban = activeBan.get(c.id)
           const bannedAt = ban?.bannedAt ?? null
           return {
             customer: { ...c, bannedAt, strikeCount: active.reduce((n, st) => n + st.severity, 0) },
-            activeBanId: ban && (ban.here || seeAll) ? ban.id : null,
+            activeBanId: ban?.here ? ban.id : null,
             banRaisedHere: ban?.here ?? false,
             activeStrikes: active.length,
             totalStrikes:  list.length,
@@ -1112,7 +1110,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
   // POST /crm/strikes/:id/reverse — manager forgives a strike. If reversing
   // drops the customer's servd-wide weight below the threshold, the auto-ban is
-  // lifted. Only a strike this company recorded, or the CEO (404 otherwise).
+  // lifted. Only a strike this company recorded (404 otherwise).
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/strikes/:id/reverse',
     { preHandler: requireAuth(...MANAGERS) },
@@ -1126,9 +1124,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const t = await scopeTenantWhere(req, 'write')
       const scope = tenantIdsOf(t)
       let ok: boolean
-      if (req.staffUser!.role === 'admin') {
-        ok = true // the CEO decides servd-wide standing
-      } else if (strike.tenantId) {
+      if (strike.tenantId) {
         ok = scope.includes(strike.tenantId)
       } else {
         const customerOk = !!(await prisma.customer.findFirst({ where: { id: strike.customerId, ...customerOfCompanies(t) }, select: { id: true } }))
@@ -1145,8 +1141,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // GET /crm/bans — every ban THIS company raised, active + historical, plus
   // the ACTIVE bans another company raised on this company's customers (a
   // block is servd-wide, owner 2026-10-15) — those anonymised: no id, no
-  // reason, no staff, no fingerprints, labelled "Another servd kitchen". The
-  // CEO sees every ban in full.
+  // reason, no staff, no fingerprints, labelled "Another servd kitchen".
   fastify.get<{ Querystring: { activeOnly?: string } }>(
     '/bans',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -1178,7 +1173,6 @@ export async function crmRoutes(fastify: FastifyInstance) {
       })
       const bc = await banCompanies(bans)
       const scope = tenantIdsOf(t)
-      const seeAll = req.staffUser!.role === 'admin'
       const own = bans.filter((b) => inCompanies(bc.get(b.id), scope, true))
         .map((b) => ({ ...b, raisedHere: true, otherKitchen: false }))
       // Active blocks raised elsewhere on this company's customers.
@@ -1194,14 +1188,12 @@ export async function crmRoutes(fastify: FastifyInstance) {
         orderBy: { bannedAt: 'desc' },
         take: 200,
       })
-      const others = elsewhere.map((b) => seeAll
-        ? { ...b, raisedHere: false, otherKitchen: true }
-        : {
+      const others = elsewhere.map((b) => ({
             id: null, customerId: b.customerId, customer: b.customer, email: null, phone: null,
             ipAddresses: [], deviceFingerprints: [], reason: `Blocked by ${OTHER_KITCHEN.toLowerCase()}`,
             tenantId: null, bannedById: null, bannedAt: b.bannedAt, liftedAt: null, liftedById: null,
             liftReason: null, expiresAt: b.expiresAt, raisedHere: false, otherKitchen: true,
-          })
+          }))
       return [...own, ...others]
         .sort((x, y) => y.bannedAt.getTime() - x.bannedAt.getTime())
         .slice(0, 200)
@@ -1210,8 +1202,9 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
   /**
    * The ban, when the caller may decide it — else 404. Bans are servd-wide
-   * (owner, 2026-10-15) but only the CEO (role admin, any ban) or a manager of
-   * the company that RAISED it may lift it or release a contact. A ban with a
+   * (owner, 2026-10-15) but only a manager of the company that RAISED it (the
+   * CEO included, through their membership of it) may lift it or release a
+   * contact. A ban with a
    * company column was raised by that company; a legacy NULL ban is attributed
    * the old way (and only the CEO may change it: liftBanTx / releaseBanContactTx
    * answer 403 LEGACY_BAN_ADMIN_ONLY to anyone else). Another company — even
@@ -1223,7 +1216,6 @@ export async function crmRoutes(fastify: FastifyInstance) {
       include: { customer: { select: { id: true, name: true, email: true, phone: true } } },
     })
     if (!ban) throw new NotFoundError('Ban', id)
-    if (req.staffUser!.role === 'admin') return ban
     const t = await scopeTenantWhere(req, mode)
     const scope = tenantIdsOf(t)
     if (ban.tenantId) {
@@ -1240,8 +1232,8 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
   // POST /crm/bans/:id/lift — lift a ban (forgive the customer, or grant an
   // appeal). Requires a reason for the audit trail. The block is servd-wide;
-  // the CEO or a manager of the company that raised it decides (404 to
-  // anyone else); a legacy NULL-company ban → CEO only (403). The strikes stay
+  // a manager of the company that raised it decides (404 to anyone else); a
+  // legacy NULL-company ban → CEO (role admin) only (403). The strikes stay
   // (owner Q6). Linked open appeals resolve; the customer is told.
   // The module gate opens this path to 'complaints' holders too (lib/moduleAccess.ts).
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(

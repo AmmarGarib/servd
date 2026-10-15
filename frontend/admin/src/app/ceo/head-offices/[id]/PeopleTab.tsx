@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 import { Select } from '../../../../components/ui/Select'
 import { fmtPkr } from '../../../../lib/money'
 import {
-  headOfficeApi, monthLabel, addMonthsTo, currentMonthPkt, monthRange,
+  headOfficeApi, monthLabel, addMonthsTo, currentMonthPkt, monthRange, WARNING_BOX_STYLE,
   type HeadOfficeDetail, type TransferBody, type TransferPreview,
 } from '../../../../lib/headOfficeApi'
 import { errText } from './CompaniesTab'
@@ -86,7 +86,7 @@ export default function PeopleTab({ hoId, detail, reload }: { hoId: string; deta
 
         {preview && (
           <div className="mt-4 space-y-3">
-            {preview.warnings.length > 0 && <ul className="rounded-xl p-3 text-xs space-y-1" style={{ background: '#f6e2bf', color: '#a15c00' }}>{preview.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
+            {preview.warnings.length > 0 && <ul className="rounded-xl p-3 text-xs space-y-1" style={WARNING_BOX_STYLE}>{preview.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
             {preview.employees.map((e) => (
               <div key={e.employeeId} className="rounded-xl p-3" style={{ border: '1px solid var(--border)' }}>
                 <div className="flex items-center gap-2 flex-wrap">

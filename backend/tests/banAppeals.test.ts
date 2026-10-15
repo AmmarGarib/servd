@@ -297,6 +297,35 @@ describe('the help-desk queue', () => {
     expect(listB.complaints.map((r: { id: string }) => r.id)).toContain(id)
   })
 
+  it("servd-wide: B sees A's block and strikes anonymised and cannot decide; A and the CEO can", async () => {
+    const c = await mkCustomer('sharedDetails', [conceptA, conceptB])
+    const ban = await mkBan(c, tenantA, true)
+    await prisma.customerStrike.create({ data: { customerId: c.id, kind: 'cod_refused', severity: 1, tenantId: tenantA, reason: 'secret A strike note' } })
+    await prisma.customerStrike.create({ data: { customerId: c.id, kind: 'other', severity: 1, tenantId: tenantB, reason: 'B strike note' } })
+    const id = (await appeal(c.id, ban.id)).json().appealId as string
+
+    const rowB = (await asStaff('mgrB', 'GET', '/complaints?kind=ban_appeal')).json().complaints.find((r: { id: string }) => r.id === id)
+    expect(rowB.ban).toMatchObject({ id: ban.id, raisedHere: false, otherKitchen: true, canDecide: false, reason: 'Blocked by another servd kitchen' })
+    expect(rowB.concept).toMatchObject({ name: 'Another servd kitchen', tenantId: null })
+    expect(rowB.strikes).toHaveLength(2)   // both count
+    expect(rowB.strikes.find((st: { where: string | null }) => st.where === 'Another servd kitchen')).toMatchObject({ reason: null, kind: 'cod_refused' })
+    expect(rowB.strikes.find((st: { where: string | null }) => st.where === null)).toMatchObject({ reason: 'B strike note' })
+    expect(JSON.stringify(rowB)).not.toContain('secret A strike note')
+    expect(JSON.stringify(rowB)).not.toContain('Staff block')
+
+    const decline = await asStaff('mgrB', 'PATCH', `/complaints/${id}`, { status: 'closed' })
+    expect(decline.statusCode).toBe(403)
+    expect(decline.json().error.code).toBe('APPEAL_RAISED_ELSEWHERE')
+    expect((await asStaff('mgrB', 'POST', `/crm/bans/${ban.id}/lift`, { reason: 'x' })).statusCode).toBe(404)
+
+    const rowA = (await asStaff('mgrA', 'GET', '/complaints?kind=ban_appeal')).json().complaints.find((r: { id: string }) => r.id === id)
+    expect(rowA.ban).toMatchObject({ raisedHere: true, canDecide: true, reason: 'Staff block' })
+    expect(rowA.strikes.find((st: { where: string | null }) => st.where === 'Another servd kitchen')).toMatchObject({ reason: null })
+
+    // The raising company's CEO decides it.
+    expect((await asStaff('ceo', 'PATCH', `/complaints/${id}`, { status: 'closed' })).statusCode).toBe(200)
+  })
+
   it('managers see the ban and strikes; a non-manager with Complaints does not; a cashier is refused', async () => {
     const c = await mkCustomer('details', [conceptA])
     const ban = await mkBan(c, tenantA)

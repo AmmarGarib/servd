@@ -6,7 +6,7 @@ import type { Prisma } from '@prisma/client'
 import { requireAuth, requireCustomerAuth, ALL_STAFF, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
-import { customerOfCompanies } from '../crm/customerScope.js'
+import { customerOfCompanies, banCompanies, strikeCompanies, inCompanies, tenantIdsOf } from '../crm/customerScope.js'
 import { customerScope } from '../../lib/outboundScope.js'
 import { sendEmail, sendPhoneMessage } from '../../lib/notify.js'
 import { audit } from '../../lib/audit.js'
@@ -34,6 +34,24 @@ const createSchema = z.object({
 // owns the appeal's brand, or has the customer in its history (an order or a
 // reservation at one of its brands) sees it. An empty scope denies everything
 // (scopeTenantWhere returns { tenantId: { in: [] } }).
+//
+// DECIDING an appeal (keep the block = close it; lift / release go through
+// /crm/bans) is for a manager of the company that RAISED the block (the CEO
+// through their membership of it; a legacy NULL-company block: the CEO only) —
+// anyone else in the queue gets 403 APPEAL_RAISED_ELSEWHERE.
+// A company that did not raise the block sees it, and the strikes of other
+// companies, only as "Another servd kitchen" (no reason, no brand, no staff).
+
+const OTHER_KITCHEN = 'Another servd kitchen'
+
+/** True when the ban was raised by one of `scope`'s companies (legacy NULL rows attributed the old way). */
+async function banRaisedIn(
+  bans: Array<{ id: string; customerId: string | null; bannedById: string | null; tenantId: string | null }>,
+  scope: string[],
+): Promise<Map<string, boolean>> {
+  const bc = await banCompanies(bans)
+  return new Map(bans.map((b) => [b.id, inCompanies(bc.get(b.id), scope, true)]))
+}
 
 async function complaintScopeWhere(req: FastifyRequest, mode: ScopeMode): Promise<Prisma.OrderComplaintWhereInput> {
   const t = await scopeTenantWhere(req, mode)
@@ -60,35 +78,51 @@ const activeStrikeWhere = (now: Date): Prisma.CustomerStrikeWhereInput => ({
 /**
  * Ban details for appeal rows — MANAGERS only (a marketing or brand login with
  * the Complaints module sees the appeal, not the block or the strikes). Strikes
- * are servd-wide (owner, 2026-10-15): every active strike on the account.
+ * are servd-wide (owner, 2026-10-15): every active strike on the account, but
+ * one another company recorded keeps only its kind, weight and date
+ * ("Another servd kitchen"); a block raised elsewhere shows no reason.
+ * `canDecide` = this caller may decide the appeal (its company raised the block;
+ * a legacy NULL-company block: the CEO only).
  */
-async function appealDetails(rows: Array<{ id: string; kind: string; banId: string | null }>) {
+async function appealDetails(rows: Array<{ id: string; kind: string; banId: string | null }>, scope: string[], isAdmin: boolean) {
   const banIds = [...new Set(rows.filter((r) => r.kind === 'ban_appeal' && r.banId).map((r) => r.banId!))]
-  if (banIds.length === 0) return new Map<string, unknown>()
+  if (banIds.length === 0) return new Map<string, { raisedHere: boolean; details: unknown }>()
   const now = new Date()
   const bans = await prisma.customerBan.findMany({
     where: { id: { in: banIds } },
     select: {
-      id: true, reason: true, bannedAt: true, bannedById: true, liftedAt: true, expiresAt: true, customerId: true,
+      id: true, reason: true, bannedAt: true, bannedById: true, liftedAt: true, expiresAt: true, customerId: true, tenantId: true,
       customer: { select: { id: true, name: true, phone: true, email: true } },
     },
   })
   const customerIds = [...new Set(bans.map((b) => b.customerId).filter((x): x is string => !!x))]
   const strikes = customerIds.length === 0 ? [] : await prisma.customerStrike.findMany({
     where: { customerId: { in: customerIds }, ...activeStrikeWhere(now) },
-    select: { customerId: true, kind: true, recordedAt: true, reason: true, severity: true },
+    select: { id: true, customerId: true, kind: true, recordedAt: true, reason: true, severity: true, sourceType: true, sourceId: true, recordedById: true, tenantId: true },
     orderBy: { recordedAt: 'desc' },
   })
-  const out = new Map<string, unknown>()
+  const [raised, sc] = await Promise.all([banRaisedIn(bans, scope), strikeCompanies(strikes)])
+  const out = new Map<string, { raisedHere: boolean; details: unknown }>()
   for (const b of bans) {
+    const here = raised.get(b.id) ?? false
     out.set(b.id, {
-      ban: {
-        id: b.id, reason: b.reason, bannedAt: b.bannedAt, auto: b.bannedById === null,
-        active: !b.liftedAt && (!b.expiresAt || b.expiresAt > now),
-        customer: b.customer,
+      raisedHere: here,
+      details: {
+        ban: {
+          id: b.id, reason: here ? b.reason : `Blocked by ${OTHER_KITCHEN.toLowerCase()}`, bannedAt: b.bannedAt, auto: b.bannedById === null,
+          active: !b.liftedAt && (!b.expiresAt || b.expiresAt > now),
+          customer: b.customer,
+          raisedHere: here,
+          otherKitchen: !here,
+          canDecide: here && (!!b.tenantId || isAdmin),
+        },
+        strikes: strikes.filter((st) => st.customerId === b.customerId).map((st) => {
+          const mine = inCompanies(sc.get(st.id), scope, true)
+          return mine
+            ? { kind: st.kind, at: st.recordedAt, reason: st.reason, severity: st.severity, otherKitchen: false, where: null }
+            : { kind: st.kind, at: st.recordedAt, reason: null, severity: st.severity, otherKitchen: true, where: OTHER_KITCHEN }
+        }),
       },
-      strikes: strikes.filter((s) => s.customerId === b.customerId)
-        .map((s) => ({ kind: s.kind, at: s.recordedAt, reason: s.reason, severity: s.severity })),
     })
   }
   return out
@@ -155,12 +189,17 @@ export async function complaintRoutes(fastify: FastifyInstance) {
     ])
 
     const isManager = MANAGERS.includes(req.staffUser!.role)
-    const details = isManager ? await appealDetails(complaints) : new Map<string, unknown>()
+    const scope = tenantIdsOf(await scopeTenantWhere(req, 'read'))
+    const details = await appealDetails(complaints, scope, req.staffUser!.role === 'admin')
     const rows = complaints.map((c) => {
       if (c.kind !== 'ban_appeal') return c
+      const d = c.banId ? details.get(c.banId) : undefined
+      // A block another company raised: its brand is not shown either.
+      const anon = !d?.raisedHere
+      const base = anon ? { ...c, concept: { name: OTHER_KITCHEN, slug: null, tenantId: null, tenant: null } } : c
       // Non-managers never see the block or the strikes, nor the contact on it.
-      if (!isManager) return { ...c, contactPhone: null }
-      return { ...c, ...(c.banId ? (details.get(c.banId) as object | undefined) ?? {} : {}) }
+      if (!isManager) return { ...base, contactPhone: null }
+      return { ...base, ...((d?.details as object | undefined) ?? {}) }
     })
 
     return { complaints: rows, stats: { total, open, resolved, inProgress: total - open - resolved } }
@@ -269,10 +308,20 @@ export async function complaintRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, AND: [await complaintScopeWhere(req, 'write')] },
         include: {
           concept: { select: { tenantId: true } },
-          ban: { select: { id: true, phone: true, email: true, customer: { select: { phone: true, email: true } } } },
+          ban: { select: { id: true, phone: true, email: true, tenantId: true, customerId: true, bannedById: true, customer: { select: { phone: true, email: true } } } },
         },
       })
       if (!complaint) throw new NotFoundError('Complaint', req.params.id)
+
+      // A ban appeal is decided by the company that raised the block (a legacy
+      // NULL-company block: the CEO only, as liftBanTx).
+      if (complaint.kind === 'ban_appeal') {
+        const scope = tenantIdsOf(await scopeTenantWhere(req, 'write'))
+        const here = complaint.ban ? (await banRaisedIn([complaint.ban], scope)).get(complaint.ban.id) : false
+        if (!here || (!complaint.ban?.tenantId && req.staffUser!.role !== 'admin')) {
+          throw new AppError('APPEAL_RAISED_ELSEWHERE', 'This block was raised by another servd kitchen — only that kitchen or the CEO can decide the appeal.', 403)
+        }
+      }
 
       if (complaint.kind !== 'ban_appeal') {
         return prisma.orderComplaint.update({

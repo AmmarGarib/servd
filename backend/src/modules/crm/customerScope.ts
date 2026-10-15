@@ -7,11 +7,15 @@
 // reading or touching anything, so company B cannot read, message, credit,
 // strike or ban someone who has only ever dealt with company A.
 //
-// Strikes and bans carry a tenantId column (wave B, 2026-10-14): a row with it
-// set belongs to that company and nothing else. Only legacy rows the migration
-// could not stamp (NULL) are attributed through their relations here (source
-// order/reservation, the staff member who raised them). Conversations still
-// have no company column and are attributed in crm/routes.ts.
+// Strikes and bans carry a tenantId column (wave B, 2026-10-14): the company
+// whose incident it is / that raised the block. Since 2026-10-15 (owner) the
+// STANDING is servd-wide — every strike counts and every active ban applies at
+// every company (lib/strikes.ts) — so the attribution below decides only who
+// sees an incident's details (another company sees "Another servd kitchen")
+// and who may lift a block. Legacy rows the migration could not stamp (NULL)
+// are attributed through their relations here (source order/reservation, the
+// staff member who raised them). Conversations still have no company column
+// and are attributed in crm/routes.ts.
 
 import type { FastifyRequest } from 'fastify'
 import type { Prisma } from '@prisma/client'
@@ -144,8 +148,9 @@ type BanRow = { id: string; customerId: string | null; bannedById: string | null
  * The companies each ban belongs to: its tenantId column when set. For a legacy
  * NULL row only: a staff-raised ban → the companies of the
  * staff member who raised it; an auto-ban (bannedById null, promoted from
- * strikes) → the companies of that customer's strikes. Decision 15: a ban
- * applies only to — and is only liftable by — the company that raised it.
+ * strikes) → the companies of that customer's strikes. A ban applies
+ * servd-wide (owner, 2026-10-15) but is liftable only by the company that
+ * raised it, or the CEO.
  */
 export async function banCompanies(bans: BanRow[]): Promise<Map<string, Set<string> | null>> {
   const out = new Map<string, Set<string> | null>()

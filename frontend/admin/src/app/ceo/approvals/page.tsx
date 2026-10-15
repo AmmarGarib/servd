@@ -43,6 +43,8 @@ interface Item {
   record?: HrRecord & { format: HrFormat; sectionTitle: string; employee?: { fullName: string } | null }
   section?: ApprovalSectionId
   viaHeadOfficeId?: string | null
+  /** Sent by the API when it can name the head office (delegates cannot read /head-offices). */
+  viaHeadOfficeName?: string | null
   handedOverTo?: ApprovalHandedOverTo
 }
 interface ApprovalInbox {
@@ -199,7 +201,7 @@ function ApprovalsInbox() {
               </h2>
             )}
             {rows.map((i) => (
-              <ItemCard key={`${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={hoName(i.viaHeadOfficeId)}
+              <ItemCard key={`${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={i.viaHeadOfficeName ?? hoName(i.viaHeadOfficeId)}
                 showCompany={showCompany} onDone={refresh} onOpenHr={() => setOpenHr(i)} />
             ))}
           </section>
@@ -218,7 +220,7 @@ function ApprovalsInbox() {
               <div className="px-3 pb-3 space-y-3">
                 <p className="text-xs text-white/50 px-1">You can still decide these yourself; the first decision wins.</p>
                 {handedItems.map((i) => (
-                  <ItemCard key={`h:${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={hoName(i.viaHeadOfficeId)}
+                  <ItemCard key={`h:${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={i.viaHeadOfficeName ?? hoName(i.viaHeadOfficeId)}
                     showCompany={showCompany} onDone={refresh} onOpenHr={() => setOpenHr(i)} />
                 ))}
               </div>
