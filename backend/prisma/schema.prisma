@@ -5050,6 +5050,10 @@ model Projection {
   // 12-month ramp curve (multipliers on steady-state daily covers, applied
   // from each brand's launch month onward). Default = PDF spec.
   rampCurve Float[]                @default([0.30, 0.45, 0.60, 0.75, 0.90, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00])
+  // Calendar month the scenario's Month 1 is (YYYY-MM). Trading days are
+  // counted on the real calendar from here (owner, 2026-10-16). Null = the
+  // month after today (Karachi) at read time.
+  startPeriod String?
   brands    ProjectionBrandInput[]
   createdAt DateTime               @default(now())
   updatedAt DateTime               @updatedAt
@@ -5063,7 +5067,11 @@ model ProjectionBrandInput {
   conceptId           String
   launchMonth         Int    @default(1) // 1..12
   checkAverageCents   Int    @default(0)
+  // Legacy flat figure — no longer read: trading days are the calendar days
+  // of each month minus the brand's closed weekdays (owner, 2026-10-16).
   tradingDaysPerMonth Int    @default(26)
+  // Weekdays the brand is closed (0 = Sunday … 6 = Saturday). Default Monday.
+  closedWeekdays      Int[]  @default([1])
   foodCostPct         Float  @default(32)
   packagingCostPct    Float  @default(8)
   // Manual fallback for daily covers. When the timing block below is filled

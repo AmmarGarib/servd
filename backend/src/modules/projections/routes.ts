@@ -30,11 +30,16 @@ import { toCents } from '../../lib/money.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 
+// Weekdays a brand is closed (0 = Sunday … 6 = Saturday) and a YYYY-MM month.
+const closedWeekdaysSchema = z.array(z.number().int().min(0).max(6)).max(6)
+const periodSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'YYYY-MM')
+
 const brandInputSchema = z.object({
   conceptId:           z.string(),
   launchMonth:         z.number().int().min(1).max(12).default(1),
   checkAverageCents:   z.number().int().min(0).default(0),
   tradingDaysPerMonth: z.number().int().min(1).max(31).default(26),
+  closedWeekdays:      closedWeekdaysSchema.default([1]),
   foodCostPct:         z.number().min(0).max(100).default(32),
   packagingCostPct:    z.number().min(0).max(100).default(8),
   dailyCoversAtSS:     z.number().int().min(0).default(0),
@@ -51,6 +56,7 @@ const brandInputUpdateSchema = z.object({
   launchMonth:         z.number().int().min(1).max(12).optional(),
   checkAverageCents:   z.number().int().min(0).optional(),
   tradingDaysPerMonth: z.number().int().min(1).max(31).optional(),
+  closedWeekdays:      closedWeekdaysSchema.optional(),
   foodCostPct:         z.number().min(0).max(100).optional(),
   packagingCostPct:    z.number().min(0).max(100).optional(),
   dailyCoversAtSS:     z.number().int().min(0).optional(),
@@ -62,6 +68,35 @@ const brandInputUpdateSchema = z.object({
   dinnerHours:         z.number().min(0).max(24).optional(),
   taxRatePct:          z.number().min(0).max(100).optional(),
 })
+
+// ── Trading days (owner, 2026-10-16) ─────────────────────────────────────
+// Month 1 of a scenario is a real calendar month (Projection.startPeriod), and
+// each month trades on its ACTUAL days minus the brand's closed weekdays
+// (Mondays by default) — 26 or 27 in most months, never a flat figure.
+
+/** The month after today in Karachi, as YYYY-MM. */
+export function defaultStartPeriod(now = new Date()): string {
+  const pkt = new Date(now.getTime() + 5 * 3_600_000)
+  const y = pkt.getUTCFullYear(), m = pkt.getUTCMonth() + 1
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
+}
+
+/** YYYY-MM `offset` months after `period`. */
+export function addMonths(period: string, offset: number): string {
+  const [y, m] = period.split('-').map(Number)
+  const idx = y! * 12 + (m! - 1) + offset
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`
+}
+
+/** Days in `period` that are not one of `closed` weekdays (0 = Sunday). */
+export function tradingDaysIn(period: string, closed: readonly number[]): number {
+  const [y, m] = period.split('-').map(Number)
+  const days = new Date(Date.UTC(y!, m!, 0)).getUTCDate()
+  const shut = new Set(closed)
+  let n = 0
+  for (let d = 1; d <= days; d++) if (!shut.has(new Date(Date.UTC(y!, m! - 1, d)).getUTCDay())) n++
+  return n
+}
 
 // Daily covers from the timing & capacity block:
 //   covers = seats × utilization% × (total operating hours ÷ table turn hours)
@@ -177,6 +212,8 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
 
       const rampCurve = projection.rampCurve
       const rampLen = rampCurve.length
+      const startPeriod = projection.startPeriod ?? defaultStartPeriod()
+      const periods = Array.from({ length: 12 }, (_, i) => addMonths(startPeriod, i))
 
       // Per-brand 12-month rows
       const brands = visibleBrandInputs.map((b) => {
@@ -189,7 +226,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         const effectiveDailyCovers  = dailyCoversCalculated ?? b.dailyCoversAtSS
 
         const months: Array<{
-          month: number; live: boolean; rampFactor: number; orders: number
+          month: number; period: string; tradingDays: number; live: boolean; rampFactor: number; orders: number
           revenueCents: number; variableCents: number; staffCents: number
           opexCents: number; totalCostCents: number; profitCents: number
           profitAfterTaxCents: number; cumulativeCents: number
@@ -200,7 +237,8 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
           const live = monthNumber >= b.launchMonth
           const rampIdx = live ? Math.min(monthNumber - b.launchMonth, rampLen - 1) : -1
           const rampFactor = live ? (rampCurve[rampIdx] ?? 0) : 0
-          const orders = Math.round(b.tradingDaysPerMonth * effectiveDailyCovers * rampFactor)
+          const tradingDays = tradingDaysIn(periods[i]!, b.closedWeekdays)
+          const orders = Math.round(tradingDays * effectiveDailyCovers * rampFactor)
           const revenueCents  = orders * b.checkAverageCents
           const variableCents = Math.round(revenueCents * (b.foodCostPct + b.packagingCostPct) / 100)
           const staffCents    = live ? staffMonthlyCents : 0
@@ -214,7 +252,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
           // Cumulative cashflow runs on AFTER-tax profit (the sheet's bottom line).
           cumulative += profitAfterTaxCents
           months.push({
-            month: monthNumber, live, rampFactor, orders,
+            month: monthNumber, period: periods[i]!, tradingDays, live, rampFactor, orders,
             revenueCents, variableCents, staffCents, opexCents,
             totalCostCents, profitCents, profitAfterTaxCents, cumulativeCents: cumulative,
           })
@@ -226,7 +264,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
           concept: b.concept,
           launchMonth: b.launchMonth,
           checkAverageCents: b.checkAverageCents,
-          tradingDaysPerMonth: b.tradingDaysPerMonth,
+          closedWeekdays: b.closedWeekdays,
           foodCostPct: b.foodCostPct,
           packagingCostPct: b.packagingCostPct,
           dailyCoversAtSS: b.dailyCoversAtSS,
@@ -256,7 +294,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       // (company-level seats net of contributions, plus head-office charges)
       // — a scenario is one company's.
       const combined: Array<{
-        month: number; revenueCents: number; variableCents: number
+        month: number; period: string; revenueCents: number; variableCents: number
         staffCents: number; headOfficeLabourCents: number; opexCents: number; totalCostCents: number
         profitCents: number; profitAfterTaxCents: number; cumulativeCents: number
       }> = []
@@ -277,7 +315,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         profitAfterTaxCents -= headOfficeLabourCents
         const totalCostCents = variableCents + staffCents + headOfficeLabourCents + opexCents
         combinedCum += profitAfterTaxCents
-        combined.push({ month: i + 1, revenueCents, variableCents, staffCents, headOfficeLabourCents, opexCents, totalCostCents, profitCents, profitAfterTaxCents, cumulativeCents: combinedCum })
+        combined.push({ month: i + 1, period: periods[i]!, revenueCents, variableCents, staffCents, headOfficeLabourCents, opexCents, totalCostCents, profitCents, profitAfterTaxCents, cumulativeCents: combinedCum })
       }
 
       // Capital ask summary (PDF: totalCapex + 3 × steady-state monthly cost)
@@ -290,7 +328,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         : null
 
       return {
-        projection: { id: projection.id, name: projection.name, rampCurve: projection.rampCurve, updatedAt: projection.updatedAt },
+        projection: { id: projection.id, name: projection.name, rampCurve: projection.rampCurve, startPeriod, startPeriodSet: projection.startPeriod != null, periods, updatedAt: projection.updatedAt },
         brands,
         combined,
         labour: {
@@ -325,6 +363,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: requireAuth(...PROJECTION_TEAM) }, async (req) => {
     const body = z.object({
       name:   z.string().min(1).max(120).default('Default scenario'),
+      startPeriod: periodSchema.optional(),
       brands: z.array(brandInputSchema).default([]),
     }).parse(req.body)
     const tenantId = requireActiveCompany(req)
@@ -339,6 +378,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       data: {
         tenantId,
         name: body.name,
+        startPeriod: body.startPeriod ?? defaultStartPeriod(),
         brands: { create: body.brands },
       },
       include: { brands: true },
@@ -350,6 +390,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
     const body = z.object({
       name:      z.string().min(1).max(120).optional(),
       rampCurve: z.array(z.number().min(0).max(5)).length(12).optional(),
+      startPeriod: periodSchema.optional(),
     }).parse(req.body)
     const projection = await findProjectionInScope(req, req.params.id, 'write')
     return prisma.projection.update({ where: { id: projection.id }, data: body })

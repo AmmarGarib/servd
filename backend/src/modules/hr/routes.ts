@@ -47,6 +47,7 @@ import { applyAttendanceCorrection, flagMissingPunches } from './attendance.js'
 import { approvedLeaveOn, leaveSpan, isHalfDayLeave, OFF_MARK, ymd as rotaYmd } from './rota.js'
 import { hasKioskPin, setKioskPin, clearKioskPin } from './kioskPin.js'
 import { loginsToDeactivate, deactivateLeftLogins } from './separations.js'
+import { accountStateOf } from '../auth/accountStatus.js'
 import { TRANSFERRED_STATUS } from './transfer.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
@@ -1144,7 +1145,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
       prisma.hrRecord.findMany({ where: { employeeId: emp.id }, orderBy: { createdAt: 'desc' }, take: 200 }),
       leaveBalancesFor(emp.tenantId, emp.id),
       loansFor(emp.tenantId, emp.id),
-      fresh.userId ? prisma.user.findUnique({ where: { id: fresh.userId }, select: { id: true, name: true, email: true, role: true } }) : null,
+      // The login's status (pending / active / suspended) for the Login tab's
+      // Offboard / Reinstate (auth/offboarding.ts) — never its module access.
+      fresh.userId ? prisma.user.findUnique({ where: { id: fresh.userId }, select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true } })
+        .then((u) => u && { id: u.id, name: u.name, email: u.email, role: u.role, status: accountStateOf(u) }) : null,
       hasKioskPin(emp.id),
     ])
     const salaryHistory = records

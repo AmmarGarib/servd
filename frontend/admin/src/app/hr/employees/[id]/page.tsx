@@ -14,6 +14,9 @@ import { openPrintable } from '../../../../components/hr/RecordDetail'
 import { Select } from '@/components/ui/Select'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { usePermissions } from '../../../../hooks/useCan'
+import { useAuthStore } from '../../../../store/auth'
+import { roleLabel } from '../../../../lib/appRoles'
 
 interface Profile {
   employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
@@ -23,7 +26,7 @@ interface Profile {
   leaveBalances: Array<{ leaveTypeId: string; name: string; paid: boolean; entitlement: number; carriedForward: number; adjustments: number; taken: number; pending: number; balance: number }>
   loans: Array<{ id: string; type: string | null; amountCents: number; installments: number; recoveredCents: number; outstandingCents: number; firstPeriod: string }>
   salaryHistory: Array<{ section: string; effectiveDate: string | null; grossCents: number; applied: boolean }>
-  user: { id: string; name: string; email: string; role: string } | null
+  user: { id: string; name: string; email: string; role: string; status?: 'pending' | 'active' | 'suspended' } | null
   kioskPinSet: boolean
 }
 
@@ -337,9 +340,13 @@ function LoginTab({ p }: { p: Profile }) {
         <p className="text-sm font-black text-white/85 mb-2">servd login</p>
         <p className="text-sm text-white/60 mb-3">Not everyone needs one — most kitchen staff punch in with a kiosk PIN instead. Linking a login lets this person clock in as themselves, use <strong>My HR</strong> and, if they manage people, approve their team&rsquo;s requests. One login can be linked to one employee record in each company.</p>
         {p.user ? (
-          <div className="flex items-center gap-3">
-            <p className="text-sm text-white/85">Linked to <strong>{p.user.name}</strong> ({p.user.email ?? 'no email'}, {human(p.user.role)})</p>
-            <button className={btnGhost} onClick={() => link.mutate(null)}>Unlink</button>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <p className="text-sm text-white/85">Linked to <strong>{p.user.name}</strong> ({p.user.email ?? 'no email'}, {human(p.user.role)})</p>
+              {p.user.status && <LoginStatusChip status={p.user.status} />}
+              <button className={btnGhost} onClick={() => link.mutate(null)}>Unlink</button>
+            </div>
+            <OffboardButtons login={p.user} onDone={() => void qc.invalidateQueries()} />
           </div>
         ) : error ? (
           <p className="text-xs text-amber-700">{(error as Error).message}</p>
@@ -353,10 +360,129 @@ function LoginTab({ p }: { p: Profile }) {
           </div>
         )}
         {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
+        {!p.user && <CreateLoginForm p={p} />}
       </div>
       <KioskPinCard p={p} />
       <WorkLocationsCard p={p} />
     </div>
+  )
+}
+
+const LOGIN_STATUS: Record<'pending' | 'active' | 'suspended', { label: string; color: string }> = {
+  pending:   { label: 'Waiting for the CEO', color: 'var(--erp-warning)' },
+  active:    { label: 'Active',              color: 'var(--erp-success)' },
+  suspended: { label: 'Offboarded',          color: 'var(--erp-danger)' },
+}
+function LoginStatusChip({ status }: { status: 'pending' | 'active' | 'suspended' }) {
+  const m = LOGIN_STATUS[status]
+  return <span className="text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5"
+    style={{ color: m.color, background: `color-mix(in srgb, ${m.color} 12%, transparent)` }}>{m.label}</span>
+}
+
+/** Offboard / Reinstate a login (POST /auth/staff/:id/offboard|reinstate) — HR and the CEO only. Never the CEO's
+ *  login, never your own (the server refuses both too). HR's reinstate of a manager or office login waits for the CEO. */
+export function OffboardButtons({ login, onDone }: { login: { id: string; name: string; role: string; status?: 'pending' | 'active' | 'suspended' }; onDone: () => void }) {
+  const { data: me } = usePermissions()
+  const myId = useAuthStore((st) => st.user?.id ?? '')
+  const confirm = useConfirm()
+  const [msg, setMsg] = useState('')
+  const off = useMutation({
+    mutationFn: (reason: string) => api.post(`/auth/staff/${login.id}/offboard`, { reason }),
+    onSuccess: () => { setMsg(`${login.name} is offboarded and signed out everywhere.`); onDone() },
+    onError: (e: Error) => setMsg(e.message),
+  })
+  const back = useMutation({
+    mutationFn: () => api.post<{ status: string; waitsForCeo: boolean }>(`/auth/staff/${login.id}/reinstate`, {}),
+    onSuccess: (r) => { setMsg(r?.waitsForCeo ? 'Reinstated — waiting for the CEO to approve it.' : `${login.name} can sign in again.`); onDone() },
+    onError: (e: Error) => setMsg(e.message),
+  })
+  const role = me?.role
+  if (role !== 'hr' && role !== 'admin') return null
+  if (login.role === 'admin' || login.id === myId) return null
+  return (
+    <div>
+      <div className="flex gap-2">
+        {login.status !== 'suspended' ? (
+          <button type="button" className={btnGhost} disabled={off.isPending} onClick={async () => {
+            const r = await confirm({
+              title: `Offboard ${login.name}?`,
+              body: 'Their login is switched off and every session ends now. Pay is not affected — record a separation in HR for that.',
+              confirmLabel: 'Offboard', danger: true, reason: { label: 'Reason', minLength: 3 },
+            })
+            if (r && r.reason) off.mutate(r.reason)
+          }}>Offboard</button>
+        ) : (
+          <button type="button" className={btnGhost} disabled={back.isPending} onClick={async () => {
+            const r = await confirm({
+              title: `Reinstate ${login.name}?`,
+              body: role === 'admin' || ['cashier', 'foh', 'boh', 'kitchen', 'expediter'].includes(login.role)
+                ? 'They can sign in again at once.'
+                : 'A manager or office login goes back to the CEO for approval before they can sign in.',
+              confirmLabel: 'Reinstate',
+            })
+            if (r) back.mutate()
+          }}>Reinstate</button>
+        )}
+      </div>
+      {msg && <p className="text-xs text-white/60 mt-2">{msg}</p>}
+    </div>
+  )
+}
+
+/** Create a login for this employee (POST /auth/staff/invite, employeeId sent). Roles come from GET /permissions/me →
+ *  childRoles. HR's floor logins (cashier, FOH, BOH, kitchen, expediter) are active at once and linked here; manager
+ *  and office logins wait for the CEO in the approvals inbox and link when approved. */
+function CreateLoginForm({ p }: { p: Profile }) {
+  const qc = useQueryClient()
+  const { data: me } = usePermissions()
+  const childRoles = me?.childRoles ?? []
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(p.employee.fullName)
+  const [email, setEmail] = useState(typeof p.employee.personalEmail === 'string' ? p.employee.personalEmail : '')
+  const [phone, setPhone] = useState(typeof p.employee.phone === 'string' ? p.employee.phone : '')
+  const [role, setRole] = useState('')
+  const [err, setErr] = useState('')
+  const [done, setDone] = useState<{ status: string; linked: boolean } | null>(null)
+  const create = useMutation({
+    mutationFn: () => api.post<{ status: string; linkedEmployeeId?: string | null }>('/auth/staff/invite', {
+      name: name.trim(), email: email.trim(), role, employeeId: p.employee.id, ...(phone.trim() ? { phone: phone.trim() } : {}),
+    }),
+    onSuccess: (r) => { setErr(''); setDone({ status: r?.status ?? 'pending', linked: !!r?.linkedEmployeeId }); setOpen(false); void qc.invalidateQueries() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  if (childRoles.length === 0) return null
+  if (done) {
+    return (
+      <p className="text-sm text-white/70 mt-3">
+        {done.status === 'active'
+          ? `Login created and active now${done.linked ? ' — linked to this employee' : ''}.`
+          : 'Login created — waiting for the CEO to approve it in the approvals inbox. It links to this employee when approved.'}
+      </p>
+    )
+  }
+  if (!open) return <button type="button" className={`${btn} mt-3`} onClick={() => setOpen(true)}>Create login</button>
+  return (
+    <form className="mt-4 space-y-2 border-t border-white/10 pt-4" onSubmit={(e) => { e.preventDefault(); if (!create.isPending) create.mutate() }}>
+      <p className="text-sm font-black text-white/85">Create login</p>
+      <input className={inp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" />
+      <input className={inp} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Company email" aria-label="Email" type="email" />
+      <input className={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile (needed for floor staff)" aria-label="Mobile" />
+      <Select className={inp} value={role} onChange={(e) => setRole(e.target.value)} aria-label="Role">
+        <option value="">Choose a role…</option>
+        {childRoles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+      </Select>
+      <p className="text-xs text-white/45">
+        {!role ? 'Floor staff (cashier, FOH, BOH, kitchen, expediter) can sign in at once; manager and office logins wait for the CEO.'
+          : ['cashier', 'foh', 'boh', 'kitchen', 'expediter'].includes(role) && (me?.role === 'hr' || me?.role === 'admin')
+            ? 'Active at once — they sign in with a code sent to this mobile.'
+            : 'Waits for the CEO to approve it.'}
+      </p>
+      {err && <p className="text-xs text-red-700">{err}</p>}
+      <div className="flex gap-2">
+        <button type="submit" className={btn} disabled={!role || !name.trim() || !email.trim() || create.isPending}>{create.isPending ? 'Creating…' : 'Create login'}</button>
+        <button type="button" className={btnGhost} onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </form>
   )
 }
 

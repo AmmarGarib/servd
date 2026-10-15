@@ -386,6 +386,18 @@ async function roleOverrides(): Promise<Map<UserRole, string[]>> {
   return map
 }
 
+/**
+ * A role's base case (the CEO's saved row ?? the in-code default), without
+ * CEO-only modules — what a person of that role holds with no per-person ticks.
+ * The CEO's per-person editor (PUT /permissions/users/:id/modules) stores a
+ * person's choice as the difference from this.
+ */
+export async function rolePresetModules(role: UserRole): Promise<string[]> {
+  if (role === 'admin') return [...ALL_MODULES]
+  const overrides = await roleOverrides()
+  return withoutCeoOnlyModules(knownModulesOnly(overrides.get(role) ?? DEFAULT_MODULE_ACCESS[role] ?? []))
+}
+
 /** Effective module set: (override ?? default) ∪ moduleAllow − moduleDeny. Admin sees all. */
 export async function effectiveModulesForUser(user: {
   role: UserRole

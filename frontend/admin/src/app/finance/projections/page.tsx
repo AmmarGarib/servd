@@ -27,7 +27,8 @@ interface BrandInput {
   concept: Concept
   launchMonth: number
   checkAverageCents: number
-  tradingDaysPerMonth: number
+  /** Weekdays the brand is closed (0 = Sunday … 6 = Saturday); Monday by default. */
+  closedWeekdays: number[]
   foodCostPct: number
   packagingCostPct: number
   dailyCoversAtSS: number
@@ -53,6 +54,9 @@ interface BrandInput {
 }
 interface BrandMonth {
   month: number
+  /** The calendar month (YYYY-MM) and its trading days (days − closed weekdays). */
+  period: string
+  tradingDays: number
   live: boolean
   rampFactor: number
   orders: number
@@ -67,6 +71,7 @@ interface BrandMonth {
 }
 interface CombinedMonth {
   month: number
+  period?: string
   revenueCents: number
   variableCents: number
   staffCents: number
@@ -81,7 +86,7 @@ interface CombinedMonth {
   cumulativeCents: number
 }
 interface ComputedScenario {
-  projection: { id: string; name: string; rampCurve: number[]; updatedAt: string }
+  projection: { id: string; name: string; rampCurve: number[]; startPeriod: string; startPeriodSet: boolean; periods: string[]; updatedAt: string }
   brands: BrandInput[]
   combined: CombinedMonth[]
   summary: {
@@ -94,6 +99,15 @@ interface ComputedScenario {
     year1CombinedProfitCents: number
     paybackMonths: number | null
   }
+}
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "2026-11" → "Nov 26". */
+function monthLabel(period: string | undefined): string {
+  if (!period) return ''
+  const [y, m] = period.split('-')
+  return `${MONTH_NAMES[Number(m) - 1] ?? ''} ${y?.slice(2) ?? ''}`
 }
 
 function fmtPkr(cents: number): string {
@@ -157,14 +171,19 @@ export default function ProjectionsPage() {
   }, [computed, concepts])
 
   const upsertBrand = useMutation({
-    mutationFn: ({ conceptId, body }: { conceptId: string; body: Record<string, number> }) =>
+    mutationFn: ({ conceptId, body }: { conceptId: string; body: Record<string, number | number[]> }) =>
       api.put(`/projections/${activeId}/brands/${conceptId}`, body),
     onSuccess: () => void refetch(),
   })
 
-  function patchBrand(conceptId: string, patch: Record<string, number>) {
+  function patchBrand(conceptId: string, patch: Record<string, number | number[]>) {
     upsertBrand.mutate({ conceptId, body: patch })
   }
+
+  const setStart = useMutation({
+    mutationFn: (startPeriod: string) => api.patch(`/projections/${activeId}`, { startPeriod }),
+    onSuccess: () => void refetch(),
+  })
 
   if (scenariosLoading || (!computed && computedLoading)) {
     return <div className="p-12 text-center text-sm text-s-muted">Loading projections…</div>
@@ -195,6 +214,13 @@ export default function ProjectionsPage() {
                 fixed opex from <Link href="/finance/opex" className="text-primary-ink hover:underline">OpEx</Link>,
                 capex from <Link href="/finance/capex" className="text-primary-ink hover:underline">Capex</Link>.
               </p>
+              <label className="mt-2 flex items-center gap-2 text-xs text-s-muted">
+                Month 1 is
+                <input type="month" value={projection.startPeriod}
+                  onChange={(e) => { if (/^\d{4}-\d{2}$/.test(e.target.value)) setStart.mutate(e.target.value) }}
+                  className="rounded bg-s-bg border border-s-border px-2 py-1 text-xs" />
+                <span>— each month trades on its real calendar days, minus the days a brand is closed.</span>
+              </label>
             </div>
             <div className="flex items-center gap-2">
               {scenarios.length > 1 && (
@@ -318,7 +344,11 @@ export default function ProjectionsPage() {
               <thead className="text-s-muted">
                 <tr className="border-b border-s-border">
                   <th className="text-left px-3 py-2 font-bold sticky left-0 bg-s-surface">Line</th>
-                  {MONTHS.map((m) => <th key={m} className="text-right px-3 py-2 font-bold">M{m}</th>)}
+                  {MONTHS.map((m) => (
+                    <th key={m} className="text-right px-3 py-2 font-bold">
+                      M{m}<span className="block text-[9px] font-normal text-s-dim">{monthLabel(projection.periods?.[m - 1])}</span>
+                    </th>
+                  ))}
                   <th className="text-right px-3 py-2 font-bold">Year 1</th>
                 </tr>
               </thead>
@@ -347,7 +377,7 @@ export default function ProjectionsPage() {
           <div className="grid grid-cols-6 md:grid-cols-12 gap-2">
             {projection.rampCurve.map((r, i) => (
               <div key={i} className="rounded-lg bg-s-bg border border-s-border px-2 py-2 text-center">
-                <div className="text-[9px] text-s-dim font-bold uppercase">M{i + 1}</div>
+                <div className="text-[9px] text-s-dim font-bold uppercase">M{i + 1} · {monthLabel(projection.periods?.[i])}</div>
                 <div className="text-sm font-black mt-0.5">{(r * 100).toFixed(0)}%</div>
               </div>
             ))}
@@ -416,8 +446,14 @@ function EditCell({ value, onCommit, step, suffix }: {
 function BrandBlock({ brand: b, months, patchBrand }: {
   brand: BrandInput
   months: number[]
-  patchBrand: (conceptId: string, patch: Record<string, number>) => void
+  patchBrand: (conceptId: string, patch: Record<string, number | number[]>) => void
 }) {
+  const closed = b.closedWeekdays ?? [1]
+  const toggleDay = (d: number) => {
+    const next = closed.includes(d) ? closed.filter((x) => x !== d) : [...closed, d].sort()
+    if (next.length > 6) return
+    patchBrand(b.conceptId, { closedWeekdays: next })
+  }
   return (
     <section>
       <div className="flex items-baseline gap-3 mb-3">
@@ -436,8 +472,19 @@ function BrandBlock({ brand: b, months, patchBrand }: {
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           <InputPair label="Check avg (PKR)" value={Math.round(b.checkAverageCents / 100)}
             onCommit={(v) => patchBrand(b.conceptId, { checkAverageCents: Math.round(v * 100) })} />
-          <InputPair label="Trading days / month" value={b.tradingDaysPerMonth}
-            onCommit={(v) => patchBrand(b.conceptId, { tradingDaysPerMonth: Math.round(v) })} />
+          <div className="flex items-center gap-2" role="group" aria-label="Closed on">
+            <span className="text-[11px] text-s-muted">Closed on</span>
+            {WEEKDAYS.map((d, i) => (
+              <button key={d} type="button" aria-pressed={closed.includes(i)} onClick={() => toggleDay(i)}
+                className="rounded px-1.5 py-0.5 text-[10px] font-bold border"
+                style={closed.includes(i)
+                  ? { background: 'var(--erp-primary)', color: '#fff', borderColor: 'var(--erp-primary)' }
+                  : { borderColor: 'rgb(var(--fg-rgb) / 0.15)', color: 'var(--muted)' }}>
+                {d}
+              </button>
+            ))}
+            <span className="text-[10px] text-s-dim">trading days = the month&rsquo;s days minus these</span>
+          </div>
           <InputPair label="Food cost %" value={b.foodCostPct}
             onCommit={(v) => patchBrand(b.conceptId, { foodCostPct: v })} />
           <InputPair label="Packaging cost %" value={b.packagingCostPct}
@@ -475,12 +522,14 @@ function BrandBlock({ brand: b, months, patchBrand }: {
               {months.map((m) => (
                 <th key={m} className="text-right px-3 py-2 font-bold">
                   M{m}{!b.months[m - 1]!.live && <span className="ml-1 text-[8px] text-s-dim">pre-launch</span>}
+                  <span className="block text-[9px] font-normal text-s-dim">{monthLabel(b.months[m - 1]?.period)}</span>
                 </th>
               ))}
               <th className="text-right px-3 py-2 font-bold">Year 1</th>
             </tr>
           </thead>
           <tbody>
+            <BrandRow label="Trading days" brand={b} pick={(m) => m.tradingDays ?? 0} raw />
             <BrandRow label="Ramp factor" brand={b} pick={(m) => m.rampFactor * 100} suffix="%" raw />
             <BrandRow label="Monthly orders" brand={b} pick={(m) => m.orders} raw />
             <BrandRow label="Revenue" brand={b} pick={(m) => m.revenueCents} />

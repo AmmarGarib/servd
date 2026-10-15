@@ -13,6 +13,7 @@ import {
   CEO_ONLY_MODULES,
   invalidateModuleAccessCache,
   effectiveModulesForUser,
+  rolePresetModules,
 } from '../../lib/moduleAccess.js'
 import { ALL_ROLES, ASSIGNABLE_ROLES, LEGACY_ROLES, OVERRIDE_APPROVERS } from '../../lib/roles.js'
 import { audit } from '../../lib/audit.js'
@@ -21,6 +22,7 @@ import { serviceClient } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { reachTenantIds, reachVia } from '../../lib/headOffice.js'
 import { liveDelegations } from '../../lib/approvalRights.js'
+import { findManagedStaff, auditCompanyOf } from '../auth/staffAccounts.js'
 
 // ── Access control is MODULE ACCESS (owner decision 34, 2026-09-27) ─────────
 //
@@ -174,6 +176,94 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       after: { role: body.role, modules },
     })
     return { ok: true, role: body.role, modules }
+  })
+
+  // GET / PUT /permissions/users/:id/modules — the CEO's per-person ticks.
+  await fastify.register(personModuleRoutes)
+}
+
+// ── Per-person module access (owner, 2026-10-15) ─────────────────────────────
+//
+// "Module access … is subjective not objective to role: I click on a person's
+// name and select the modules they are allowed to access, but a base case can
+// be preset for roles … and only I can change what they see."
+//
+// The role preset (PUT /role-modules) is the base case; a person's ticks are
+// stored as the difference from it — moduleAllow = chosen − preset,
+// moduleDeny = preset − chosen — so effectiveModulesForUser stays the ONE
+// resolver the API enforces with. CEO only (ADMIN_ONLY). The target must be in
+// the CEO's companies (findManagedStaff: 404 / 403 LOGIN_IN_OTHER_COMPANY). An
+// admin login (the CEO's own included) always holds every module: shown
+// locked, never saved. CEO-only modules (Brands) are never given to anyone else.
+
+/** Every module the editor offers, grouped as lib/workspaces.ts places it. */
+function moduleCatalogue() {
+  return WORKSPACES.flatMap((w) => w.sections.flatMap((s) => s.modules.map((id) => ({
+    id, workspace: w.id, workspaceTitle: w.title, section: s.key, sectionTitle: s.title,
+    ceoOnly: CEO_ONLY_MODULES.includes(id),
+  }))))
+}
+
+async function personModulesView(target: { role: UserRole; moduleAllow: string[]; moduleDeny: string[] }) {
+  const rolePreset = await rolePresetModules(target.role)
+  const effective = await effectiveModulesForUser(target)
+  const presetSet = new Set(rolePreset)
+  return {
+    role: target.role,
+    locked: target.role === 'admin',
+    rolePreset,
+    effective: Array.from(effective),
+    allow: knownModulesOnly(target.moduleAllow).filter((m) => !presetSet.has(m)),
+    deny: target.moduleDeny.filter((m) => presetSet.has(m)),
+    modules: moduleCatalogue(),
+  }
+}
+
+export async function personModuleRoutes(fastify: FastifyInstance) {
+  fastify.get<{ Params: { id: string } }>('/users/:id/modules', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const target = await findManagedStaff(req, req.params.id, { id: true, name: true, role: true, moduleAllow: true, moduleDeny: true })
+    return { id: target.id, name: target.name, ...(await personModulesView(target)) }
+  })
+
+  fastify.put<{ Params: { id: string } }>('/users/:id/modules', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ modules: z.array(z.string().min(1)).nullable() }).strict().parse(req.body)
+    const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, role: true, moduleAllow: true, moduleDeny: true })
+    if (target.id === req.staffUser!.id || target.role === 'admin') {
+      throw new AppError('CEO_HOLDS_EVERY_MODULE', 'The CEO always has every module — it cannot be changed per person.', 403)
+    }
+    let allow: string[] = []
+    let deny: string[] = []
+    if (body.modules) {
+      const unknown = body.modules.filter((m) => !isKnownModuleId(m) && !isRetiredModuleId(m))
+      if (unknown.length) throw new AppError('UNKNOWN_MODULE', `Unknown module id(s): ${unknown.join(', ')}`, 400)
+      // Retired ids dropped quietly; CEO-only modules are never granted.
+      const chosen = new Set(withoutCeoOnlyModules(knownModulesOnly(body.modules)))
+      const preset = await rolePresetModules(target.role)
+      const presetSet = new Set(preset)
+      allow = Array.from(chosen).filter((m) => !presetSet.has(m)).sort()
+      deny = preset.filter((m) => !chosen.has(m)).sort()
+    }
+    const before = { moduleAllow: target.moduleAllow, moduleDeny: target.moduleDeny }
+    const updated = await serviceClient.user.update({
+      where: { id: target.id },
+      data: { moduleAllow: allow, moduleDeny: deny },
+      select: { id: true, name: true, role: true, moduleAllow: true, moduleDeny: true },
+    })
+    // Nothing to invalidate: the per-user columns are read live on every
+    // request (auth middleware, requireModule); the role cache is unchanged.
+    await audit({
+      category: 'identity',
+      action: 'staff.modules',
+      entity: 'User',
+      entityId: target.id,
+      userId: req.staffUser?.id ?? null,
+      userEmail: req.staffUser?.email ?? null,
+      tenantId: auditCompanyOf(target),
+      before,
+      after: { moduleAllow: allow, moduleDeny: deny, resetToRolePreset: body.modules === null, targetEmail: target.email },
+      metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
+    })
+    return { id: updated.id, name: updated.name, ...(await personModulesView(updated)) }
   })
 }
 

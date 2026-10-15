@@ -1,5 +1,5 @@
 import type { UserRole } from '@prisma/client'
-import { ASSIGNABLE_ROLES_WITH_ADMIN } from './roles.js'
+import { ASSIGNABLE_ROLES, ASSIGNABLE_ROLES_WITH_ADMIN } from './roles.js'
 
 /**
  * WORKSPACES — servd organised by OWNER (owner decision 47, 2026-10-04).
@@ -154,6 +154,10 @@ export const WORKSPACE_OF_MODULE: ReadonlyMap<string, WorkspaceDef['id']> = new 
 // else INVITES into their own reach (POST /auth/staff/invite) and the CEO
 // approves. owner gets none: owners cannot touch staff accounts (escalation
 // rule — an owner who could mint logins could mint an admin).
+//
+// HR onboards (owner, 2026-10-15): every assignable role except the CEO
+// (admin) and co-owner (owner) seats. Floor logins HR adds are ACTIVE at once;
+// manager / office logins wait for the CEO (auth/offboarding.ts activeAtOnce).
 const OPS_FLOOR: UserRole[] = ['foh', 'boh', 'kitchen', 'expediter', 'cashier', 'procurement']
 
 export const CHILD_ROLES: Readonly<Record<UserRole, readonly UserRole[]>> = {
@@ -165,7 +169,7 @@ export const CHILD_ROLES: Readonly<Record<UserRole, readonly UserRole[]>> = {
   foh_management: ['foh', 'cashier'],
   manager:        ['foh', 'cashier'],
   finance:        ['finance'],
-  hr:             ['hr'],
+  hr:             ASSIGNABLE_ROLES.filter((r) => r !== 'owner'),
   marketing:      ['marketing'],
   brand_manager:  ['marketing'],
   it:             [],

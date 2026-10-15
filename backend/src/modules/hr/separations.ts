@@ -14,8 +14,7 @@
 
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
-import { revokeAllForSubject } from '../../lib/tokenRevocation.js'
-import { suspendData } from '../auth/accountStatus.js'
+import { switchOffLogin } from '../auth/offboarding.js'
 import { applyDueEffects } from './service.js'
 import { pktToday } from './logic.js'
 
@@ -61,12 +60,8 @@ export async function deactivateLeftLogins(tenantId: string, now = new Date()): 
   await applyDueEffects(tenantId, now)
   const due = await loginsToDeactivate(tenantId, now)
   for (const d of due) {
-    const n = await prisma.user.updateMany({
-      where: { id: d.userId, OR: [{ isActive: true }, { accountStatus: { not: 'suspended' } }] },
-      data: suspendData(),
-    })
-    if (n.count === 0) continue
-    await revokeAllForSubject(d.userId)
+    // The one switch-off (auth/offboarding.ts), shared with HR's Offboard.
+    if (!(await switchOffLogin(d.userId))) continue
     await audit({
       category: 'identity', action: 'hr.separation.login_deactivated', entity: 'User', entityId: d.userId,
       userId: null, userEmail: null, tenantId,

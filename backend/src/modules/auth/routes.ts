@@ -35,7 +35,8 @@ import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/ten
 import { childRolesFor } from '../../lib/workspaces.js'
 import { approvalInputOf, approvalQueueTenantIds, auditApproval, canApprove } from '../../lib/approvalRights.js'
 import { viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
-import { withoutCeoOnlyModules } from '../../lib/moduleAccess.js'
+import { withoutCeoOnlyModules, effectiveModulesForUser } from '../../lib/moduleAccess.js'
+import { activeAtOnce, activationSideEffects, switchOffLogin, OFFBOARDERS } from './offboarding.js'
 import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
@@ -186,6 +187,17 @@ async function loginInTrash(req: FastifyRequest, holderId: string): Promise<AppE
   const mine = new Set(req.staffUser?.memberTenantIds ?? [])
   const visible = companies.length ? companies.some((t) => mine.has(t)) : req.staffUser?.role === 'admin'
   return inTrashConflict(TRASH_COMPANY.login, h.id, visible, 'A login with that email')
+}
+
+/** HR's onboarding / offboarding runs from the HR back office: an HR login
+ *  needs the staff_hr module (the CEO's untick closes it). Other roles pass. */
+async function assertHrBackOffice(req: FastifyRequest): Promise<void> {
+  if (req.staffUser?.role !== 'hr') return
+  const me = await prisma.user.findUnique({ where: { id: req.staffUser.id }, select: { moduleAllow: true, moduleDeny: true } })
+  const mods = await effectiveModulesForUser({ role: 'hr', moduleAllow: me?.moduleAllow ?? [], moduleDeny: me?.moduleDeny ?? [] })
+  if (!mods.has('staff_hr')) {
+    throw new AppError('FORBIDDEN', 'Your account does not have access to this module (staff_hr). Ask the CEO to enable it in Module Access.', 403)
+  }
 }
 
 export async function authRoutes(fastify: FastifyInstance) {
@@ -1054,6 +1066,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     if (body.role === 'admin' || !(allowed as string[]).includes(body.role)) {
       throw new AppError('ROLE_NOT_ALLOWED', `You cannot add a login with the role "${body.role}".`, 403)
     }
+    // HR onboards through the HR back office: the CEO's untick of staff_hr
+    // for an HR login closes this too.
+    await assertHrBackOffice(req)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) {
       throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a new login belongs to one company.', 422)
@@ -1089,6 +1104,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     const password = await hashPassword(temporaryPassword)
     // Check and write under one per-number lock (AUTH-R5).
     const viaHeadOfficeId = await viaHeadOfficeForSubmit(req, tenantId)
+    // HR (or the CEO) adding a FLOOR login: active at once, with the same side
+    // effects as an approval (offboarding.ts). Manager / office logins, and
+    // anything proposed through a head office, wait for the CEO as before.
+    // Module access is never set here — only the CEO changes what anyone sees.
+    const activeNow = !practice && !viaHeadOfficeId && activeAtOnce(req.staffUser!.role, body.role)
     const user = await withStaffPhoneLock(phone, async (tx) => {
       await assertPhoneFree(req, phone, { role: body.role, db: tx })
       return tx.user.create({
@@ -1099,13 +1119,13 @@ export async function authRoutes(fastify: FastifyInstance) {
           password,
           role: body.role as UserRole,
           tenantId,
-          ...(practice ? approveData() : { accountStatus: 'pending' as const, isActive: true }),
+          ...(practice || activeNow ? approveData() : { accountStatus: 'pending' as const, isActive: true }),
           mustChangePassword: true,
           invitedById: req.staffUser!.id,
           ...(viaHeadOfficeId ? { viaHeadOfficeId } : {}),
           // Linked to the HrEmployee on approval (validated above, re-checked
           // then) — or at once in the practice copy, below.
-          ...(body.employeeId && !practice ? { inviteEmployeeId: body.employeeId } : {}),
+          ...(body.employeeId && !practice && !activeNow ? { inviteEmployeeId: body.employeeId } : {}),
           tenantMemberships: { create: [{ tenant: { connect: { id: tenantId } }, role: 'member' }] },
         },
         select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true, createdAt: true, tenantId: true },
@@ -1120,14 +1140,19 @@ export async function authRoutes(fastify: FastifyInstance) {
       userEmail: req.staffUser!.email,
       tenantId,
       after: { name: user.name, email: user.email, role: user.role, tenantId, employeeId: body.employeeId ?? null, accountStatus: user.accountStatus },
-      ...(viaHeadOfficeId || practice ? { metadata: { ...(viaHeadOfficeId ? { viaHeadOfficeId } : {}), ...(practice ? { practiceNoApproval: true } : {}) } } : {}),
+      ...(viaHeadOfficeId || practice || activeNow ? { metadata: {
+        ...(viaHeadOfficeId ? { viaHeadOfficeId } : {}),
+        ...(practice ? { practiceNoApproval: true } : {}),
+        ...(activeNow ? { activeAtOnce: true } : {}),
+      } } : {}),
     })
     if (practice) {
-      if (body.employeeId) {
-        await prisma.hrEmployee.updateMany({ where: { id: body.employeeId, tenantId, userId: null }, data: { userId: user.id } })
-          .catch((err) => req.log.warn({ err, employeeId: body.employeeId, userId: user.id }, 'practice invite: employee link failed'))
-      }
+      await activationSideEffects(req, user, body.employeeId, { sendPasswordLink: false })
       return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined, temporaryPassword })
+    }
+    if (activeNow) {
+      const { linkedEmployeeId, passwordLink } = await activationSideEffects(req, user, body.employeeId)
+      return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined, linkedEmployeeId, passwordLink })
     }
     return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined })
   })
@@ -1196,32 +1221,12 @@ export async function authRoutes(fastify: FastifyInstance) {
           : tx.user.findUniqueOrThrow({ where: { id: req.params.id }, select: { id: true, name: true, email: true, role: true, accountStatus: true } })
       })
 
-      // Link the HR employee named at invite time — re-validated now: still in
-      // this login's company and still without a login. Anything else is
-      // skipped (logged), never fatal: HR can link it from the employee record.
-      let linkedEmployeeId: string | null = null
-      if (user.inviteEmployeeId && user.tenantId) {
-        const linked = await prisma.hrEmployee.updateMany({
-          where: { id: user.inviteEmployeeId, tenantId: user.tenantId, userId: null },
-          data: { userId: user.id },
-        }).catch((err) => { req.log.warn({ err, employeeId: user.inviteEmployeeId, userId: user.id }, 'invite: employee link failed'); return { count: 0 } })
-        if (linked.count === 1) linkedEmployeeId = user.inviteEmployeeId
-        else req.log.warn({ employeeId: user.inviteEmployeeId, userId: user.id }, 'invite: employee no longer linkable')
-      }
-
-      // Send the set-your-password link when a channel exists. A failure here
-      // is logged, never fatal: the CEO can still issue a password.
-      let passwordLink: 'sent' | 'unavailable' | 'failed' = 'unavailable'
-      if (user.email && await deliveryConfigured().catch(() => false)) {
-        try {
-          const outcome = await requestPasswordReset(user.email, req.ip ?? null)
-          passwordLink = outcome.email === 'sent' || outcome.whatsapp === 'sent' ? 'sent' : 'failed'
-          if (outcome.errors.length) req.log.error({ userId: user.id, outcome }, 'approve: password link delivery failed')
-        } catch (err) {
-          passwordLink = 'failed'
-          req.log.error({ err, userId: user.id }, 'approve: password link failed')
-        }
-      }
+      // Link the HR employee named at invite time (re-validated now) and send
+      // the set-your-password link when a channel exists — the same side
+      // effects as HR's active-at-once floor login (offboarding.ts). Never
+      // fatal: HR can link it from the employee record, the CEO can issue a
+      // password.
+      const { linkedEmployeeId, passwordLink } = await activationSideEffects(req, user, user.inviteEmployeeId)
 
       // Letting someone in is half of "who can get in"; it was never recorded.
       await audit({
@@ -1281,6 +1286,90 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
       await auditApproval(req, { type: 'staff_login', id: req.params.id, tenantId: auditCompanyOf(before), decision: 'reject', grant: right.grant, entity: 'User' })
       return reply.status(200).send(updated)
+    },
+  )
+
+  // POST /auth/staff/:id/offboard — HR or the CEO switches a login off, same
+  // as someone leaving in real life (owner, 2026-10-15). The login must be in
+  // the caller's companies (404 / 403 LOGIN_IN_OTHER_COMPANY, findManagedStaff).
+  // Never the CEO's login (403 CANNOT_OFFBOARD_CEO) and never your own (403
+  // CANNOT_OFFBOARD_SELF): "the only person HR can't fire is me and the only
+  // person I can't fire is me". Suspends (accountStatus.ts) and revokes every
+  // session through the one switch-off (offboarding.ts), shared with the HR
+  // leaver sweep. Pay is HR's separation, not this.
+  fastify.post<{ Params: { id: string } }>(
+    '/staff/:id/offboard',
+    { preHandler: requireAuth(...OFFBOARDERS) },
+    async (req) => {
+      await assertHrBackOffice(req)
+      const body = z.object({ reason: z.string().trim().min(3).max(500) }).parse(req.body ?? {})
+      const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true })
+      if (target.id === req.staffUser!.id) throw new AppError('CANNOT_OFFBOARD_SELF', 'You cannot offboard your own login.', 403)
+      if (target.role === 'admin') throw new AppError('CANNOT_OFFBOARD_CEO', "The CEO's login cannot be offboarded.", 403)
+      const before = accountStateOf(target)
+      const changed = await switchOffLogin(target.id)
+      if (changed) {
+        await audit({
+          category: 'identity',
+          action: 'staff.offboard',
+          entity: 'User',
+          entityId: target.id,
+          userId: req.staffUser!.id,
+          userEmail: req.staffUser!.email,
+          tenantId: auditCompanyOf(target),
+          before: { accountStatus: before },
+          after: { accountStatus: 'suspended', reason: body.reason, targetEmail: target.email, role: target.role },
+          metadata: { actorTenantId: req.staffUser!.tenantId ?? null, actorRole: req.staffUser!.role },
+        })
+      }
+      return { id: target.id, name: target.name, status: 'suspended' as const, alreadyOffboarded: !changed }
+    },
+  )
+
+  // POST /auth/staff/:id/reinstate — bring an offboarded login back. The CEO's
+  // reinstate is immediate. HR's: a floor login (code sign-in) is active at
+  // once; a manager / office login goes back to PENDING and waits for the CEO
+  // in the approvals inbox (staff_login), like a new one. Same scope and
+  // refusals as offboard (HR never touches the CEO's login).
+  fastify.post<{ Params: { id: string } }>(
+    '/staff/:id/reinstate',
+    { preHandler: requireAuth(...OFFBOARDERS) },
+    async (req) => {
+      await assertHrBackOffice(req)
+      const isCeo = req.staffUser!.role === 'admin'
+      const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true })
+      if (target.id === req.staffUser!.id) throw new AppError('CANNOT_OFFBOARD_SELF', 'You cannot change your own login here.', 403)
+      if (target.role === 'admin' && !isCeo) throw new AppError('CANNOT_OFFBOARD_CEO', "Only the CEO can change a CEO login.", 403)
+      if (accountStateOf(target) !== 'suspended') throw new AppError('NOT_SUSPENDED', 'This login is not switched off.', 409)
+      const immediate = isCeo || activeAtOnce(req.staffUser!.role, target.role)
+      // A floor login coming back must have a number nobody else holds
+      // (PPL-04/05, AUTH-R5) — the same check as a reactivation on Workforce.
+      const phone = normaliseStaffPhoneLenient(target.phone)
+      const floorActive = immediate && usesOtpLogin(target.role)
+      if (floorActive) assertPhoneForRole(target.role, phone)
+      const data = immediate ? approveData() : { accountStatus: 'pending' as const, isActive: true }
+      const updated = await withStaffPhoneLock(floorActive ? phone : null, async (tx) => {
+        if (floorActive) await assertPhoneFree(req, phone, { role: target.role, excludeUserId: target.id, db: tx })
+        const claimed = await tx.user.updateMany({
+          where: { id: target.id, deletedAt: null, OR: [{ accountStatus: 'suspended' }, { isActive: false }] },
+          data,
+        })
+        if (claimed.count === 0) throw new AppError('NOT_SUSPENDED', 'This login is not switched off.', 409)
+        return tx.user.findUniqueOrThrow({ where: { id: target.id }, select: { id: true, name: true, accountStatus: true, isActive: true } })
+      })
+      await audit({
+        category: 'identity',
+        action: 'staff.reinstate',
+        entity: 'User',
+        entityId: target.id,
+        userId: req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: auditCompanyOf(target),
+        before: { accountStatus: 'suspended' },
+        after: { accountStatus: updated.accountStatus, targetEmail: target.email, role: target.role },
+        metadata: { actorTenantId: req.staffUser!.tenantId ?? null, actorRole: req.staffUser!.role, waitsForCeo: !immediate },
+      })
+      return { id: updated.id, name: updated.name, status: accountStateOf(updated), waitsForCeo: !immediate }
     },
   )
 
@@ -2019,6 +2108,12 @@ export async function authRoutes(fastify: FastifyInstance) {
         // moved FROM. phone for the floor-login rules below.
         role: true, isActive: true, accountStatus: true, email: true, phone: true,
       })
+
+      // "The only person I can't fire is me" (owner, 2026-10-15): the CEO
+      // never switches their own login off here.
+      if (body.isActive === false && req.params.id === req.staffUser!.id) {
+        throw new AppError('CANNOT_OFFBOARD_SELF', 'You cannot switch off your own login.', 403)
+      }
 
       // Moving or adding companies: only ones the operator belongs to (422).
       assertCompaniesInScope(req, [...(body.tenantId ? [body.tenantId] : []), ...(body.tenantIds ?? [])])
