@@ -204,10 +204,11 @@ function deliverGate(o: DeliveryOrder, isManager: boolean): { canMark: boolean; 
     return { canMark: false, locked: false, note: `Kitchen still on it (${o.status}) — deliverable once ready` }
   }
   const locked = (o.deliveryOtpAttempts ?? 0) >= OTP_MAX_ATTEMPTS
-  // Code-only delivery (or not yet known from the board): no staff "Delivered".
-  // The rider app or "Enter customer's code" completes it; a locked code goes
-  // to a manager on Emergency overrides.
-  if (o.codeOnly !== false) {
+  // Code-only delivery: no staff "Delivered". The rider app or "Enter
+  // customer's code" completes it; a locked code goes to a manager on Emergency
+  // overrides. Unknown (board loading / errored / rider not on the board) keeps
+  // today's behaviour — the API refuses staff Delivered for a code-only company.
+  if (o.codeOnly === true) {
     return {
       canMark: false, locked,
       note: locked ? 'Code locked — a manager can send the code to the rider.' : "Closed with the customer's code only.",
@@ -428,7 +429,8 @@ export default function RidersPage() {
     })))
   // The orders list does not carry code-only / reroute / door problem: take
   // them from the board (same order id). Not on the board → codeOnly unknown,
-  // which the gate treats as "no staff Delivered".
+  // which the gate treats as today's behaviour (the API still refuses staff
+  // Delivered for a code-only company).
   const boardOrders = new Map(board.flatMap((r) => r.orders.map((o) => [o.id, o] as const)))
   const withRider: DeliveryOrder[] = [...inService, ...outCompleted].map((o) => {
     const b = boardOrders.get(o.id)

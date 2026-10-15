@@ -26,6 +26,7 @@ import { BankAccountSelect, useBankAccounts } from '../../../components/finance/
 import { useAuthStore } from '../../../store/auth'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
+import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { Select } from '@/components/ui/Select'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
@@ -127,7 +128,10 @@ interface PayrollBudget {
   companyLevelSeatsMonthlyCents?: number
   headOfficeChargesMonthlyCents?: number
   headOfficeCharges?: Array<{ headOfficeId: string; name: string; companyTenantId: string; companyName: string; shareBps: number; monthlyCents: number }>
-  labels?: { headOfficeCharges?: string; companyLevelSeats?: string }
+  // A head office in view: what it recharges out to its companies (plan).
+  // Already subtracted in netMonthlyCents by the server.
+  rechargedOutMonthlyCents?: number
+  labels?: { headOfficeCharges?: string; companyLevelSeats?: string; rechargedOut?: string }
   netMonthlyCents: number       // == monthlyCents after add/subtract
 }
 interface ContributionLine {
@@ -520,6 +524,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
     : 0
   const isPayroll = category.name.toLowerCase() === 'payroll'
   const accountLabel = useAccountLabel(category.tenantId)
+  const { headOfficeSetupApplied } = useHeadOfficeMe()
 
   return (
     <section className="rounded-2xl overflow-hidden"
@@ -576,8 +581,13 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
               <span className="text-white/55">Position gross</span>
               <span className="font-bold text-white/85">{PKR(payrollSnap.budget.grossMonthlyCents)}</span>
             </div>
-            {positionsSummary && positionsSummary.contributions.map((c) => (
-              <div key={c.id} className="flex justify-between items-baseline">
+            {positionsSummary && positionsSummary.contributions.map((c) => {
+              // After the head-office setup, old head-office contributions are
+              // ended: the server leaves them out of Net, so show them muted
+              // with no sign (same as /workforce/positions).
+              const ended = headOfficeSetupApplied && c.category === 'head_office'
+              return (
+              <div key={c.id} className={`flex justify-between items-baseline${ended ? ' opacity-60' : ''}`}>
                 <span className="text-white/55 flex items-center gap-1.5">
                   <span style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                     {c.direction === 'incoming' ? '<--' : '-->'}
@@ -587,13 +597,15 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                     ({c.direction === 'incoming' ? 'from' : 'to'}{' '}
                     {c.direction === 'incoming' ? c.sourceTenant.name : c.destinationTenant.name})
                   </span>
+                  {ended && <span className="text-[10px] uppercase tracking-wider font-bold text-white/40">ended</span>}
                 </span>
                 <span className="font-bold"
-                  style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
-                  {c.direction === 'incoming' ? '-' : '+'} {PKR(c.monthlyCents)}
+                  style={ended ? undefined : { color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
+                  {ended ? '' : (c.direction === 'incoming' ? '- ' : '+ ')}{PKR(c.monthlyCents)}
                 </span>
               </div>
-            ))}
+              )
+            })}
             {(payrollSnap.budget.companyLevelSeatsMonthlyCents ?? 0) > 0 && (
               <div className="flex justify-between">
                 <span className="text-white/55">{payrollSnap.budget.labels?.companyLevelSeats ?? 'Company-level seats'} (in gross)</span>
@@ -609,6 +621,12 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                 <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>+ {PKR(h.monthlyCents)}</span>
               </div>
             ))}
+            {(payrollSnap.budget.rechargedOutMonthlyCents ?? 0) > 0 && (
+              <div className="flex justify-between items-baseline">
+                <span className="text-white/55">{payrollSnap.budget.labels?.rechargedOut ?? 'Recharged to companies (plan)'}</span>
+                <span className="font-bold" style={{ color: 'var(--erp-success)' }}>- {PKR(payrollSnap.budget.rechargedOutMonthlyCents ?? 0)}</span>
+              </div>
+            )}
             <div className="border-t border-white/10 mt-1 pt-2 flex justify-between items-baseline text-sm">
               <span className="font-bold text-white/85">Net to this tenant&apos;s P&L</span>
               <div className="text-right">

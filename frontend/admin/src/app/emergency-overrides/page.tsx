@@ -76,6 +76,7 @@ const ERROR_WORDS: Record<string, string> = {
   RATE_LIMITED: 'Too many resends. Wait a few minutes and try again.',
   TOO_MANY_REQUESTS: 'Too many resends. Wait a few minutes and try again.',
   FORBIDDEN: 'You do not have access to this action.',
+  ORDER_CHANGED: "This order's rider changed just now. Refresh and try again.",
 }
 function words(err: unknown): string {
   if (err instanceof ApiError) {
@@ -290,15 +291,17 @@ function SwitchDialog({ company, onClose }: { company: Company; onClose: () => v
 function SendCodeDialog({ row, onClose }: { row: RoadRow; onClose: () => void }) {
   const [reason, setReason] = useState('')
   const [hint, setHint] = useState<string | null>(null)
-  const [resent, setResent] = useState(false)
+  // null = not sent from this dialog yet; true/false = did WhatsApp reach the rider.
+  const [sentOk, setSentOk] = useState<boolean | null>(null)
+  const [resentOk, setResentOk] = useState<boolean | null>(null)
   const base = `/emergency-overrides/orders/${row.orderId}/send-code-to-rider`
   const send = useMutation({
     mutationFn: () => api.post<{ ok: true; sentToRider: boolean; riderPhoneHint: string }>(base, { reason: reason.trim() }),
-    onSuccess: (r) => setHint(r.riderPhoneHint),
+    onSuccess: (r) => { setHint(r.riderPhoneHint); setSentOk(r.sentToRider) },
   })
   const resend = useMutation({
-    mutationFn: () => api.post<{ riderPhoneHint?: string }>(`${base}/resend`, {}),
-    onSuccess: (r) => { setResent(true); if (r.riderPhoneHint) setHint(r.riderPhoneHint) },
+    mutationFn: () => api.post<{ ok: true; sentToRider: boolean; riderPhoneHint?: string }>(`${base}/resend`, {}),
+    onSuccess: (r) => { setResentOk(r.sentToRider); if (r.riderPhoneHint) setHint(r.riderPhoneHint) },
   })
   const already = !!row.rerouted || send.isSuccess
   const len = reason.trim().length
@@ -322,13 +325,22 @@ function SendCodeDialog({ row, onClose }: { row: RoadRow; onClose: () => void })
       {send.error && <p role="alert" className="text-xs text-s-red">{words(send.error)}</p>}
       {already && (
         <div className="space-y-2">
-          <p className="text-sm text-success font-medium">
-            Code sent to {row.rider.name}{hint ? ` (${hint})` : ''}.
-          </p>
+          {sentOk === false && resentOk !== true ? (
+            <p role="alert" className="text-sm text-s-red font-medium">
+              The new code was made but WhatsApp did not reach {row.rider.name}{hint ? ` (${hint})` : ''} — use Resend.
+            </p>
+          ) : (
+            <p className="text-sm text-success font-medium">
+              Code sent to {row.rider.name}{hint ? ` (${hint})` : ''}.
+            </p>
+          )}
           <button disabled={resend.isPending} onClick={() => resend.mutate()} className="s-btn-secondary w-full disabled:opacity-50">
             {resend.isPending ? 'Resending…' : 'Resend the same code'}
           </button>
-          {resent && <p className="text-xs text-success">Sent again.</p>}
+          {resentOk === true && <p className="text-xs text-success">Sent again.</p>}
+          {resentOk === false && (
+            <p role="alert" className="text-xs text-s-red">WhatsApp did not reach {row.rider.name} this time either. Try Resend again in a moment.</p>
+          )}
           {resend.error && <p role="alert" className="text-xs text-s-red">{words(resend.error)}</p>}
         </div>
       )}

@@ -118,7 +118,10 @@ interface Summary {
   contributions: ContributionSummary[]
   headOfficeCharges?: HeadOfficeChargeLine[]
   headOfficeChargesMonthlyCents?: number
-  labels?: { headOfficeCharges?: string }
+  // A head office in scope: what it recharges out to its companies (plan).
+  // Already folded into netMonthlyCents by the server.
+  rechargedOutMonthlyCents?: number
+  labels?: { headOfficeCharges?: string; rechargedOut?: string }
 }
 
 const STATUS_META: Record<Position['status'], { label: string; color: string; bg: string }> = {
@@ -362,7 +365,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
               />
             </div>
 
-            {(summary.headOfficeCharges ?? []).length > 0 && (
+            {((summary.headOfficeCharges ?? []).length > 0 || (summary.rechargedOutMonthlyCents ?? 0) > 0) && (
               <div className="mt-4 rounded-xl border border-s-border bg-s-surface overflow-hidden">
                 <div className="px-4 py-3 border-b border-s-border">
                   <p className="text-sm font-bold">{summary.labels?.headOfficeCharges ?? 'Head office charges (plan)'}</p>
@@ -378,10 +381,18 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                       <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>+ {fmtPkrWhole(h.monthlyCents)}</span>
                     </div>
                   ))}
-                  <div className="border-t border-s-border mt-1 pt-2 flex justify-between text-xs font-mono">
-                    <span className="font-bold">Total</span>
-                    <span className="font-black">{fmtPkrWhole(summary.headOfficeChargesMonthlyCents ?? 0)}</span>
-                  </div>
+                  {(summary.headOfficeCharges ?? []).length > 0 && (
+                    <div className="border-t border-s-border mt-1 pt-2 flex justify-between text-xs font-mono">
+                      <span className="font-bold">Total</span>
+                      <span className="font-black">{fmtPkrWhole(summary.headOfficeChargesMonthlyCents ?? 0)}</span>
+                    </div>
+                  )}
+                  {(summary.rechargedOutMonthlyCents ?? 0) > 0 && (
+                    <div className="flex justify-between text-xs font-mono items-baseline">
+                      <span className="text-s-muted">{summary.labels?.rechargedOut ?? 'Recharged to companies (plan)'}</span>
+                      <span className="font-bold" style={{ color: 'var(--erp-success)' }}>- {fmtPkrWhole(summary.rechargedOutMonthlyCents ?? 0)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -416,6 +427,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     <span className="font-bold">{fmtPkrWhole(summary.totalTenantShareMonthlyCents)}</span>
                   </div>
                   {summary.contributions.map((c) => {
+                    const ended = headOfficeSetupApplied && c.category === 'head_office'
                     const line = (<>
                       <div className="flex justify-between text-xs font-mono items-baseline">
                         <span className="text-s-muted flex items-center gap-1.5">
@@ -430,7 +442,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                         </span>
                         <span className="font-bold"
                           style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
-                          {c.direction === 'incoming' ? '-' : '+'} {fmtPkrWhole(c.monthlyCents)}
+                          {ended ? '' : (c.direction === 'incoming' ? '- ' : '+ ')}{fmtPkrWhole(c.monthlyCents)}
                         </span>
                       </div>
                       {c.internalSplit && c.internalSplit.length > 0 && (
@@ -445,7 +457,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     </>)
                     // After the setup, old head-office contributions are ended:
                     // shown read-only. Only managers may change any other one.
-                    if (headOfficeSetupApplied && c.category === 'head_office') {
+                    if (ended) {
                       return (
                         <div key={c.id} className="rounded-md px-1 py-1 -mx-1 opacity-60">
                           {line}
@@ -462,6 +474,18 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                       <div key={c.id} className="rounded-md px-1 py-1 -mx-1">{line}</div>
                     )
                   })}
+                  {(summary.headOfficeChargesMonthlyCents ?? 0) > 0 && (
+                    <div className="flex justify-between text-xs font-mono items-baseline">
+                      <span className="text-s-muted">{summary.labels?.headOfficeCharges ?? 'Head office charges (plan)'}</span>
+                      <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>+ {fmtPkrWhole(summary.headOfficeChargesMonthlyCents ?? 0)}</span>
+                    </div>
+                  )}
+                  {(summary.rechargedOutMonthlyCents ?? 0) > 0 && (
+                    <div className="flex justify-between text-xs font-mono items-baseline">
+                      <span className="text-s-muted">{summary.labels?.rechargedOut ?? 'Recharged to companies (plan)'}</span>
+                      <span className="font-bold" style={{ color: 'var(--erp-success)' }}>- {fmtPkrWhole(summary.rechargedOutMonthlyCents ?? 0)}</span>
+                    </div>
+                  )}
                   <div className="border-t border-s-border mt-1 pt-2 flex justify-between text-sm font-mono">
                     <span className="font-bold">Net to this tenant&apos;s P&L</span>
                     <span className="font-black" style={{ color: 'var(--erp-primary-ink)' }}>
