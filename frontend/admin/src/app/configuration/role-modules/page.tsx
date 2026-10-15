@@ -103,9 +103,9 @@ export default function RoleModulesPage() {
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🗂 Module Access by Role</h1>
+            <h1 className="text-2xl font-black text-white/90">🗂 Role presets</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              For each role, tick the modules that should appear in the sidebar. Admin + CEO always see everything — they&rsquo;re not editable. Tap a role label to switch into View-as mode and watch the sidebar reshape in real time.
+              The base case for each role: the modules a new login of that role can open. Change one person&rsquo;s access on Workforce — open their row and use &ldquo;What they can open&rdquo;. Admin + CEO always see everything — they&rsquo;re not editable. Tap a role label to switch into View-as mode and watch the sidebar reshape in real time.
             </p>
           </div>
           <div className="flex items-center gap-2">

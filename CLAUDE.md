@@ -208,6 +208,29 @@ module id must be placed in a workspace in the same change.
   /workforce or in the approvals inbox. The CEO's own `POST /auth/users`
   needs no approval. A login with no company can't be approved
   (422 `LOGIN_NEEDS_COMPANY`) — pick its company on /workforce first.
+- **HR onboards and offboards (owner, 2026-10-15).** HR's `childRoles` are
+  every assignable role except `admin` and `owner`. A FLOOR login (cashier,
+  FOH, BOH, kitchen, expediter) that HR or the CEO invites is ACTIVE at once
+  with the same side effects as an approval (`auth/offboarding.ts`
+  `activeAtOnce` / `activationSideEffects`: employee linked, password link);
+  every other role waits for the CEO (`staff_login`). Managers' invites stay
+  pending. `POST /auth/staff/:id/offboard {reason}` / `/reinstate`: HR and the
+  CEO only, own companies (404), never an admin login (403
+  `CANNOT_OFFBOARD_CEO`), never your own (403 `CANNOT_OFFBOARD_SELF`; the
+  staff editor refuses the CEO switching themselves off too). Offboard =
+  `switchOffLogin` (suspend + revoke every session), the ONE switch-off the
+  HR leaver sweep (`hr/separations.ts`) uses too. HR's reinstate of a manager
+  / office login goes back to `pending` for the CEO. UI: the HR employee
+  Login tab (Create login, Offboard / Reinstate) and Workforce.
+- **Module access is per person; only the CEO changes it (owner,
+  2026-10-15).** Role presets (`PUT /permissions/role-modules`, page
+  "Role presets") are the base case; the CEO ticks a person's modules on
+  Workforce ("What they can open") through `GET/PUT
+  /permissions/users/:id/modules` (`modules: null` = back to the preset),
+  stored as `moduleAllow = chosen − preset`, `moduleDeny = preset − chosen`,
+  audit `staff.modules`. Admin rows are locked (every module). Every writer of
+  module access is ADMIN_ONLY; an invite never carries it (tested in
+  `tests/staffOnboarding.test.ts`).
 - **One approvals inbox** (`/ceo/approvals`, `GET /approvals` +
   `/approvals/counts`, `backend/src/modules/approvals/`; owner decision D3).
   It READS each module's own queue as the caller (new logins, website

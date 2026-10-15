@@ -26,6 +26,9 @@ import { Select } from '@/components/ui/Select'
 import { Modal } from '@/components/ui/Modal'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useIsPracticeCopy } from '@/components/SandboxBanner'
+import { PersonModules } from '../../components/staff/PersonModules'
+import { OffboardButtons } from '../../components/hr/OffboardButtons'
+import { useAuthStore } from '../../store/auth'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -422,6 +425,9 @@ function WorkforcePageInner() {
           {filtered.map((u) => (
             <StaffRow
               key={u.id} user={u} canEdit={canEdit}
+              // HR onboards and offboards (owner, 2026-10-15): Offboard /
+              // Reinstate on the row; the CEO has them in the editor.
+              hrOffboard={me?.role === 'hr'}
               onSignInCode={
                 u.usesCodeLogin && statusOf(u) === 'active' && !!u.phone && childRoles.has(u.role)
                   ? () => setCodeFor(u) : undefined
@@ -508,10 +514,12 @@ function CategoryBlurb({ category }: { category: Category }) {
 // ─── Staff row + inline editor ──────────────────────────────────────────────
 
 function StaffRow({
-  user, canEdit, tenants, showTenantChip, invitedBy, onSignInCode,
+  user, canEdit, tenants, showTenantChip, invitedBy, onSignInCode, hrOffboard,
   expanded, onExpand, onClose, onChange,
 }: {
   user: StaffUser; canEdit: boolean
+  /** HR viewing: show Offboard / Reinstate on the row. */
+  hrOffboard?: boolean
   /** Set when the viewer may hand this person a one-time sign-in code. */
   onSignInCode?: () => void
   tenants: TenantLite[]
@@ -637,6 +645,11 @@ function StaffRow({
       </button>
       {/* Manager-assisted sign-in: when WhatsApp/email cannot deliver a code,
           the till tells the cashier to ask a manager for one — this is it. */}
+      {hrOffboard && (
+        <div className="shrink-0 flex items-center pr-3">
+          <OffboardButtons login={{ id: user.id, name: user.name, role: user.role, status }} onDone={onChange} />
+        </div>
+      )}
       {onSignInCode && (
         <div className="shrink-0 flex items-center pr-3">
           <button type="button" onClick={onSignInCode}
@@ -800,15 +813,37 @@ function InlineEditor({
     onError:    showErr,
   })
 
+  // Offboard / reinstate (owner, 2026-10-15) go through the same routes HR
+  // uses (POST /auth/staff/:id/offboard|reinstate). Another CEO login is not
+  // offboarded there, so it keeps the staff editor's switch.
+  const myId = useAuthStore((st) => st.user?.id ?? '')
+  const offboard = useMutation({
+    mutationFn: (reason: string) => api.post(`/auth/staff/${user.id}/offboard`, { reason }),
+    onSuccess:  () => onChange(),
+    onError:    showErr,
+  })
+  const reinstate = useMutation({
+    mutationFn: () => api.post(`/auth/staff/${user.id}/reinstate`, {}),
+    onSuccess:  () => onChange(),
+    onError:    showErr,
+  })
   async function suspend() {
     // Switching a login off does not stop pay — HR payroll reads only the
     // employee record. Say so at the moment it matters.
-    if (user.payroll && !(await confirm({
-      title: 'Suspend this login?',
-      body: `${user.name} is still on payroll in HR. Suspending this login stops them signing in, but they will keep being paid until HR records a separation.`,
-      confirmLabel: 'Suspend login', danger: true,
-    }))) return
-    toggleActive.mutate()
+    const r = await confirm({
+      title: `Offboard ${user.name}?`,
+      body: user.payroll
+        ? `${user.name} is still on payroll in HR. Offboarding stops them signing in and ends every session, but they will keep being paid until HR records a separation.`
+        : 'Their login is switched off and every session ends now.',
+      confirmLabel: 'Offboard', danger: true, reason: { label: 'Reason', minLength: 3 },
+    })
+    if (!r) return
+    if (user.role === 'admin') toggleActive.mutate()
+    else offboard.mutate(r.reason ?? '')
+  }
+  function unsuspend() {
+    if (user.role === 'admin') toggleActive.mutate()
+    else reinstate.mutate()
   }
 
   return (
@@ -828,6 +863,12 @@ function InlineEditor({
           </Link>
         </p>
       )}
+      {/* Per-person module access (owner, 2026-10-15) — the CEO's ticks for
+          this person, on top of the role preset. */}
+      <details open className="rounded-lg border border-s-border bg-s-surface px-3 py-2">
+        <summary className="cursor-pointer text-xs font-black text-s-text">What they can open</summary>
+        <div className="mt-2"><PersonModules userId={user.id} /></div>
+      </details>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} name="staff-name" autoComplete="off"
@@ -995,16 +1036,16 @@ function InlineEditor({
               </button>
             </>
           )}
-          {status === 'active' && (
-            <button type="button" onClick={suspend} disabled={toggleActive.isPending}
+          {status === 'active' && user.id !== myId && (
+            <button type="button" onClick={suspend} disabled={toggleActive.isPending || offboard.isPending}
               className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-amber-700 hover:border-amber-400/40">
-              Suspend
+              Offboard
             </button>
           )}
           {status === 'suspended' && (
-            <button type="button" onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
+            <button type="button" onClick={unsuspend} disabled={toggleActive.isPending || reinstate.isPending}
               className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-primary-ink hover:border-primary/40">
-              Reactivate
+              Reinstate
             </button>
           )}
           <button type="button" onClick={async () => {

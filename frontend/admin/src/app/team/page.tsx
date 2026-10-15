@@ -141,7 +141,7 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
   const needsPhone = !practice && CODE_LOGIN_ROLES.has(role)
 
   const invite = useMutation({
-    mutationFn: () => api.post<{ name: string; email: string; temporaryPassword?: string }>('/auth/staff/invite', {
+    mutationFn: () => api.post<{ name: string; email: string; status?: string; temporaryPassword?: string }>('/auth/staff/invite', {
       name: name.trim(),
       ...(practice ? {} : { email: email.trim().toLowerCase() }),
       ...(!practice && phone.trim() ? { phone: phone.trim() } : {}),
@@ -153,7 +153,8 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
         setIssued({ name: created.name, email: created.email, password: created.temporaryPassword })
         setDone(null)
       } else {
-        setDone(`${name.trim()} is waiting for the CEO's approval.`)
+        // HR's floor logins are active at once (owner, 2026-10-15); the rest wait.
+        setDone(created?.status === 'active' ? `${name.trim()} can sign in now.` : `${name.trim()} is waiting for the CEO's approval.`)
       }
       setName(''); setEmail(''); setPhone(''); setEmployeeId('')
       void qc.invalidateQueries({ queryKey: ['staff', 'invites'] })
