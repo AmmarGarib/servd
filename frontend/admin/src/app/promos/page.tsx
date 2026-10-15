@@ -3,16 +3,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
-import { fmtPkrWhole } from '../../lib/money'
+import { fmtPkrWhole, isoToPktLocal, pktLocalToIso } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
-
-// datetime-local inputs hold Karachi wall time (YYYY-MM-DDTHH:mm), whatever the browser's zone.
-function isoToPktLocal(iso: string): string {
-  return new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(0, 16)
-}
-function pktLocalToIso(v: string): string {
-  return new Date(`${v}:00+05:00`).toISOString()
-}
 
 interface PromoCode {
   id: string

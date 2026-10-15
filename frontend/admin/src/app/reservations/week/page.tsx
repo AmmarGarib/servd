@@ -27,8 +27,9 @@ const pktHour = (iso: string) => Number(new Date(iso).toLocaleString('en-GB', { 
 
 function startOfWeek(iso: string): Date {
   const d = new Date(`${iso.slice(0, 10)}T00:00:00+05:00`)
-  // Mon-start week (server-day-of-week mapping: 0 = Sun → shift)
-  const dow = d.getUTCDay()
+  // Mon-start week. The weekday comes from the Karachi DATE itself: d is
+  // Karachi midnight (19:00Z the day before), so d.getUTCDay() would be a day early.
+  const dow = new Date(`${iso.slice(0, 10)}T00:00:00Z`).getUTCDay()
   const offset = dow === 0 ? 6 : dow - 1
   return new Date(d.getTime() - offset * 86_400_000)
 }
