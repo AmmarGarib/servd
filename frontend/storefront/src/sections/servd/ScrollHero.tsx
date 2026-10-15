@@ -46,8 +46,10 @@ export function ScrollHero({ fields }: SectionProps) {
       {...(date && { date })}
       scrollToExpand={str(fields.scrollToExpand)}
       textBlend={fields.textBlend === true}
+      revealPadded={Boolean(overview || conclusion || primary.text || secondary.text)}
     >
       {!showTitle && title && <Heading className="sr-only">{title}</Heading>}
+      {(overview || conclusion || primary.text || secondary.text) && (
       <div className="container" style={{ maxWidth: '52rem', margin: '0 auto', textAlign: 'center' }}>
         {overview && (
           <p style={{
@@ -81,6 +83,7 @@ export function ScrollHero({ fields }: SectionProps) {
           </div>
         )}
       </div>
+      )}
     </ScrollExpandMedia>
   )
 }

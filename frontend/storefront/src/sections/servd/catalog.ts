@@ -86,10 +86,12 @@ export const specs: SectionSpec[] = [
       date: '',
       scrollToExpand: '',
       textBlend: false,
-      overview: 'Simmer, Stackd and Flipd. Pick a kitchen, see the menu, and order.',
-      conclusion: 'Join Insiders for rewards on every order.',
-      primaryCta: { text: 'Order now', href: '#kitchens' },
-      secondaryCta: { text: 'Search the menus', href: '#search' },
+      // No words or buttons after the expansion either (owner, 2026-10-15: "redundant, kill it — the brand cards
+      // under it cover everything"). The fields stay editable in Admin -> Storefront.
+      overview: '',
+      conclusion: '',
+      primaryCta: { text: '', href: '#kitchens' },
+      secondaryCta: { text: '', href: '#search' },
     },
   },
   {

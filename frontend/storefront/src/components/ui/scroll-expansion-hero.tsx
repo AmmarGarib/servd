@@ -55,6 +55,8 @@ interface ScrollExpandMediaProps {
   scrollToExpand?: string;
   textBlend?: boolean;
   children?: ReactNode;
+  /** false = nothing visible after the expansion (only an sr-only heading): no padded reveal band. */
+  revealPadded?: boolean;
 }
 
 export interface BgSlide { src: string; alt: string }
@@ -177,6 +179,7 @@ const ScrollExpandMedia = ({
   scrollToExpand,
   textBlend,
   children,
+  revealPadded = true,
 }: ScrollExpandMediaProps) => {
   const [scrollProgress, setScrollProgress] = useState<number>(0);
   // The slideshow, or the single background photo as a one-photo slideshow.
@@ -688,7 +691,7 @@ const ScrollExpandMedia = ({
             </div>
 
             <section
-              className='flex flex-col w-full px-8 py-10 md:px-16 lg:py-20'
+              className={revealPadded ? 'flex flex-col w-full px-8 py-10 md:px-16 lg:py-20' : 'flex flex-col w-full'}
               style={{ opacity: showContent ? 1 : 0, transition: 'opacity 700ms ease-in-out' }}
             >
               {children}
