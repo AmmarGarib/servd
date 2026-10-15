@@ -22,7 +22,7 @@ import {
   loanInstallmentCents, canActOnStep, employedFraction, otMultiplierFor,
   leaveQuantity, leaveDaysWithin, carriedForwardDays, attendanceInputs,
   salaryInForce, allocateLoanCents, finalSettlement, accruedLeaveDays, sessiEmployerCents, EOBI_NOT_CALCULATED,
-  pktToday, leaveYear, employedOn, onBooksAt, exitDay,
+  pktToday, leaveYear, employedOn, onBooksAt, exitDay, daysInPeriod, periodOf,
 } from '../src/modules/hr/logic.js'
 import { applyDueEffects, leaveBalancesFor, salaryForPeriod } from '../src/modules/hr/service.js'
 import { sectionByKey, validateAgainst, checkFormat, HR_SECTIONS, EMPLOYEE_MASTER_FIELDS, type HrField } from '../src/modules/hr/forms.js'
@@ -579,6 +579,11 @@ afterAll(async () => {
 })
 
 describe('HR through the API', () => {
+  // The API always pays on the actual days of each month (owner, 2026-10-16) —
+  // whatever a settings PUT sends for workingDaysPerMonth, it is stored as 0.
+  const ACTUAL = { ...DEFAULT_HR_SETTINGS, workingDaysPerMonth: 0 }
+  // The payroll test's OT: 3 h on 2026-09-10, priced on September's 30 days.
+  const SEPT_OT = overtimeCents(3, RS(52000), ACTUAL, undefined, '2026-09')
   let bossEmp: string, cookEmp: string, annual: string
 
   it('creates employees from the Employee Master format, generating IDs', async () => {
@@ -637,7 +642,7 @@ describe('HR through the API', () => {
     const ot = (await call('cook', 'POST', '/me/records/overtime', { data: { date: '2026-09-10', otHours: 3 } })).json()
     await call('boss', 'POST', `/records/overtime/${ot.id}/decide`, { decision: 'approved' })
     const otDone = (await call('hr', 'POST', `/records/overtime/${ot.id}/decide`, { decision: 'approved' })).json()
-    expect(otDone.amountCents).toBe(RS(1500))
+    expect(otDone.amountCents).toBe(SEPT_OT)
 
     const loan = (await call('hr', 'POST', '/records/loan', { data: { employee: cookEmp, type: 'loan', amount: RS(10000), installments: 3, firstDeduction: '2026-09-01' } })).json()
     await call('ceo', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })
@@ -648,7 +653,7 @@ describe('HR through the API', () => {
     const slip = detail.payslips.find((p: { employeeId: string }) => p.employeeId === cookEmp)
     const codes = slip.lines.map((l: { code: string }) => l.code)
     expect(codes).toEqual(expect.arrayContaining(['salary', 'overtime', 'eobi_employee', 'loan', 'eobi_employer']))
-    expect(slip.netCents).toBe(RS(52000) + RS(1500) - RS(400) - 333333)
+    expect(slip.netCents).toBe(RS(52000) + SEPT_OT - RS(400) - 333333)
 
     // The preparer cannot approve their own payroll.
     expect((await call('hr', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(403)
@@ -827,7 +832,7 @@ describe('HR through the API', () => {
     const final = (await call('hr', 'POST', `/records/overtime/${ot.id}/decide`, { decision: 'approved' })).json()
     expect(final.data.approvedHours).toBe(4)
     expect(final.data.multiplier).toBe(2)
-    expect(final.amountCents).toBe(overtimeCents(4, RS(52000), S26)) // Rs 2,000, not 10 h or 50×
+    expect(final.amountCents).toBe(overtimeCents(4, RS(52000), ACTUAL, undefined, '2026-11')) // 4 h at 2×, not 10 h or 50×
   })
 
   it('prices OT approved at creation when its format has no steps, and refuses it to self-service', async () => {
@@ -843,7 +848,7 @@ describe('HR through the API', () => {
       const rec = await call('hr', 'POST', '/records/overtime', { data: { employee: cookEmp, date: '2026-11-20', otHours: 2, otAmount: 5000000 } })
       expect(rec.statusCode).toBe(201)
       expect(rec.json().status).toBe('approved')
-      expect(rec.json().amountCents).toBe(overtimeCents(2, RS(52000), S26))
+      expect(rec.json().amountCents).toBe(overtimeCents(2, RS(52000), ACTUAL, undefined, '2026-11'))
       const ess = await call('cook', 'POST', '/me/records/overtime', { data: { date: '2026-11-21', otHours: 1 } })
       expect(ess.statusCode).toBe(422)
       expect(ess.json().error.code).toBe('NO_WORKFLOW')
@@ -997,9 +1002,9 @@ describe('HR through the API', () => {
     const run = (await call('hr', 'POST', '/payroll/runs', { period: '2027-02' })).json()
     const slip = (await call('hr', 'GET', `/payroll/runs/${run.id}`)).json().payslips.find((p: { employeeId: string }) => p.employeeId === w)
     expect(slip.inputs).toMatchObject({ absentDays: 1, lateCount: 0, unpaidLeaveDays: 3.5 })
-    const daily = RS(52000) / 26
-    expect(slip.lines.find((l: { code: string }) => l.code === 'absence').amountCents).toBe(daily)
-    expect(slip.lines.find((l: { code: string }) => l.code === 'unpaid_leave').amountCents).toBe(daily * 3.5)
+    const daily = RS(52000) / daysInPeriod('2027-02') // 28 days
+    expect(slip.lines.find((l: { code: string }) => l.code === 'absence').amountCents).toBe(Math.round(daily))
+    expect(slip.lines.find((l: { code: string }) => l.code === 'unpaid_leave').amountCents).toBe(Math.round(daily * 3.5))
     expect(slip.lines.map((l: { code: string }) => l.code)).not.toContain('late')
     expect((await call('hr', 'DELETE', `/payroll/runs/${run.id}`)).statusCode).toBe(204)
   })
@@ -1063,8 +1068,9 @@ describe('HR through the API', () => {
 
     // New OT hours are paid at the OT rate, unless the amount is typed too.
     const hours = (await call('hr', 'PATCH', `/payroll/payslips/${juneSlip.id}`, { otHours: 4 })).json()
-    expect(hours.inputs.otCents).toBe(overtimeCents(4, RS(52000), S26))
-    expect(hours.lines.find((l: { code: string }) => l.code === 'overtime').amountCents).toBe(RS(2000))
+    const juneOt = overtimeCents(4, RS(52000), ACTUAL, undefined, '2027-06')
+    expect(hours.inputs.otCents).toBe(juneOt)
+    expect(hours.lines.find((l: { code: string }) => l.code === 'overtime').amountCents).toBe(juneOt)
     const both = (await call('hr', 'PATCH', `/payroll/payslips/${juneSlip.id}`, { otHours: 5, otCents: RS(100) })).json()
     expect(both.inputs.otCents).toBe(RS(100))
 
@@ -1200,7 +1206,7 @@ describe('HR through the API', () => {
     const fullYear = paid.reduce((a, b) => a + b.entitlement, 0)
     // One month of the year's entitlement, not the year's.
     expect(ff.leaveBalanceDays).toBeCloseTo(fullYear / 12, 1)
-    expect(ff.leaveEncashment).toBe(Math.round(ff.leaveBalanceDays * RS(52000) / 26))
+    expect(ff.leaveEncashment).toBe(Math.round(ff.leaveBalanceDays * (RS(52000) / daysInPeriod(periodOf(new Date('2026-09-30'))))))
   })
 
   // ── formats, references, lookups, letters ─────────────────────────────────
@@ -1432,10 +1438,10 @@ describe('HR through the API', () => {
   it('exports record money in rupees and references by name', async () => {
     const file = await call('hr', 'GET', '/records/overtime/export.csv')
     expect(file.statusCode).toBe(200)
-    // The payroll test's approved OT: 3 h, Rs 1,500 — stored as 150000 paisa.
+    // The payroll test's approved OT: 3 h on September's days — stored in paisa, exported in rupees.
     const line = file.body.split('\n').find((l: string) => l.includes('2026-09-10'))!
-    expect(line).toMatch(/,1500\.00,/)
-    expect(line).not.toMatch(/,150000,/)
+    expect(line).toContain(`,${(SEPT_OT / 100).toFixed(2)},`)
+    expect(line).not.toContain(`,${SEPT_OT},`)
     expect(line).not.toContain(cookEmp)
     expect(line.match(/Line Cook/g)).toHaveLength(2) // the Employee column and the form's employee field
   })
