@@ -15,7 +15,7 @@ import { Select } from '@/components/ui/Select'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { usePermissions } from '../../../../hooks/useCan'
-import { useAuthStore } from '../../../../store/auth'
+import { OffboardButtons, FLOOR_LOGIN_ROLES } from '../../../../components/hr/OffboardButtons'
 import { roleLabel } from '../../../../lib/appRoles'
 
 interface Profile {
@@ -379,56 +379,6 @@ function LoginStatusChip({ status }: { status: 'pending' | 'active' | 'suspended
     style={{ color: m.color, background: `color-mix(in srgb, ${m.color} 12%, transparent)` }}>{m.label}</span>
 }
 
-/** Offboard / Reinstate a login (POST /auth/staff/:id/offboard|reinstate) — HR and the CEO only. Never the CEO's
- *  login, never your own (the server refuses both too). HR's reinstate of a manager or office login waits for the CEO. */
-export function OffboardButtons({ login, onDone }: { login: { id: string; name: string; role: string; status?: 'pending' | 'active' | 'suspended' }; onDone: () => void }) {
-  const { data: me } = usePermissions()
-  const myId = useAuthStore((st) => st.user?.id ?? '')
-  const confirm = useConfirm()
-  const [msg, setMsg] = useState('')
-  const off = useMutation({
-    mutationFn: (reason: string) => api.post(`/auth/staff/${login.id}/offboard`, { reason }),
-    onSuccess: () => { setMsg(`${login.name} is offboarded and signed out everywhere.`); onDone() },
-    onError: (e: Error) => setMsg(e.message),
-  })
-  const back = useMutation({
-    mutationFn: () => api.post<{ status: string; waitsForCeo: boolean }>(`/auth/staff/${login.id}/reinstate`, {}),
-    onSuccess: (r) => { setMsg(r?.waitsForCeo ? 'Reinstated — waiting for the CEO to approve it.' : `${login.name} can sign in again.`); onDone() },
-    onError: (e: Error) => setMsg(e.message),
-  })
-  const role = me?.role
-  if (role !== 'hr' && role !== 'admin') return null
-  if (login.role === 'admin' || login.id === myId) return null
-  return (
-    <div>
-      <div className="flex gap-2">
-        {login.status !== 'suspended' ? (
-          <button type="button" className={btnGhost} disabled={off.isPending} onClick={async () => {
-            const r = await confirm({
-              title: `Offboard ${login.name}?`,
-              body: 'Their login is switched off and every session ends now. Pay is not affected — record a separation in HR for that.',
-              confirmLabel: 'Offboard', danger: true, reason: { label: 'Reason', minLength: 3 },
-            })
-            if (r && r.reason) off.mutate(r.reason)
-          }}>Offboard</button>
-        ) : (
-          <button type="button" className={btnGhost} disabled={back.isPending} onClick={async () => {
-            const r = await confirm({
-              title: `Reinstate ${login.name}?`,
-              body: role === 'admin' || ['cashier', 'foh', 'boh', 'kitchen', 'expediter'].includes(login.role)
-                ? 'They can sign in again at once.'
-                : 'A manager or office login goes back to the CEO for approval before they can sign in.',
-              confirmLabel: 'Reinstate',
-            })
-            if (r) back.mutate()
-          }}>Reinstate</button>
-        )}
-      </div>
-      {msg && <p className="text-xs text-white/60 mt-2">{msg}</p>}
-    </div>
-  )
-}
-
 /** Create a login for this employee (POST /auth/staff/invite, employeeId sent). Roles come from GET /permissions/me →
  *  childRoles. HR's floor logins (cashier, FOH, BOH, kitchen, expediter) are active at once and linked here; manager
  *  and office logins wait for the CEO in the approvals inbox and link when approved. */
@@ -473,7 +423,7 @@ function CreateLoginForm({ p }: { p: Profile }) {
       </Select>
       <p className="text-xs text-white/45">
         {!role ? 'Floor staff (cashier, FOH, BOH, kitchen, expediter) can sign in at once; manager and office logins wait for the CEO.'
-          : ['cashier', 'foh', 'boh', 'kitchen', 'expediter'].includes(role) && (me?.role === 'hr' || me?.role === 'admin')
+          : FLOOR_LOGIN_ROLES.includes(role) && (me?.role === 'hr' || me?.role === 'admin')
             ? 'Active at once — they sign in with a code sent to this mobile.'
             : 'Waits for the CEO to approve it.'}
       </p>
