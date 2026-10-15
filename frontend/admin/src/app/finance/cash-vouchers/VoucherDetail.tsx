@@ -27,9 +27,8 @@ import { Select } from '@/components/ui/Select'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
-type Act = 'sign-hod' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
+type Act = 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
 const ACT_DONE: Record<Act, string> = {
-  'sign-hod': 'Signed — now waiting for the CEO.',
   'finance-approve': 'Approved by finance — now waiting for the CEO.',
   approve: 'Approved — the cashier can pay it.',
   return: 'Returned for correction.',
@@ -140,14 +139,13 @@ export function VoucherDetail({ id }: { id: string }) {
         <div className="rounded-2xl p-4 space-y-3" style={card}>
           <div className="flex flex-wrap items-center gap-2">
             {v.canFinanceApprove && <span className="text-xs font-bold text-white/60">Finance approval is below.</span>}
-            {v.canSignHod && <button onClick={() => run('sign-hod')} disabled={act.isPending} className={primaryBtn}>Sign (legacy HOD step)</button>}
             {v.canApprove && (
               <button disabled={act.isPending} className={primaryBtn}
                 onClick={() => { if (window.confirm(`Approve ${v.number}: PKR ${formatPkr(v.amountCents)} for ${holder}? The cashier may then pay it.`)) run('approve') }}>
                 Approve (CEO)
               </button>
             )}
-            {v.status === 'returned' && v.canEdit && (
+            {v.status === 'returned' && (v.canResubmit ?? v.canEdit) && (
               <button disabled={act.isPending} className={primaryBtn} onClick={() => run('resubmit')}>Resubmit</button>
             )}
             {v.canReturn && (
@@ -159,7 +157,7 @@ export function VoucherDetail({ id }: { id: string }) {
             {(v.canEdit || v.canEditCategory) && (
               <button onClick={() => setEditing(true)} className={secondaryBtn}>{v.canEdit ? 'Edit' : 'Change category'}</button>
             )}
-            {approved && (
+            {approved && (v.canExport ?? true) && (
               <>
                 <button onClick={() => window.print()} className={secondaryBtn}>Print</button>
                 <button onClick={() => void exportAs('pdf')} className={secondaryBtn}>Download PDF</button>
@@ -205,7 +203,7 @@ export function VoucherDetail({ id }: { id: string }) {
 
         {/* After payment */}
         {paid && newFlow && <DocumentsPanel v={v} isKeeper={isKeeper} />}
-        {v.status === 'disbursed' && newFlow && v.canUpload && !v.canVerify && <SpentPanel v={v} isKeeper={isKeeper} />}
+        {v.status === 'disbursed' && newFlow && (v.canRecordSpend ?? v.canUpload) && !v.canVerify && <SpentPanel v={v} isKeeper={isKeeper} />}
         {v.status === 'disbursed' && newFlow && v.canVerify && <VerifyPanel v={v} isKeeper={isKeeper} />}
         {paid && !newFlow && <SettlePanel v={v} isKeeper={isKeeper} />}
         {v.status === 'posted' && (
@@ -305,7 +303,7 @@ function Steps({ v }: { v: CashVoucher }) {
   const financeBy = v.financeApprovedByName ?? v.hodSignedByName ?? null
   const rejectedBeforeCeo = v.status === 'rejected' && !v.directorSignedAt
   const steps: S[] = [
-    { title: 'Requested', who: v.preparedByName ?? null, when: v.submittedAt ?? v.createdAt, state: 'done' },
+    { title: 'Requested', who: v.submittedByName ?? v.preparedByName ?? null, when: v.submittedAt ?? v.createdAt, state: 'done' },
     { title: 'Finance', who: financeBy, when: financeAt, state: financeAt ? 'done' : rejectedBeforeCeo && !financeAt ? 'bad' : v.status === 'returned' ? 'bad' : 'todo' },
     rejectedBeforeCeo && financeAt
       ? { title: 'CEO', who: v.rejectedByName ?? null, when: v.rejectedAt ?? null, state: 'bad' }
@@ -346,14 +344,14 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
   const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
   const [category, setCategory] = useState(v.category ?? '')
   const [discountCents, setDiscountCents] = useState(v.discountCents ?? 0)
-  const gross = v.grossCents ?? v.amountCents + (v.discountCents ?? 0)
+  const gross = v.grossOrAmountCents ?? v.grossCents ?? v.amountCents + (v.discountCents ?? 0)
   const isCode = /^\d{4}$/.test(category)
   const changed = category !== (v.category ?? '') || discountCents !== (v.discountCents ?? 0)
   const ok = !!category && discountCents >= 0 && discountCents < gross
   const approve = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/finance-approve`, {
       ...(category !== (v.category ?? '') ? (isCode ? { accountCode: category } : { categoryKey: category }) : {}),
-      ...(discountCents !== (v.discountCents ?? 0) ? { discountCents } : {}),
+      ...(discountCents !== (v.discountCents ?? 0) && v.canEditDiscount !== false ? { discountCents } : {}),
     }, { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
     onSuccess: () => { toast.success('Approved by finance — now waiting for the CEO.'); onDone() },
@@ -388,6 +386,21 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
   )
 }
 
+const ACTION_WORDS: Record<string, string> = {
+  create: 'Raised', submitted: 'Submitted to finance', update: 'Edited', finance_approve: 'Approved by finance', finance_approved: 'Approved by finance',
+  approve: 'Approved by the CEO', approved: 'Approved by the CEO', return: 'Returned for correction', returned: 'Returned for correction',
+  resubmit: 'Resubmitted', reject: 'Rejected', rejected: 'Rejected', cancel: 'Cancelled', cancelled: 'Cancelled', pay: 'Cash paid',
+  document_add: 'Document added', document_remove: 'Document removed', receipt_add: 'Receipt added', receipt_remove: 'Receipt removed',
+  spend: 'Spend recorded', verify_docs: 'Documents verified & expense booked', export: 'Exported', settle: 'Receipts submitted',
+  return_change: 'Change returned', settlement_line_reclass: 'Line moved to another account', name_holder: 'Holder named',
+}
+
+function noteOf(r: HistoryRow): string | null {
+  const a = (r.after ?? null) as Record<string, unknown> | null
+  const n = a && typeof a === 'object' ? (a['note'] ?? a['returnNote'] ?? a['rejectNote'] ?? a['cancelNote']) : null
+  return typeof n === 'string' && n ? n : null
+}
+
 /** The voucher's audit trail, oldest first. */
 function History({ id }: { id: string }) {
   const { data, isLoading } = useHistory(id)
@@ -400,9 +413,9 @@ function History({ id }: { id: string }) {
       <ol className="space-y-1.5">
         {rows.map((r, i) => (
           <li key={r.id ?? i} className="text-xs flex flex-wrap gap-x-3">
-            <span className="text-white/40 tabular-nums shrink-0">{fmtDateTime(r.at ?? r.createdAt)}</span>
-            <span className="font-bold text-white/80">{r.actorName ?? '—'}</span>
-            <span className="text-white/65">{(r.summary ?? r.action ?? '').replace(/[._]/g, ' ')}{r.note ? ` — ${r.note}` : ''}</span>
+            <span className="text-white/40 tabular-nums shrink-0">{fmtDateTime(r.at)}</span>
+            <span className="font-bold text-white/80">{r.userName ?? '—'}</span>
+            <span className="text-white/65">{ACTION_WORDS[r.action] ?? r.action.replace(/_/g, ' ')}{noteOf(r) ? ` — ${noteOf(r)}` : ''}</span>
           </li>
         ))}
       </ol>

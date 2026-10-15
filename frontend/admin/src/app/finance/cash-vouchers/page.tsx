@@ -26,7 +26,7 @@ export default function CashVouchersPage() {
   )
 }
 
-type Tile = { view: ListView; label: string; key: keyof Dashboard; bad?: boolean; good?: boolean }
+type Tile = { view: ListView; label: string; key: Exclude<keyof Dashboard, 'scope'>; bad?: boolean; good?: boolean }
 const TILES: Tile[] = [
   { view: 'finance', label: 'Waiting for finance', key: 'waitingFinance' },
   { view: 'ceo', label: 'Waiting for CEO', key: 'waitingCeo' },
@@ -79,7 +79,7 @@ function CashVouchers() {
             <button onClick={() => setMode('request')} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
               + Request cash
             </button>
-            {keeper && (
+            {data?.financeApprover && (
               <button onClick={() => setMode('expense')}
                 className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-bold text-white/70 hover:text-white hover:border-primary">
                 + New payee voucher

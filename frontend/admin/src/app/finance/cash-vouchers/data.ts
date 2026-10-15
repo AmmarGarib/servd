@@ -25,11 +25,15 @@ export type VoucherStatus =
   | 'rejected' | 'cancelled' | 'settled' | 'converted'
 /** The step shown. Server `stage` may add words; unknown ones render as plain text. */
 export type RequestStage =
+  | 'waiting_finance' | 'waiting_ceo' | 'awaiting_docs'
   | 'submitted' | 'finance_approved' | 'returned' | 'approved' | 'missing_docs' | 'awaiting_verification' | 'posted'
   | 'draft' | 'hod_signed' | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
 
 /** The words and the badge for each step (globals.css s-badge-*): green = good news, amber = waiting, red = bad. */
 export const STAGE_META: Record<RequestStage, { label: string; badge: string }> = {
+  waiting_finance:  { label: 'Waiting for finance',     badge: 's-badge-amber' },
+  waiting_ceo:      { label: 'Waiting for CEO',         badge: 's-badge-amber' },
+  awaiting_docs:    { label: 'Paid — documents missing', badge: 's-badge-red' },
   submitted:        { label: 'Waiting for finance',     badge: 's-badge-amber' },
   finance_approved: { label: 'Waiting for CEO',         badge: 's-badge-amber' },
   returned:         { label: 'Returned for correction', badge: 's-badge-red' },
@@ -59,12 +63,13 @@ export function stageMeta(s: string) {
  * legacy paid / settled sub-steps.
  */
 export function stageOf(v: Pick<CashVoucher, 'status' | 'stage' | 'expenseOnVerify' | 'supportingCount'>): string {
+  if (v.stage) return v.stage
   switch (v.status) {
-    case 'draft': case 'submitted': return 'submitted'
-    case 'hod_signed': case 'finance_approved': return 'finance_approved'
+    case 'draft': case 'submitted': return 'waiting_finance'
+    case 'hod_signed': case 'finance_approved': return 'waiting_ceo'
     case 'disbursed':
-      if (v.expenseOnVerify) return (v.supportingCount ?? 0) > 0 ? 'awaiting_verification' : 'missing_docs'
-      return v.stage ?? 'paid'
+      if (v.expenseOnVerify) return (v.supportingCount ?? 0) > 0 ? 'awaiting_verification' : 'awaiting_docs'
+      return 'paid'
     default: return v.status
   }
 }
@@ -74,9 +79,10 @@ export interface SupportingDoc {
   uploadedById?: string | null; uploadedByName?: string | null; kind?: string
 }
 
-export interface HistoryRow { id?: string; at?: string; createdAt?: string; action: string; actorName?: string | null; summary?: string | null; before?: unknown; after?: unknown; note?: string | null }
+export interface HistoryRow { id?: string; at?: string; action: string; userId?: string | null; userName?: string | null; before?: unknown; after?: unknown }
 
 export interface Dashboard {
+  scope?: 'company' | 'mine'
   waitingFinance: { count: number; cents: number }
   waitingCeo: { count: number; cents: number }
   returned: { count: number; cents: number }
@@ -127,7 +133,11 @@ export interface CashVoucher {
   stage: RequestStage
   expenseOnVerify?: boolean
   supportingCount?: number
-  supporting?: SupportingDoc[]
+  documents?: SupportingDoc[]
+  spend?: { lines: SettlementLine[]; spentCents: number | null; changeDueCents: number | null; topUpDueCents: number | null } | null
+  totalCents?: number
+  grossOrAmountCents?: number
+  submittedByName?: string | null
   financeApprovedById?: string | null
   financeApprovedAt?: string | null
   financeApprovedByName?: string | null
@@ -190,6 +200,10 @@ export interface CashVoucher {
   canReturn?: boolean
   canReject: boolean
   canUpload?: boolean
+  canEditDiscount?: boolean
+  canResubmit?: boolean
+  canRecordSpend?: boolean
+  canExport?: boolean
   canVerify?: boolean
   canCancel: boolean
   canPay: boolean
@@ -239,9 +253,9 @@ export function useVouchers(view: ListView) {
   return useQuery({
     queryKey: [CV_ROOT, 'list', view],
     queryFn: async () => {
-      const r: { items?: CashVoucher[]; nextCursor?: string | null; keeper?: boolean } =
+      const r: { items?: CashVoucher[]; nextCursor?: string | null; keeper?: boolean; financeApprover?: boolean } =
         await api.get(`${CV_BASE}?view=${view}&limit=200`)
-      return { items: r.items ?? [], truncated: !!r.nextCursor, keeper: !!r.keeper }
+      return { items: r.items ?? [], truncated: !!r.nextCursor, keeper: !!r.keeper, financeApprover: !!r.financeApprover }
     },
     refetchInterval: 60_000,
   })
@@ -339,6 +353,17 @@ export function useStaffNames() {
 // ─── Error words ────────────────────────────────────────────────────────────
 
 const ERROR_WORDS: Record<string, string> = {
+  EXPENSE_VOUCHER_FINANCE_ONLY: 'Only finance raises a voucher for an outside payee.',
+  DISCOUNT_FINANCE_ONLY: 'Only finance sets a discount.',
+  AMOUNT_MISMATCH: 'The amount, discount and total do not add up.',
+  CHANGE_MISMATCH: 'Spent plus change must equal the cash paid — the change shown is what the lines leave over.',
+  VOUCHER_NOT_FINANCE_APPROVED: 'Finance has not approved this voucher yet.',
+  USE_DOCUMENTS: 'Use the supporting documents upload for this voucher.',
+  DOCUMENT_NOT_ALLOWED: 'That file type is not accepted. Use PDF, JPG, PNG, WebP, Excel, Word, PowerPoint, CSV or TXT.',
+  DOCUMENTS_LOCKED: 'The documents are locked — this voucher is already verified.',
+  HOD_STEP_RETIRED: 'The HOD step is retired — finance approves now.',
+  VOUCHER_NOT_AWAITING_DOCS: 'This voucher is not waiting for documents — reload to see where it is.',
+  SPEND_NOT_ALLOWED: 'Only the holder, the cashier or finance can record what was spent.',
   SELF_APPROVE: 'You cannot approve your own request — another finance login does.',
   NOT_APPROVED: 'Print, PDF and Excel are available once the CEO has approved.',
   DOCS_REQUIRED: 'Upload at least one supporting document before verifying.',
@@ -410,7 +435,7 @@ export function errorWords(e: unknown): string {
   if (e instanceof ApiError) {
     const known = ERROR_WORDS[e.code]
     // These carry useful specifics from the server (sizes, the float, the amounts).
-    if (known && ['BAD_PHOTO', 'BAD_FILE', 'BAD_DOCUMENT', 'INSUFFICIENT_FLOAT', 'RECEIPTS_OVER_REQUEST', 'OVER_REMAINING', 'UNIT_MISMATCH'].includes(e.code) && e.message) {
+    if (known && ['BAD_PHOTO', 'BAD_FILE', 'BAD_DOCUMENT', 'DOCUMENT_NOT_ALLOWED', 'CHANGE_MISMATCH', 'INSUFFICIENT_FLOAT', 'RECEIPTS_OVER_REQUEST', 'OVER_REMAINING', 'UNIT_MISMATCH'].includes(e.code) && e.message) {
       return `${known} (${e.message})`
     }
     if (known) return known

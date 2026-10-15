@@ -14,12 +14,12 @@ import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../../../lib/api'
-import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { SpendLinesEditor, emptyLine, lineBody, linesReady, type SpendLine } from '../../../components/finance/SpendLinesEditor'
 import { formatPkr } from './amountInWords'
-import { CV_BASE, CV_ROOT, errorWords, fmtDateTime, type CashVoucher, type SupportingDoc } from './data'
+import { CV_BASE, CV_ROOT, errorWords, fmtDateTime, usePettyBoxes, type CashVoucher, type SupportingDoc } from './data'
 import { attachmentPath, kb, preparePhoto } from './photo'
 import { ErrorBanner, fieldCls, primaryBtn, secondaryBtn } from './ui'
+import { Select } from '@/components/ui/Select'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 export const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt'
@@ -61,7 +61,7 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const docs: SupportingDoc[] = v.supporting ?? []
+  const docs: SupportingDoc[] = v.documents ?? []
   const refresh = () => void qc.invalidateQueries({ queryKey: [CV_ROOT] })
   const locked = v.status === 'posted'
 
@@ -146,7 +146,7 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
 
 /** One default line: the voucher's own category × the amount paid. */
 function defaultLines(v: CashVoucher): SpendLine[] {
-  const prior = (v.settlements ?? []).flatMap((s) => s.lines)
+  const prior = v.spend?.lines?.length ? v.spend.lines : (v.settlements ?? []).flatMap((s) => s.lines)
   if (prior.length > 0) {
     return prior.map((l) => ({
       kind: l.kind, categoryKey: l.categoryKey ?? '', accountCode: l.categoryKey ? '' : l.accountCode, amountCents: l.amountCents,
@@ -160,36 +160,35 @@ function defaultLines(v: CashVoucher): SpendLine[] {
   return [{ ...emptyLine(v.amountCents, v.purpose), categoryKey: isCode ? '' : cat, accountCode: isCode ? cat : '', conceptId: v.conceptId ?? '' }]
 }
 
-/** The holder: what was actually spent, and the change handed back. */
+/** The holder: what was actually spent. Books nothing — finance verifies against the documents. */
 export function SpentPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean }) {
   const qc = useQueryClient()
   const [lines, setLines] = useState<SpendLine[]>(() => defaultLines(v))
-  const [changeCents, setChangeCents] = useState(0)
+  const [note, setNote] = useState('')
   const spent = lines.reduce((s, l) => s + l.amountCents, 0)
   const save = useMutation({
-    mutationFn: () => api.post(`${CV_BASE}/${v.id}/settlements`, {
+    mutationFn: () => api.post(`${CV_BASE}/${v.id}/spend`, {
       lines: lines.map(lineBody),
-      ...(changeCents > 0 ? { changeReturnedCents: changeCents } : {}),
+      ...(note.trim() ? { note: note.trim() } : {}),
     }, { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
     onSuccess: () => { toast.success('Saved — finance will check it against your documents.'); void qc.invalidateQueries({ queryKey: [CV_ROOT] }) },
   })
-  const ready = linesReady(lines, v.amountCents, 'atMost')
+  const ready = lines.length > 0 && linesReady(lines, Math.max(spent, 1), 'atMost')
+  const change = v.amountCents - spent
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">What was spent</p>
       <p className="text-xs text-white/50">
-        Cash paid PKR {formatPkr(v.amountCents)}. List what you spent it on and any change you hand back. Nothing is booked until finance verifies.
+        Cash paid PKR {formatPkr(v.amountCents)}. List what you spent it on. Nothing is booked until finance verifies the documents.
       </p>
-      <SpendLinesEditor lines={lines} onChange={setLines} totalCents={v.amountCents} canPickAccount={isKeeper}
+      <SpendLinesEditor lines={lines} onChange={setLines} totalCents={Math.max(spent, v.amountCents)} canPickAccount={isKeeper}
         tenantId={v.tenantId} fieldClassName={fieldCls} mode="atMost" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
-        <div>
-          <label className="text-xs text-white/55">Change handed back (PKR)</label>
-          <div className="mt-1"><MoneyInput value={changeCents} onChange={setChangeCents} className={fieldCls} ariaLabel="Change returned in rupees" /></div>
-        </div>
-        <p className="text-xs text-white/55">Spent PKR {formatPkr(spent)} + change PKR {formatPkr(changeCents)} of PKR {formatPkr(v.amountCents)}</p>
-      </div>
+      <p className="text-xs text-white/55">
+        Spent PKR {formatPkr(spent)}
+        {change > 0 ? ` — PKR ${formatPkr(change)} change to hand back` : change < 0 ? ` — PKR ${formatPkr(-change)} more than was paid; finance pays the difference` : ''}
+      </p>
+      <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Note (optional)" className={fieldCls} />
       {save.error && <ErrorBanner message={errorWords(save.error)} />}
       <button onClick={() => { save.reset(); save.mutate() }} disabled={!ready || save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : 'Save what was spent'}
@@ -198,17 +197,21 @@ export function SpentPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean 
   )
 }
 
-/** Finance: confirm the lines and the change, then verify the documents and book the expense. */
+/** Finance: confirm the lines, then verify the documents and book the expense. Change / difference move through a box. */
 export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean }) {
   const qc = useQueryClient()
+  const { data: boxes = [] } = usePettyBoxes()
+  const companyBoxes = boxes.filter((b) => b.isActive && b.tenantId === v.tenantId)
   const [lines, setLines] = useState<SpendLine[]>(() => defaultLines(v))
-  const [changeCents, setChangeCents] = useState(Math.max(0, v.returnedCents ?? 0))
+  const [boxId, setBoxId] = useState(v.boxId ?? '')
   const spent = lines.reduce((s, l) => s + l.amountCents, 0)
-  const over = spent - v.amountCents
+  const change = Math.max(0, v.amountCents - spent)
+  const topUp = Math.max(0, spent - v.amountCents)
   const verify = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/verify-docs`, {
       lines: lines.map(lineBody),
-      changeReturnedCents: changeCents,
+      ...(change > 0 ? { changeCents: change, ...(boxId ? { changeBoxId: boxId } : {}) } : {}),
+      ...(topUp > 0 && boxId ? { topUpBoxId: boxId } : {}),
     }, { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
     onSuccess: () => {
@@ -216,27 +219,32 @@ export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
       void qc.invalidateQueries({ queryKey: [CV_ROOT] }); void qc.invalidateQueries({ queryKey: ['petty-cash-boxes'] })
     },
   })
-  const noDocs = (v.supportingCount ?? v.supporting?.length ?? 0) === 0
-  const balanced = over > 0 || spent + changeCents === v.amountCents
-  const ready = lines.length > 0 && linesReady(lines, Math.max(spent, 1), 'atMost') && balanced && !noDocs
+  const noDocs = (v.supportingCount ?? v.documents?.length ?? 0) === 0
+  const ready = lines.length > 0 && linesReady(lines, Math.max(spent, 1), 'atMost') && !noDocs
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Verify documents &amp; book the expense</p>
       <p className="text-xs text-white/50">
-        Check the documents above against the lines. Spent plus change must equal the PKR {formatPkr(v.amountCents)} paid
-        {over > 0 ? `; spent is PKR ${formatPkr(over)} over — the difference is paid to the holder from a box in this step` : ''}.
+        Check the documents above against the lines (the holder&rsquo;s own lines are filled in if they recorded them). Cash paid PKR {formatPkr(v.amountCents)}.
       </p>
       <SpendLinesEditor lines={lines} onChange={setLines} totalCents={Math.max(spent, v.amountCents)} canPickAccount={isKeeper}
         tenantId={v.tenantId} fieldClassName={fieldCls} mode="atMost" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+      <p className="text-xs text-white/55">
+        Spent PKR {formatPkr(spent)}
+        {change > 0 ? ` — change PKR ${formatPkr(change)} goes back into the box` : topUp > 0 ? ` — PKR ${formatPkr(topUp)} over; paid to the holder from the box in this step` : ' — equals the cash paid'}
+      </p>
+      {(change > 0 || topUp > 0) && companyBoxes.length > 0 && (
         <div>
-          <label className="text-xs text-white/55">Change handed back (PKR)</label>
-          <div className="mt-1"><MoneyInput value={changeCents} onChange={setChangeCents} className={fieldCls} ariaLabel="Change returned in rupees" /></div>
+          <label className="text-xs text-white/55">{change > 0 ? 'Change goes into' : 'Difference paid from'} (default: the box it was paid from)</label>
+          <div className="mt-1">
+            <Select value={boxId} onChange={(e) => setBoxId(e.target.value)} className={fieldCls}>
+              {!v.boxId && <option value="">— pick a box —</option>}
+              {companyBoxes.map((b) => <option key={b.id} value={b.id}>{b.name} · PKR {formatPkr(b.floatCents)}</option>)}
+            </Select>
+          </div>
         </div>
-        <p className="text-xs text-white/55">Spent PKR {formatPkr(spent)} + change PKR {formatPkr(changeCents)} = PKR {formatPkr(spent + changeCents)}</p>
-      </div>
+      )}
       {noDocs && <p className="text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>Upload at least one supporting document first.</p>}
-      {!balanced && !noDocs && <p className="text-xs font-bold text-s-red">Spent plus change must equal the cash paid.</p>}
       {verify.error && <ErrorBanner message={errorWords(verify.error)} />}
       <button disabled={!ready || verify.isPending} className={primaryBtn}
         onClick={() => { if (window.confirm(`Verify the documents of ${v.number} and book PKR ${formatPkr(spent)} as expense?`)) { verify.reset(); verify.mutate() } }}>

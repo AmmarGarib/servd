@@ -76,7 +76,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
         conceptId: conceptId || null,
         department: department.trim() || null,
         ...(expense
-          ? { kind: 'expense', payeeName: payeeName.trim(), grossCents, discountCents, ...(editing ? {} : { sendTo }) }
+          ? { payeeName: payeeName.trim(), grossCents, discountCents, ...(editing ? {} : { kind: 'expense', sendTo }) }
           : { amountCents: grossCents }),
       }
       const extra = tenantId ? { tenantId } : undefined
