@@ -1,161 +1,412 @@
 'use client'
 
-// servd.kitchens — one rounded tile per kitchen in that kitchen's own palette,
-// with "Order" and "Learn more". The tile styling (colours, wordmark, built-in
-// art) is design, keyed by brand slug; the heading, taglines, labels and art
-// image are fields, and the tiles are a list (reorder / hide).
+// servd.kitchens — the kitchens as a hand of oversized trading cards.
 //
-// Each tile's h3 is the brand name (visually hidden text) beside the visual
-// wordmark (aria-hidden), so the outline reads "Stackd / Simmer / Flipd".
-// "Learn more" goes to the brand's own domain (stackd.pk), the canonical home
-// of its microsite — not servd.pk/brand/<slug>, which canonicalises there.
+// A port of Hasham's BrandDeck (playful-arena/team-b), rebuilt without
+// framer-motion and without his game hooks (sticker tin, sounds, crowd
+// characters, session flip memory, touch peek, live open/closed status).
+// Motion is CSS: a slap-in entrance when the section scrolls into view, a
+// static resting tilt per card, and a pointer tilt + glare that a small
+// handler writes into CSS variables (no per-frame React state). Reduced
+// motion = no tilt, no sway, and the flip becomes a cross-fade (.calm).
+//
+// Each card is its brand's own colours (brandSurface + the META below, design
+// keyed by slug) inside the servd ink border + hard offset shadow. The
+// '/slug' tab is a real button that flips the card to a stat block built from
+// the brand's own highlights and hours. Two links per front, stretched-link
+// pattern: the name goes to the brand's own domain, "Order from X" sits above
+// it and goes to /<slug>.
+//
+// Fields: eyebrow, heading (last line of 2+ lines is the italic accent),
+// lead, note, backLabel, hoursLabel, backFoot, flipBackText, tiles[]
+// (brand, kind, tagline, highlights, photo, art, orderText, learnMoreText,
+// hidden). Old stored blocks lack the new keys: a missing key takes the
+// default, an explicit '' hides/clears it.
 
 import Link from 'next/link'
-import type { ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
+import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import type { Concept } from '../../lib/concept'
-import { brandStory, formatBrandName } from '../../lib/concept'
+import { brandStory, brandSurface, conceptHeroImage, formatBrandName } from '../../lib/concept'
 import { brandCanonical, SERVD_LINK_ORIGIN } from '../../lib/brandDomains'
 import { useScrollReveal } from '../../components/kinetic/motionHooks'
 import type { SectionProps } from '../types'
 import { list, safeSrc, str } from '../safe'
 import { brandsInOrder } from './brands'
-import { Chevron } from './icons'
+import { hoursSummary } from './brandFacts'
+import d from './deck.module.css'
 
 interface TileFields {
-  brand?: unknown; tagline?: unknown; orderText?: unknown; learnMoreText?: unknown
-  art?: unknown; wide?: unknown; hidden?: unknown
+  brand?: unknown; kind?: unknown; tagline?: unknown; highlights?: unknown; photo?: unknown
+  art?: unknown; orderText?: unknown; learnMoreText?: unknown; hidden?: unknown
+}
+
+interface CardMeta {
+  kind: string
+  tab: { bg: string; fg: string }
+  /** The back face: the brand's own colours as a stat-card ground. */
+  back: { bg: string; fg: string; rule: string }
+  tilt: number
+  elegant?: boolean
+}
+
+const META: Record<string, CardMeta> = {
+  stackd: {
+    kind: 'scratch café · market',
+    tab: { bg: 'var(--stackd-cream)', fg: 'var(--stackd-plum)' },
+    back: { bg: 'var(--stackd-plum)', fg: 'var(--stackd-cream)', rule: 'var(--stackd-sky, #9BD3DD)' },
+    tilt: -2.5,
+  },
+  simmer: {
+    kind: 'small plates · mocktails',
+    tab: { bg: 'var(--simmer-bone)', fg: 'var(--simmer-green)' },
+    back: { bg: 'var(--simmer-green)', fg: 'var(--simmer-bone)', rule: 'var(--simmer-orange)' },
+    tilt: 0,
+    elegant: true,
+  },
+  flipd: {
+    kind: 'smash burgers',
+    tab: { bg: 'var(--flipd-mustard)', fg: 'var(--flipd-blue)' },
+    back: { bg: 'var(--flipd-blue)', fg: 'var(--flipd-mustard)', rule: 'var(--flipd-bone, #F9F0E1)' },
+    tilt: 2.5,
+  },
+}
+
+const FALLBACK_META: CardMeta = {
+  kind: 'kitchen',
+  tab: { bg: 'var(--servd-surface)', fg: 'var(--servd-black)' },
+  back: { bg: 'var(--servd-purple)', fg: 'var(--servd-on-purple)', rule: 'var(--servd-green)' },
+  tilt: 0,
+}
+
+/** Natural size of the bundled sticker art; owner uploads have no entry. */
+const BUNDLED_ART: Record<string, { width: number; height: number; badge: boolean }> = {
+  '/brand/stackd-mascot.png': { width: 338, height: 453, badge: false },
+  '/brand/flipd-badge.png': { width: 760, height: 760, badge: true },
+}
+
+/** A missing key takes the default; an explicit '' stays '' (hidden). */
+function opt(v: unknown, def: string): string {
+  return typeof v === 'string' ? v : def
+}
+
+function linesOf(v: unknown): string[] {
+  return str(v).split('\n').map((l) => l.trim()).filter(Boolean)
 }
 
 export function Kitchens({ fields, ctx }: SectionProps) {
+  const titleId = useId()
   const ref = useScrollReveal<HTMLElement>()
   const tiles = list<TileFields>(fields.tiles).filter((t) => t.hidden !== true && str(t.brand).trim())
   const brands = brandsInOrder(tiles.map((t) => str(t.brand).trim()), ctx.concepts)
-  const heading = str(fields.heading)
 
+  const eyebrow = opt(fields.eyebrow, 'The kitchens')
+  const lead = opt(fields.lead, 'Three kitchens, each with its own menu and its own basket. Open one, see what’s cooking, and order.')
+  const note = opt(fields.note, 'flip a card to meet the kitchen')
+  const backLabel = opt(fields.backLabel, 'kitchen stats')
+  const hoursLabel = opt(fields.hoursLabel, 'hours')
+  const backFoot = opt(fields.backFoot, 'collect all three')
+  const flipBackText = opt(fields.flipBackText, 'flip back')
+  const headLines = linesOf(fields.heading)
+  const accent = headLines.length >= 2 ? headLines[headLines.length - 1] : ''
+  const plain = headLines.length >= 2 ? headLines.slice(0, -1) : headLines
+
+  let n = 0
   return (
-    <section ref={ref} id="kitchens" className="sv-section" style={{ scrollMarginTop: 52 }}>
-      {heading && (
-        <div className="sv-wrap sv-section-head reveal-on-scroll">
-          <h2 className="sv-section-title">{heading}</h2>
+    <section ref={ref} id="kitchens" className={d.section} style={{ scrollMarginTop: 52 }} aria-labelledby={headLines.length ? titleId : undefined}>
+      <svg aria-hidden className={d.bgStar} viewBox="0 0 40 40"><path d="M20 2 L24 16 L38 20 L24 24 L20 38 L16 24 L2 20 L16 16 Z" /></svg>
+      <div className={d.wrap}>
+        <header className={`${d.head} reveal-on-scroll`}>
+          <div>
+            {eyebrow && <p className={d.eyebrow}>{eyebrow}</p>}
+            {headLines.length > 0 && (
+              <h2 id={titleId} className={d.h2}>
+                {plain.map((l, i) => (<span key={i}>{l}{(i < plain.length - 1 || accent) && <br />}</span>))}
+                {accent && <em>{accent}</em>}
+              </h2>
+            )}
+            {lead && <p className={d.lead}>{lead}</p>}
+          </div>
+          {note && (
+            <p className={d.note} aria-hidden>
+              <span>{note}</span>
+              <svg viewBox="0 0 120 80"><path d="M8 10 C 40 4, 88 14, 96 46 M84 36 L97 50 L108 34" /></svg>
+            </p>
+          )}
+        </header>
+
+        <div className={d.grid}>
+          {tiles.map((t, i) => {
+            const c = brands.find((b) => b.slug === str(t.brand).trim())
+            if (!c) return null
+            const index = n++
+            return (
+              <BrandCard
+                key={`${c.slug}-${i}`}
+                concept={c}
+                tile={t}
+                index={index}
+                onBrandHost={ctx.onBrandHost === true}
+                labels={{ backLabel, hoursLabel, backFoot, flipBackText }}
+              />
+            )
+          })}
         </div>
-      )}
-      <div className="sv-tiles">
-        {tiles.map((t, i) => {
-          const c = brands.find((b) => b.slug === str(t.brand).trim())
-          return c ? <BrandTile key={`${c.slug}-${i}`} concept={c} tile={t} onBrandHost={ctx.onBrandHost === true} /> : null
-        })}
       </div>
     </section>
   )
 }
 
-/** Natural size of the bundled tile art, so the box is reserved before it
- *  loads. Owner uploads have no entry and size themselves as before. */
-const BUNDLED_ART_SIZE: Record<string, { width: number; height: number }> = {
-  '/brand/stackd-mascot.png': { width: 338, height: 453 },
-  '/brand/flipd-badge.png': { width: 760, height: 760 },
-}
-
-function BrandTile({ concept, tile, onBrandHost }: { concept: Concept; tile: TileFields; onBrandHost: boolean }) {
+function BrandCard({ concept, tile, index, onBrandHost, labels }: {
+  concept: Concept
+  tile: TileFields
+  index: number
+  onBrandHost: boolean
+  labels: { backLabel: string; hoursLabel: string; backFoot: string; flipBackText: string }
+}) {
   const slug = concept.slug
+  const meta = META[slug] ?? FALLBACK_META
+  const isQuiet = !!meta.elegant
+  const surface = brandSurface(slug)
   const name = formatBrandName(concept.name)
+  const kind = str(tile.kind).trim() || meta.kind
   const tagline = str(tile.tagline).trim() || brandStory(slug).tagline
-  const orderText = str(tile.orderText)
-  const learnMoreText = str(tile.learnMoreText)
+  const own = linesOf(tile.highlights)
+  const highlights = (own.length ? own : brandStory(slug).highlights).slice(0, 3)
+  const photo = safeSrc(tile.photo) || conceptHeroImage(concept, 'card') || ''
   const art = safeSrc(tile.art)
-  const artSize = BUNDLED_ART_SIZE[art]
-  const t = TILE[slug] ?? TILE.default!
+  const bundled = BUNDLED_ART[art]
+  const orderText = str(tile.orderText).replaceAll('{name}', name).trim()
+  const learnMoreText = str(tile.learnMoreText).replaceAll('{name}', name).trim()
+  const hours = hoursSummary(concept.serviceHours)
+  const orderHref = `${onBrandHost ? SERVD_LINK_ORIGIN : ''}/${slug}`
+  const lc = (v: string) => (isQuiet ? v.toLowerCase() : v)
+
+  const cardRef = useRef<HTMLDivElement>(null)
+  const frontRef = useRef<HTMLDivElement>(null)
+  const backRef = useRef<HTMLDivElement>(null)
+  const tabRef = useRef<HTMLButtonElement>(null)
+  const flipBackRef = useRef<HTMLButtonElement>(null)
+  const flipIntent = useRef<'none' | 'toBack' | 'toFront'>('none')
+  const [flipped, setFlipped] = useState(false)
+  const [reduced, setReduced] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    setReduced(mq.matches)
+    const on = () => setReduced(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+
+  // The hidden face is inert, and focus follows the flip so keyboard users
+  // land on the face they can see.
+  useEffect(() => {
+    const front = frontRef.current
+    const back = backRef.current
+    if (front) {
+      if (flipped) front.setAttribute('inert', '')
+      else front.removeAttribute('inert')
+    }
+    if (back) {
+      if (flipped) back.removeAttribute('inert')
+      else back.setAttribute('inert', '')
+    }
+    if (flipIntent.current === 'toBack') flipBackRef.current?.focus({ preventScroll: true })
+    else if (flipIntent.current === 'toFront') tabRef.current?.focus({ preventScroll: true })
+    flipIntent.current = 'none'
+  }, [flipped])
+
+  const strength = isQuiet ? 5 : 11
+  function onMove(e: PointerEvent<HTMLDivElement>) {
+    if (reduced || e.pointerType !== 'mouse') return
+    const el = cardRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const px = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+    const py = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+    el.style.setProperty('--ry', `${((px - 0.5) * 2 * strength).toFixed(2)}deg`)
+    el.style.setProperty('--rx', `${(-(py - 0.5) * 2 * strength * 0.8).toFixed(2)}deg`)
+    el.style.setProperty('--gx', `${(px * 100).toFixed(1)}%`)
+    el.style.setProperty('--gy', `${(py * 100).toFixed(1)}%`)
+  }
+  function onLeave() {
+    const el = cardRef.current
+    if (!el) return
+    el.style.setProperty('--rx', '0deg')
+    el.style.setProperty('--ry', '0deg')
+    el.style.setProperty('--gx', '50%')
+    el.style.setProperty('--gy', '50%')
+  }
+
+  function flipTo(next: boolean) {
+    flipIntent.current = next ? 'toBack' : 'toFront'
+    setFlipped(next)
+  }
+  function onTab(e: MouseEvent<HTMLButtonElement>) {
+    // The tab sits over the card's stretched link — never let it navigate.
+    e.preventDefault()
+    e.stopPropagation()
+    flipTo(!flipped)
+  }
+
+  const slotStyle = { '--tilt': `${meta.tilt}deg`, '--i': index } as CSSProperties
+  const cardStyle = {
+    '--text': surface.text,
+    '--surface': surface.bg,
+    '--back-bg': meta.back.bg,
+    '--back-fg': meta.back.fg,
+    '--back-rule': meta.back.rule,
+  } as CSSProperties
+
+  const nameInner = slug === 'stackd'
+    ? (
+      <>
+        <span aria-hidden className={d.wordmark} />
+        <span className="sr-only">{name}</span>
+      </>
+    )
+    : name
+
   return (
-    <article className={`sv-tile reveal-on-scroll${tile.wide === true ? ' sv-tile-wide' : ''}`}
-      style={{ background: t.bg, color: t.fg }} aria-label={name}>
-      {/* The heading is the brand name as text; the wordmark beside it is
-          art (aria-hidden). Kept outside the h3 so the heading's text is
-          exactly the name for crawlers too ("Simmer", not "simmersimmer
-          down."). The wrapper carries the h3 type the marks inherited. */}
-      <h3 className="sr-only">{name}</h3>
-      <div className="sv-tile-name" aria-hidden style={{ fontWeight: 800, letterSpacing: '-0.02em' }}>
-        {t.mark(name)}
-      </div>
-      <p className="sv-tile-tag" style={{ fontFamily: t.tagFont, color: t.muted }}>
-        {tagline}
-      </p>
-      <div className="sv-tile-ctas">
-        {orderText && (
-          <Link href={`${onBrandHost ? SERVD_LINK_ORIGIN : ''}/${slug}`} className="sv-btn" style={{ background: t.btnBg, color: t.btnFg }}
-            aria-label={`Order from ${name}`}>
-            {orderText}
-          </Link>
-        )}
-        {learnMoreText && (
-          // Cross-origin (the brand's own domain): a plain link, no prefetch.
-          <a href={brandCanonical(slug)} className="sv-link" style={{ color: t.fg }}
-            aria-label={`Learn more about ${name}`}>
-            {learnMoreText} <Chevron />
-          </a>
-        )}
-      </div>
-      <div className="sv-tile-art" aria-hidden>
-        {art
-          // Below the fold: lazy, so it is not preloaded ahead of the hero.
-          // eslint-disable-next-line @next/next/no-img-element
-          ? <img src={art} alt="" loading="lazy" decoding="async" {...artSize} style={t.artStyle} />
-          : t.codeArt ?? null}
+    <article className={`${d.slot} ${isQuiet ? d.elegant : ''} reveal-on-scroll`} style={slotStyle}>
+      <div
+        ref={cardRef}
+        className={`${d.card} ${reduced ? d.calm : ''}`}
+        data-flipped={flipped || undefined}
+        onPointerMove={onMove}
+        onPointerLeave={onLeave}
+        style={cardStyle}
+      >
+        {/* ── Front ──────────────────────────────────────────────────── */}
+        <div
+          ref={frontRef}
+          className={`${d.face} ${d.front}`}
+          style={{ background: surface.bg, color: surface.text }}
+          aria-hidden={flipped || undefined}
+        >
+          <button
+            ref={tabRef}
+            type="button"
+            className={d.tab}
+            style={{ background: meta.tab.bg, color: meta.tab.fg }}
+            aria-label={`Flip the ${name} card`}
+            aria-pressed={flipped}
+            onClick={onTab}
+          >
+            /{slug}
+            <svg aria-hidden viewBox="0 0 16 16" className={d.tabIcon} focusable="false">
+              <path d="M3 6.5a5 5 0 0 1 9-1.5M13 9.5a5 5 0 0 1-9 1.5M12 2v3h-3M4 14v-3h3" />
+            </svg>
+          </button>
+
+          <div className={d.photo}>
+            {photo && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={photo} alt="" loading="lazy" decoding="async" width={1200} height={960} />
+            )}
+            <span className={d.num} aria-hidden>No. 0{index + 1}</span>
+            <span className={d.kind} aria-hidden>{kind}</span>
+            {isQuiet && <span aria-hidden className={d.candle} />}
+          </div>
+
+          {art && (
+            <span aria-hidden className={`${d.sticker} ${bundled?.badge ? d.stickerBadge : d.stickerMascot}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img alt="" aria-hidden src={art} width={bundled?.width} height={bundled?.height} loading="lazy" decoding="async" />
+            </span>
+          )}
+
+          <div className={d.body}>
+            <h3 className={d.name}>
+              {learnMoreText ? (
+                // Cross-origin (the brand's own domain): a plain link.
+                <a href={brandCanonical(slug)} className={d.stretch} aria-label={learnMoreText}>{nameInner}</a>
+              ) : nameInner}
+            </h3>
+            {isQuiet && <span aria-hidden className={d.hairline} />}
+            <p className={d.tagline}>{tagline}</p>
+            {highlights.length > 0 && (
+              <ul className={d.chips} aria-label={`${name} highlights`}>
+                {highlights.map((h, i) => <li key={i}>{h}</li>)}
+              </ul>
+            )}
+            <div className={d.actions}>
+              {orderText && (
+                <Link
+                  href={orderHref}
+                  className={isQuiet ? d.orderQuiet : `sv-btn ${d.order}`}
+                >
+                  {isQuiet ? orderText.toLowerCase() : orderText}
+                  <ArrowRight aria-hidden size={18} strokeWidth={2.6} />
+                </Link>
+              )}
+              {learnMoreText && (
+                <span aria-hidden className={d.visit}>
+                  <ArrowUpRight size={20} strokeWidth={2.4} />
+                </span>
+              )}
+            </div>
+          </div>
+
+          <span aria-hidden className={d.glare} />
+        </div>
+
+        {/* ── Back: the trading-card stat block ──────────────────────── */}
+        <div
+          ref={backRef}
+          className={`${d.face} ${d.back}`}
+          aria-hidden={!flipped || undefined}
+          role="group"
+          aria-label={`${name} kitchen stats`}
+        >
+          <span aria-hidden className={`${d.tab} ${d.backTab}`} style={{ background: meta.tab.bg, color: meta.tab.fg }}>
+            /{slug}
+          </span>
+          <div className={d.backHead}>
+            <span className={d.backNum}>{lc(`No. 0${index + 1}`)}</span>
+            <span className={d.backKind}>{kind}</span>
+          </div>
+          <p className={d.backName}>{name}</p>
+          <span aria-hidden className={d.backRule} />
+          {labels.backLabel && <p className={d.backLabel}>{labels.backLabel}</p>}
+          <ul className={d.stats}>
+            {highlights.map((h, i) => (
+              <li key={i}>
+                <span className={d.statKey} aria-hidden>{String(i + 1).padStart(2, '0')}</span>
+                <span className={d.statVal}>{lc(h)}</span>
+              </li>
+            ))}
+            {hours && (
+              <li>
+                <span className={d.statKey}>{labels.hoursLabel}</span>
+                <span className={d.statVal}>{lc(hours)}</span>
+              </li>
+            )}
+          </ul>
+          {labels.backFoot && <p className={d.backFoot}>{labels.backFoot}</p>}
+          <div className={d.backActions}>
+            <button
+              ref={flipBackRef}
+              type="button"
+              className={d.flipBack}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                flipTo(false)
+              }}
+            >
+              {labels.flipBackText || 'flip back'}
+            </button>
+            {orderText && (
+              <Link href={orderHref} className={d.backOrder}>
+                {isQuiet ? orderText.toLowerCase() : orderText}
+                <ArrowRight aria-hidden size={16} strokeWidth={2.6} />
+              </Link>
+            )}
+          </div>
+        </div>
       </div>
     </article>
   )
-}
-
-interface TileStyle {
-  bg: string; fg: string; muted: string; btnBg: string; btnFg: string
-  tagFont?: string
-  /** The visual wordmark (rendered aria-hidden); the h3 carries the name. */
-  mark: (name: string) => ReactNode
-  /** How an art image sits in this brand's tile. */
-  artStyle?: React.CSSProperties
-  /** Built-in art when no image is set (Simmer's low sun). */
-  codeArt?: ReactNode
-}
-
-const TILE: Record<string, TileStyle> = {
-  // Stackd — Pantone 9180 cream field, Red Plum ink; the cream wordmark asset
-  // is tinted plum with a mask, and the mascot gets the tile at full size.
-  stackd: {
-    bg: 'var(--stackd-cream)', fg: 'var(--stackd-plum)', muted: 'color-mix(in srgb, var(--stackd-plum) 78%, transparent)',
-    btnBg: 'var(--stackd-plum)', btnFg: 'var(--stackd-cream)',
-    mark: () => (
-      <span style={{
-        display: 'block', width: 'min(340px, 70vw)', aspectRatio: '600 / 144', background: 'var(--stackd-plum)',
-        WebkitMask: 'url(/brand/stackd-wordmark.png) center / contain no-repeat',
-        mask: 'url(/brand/stackd-wordmark.png) center / contain no-repeat',
-      }} />
-    ),
-    artStyle: { maxHeight: 340, marginBottom: 32 },
-  },
-  // Simmer — night mode: tiber green + bone, Amarante, the wordmark lowercase
-  // with "simmer down." below it. One orange signal: the low sun.
-  simmer: {
-    bg: 'var(--simmer-green)', fg: 'var(--simmer-bone)', muted: 'color-mix(in srgb, var(--simmer-bone) 72%, transparent)',
-    btnBg: 'var(--simmer-bone)', btnFg: 'var(--simmer-green)', tagFont: 'var(--simmer-display)',
-    mark: () => (
-      <span style={{ display: 'block', fontFamily: 'var(--simmer-display)', fontWeight: 400 }}>
-        <span style={{ display: 'block', fontSize: 'clamp(3.2rem, 7vw, 4.6rem)', letterSpacing: '0.01em' }}>simmer</span>
-        <span style={{ display: 'block', fontSize: '1.05rem', marginTop: 6, opacity: 0.75 }}>simmer down.</span>
-      </span>
-    ),
-    codeArt: <span style={{ display: 'block', width: 'min(360px, 80%)', aspectRatio: '2 / 1', background: 'var(--simmer-orange)', borderRadius: '999px 999px 0 0' }} />,
-  },
-  // Flipd — Smash Mustard field, Flipd Blue type; the badge is its own sticker.
-  flipd: {
-    bg: 'var(--flipd-mustard)', fg: 'var(--flipd-blue)', muted: 'var(--flipd-blue-dim)',
-    btnBg: 'var(--flipd-blue)', btnFg: 'var(--flipd-mustard)',
-    mark: (name) => (
-      <span style={{ display: 'block', fontFamily: 'var(--flipd-display)', fontSize: 'clamp(3rem, 7vw, 4.4rem)', letterSpacing: '0.01em' }}>{name}</span>
-    ),
-    artStyle: { maxHeight: 300, marginBottom: 28 },
-  },
-  default: {
-    bg: 'var(--servd-purple)', fg: 'var(--servd-on-purple)', muted: 'color-mix(in srgb, var(--servd-on-purple) 72%, transparent)',
-    btnBg: 'var(--servd-green)', btnFg: 'var(--servd-on-green)',
-    mark: (name) => <span className="sv-section-title" style={{ color: 'inherit' }}>{name}</span>,
-  },
 }

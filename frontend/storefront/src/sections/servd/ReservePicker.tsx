@@ -59,10 +59,10 @@ export async function ReservePicker({ fields, ctx }: SectionProps) {
     <section className="section" style={{ paddingTop: 0, paddingBottom: 'clamp(4rem, 8vw, 6rem)' }}>
       <div className="container">
         {concepts.length === 0 ? (
-          <div className="servd-card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+          <div className="servd-card sv-hard-card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
             <p style={{ color: 'var(--servd-mute)' }}>{str(fields.emptyText)}</p>
             {emptyCta.text && (
-              <Link href={safeHref(emptyCta.href)} className="brand-pill" style={{ marginTop: '1.25rem', background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
+              <Link href={safeHref(emptyCta.href)} className="brand-pill sv-hard-btn" style={{ marginTop: '1.25rem', background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                 {emptyCta.text}
               </Link>
             )}
@@ -80,7 +80,7 @@ export async function ReservePicker({ fields, ctx }: SectionProps) {
                   key={c.id}
                   href={`/reserve/${c.slug}`}
                   aria-label={`Book a table at ${name}`}
-                  className="servd-card"
+                  className="servd-card sv-hard-card"
                   style={{
                     textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column',
                     ['--brand-accent' as string]: accent,

@@ -19,7 +19,7 @@ export function Faq({ fields }: SectionProps) {
         {heading && <h2 className="display" style={{ fontSize: 'clamp(1.5rem, 3vw, 2rem)', margin: '0 0 1rem' }}>{heading}</h2>}
         <div style={{ display: 'grid', gap: '0.75rem' }}>
           {items.map((it, i) => (
-            <details key={i} className="servd-card" open={fields.openFirst === true && i === 0} style={{ padding: '1rem 1.25rem' }}>
+            <details key={i} className="servd-card sv-hard-card" open={fields.openFirst === true && i === 0} style={{ padding: '1rem 1.25rem' }}>
               <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: '1.05rem', lineHeight: 1.4 }}>{it.question}</summary>
               <p style={{ color: 'var(--servd-mute)', fontSize: '0.98rem', lineHeight: 1.65, margin: '0.75rem 0 0' }}>
                 {lines(it.answer).map((l, j) => <span key={j}>{j > 0 && <br />}{l}</span>)}

@@ -60,7 +60,7 @@ export function AboutIntro({ fields, ctx }: SectionProps) {
         {showTable && (
           <div>
             {str(fields.tableHeading) && <h2 className="display" style={{ fontSize: 'clamp(1.5rem, 3vw, 2rem)', margin: '0 0 1rem' }}>{str(fields.tableHeading)}</h2>}
-            <div className="servd-card" style={{ padding: 0, overflowX: 'auto' }}>
+            <div className="servd-card sv-hard-card" style={{ padding: 0, overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '44rem' }}>
                 <thead>
                   <tr>

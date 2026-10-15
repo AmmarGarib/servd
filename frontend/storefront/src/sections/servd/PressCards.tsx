@@ -35,7 +35,7 @@ export async function PressCards({ fields }: SectionProps) {
           const button = link(c.button)
           const isWhatsapp = button.href.trim() === '#whatsapp'
           return (
-            <div key={i} className="servd-card" style={{ padding: '1.5rem' }}>
+            <div key={i} className="servd-card sv-hard-card" style={{ padding: '1.5rem' }}>
               {title && <p className="eyebrow" style={{ marginBottom: '0.5rem' }}>{title}</p>}
               {bullets.length > 0 && (
                 <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.65 }}>
@@ -49,13 +49,13 @@ export async function PressCards({ fields }: SectionProps) {
               )}
               {button.text && (isWhatsapp
                 ? whatsappHref && (
-                  <a href={whatsappHref} target="_blank" rel="noopener noreferrer" className="brand-pill"
+                  <a href={whatsappHref} target="_blank" rel="noopener noreferrer" className="brand-pill sv-hard-btn"
                     style={{ background: '#25D366', color: 'white' }}>
                     {button.text}
                   </a>
                 )
                 : (
-                  <Link href={safeHref(button.href)} className="brand-pill"
+                  <Link href={safeHref(button.href)} className="brand-pill sv-hard-btn"
                     style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                     {button.text}
                   </Link>

@@ -18,7 +18,7 @@ import type { SectionProps } from '../types'
 import { str } from '../safe'
 import { fillLocation, findLocation } from './location'
 
-const quiet: CSSProperties = { background: 'var(--servd-surface)', color: 'var(--servd-ink)', border: '1px solid var(--servd-line)' }
+const quiet: CSSProperties = { background: 'var(--servd-surface)', color: 'var(--servd-ink)' }
 
 /** Where the Maps button goes and what the embed shows ('' = nothing to show). */
 function mapsFor(brand: BrandLocation, name: string): { href: string; embedQuery: string } {
@@ -55,7 +55,7 @@ export async function LocationDetails({ fields, ctx }: SectionProps) {
     <section className="section" style={{ paddingTop: 0, paddingBottom: 'clamp(4rem, 8vw, 6rem)' }}>
       <div className="container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem' }}>
         {/* NAP card */}
-        <div className="servd-card" style={{ padding: '1.5rem' }}>
+        <div className="servd-card sv-hard-card" style={{ padding: '1.5rem' }}>
           {t('findTitle') && <p className="eyebrow" style={{ marginBottom: '0.5rem' }}>{t('findTitle')}</p>}
           <p style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.25rem' }}>{addressLine(brand)}</p>
           {street && (
@@ -65,26 +65,26 @@ export async function LocationDetails({ fields, ctx }: SectionProps) {
             {t('mapsText') && maps.href && (
               <a href={maps.href}
                 target="_blank" rel="noopener noreferrer"
-                className="brand-pill"
+                className="brand-pill sv-hard-btn"
                 style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
                 {t('mapsText')}
               </a>
             )}
             {t('callText') && phone && (
-              <a href={`tel:${phone}`} className="brand-pill" style={quiet}>
+              <a href={`tel:${phone}`} className="brand-pill sv-hard-btn" style={quiet}>
                 {t('callText')}
               </a>
             )}
             {t('whatsappText') && hasWhatsapp && (
               <a href={whatsappLink(brand, fillLocation(t('whatsappGreeting'), brand) || undefined)}
                 target="_blank" rel="noopener noreferrer"
-                className="brand-pill"
+                className="brand-pill sv-hard-btn"
                 style={{ background: '#25D366', color: 'white' }}>
                 {t('whatsappText')}
               </a>
             )}
             {brand.email && t('emailText') && (
-              <a href={`mailto:${brand.email}`} className="brand-pill" style={quiet}>
+              <a href={`mailto:${brand.email}`} className="brand-pill sv-hard-btn" style={quiet}>
                 {t('emailText')}
               </a>
             )}
@@ -92,7 +92,7 @@ export async function LocationDetails({ fields, ctx }: SectionProps) {
         </div>
 
         {/* Actions card */}
-        <div className="servd-card" style={{ padding: '1.5rem' }}>
+        <div className="servd-card sv-hard-card" style={{ padding: '1.5rem' }}>
           {t('visitTitle') && <p className="eyebrow" style={{ marginBottom: '0.5rem' }}>{t('visitTitle')}</p>}
           {visitBody && (
             <p style={{ fontSize: '0.95rem', color: 'var(--servd-mute)', lineHeight: 1.5, marginBottom: '1rem' }}>
@@ -102,17 +102,17 @@ export async function LocationDetails({ fields, ctx }: SectionProps) {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
             {t('menuText') && (
               // The brand's own domain: a plain cross-origin link.
-              <a href={brandCanonical(brand.slug, 'menu')} className="brand-pill" style={{ background: 'var(--servd-ink)', color: 'white' }}>
+              <a href={brandCanonical(brand.slug, 'menu')} className="brand-pill sv-hard-btn" style={{ background: 'var(--servd-ink)', color: 'white' }}>
                 {t('menuText')}
               </a>
             )}
             {brand.acceptsReservations && t('bookText') && (
-              <Link href={`/reserve/${brand.slug}`} className="brand-pill" style={quiet}>
+              <Link href={`/reserve/${brand.slug}`} className="brand-pill sv-hard-btn" style={quiet}>
                 {t('bookText')}
               </Link>
             )}
             {t('orderText') && (
-              <Link href={`/${brand.slug}`} className="brand-pill" style={quiet}>
+              <Link href={`/${brand.slug}`} className="brand-pill sv-hard-btn" style={quiet}>
                 {t('orderText')}
               </Link>
             )}

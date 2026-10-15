@@ -40,6 +40,15 @@
   --servd-on-purple:    #ffffff;  /* text on purple */
   --servd-black:        #3b0764;  /* deepest purple — dark surfaces, purple hover */
   --servd-ink:          #261038;  /* body text */
+  /* Hasham's hard offset shadow behind cards and buttons (owner 2026-10-15). servd pages only. */
+  --servd-hard-ink:        var(--servd-ink);
+  --servd-hard-border:     2.5px solid var(--servd-hard-ink);
+  --servd-hard-card:       8px 8px 0 var(--servd-hard-ink);
+  --servd-hard-card-lg:    10px 10px 0 var(--servd-hard-ink);
+  --servd-hard-card-hover: 14px 18px 0 var(--servd-hard-ink);
+  --servd-hard-btn:        0 5px 0 var(--servd-hard-ink);
+  --servd-hard-btn-hover:  0 8px 0 var(--servd-hard-ink);
+  --servd-hard-btn-active: 0 2px 0 var(--servd-hard-ink);
   --servd-mute:         #6b5b7c;  /* secondary text, ~6:1 on white */
   --servd-dim:          #a497b4;  /* placeholders, separators */
   --servd-line:         rgba(38,16,56,0.12);
@@ -2114,12 +2123,12 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
    !important so it wins over the inline display fonts the blocks carry. */
 [data-sv-font] :is(h1, h2, h3, h4, h5, h6) { font-family: var(--sv-heading-font) !important; }
 /* .eyebrow and the home-section headings (.sv-headline, .sv-section-title,
-   .sv-trio / .sv-perk / .sv-visit-card h3) say 800 only to keep Bricolage
+   .sv-trio / .sv-visit-card h3) say 800 only to keep Bricolage
    looking as it did (see --font-display); they were written as 700. An
    editor-chosen heading font (the rule above: a built-in stack or a library
    font) is not that Bricolage, so headings set in one keep their 700. */
 [data-sv-font] :is(h1, h2, h3, h4, h5, h6):is(.sv-headline, .sv-section-title, .eyebrow),
-[data-sv-font] :is(.sv-trio, .sv-perk, .sv-visit-card) h3 { font-weight: 700; }
+[data-sv-font] :is(.sv-trio, .sv-visit-card) h3 { font-weight: 700; }
 
 /* Columns block: a responsive grid that stacks on mobile unless told not to. */
 .sv-cols {
@@ -2247,13 +2256,29 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   font-weight: 500; letter-spacing: -0.01em; margin: 20px auto 0; max-width: 34rem; text-wrap: balance;
 }
 .sv-ctas { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 28px; margin-top: 32px; }
+.sv-btn, .sv-hard-btn {
+  border: var(--servd-hard-border); box-shadow: var(--servd-hard-btn);
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease, background 160ms ease;
+}
 .sv-btn {
   display: inline-flex; align-items: center; justify-content: center; min-height: 48px;
-  padding: 0 26px; border-radius: 999px; font-weight: 700; font-size: 1rem;
-  text-decoration: none; border: 0; cursor: pointer;
-  transition: transform 160ms ease, background 160ms ease;
+  padding: 0 26px; border-radius: 999px; font-weight: 800; font-size: 1rem;
+  text-decoration: none; cursor: pointer;
 }
-.sv-btn:active { transform: scale(0.98); }
+@media (hover: hover) and (pointer: fine) {
+  .sv-btn:hover, .sv-hard-btn:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: var(--servd-hard-btn-hover); }
+}
+.sv-btn:active, .sv-hard-btn:active { transform: translateY(4px); box-shadow: var(--servd-hard-btn-active); }
+.sv-btn:focus-visible, .sv-hard-btn:focus-visible { outline: 3px solid var(--servd-purple); outline-offset: 4px; }
+.sv-hard-card {
+  border: var(--servd-hard-border); box-shadow: var(--servd-hard-card);
+  transition: translate 240ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
+}
+/* A hard card replaces .servd-card's soft lift: no transform, the hard shadow even after a tap. */
+.servd-card.sv-hard-card:hover { transform: none; box-shadow: var(--servd-hard-card); }
+@media (hover: hover) and (pointer: fine) {
+  .sv-hard-card:hover, .servd-card.sv-hard-card:hover, .sv-visit-card:hover { translate: 0 -4px; box-shadow: 10px 12px 0 var(--servd-hard-ink); }
+}
 .sv-btn-primary { background: var(--servd-green); color: var(--servd-on-green); }
 .sv-btn-primary:hover { background: var(--servd-green-hover); }
 .sv-link {
@@ -2279,23 +2304,6 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   font-size: clamp(2.2rem, 6vw, 4rem); margin: 0 auto; max-width: 18ch; text-wrap: balance;
 }
 
-/* Brand tiles */
-.sv-tiles { display: grid; gap: 12px; padding: 0 12px; max-width: 1440px; margin: 0 auto; }
-@media (min-width: 900px) { .sv-tiles { grid-template-columns: 1fr 1fr; } .sv-tile-wide { grid-column: 1 / -1; } }
-.sv-tile {
-  position: relative; overflow: hidden; border-radius: clamp(20px, 2.4vw, 28px);
-  min-height: 560px; display: flex; flex-direction: column; align-items: center;
-  text-align: center; padding: clamp(40px, 6vw, 64px) 24px 0;
-}
-.sv-tile-wide { min-height: 600px; }
-.sv-tile-name { margin: 0; line-height: 1; }
-.sv-tile-tag { margin: 14px auto 0; font-size: clamp(1.05rem, 1.8vw, 1.35rem); line-height: 1.35; max-width: 26rem; text-wrap: balance; }
-.sv-tile-ctas { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 24px; margin-top: 24px; position: relative; z-index: 2; }
-.sv-tile-art { margin-top: auto; width: 100%; display: flex; justify-content: center; align-items: flex-end; flex: 1; padding-top: 28px; }
-.sv-tile-art img { max-width: min(420px, 82%); max-height: 320px; object-fit: contain; display: block; }
-.sv-tile:hover .sv-tile-art img { transform: translateY(-6px); }
-.sv-tile-art img { transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1); }
-
 /* Feature trio */
 .sv-trio { display: grid; gap: 40px; text-align: center; }
 @media (min-width: 760px) { .sv-trio { grid-template-columns: repeat(3, 1fr); gap: 32px; } }
@@ -2303,30 +2311,10 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 18px;
   display: flex; align-items: center; justify-content: center;
   background: var(--servd-green-soft); color: var(--servd-green-ink);
+  border: 2px solid var(--servd-hard-ink); box-shadow: 0 4px 0 var(--servd-hard-ink);
 }
 .sv-trio h3 { font-family: var(--font-display); font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 8px; }
 .sv-trio p { color: var(--servd-mute); font-size: 1rem; line-height: 1.5; margin: 0 auto; max-width: 20rem; }
-
-/* Insiders band */
-.sv-band {
-  margin: clamp(72px, 11vw, 140px) 12px 0; border-radius: clamp(20px, 2.4vw, 28px);
-  background: var(--servd-purple); color: var(--servd-on-purple);
-  padding: clamp(64px, 9vw, 112px) 0; max-width: 1440px;
-}
-@media (min-width: 1464px) { .sv-band { margin-left: auto; margin-right: auto; } }
-.sv-band .sv-section-title { color: var(--servd-on-purple); }
-.sv-band .sv-sub { color: color-mix(in srgb, var(--servd-on-purple) 72%, transparent); }
-.sv-perks { display: grid; gap: 12px; margin-top: clamp(40px, 6vw, 56px); }
-@media (min-width: 860px) { .sv-perks { grid-template-columns: repeat(3, 1fr); } }
-.sv-perk {
-  background: color-mix(in srgb, var(--servd-on-purple) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--servd-on-purple) 14%, transparent);
-  border-radius: 20px; padding: 28px 24px; text-align: left;
-}
-.sv-perk-tag { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.65; margin: 0 0 10px; }
-.sv-perk h3 { font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 10px; color: var(--servd-on-purple); }
-.sv-perk p { font-size: 0.95rem; line-height: 1.55; margin: 0; opacity: 0.78; }
-.sv-band .sv-link { color: var(--servd-on-purple); }
 
 /* Visit */
 .sv-visit { display: grid; gap: 12px; }
@@ -2334,6 +2322,8 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 .sv-visit-card {
   background: var(--servd-surface); border-radius: 20px; padding: 24px;
   display: flex; flex-direction: column; gap: 10px; min-height: 180px;
+  border: var(--servd-hard-border); box-shadow: var(--servd-hard-card);
+  transition: translate 240ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
 }
 .sv-visit-card h3 { font-family: var(--font-display); font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; margin: 0; }
 .sv-visit-card p { color: var(--servd-mute); font-size: 0.95rem; line-height: 1.45; margin: 0; }
@@ -2346,7 +2336,9 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 
 @media (prefers-reduced-motion: reduce) {
   .sv-search-sheet, .sv-search-backdrop { animation: none; }
-  .sv-tile-art img { transition: none; }
+  .sv-btn, .sv-hard-btn, .sv-hard-card, .sv-visit-card { transition: none; }
+  .sv-btn:hover, .sv-btn:active, .sv-hard-btn:hover, .sv-hard-btn:active { transform: none; }
+  .sv-hard-card:hover, .sv-visit-card:hover { translate: none; }
 }
 .sv-search-field input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 
