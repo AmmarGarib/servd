@@ -4,30 +4,38 @@
 //   GET /:id/export.pdf
 //   GET /:id/export.xlsx
 //
-// Only a voucher the CEO has approved (approved, disbursed, settled, posted,
-// converted) can be exported — 409 NOT_APPROVED before. Visibility and company
+// Exportable at every stage (owner, 2026-10-16). Before the CEO's approval the
+// copy is stamped NOT APPROVED (rejected / cancelled: VOID). Visibility and company
 // scope are loadVisible's: another company's voucher is 404. Every export is
 // audited (cash_voucher.export). Files are generated in memory; nothing is
 // stored.
 
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
+import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
-import { AppError } from '../../lib/errors.js'
 import { amountInWords, formatPkr } from '../../lib/amountInWords.js'
 import { buildXlsx, type XlsxCell } from '../../lib/xlsxWriter.js'
 import { categoryRefOf } from '../accounting/pettyCashPosting.js'
 import { payoutCategory } from '../accounting/expenseCategories.js'
 import { auditVoucher, loadVisible, type VoucherRow } from './cashVouchers.js'
 
-const EXPORTABLE = ['approved', 'disbursed', 'settled', 'posted', 'converted']
+// Printable at every stage (owner, 2026-10-16); before the CEO's approval the copy is stamped, a rejected or
+// cancelled voucher is stamped VOID.
+const APPROVED_STATUSES = ['approved', 'disbursed', 'settled', 'posted', 'converted']
+function stampFor(status: string): string | null {
+  if (APPROVED_STATUSES.includes(status)) return null
+  if (status === 'rejected' || status === 'cancelled') return `VOID - ${status.toUpperCase()} - NOT VALID FOR PAYMENT`
+  return 'NOT APPROVED - FOR REFERENCE ONLY - DO NOT PAY'
+}
 
 /** One digital approval box: no signature anywhere — a status, a name and a time. */
 interface Approval { role: string; status: string; name: string; when: string; sub: string }
 interface VoucherDoc {
   company: string
   title: string
+  /** Not approved / void: the stamp printed across the copy (owner, 2026-10-16: print at every stage). Null = approved. */
+  stamp: string | null
   number: string
   date: string
   status: string
@@ -116,6 +124,7 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
   return {
     company: tenant?.name ?? '',
     title: 'CASH PAYMENT VOUCHER', // one title for both kinds (owner, 2026-10-15)
+    stamp: stampFor(v.status),
     number: v.number,
     date: fmtDate(v.voucherDate),
     status: v.status.replace(/_/g, ' '),
@@ -181,10 +190,26 @@ async function renderPdf(d: VoucherDoc): Promise<Buffer> {
     text(s, M + (W - w) / 2, yy, { size, bold: b })
   }
 
+  // Not approved / void: a diagonal stamp across the page and a banner under the title.
+  if (d.stamp) {
+    const big = d.stamp.startsWith('VOID') ? 'VOID' : 'NOT APPROVED'
+    const size = big === 'VOID' ? 120 : 64
+    const w = bold.widthOfTextAtSize(big, size)
+    page.drawText(big, { x: 595.28 / 2 - (w / 2) * 0.82, y: 841.89 / 2 - (w / 2) * 0.57, size, font: bold, color: rgb(0.71, 0.14, 0.09), opacity: 0.12, rotate: degrees(35) })
+  }
+
   // Heading
   centered(d.company || 'servd', y - 14, 16, true)
   centered(d.title, y - 34, 12, true)
   y -= 44
+  if (d.stamp) {
+    y -= 8
+    const sz = 9
+    const sw = bold.widthOfTextAtSize(winAnsi(d.stamp), sz)
+    page.drawRectangle({ x: M + (W - sw) / 2 - 8, y: y - 6, width: sw + 16, height: 16, borderColor: rgb(0.71, 0.14, 0.09), borderWidth: 1 })
+    page.drawText(winAnsi(d.stamp), { x: M + (W - sw) / 2, y: y - 1, size: sz, font: bold, color: rgb(0.71, 0.14, 0.09) })
+    y -= 20
+  }
   page.drawRectangle({ x: M, y: y - 3, width: W, height: 1.5, color: ink })
   y -= 22
 
@@ -287,7 +312,7 @@ function renderXlsx(d: VoucherDoc): Buffer {
   const rows: XlsxCell[][] = [
     [{ v: d.company, s: 'title' }],
     [{ v: d.title, s: 'bold' }],
-    [],
+    d.stamp ? [{ v: d.stamp, s: 'bold' }] : [],
     [{ v: 'Voucher No.', s: 'bold' }, d.number, { v: 'Date', s: 'bold' }, d.date],
     [{ v: 'Status', s: 'bold' }, d.status],
     [{ v: 'Payee', s: 'bold' }, d.payee],
@@ -324,9 +349,6 @@ export async function cashVoucherExportRoutes(fastify: FastifyInstance) {
   for (const format of ['pdf', 'xlsx'] as const) {
     fastify.get<{ Params: { id: string } }>(`/:id/export.${format}`, { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
       const { v } = await loadVisible(req, req.params.id)
-      if (!EXPORTABLE.includes(v.status)) {
-        throw new AppError('NOT_APPROVED', `Cash voucher ${v.number} is ${v.status.replace(/_/g, ' ')} — it can be printed or exported once the CEO has approved it`, 409)
-      }
       const doc = await buildDoc(v)
       const body = format === 'pdf' ? await renderPdf(doc) : renderXlsx(doc)
       await auditVoucher(req, 'export', v, { format, status: v.status })

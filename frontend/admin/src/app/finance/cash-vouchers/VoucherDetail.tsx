@@ -159,7 +159,7 @@ export function VoucherDetail({ id }: { id: string }) {
             {(v.canEdit || v.canEditCategory) && (
               <button onClick={() => setEditing(true)} className={secondaryBtn}>{v.canEdit ? 'Edit' : 'Change category'}</button>
             )}
-            {approved && (v.canExport ?? true) && (
+            {(v.canExport ?? true) && (
               <>
                 <button onClick={() => window.print()} className={secondaryBtn}>Print</button>
                 <button onClick={() => void exportAs('pdf')} className={secondaryBtn}>Download PDF</button>
@@ -177,7 +177,7 @@ export function VoucherDetail({ id }: { id: string }) {
           {waitingFinance && !v.canFinanceApprove && <p className="text-xs text-white/50">Waiting for finance to approve it.</p>}
           {waitingCeo && !v.canApprove && <p className="text-xs text-white/50">Approved by finance{v.financeApprovedByName ? ` (${v.financeApprovedByName})` : ''} — waiting for the CEO. Do not pay until it is approved.</p>}
           {v.status === 'approved' && !v.canPay && <p className="text-xs text-white/50">Approved — the cashier who holds the cash box pays it.</p>}
-          {!approved && <p className="text-xs text-white/40">Print, PDF and Excel unlock once the CEO has approved.</p>}
+          {!approved && <p className="text-xs text-white/40">Printed or downloaded before the CEO approves, the voucher is stamped NOT APPROVED — for reference only.</p>}
 
           {noteFor && (
             <div className="rounded-xl p-3" style={{ background: 'var(--elevated)' }}>

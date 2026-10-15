@@ -228,7 +228,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canVerify: newPaid && viewer.financeApprover && !own && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
     canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt
       && (s === 'disbursed' || s === 'posted' || s === 'settled' || s === 'converted'),
-    canExport: ['approved', 'disbursed', 'settled', 'posted', 'converted'].includes(s),
+    canExport: true, // every stage; stamped NOT APPROVED / VOID until the CEO approves (owner, 2026-10-16)
     canUploadReceipts,
     canSettle: canUploadReceipts && remaining > 0,
     canReturnChange: legacyPaid && remaining > 0 && (viewer.keeper || custodian),

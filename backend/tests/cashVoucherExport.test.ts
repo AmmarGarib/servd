@@ -119,12 +119,15 @@ describe('cash voucher exports', () => {
     expect(xml).toContain('One Lakh Twenty Three Thousand Four Hundred Fifty Six Only')
   })
 
-  it('409 NOT_APPROVED before approval', async () => {
-    for (const f of ['pdf', 'xlsx']) {
-      const r = await get('ceoA', `/${V['submitted']}/export.${f}`)
-      expect(r.statusCode).toBe(409)
-      expect(r.json().error.code).toBe('NOT_APPROVED')
-    }
+  it('before approval it still exports, stamped NOT APPROVED (owner, 2026-10-16)', async () => {
+    const pdf = await get('ceoA', `/${V['submitted']}/export.pdf`)
+    expect(pdf.statusCode).toBe(200)
+    expect(pdf.rawPayload.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    const x = await get('ceoA', `/${V['submitted']}/export.xlsx`)
+    expect(x.statusCode).toBe(200)
+    expect(x.rawPayload.toString('latin1')).toContain('NOT APPROVED - FOR REFERENCE ONLY - DO NOT PAY')
+    // an approved voucher carries no stamp
+    expect((await get('ceoA', `/${V['approved']}/export.xlsx`)).rawPayload.toString('latin1')).not.toContain('NOT APPROVED')
   })
 
   it("company B gets 404 on company A's voucher", async () => {
