@@ -21,13 +21,14 @@ const API_BASE = () => process.env['API_URL'] ?? 'http://localhost:3001'
 /**
  * Platform-level reachability, for automated messages that no one company
  * sends (activation, first-order welcome, second-order nudge): not deleted
- * and not unsubscribed. Bans (servd-wide since 2026-10-15) are NOT read here;
- * a caller that knows the sending company checks activeBanAtCompany /
- * reachableAtCompany, which read every active ban.
+ * not unsubscribed and not banned. Bans are servd-wide (owner, 2026-10-15), so
+ * Customer.bannedAt — the servd-wide mirror lib/strikes.ts keeps — is enough here;
+ * reachableAtCompany also reads the ban rows (email / phone matches).
  */
 export const reachableCustomer: Prisma.CustomerWhereInput = {
   deletedAt: null,
   marketingOptOutAt: null,
+  bannedAt: null,
 }
 
 /**
@@ -42,6 +43,7 @@ export async function reachableAtCompany(tenantId: string): Promise<Prisma.Custo
   return {
     deletedAt: null,
     marketingOptOutAt: null,
+    bannedAt: null,
     ...(banned.length > 0 && { id: { notIn: banned } }),
   }
 }

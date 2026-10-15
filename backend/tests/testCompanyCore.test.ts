@@ -93,11 +93,11 @@ afterAll(async () => {
 let testCo: string
 
 describe('creating a test company', () => {
-  it('a manager cannot make a test company (403 TEST_COMPANY_CEO_ONLY) and nothing is created', async () => {
+  it('a manager cannot make any company, test or not (CEO only, owner 2026-10-15) and nothing is created', async () => {
     const before = await prisma.tenant.count()
     const res = await call('mgr', 'POST', '/tenants', { name: 'Sneaky Test', isTest: true })
     expect(res.statusCode).toBe(403)
-    expect(res.json().error.code).toBe('TEST_COMPANY_CEO_ONLY')
+    expect((await call('mgr', 'POST', '/tenants', { name: 'Ordinary Co' })).statusCode).toBe(403)
     expect(await prisma.tenant.count()).toBe(before)
   })
 
@@ -119,14 +119,14 @@ describe('creating a test company', () => {
   })
 
   it('a plain company is not a test company and keeps fiscal reporting required', async () => {
-    const res = await call('mgr', 'POST', '/tenants', { name: 'Ordinary Co' })
+    const res = await call('ceo', 'POST', '/tenants', { name: 'Ordinary Co' })
     expect(res.statusCode).toBe(201)
     const id = (res.json() as { id: string; isTest: boolean }).id
     expect(res.json().isTest).toBe(false)
     expect(await isTestTenant(id)).toBe(false)
     expect(await fiscalReportingRequired(id, prisma)).toBe(true)
-    // back to the real company for the manager
-    await prisma.user.update({ where: { id: users.mgr!.id }, data: { tenantId: realCo } })
+    // creating it switched the CEO into it — back to the test company the next checks expect
+    await prisma.user.update({ where: { id: users.ceo!.id }, data: { tenantId: testCo } })
   })
 
   it('/tenants/mine, /tenants and /tenants/me carry isTest', async () => {

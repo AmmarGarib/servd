@@ -252,7 +252,8 @@ export async function orderRoutes(fastify: FastifyInstance) {
         if (door === 'delivery') {
           throw new AppError(
             'COMPLETE_ON_DELIVERY',
-            'A delivery completes only with the customer\'s code — the rider enters it in the rider app, or staff use Enter customer\'s code on Dispatch. If the customer can\'t give it, a manager can send it to the rider (Emergency overrides).',
+            // Switch-neutral: with code-only delivery off (the default) staff "Delivered" on Dispatch still works.
+            'A delivery is completed on Dispatch — the rider enters the customer\'s code in the rider app, or staff close it on Dispatch.',
             409,
           )
         }
