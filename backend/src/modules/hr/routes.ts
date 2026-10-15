@@ -948,7 +948,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.put('/settings', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const tenantId = activeTenant(req)
     const body = z.object({
-      workingDaysPerMonth: z.number().min(1).max(31),
+      // 0 = the actual days of each month (the default, owner HR-1).
+      workingDaysPerMonth: z.number().int().min(0).max(31),
       hoursPerDay: z.number().min(1).max(24),
       otMultiplier: z.number().min(1).max(5),
       eobi: z.object({

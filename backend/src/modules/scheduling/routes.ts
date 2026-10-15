@@ -27,7 +27,7 @@ import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { rotaFor, shiftMaster, cellMinutes, toMinutes, segmentMinutes, ymd, OFF_MARK, approvedLeaveOn, leaveSpan, isHalfDayLeave as isHalfDay } from '../hr/rota.js'
 import { employeeLabels, getSettings } from '../hr/service.js'
-import { hourlyRateCents } from '../hr/logic.js'
+import { hourlyRateCents, payDaysFor, periodOf } from '../hr/logic.js'
 
 /** Who plans the rota and sees what it costs. */
 export const ROTA_PLANNERS = Array.from(new Set([...MANAGERS, 'hr'])) as UserRole[]
@@ -253,7 +253,7 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
     const byEmployee = emps.map((e) => {
       const minutes = cells.filter((c) => c.employeeId === e.id).reduce((a, c) => a + cellMinutes(c), 0)
       const hours = minutes / 60
-      const rate = hourlyRateCents(e.grossSalaryCents, settings)
+      const rate = hourlyRateCents(e.grossSalaryCents, settings, periodOf(mon))
       return {
         employeeId: e.id, name: e.fullName,
         hours: Math.round(hours * 100) / 100,
@@ -266,7 +266,7 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
       totalHours: Math.round(byEmployee.reduce((a, x) => a + x.hours, 0) * 100) / 100,
       totalCents: byEmployee.reduce((a, x) => a + x.totalCents, 0),
       byEmployee,
-      basis: `HR gross salary ÷ ${settings.workingDaysPerMonth} working days ÷ ${settings.hoursPerDay} hours`,
+      basis: `HR gross salary ÷ ${payDaysFor(settings, periodOf(mon))} days ÷ ${settings.hoursPerDay} hours`,
     }
   })
 }

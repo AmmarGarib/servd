@@ -109,7 +109,8 @@ const purchaseOrder: TrashProvider = {
       .map((l) => ({
         inventoryItemId: l.inventoryItemId,
         quantityOrdered: l.quantityOrdered,
-        unitCostCents: l.inventoryItem.unitCostCents ?? l.unitCostCents,
+        // A null or zero "today's cost" (never costed yet) falls back to the agreed price.
+        unitCostCents: l.inventoryItem.unitCostCents && l.inventoryItem.unitCostCents > 0 ? l.inventoryItem.unitCostCents : l.unitCostCents,
         notes: l.notes,
       }))
     if (!lines.length) throw new AppError('NOTHING_TO_COPY', 'Every item on this PO was deleted — raise a new PO', 422)

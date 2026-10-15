@@ -15,7 +15,9 @@
 import type { FastifyRequest } from 'fastify'
 
 export interface HrSettings {
-  /** Days a monthly salary is divided by for daily rate, absence and OT. */
+  /** Days a monthly salary is divided by for the daily rate (absence, unpaid
+   *  leave, lates, OT, leave encashment). 0 = the ACTUAL days of the month in
+   *  question, 28–31 (owner HR-1, 2026-10-16 — the default). */
   workingDaysPerMonth: number
   hoursPerDay: number
   /** OT multiplier when a request doesn't specify one. Sindh's shops &
@@ -74,9 +76,10 @@ export const DEFAULT_GRATUITY: GratuitySettings = {
 }
 
 export const DEFAULT_HR_SETTINGS: HrSettings = {
-  // Pay basis (owner HR-1, 2026-10-15): gross ÷ 30, as in Danish's sheet — 26 is
-  // the company's trading days, not the pay basis.
-  workingDaysPerMonth: 30,
+  // Pay basis (owner HR-1, 2026-10-16): the ACTUAL days of the month (0), the
+  // same basis a joiner's or leaver's month is prorated on — 26 is the
+  // company's trading days, not the pay basis.
+  workingDaysPerMonth: 0,
   hoursPerDay: 8,
   otMultiplier: 2,
   eobi: { enabled: false, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: null },
@@ -105,12 +108,20 @@ export function mergeSettings(stored: Partial<HrSettings> | null | undefined): H
 
 // ─── Rates ──────────────────────────────────────────────────────────────────
 
-export function dailyRateCents(grossCents: number, s: HrSettings): number {
-  return s.workingDaysPerMonth > 0 ? grossCents / s.workingDaysPerMonth : 0
+/** The days a month's salary is divided by: the setting, or (0) the actual
+ *  days of `period` (YYYY-MM; default this month). */
+export function payDaysFor(s: HrSettings, period?: string | null): number {
+  if (s.workingDaysPerMonth > 0) return s.workingDaysPerMonth
+  return daysInPeriod(period ?? periodOf(new Date()))
 }
 
-export function hourlyRateCents(grossCents: number, s: HrSettings): number {
-  return s.hoursPerDay > 0 ? dailyRateCents(grossCents, s) / s.hoursPerDay : 0
+export function dailyRateCents(grossCents: number, s: HrSettings, period?: string | null): number {
+  const days = payDaysFor(s, period)
+  return days > 0 ? grossCents / days : 0
+}
+
+export function hourlyRateCents(grossCents: number, s: HrSettings, period?: string | null): number {
+  return s.hoursPerDay > 0 ? dailyRateCents(grossCents, s, period) / s.hoursPerDay : 0
 }
 
 /** The OT multiplier a record is paid at: the one HR set on it, held to the
@@ -120,9 +131,9 @@ export function otMultiplierFor(recordValue: unknown, s: HrSettings): number {
   return Math.min(5, Math.max(1, recordValue))
 }
 
-export function overtimeCents(hours: number, grossCents: number, s: HrSettings, multiplier?: number | null): number {
+export function overtimeCents(hours: number, grossCents: number, s: HrSettings, multiplier?: number | null, period?: string | null): number {
   if (!(hours > 0)) return 0
-  return Math.round(hours * hourlyRateCents(grossCents, s) * (multiplier ?? s.otMultiplier))
+  return Math.round(hours * hourlyRateCents(grossCents, s, period) * (multiplier ?? s.otMultiplier))
 }
 
 export interface EobiResult { employeeCents: number; employerCents: number; problem?: string }
@@ -484,7 +495,7 @@ export function computePayslip(
   const lines: PayLine[] = []
   const fraction = employedFraction(period, emp.joiningDate, emp.lastWorkingDay)
   const gross = Math.round(emp.grossSalaryCents * fraction)
-  const daily = dailyRateCents(emp.grossSalaryCents, s)
+  const daily = dailyRateCents(emp.grossSalaryCents, s, period)
   // Days docked can't be more than the days employed, and together they can
   // take the salary to nothing but not below it: the working-day rate is
   // higher than the calendar-day one, so a month of unpaid leave priced at it
@@ -599,7 +610,7 @@ export function finalSettlement(
   }
   const total = (k: keyof Omit<SettlementMonth, 'period'>) => months.reduce((a, m) => a + m[k], 0)
   const leaveEncashment = s.encashLeaveOnExit && inp.leaveBalanceDays > 0
-    ? Math.round(inp.leaveBalanceDays * dailyRateCents(emp.grossSalaryCents, s))
+    ? Math.round(inp.leaveBalanceDays * dailyRateCents(emp.grossSalaryCents, s, periodOf(lastWorkingDay)))
     : 0
   const parts: SettlementParts = {
     salaryPayable: total('salaryCents'), otPayable: inp.otPayableCents, leaveEncashment,

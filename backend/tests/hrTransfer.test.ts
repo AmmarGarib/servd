@@ -257,9 +257,9 @@ describe('preview', () => {
     const annual = mgr.leave.find((l: { name: string }) => l.name === 'Annual Leave')
     expect(annual.days).toBe(11)
     expect(mgr.leave.find((l: { name: string }) => l.name === 'Unpaid Leave')).toBeUndefined()
-    // daily rate = 260,000 / 30 (pay basis, owner HR-1) = 8,666.67 PKR; 11 days → 95,333.33 PKR.
-    expect(mgr.dailyRateCents).toBe(866_667)
-    expect(mgr.suggestedAdjustmentCents).toBe(Math.round(11 * 26_000_000 / 30))
+    // daily rate = 260,000 / 31 (actual days of October, owner HR-1) ≈ 8,387.10 PKR; 11 days.
+    expect(mgr.dailyRateCents).toBe(Math.round(26_000_000 / 31))
+    expect(mgr.suggestedAdjustmentCents).toBe(Math.round(11 * 26_000_000 / 31))
     expect(mgr.department).toEqual({ name: 'Finance', match: 'create' })
     expect(mgr.positions).toEqual([expect.objectContaining({ moves: true })])
     expect(mgr.lastWorkingDay).toBe('2026-10-31')

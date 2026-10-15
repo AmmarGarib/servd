@@ -367,10 +367,12 @@ export async function onFinalApproval(tx: Tx, rec: HrRecord, emp: HrEmployee | n
     // the multiplier only by HR — self-service cannot set either.
     const hours = extra.approvedHours ?? (typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : rec.quantity ?? 0)
     const mult = otMultiplierFor(d['multiplier'], s)
-    const amount = overtimeCents(hours, emp.grossSalaryCents, s, mult)
+    // Priced in the month the overtime was worked (actual-days pay basis).
+    const otPeriod = periodOf(rec.startDate ?? new Date())
+    const amount = overtimeCents(hours, emp.grossSalaryCents, s, mult, otPeriod)
     d['approvedHours'] = hours
     d['multiplier'] = mult
-    d['otRate'] = Math.round(hourlyRateCents(emp.grossSalaryCents, s))
+    d['otRate'] = Math.round(hourlyRateCents(emp.grossSalaryCents, s, otPeriod))
     d['otAmount'] = amount
     await tx.hrRecord.update({ where: { id: rec.id }, data: { amountCents: amount, data: d as Prisma.InputJsonValue } })
   }
@@ -812,7 +814,7 @@ export async function recalcPayslip(payslipId: string, overrides: Partial<Payrol
   // New OT hours are paid at the OT rate — unless HR typed the amount too.
   const hoursEdited = overrides.otHours !== undefined && overrides.otHours !== cur.otHours
   const centsEdited = overrides.otCents !== undefined && overrides.otCents !== cur.otCents
-  if (hoursEdited && !centsEdited) inputs.otCents = overtimeCents(overrides.otHours!, salaryCents, s)
+  if (hoursEdited && !centsEdited) inputs.otCents = overtimeCents(overrides.otHours!, salaryCents, s, undefined, slip.run.period)
   // An edited loan total is spread over the employee's loans, oldest first and
   // never beyond what each still owes — so what is recovered from each loan
   // is exactly what was deducted.

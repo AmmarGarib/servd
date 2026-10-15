@@ -373,7 +373,7 @@ async function assess(input: TransferInput, actor: TransferActor): Promise<Asses
       accruedDays: accruedLeaveDays(b, b.yearFrom, e.joiningDate, lastWorkingDay),
       headOfficeLeaveTypeId: hoTypeByName.get(norm(b.name)) ?? null,
     }))
-    const rate = dailyRateCents(e.grossSalaryCents, s)
+    const rate = dailyRateCents(e.grossSalaryCents, s, periodOf(lastWorkingDay))
     const carriedDays = leave.reduce((a, l) => a + l.days, 0)
     const accruedDays = leave.reduce((a, l) => a + l.accruedDays, 0)
 

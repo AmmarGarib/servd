@@ -202,6 +202,28 @@ describe('CapEx', () => {
     }
   })
 
+  it('a line whose posted instalment was deleted earlier is never erasable', async () => {
+    const project = await prisma.capexProject.create({ data: { tenantId: T.A, name: `${P} Fit-out` } })
+    const line = await prisma.capexLine.create({ data: { projectId: project.id, scope: 'FOH', item: `${P} Booths`, unitCostCents: 300_000 } })
+    const pay = await prisma.capexPayment.create({ data: { lineId: line.id, label: 'deposit', amountCents: 40_000 } })
+    await postJournalEntry({
+      tenantId: T.A, sourceType: 'capex.payment', sourceId: pay.id, description: 'capex deposit', postedBy: 'test',
+      entryDate: new Date(),
+      lines: [
+        { accountCode: '1340', type: 'debit', amountCents: 40_000 },
+        { accountCode: '1020', type: 'credit', amountCents: 40_000 },
+      ],
+    })
+    // The instalment goes (its posting reversed); the line has nothing live left.
+    expect((await call('finA', 'DELETE', `/finance/capex/payments/${pay.id}`)).statusCode).toBe(204)
+    expect((await call('finA', 'DELETE', `/finance/capex/lines/${line.id}`)).statusCode).toBe(204)
+    expect(((await openEntry('capex_line', line.id))!.meta as { everPosted?: boolean }).everPosted).toBe(true)
+    const purge = await call('ceo', 'DELETE', `/trash/capex_line/${line.id}?reason=${encodeURIComponent('clean the trash please')}`)
+    expect(purge.statusCode).toBe(409)
+    expect(purge.json().error.code).toBe('NOT_ERASABLE')
+    before = await ledgerPrint(T.A)
+  })
+
   it('a quote comes back on its line; nothing touched the books', async () => {
     expect((await call('finA', 'DELETE', `/finance/capex/quotes/${quoteId}`)).statusCode).toBe(204)
     expect((await call('finA', 'POST', `/trash/capex_quote/${quoteId}/restore`, {})).statusCode).toBe(200)

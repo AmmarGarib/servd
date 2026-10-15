@@ -83,8 +83,11 @@ async function snapshotRestore(tx: Tx, entry: TrashEntry): Promise<string> {
 
 /** The project a capex line / quote hangs from must exist (a purged project cannot take its line back). */
 async function assertLiveCapexLine(tx: Tx, lineId: string): Promise<void> {
-  const line = await tx.capexLine.findFirst({ where: { id: lineId, project: { deletedAt: null } }, select: { id: true } })
+  const line = await tx.capexLine.findFirst({ where: { id: lineId }, select: { id: true, project: { select: { deletedAt: true, name: true } } } })
   if (!line) throw new AppError('PARENT_GONE', 'The CapEx line this belonged to no longer exists — add it again on the project', 409)
+  if (line.project.deletedAt) {
+    throw new AppError('PARENT_IN_TRASH', `Restore the CapEx project "${line.project.name}" first — it is in the Trash`, 409)
+  }
 }
 
 // ── CapEx ────────────────────────────────────────────────────────────────────

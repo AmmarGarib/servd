@@ -33,7 +33,7 @@ const RS = (r: number) => r * 100 // rupees → paisa
 // ─── pure logic ─────────────────────────────────────────────────────────────
 
 // These figures were written on a 26-day basis (Rs 52,000 / 26 = Rs 2,000 a day).
-// The default pay basis is 30 days now (owner HR-1); pin 26 here so the sums stay
+// The default pay basis is the actual days of the month now (owner HR-1); pin 26 here so the sums stay
 // readable, and check the default itself below.
 const S26 = { ...DEFAULT_HR_SETTINGS, workingDaysPerMonth: 26 }
 
@@ -69,8 +69,11 @@ describe('EOBI', () => {
 describe('overtime', () => {
   it('is hours × (gross ÷ working days ÷ hours per day) × multiplier', () => {
     // 52,000 / 26 / 8 = Rs 250/h; 3 h at 2× = Rs 1,500
-    expect(DEFAULT_HR_SETTINGS.workingDaysPerMonth).toBe(30) // owner HR-1: gross ÷ 30
-    expect(overtimeCents(3, RS(60000), DEFAULT_HR_SETTINGS)).toBe(RS(1500)) // 60,000 / 30 / 8 = Rs 250/h
+    // Owner HR-1: the actual days of the month (0). 62,000 / 31 / 8 = Rs 250/h in October;
+    // 56,000 / 28 / 8 = Rs 250/h in February 2026.
+    expect(DEFAULT_HR_SETTINGS.workingDaysPerMonth).toBe(0)
+    expect(overtimeCents(3, RS(62000), DEFAULT_HR_SETTINGS, null, '2026-10')).toBe(RS(1500))
+    expect(overtimeCents(3, RS(56000), DEFAULT_HR_SETTINGS, null, '2026-02')).toBe(RS(1500))
     expect(overtimeCents(3, RS(52000), S26)).toBe(RS(1500))
     expect(overtimeCents(3, RS(52000), S26, 1.5)).toBe(RS(1125))
     expect(overtimeCents(0, RS(52000), S26)).toBe(0)

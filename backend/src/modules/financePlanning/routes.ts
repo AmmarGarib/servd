@@ -260,6 +260,13 @@ async function lineHasPostings(tenantId: string | null, lineId: string): Promise
 async function linesEverPosted(tenantId: string | null, lineIds: string[]): Promise<boolean> {
   if (!tenantId || lineIds.length === 0) return false
   const ids = (await prisma.capexPayment.findMany({ where: { lineId: { in: lineIds } }, select: { id: true } })).map((p) => p.id)
+  // An instalment deleted earlier (F3) is gone from capex_payments but its
+  // posting and reversal stay on the books: count it through its Trash entry.
+  const deleted = await prisma.trashEntry.findMany({
+    where: { tenantId, entityType: 'capex_payment', parentType: 'capex_line', parentId: { in: lineIds } },
+    select: { entityId: true },
+  })
+  ids.push(...deleted.map((d) => d.entityId))
   if (ids.length === 0) return false
   const n = await prisma.journalEntry.count({
     where: {
