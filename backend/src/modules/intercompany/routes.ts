@@ -14,7 +14,11 @@
 //                                         required for every method (422
 //                                         PAYMENT_REFERENCE_REQUIRED). 201 → the transfer
 //                                         + referenceUsedBefore (a warning only).
-//   POST /transfers/:id/approve|reject|reverse   CEO, member of both companies
+//   POST /transfers/:id/approve|reject    lib/approvalRights.ts assertCanApprove:
+//                                         the CEO of both companies; on a head-office
+//                                         pair also a Finance delegate covering the
+//                                         company (never the preparer)
+//   POST /transfers/:id/reverse           CEO, member of both companies
 //   GET  /fleet?from=YYYY-MM&to=YYYY-MM   shared-fleet agreements, rates, trips, charges
 //   PUT  /fleet/:agreementId/rate         CEO, member of both (new history row)
 //   POST /fleet/charge {month?, agreementId?}    CEO "Charge now" (also the close checklist's fix)
@@ -27,15 +31,27 @@
 // (lib/companyPairs.ts — 403 NOT_IN_BOTH_COMPANIES), and a NEW transfer or
 // rate also needs the active company to be one of the two (422
 // ACTIVE_COMPANY_NOT_A_PARTY). Audits are written in BOTH companies.
+//
+// Head-office pairs (D1; the owner chose to reuse this engine): a member of a
+// head office, acting as it, prepares settlements and adjustments with a
+// company it serves through a LIVE link (lib/companyPairs.ts
+// assertPairPreparer), and sees that pair's transfers and balances — read on
+// serviceClient, scoped explicitly to (their head office, the served company);
+// through the head-office lens they see NOTHING else of the served company's
+// inter-company rows. Approve / reject go through lib/approvalRights.ts
+// (approvalSubject → assertCanApprove, ceoOnly unless it is a head-office
+// pair). With no head office linked every path is exactly as before.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import type { UserRole } from '@prisma/client'
+import type { Prisma, UserRole } from '@prisma/client'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope, activeTenantId } from '../../lib/tenantScope.js'
-import { assertBothSidesOwned, isMemberOfBoth } from '../../lib/companyPairs.js'
+import { assertBothSidesOwned, assertPairPreparer, isMemberOfBoth } from '../../lib/companyPairs.js'
+import { reachMapOf } from '../../lib/headOffice.js'
+import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, canApprove, type ApprovalGrant } from '../../lib/approvalRights.js'
 import { audit } from '../../lib/audit.js'
 import { zInt4Cents, zMoneyCents } from '../../lib/money.js'
 import { zPaymentRef } from '../../lib/bankAccounts.js'
@@ -88,19 +104,17 @@ async function auditBoth(req: FastifyRequest, tenantIds: string[], action: strin
 }
 
 /**
- * Where else either company of a settlement already recorded its payment
- * reference # (the caller is a member of both — assertBothSidesOwned), this
- * transfer left out. A warning only.
+ * Where else a company of the settlement that the caller belongs to already
+ * recorded its payment reference # (a member of both sees both; a head-office
+ * preparer only their head office's), this transfer left out. A warning only.
  */
-async function referenceUsesOfPair(t: TransferRow): Promise<PaymentRefUse[]> {
+async function referenceUsesOfPair(t: TransferRow, memberIds: readonly string[]): Promise<PaymentRefUse[]> {
   if (t.kind !== 'settlement' || !t.bankReference) return []
   const exclude = { kind: 'intercompany_transfer' as const, id: t.id }
-  const [a, b] = await Promise.all([
-    findPaymentReferenceUses(serviceClient, t.tenantId, t.bankReference, { exclude }),
-    findPaymentReferenceUses(serviceClient, t.counterpartyTenantId, t.bankReference, { exclude }),
-  ])
+  const sides = [t.tenantId, t.counterpartyTenantId].filter((id) => memberIds.includes(id))
+  const found = await Promise.all(sides.map((id) => findPaymentReferenceUses(serviceClient, id, t.bankReference!, { exclude })))
   const seen = new Set<string>()
-  return [...a, ...b]
+  return found.flat()
     .filter((u) => (seen.has(`${u.kind}:${u.id}`) ? false : (seen.add(`${u.kind}:${u.id}`), true)))
     .sort((x, y) => y.at.localeCompare(x.at))
     .slice(0, 5)
@@ -115,6 +129,84 @@ async function transferInWriteScope(req: FastifyRequest, id: string): Promise<Tr
   if (!t) throw new NotFoundError('Transfer', id)
   return t
 }
+
+// ─── Head-office pairs (D1) ──────────────────────────────────────────────────
+
+/**
+ * True when (a, b) is a head-office pair the caller sees through a head office
+ * they belong to: one side is such a head office and the other a company it
+ * serves through a LIVE link (the auth middleware's reach map — never cached).
+ */
+function isOwnHeadOfficePair(req: FastifyRequest, a: string, b: string): boolean {
+  const reach = reachMapOf(req)
+  return !!(reach.get(a)?.includes(b) || reach.get(b)?.includes(a))
+}
+
+/**
+ * The transfers the caller sees in `scopeIds` (resolveTenantScope), as two
+ * explicit filters:
+ *   member  either side is an in-scope company the caller belongs to (as
+ *           before; read through `prisma`);
+ *   ho      for an in-scope company the caller only REACHES (the head-office
+ *           lens), just its pairs with the caller's own head offices (read on
+ *           serviceClient — nothing else of that company's rows).
+ */
+function transferFilters(req: FastifyRequest, scopeIds: readonly string[]): { member: Prisma.IntercompanyTransferWhereInput | null; ho: Prisma.IntercompanyTransferWhereInput | null } {
+  const members = new Set(req.staffUser!.memberTenantIds)
+  const memberScope = scopeIds.filter((t) => members.has(t))
+  const reach = reachMapOf(req)
+  const hoPairs: Prisma.IntercompanyTransferWhereInput[] = []
+  for (const c of scopeIds) {
+    if (members.has(c)) continue
+    for (const ho of reach.get(c) ?? []) {
+      if (!members.has(ho)) continue
+      hoPairs.push({ tenantId: ho, counterpartyTenantId: c }, { tenantId: c, counterpartyTenantId: ho })
+    }
+  }
+  return {
+    member: memberScope.length ? { OR: [{ tenantId: { in: memberScope } }, { counterpartyTenantId: { in: memberScope } }] } : null,
+    ho: hoPairs.length ? { OR: hoPairs } : null,
+  }
+}
+
+/**
+ * The views with canApprove decided by lib/approvalRights.ts for every
+ * submitted transfer with a head office on one side (the CEO, or a Finance
+ * delegate covering the company — never its preparer). Other rows keep
+ * presentTransfers' flag (the CEO of both companies), which is what
+ * assertCanApprove decides for them.
+ */
+async function withApprovalFlags<T extends { id: string; tenantId: string; counterpartyTenantId: string; status: string; canApprove: boolean }>(req: FastifyRequest, views: T[]): Promise<T[]> {
+  const submitted = views.filter((v) => v.status === 'submitted')
+  if (submitted.length === 0) return views
+  const ids = Array.from(new Set(submitted.flatMap((v) => [v.tenantId, v.counterpartyTenantId])))
+  const hos = new Set((await serviceClient.tenant.findMany({ where: { id: { in: ids }, kind: 'head_office' }, select: { id: true } })).map((t) => t.id))
+  if (hos.size === 0) return views
+  const out: T[] = []
+  for (const v of views) {
+    if (v.status !== 'submitted' || (!hos.has(v.tenantId) && !hos.has(v.counterpartyTenantId))) { out.push(v); continue }
+    const s = await approvalSubject('intercompany_transfer', v.id)
+    const ok = !!s && await canApprove(req, approvalInputOf('intercompany_transfer', v.id, s, { ceoOnly: !s.headOfficePair }))
+    out.push({ ...v, canApprove: ok })
+  }
+  return out
+}
+
+/**
+ * Approve / reject: resolve the transfer on serviceClient (A5), then
+ * assertCanApprove — CEO only unless it is a head-office pair. 404 when the
+ * caller cannot see it at all.
+ */
+async function decisionGrant(req: FastifyRequest, id: string, action: 'approve' | 'reject'): Promise<{ grant: ApprovalGrant; ownerTenantId: string | null }> {
+  const s = await approvalSubject('intercompany_transfer', id)
+  if (!s) throw new NotFoundError('Transfer', id)
+  const grant = await assertCanApprove(req, approvalInputOf('intercompany_transfer', id, s, {
+    ceoOnly: !s.headOfficePair, entity: 'IntercompanyTransfer', action: `${action} an inter-company transfer`,
+  }))
+  return { grant, ownerTenantId: s.ownerTenantId }
+}
+
+const grantMeta = (g: ApprovalGrant) => ({ decidedVia: g.via, ...(g.via === 'delegation' ? { delegationId: g.delegationId } : {}) })
 
 const conceptShareSchema = z.object({
   conceptId: z.string().min(1),
@@ -168,9 +260,22 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
     })
+    // D1: the caller's head offices and the companies each serves through a
+    // LIVE link (the pairs they may prepare for, acting as that head office).
+    const reach = reachMapOf(req)
+    const byHo = new Map<string, string[]>()
+    for (const [company, hos] of reach) {
+      for (const ho of hos) if (su.memberTenantIds.includes(ho)) byHo.set(ho, [...(byHo.get(ho) ?? []), company])
+    }
+    const hoNames = byHo.size ? await companyNames([...byHo.keys(), ...[...byHo.values()].flat()]) : new Map<string, string>()
+    const headOfficePairs = [...byHo.entries()].map(([ho, companies]) => ({
+      headOffice: { id: ho, name: hoNames.get(ho) ?? null },
+      companies: companies.map((c) => ({ id: c, name: hoNames.get(c) ?? null })).sort((x, y) => (x.name ?? '').localeCompare(y.name ?? '')),
+    }))
     return {
       activeTenantId: su.tenantId,
       companies: rows,
+      headOfficePairs,
       can: {
         /** Prepare a transfer (finance, the CEO). */
         prepare: TRANSFER_PREPARERS.includes(su.role),
@@ -187,13 +292,21 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     const viewer = actorOf(req)
     const seen = new Set<string>()
     const pairs: Array<{ a: string; b: string }> = []
+    const reach = reachMapOf(req)
     for (const self of scope.tenantIds) {
-      for (const other of await counterpartiesOf(serviceClient, self)) {
+      // A company seen only through the head-office lens: just its pairs with
+      // the caller's own head offices.
+      const lensOnly = !viewer.memberTenantIds.includes(self)
+      const others = lensOnly
+        ? (reach.get(self) ?? []).filter((ho) => viewer.memberTenantIds.includes(ho))
+        : await counterpartiesOf(serviceClient, self)
+      for (const other of others) {
         const key = pairKey(self, other)
         if (seen.has(key)) continue
         seen.add(key)
-        // a = the active company when it is a party, else the in-scope side.
-        const a = other === viewer.tenantId ? other : self
+        // a = the active company when it is a party, else a side the caller
+        // belongs to (a head office through the lens), else the in-scope side.
+        const a = other === viewer.tenantId ? other : (lensOnly ? other : self)
         pairs.push({ a, b: a === self ? other : self })
       }
     }
@@ -201,9 +314,11 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     const out = []
     for (const p of pairs) {
       const both = isMemberOfBoth(viewer, p.a, p.b)
-      if (both) {
+      if (both || isOwnHeadOfficePair(req, p.a, p.b)) {
+        // A member of both, or a head-office member on their own head office's
+        // pair with a company it serves (spec §4.8): both sides.
         const bal = await pairBalances(serviceClient, p.a, p.b, asOf)
-        out.push({ a: { id: p.a, name: names.get(p.a) ?? null }, b: { id: p.b, name: names.get(p.b) ?? null }, memberOfBoth: true, ...bal })
+        out.push({ a: { id: p.a, name: names.get(p.a) ?? null }, b: { id: p.b, name: names.get(p.b) ?? null }, memberOfBoth: both, headOfficePair: !both, ...bal })
       } else {
         // Only the side the caller belongs to; the other company's books stay closed to them.
         const s = await sideBalances(serviceClient, p.a, p.b, asOf)
@@ -224,53 +339,64 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     }).parse(req.query)
     const scope = await resolveTenantScope(req)
     if (scope.tenantIds.length === 0) return { items: [] }
-    const rows = await prisma.intercompanyTransfer.findMany({
-      where: {
-        ...(q.status && { status: q.status }),
-        OR: [{ tenantId: { in: scope.tenantIds } }, { counterpartyTenantId: { in: scope.tenantIds } }],
-      },
-      orderBy: [{ preparedAt: 'desc' }, { id: 'desc' }],
-      take: q.limit,
-    })
-    return { items: await presentTransfers(rows, actorOf(req)) }
+    const f = transferFilters(req, scope.tenantIds)
+    const orderBy = [{ preparedAt: 'desc' as const }, { id: 'desc' as const }]
+    const status = q.status ? { status: q.status } : {}
+    const [mine, ho] = await Promise.all([
+      f.member ? prisma.intercompanyTransfer.findMany({ where: { ...status, ...f.member }, orderBy, take: q.limit }) : [],
+      f.ho ? serviceClient.intercompanyTransfer.findMany({ where: { ...status, ...f.ho }, orderBy, take: q.limit }) : [],
+    ])
+    const byId = new Map<string, TransferRow>()
+    for (const r of [...mine, ...ho]) byId.set(r.id, r)
+    const rows = [...byId.values()]
+      .sort((x, y) => y.preparedAt.getTime() - x.preparedAt.getTime() || (y.id < x.id ? -1 : y.id > x.id ? 1 : 0))
+      .slice(0, q.limit)
+    return { items: await withApprovalFlags(req, await presentTransfers(rows, actorOf(req))) }
   })
 
   fastify.get<{ Params: { id: string } }>('/transfers/:id', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const scope = await resolveTenantScope(req)
-    const t = await prisma.intercompanyTransfer.findFirst({
-      where: { id: req.params.id, OR: [{ tenantId: { in: scope.tenantIds } }, { counterpartyTenantId: { in: scope.tenantIds } }] },
-    })
+    const f = transferFilters(req, scope.tenantIds)
+    const t = (f.member ? await prisma.intercompanyTransfer.findFirst({ where: { id: req.params.id, ...f.member } }) : null)
+      ?? (f.ho ? await serviceClient.intercompanyTransfer.findFirst({ where: { id: req.params.id, ...f.ho } }) : null)
     if (!t) throw new NotFoundError('Transfer', req.params.id)
-    return (await presentTransfers([t], actorOf(req)))[0]
+    return (await withApprovalFlags(req, await presentTransfers([t], actorOf(req))))[0]
   })
 
   fastify.post('/transfers', { preHandler: requireAuth(...TRANSFER_PREPARERS) }, async (req, reply) => {
     const body = createSchema.parse(req.body)
-    await assertBothSidesOwned(req, body.debtorTenantId, body.creditorTenantId, { what: 'transfer' })
+    // Both companies' member, or (D1) a head-office member acting as the head
+    // office for a company it serves through a live link.
+    await assertPairPreparer(req, body.debtorTenantId, body.creditorTenantId, { what: 'transfer' })
     if (body.postNow && !isCeo(req.staffUser!.role)) {
       throw new ForbiddenError('Only the CEO can post a transfer at once — submit it for approval instead')
     }
     const row = await createTransfer(actorOf(req), body, { postNow: body.postNow })
-    const [view] = await presentTransfers([row], actorOf(req))
+    const [view] = await withApprovalFlags(req, await presentTransfers([row], actorOf(req)))
     await auditBoth(req, [row.tenantId, row.counterpartyTenantId], body.postNow ? 'intercompany.transfer.post' : 'intercompany.transfer.submit', 'IntercompanyTransfer', row.id, view)
-    return reply.status(201).send({ ...view, referenceUsedBefore: await referenceUsesOfPair(row) })
+    return reply.status(201).send({ ...view, referenceUsedBefore: await referenceUsesOfPair(row, req.staffUser!.memberTenantIds) })
   })
 
-  fastify.post<{ Params: { id: string } }>('/transfers/:id/approve', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+  // Any staff role reaches the handler (the '/accounting' module gate still
+  // applies); assertCanApprove decides — the CEO of both companies, or on a
+  // head-office pair a Finance delegate covering the company.
+  fastify.post<{ Params: { id: string } }>('/transfers/:id/approve', { preHandler: requireAuth() }, async (req) => {
     const body = z.object({ note: z.string().trim().max(500).nullable().optional() }).parse(req.body ?? {})
-    await transferInWriteScope(req, req.params.id)
-    const row = await approveTransfer(actorOf(req), req.params.id, body.note ?? null)
+    const { grant, ownerTenantId } = await decisionGrant(req, req.params.id, 'approve')
+    const row = await approveTransfer(actorOf(req), req.params.id, body.note ?? null, { grant })
     const [view] = await presentTransfers([row], actorOf(req))
-    await auditBoth(req, [row.tenantId, row.counterpartyTenantId], 'intercompany.transfer.approve', 'IntercompanyTransfer', row.id, view)
+    await auditBoth(req, [row.tenantId, row.counterpartyTenantId], 'intercompany.transfer.approve', 'IntercompanyTransfer', row.id, view, grantMeta(grant))
+    await auditApproval(req, { type: 'intercompany_transfer', id: row.id, tenantId: ownerTenantId, decision: 'approve', grant, entity: 'IntercompanyTransfer' })
     return view
   })
 
-  fastify.post<{ Params: { id: string } }>('/transfers/:id/reject', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+  fastify.post<{ Params: { id: string } }>('/transfers/:id/reject', { preHandler: requireAuth() }, async (req) => {
     const body = z.object({ note: z.string().trim().min(3).max(500) }).parse(req.body ?? {})
-    await transferInWriteScope(req, req.params.id)
-    const row = await rejectTransfer(actorOf(req), req.params.id, body.note)
+    const { grant, ownerTenantId } = await decisionGrant(req, req.params.id, 'reject')
+    const row = await rejectTransfer(actorOf(req), req.params.id, body.note, { grant })
     const [view] = await presentTransfers([row], actorOf(req))
-    await auditBoth(req, [row.tenantId, row.counterpartyTenantId], 'intercompany.transfer.reject', 'IntercompanyTransfer', row.id, view)
+    await auditBoth(req, [row.tenantId, row.counterpartyTenantId], 'intercompany.transfer.reject', 'IntercompanyTransfer', row.id, view, grantMeta(grant))
+    await auditApproval(req, { type: 'intercompany_transfer', id: row.id, tenantId: ownerTenantId, decision: 'reject', grant, entity: 'IntercompanyTransfer', metadata: { note: body.note } })
     return view
   })
 

@@ -27,10 +27,20 @@
 // company's chart. Reversal: 'ic.transfer.reversal:<id>' in both books.
 //
 // Sources: 'manual' (finance prepares → the CEO approves, or the CEO posts at
-// once), 'fleet' (the shared-fleet monthly charge, fleet.ts) and 'cod' (a
-// fleet rider's unpaid cash-on-delivery, accounting/codPosting.ts) — the last
-// two are SYSTEM transfers posted by postSystemTransferTx, idempotent on
-// sourceRef. 'ho_recharge' is reserved for D1.
+// once), 'fleet' (the shared-fleet monthly charge, fleet.ts), 'cod' (a fleet
+// rider's unpaid cash-on-delivery, accounting/codPosting.ts) and 'ho_recharge'
+// (one head-office recharge run line, modules/headOffices/runs.ts) — the last
+// three are SYSTEM transfers posted by postSystemTransferTx, idempotent on
+// sourceRef, and reversed only from where they were booked.
+//
+// Head-office pairs (D1): a transfer between a head office and a company it
+// serves (settlement, or a 'charge' used as a paired adjustment) is an
+// ordinary 'manual' transfer. A member of the head office may prepare it
+// (lib/companyPairs.ts assertPairPreparer); the CEO or a Finance delegate
+// covering the company approves it (lib/approvalRights.ts — the route proves
+// the grant and passes it in); a non-admin never approves what they prepared.
+// A charge on a head-office pair may not name the head office's recharge
+// account or the link's "Head office charges" account (A9).
 
 import { Prisma, type IntercompanyTransfer } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
@@ -38,7 +48,8 @@ import { AppError } from '../../lib/errors.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
 import { moneyAccountCode, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
 import { isMemberOfBoth } from '../../lib/companyPairs.js'
-import { postJournalEntry, reverseJournalEntry, withLateNote, type JournalLineInput } from '../accounting/journal.js'
+import type { ApprovalGrant } from '../../lib/approvalRights.js'
+import { ACCT, postJournalEntry, reverseJournalEntry, withLateNote, type JournalLineInput } from '../accounting/journal.js'
 import { fmtPktDate, parsePktStartOfDay, pktToday } from '../accounting/dates.js'
 import { ensurePairAccounts, lockPair, sideBalances, type Db, type Tx } from './accounts.js'
 
@@ -51,7 +62,7 @@ export const IC_TRANSFER_REVERSAL_SOURCE = `${IC_TRANSFER_SOURCE}.reversal`
 
 export const TRANSFER_KINDS = ['charge', 'settlement', 'netting'] as const
 export type TransferKind = (typeof TRANSFER_KINDS)[number]
-export const SYSTEM_SOURCES = ['fleet', 'cod'] as const
+export const SYSTEM_SOURCES = ['fleet', 'cod', 'ho_recharge'] as const
 export type SystemSource = (typeof SYSTEM_SOURCES)[number]
 /** How a settlement was paid (receipt methods without card — lib/bankAccounts.ts RECEIPT_METHODS). */
 export const SETTLEMENT_METHODS = ['bank_transfer', 'bank_deposit', 'cheque', 'cash'] as const
@@ -181,6 +192,73 @@ async function assertPostableAccount(db: Db, tenantId: string, code: string, com
     throw new AppError(
       'ACCOUNT_CONTROLLED',
       `Account ${code} '${acc.name}' in ${companyName}'s chart is kept by ${acc.controlledBy === 'intercompany' ? 'the inter-company module' : acc.controlledBy === 'fixed_asset' ? 'the fixed-asset register' : 'another module'} — pick an ordinary account (${side})`,
+      422,
+    )
+  }
+}
+
+// ─── Head-office pairs (D1) ──────────────────────────────────────────────────
+
+/** Which of a and b are head offices (kind head_office). */
+async function headOfficesAmong(db: Db, ids: string[]): Promise<string[]> {
+  const rows = await db.tenant.findMany({ where: { id: { in: ids }, kind: 'head_office' }, select: { id: true } })
+  return rows.map((r) => r.id)
+}
+
+/**
+ * A transfer with a head office on one side is only between that head office
+ * and a company it serves or served (a link, live or ended — spec §4.6):
+ * 422 HEAD_OFFICE_NOT_LINKED otherwise. Two head offices never transfer.
+ */
+async function assertHeadOfficePairLinked(db: Db, D: string, C: string, names: Map<string, string>): Promise<void> {
+  const hos = await headOfficesAmong(db, [D, C])
+  if (hos.length === 0) return
+  if (hos.length === 2) {
+    throw new AppError('HEAD_OFFICE_NOT_LINKED', 'Two head offices do not transfer to each other — a head office transfers only with a company it serves', 422)
+  }
+  const ho = hos[0]!
+  const company = ho === D ? C : D
+  const link = await db.headOfficeLink.findFirst({ where: { tenantId: ho, companyTenantId: company }, select: { id: true } })
+  if (!link) {
+    throw new AppError(
+      'HEAD_OFFICE_NOT_LINKED',
+      `${names.get(company) ?? 'That company'} has never been linked to ${names.get(ho) ?? 'this head office'} — link it first (CEO → Head offices)`,
+      422,
+    )
+  }
+}
+
+/**
+ * A9: on a head-office pair, a charge (the paired adjustment) may not name
+ * the head office's RECHARGE account (HeadOfficeBooks.rechargeAccountId, else
+ * the template 6990) in the head office's chart, nor any link's "Head office
+ * charges" account in the company's chart — the recharge run owns them, and a
+ * transfer line on them would feed back into the pool. 422 COUNTER_ACCOUNT_INVALID.
+ */
+async function assertHeadOfficeCounters(
+  db: Db, D: string, C: string, codeOf: Record<string, string>, names: Map<string, string>,
+): Promise<void> {
+  const hos = await headOfficesAmong(db, [D, C])
+  if (hos.length !== 1) return
+  const ho = hos[0]!
+  const company = ho === D ? C : D
+  const [books, links] = await Promise.all([
+    db.headOfficeBooks.findUnique({ where: { tenantId: ho }, select: { rechargeAccount: { select: { code: true, tenantId: true } } } }),
+    db.headOfficeLink.findMany({ where: { tenantId: ho, companyTenantId: company }, select: { charges: { select: { code: true, tenantId: true } } } }),
+  ])
+  const rechargeCode = books?.rechargeAccount && books.rechargeAccount.tenantId === ho ? books.rechargeAccount.code : ACCT.GROUP_RECHARGES // headOffices/accounts.ts HO_RECHARGE_CODE (not imported: books.ts → fleet.ts → here)
+  if (codeOf[ho] === rechargeCode) {
+    throw new AppError(
+      'COUNTER_ACCOUNT_INVALID',
+      `Account ${rechargeCode} is ${names.get(ho) ?? 'the head office'}'s recharge account — only the monthly recharge run posts there. Pick another account.`,
+      422,
+    )
+  }
+  const charges = new Set(links.map((l) => l.charges).filter((a): a is { code: string; tenantId: string | null } => !!a && a.tenantId === company).map((a) => a.code))
+  if (codeOf[company] && charges.has(codeOf[company]!)) {
+    throw new AppError(
+      'COUNTER_ACCOUNT_INVALID',
+      `Account ${codeOf[company]} is ${names.get(company) ?? 'the company'}'s "Head office charges" account — only the monthly recharge run posts there. Pick another account.`,
       422,
     )
   }
@@ -429,6 +507,7 @@ export async function createTransfer(actor: TransferActor, input: CreateTransfer
     }
     await assertPostableAccount(serviceClient, D, input.debtorAccountCode, names.get(D) ?? 'the paying company', 'charged to')
     await assertPostableAccount(serviceClient, C, input.creditorAccountCode, names.get(C) ?? 'the charging company', 'recovered in')
+    await assertHeadOfficeCounters(serviceClient, D, C, { [D]: input.debtorAccountCode, [C]: input.creditorAccountCode }, names)
     debtorAccountCode = input.debtorAccountCode
     creditorAccountCode = input.creditorAccountCode
     conceptSplit = await assertConceptSplit(serviceClient, D, input.conceptSplit, input.amountCents)
@@ -450,6 +529,7 @@ export async function createTransfer(actor: TransferActor, input: CreateTransfer
     debtorBankAccountId = (await moneyAccountCode(serviceClient, D, { method: side.debtor, bankAccountId: input.debtorBankAccountId ?? null })).bankAccountId
     creditorBankAccountId = (await moneyAccountCode(serviceClient, C, { method: side.creditor, bankAccountId: input.creditorBankAccountId ?? null })).bankAccountId
   }
+  await assertHeadOfficePairLinked(serviceClient, D, C, names)
   await assertOpenInBoth(serviceClient, [D, C], entryDate)
 
   return serviceClient.$transaction(async (tx) => {
@@ -475,18 +555,46 @@ export async function createTransfer(actor: TransferActor, input: CreateTransfer
   }, TX_OPTS)
 }
 
-/** The CEO approves: claim submitted → posted and post both books, in ONE transaction. */
-export async function approveTransfer(actor: TransferActor, id: string, note?: string | null): Promise<TransferRow> {
+/** How a decision was authorised: the grant lib/approvalRights.ts assertCanApprove returned (the route proves it). */
+export interface DecideOpts {
+  grant?: ApprovalGrant | null
+}
+
+/**
+ * The claim's guard: always 'submitted'; a non-admin (a Finance delegate) never
+ * decides what they prepared — enforced in the claim itself, not only by the
+ * route's check, so a race cannot slip past it.
+ */
+function claimWhere(actor: TransferActor, id: string): Prisma.IntercompanyTransferWhereInput {
+  return { id, status: 'submitted', ...(actor.role !== 'admin' && { preparedById: { not: actor.id } }) }
+}
+
+/** 409 NOT_SUBMITTED, or 403 SELF_APPROVAL_BLOCKED when the claim missed only because a non-admin prepared it. */
+async function claimMissed(db: Db, actor: TransferActor, id: string): Promise<never> {
+  const now = await db.intercompanyTransfer.findUnique({ where: { id }, select: { status: true, preparedById: true } })
+  if (now?.status === 'submitted' && actor.role !== 'admin' && now.preparedById === actor.id) {
+    throw new AppError('SELF_APPROVAL_BLOCKED', "You can't approve something you prepared. Have a colleague or the CEO decide it.", 403)
+  }
+  throw new AppError('NOT_SUBMITTED', 'This transfer is no longer waiting for approval', 409)
+}
+
+/**
+ * Approve: claim submitted → posted and post both books, in ONE transaction.
+ * Authorised by `opts.grant` (the route's assertCanApprove — the CEO, or a
+ * Finance delegate on a head-office pair) or, with no grant, the CEO who
+ * belongs to both companies (as before). selfApproved stays for the CEO.
+ */
+export async function approveTransfer(actor: TransferActor, id: string, note?: string | null, opts: DecideOpts = {}): Promise<TransferRow> {
   const t = await serviceClient.intercompanyTransfer.findUnique({ where: { id } })
   if (!t) throw new AppError('NOT_FOUND', 'Transfer not found', 404)
-  assertActorOfBoth(actor, t)
+  assertMayDecide(actor, t, opts)
   return serviceClient.$transaction(async (tx) => {
     await lockPair(tx, t.tenantId, t.counterpartyTenantId)
     const claim = await tx.intercompanyTransfer.updateMany({
-      where: { id, status: 'submitted' },
+      where: claimWhere(actor, id),
       data: { status: 'posted', decidedById: actor.id, decidedAt: new Date(), decisionNote: note?.trim() || null, selfApproved: t.preparedById === actor.id },
     })
-    if (claim.count === 0) throw new AppError('NOT_SUBMITTED', 'This transfer is no longer waiting for approval', 409)
+    if (claim.count === 0) await claimMissed(tx, actor, id)
     const row = await tx.intercompanyTransfer.findUniqueOrThrow({ where: { id } })
     await assertWithinBalance(tx, { id, kind: row.kind, tenantId: row.tenantId, counterpartyTenantId: row.counterpartyTenantId, amountCents: toCents(row.amountCents), entryDate: row.entryDate }, false)
     await postBothBooks(tx, row, { entryDate: row.entryDate, postedBy: actor.id })
@@ -494,16 +602,26 @@ export async function approveTransfer(actor: TransferActor, id: string, note?: s
   }, TX_OPTS)
 }
 
-export async function rejectTransfer(actor: TransferActor, id: string, note: string): Promise<TransferRow> {
+/** Reject: the same authority as approve (opts.grant, else the CEO of both). */
+export async function rejectTransfer(actor: TransferActor, id: string, note: string, opts: DecideOpts = {}): Promise<TransferRow> {
   const t = await serviceClient.intercompanyTransfer.findUnique({ where: { id } })
   if (!t) throw new AppError('NOT_FOUND', 'Transfer not found', 404)
-  assertActorOfBoth(actor, t)
+  assertMayDecide(actor, t, opts)
   const claim = await serviceClient.intercompanyTransfer.updateMany({
-    where: { id, status: 'submitted' },
+    where: claimWhere(actor, id),
     data: { status: 'rejected', decidedById: actor.id, decidedAt: new Date(), decisionNote: note.trim() },
   })
-  if (claim.count === 0) throw new AppError('NOT_SUBMITTED', 'This transfer is no longer waiting for approval', 409)
+  if (claim.count === 0) await claimMissed(serviceClient, actor, id)
   return serviceClient.intercompanyTransfer.findUniqueOrThrow({ where: { id } })
+}
+
+/** A decision needs a proven grant, or the CEO (admin) who belongs to both companies. */
+function assertMayDecide(actor: TransferActor, t: { tenantId: string; counterpartyTenantId: string }, opts: DecideOpts): void {
+  if (opts.grant) return
+  if (actor.role !== 'admin') {
+    throw new AppError('APPROVAL_NOT_YOURS', 'This needs the CEO', 403)
+  }
+  assertActorOfBoth(actor, t)
 }
 
 function assertActorOfBoth(actor: TransferActor, t: { tenantId: string; counterpartyTenantId: string }): void {
@@ -557,6 +675,9 @@ export async function reverseTransfer(actor: TransferActor, id: string, reason: 
   assertActorOfBoth(actor, t)
   if (t.source === 'cod') {
     throw new AppError('REVERSE_FROM_SOURCE', "A rider's cash-on-delivery debt is cleared when the rider pays it in (Reconciliation → Cash on delivery), not here", 409)
+  }
+  if (t.source === 'ho_recharge') {
+    throw new AppError('REVERSE_FROM_SOURCE', 'A head-office recharge is reversed from its run — reverse the recharge run instead (Inter-company → Head office)', 409)
   }
   await serviceClient.$transaction((tx) => reverseInTx(tx, id, reason.trim(), { actorId: actor.id, idempotent: false }), TX_OPTS)
   return serviceClient.intercompanyTransfer.findUniqueOrThrow({ where: { id } })
@@ -761,7 +882,7 @@ export async function presentTransfers(rows: TransferRow[], viewer: TransferActo
       createdAt: t.createdAt.toISOString(),
       memberOfBoth: both,
       canApprove: isCeo && both && t.status === 'submitted',
-      canReverse: isCeo && both && t.status === 'posted' && t.source !== 'cod',
+      canReverse: isCeo && both && t.status === 'posted' && t.source !== 'cod' && t.source !== 'ho_recharge',
     }
   })
 }

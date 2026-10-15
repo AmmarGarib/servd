@@ -18,6 +18,10 @@
 //   isMemberOfBoth(user, a, b) — the same membership test without the
 //     active-company rule, for system-adjacent paths (a fleet rider's COD
 //     debt, the approval of a transfer, the fleet re-poster's guard).
+//   assertPairPreparer(req, a, b) — who may PREPARE an inter-company transfer:
+//     assertBothSidesOwned, OR (D1, head office) a member of a head office
+//     acting AS that head office, preparing for the head office and a company
+//     it serves through a LIVE link. Otherwise the errors above.
 //
 // There is no second copy: positions/contributions.ts, intercompany/* and the
 // COD rider-debt path all import these.
@@ -25,6 +29,7 @@
 import type { FastifyRequest } from 'fastify'
 import { serviceClient } from './prisma.js'
 import { AppError, UnauthorizedError } from './errors.js'
+import { liveLink } from './headOffice.js'
 
 /** True when `user` belongs to both companies (and they are two different companies). */
 export function isMemberOfBoth(user: { id: string; memberTenantIds: string[] }, a: string, b: string): boolean {
@@ -75,4 +80,44 @@ export async function assertBothSidesOwned(req: FastifyRequest, a: string, b: st
   }
   const live = await serviceClient.tenant.count({ where: { id: { in: [a, b] }, deletedAt: null } })
   if (live !== 2) throw new AppError('COMPANY_NOT_FOUND', 'One of the two companies no longer exists', 422)
+}
+
+/**
+ * Who may PREPARE a transfer between a and b (D1 + the owner's "reuse the
+ * inter-company engine"): whoever passes assertBothSidesOwned, OR a head-office
+ * member preparing for their head office and a company it serves, when ALL of:
+ *   • one side is a head office (kind head_office) the caller is a member of;
+ *   • the other side has a LIVE link to it (lib/headOffice.ts liveLink — both
+ *     live, not ended);
+ *   • the caller's active company is that head office.
+ * Anything else throws exactly what assertBothSidesOwned throws (SAME_COMPANY,
+ * NOT_IN_BOTH_COMPANIES, ACTIVE_COMPANY_NOT_A_PARTY, COMPANY_NOT_FOUND). With
+ * no head office linked (today) this is assertBothSidesOwned.
+ */
+export async function assertPairPreparer(req: FastifyRequest, a: string, b: string, opts: { what?: string } = {}): Promise<void> {
+  try {
+    await assertBothSidesOwned(req, a, b, opts)
+    return
+  } catch (err) {
+    // A pair of one company with itself is never rescued.
+    if (!(err instanceof AppError) || err.code === 'SAME_COMPANY') throw err
+    if (await headOfficeMayPrepare(req, a, b)) return
+    throw err
+  }
+}
+
+/** The head-office path of assertPairPreparer (no throw). */
+async function headOfficeMayPrepare(req: FastifyRequest, a: string, b: string): Promise<boolean> {
+  const su = req.staffUser
+  if (!su || !a || !b || a === b) return false
+  const active = su.tenantId
+  if (!active || (active !== a && active !== b)) return false
+  if (!su.memberTenantIds.includes(active)) return false
+  const ho = await serviceClient.tenant.findFirst({
+    where: { id: active, kind: 'head_office', isActive: true, deletedAt: null },
+    select: { id: true },
+  })
+  if (!ho) return false
+  const company = active === a ? b : a
+  return (await liveLink(ho.id, company)) !== null
 }

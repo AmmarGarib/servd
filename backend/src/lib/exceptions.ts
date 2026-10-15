@@ -88,6 +88,9 @@ export type ExceptionKind =
   // People, close and inter-company
   | 'period_close_override'      // the CEO closed a period over a blocking close check
   | 'intercompany_mismatch'      // the two sides of a company pair's due-to / due-from disagree
+  // Head office (D1; workers/headOfficeRecharge.ts). Plain String column — no migration.
+  | 'recharge_missing'           // a head office's month is not recharged (not ready) on day 5 of the next month
+  | 'recharge_drift'             // a recharged month's head-office cost moved after posting (a true-up is due)
   // Cash requests
   | 'cash_request_receipts_overdue' // a paid cash request past its due date with no receipt uploaded (H3: flagged, nothing booked)
   | 'stock_difference_queried'      // the CEO sent a waste / count difference back with a note (H20)

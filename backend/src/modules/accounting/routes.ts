@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
-import { postJournalEntry, reverseJournalEntry } from './journal.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate, pktToday } from './dates.js'
@@ -22,46 +20,16 @@ import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
-
-const journalEntrySchema = z.object({
-  reference: z.string().optional(),
-  description: z.string().min(1),
-  entryDate: z.string().datetime().optional(),
-  lines: z.array(
-    z.object({
-      accountId: z.string().uuid(),
-      type: z.enum(['debit', 'credit']),
-      // One line ≤ MAX_MONEY_CENTS (PKR 900bn), else 422 AMOUNT_TOO_LARGE.
-      amountCents: zMoneyCents('A journal line', { sign: 'positive' }),
-      memo: z.string().optional(),
-      // Optional brand attribution, so a manual adjustment can land on one
-      // brand's P&L instead of the shared bucket.
-      conceptId: z.string().uuid().nullable().optional(),
-    }),
-  ).min(2),
-  // A line on a fixed-asset register account (1500–1599, 2012) needs the
-  // CEO's reason; the entry is then audited and flagged
-  // fixed_asset_gl_mismatch so the register tie-out explains it. The reason's
-  // length is checked by the posting engine (422 REGISTER_CONTROLLED_ACCOUNT).
-  registerOverride: z.object({ reason: z.string().trim().max(500) }).optional(),
-})
-
-// Manual journal entries carry `manual:<uuid>`; their reversal (posted by
-// reverseJournalEntry) carries `manual.reversal:<uuid>`.
-const MANUAL_PREFIX = 'manual:'
-const MANUAL_REVERSAL_PREFIX = 'manual.reversal:'
+import {
+  MANUAL_PREFIX, MANUAL_REVERSAL_PREFIX, journalEntrySchema, reverseSchema,
+  assertBalanced, postManualJournal, reverseManualJournal,
+} from './manualJournal.js'
+import { journalRequestRoutes } from './journalRequestRoutes.js'
 
 // Who records tax paid to the authorities, links entries and posts the
 // 2030 reclass: finance and the CEO (finance gap 6) — taxPayments.ts holds
 // the one list. Inside the /accounting module gate like every route here.
 const TAX_PAYERS = [...TAX_PAYER_ROLES] as UserRole[]
-
-const reverseSchema = z.object({
-  reason: z.string().trim().min(5).max(500),
-  // Date of the reversing entry; defaults to now. The original may sit in a
-  // closed month — the reversal is dated in the open period.
-  entryDate: z.string().datetime().optional(),
-})
 
 function sendCsv(reply: FastifyReply, filename: string, body: string) {
   reply.header('Content-Type', 'text/csv; charset=utf-8')
@@ -166,129 +134,24 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.post('/journal', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = journalEntrySchema.parse(req.body)
-
-    const debits =body.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
-    const credits = body.lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
-    if (debits !== credits) {
-      return reply.status(422).send({
-        error: { code: 'UNBALANCED_ENTRY', message: `Debits (${debits}) must equal credits (${credits})` },
-      })
-    }
+    assertBalanced(body.lines)
 
     // A manual entry is posted into the company the operator is working in,
     // against that company's chart and its own period close.
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
 
-    // The client names accounts by id; the posting engine takes codes, which
-    // it resolves again inside this company's chart.
-    const accountIds = Array.from(new Set(body.lines.map((l) => l.accountId)))
-    const accounts = await prisma.account.findMany({
-      where: { id: { in: accountIds }, tenantId },
-      select: { id: true, code: true, isActive: true },
-    })
-    if (accounts.length !== accountIds.length) {
-      throw new AppError('ACCOUNT_NOT_IN_COMPANY', 'One or more accounts belong to another company', 422)
-    }
-    const inactive = accounts.filter((a) => !a.isActive).map((a) => a.code)
-    if (inactive.length > 0) {
-      throw new AppError('ACCOUNT_INACTIVE', `Account(s) ${inactive.join(', ')} are deactivated — reactivate them in Configuration → Chart of accounts first`, 422)
-    }
-    const codeOf = new Map(accounts.map((a) => [a.id, a.code]))
-
-    // Brand attribution per line, optional. A brand must belong to the company
-    // whose books this is (a create: the active company only).
-    const conceptIds = Array.from(new Set(body.lines.map((l) => l.conceptId).filter((c): c is string => !!c)))
-    if (conceptIds.length > 0) {
-      const ownBrands = await prisma.concept.count({ where: { id: { in: conceptIds }, tenantId, deletedAt: null } })
-      if (ownBrands !== conceptIds.length) {
-        throw new AppError('BRAND_NOT_IN_COMPANY', 'A line names a brand that is not one of this company\'s brands', 422)
-      }
-    }
-
-    const reference = body.reference?.trim() || null
-    const registerReason = body.registerOverride?.reason?.trim() || null
-    const posted = await postJournalEntry({
-      ...(registerReason ? { controlledOverride: { reason: registerReason } } : {}),
+    // manualJournal.ts — the one path (journal requests post through it too).
+    const { entry } = await postManualJournal(prisma, {
       tenantId,
-      sourceType: 'manual',
-      sourceId: randomUUID(),
-      // JournalEntry.reference holds the idempotency key, so the operator's
-      // own reference travels in the description (and the audit metadata).
-      description: reference ? `${body.description} · ref ${reference}` : body.description,
-      entryDate: body.entryDate ? new Date(body.entryDate) : new Date(),
+      description: body.description,
+      reference: body.reference,
+      entryDate: body.entryDate,
+      lines: body.lines,
       postedBy: req.staffUser!.id,
-      lines: body.lines.map((l) => ({
-        accountCode: codeOf.get(l.accountId)!,
-        type: l.type,
-        amountCents: l.amountCents,
-        memo: l.memo,
-        conceptId: l.conceptId ?? null,
-      })),
+      registerOverride: body.registerOverride ?? null,
+      actor: { id: req.staffUser!.id, email: req.staffUser!.email, ip: req.ip },
     })
-
-    const entry = await prisma.journalEntry.findUniqueOrThrow({
-      where: { id: posted.entryId },
-      include: { lines: { include: { account: true } } },
-    })
-    await audit({ category: 'accounting',
-      action: 'journal.manual',
-      entity: 'JournalEntry',
-      entityId: entry.id,
-      userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
-      userEmail: req.staffUser!.email,
-      after: entry,
-      metadata: { ip: req.ip, debits, credits, reference },
-    })
-    // A register account posted to by hand (the engine let it through only
-    // with the reason): on the trail and in the inbox, so the register's
-    // tie-out explains the difference.
-    const registerLines = entry.lines.filter((l) => l.account.controlledBy === 'fixed_asset')
-    if (registerReason && registerLines.length > 0) {
-      const codes = Array.from(new Set(registerLines.map((l) => l.account.code))).sort()
-      const registerCents = registerLines.reduce((s, l) => s + toCents(l.amountCents), 0)
-      await audit({ category: 'accounting',
-        action: 'journal.register_override',
-        entity: 'JournalEntry',
-        entityId: entry.id,
-        userId: req.staffUser!.id, tenantId,
-        userEmail: req.staffUser!.email,
-        after: { codes, amountCents: registerCents },
-        metadata: { ip: req.ip, reason: registerReason, reference },
-      })
-      const { flagException } = await import('../../lib/exceptions.js')
-      await flagException({
-        tenantId,
-        kind: 'fixed_asset_gl_mismatch',
-        severity: 'high',
-        title: `Fixed-asset account${codes.length === 1 ? '' : 's'} ${codes.join(', ')} posted to by hand`,
-        description: `${req.staffUser!.email} posted a manual journal to the fixed-asset register's account${codes.length === 1 ? '' : 's'} (${codes.join(', ')}) for PKR ${(registerCents / 100).toFixed(0)}. `
-          + `Reason: ${registerReason}. The register no longer ties to the ledger by this amount until it is matched by a register event or reversed.`,
-        entityType: 'JournalEntry',
-        entityId: entry.id,
-        actorId: req.staffUser!.id,
-        amountCents: registerCents,
-        metadata: { codes, reason: registerReason, reference },
-      })
-    }
-
-    // Every manual JE is a high-trust action. The system fires a flag for
-    // owner review — not because it's wrong, but because every single one
-    // should have eyes on it. The resolution note is the owner's audit trail.
-    const { flagException } = await import('../../lib/exceptions.js')
-    await flagException({
-      tenantId,
-      kind: 'manual_journal',
-      severity: debits >= 100000 ? 'high' : 'medium',           // PKR 1,000+ = high
-      title: `Manual journal entry posted: ${body.description}`,
-      description: `${req.staffUser!.email} posted a manual JE for PKR ${(debits / 100).toFixed(0)}. Reference: ${reference ?? 'none'}.`,
-      entityType: 'JournalEntry',
-      entityId: entry.id,
-      actorId: req.staffUser!.id,
-      amountCents: debits,
-      metadata: { reference, debits, credits, lineCount: body.lines.length, ip: req.ip },
-    })
-
     return reply.status(201).send(entry)
   })
 
@@ -312,113 +175,26 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/journal/:id/reverse', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = reverseSchema.parse(req.body ?? {})
 
-    const original = await prisma.journalEntry.findFirst({
+    const found = await prisma.journalEntry.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      include: { lines: { include: { account: { select: { code: true, name: true, isActive: true, controlledBy: true } } } } },
+      select: { id: true, tenantId: true },
     })
-    if (!original || !original.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
-    const tenantId = original.tenantId
-    if (!original.reference?.startsWith(MANUAL_PREFIX)) {
-      throw new AppError(
-        'NOT_A_MANUAL_ENTRY',
-        original.reference?.startsWith(MANUAL_REVERSAL_PREFIX)
-          ? 'This entry is itself a reversal — post a new manual entry instead of reversing it.'
-          : 'Only manual journal entries can be reversed here. This entry was posted by its source document — correct it there (refund the order, void the bill, …).',
-        422,
-      )
-    }
-    const inactive = Array.from(new Set(original.lines.filter((l) => !l.account.isActive).map((l) => l.account.code)))
-    if (inactive.length > 0) {
-      throw new AppError('ACCOUNT_INACTIVE', `Account(s) ${inactive.join(', ')} are deactivated — reactivate them in Configuration → Chart of accounts first`, 422)
-    }
-    // A manual entry linked to the sales-tax return as a tax payment is that
-    // payment: reversing it underneath the link would leave the return
-    // counting a payment that no longer exists (and its reversal as output).
-    const linkedPayment = await prisma.salesTaxPayment.findFirst({
-      where: { tenantId, journalEntryId: original.id, linked: true },
-      select: { id: true },
-    })
-    if (linkedPayment) {
-      throw new AppError('TAX_PAYMENT_LINKED', 'This entry is linked to the sales-tax return as a tax payment — unlink it there first, then reverse it.', 409)
-    }
-    const sourceId = original.reference.slice(MANUAL_PREFIX.length)
-    const reversalRef = `${MANUAL_REVERSAL_PREFIX}${sourceId}`
-    // A manual entry the CEO posted to the fixed-asset register's accounts
-    // (registerOverride) is undone the same way: its reversal touches those
-    // accounts too, so it carries the reason as its override (the journal's
-    // controlled-account rule — a reason too short is refused there, 422).
-    const registerLines = original.lines.filter((l) => l.account.controlledBy === 'fixed_asset')
+    if (!found || !found.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
 
-    const result = await prisma.$transaction(async (tx) => {
-      // One reversal per entry, even under a double click.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`journal.reverse:${tenantId}:${original.reference}`}))`
-      const already = await tx.journalEntry.findFirst({ where: { tenantId, reference: reversalRef }, select: { id: true, entryDate: true } })
-      if (already) {
-        throw new AppError('ALREADY_REVERSED', `This entry was already reversed on ${fmtPktDate(already.entryDate)} (entry ${already.id.slice(0, 8)}).`, 409)
-      }
-      return reverseJournalEntry(tenantId, 'manual', sourceId, body.reason, {
-        tx,
-        postedBy: req.staffUser!.id,
-        entryDate: body.entryDate ? new Date(body.entryDate) : new Date(),
-        ...(registerLines.length > 0 ? { controlledOverride: { reason: body.reason } } : {}),
-      })
-    })
-    if (!result.posted) {
-      throw new AppError('ALREADY_REVERSED', 'This entry was already reversed.', 409)
-    }
-
-    const reversal = await prisma.journalEntry.findUniqueOrThrow({
-      where: { id: result.entryId },
-      include: { lines: { include: { account: true } } },
-    })
-    const amountCents = reversal.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + toCents(l.amountCents), 0)
-    await audit({ category: 'accounting',
-      action: 'journal.reverse',
-      entity: 'JournalEntry',
-      entityId: reversal.id,
-      // The books this touched — the entry's company, which may not be the
-      // operator's active one.
-      userId: req.staffUser!.id, tenantId,
-      userEmail: req.staffUser!.email,
-      before: original,
-      after: reversal,
-      metadata: { ip: req.ip, reason: body.reason, reversedEntryId: original.id, amountCents },
-    })
-    if (registerLines.length > 0) {
-      const codes = Array.from(new Set(registerLines.map((l) => l.account.code))).sort()
-      const registerCents = registerLines.reduce((t, l) => t + toCents(l.amountCents), 0)
-      await audit({ category: 'accounting',
-        action: 'journal.register_override',
-        entity: 'JournalEntry',
-        entityId: reversal.id,
-        userId: req.staffUser!.id, tenantId,
-        userEmail: req.staffUser!.email,
-        after: { codes, amountCents: registerCents, reverses: original.id },
-        metadata: { ip: req.ip, reason: body.reason },
-      })
-      // The hand entry the register did not know about is gone: its open
-      // fixed_asset_gl_mismatch flag is closed by the reversal.
-      await prisma.exceptionFlag.updateMany({
-        where: { tenantId, kind: 'fixed_asset_gl_mismatch', entityType: 'JournalEntry', entityId: original.id, status: { in: ['open', 'acknowledged'] } },
-        data: { status: 'resolved', resolvedAt: new Date(), resolution: `Reversed by entry ${reversal.id.slice(0, 8)}: ${body.reason}`.slice(0, 500) },
-      })
-    }
-    const { flagException } = await import('../../lib/exceptions.js')
-    await flagException({
-      tenantId,
-      kind: 'manual_journal',
-      severity: amountCents >= 100000 ? 'high' : 'medium',
-      title: `Manual journal entry reversed: ${original.description}`,
-      description: `${req.staffUser!.email} reversed a manual JE of PKR ${(amountCents / 100).toFixed(0)}. Reason: ${body.reason}.`,
-      entityType: 'JournalEntry',
-      entityId: reversal.id,
+    // manualJournal.ts — the one path (a journal request of kind reverse uses it too).
+    const { reversal, original } = await reverseManualJournal(prisma, {
+      tenantId: found.tenantId,
+      entryId: found.id,
+      reason: body.reason,
       actorId: req.staffUser!.id,
-      amountCents,
-      metadata: { reversedEntryId: original.id, reason: body.reason, ip: req.ip, amountCents },
+      entryDate: body.entryDate,
+      actor: { email: req.staffUser!.email, ip: req.ip },
     })
-
     return reply.status(201).send({ ...reversal, reverses: { id: original.id, reference: original.reference } })
   })
+
+  // Journal requests: Finance prepares, the CEO approves (journalRequestRoutes.ts).
+  await fastify.register(journalRequestRoutes, { prefix: '/journal-requests' })
 
   // The chart of accounts is read and edited through /setup/chart-of-accounts
   // (Configuration → Chart of accounts) — the one chart API.
