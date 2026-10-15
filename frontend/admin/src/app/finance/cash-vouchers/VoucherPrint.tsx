@@ -12,16 +12,14 @@
 // only the voucher is on the paper.
 //
 // Until the director approves, the paper carries a large "NOT APPROVED — DO
-// NOT PAY"; a rejected or cancelled voucher prints "VOID". The HOD and the
-// director sign in servd (name + time from servd); the cashier and the person
-// who takes the cash sign the paper. Colours are the ERP tokens (globals.css)
+// NOT PAY"; a rejected or cancelled voucher prints "VOID". Approvals are digital status boxes
+// (Finance, CEO, Paid by, Received by) — no signature anywhere. Colours are the ERP tokens (globals.css)
 // — ink on white.
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { formatBrandName } from '../../../lib/brandName'
 import { amountInWords, formatPkr } from './amountInWords'
-import { cashierOf, fmtDate, fmtDateTime, type CashVoucher } from './data'
+import { fmtDate, fmtDateTime, type CashVoucher } from './data'
 
 const PRINT_CSS = `
 .cv-print-root { display: none; }
@@ -66,30 +64,28 @@ function FieldBox({ label, value, grow = 1, minH, size = '10pt' }: { label: stri
   )
 }
 
-function SignBlock({ title, name, line, when }: { title: string; name: string | null; line: React.ReactNode; when: string | null }) {
+function StatusBlock({ title, ok, head, name, when, sub }: { title: string; ok: boolean; head: string; name: string | null; when: string | null; sub: string | null }) {
   return (
-    <div style={{ flex: '1 1 0', minWidth: 0, border: `1px solid ${hair}`, borderRadius: '1.5mm', padding: '2mm 2.4mm', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ flex: '1 1 0', minWidth: 0, border: `1px solid ${hair}`, borderRadius: '1.5mm', padding: '2.4mm 2.6mm', display: 'flex', flexDirection: 'column', gap: '0.8mm' }}>
       <Label>{title}</Label>
-      <div style={{ height: '9mm', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', borderBottom: `1px solid ${rule}`, fontSize: '7.5pt', fontStyle: 'italic', color: muted, paddingBottom: '0.6mm' }}>
-        {line}
-      </div>
-      <div style={{ fontSize: '8.5pt', fontWeight: 700, color: ink, marginTop: '1mm', minHeight: '4mm', overflowWrap: 'anywhere' }}>{name || ' '}</div>
-      <div style={{ fontSize: '7pt', color: muted, minHeight: '3mm' }}>{when ?? ' '}</div>
+      <div style={{ fontSize: '11pt', fontWeight: 900, color: ok ? 'var(--erp-success)' : ink, overflowWrap: 'anywhere' }}>{head}</div>
+      {name && <div style={{ fontSize: '8.5pt', fontWeight: 700, color: ink, overflowWrap: 'anywhere' }}>{name}</div>}
+      {when && <div style={{ fontSize: '7.5pt', color: muted }}>{when}</div>}
+      {sub && <div style={{ fontSize: '7.5pt', color: muted }}>{sub}</div>}
     </div>
   )
 }
 
 export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher; companyName: string; categoryLabel: string }) {
   const mark = watermarkFor(v.status)
-  const brand = v.conceptName ? formatBrandName(v.conceptName) : null
-  const brandDept = [brand, v.department].filter(Boolean).join(' · ') || '—'
   const discount = v.discountCents ?? 0
   const gross = v.grossCents ?? v.amountCents + discount
   const total = v.amountCents
   const words = v.amountInWords || amountInWords(total)
   const financeAt = v.financeApprovedAt ?? v.hodSignedAt ?? null
   const financeBy = v.financeApprovedByName ?? v.hodSignedByName ?? null
-  const cashier = cashierOf(v)
+  const waitingWord = v.status === 'rejected' ? 'Rejected' : v.status === 'returned' ? 'Returned for correction' : v.status === 'cancelled' ? 'Cancelled' : 'Pending'
+  const receiver = v.receiverName ?? (v.kind === 'expense' ? v.payeeName : (v.holderName ?? v.payeeName))
   const payee = v.kind === 'expense' ? v.payeeName : (v.holderName ?? v.payeeName)
   const th: React.CSSProperties = { textAlign: 'left', fontSize: '8pt', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: muted, padding: '2mm 3mm', borderBottom: `1.5px solid ${rule}` }
   const td: React.CSSProperties = { padding: '2.2mm 3mm', fontSize: '10.5pt', borderBottom: `1px solid ${hair}` }
@@ -108,7 +104,7 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
           <div style={{ fontSize: '8.5pt', color: muted, marginTop: '1mm' }}>Internal voucher</div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: '14pt', fontWeight: 900, letterSpacing: '0.1em', color: 'var(--erp-primary-ink)' }}>CASH EXPENSE VOUCHER</div>
+          <div style={{ fontSize: '14pt', fontWeight: 900, letterSpacing: '0.1em', color: 'var(--erp-primary-ink)' }}>CASH PAYMENT VOUCHER</div>
           <div style={{ display: 'flex', gap: '6mm', justifyContent: 'flex-end', marginTop: '2mm' }}>
             <div><Label>Voucher No.</Label><div style={{ fontSize: '12pt', fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{v.number}</div></div>
             <div><Label>Date</Label><div style={{ fontSize: '12pt', fontWeight: 700 }}>{fmtDate(v.voucherDate)}</div></div>
@@ -121,10 +117,7 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
         <FieldBox label="Payee" value={payee} size="11.5pt" />
         <FieldBox label="Particulars" value={v.purpose} minH="14mm"
           size={v.purpose.length > 320 ? '8.5pt' : v.purpose.length > 160 ? '9.5pt' : '11pt'} />
-        <div style={{ display: 'flex', gap: '6mm' }}>
-          <FieldBox label="Expense account" value={categoryLabel} />
-          <FieldBox label="Brand / Department" value={brandDept} />
-        </div>
+        <FieldBox label="Expense account" value={categoryLabel} />
       </div>
 
       {/* Amounts */}
@@ -147,23 +140,26 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
 
       <div style={{ display: 'flex', gap: '6mm' }}>
         <FieldBox label="Raised by" value={v.preparedByName ?? '—'} />
-        <FieldBox label="Paid from (cash box)" value={v.boxName ?? '—'} />
         <FieldBox label="Documents due by" value={v.dueBy ? fmtDate(v.dueBy) : '—'} />
       </div>
 
-      {/* Signatures */}
+      {/* Digital approvals — status, name and time from servd; nothing to sign */}
       <div style={{ display: 'flex', gap: '2.5mm', marginTop: 'auto' }}>
-        <SignBlock title="Requested by" name={v.preparedByName ?? null} line={'Raised in servd'} when={fmtDateTime(v.submittedAt ?? v.createdAt)} />
-        <SignBlock title="Finance" name={financeAt ? financeBy : null} line={financeAt ? 'Approved in servd' : 'Not approved yet'} when={financeAt ? fmtDateTime(financeAt) : null} />
-        <SignBlock title="CEO" name={v.directorSignedAt ? (v.directorSignedByName ?? '—') : null}
-          line={v.directorSignedAt ? 'Approved in servd' : 'Not approved yet'} when={v.directorSignedAt ? fmtDateTime(v.directorSignedAt) : null} />
-        <SignBlock title="Paid by" name={cashier} line={' '} when="Date: ____________" />
-        <SignBlock title="Received by" name={payee} line={' '} when="Date: ____________" />
+        <StatusBlock title="Finance approval" ok={!!financeAt} head={financeAt ? 'Approved' : 'Not approved'}
+          name={financeAt ? financeBy : null} when={financeAt ? fmtDateTime(financeAt) : null} sub={financeAt ? null : waitingWord} />
+        <StatusBlock title="CEO approval" ok={!!v.directorSignedAt} head={v.directorSignedAt ? 'Approved' : 'Not approved'}
+          name={v.directorSignedAt ? (v.directorSignedByName ?? '—') : null} when={v.directorSignedAt ? fmtDateTime(v.directorSignedAt) : null}
+          sub={v.directorSignedAt ? null : financeAt ? waitingWord : 'Pending'} />
+        <StatusBlock title="Paid by" ok={!!v.disbursedAt} head={v.disbursedAt ? (v.paidByName ?? 'Finance') : 'Not paid yet'}
+          name={null} when={v.disbursedAt ? fmtDateTime(v.disbursedAt) : null} sub={null} />
+        <StatusBlock title="Received by" ok={!!v.cashReceivedAt} head={receiver}
+          name={null} when={v.cashReceivedAt ? fmtDateTime(v.cashReceivedAt) : null}
+          sub={v.cashReceivedAt ? 'Cash received — confirmed' : 'Not confirmed yet'} />
       </div>
 
       {/* Footer */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4mm', borderTop: `1px solid ${hair}`, paddingTop: '2mm', fontSize: '7pt', color: muted }}>
-        <span>Generated by servd. Cash is paid only once the CEO has approved; the expense is booked when finance verifies the supporting documents.</span>
+        <span>Digital voucher — approved and confirmed in servd; no signature required.</span>
         <span style={{ flexShrink: 0 }}>{v.disbursedAt ? `Paid ${fmtDate(v.disbursedAt)}` : ''}</span>
       </div>
 

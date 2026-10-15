@@ -10,12 +10,11 @@ import Link from 'next/link'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../../../lib/api'
-import { formatBrandName } from '../../../lib/brandName'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { amountInWords, formatPkr } from './amountInWords'
 import {
-  CV_BASE, CV_ROOT, cashierOf, categoryWords, errorWords, fmtDate, fmtDateTime, stageOf, useCategories, useHistory,
+  CV_BASE, CV_ROOT, categoryWords, errorWords, fmtDate, fmtDateTime, stageOf, useCategories, useHistory,
   useMyBoxes, usePettyBoxes, useStaffNames, useVoucher, type CashVoucher, type HistoryRow,
 } from './data'
 import { PrintPortal, VoucherSheet } from './VoucherPrint'
@@ -27,8 +26,9 @@ import { Select } from '@/components/ui/Select'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
-type Act = 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
+type Act = 'confirm-received' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
 const ACT_DONE: Record<Act, string> = {
+  'confirm-received': 'Cash received confirmed — finance can now verify the documents.',
   'finance-approve': 'Approved by finance — now waiting for the CEO.',
   approve: 'Approved — the cashier can pay it.',
   return: 'Returned for correction.',
@@ -198,6 +198,21 @@ export function VoucherDetail({ id }: { id: string }) {
         </div>
 
         {v.canFinanceApprove && <FinanceApprovePanel v={v} onDone={refresh} />}
+        {v.canConfirmReceived && (
+          <div className="rounded-2xl p-5 space-y-2" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
+            <p className="text-sm font-black text-white/90">Did you receive the cash?</p>
+            <p className="text-xs text-white/55">Confirming puts your name in the Received by box. Finance can verify the documents after that.</p>
+            <button disabled={act.isPending} className={primaryBtn}
+              onClick={() => { if (window.confirm(`Confirm you received PKR ${formatPkr(v.amountCents)} in cash for ${v.number}?`)) run('confirm-received') }}>
+              {act.isPending ? 'Saving…' : 'Cash received'}
+            </button>
+          </div>
+        )}
+        {v.status === 'disbursed' && newFlow && v.kind !== 'expense' && !v.cashReceivedAt && !v.canConfirmReceived && (
+          <p className="rounded-2xl p-4 text-xs font-bold text-white/70" style={card}>
+            Waiting for {v.receiverName ?? holder} to confirm cash received — finance verifies the documents after that.
+          </p>
+        )}
         {v.canNameHolder && <NameHolder v={v} onDone={refresh} />}
         {v.canPay && <PayPanel v={v} isKeeper={isKeeper} onDone={refresh} />}
 
@@ -245,9 +260,9 @@ export function VoucherDetail({ id }: { id: string }) {
             <Fact label="In words" value={v.amountInWords || amountInWords(v.amountCents)} wide />
             <Fact label="Particulars" value={v.purpose} wide />
             <Fact label="Expense account" value={categoryLabel} />
-            <Fact label="Brand / Department" value={[v.conceptName ? formatBrandName(v.conceptName) : null, v.department].filter(Boolean).join(' · ') || '—'} />
             <Fact label="Paid from" value={v.boxName ?? '—'} />
-            <Fact label="Cashier" value={cashierOf(v) ?? '—'} />
+            <Fact label="Paid by" value={v.paidByName ?? '—'} />
+            <Fact label="Received by" value={v.cashReceivedAt ? `${v.receiverName ?? holder} · confirmed ${fmtDateTime(v.cashReceivedAt)}` : `${v.receiverName ?? holder} · not confirmed yet`} />
             {v.dueBy && <Fact label="Documents due by" value={fmtDate(v.dueBy)} />}
             <Fact label="Raised by" value={`${v.preparedByName ?? '—'} · ${fmtDateTime(v.createdAt)}`} />
             {companyName && <Fact label="Company" value={companyName} />}
@@ -292,7 +307,7 @@ function Fact({ label, value, wide }: { label: string; value: string; wide?: boo
   )
 }
 
-/** Requested → Finance → CEO → Paid → Documents → Verified & booked; done steps are green. */
+/** Requested → Finance → CEO → Paid → Cash received → Documents → Verified & booked; done steps are green. */
 function Steps({ v }: { v: CashVoucher }) {
   const paid = !!v.disbursedAt
   const docs = v.supportingCount ?? v.receiptCount ?? 0
@@ -308,7 +323,8 @@ function Steps({ v }: { v: CashVoucher }) {
     rejectedBeforeCeo && financeAt
       ? { title: 'CEO', who: v.rejectedByName ?? null, when: v.rejectedAt ?? null, state: 'bad' }
       : { title: 'CEO', who: v.directorSignedByName ?? null, when: v.directorSignedAt, state: v.directorSignedAt ? 'done' : 'todo' },
-    { title: 'Paid', who: cashierOf(v), when: v.disbursedAt ?? null, state: paid ? 'done' : 'todo' },
+    { title: 'Paid', who: v.paidByName ?? null, when: v.disbursedAt ?? null, state: paid ? 'done' : 'todo' },
+    { title: 'Cash received', who: v.cashReceivedAt ? (v.cashReceivedByName ?? v.receiverName ?? null) : null, when: v.cashReceivedAt ?? null, state: v.cashReceivedAt ? 'done' : 'todo' },
     {
       title: 'Documents',
       who: docs ? `${docs} file${docs === 1 ? '' : 's'}` : null,
@@ -323,7 +339,7 @@ function Steps({ v }: { v: CashVoucher }) {
     },
   ]
   return (
-    <ol className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+    <ol className="grid grid-cols-2 sm:grid-cols-7 gap-2">
       {steps.map((s) => (
         <li key={s.title} className="rounded-xl p-3" style={card}>
           <div className="flex items-center gap-2">
@@ -338,7 +354,7 @@ function Steps({ v }: { v: CashVoucher }) {
   )
 }
 
-/** Finance approves: may still fix the account, discount, brand and department in the same call. */
+/** Finance approves: may still fix the account and discount in the same call. */
 function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const { data: cats } = useCategories()
   const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
@@ -389,7 +405,7 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
 const ACTION_WORDS: Record<string, string> = {
   create: 'Raised', submitted: 'Submitted to finance', update: 'Edited', finance_approve: 'Approved by finance', finance_approved: 'Approved by finance',
   approve: 'Approved by the CEO', approved: 'Approved by the CEO', return: 'Returned for correction', returned: 'Returned for correction',
-  resubmit: 'Resubmitted', reject: 'Rejected', rejected: 'Rejected', cancel: 'Cancelled', cancelled: 'Cancelled', pay: 'Cash paid',
+  confirm_received: 'Cash received confirmed', resubmit: 'Resubmitted', reject: 'Rejected', rejected: 'Rejected', cancel: 'Cancelled', cancelled: 'Cancelled', pay: 'Cash paid',
   document_add: 'Document added', document_remove: 'Document removed', receipt_add: 'Receipt added', receipt_remove: 'Receipt removed',
   spend: 'Spend recorded', verify_docs: 'Documents verified & expense booked', export: 'Exported', settle: 'Receipts submitted',
   return_change: 'Change returned', settlement_line_reclass: 'Line moved to another account', name_holder: 'Holder named',

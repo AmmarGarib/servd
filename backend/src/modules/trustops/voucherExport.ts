@@ -23,7 +23,8 @@ import { auditVoucher, loadVisible, type VoucherRow } from './cashVouchers.js'
 
 const EXPORTABLE = ['approved', 'disbursed', 'settled', 'posted', 'converted']
 
-interface Sign { role: string; name: string; date: string }
+/** One digital approval box: no signature anywhere — a status, a name and a time. */
+interface Approval { role: string; status: string; name: string; when: string; sub: string }
 interface VoucherDoc {
   company: string
   title: string
@@ -33,13 +34,11 @@ interface VoucherDoc {
   payee: string
   particulars: string
   account: string
-  brand: string
-  department: string
   grossCents: number
   discountCents: number
   totalCents: number
   words: string
-  signs: Sign[]
+  approvals: Approval[]
   documents: string[]
   footer: string
 }
@@ -47,6 +46,8 @@ interface VoucherDoc {
 const KARACHI = 'Asia/Karachi'
 const fmtDate = (d: Date | null | undefined) =>
   d ? new Intl.DateTimeFormat('en-GB', { timeZone: KARACHI, day: '2-digit', month: 'short', year: 'numeric' }).format(d) : ''
+const fmtWhen = (d: Date | null | undefined) =>
+  d ? new Intl.DateTimeFormat('en-GB', { timeZone: KARACHI, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(d) : ''
 const fmtStamp = (d: Date) =>
   new Intl.DateTimeFormat('en-GB', { timeZone: KARACHI, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(d) + ' PKT'
 
@@ -56,11 +57,10 @@ const EXT_BY_MIME: Record<string, string> = {
 
 async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
   const tenantId = v.tenantId
-  const ids = [v.preparedById, v.financeApprovedById, v.directorSignedById, v.disbursedById, v.payeeUserId].filter((x): x is string => !!x)
-  const [tenant, users, concept, atts] = await Promise.all([
+  const ids = [v.preparedById, v.financeApprovedById, v.hodSignedById, v.directorSignedById, v.disbursedById, v.payeeUserId, v.cashReceivedById].filter((x): x is string => !!x)
+  const [tenant, users, atts] = await Promise.all([
     prisma.tenant.findFirst({ where: { id: tenantId }, select: { name: true } }),
     prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
-    v.conceptId ? prisma.concept.findFirst({ where: { id: v.conceptId, tenantId }, select: { name: true } }) : Promise.resolve(null),
     prisma.cashVoucherAttachment.findMany({
       where: { voucherId: v.id, tenantId, kind: { in: ['supporting', 'receipt'] } },
       select: { id: true, kind: true, mime: true, fileName: true },
@@ -84,13 +84,26 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
   const totalCents = v.amountCents
   const grossCents = v.grossCents ?? totalCents + discountCents
 
-  const paidBy = v.cashierName || name(v.disbursedById)
-  const signs: Sign[] = [
-    { role: 'Requested by', name: name(v.preparedById), date: fmtDate(v.submittedAt ?? v.createdAt) },
-    { role: 'Finance approved', name: name(v.financeApprovedById), date: fmtDate(v.financeApprovedAt) },
-    { role: 'CEO approved', name: name(v.directorSignedById), date: fmtDate(v.directorSignedAt) },
-    { role: 'Paid by cashier', name: paidBy, date: fmtDate(v.disbursedAt) },
-    { role: 'Received by', name: '', date: '' },
+  // The three digital status boxes (+ who got the cash): no signature, no manual verification.
+  const rejected = v.status === 'rejected'
+  const waitingWord = rejected ? 'Rejected' : v.status === 'returned' ? 'Returned for correction' : v.status === 'cancelled' ? 'Cancelled' : 'Pending'
+  const financeAt = v.financeApprovedAt ?? v.hodSignedAt ?? null
+  const financeBy = name(v.financeApprovedById ?? v.hodSignedById)
+  const receiver = v.kind === 'expense' ? v.payeeName : (name(v.cashReceivedById) || name(v.payeeUserId) || v.payeeName)
+  const approvals: Approval[] = [
+    financeAt
+      ? { role: 'Finance approval', status: 'Approved', name: financeBy, when: fmtWhen(financeAt), sub: '' }
+      : { role: 'Finance approval', status: 'Not approved', name: '', when: '', sub: waitingWord },
+    v.directorSignedAt
+      ? { role: 'CEO approval', status: 'Approved', name: name(v.directorSignedById), when: fmtWhen(v.directorSignedAt), sub: '' }
+      : { role: 'CEO approval', status: 'Not approved', name: '', when: '', sub: financeAt ? waitingWord : 'Pending' },
+    v.disbursedAt
+      ? { role: 'Paid by', status: name(v.disbursedById) || 'Finance', name: '', when: fmtWhen(v.disbursedAt), sub: '' }
+      : { role: 'Paid by', status: 'Not paid yet', name: '', when: '', sub: '' },
+    {
+      role: 'Received by', status: receiver, name: '', when: v.cashReceivedAt ? fmtWhen(v.cashReceivedAt) : '',
+      sub: v.cashReceivedAt ? `Cash received - confirmed ${fmtDate(v.cashReceivedAt)}` : 'Not confirmed yet',
+    },
   ]
   const used = new Map<string, number>()
   const documents = atts.map((a) => {
@@ -102,20 +115,18 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
 
   return {
     company: tenant?.name ?? '',
-    title: v.kind === 'expense' ? 'CASH PAYMENT VOUCHER' : 'PETTY CASH VOUCHER',
+    title: 'CASH PAYMENT VOUCHER', // one title for both kinds (owner, 2026-10-15)
     number: v.number,
     date: fmtDate(v.voucherDate),
     status: v.status.replace(/_/g, ' '),
     payee: v.payeeName,
     particulars: v.purpose,
     account,
-    brand: concept?.name ?? '—',
-    department: v.department || '—',
     grossCents, discountCents, totalCents,
     words: amountInWords(totalCents),
-    signs,
+    approvals,
     documents,
-    footer: `Generated by servd ${fmtStamp(new Date())} — ${v.number}`,
+    footer: `Digital voucher - approved and confirmed in servd; no signature required. Generated ${fmtStamp(new Date())} - ${v.number}`,
   }
 }
 
@@ -200,8 +211,6 @@ async function renderPdf(d: VoucherDoc): Promise<Buffer> {
   row('Payee', d.payee)
   row('Particulars', d.particulars)
   row('Expense account', d.account)
-  row('Brand', d.brand)
-  row('Department', d.department)
   y -= 16
 
   // Amount table: Amount | Discount | Total
@@ -226,19 +235,22 @@ async function renderPdf(d: VoucherDoc): Promise<Buffer> {
   for (const l of wrap(d.words, bold, 11, W)) { text(l, M, y, { size: 11, bold: true }); y -= 14 }
   y -= 22
 
-  // Signature blocks
-  const n = d.signs.length
+  // Digital approval boxes
+  const n = d.approvals.length
   const gap = 8
   const bw = (W - gap * (n - 1)) / n
-  const bh = 86
-  d.signs.forEach((s, i) => {
+  const bh = 72
+  d.approvals.forEach((s, i) => {
     const x = M + i * (bw + gap)
     page.drawRectangle({ x, y: y - bh, width: bw, height: bh, borderColor: rule, borderWidth: 0.7 })
-    text(s.role, x + 5, y - 13, { size: 8, bold: true })
-    line(x + 5, y - 48, x + bw - 5, y - 48, 0.5)
-    const nm = wrap(s.name || (s.role === 'Received by' ? '' : '—'), font, 8, bw - 10)
-    nm.slice(0, 2).forEach((l, k) => text(l, x + 5, y - 60 - k * 10, { size: 8 }))
-    text(s.date ? s.date : s.role === 'Received by' ? 'Signature / date' : '—', x + 5, y - 80, { size: 7.5, color: mute })
+    text(s.role, x + 5, y - 13, { size: 8, bold: true, color: mute })
+    const head = wrap(s.status, bold, 10, bw - 10)
+    head.slice(0, 2).forEach((l, k) => text(l, x + 5, y - 30 - k * 12, { size: 10, bold: true }))
+    let ly = y - 30 - Math.min(head.length, 2) * 12 - 2
+    for (const t of [s.name, s.when, s.sub]) {
+      if (!t) continue
+      wrap(t, font, 8, bw - 10).slice(0, 2).forEach((l) => { text(l, x + 5, ly, { size: 8, color: mute }); ly -= 10 })
+    }
   })
   y -= bh + 22
 
@@ -281,15 +293,13 @@ function renderXlsx(d: VoucherDoc): Buffer {
     [{ v: 'Payee', s: 'bold' }, d.payee],
     [{ v: 'Particulars', s: 'bold' }, { v: d.particulars, s: 'wrap' }],
     [{ v: 'Expense account', s: 'bold' }, d.account],
-    [{ v: 'Brand', s: 'bold' }, d.brand],
-    [{ v: 'Department', s: 'bold' }, d.department],
     [],
     [{ v: 'Amount', s: 'header' }, { v: 'Discount', s: 'header' }, { v: 'Total', s: 'header' }],
     [{ v: rupees(d.grossCents), s: 'currency' }, { v: rupees(d.discountCents), s: 'currency' }, { v: rupees(d.totalCents), s: 'boldCurrency' }],
     [{ v: 'Amount in words', s: 'bold' }, d.words],
     [],
-    [{ v: 'Signatures', s: 'header' }, { v: 'Name', s: 'header' }, { v: 'Date', s: 'header' }],
-    ...d.signs.map((s): XlsxCell[] => [{ v: s.role, s: 'bold' }, s.name, s.date]),
+    [{ v: 'Approval', s: 'header' }, { v: 'Status', s: 'header' }, { v: 'By', s: 'header' }, { v: 'Date', s: 'header' }],
+    ...d.approvals.map((s): XlsxCell[] => [{ v: s.role, s: 'bold' }, s.sub ? `${s.status} (${s.sub})` : s.status, s.name, s.when]),
     [],
     [{ v: 'Attached supporting documents', s: 'bold' }],
     ...(d.documents.length ? d.documents.map((f, i): XlsxCell[] => [`${i + 1}`, f]) : [['None attached']]),

@@ -145,6 +145,12 @@ export interface CashVoucher {
   returnedAt?: string | null
   returnedByName?: string | null
   returnNote?: string | null
+  cashReceivedAt?: string | null
+  cashReceivedByName?: string | null
+  /** Who recorded the payment (finance / the cashier). */
+  paidByName?: string | null
+  /** The holder until they confirm, then the confirmer; the outside payee on a payee voucher. */
+  receiverName?: string | null
   returnCount?: number
   docsVerifiedAt?: string | null
   docsVerifiedByName?: string | null
@@ -201,6 +207,7 @@ export interface CashVoucher {
   canReject: boolean
   canUpload?: boolean
   canEditDiscount?: boolean
+  canConfirmReceived?: boolean
   canResubmit?: boolean
   canRecordSpend?: boolean
   canExport?: boolean
@@ -353,6 +360,9 @@ export function useStaffNames() {
 // ─── Error words ────────────────────────────────────────────────────────────
 
 const ERROR_WORDS: Record<string, string> = {
+  CASH_RECEIPT_NOT_CONFIRMED: 'The person who took the cash has not confirmed receiving it yet — finance verifies after that.',
+  NOT_HOLDER: 'Only the person who holds this cash can confirm receiving it.',
+  ALREADY_CONFIRMED: 'The cash is already confirmed as received.',
   EXPENSE_VOUCHER_FINANCE_ONLY: 'Only finance raises a voucher for an outside payee.',
   DISCOUNT_FINANCE_ONLY: 'Only finance sets a discount.',
   AMOUNT_MISMATCH: 'The amount, discount and total do not add up.',
