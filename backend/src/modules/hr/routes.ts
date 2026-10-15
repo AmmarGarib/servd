@@ -35,7 +35,7 @@ import {
 } from './logic.js'
 import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml, withLetterSystemRows } from './letters.js'
 import { CASH_REQUEST_PAID_FROM } from './advanceLoan.js'
-import { REPORTS, buildReport, resolver, type ReportQuery } from './reports.js'
+import { REPORTS, buildReport, reportXlsx, resolver, type ReportQuery } from './reports.js'
 import {
   postPayrollAccrual, postPayrollPayment, postLoanDisbursement, postFinalSettlementAccrual, postFinalSettlementPayment,
   lockSettlement, FNF_ACCRUAL, FNF_PAYMENT, type PayrollPayFrom,
@@ -54,6 +54,8 @@ import {
   throughHeadOfficeBatch, type ApprovalGrant,
 } from '../../lib/approvalRights.js'
 import { headOfficeSetupApplied } from '../headOffices/books.js'
+import { workLocationRoutes, syncPrimaryWorkLocation } from './workLocations.js'
+import { attendanceTrackingRoutes } from './attendanceTracking.js'
 
 const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 /** The HR back office under /hr/records (audit PPL-R2-01). lib/moduleAccess.ts
@@ -828,6 +830,11 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
 // ─── routes ─────────────────────────────────────────────────────────────────
 
 export async function hrRoutes(fastify: FastifyInstance) {
+  // Work locations on the employee (/employees/:id/work-locations) and HR attendance tracking
+  // (/attendance-tracking/*) — owner, 2026-10-15.
+  await workLocationRoutes(fastify)
+  await attendanceTrackingRoutes(fastify)
+
   // ── Sections & formats ────────────────────────────────────────────────────
   fastify.get('/sections', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const formats = await getAllFormats(activeTenant(req))
@@ -1193,6 +1200,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
         data: { tenantId, ...(cols as object), fullName: String(cols['fullName']), employeeCode: String(cols['employeeCode']), data: extra as Prisma.InputJsonValue, createdById: req.staffUser!.id } as Prisma.HrEmployeeUncheckedCreateInput,
       })
       await audit({ category: 'identity', action: 'hr.employee.create', entity: 'HrEmployee', entityId: emp.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { employeeCode: emp.employeeCode, fullName: emp.fullName } })
+      // The Branch Location is the primary work location (the time clock measures from it).
+      await syncPrimaryWorkLocation(emp.id, tenantId, emp.locationId, req.staffUser!.id)
       return emp
     }
     const cur = await prisma.hrEmployee.findUniqueOrThrow({ where: { id } })
@@ -1207,6 +1216,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
       where: { id },
       data: { ...(cols as object), data: { ...(cur.data as object), ...extra } as Prisma.InputJsonValue } as Prisma.HrEmployeeUncheckedUpdateInput,
     })
+    // A new Branch Location becomes the primary work location (work locations stay in step with it).
+    if (emp.locationId && emp.locationId !== cur.locationId) await syncPrimaryWorkLocation(emp.id, tenantId, emp.locationId, req.staffUser!.id)
     await audit({
       category: 'identity', action: salaryChanged ? 'hr.employee.salary_edit' : 'hr.employee.update', entity: 'HrEmployee', entityId: id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
@@ -2190,23 +2201,36 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { days?: string } }>('/due', { preHandler: requireAuth(...HR_ADMIN) }, async (req) =>
     dueList(readTenants(req), Math.min(365, parseInt(req.query.days ?? '30', 10) || 30)))
 
-  // Reports (§30). The two original CSV paths stay as aliases.
+  // Reports: Danish's four HR formats (reports.ts). JSON preview, .csv, and
+  // .xlsx laid out as his workbook. /reports/employees.csv stays as an alias.
   fastify.get('/reports', { preHandler: requireAuth(...HR_ADMIN) }, async () => REPORTS)
 
-  const sendReport = async (req: FastifyRequest, reply: FastifyReply, key: string, q: ReportQuery) => {
+  const reportQuery = (q: unknown): ReportQuery => z.object({
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    status: z.string().max(40).optional(),
+    department: z.string().uuid().optional(),
+    location: z.string().uuid().optional(),
+  }).parse(q ?? {})
+  const sendReport = async (req: FastifyRequest, reply: FastifyReply, key: string, q: ReportQuery, as: 'csv' | 'xlsx' = 'csv') => {
     const t = await buildReport(key, readTenants(req), activeTenant(req), q)
+    const name = `hr-${key.replace(/_/g, '-')}${t.month ? `-${t.month}` : ''}`
+    if (as === 'xlsx') {
+      return reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        .header('Content-Disposition', `attachment; filename="${name}.xlsx"`)
+        .send(reportXlsx(t))
+    }
     return reply.header('Content-Type', 'text/csv; charset=utf-8')
-      .header('Content-Disposition', `attachment; filename="hr-${key.replace(/_/g, '-')}.csv"`)
+      .header('Content-Disposition', `attachment; filename="${name}.csv"`)
       .send(csv([t.header, ...t.rows]))
   }
   fastify.get('/reports/employees.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => sendReport(req, reply, 'employee_master', {}))
-  fastify.get('/reports/leave-balances.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => sendReport(req, reply, 'leave_balance', {}))
 
-  fastify.get<{ Params: { key: string }; Querystring: ReportQuery }>('/reports/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
-    const m = /^(.+)\.csv$/.exec(req.params.key)
-    if (m) return sendReport(req, reply, m[1]!, req.query)
+  fastify.get<{ Params: { key: string } }>('/reports/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const q = reportQuery(req.query)
+    const m = /^(.+)\.(csv|xlsx)$/.exec(req.params.key)
+    if (m) return sendReport(req, reply, m[1]!, q, m[2] as 'csv' | 'xlsx')
     // On-screen preview: first 500 rows, with the full count.
-    const t = await buildReport(req.params.key, readTenants(req), activeTenant(req), req.query)
+    const t = await buildReport(req.params.key, readTenants(req), activeTenant(req), q)
     return { ...t, total: t.rows.length, rows: t.rows.slice(0, 500) }
   })
 

@@ -1,119 +1,506 @@
-// HR reports — spec §30. Every report in the spec, as a table the admin can
-// preview and download as CSV.
+// HR reports — Danish's four formats (owner, 2026-10-15: "kill old stuff ...
+// And put danish formats in"). The catalogue is EXACTLY these four, with his
+// column order and labels; nothing else. The HR dashboard is not a report.
 //
-// Reports read across the companies the operator is viewing (the portfolio
-// header), but formats come from the active company: a record report's columns
-// are that company's current format for the section, so when HR changes a
-// format the report follows without a code change.
+//   employee_master   Employee Master
+//   lifecycle_dues    Lifecycle & Dues
+//   attendance_leaves Attendance & Leaves   (month)
+//   payroll_report    Payroll Report        (month)
+//
+// Every format reads across the companies the operator is viewing (the
+// portfolio header, `readTenants` in routes.ts) and never outside them. Each
+// is a JSON table for the screen and an .xlsx laid out like Danish's
+// workbook: the sheet title on row 1 (merged over rows 1–2), the header on
+// row 4, data from row 5 (`reportXlsx`).
+//
+// One source per number:
+//  - attendance comes from the HR attendance records the time clock writes,
+//    read through logic.ts `attendanceInputs` — the same reading payroll uses,
+//    so the format's Absents / Unpaid Leaves are what payroll docks;
+//  - pay comes ONLY from the month's payroll run (its payslips' lines). This
+//    file never works pay out again.
+//
+// No person's data lives in code: Danish's workbook rows were his test data.
 
-import type { HrEmployee, HrRecord, Prisma } from '@prisma/client'
+import type { HrEmployee, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { getFormat, employeeLabelsAcross, leaveBalancesFor, STANDING_ATTENDANCE } from './service.js'
-import { employedOn, onBooksAt, exitDay, pktToday, periodOf } from './logic.js'
+import { buildXlsx, colName, type XlsxCell } from '../../lib/xlsxWriter.js'
+import { employeeLabelsAcross, getSettings, leaveBalancesFor, payableEmployees, STANDING_ATTENDANCE } from './service.js'
+import { attendanceInputs, inclusiveDays, periodOf, periodStart, periodEnd, pktToday, type HrSettings } from './logic.js'
 import type { HrField } from './forms.js'
 
-export type ReportParam = 'range' | 'asOf' | 'days' | 'period'
+export type ReportParam = 'month' | 'status' | 'department' | 'location'
+/** How a column is shown: text as is, money in rupees (2 dp), a percent as "12.5%". */
+export type ColumnKind = 'text' | 'date' | 'number' | 'money' | 'percent'
 
 export interface ReportDef {
   key: string
   title: string
-  group: string
   description: string
   params: ReportParam[]
+  /** Danish's columns, in his order (a format may add a trailing column, see each builder). */
+  columns: string[]
 }
+
+const MASTER_COLS = ['Emp ID', 'Full Name', 'Father Name', 'CNIC Number', 'DOB', 'Gender', 'Contact No', 'Email Address', 'Branch Location', 'Department', 'Designation', 'Employment Type', 'DOJ', 'Reporting Manager', 'Status', 'Mode of Payment', 'Bank Name', 'Bank Account No', 'Account Title']
+const MASTER_KINDS: ColumnKind[] = ['text', 'text', 'text', 'text', 'date', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'date', 'text', 'text', 'text', 'text', 'text', 'text']
+
+const LIFECYCLE_COLS = ['Emp ID', 'Full Name', 'Department', 'DOJ', 'Employment Type', 'Confirmation / Expiry Date', 'Days Remaining', 'Review Status', 'CNIC Expiry Date', 'CNIC Days Remaining', 'CNIC Alert']
+const LIFECYCLE_KINDS: ColumnKind[] = ['text', 'text', 'text', 'date', 'text', 'date', 'number', 'text', 'date', 'number', 'text']
+
+/** The owner's out-of-area flag is the ONE column added to Danish's format, at the end. */
+export const OUT_OF_AREA_COL = 'Out-of-area punches'
+const ATTENDANCE_COLS = ['Emp ID', 'Full Name', 'Department', 'Total Days in Month', 'Days Worked', 'Unpaid Leaves', 'Absents', 'Late Arrivals', 'OT Hours', 'Casual Balance', 'Annual Balance', 'Sick Balance', 'Absenteeism %', OUT_OF_AREA_COL]
+const ATTENDANCE_KINDS: ColumnKind[] = ['text', 'text', 'text', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'percent', 'number']
+
+/** Added after Net Salary Payable only when some payslip has a deduction with no column of its own. */
+export const OTHER_DEDUCTIONS_COL = 'Other deductions'
+const PAYROLL_COLS = ['Emp ID', 'Full Name', 'Department', 'Location', 'Cost Center', 'DOJ', 'Gross Salary', 'Days Worked', 'Salary Earned', 'Arrears / Discrepancy', 'OT Amount', 'Total Earned', 'Late Deduction', 'Loan Deduction', 'Unpaid Leave Ded.', 'Advance Salary', 'Income Tax', 'Total Deductions', 'Net Salary Payable']
+const PAYROLL_KINDS: ColumnKind[] = ['text', 'text', 'text', 'text', 'text', 'date', 'money', 'number', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money']
 
 export const REPORTS: ReportDef[] = [
-  { key: 'employee_master', title: 'Employee master report', group: 'People', description: 'Every employee with personal, job, pay and statutory details.', params: [] },
-  { key: 'headcount', title: 'Headcount report', group: 'People', description: 'Employed on a date, by department, branch, designation and type.', params: ['asOf'] },
-  { key: 'branch_headcount', title: 'Branch-wise headcount', group: 'People', description: 'Employed on a date, per branch.', params: ['asOf'] },
-  { key: 'department_headcount', title: 'Department-wise headcount', group: 'People', description: 'Employed on a date, per department.', params: ['asOf'] },
-  { key: 'new_joiners', title: 'New joiner report', group: 'People', description: 'Joined within the dates.', params: ['range'] },
-  { key: 'separations', title: 'Separation report', group: 'People', description: 'Last working day within the dates.', params: ['range'] },
-  { key: 'turnover', title: 'Turnover report', group: 'People', description: 'Opening and closing headcount, joiners, leavers and turnover % per month.', params: ['range'] },
-  { key: 'movement', title: 'Employee movement report', group: 'People', description: 'Approved promotions, transfers and salary revisions effective within the dates.', params: ['range'] },
-
-  { key: 'attendance', title: 'Attendance report', group: 'Time', description: 'Every attendance entry within the dates.', params: ['range'] },
-  { key: 'absenteeism', title: 'Absenteeism report', group: 'Time', description: 'Absences and half days per employee within the dates.', params: ['range'] },
-  { key: 'late_coming', title: 'Late coming report', group: 'Time', description: 'Late arrivals and minutes lost per employee within the dates.', params: ['range'] },
-  { key: 'overtime', title: 'OT report', group: 'Time', description: 'Overtime requests within the dates, with approved hours and amount.', params: ['range'] },
-  { key: 'leave', title: 'Leave report', group: 'Time', description: 'Leave requests starting within the dates.', params: ['range'] },
-  { key: 'leave_balance', title: 'Leave balance report', group: 'Time', description: 'Entitlement, taken, pending and balance per leave type, current leave year.', params: [] },
-
-  { key: 'payroll', title: 'Payroll report', group: 'Pay', description: 'Payroll register for a month: gross, deductions, EOBI and net per employee.', params: ['period'] },
-  { key: 'salary', title: 'Salary report', group: 'Pay', description: 'Current salary structure and payment details of every active employee.', params: [] },
-  { key: 'eobi', title: 'EOBI report', group: 'Pay', description: 'Employee and employer EOBI contributions for a month.', params: ['period'] },
-  { key: 'sessi', title: 'SESSI report', group: 'Pay', description: 'Employer SESSI contributions for a month.', params: ['period'] },
-  { key: 'statutory', title: 'Statutory: accrued vs paid', group: 'Pay', description: 'EOBI, SESSI and salary tax owed, paid and still due each month — kept by Accounting → Statutory payments.', params: [] },
-  { key: 'final_settlement', title: 'F&F report', group: 'Pay', description: 'Full and final settlements within the dates.', params: ['range'] },
-
-  { key: 'probation_due', title: 'Probation due report', group: 'Due dates', description: 'Probation ending within the next N days (and already ended, unconfirmed).', params: ['days'] },
-  { key: 'confirmation_due', title: 'Confirmation due report', group: 'Due dates', description: 'Probation over but not yet confirmed.', params: [] },
-  { key: 'contract_expiry', title: 'Contract expiry report', group: 'Due dates', description: 'Contracts ending within the next N days.', params: ['days'] },
-  { key: 'document_expiry', title: 'Document expiry report', group: 'Due dates', description: 'Documents and CNICs expiring within the next N days, or already expired.', params: ['days'] },
-
-  { key: 'training', title: 'Training report', group: 'Development', description: 'Training programs and requests within the dates.', params: ['range'] },
-  { key: 'performance', title: 'Performance report', group: 'Development', description: 'Performance reviews within the dates.', params: ['range'] },
+  { key: 'employee_master', title: 'Employee Master', description: 'Every employee: personal, job and payment details (the ERP primary table).', params: ['status', 'department', 'location'], columns: MASTER_COLS },
+  { key: 'lifecycle_dues', title: 'Lifecycle & Dues', description: 'Probation, contract and confirmation dates with days remaining and review status; CNIC expiry alerts.', params: [], columns: LIFECYCLE_COLS },
+  { key: 'attendance_leaves', title: 'Attendance & Leaves', description: 'Monthly time, attendance, overtime and leave per employee, from the time clock and HR attendance — plus out-of-area punches.', params: ['month'], columns: ATTENDANCE_COLS },
+  { key: 'payroll_report', title: 'Payroll Report', description: 'The month\'s payroll sheet, read from the payroll run.', params: ['month'], columns: PAYROLL_COLS },
 ]
 
-export interface ReportQuery { from?: string; to?: string; asOf?: string; days?: string; period?: string }
-export interface ReportTable { title: string; header: string[]; rows: unknown[][]; note?: string; link?: { path: string; label: string } }
-
-/** Where EOBI / SESSI / salary tax accrued vs paid is worked out — ONE
- *  computation, from the books (accounting/statutory.ts statutorySummary). */
-export const STATUTORY_PAGE = { path: '/accounting/statutory', label: 'Accounting → Statutory payments' }
+export interface ReportQuery { month?: string; status?: string; department?: string; location?: string }
+export interface ReportTable {
+  key: string
+  title: string
+  /** Row 1 of the .xlsx, as in Danish's workbook. */
+  sheetTitle: string
+  header: string[]
+  /** One per header column. */
+  kinds: ColumnKind[]
+  rows: unknown[][]
+  /** The last row is a totals row (payroll). */
+  totalsRow?: boolean
+  note?: string
+  month?: string
+}
 
 export const rupees = (c: number | null | undefined) => (c == null ? null : (c / 100).toFixed(2))
+/** Paisa → rupees as a number with 2 decimals (what the sheet sums). */
+const rs = (c: number) => Math.round(c) / 100
 const d10 = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null)
+const DAY = 86_400_000
+const dayOf = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+const r2 = (n: number) => Math.round(n * 100) / 100
 
-function parseDate(s: string | undefined, fallback: Date): Date {
-  if (!s) return fallback
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) throw new AppError('BAD_DATE', `"${s}" is not a date`, 400)
-  return d
+const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
+/** "2026-09" → "SEPTEMBER 2026". */
+export function monthLabel(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  return `${MONTHS[m! - 1]} ${y}`
+}
+const titleCase = (s: string) => s.charAt(0) + s.slice(1).toLowerCase()
+
+function monthOf(q: ReportQuery): string {
+  const month = q.month ?? periodOf(pktToday())
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new AppError('BAD_MONTH', 'Month must be YYYY-MM', 400)
+  return month
 }
 
-function range(q: ReportQuery): [Date, Date] {
+// ─── Labels as Danish writes them ───────────────────────────────────────────
+
+const EMPLOYMENT_TYPE: Record<string, string> = { probation: 'On Probation', permanent: 'Permanent', contract: 'Contract', temporary: 'Temporary', intern: 'Intern' }
+const STATUS: Record<string, string> = { active: 'Active', on_leave: 'On Leave', resigned: 'Resigned', terminated: 'Terminated', separated: 'Separated', transferred: 'Transferred' }
+const PAYMENT: Record<string, string> = { bank: 'Bank Transfer', cash: 'Cash', cheque: 'Cheque' }
+const label = (map: Record<string, string>, v: string | null | undefined) =>
+  (v == null || v === '' ? null : map[v] ?? v.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))
+export const employmentTypeLabel = (v: string | null | undefined) => label(EMPLOYMENT_TYPE, v)
+
+/** Danish's rule (Lifecycle & Dues, "Review Status"). */
+export function reviewStatus(employmentType: string, daysRemaining: number | null): string {
+  if (employmentType !== 'probation') return 'Confirmed'
+  if (daysRemaining == null) return 'Under Probation'
+  if (daysRemaining <= 0) return 'Confirmation Due'
+  if (daysRemaining <= 30) return 'Review Pending'
+  return 'Under Probation'
+}
+
+/** Danish's rule (Lifecycle & Dues, "CNIC Alert"); blank with no expiry on file. */
+export function cnicAlert(daysRemaining: number | null): string | null {
+  if (daysRemaining == null) return null
+  if (daysRemaining <= 0) return 'Expired'
+  if (daysRemaining <= 90) return 'Expiring Soon'
+  return 'Valid'
+}
+
+/** Days from today (Karachi) to a date; null with no date. */
+function daysUntil(d: Date | null | undefined, today: Date): number | null {
+  return d ? Math.round((dayOf(d) - dayOf(today)) / DAY) : null
+}
+
+// ─── Shared look-ups ────────────────────────────────────────────────────────
+
+/** Each employee's Branch Location: the primary work location's name, else
+ *  their `locationId`'s (kept in step with the primary by the work-location API). */
+async function branchNames(emps: HrEmployee[], tenantIds: string[], labelOf: (id: string | null | undefined) => string | null) {
+  const rows = emps.length ? await prisma.hrWorkLocation.findMany({
+    where: { tenantId: { in: tenantIds }, employeeId: { in: emps.map((e) => e.id) }, isPrimary: true },
+    select: { employeeId: true, location: { select: { name: true } } },
+  }) : []
+  const primary = new Map(rows.map((r) => [r.employeeId, r.location.name]))
+  return (e: HrEmployee) => primary.get(e.id) ?? labelOf(e.locationId)
+}
+
+// ─── 1. Employee Master ─────────────────────────────────────────────────────
+
+async function employeeMaster(def: ReportDef, tenantIds: string[], q: ReportQuery): Promise<ReportTable> {
+  const where = {
+    tenantId: { in: tenantIds },
+    ...(q.status && { status: q.status }),
+    ...(q.department && { departmentId: q.department }),
+    ...(q.location && { OR: [{ locationId: q.location }, { workLocations: { some: { locationId: q.location } } }] }),
+  }
+  const emps = await prisma.hrEmployee.findMany({ where, orderBy: { employeeCode: 'asc' } })
+  const labelOf = await employeeLabelsAcross(emps)
+  const branch = await branchNames(emps, tenantIds, labelOf)
+  return {
+    key: def.key, title: def.title, sheetTitle: 'EMPLOYEE MASTER DATABASE (ERP PRIMARY TABLE)',
+    header: MASTER_COLS, kinds: MASTER_KINDS,
+    rows: emps.map((e) => {
+      const data = (e.data ?? {}) as Record<string, unknown>
+      const accountTitle = typeof data['accountTitle'] === 'string' ? data['accountTitle'] : null
+      return [
+        e.employeeCode, e.fullName, e.fatherHusbandName, e.cnic, d10(e.dateOfBirth), e.gender, e.phone, e.personalEmail,
+        branch(e), labelOf(e.departmentId), labelOf(e.designationId), employmentTypeLabel(e.employmentType), d10(e.joiningDate),
+        labelOf(e.managerId), label(STATUS, e.status), label(PAYMENT, e.paymentMethod), e.bankName, e.iban, accountTitle,
+      ]
+    }),
+  }
+}
+
+// ─── 2. Lifecycle & Dues ────────────────────────────────────────────────────
+
+/** The date Danish's "Confirmation / Expiry Date" column shows. */
+function lifecycleDate(e: HrEmployee): Date | null {
+  if (e.employmentType === 'probation') return e.probationEnd
+  if (e.employmentType === 'contract') return e.contractEnd
+  return e.confirmationDate
+}
+
+async function lifecycleDues(def: ReportDef, tenantIds: string[]): Promise<ReportTable> {
   const today = pktToday()
-  const from = parseDate(q.from, new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)))
-  const to = parseDate(q.to, today)
-  to.setUTCHours(23, 59, 59, 999)
-  if (from > to) throw new AppError('BAD_RANGE', 'The start date is after the end date', 400)
-  return [from, to]
+  const emps = await prisma.hrEmployee.findMany({ where: { tenantId: { in: tenantIds }, status: { in: ['active', 'on_leave'] } }, orderBy: { employeeCode: 'asc' } })
+  const labelOf = await employeeLabelsAcross(emps)
+  return {
+    key: def.key, title: def.title, sheetTitle: 'EMPLOYEE LIFECYCLE & EXPIRY TRACKER (PROBATION, CONTRACTS, SEPARATIONS)',
+    header: LIFECYCLE_COLS, kinds: LIFECYCLE_KINDS,
+    rows: emps.map((e) => {
+      const due = lifecycleDate(e)
+      const days = daysUntil(due, today)
+      const cnicDays = daysUntil(e.cnicExpiry, today)
+      return [
+        e.employeeCode, e.fullName, labelOf(e.departmentId), d10(e.joiningDate), employmentTypeLabel(e.employmentType),
+        d10(due), days, reviewStatus(e.employmentType, days), d10(e.cnicExpiry), cnicDays, cnicAlert(cnicDays),
+      ]
+    }),
+  }
 }
 
-function days(q: ReportQuery) {
-  const n = parseInt(q.days ?? '30', 10)
-  return Number.isFinite(n) ? Math.min(Math.max(n, 0), 730) : 30
+// ─── 3. Attendance & Leaves ─────────────────────────────────────────────────
+
+export interface MonthAttendance {
+  totalDays: number
+  daysWorked: number
+  unpaidLeaves: number
+  absents: number
+  lateArrivals: number
+  otHours: number
+  casual: number | null
+  annual: number | null
+  sick: number | null
+  /** Absents ÷ total days; null when the person had no days in the month. */
+  absenteeism: number | null
+  outOfArea: number
 }
 
-/** For people marked gone with no last working day: when their approved
- *  resignation or termination said they left. */
-async function exitDates(emps: HrEmployee[]): Promise<Map<string, Date>> {
-  const ids = emps.filter((e) => !e.lastWorkingDay && !['active', 'on_leave'].includes(e.status)).map((e) => e.id)
-  const out = new Map<string, Date>()
-  if (!ids.length) return out
-  const exits = await prisma.hrRecord.findMany({ where: { employeeId: { in: ids }, section: { in: ['resignation', 'termination'] }, status: 'approved' }, orderBy: { createdAt: 'asc' } })
-  for (const x of exits) {
-    const d = x.endDate ?? x.effectiveDate
-    if (x.employeeId && d) out.set(x.employeeId, d)
+/** How many out-of-area punches an attendance record notes (the time clock's
+ *  flag, written for kiosk punches by staff without a login). */
+function recordOutOfArea(data: unknown): number {
+  const d = (data ?? {}) as Record<string, unknown>
+  // Count punches, like the ClockLog count for logins: each punch copy in
+  // _punches carries its own outOfArea (timeclock → attendance.ts recordPunch).
+  const punches = Array.isArray(d['_punches']) ? (d['_punches'] as Array<Record<string, unknown> | null>) : []
+  const n = punches.filter((p) => p && p['outOfArea'] === true).length
+  if (n) return n
+  return d['_outOfArea'] === true ? 1 : 0
+}
+
+/**
+ * The month for each employee, as payroll reads it.
+ *
+ * The days counted are the month's days the person was employed, up to today
+ * for the month in progress. Absents and Unpaid Leaves are logic.ts
+ * `attendanceInputs` — exactly what payroll docks (an absent record = 1, a half
+ * day = 0.5; a day covered by leave is never an absence). Days Worked are the
+ * paid days, so Danish's identity holds: Absents = Total − (Worked + Unpaid).
+ */
+export async function monthAttendance(emps: HrEmployee[], month: string): Promise<Map<string, MonthAttendance>> {
+  const out = new Map<string, MonthAttendance>()
+  if (!emps.length) return out
+  const mStart = periodStart(month)
+  const mEnd = periodEnd(month)
+  const today = pktToday()
+  const ids = emps.map((e) => e.id)
+  const tenantIds = Array.from(new Set(emps.map((e) => e.tenantId)))
+  const userIds = emps.map((e) => e.userId).filter((u): u is string => !!u)
+
+  const [attendance, leaves, unpaidTypes, overtime, clockOut] = await Promise.all([
+    prisma.hrRecord.findMany({
+      where: { tenantId: { in: tenantIds }, section: 'attendance', employeeId: { in: ids }, status: STANDING_ATTENDANCE, startDate: { gte: mStart, lte: mEnd } },
+      select: { employeeId: true, tenantId: true, startDate: true, category: true, quantity: true, createdAt: true, data: true },
+    }),
+    prisma.hrRecord.findMany({
+      where: { tenantId: { in: tenantIds }, section: 'leave', employeeId: { in: ids }, status: 'approved', startDate: { lte: mEnd }, endDate: { gte: mStart } },
+      select: { employeeId: true, tenantId: true, startDate: true, endDate: true, quantity: true, refId: true },
+    }),
+    prisma.hrRecord.findMany({ where: { tenantId: { in: tenantIds }, section: 'leave_type', category: 'unpaid' }, select: { id: true } }),
+    prisma.hrRecord.findMany({
+      where: { tenantId: { in: tenantIds }, section: 'overtime', employeeId: { in: ids }, status: 'approved', startDate: { gte: mStart, lte: mEnd } },
+      select: { employeeId: true, tenantId: true, quantity: true, data: true },
+    }),
+    // Login punches outside every work location (Karachi month).
+    userIds.length ? prisma.clockLog.findMany({
+      where: { userId: { in: userIds }, tenantId: { in: tenantIds }, outOfArea: true, recordedAt: { gte: new Date(mStart.getTime() - 5 * 3_600_000), lt: new Date(mEnd.getTime() + 1 - 5 * 3_600_000) } },
+      select: { userId: true, tenantId: true },
+    }) : Promise.resolve([] as Array<{ userId: string; tenantId: string | null }>),
+  ])
+  const unpaid = new Set(unpaidTypes.map((t) => t.id))
+  const settings = new Map<string, HrSettings>()
+  for (const t of tenantIds) settings.set(t, await getSettings(t))
+  const balanceOn = new Date(Math.min(dayOf(mEnd), dayOf(today)))
+
+  for (const e of emps) {
+    const mine = <T extends { employeeId: string | null; tenantId: string | null }>(rows: T[]) => rows.filter((r) => r.employeeId === e.id && r.tenantId === e.tenantId)
+    const wFrom = e.joiningDate && e.joiningDate > mStart ? new Date(dayOf(e.joiningDate)) : mStart
+    let wTo = new Date(dayOf(mEnd))
+    if (e.lastWorkingDay && dayOf(e.lastWorkingDay) < wTo.getTime()) wTo = new Date(dayOf(e.lastWorkingDay))
+    if (dayOf(today) < wTo.getTime()) wTo = new Date(dayOf(today))
+    const totalDays = wFrom <= wTo ? inclusiveDays(wFrom, wTo) : 0
+    const att = mine(attendance)
+    let absents = 0, unpaidLeaves = 0, lateArrivals = 0
+    if (totalDays > 0) {
+      const r = attendanceInputs(
+        wFrom, wTo,
+        att.filter((a) => a.startDate).map((a) => ({ date: a.startDate!, status: a.category, lateMinutes: a.quantity, createdAt: a.createdAt })),
+        mine(leaves).filter((l) => l.startDate && l.endDate).map((l) => ({ startDate: l.startDate!, endDate: l.endDate!, quantity: l.quantity, unpaid: !!l.refId && unpaid.has(l.refId) })),
+        settings.get(e.tenantId)!,
+      )
+      absents = Math.min(r.absentDays, totalDays)
+      unpaidLeaves = Math.min(r.unpaidLeaveDays, Math.max(0, totalDays - absents))
+      lateArrivals = r.lateCount
+    }
+    const otHours = mine(overtime).reduce((a, o) => {
+      const d = (o.data ?? {}) as Record<string, unknown>
+      return a + (typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : o.quantity ?? 0)
+    }, 0)
+    const balances = await leaveBalancesFor(e.tenantId, e.id, balanceOn)
+    const bal = (re: RegExp) => { const b = balances.find((x) => re.test(x.name)); return b ? r2(b.balance) : null }
+    const outOfArea = e.userId
+      ? clockOut.filter((c) => c.userId === e.userId && c.tenantId === e.tenantId).length
+      : att.reduce((a, r) => a + recordOutOfArea(r.data), 0)
+    const daysWorked = r2(Math.max(0, totalDays - absents - unpaidLeaves))
+    out.set(e.id, {
+      totalDays, daysWorked, unpaidLeaves: r2(unpaidLeaves), absents: r2(totalDays - (daysWorked + r2(unpaidLeaves))),
+      lateArrivals, otHours: r2(otHours),
+      casual: bal(/casual/i), annual: bal(/annual/i), sick: bal(/sick/i),
+      absenteeism: totalDays > 0 ? r2(totalDays - (daysWorked + r2(unpaidLeaves))) / totalDays : null,
+      outOfArea,
+    })
   }
   return out
 }
 
-/** A record's date for reporting: its start date, else its effective date, else when it was raised. */
-function inRangeWhere(from: Date, to: Date): Prisma.HrRecordWhereInput {
-  const r = { gte: from, lte: to }
+const pct = (v: number | null) => (v == null ? null : `${(v * 100).toFixed(1)}%`)
+
+async function attendanceLeaves(def: ReportDef, tenantIds: string[], q: ReportQuery): Promise<ReportTable> {
+  const month = monthOf(q)
+  // Who is on the month: the payroll's own list, per company.
+  const emps = (await Promise.all(tenantIds.map((t) => payableEmployees(t, month)))).flat()
+    .sort((a, b) => a.employeeCode.localeCompare(b.employeeCode))
+  const [labelOf, att] = await Promise.all([employeeLabelsAcross(emps), monthAttendance(emps, month)])
+  const inProgress = month === periodOf(pktToday())
   return {
-    OR: [
-      { startDate: r },
-      { startDate: null, effectiveDate: r },
-      { startDate: null, effectiveDate: null, createdAt: r },
-    ],
+    key: def.key, title: `${def.title} — ${month}`, month,
+    sheetTitle: `MONTHLY TIME, ATTENDANCE, OVERTIME & LEAVE REPORT (${monthLabel(month)})`,
+    header: ATTENDANCE_COLS, kinds: ATTENDANCE_KINDS,
+    rows: emps.map((e) => {
+      const a = att.get(e.id)!
+      return [e.employeeCode, e.fullName, labelOf(e.departmentId), a.totalDays, a.daysWorked, a.unpaidLeaves, a.absents, a.lateArrivals, a.otHours, a.casual, a.annual, a.sick, pct(a.absenteeism), a.outOfArea]
+    }),
+    note: [
+      inProgress ? `${titleCase(monthLabel(month).split(' ')[0]!)} is not over: days are counted to today.` : null,
+      'Days Worked are the paid days; Absents = Total − (Worked + Unpaid), as payroll docks them. A joiner or leaver counts only the days employed. Balances are on the month\'s last day.',
+    ].filter(Boolean).join(' '),
   }
 }
 
+// ─── 4. Payroll Report ──────────────────────────────────────────────────────
+
+type Line = { kind: string; code: string; amountCents: number }
+
+/**
+ * Where a payslip line goes in Danish's sheet. Earnings with no column of
+ * their own are "Arrears / Discrepancy"; deductions with none (absence, EOBI
+ * employee share, other) go to the trailing "Other deductions" column. Loan
+ * installments split into Loan Deduction and Advance Salary by the loan's
+ * type. Employer contributions are not on the sheet.
+ */
+const EARN_COL: Record<string, string> = { salary: 'Salary Earned', overtime: 'OT Amount' }
+const DED_COL: Record<string, string> = { late: 'Late Deduction', unpaid_leave: 'Unpaid Leave Ded.', tax: 'Income Tax' }
+
+async function payrollReport(def: ReportDef, tenantIds: string[], q: ReportQuery): Promise<ReportTable> {
+  const month = monthOf(q)
+  const runs = await prisma.hrPayrollRun.findMany({ where: { tenantId: { in: tenantIds }, period: month }, select: { id: true, status: true, tenantId: true } })
+  const slips = runs.length ? await prisma.hrPayslip.findMany({
+    where: { runId: { in: runs.map((r) => r.id) }, tenantId: { in: tenantIds } },
+    include: { employee: true },
+    orderBy: { employee: { employeeCode: 'asc' } },
+  }) : []
+  const companyIds = runs.length ? Array.from(new Set(runs.map((r) => r.tenantId))) : tenantIds
+  const companies = await prisma.tenant.findMany({ where: { id: { in: companyIds } }, select: { name: true }, orderBy: { name: 'asc' } })
+  const sheetTitle = `${companies.map((c) => c.name.toUpperCase()).join(' & ')} - MONTHLY PAYROLL SHEET (${monthLabel(month)})`
+
+  if (!slips.length) {
+    return { key: def.key, title: `${def.title} — ${month}`, month, sheetTitle, header: PAYROLL_COLS, kinds: PAYROLL_KINDS, rows: [], note: `No payroll run for ${month} yet` }
+  }
+
+  const emps = slips.map((s) => s.employee)
+  const [labelOf, att, costCentres] = await Promise.all([
+    employeeLabelsAcross(emps),
+    monthAttendance(emps, month),
+    // A cost centre is an HR org unit (kind cost_center) whose parent is the department.
+    prisma.hrOrgUnit.findMany({ where: { tenantId: { in: tenantIds }, kind: 'cost_center', isActive: true, parentId: { not: null } }, select: { tenantId: true, parentId: true, name: true }, orderBy: { name: 'asc' } }),
+  ])
+  const branch = await branchNames(emps, tenantIds, labelOf)
+  const costCentreOf = (e: HrEmployee) => costCentres.find((c) => c.tenantId === e.tenantId && c.parentId === e.departmentId)?.name ?? 'General'
+
+  // Which loans are salary advances (loan records, category 'advance').
+  const loanIds = new Set<string>()
+  for (const s of slips) for (const l of loanLinesOf(s.inputs)) loanIds.add(l.loanId)
+  const advances = new Set(loanIds.size ? (await prisma.hrRecord.findMany({
+    where: { id: { in: Array.from(loanIds) }, tenantId: { in: tenantIds }, section: 'loan', category: 'advance' }, select: { id: true },
+  })).map((r) => r.id) : [])
+
+  type Cents = { gross: number; earned: number; arrears: number; ot: number; totalEarned: number; late: number; loan: number; unpaid: number; advance: number; tax: number; other: number; totalDed: number; net: number }
+  const perSlip: Array<{ s: (typeof slips)[number]; c: Cents }> = slips.map((s) => {
+    const lines = (Array.isArray(s.lines) ? s.lines : []) as unknown as Line[]
+    const inputs = (s.inputs ?? {}) as Record<string, unknown>
+    const c: Cents = {
+      gross: typeof inputs['salaryCents'] === 'number' ? inputs['salaryCents'] as number : s.employee.grossSalaryCents,
+      earned: 0, arrears: 0, ot: 0, totalEarned: s.earningsCents, late: 0, loan: 0, unpaid: 0, advance: 0, tax: 0, other: 0,
+      totalDed: s.deductionsCents, net: s.netCents,
+    }
+    let loanLine = 0
+    for (const l of lines) {
+      const amt = typeof l.amountCents === 'number' ? l.amountCents : 0
+      if (l.kind === 'earning') {
+        const col = EARN_COL[l.code]
+        if (col === 'Salary Earned') c.earned += amt
+        else if (col === 'OT Amount') c.ot += amt
+        else c.arrears += amt
+      } else if (l.kind === 'deduction') {
+        if (l.code === 'loan') loanLine += amt
+        else if (DED_COL[l.code] === 'Late Deduction') c.late += amt
+        else if (DED_COL[l.code] === 'Unpaid Leave Ded.') c.unpaid += amt
+        else if (DED_COL[l.code] === 'Income Tax') c.tax += amt
+        else c.other += amt
+      }
+    }
+    const advanceCents = loanLinesOf(s.inputs).filter((l) => advances.has(l.loanId)).reduce((a, l) => a + l.cents, 0)
+    c.advance = Math.min(loanLine, advanceCents)
+    c.loan = loanLine - c.advance
+    return { s, c }
+  })
+  const showOther = perSlip.some((x) => x.c.other !== 0)
+  const header = showOther ? [...PAYROLL_COLS, OTHER_DEDUCTIONS_COL] : PAYROLL_COLS
+  const kinds: ColumnKind[] = showOther ? [...PAYROLL_KINDS, 'money'] : PAYROLL_KINDS
+  const money = (c: Cents) => [rs(c.gross)]
+  const rest = (c: Cents) => [rs(c.earned), rs(c.arrears), rs(c.ot), rs(c.totalEarned), rs(c.late), rs(c.loan), rs(c.unpaid), rs(c.advance), rs(c.tax), rs(c.totalDed), rs(c.net), ...(showOther ? [rs(c.other)] : [])]
+
+  const rows: unknown[][] = perSlip.map(({ s, c }) => [
+    s.employee.employeeCode, s.employee.fullName, labelOf(s.employee.departmentId), branch(s.employee), costCentreOf(s.employee), d10(s.employee.joiningDate),
+    ...money(c), att.get(s.employee.id)?.daysWorked ?? null, ...rest(c),
+  ])
+  const sum = (k: keyof Cents) => perSlip.reduce((a, x) => a + x.c[k], 0)
+  const tot = Object.fromEntries((['gross', 'earned', 'arrears', 'ot', 'totalEarned', 'late', 'loan', 'unpaid', 'advance', 'tax', 'other', 'totalDed', 'net'] as const).map((k) => [k, sum(k)])) as Cents
+  rows.push([null, null, `Total ${titleCase(monthLabel(month).split(' ')[0]!)} ${month.slice(0, 4)} Payroll`, null, null, null, ...money(tot), null, ...rest(tot)])
+
+  const notLocked = runs.some((r) => r.status !== 'locked')
+  return {
+    key: def.key, title: `${def.title} — ${month}`, month, sheetTitle, header, kinds, rows, totalsRow: true,
+    note: [
+      notLocked ? `The ${month} run is not locked yet — figures can still change.` : null,
+      'Figures are the payroll run\'s payslips. Days Worked come from Attendance & Leaves.',
+      showOther ? `${OTHER_DEDUCTIONS_COL}: absence, EOBI (employee share) and other deductions — they have no column in this format.` : null,
+    ].filter(Boolean).join(' '),
+  }
+}
+
+const loanLinesOf = (inputs: unknown): Array<{ loanId: string; cents: number }> => {
+  const v = (inputs as Record<string, unknown> | null)?.['loans']
+  return Array.isArray(v) ? (v as Array<{ loanId: string; cents: number }>).filter((l) => l && typeof l.loanId === 'string' && typeof l.cents === 'number') : []
+}
+
+// ─── Entry points ───────────────────────────────────────────────────────────
+
+/** Build a format for the companies in `tenantIds` (the caller's HR read scope). */
+export async function buildReport(key: string, tenantIds: string[], _activeTenantId: string, q: ReportQuery): Promise<ReportTable> {
+  const def = REPORTS.find((r) => r.key === key)
+  if (!def) throw new AppError('UNKNOWN_REPORT', `No HR report "${key}"`, 404)
+  switch (def.key) {
+    case 'employee_master': return employeeMaster(def, tenantIds, q)
+    case 'lifecycle_dues': return lifecycleDues(def, tenantIds)
+    case 'attendance_leaves': return attendanceLeaves(def, tenantIds, q)
+    case 'payroll_report': return payrollReport(def, tenantIds, q)
+  }
+  throw new AppError('UNKNOWN_REPORT', `No HR report "${key}"`, 404)
+}
+
+/** Danish's widths per column (characters), from his workbook. */
+const WIDTHS: Record<string, number[]> = {
+  employee_master: [12, 24, 23, 19, 14, 12, 16, 30, 19, 18, 29, 19, 14, 24, 12, 19, 23, 28, 24],
+  lifecycle_dues: [12, 24, 18, 13, 16, 26, 16, 20, 18, 20, 16],
+  attendance_leaves: [12, 24, 18, 20, 15, 15, 12, 15, 12, 16, 16, 14, 15, 20],
+  payroll_report: [12, 24, 18, 22, 15, 13, 16, 13, 16, 20, 15, 16, 16, 16, 18, 16, 15, 18, 20, 18],
+}
+
+/** The table as Danish's sheet: title on row 1 (merged A1:<last>2), the note
+ *  (if any) on row 3, header on row 4, data from row 5. */
+export function reportXlsx(t: ReportTable): Buffer {
+  const last = colName(t.header.length - 1)
+  const cell = (v: unknown, kind: ColumnKind, bold: boolean): XlsxCell => {
+    if (v == null || v === '') return null
+    if (kind === 'money' && typeof v === 'number') return { v, s: bold ? 'boldAmount' : 'amount' }
+    if (kind === 'percent' && typeof v === 'string' && /^-?[\d.]+%$/.test(v)) return { v: Number(v.slice(0, -1)) / 100, s: 'percent' }
+    if (typeof v === 'number') return bold ? { v, s: 'bold' } : v
+    const s = Array.isArray(v) ? v.join(', ') : String(v)
+    return bold ? { v: s, s: 'bold' } : s
+  }
+  const rows: XlsxCell[][] = [
+    [{ v: t.sheetTitle, s: 'title' }],
+    [],
+    [t.note ?? null],
+    t.header.map((h) => ({ v: h, s: 'header' as const })),
+    ...t.rows.map((r, i) => {
+      const bold = !!t.totalsRow && i === t.rows.length - 1
+      return t.header.map((_, c) => cell(r[c], t.kinds[c] ?? 'text', bold))
+    }),
+  ]
+  const merges = [`A1:${last}2`]
+  if (t.totalsRow && t.rows.length) merges.push(`C${4 + t.rows.length}:F${4 + t.rows.length}`)
+  const sheetName = REPORTS.find((r) => r.key === t.key)?.title ?? 'Report'
+  return buildXlsx({ name: sheetName, widths: WIDTHS[t.key]?.slice(0, t.header.length), rows, merges })
+}
+
 // Record values printed the way their field reads: rupees, names for references.
+// (Used by the section export in routes.ts.)
 export async function resolver(records: Array<Pick<HrRecord, 'data'>>, fields: HrField[]) {
   const ids = new Set<string>()
   for (const r of records) {
@@ -146,303 +533,4 @@ export async function resolver(records: Array<Pick<HrRecord, 'data'>>, fields: H
       default: return v
     }
   }
-}
-
-/** A section's records within the dates, one column per field of the active format. */
-async function recordReport(title: string, sections: string[], tenantIds: string[], activeTenantId: string, q: ReportQuery, extra: Prisma.HrRecordWhereInput = {}): Promise<ReportTable> {
-  const [from, to] = range(q)
-  const fmts = await Promise.all(sections.map((s) => getFormat(activeTenantId, s)))
-  // Union of the sections' fields, in order, so a combined report (training
-  // programs + requests) still reads as one table.
-  const cols: HrField[] = []
-  for (const fmt of fmts) for (const f of fmt.fields) if (f.bind !== 'employeeId' && !cols.some((c) => c.key === f.key)) cols.push(f)
-  const rows = await prisma.hrRecord.findMany({
-    where: { tenantId: { in: tenantIds }, section: { in: sections }, status: { not: 'cancelled' }, ...inRangeWhere(from, to), ...extra },
-    include: { employee: { select: { fullName: true, employeeCode: true } } },
-    orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }],
-    take: 20_000,
-  })
-  const show = await resolver(rows, cols)
-  return {
-    title,
-    header: [...(sections.length > 1 ? ['Type'] : []), 'Employee ID', 'Employee', ...cols.map((c) => c.label), 'Status', 'Stage', 'Raised'],
-    rows: rows.map((r) => [
-      ...(sections.length > 1 ? [fmts.find((f) => f.section === r.section)?.title ?? r.section] : []),
-      r.employee?.employeeCode ?? null, r.employee?.fullName ?? null,
-      ...cols.map((c) => show(c, (r.data as Record<string, unknown>)[c.key])),
-      r.status, r.stage, d10(r.createdAt),
-    ]),
-  }
-}
-
-function inputCols(inputs: unknown) {
-  const i = (inputs ?? {}) as Record<string, unknown>
-  return [i['absentDays'] ?? 0, i['unpaidLeaveDays'] ?? 0, i['otHours'] ?? 0]
-}
-
-async function payrollRuns(tenantIds: string[], q: ReportQuery) {
-  const period = q.period ?? periodOf(pktToday())
-  if (!/^\d{4}-\d{2}$/.test(period)) throw new AppError('BAD_PERIOD', 'Month must be YYYY-MM', 400)
-  const runs = await prisma.hrPayrollRun.findMany({ where: { tenantId: { in: tenantIds }, period }, select: { id: true, status: true } })
-  const slips = runs.length ? await prisma.hrPayslip.findMany({
-    where: { runId: { in: runs.map((r) => r.id) } },
-    include: { employee: true },
-    orderBy: { employee: { employeeCode: 'asc' } },
-  }) : []
-  const note = runs.length === 0 ? `No payroll run for ${period} yet.` : runs.some((r) => r.status !== 'locked') ? `The ${period} run is not locked yet — figures can still change.` : undefined
-  return { period, slips, note }
-}
-
-export async function buildReport(key: string, tenantIds: string[], activeTenantId: string, q: ReportQuery): Promise<ReportTable> {
-  const def = REPORTS.find((r) => r.key === key)
-  if (!def) throw new AppError('UNKNOWN_REPORT', `No HR report "${key}"`, 404)
-  const T = { tenantId: { in: tenantIds } }
-  const now = new Date()
-
-  switch (key) {
-    case 'employee_master': {
-      const rows = await prisma.hrEmployee.findMany({ where: T, orderBy: { employeeCode: 'asc' } })
-      const label = await employeeLabelsAcross(rows)
-      return {
-        title: def.title,
-        header: ['Employee ID', 'Name', 'Father/Husband', 'CNIC', 'CNIC expiry', 'Phone', 'Department', 'Designation', 'Branch', 'Manager', 'Type', 'Status', 'Joined', 'Probation end', 'Confirmed', 'Contract end', 'Last day', 'Basic', 'Gross', 'EOBI', 'SESSI', 'NTN', 'Bank', 'IBAN'],
-        rows: rows.map((e) => [e.employeeCode, e.fullName, e.fatherHusbandName, e.cnic, d10(e.cnicExpiry), e.phone, label(e.departmentId), label(e.designationId), label(e.locationId), label(e.managerId), e.employmentType, e.status, d10(e.joiningDate), d10(e.probationEnd), d10(e.confirmationDate), d10(e.contractEnd), d10(e.lastWorkingDay), rupees(e.basicSalaryCents), rupees(e.grossSalaryCents), e.eobiNo, e.sessiNo, e.ntn, e.bankName, e.iban]),
-      }
-    }
-
-    case 'headcount': case 'branch_headcount': case 'department_headcount': {
-      const on = parseDate(q.asOf, pktToday())
-      const all = await prisma.hrEmployee.findMany({ where: T })
-      const exits = await exitDates(all)
-      const emps = all.filter((e) => employedOn(onBooksFrom(e), on, exits.get(e.id)))
-      const label = await employeeLabelsAcross(emps)
-      const keyOf = (e: HrEmployee) =>
-        key === 'branch_headcount' ? [label(e.locationId) ?? 'Unassigned']
-        : key === 'department_headcount' ? [label(e.departmentId) ?? 'Unassigned']
-        : [label(e.departmentId) ?? 'Unassigned', label(e.locationId) ?? 'Unassigned', label(e.designationId) ?? 'Unassigned', e.employmentType]
-      const counts = new Map<string, { cols: string[]; n: number }>()
-      for (const e of emps) {
-        const cols = keyOf(e)
-        const k = cols.join('\u0000')
-        const cur = counts.get(k) ?? { cols, n: 0 }
-        cur.n++
-        counts.set(k, cur)
-      }
-      const rows = Array.from(counts.values()).sort((a, b) => a.cols.join().localeCompare(b.cols.join())).map((c) => [...c.cols, c.n])
-      const header = key === 'branch_headcount' ? ['Branch', 'Headcount'] : key === 'department_headcount' ? ['Department', 'Headcount'] : ['Department', 'Branch', 'Designation', 'Type', 'Headcount']
-      rows.push([...header.slice(0, -1).map((_, i) => (i === 0 ? 'Total' : '')), emps.length])
-      return { title: `${def.title} — ${d10(on)}`, header, rows }
-    }
-
-    case 'new_joiners': case 'separations': {
-      const [from, to] = range(q)
-      const col = key === 'new_joiners' ? 'joiningDate' : 'lastWorkingDay'
-      // A move to head office (hr/transfer.ts) is neither a joiner (the head
-      // office's new record) nor a separation (the company's old record).
-      const emps = (await prisma.hrEmployee.findMany({ where: { ...T, [col]: { gte: from, lte: to } }, orderBy: { [col]: 'asc' } }))
-        .filter((e) => (key === 'new_joiners' ? !movedInAt(e) : e.status !== 'transferred'))
-      const label = await employeeLabelsAcross(emps)
-      if (key === 'new_joiners') {
-        return {
-          title: def.title,
-          header: ['Employee ID', 'Name', 'Joined', 'Department', 'Designation', 'Branch', 'Type', 'Probation end', 'Gross'],
-          rows: emps.map((e) => [e.employeeCode, e.fullName, d10(e.joiningDate), label(e.departmentId), label(e.designationId), label(e.locationId), e.employmentType, d10(e.probationEnd), rupees(e.grossSalaryCents)]),
-        }
-      }
-      // The reason comes from the approved resignation / termination record.
-      const exits = await prisma.hrRecord.findMany({ where: { employeeId: { in: emps.map((e) => e.id) }, section: { in: ['resignation', 'termination'] }, status: 'approved' }, orderBy: { createdAt: 'desc' } })
-      return {
-        title: def.title,
-        header: ['Employee ID', 'Name', 'Last working day', 'Joined', 'Department', 'Designation', 'Branch', 'Status', 'Exit type', 'Reason'],
-        rows: emps.map((e) => {
-          const x = exits.find((r) => r.employeeId === e.id)
-          const data = (x?.data ?? {}) as Record<string, unknown>
-          return [e.employeeCode, e.fullName, d10(e.lastWorkingDay), d10(e.joiningDate), label(e.departmentId), label(e.designationId), label(e.locationId), e.status, x?.section ?? null, x?.category ?? data['reason'] ?? null]
-        }),
-      }
-    }
-
-    case 'turnover': {
-      const [from, to] = range(q)
-      const emps = await prisma.hrEmployee.findMany({ where: T })
-      const exits = await exitDates(emps)
-      const gone = (e: HrEmployee) => exitDay(e, exits.get(e.id))
-      const rows: unknown[][] = []
-      let cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1))
-      let guard = 0
-      while (cursor <= to && guard++ < 60) {
-        const monthStart = cursor
-        const monthEnd = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0, 23, 59, 59, 999))
-        // Opening is who was on the books as the month began, closing who still
-        // was once it ended — so someone leaving on the 31st is a leaver, not closing.
-        // A move to head office is neither a joiner nor a leaver: the old
-        // record ('transferred') leaves the company's books, the new one joins
-        // the head office's from the move date, and neither counts as turnover.
-        const opening = emps.filter((e) => onBooksAt(onBooksFrom(e), new Date(monthStart.getTime() - 1), exits.get(e.id))).length
-        const closing = emps.filter((e) => onBooksAt(onBooksFrom(e), monthEnd, exits.get(e.id))).length
-        const joiners = emps.filter((e) => !movedInAt(e) && e.joiningDate && e.joiningDate >= monthStart && e.joiningDate <= monthEnd).length
-        const leavers = emps.filter((e) => { if (e.status === 'transferred') return false; const g = gone(e); return g && g >= monthStart && g <= monthEnd }).length
-        const avg = (opening + closing) / 2
-        rows.push([monthStart.toISOString().slice(0, 7), opening, joiners, leavers, closing, avg > 0 ? `${((leavers / avg) * 100).toFixed(1)}%` : '—'])
-        cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
-      }
-      return { title: def.title, header: ['Month', 'Opening', 'Joiners', 'Leavers', 'Closing', 'Turnover %'], rows, note: 'Turnover % = leavers ÷ average of opening and closing headcount.' }
-    }
-
-    case 'movement':
-      return recordReport(def.title, ['promotion', 'transfer', 'salary_revision'], tenantIds, activeTenantId, q, { status: 'approved' })
-
-    case 'attendance':
-      return recordReport(def.title, ['attendance'], tenantIds, activeTenantId, q)
-
-    case 'absenteeism': case 'late_coming': {
-      const [from, to] = range(q)
-      const cats = key === 'absenteeism' ? ['absent', 'half_day'] : ['late']
-      const recs = await prisma.hrRecord.findMany({
-        where: { ...T, section: 'attendance', status: STANDING_ATTENDANCE, category: { in: cats }, startDate: { gte: from, lte: to } },
-        include: { employee: { select: { employeeCode: true, fullName: true } } },
-      })
-      const by = new Map<string, { code: string; name: string; a: number; b: number; mins: number; dates: string[] }>()
-      for (const r of recs) {
-        if (!r.employeeId) continue
-        const cur = by.get(r.employeeId) ?? { code: r.employee?.employeeCode ?? '', name: r.employee?.fullName ?? '', a: 0, b: 0, mins: 0, dates: [] }
-        if (r.category === 'half_day') cur.b++
-        else cur.a++
-        cur.mins += r.quantity ?? 0
-        cur.dates.push(d10(r.startDate) ?? '')
-        by.set(r.employeeId, cur)
-      }
-      const list = Array.from(by.values()).sort((x, y) => (y.a + y.b / 2) - (x.a + x.b / 2))
-      return key === 'absenteeism'
-        ? { title: def.title, header: ['Employee ID', 'Name', 'Absent days', 'Half days', 'Days lost', 'Dates'], rows: list.map((x) => [x.code, x.name, x.a, x.b, x.a + x.b / 2, x.dates.sort().join(' ')]) }
-        : { title: def.title, header: ['Employee ID', 'Name', 'Times late', 'Minutes late', 'Dates'], rows: list.map((x) => [x.code, x.name, x.a, x.mins, x.dates.sort().join(' ')]) }
-    }
-
-    case 'overtime':
-      return recordReport(def.title, ['overtime'], tenantIds, activeTenantId, q)
-
-    case 'leave':
-      return recordReport(def.title, ['leave'], tenantIds, activeTenantId, q)
-
-    case 'leave_balance': {
-      const emps = await prisma.hrEmployee.findMany({ where: { ...T, status: { in: ['active', 'on_leave'] } }, orderBy: { employeeCode: 'asc' } })
-      const rows: unknown[][] = []
-      for (const e of emps) for (const b of await leaveBalancesFor(e.tenantId, e.id)) rows.push([e.employeeCode, e.fullName, b.name, b.entitlement, b.carriedForward, b.adjustments, b.taken, b.pending, b.balance])
-      return { title: def.title, header: ['Employee ID', 'Name', 'Leave type', 'Entitlement', 'Carried forward', 'Adjustments', 'Taken', 'Pending', 'Balance'], rows }
-    }
-
-    case 'payroll': {
-      const { period, slips, note } = await payrollRuns(tenantIds, q)
-      return {
-        title: `${def.title} — ${period}`, note,
-        header: ['Employee ID', 'Name', 'Absent days', 'Unpaid leave', 'OT hours', 'Gross', 'Earnings', 'Deductions', 'EOBI employee', 'EOBI employer', 'Net', 'Payment'],
-        rows: slips.map((s) => [s.employee.employeeCode, s.employee.fullName, ...inputCols(s.inputs), rupees(s.grossCents), rupees(s.earningsCents), rupees(s.deductionsCents), rupees(s.eobiEmployeeCents), rupees(s.eobiEmployerCents), rupees(s.netCents), s.employee.paymentMethod]),
-      }
-    }
-
-    case 'salary': {
-      const emps = await prisma.hrEmployee.findMany({ where: { ...T, status: { in: ['active', 'on_leave'] } }, orderBy: { employeeCode: 'asc' } })
-      const label = await employeeLabelsAcross(emps)
-      return {
-        title: def.title,
-        header: ['Employee ID', 'Name', 'Department', 'Designation', 'Grade', 'Basic', 'Gross', 'Monthly tax', 'Payment', 'Bank', 'IBAN'],
-        rows: emps.map((e) => [e.employeeCode, e.fullName, label(e.departmentId), label(e.designationId), label(e.gradeId), rupees(e.basicSalaryCents), rupees(e.grossSalaryCents), rupees(e.monthlyTaxCents), e.paymentMethod, e.bankName, e.iban]),
-      }
-    }
-
-    case 'eobi': {
-      const { period, slips, note } = await payrollRuns(tenantIds, q)
-      const rows: unknown[][] = slips.map((s) => [s.employee.employeeCode, s.employee.fullName, s.employee.cnic, s.employee.eobiNo, rupees(s.eobiEmployeeCents), rupees(s.eobiEmployerCents), rupees(s.eobiEmployeeCents + s.eobiEmployerCents)])
-      const sum = (f: (s: (typeof slips)[number]) => number) => rupees(slips.reduce((a, s) => a + f(s), 0))
-      if (slips.length) rows.push(['Total', '', '', '', sum((s) => s.eobiEmployeeCents), sum((s) => s.eobiEmployerCents), sum((s) => s.eobiEmployeeCents + s.eobiEmployerCents)])
-      return { title: `${def.title} — ${period}`, note, header: ['Employee ID', 'Name', 'CNIC', 'EOBI no.', 'Employee share', 'Employer share', 'Total'], rows }
-    }
-
-    case 'sessi': {
-      const { period, slips, note } = await payrollRuns(tenantIds, q)
-      const amt = (s: (typeof slips)[number]) => (s.lines as Array<{ code: string; amountCents: number }>).filter((l) => l.code === 'sessi_employer').reduce((a, l) => a + l.amountCents, 0)
-      const rows: unknown[][] = slips.map((s) => [s.employee.employeeCode, s.employee.fullName, s.employee.cnic, s.employee.sessiNo, rupees(s.grossCents), rupees(amt(s))])
-      if (slips.length) rows.push(['Total', '', '', '', rupees(slips.reduce((a, s) => a + s.grossCents, 0)), rupees(slips.reduce((a, s) => a + amt(s), 0))])
-      return { title: `${def.title} — ${period}`, note: note ?? (slips.length && slips.every((s) => amt(s) === 0) ? 'SESSI is 0 — set the employer % in HR settings.' : undefined), header: ['Employee ID', 'Name', 'CNIC', 'SESSI no.', 'Gross', 'Employer SESSI'], rows }
-    }
-
-    case 'final_settlement':
-      return recordReport(def.title, ['final_settlement'], tenantIds, activeTenantId, q)
-
-    case 'statutory':
-      // Not worked out here: accrued vs paid is ONE computation, from the
-      // ledger's 2042 / 2043 / 2044 and the payments recorded against them
-      // (accounting/statutory.ts) — a second one from payslips would disagree
-      // after a reclass, an F&F reversal or a payslip edited after posting.
-      return {
-        title: def.title,
-        header: ['What', 'Where'],
-        rows: [
-          ['EOBI, SESSI and salary tax: accrued, paid and owed per month', `${STATUTORY_PAGE.label} (${STATUTORY_PAGE.path})`],
-          ['Record or link a challan payment', `${STATUTORY_PAGE.label} (${STATUTORY_PAGE.path})`],
-          ['Per-employee contributions for a month', 'HR reports → EOBI report / SESSI report'],
-        ],
-        note: 'EOBI, SESSI and salary tax are booked to 2043, 2044 and 2042 when payroll is locked and a full & final is approved, and paid over in Accounting → Statutory payments.',
-        link: STATUTORY_PAGE,
-      }
-
-    case 'probation_due': case 'confirmation_due': case 'contract_expiry': {
-      const n = days(q)
-      const until = new Date(now.getTime() + n * 86_400_000)
-      const where: Prisma.HrEmployeeWhereInput =
-        key === 'probation_due' ? { employmentType: 'probation', confirmationDate: null, probationEnd: { not: null, lte: until } }
-        : key === 'confirmation_due' ? { employmentType: 'probation', confirmationDate: null, probationEnd: { not: null, lt: now } }
-        : { employmentType: 'contract', contractEnd: { not: null, lte: until } }
-      const col = key === 'contract_expiry' ? 'contractEnd' : 'probationEnd'
-      const emps = await prisma.hrEmployee.findMany({ where: { ...T, status: { in: ['active', 'on_leave'] }, ...where }, orderBy: { [col]: 'asc' } })
-      const label = await employeeLabelsAcross(emps)
-      return {
-        title: def.title,
-        header: ['Employee ID', 'Name', 'Department', 'Designation', 'Manager', 'Joined', key === 'contract_expiry' ? 'Contract ends' : 'Probation ends', 'Days left'],
-        rows: emps.map((e) => {
-          const d = e[col]!
-          return [e.employeeCode, e.fullName, label(e.departmentId), label(e.designationId), label(e.managerId), d10(e.joiningDate), d10(d), Math.ceil((d.getTime() - now.getTime()) / 86_400_000)]
-        }),
-      }
-    }
-
-    case 'document_expiry': {
-      const until = new Date(now.getTime() + days(q) * 86_400_000)
-      const [docs, cnics] = await Promise.all([
-        prisma.hrDocument.findMany({ where: { ...T, expiryDate: { not: null, lte: until } }, include: { employee: { select: { employeeCode: true, fullName: true, status: true } } } }),
-        prisma.hrEmployee.findMany({ where: { ...T, status: { in: ['active', 'on_leave'] }, cnicExpiry: { not: null, lte: until } } }),
-      ])
-      const rows = [
-        ...docs.filter((d) => ['active', 'on_leave'].includes(d.employee.status)).map((d) => ({ code: d.employee.employeeCode, name: d.employee.fullName, doc: d.title || d.docType, at: d.expiryDate! })),
-        ...cnics.map((e) => ({ code: e.employeeCode, name: e.fullName, doc: 'CNIC', at: e.cnicExpiry! })),
-      ].sort((a, b) => a.at.getTime() - b.at.getTime())
-      return {
-        title: def.title,
-        header: ['Employee ID', 'Name', 'Document', 'Expires', 'Days left'],
-        rows: rows.map((r) => [r.code, r.name, r.doc, d10(r.at), Math.ceil((r.at.getTime() - now.getTime()) / 86_400_000)]),
-      }
-    }
-
-    case 'training':
-      return recordReport(def.title, ['training', 'training_request'], tenantIds, activeTenantId, q)
-
-    case 'performance':
-      return recordReport(def.title, ['performance_review'], tenantIds, activeTenantId, q)
-  }
-  throw new AppError('UNKNOWN_REPORT', `No HR report "${key}"`, 404)
-}
-
-/** A head-office record made by a move from a company (hr/transfer.ts): the
- *  move's effective date, else null. Its joining date may be the original one
- *  (service kept), but it is on the head office's books only from the move. */
-function movedInAt(e: HrEmployee): Date | null {
-  const eff = ((e.data ?? {}) as { transferredFrom?: { effectiveDate?: unknown } }).transferredFrom?.effectiveDate
-  return typeof eff === 'string' && /^\d{4}-\d{2}-\d{2}/.test(eff) ? new Date(`${eff.slice(0, 10)}T00:00:00Z`) : null
-}
-
-/** The record as headcount reads it: a moved-in record starts on the move date,
- *  so a person is never counted in the company and the head office at once. */
-function onBooksFrom(e: HrEmployee): HrEmployee {
-  const moved = movedInAt(e)
-  return moved && (!e.joiningDate || e.joiningDate < moved) ? { ...e, joiningDate: moved } : e
 }

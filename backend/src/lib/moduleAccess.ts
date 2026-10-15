@@ -520,6 +520,10 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   { prefix: '/hr/final-settlement', anyOf: ['staff_hr'] },
   { prefix: '/hr/org/units',        anyOf: ['staff_hr'] },
   { prefix: '/hr/org/departments',  anyOf: ['staff_hr'] },
+  // HR → Attendance (the Today board and punch log, hr/attendanceTracking.ts):
+  // its one page is /hr/attendance under staff_hr. A manager role reads it
+  // only when the CEO gives it staff_hr (the role array is HR team + managers).
+  { prefix: '/hr/attendance-tracking', anyOf: ['staff_hr'] },
 
   // ── Live operations (wave 3, UI-12) ──────────────────────────────────────
   // Their role arrays are ALL_STAFF (every floor role works them), so before

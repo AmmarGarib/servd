@@ -208,9 +208,8 @@ describe('HR\'s EOBI / SESSI payments form has moved to Accounting', () => {
     expect(sections.find((s) => s.key === 'leave')!.movedTo).toBeNull()
   })
 
-  it('HR\'s statutory report points to the one computation in Accounting', async () => {
-    const r = (await call('hr', 'GET', '/reports/statutory')).json()
-    expect(r.link.path).toBe('/accounting/statutory')
+  it('HR keeps no statutory report of its own (Danish\'s formats replaced them); Accounting is the one place', async () => {
+    expect((await call('hr', 'GET', '/reports/statutory')).statusCode).toBe(404)
   })
 })
 

@@ -242,11 +242,10 @@ describe('punches write attendance', () => {
 })
 
 describe('the time clock', () => {
-  it('holds the company geofence to any of its branches', async () => {
+  it('measures against any of the company\'s branches (no work locations set) and never refuses', async () => {
     await setOps({ geofenceEnforced: true, geofenceRadiusMetres: 150 })
-    const far = await call('runner', 'POST', '/time-clock/punch-in', { lat: 25.5, lng: 68.0 })
-    expect(far.statusCode).toBe(403)
-    expect(far.json().error.code).toBe('OUTSIDE_GEOFENCE')
+    // Owner 2026-10-15: out of area is allowed and flagged — measured, not refused (the far punch is in
+    // workLocations.test.ts); here the near one.
     const near = await call('runner', 'POST', '/time-clock/punch-in', { lat: 24.9001, lng: 67.1001 })
     expect(near.statusCode).toBe(201)
     expect(near.json()).toMatchObject({ geofenceMatched: true, location: 'Branch B', hrLinked: true })
@@ -262,11 +261,11 @@ describe('the time clock', () => {
     expect(row?.attendance).toBeTruthy()
   })
 
-  it('refuses an enforced geofence with no located branch rather than waving everyone through', async () => {
+  it('an enforced geofence with no located branch lets the punch through as out of area rather than waving it through unflagged', async () => {
     const lonely = (await prisma.tenant.create({ data: { name: 'No Pins Co', slug: `no-pins-${Date.now()}` } })).id
     await prisma.operationsConfig.create({ data: { tenantId: lonely, scope: 'global', scopeId: null, geofenceEnforced: true } })
     invalidateSetupCache()
-    await expect(enforceClockInPolicy(lonely, 'kitchen', { lat: 24.86, lng: 67 })).rejects.toMatchObject({ code: 'NO_BRANCH_LOCATION' })
+    await expect(enforceClockInPolicy(lonely, 'kitchen', { lat: 24.86, lng: 67 })).resolves.toMatchObject({ outOfArea: true, outOfAreaReason: 'no_anchor' })
     // The CEO is never held to it.
     await expect(enforceClockInPolicy(lonely, 'admin', {})).resolves.toMatchObject({ geofenceMatched: null })
   })

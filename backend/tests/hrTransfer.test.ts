@@ -432,19 +432,18 @@ describe('an archived head-office department', () => {
 
 describe('HR reports after the moves (spec §5 step 3)', () => {
   const T = () => [A, A2, HO]
-  it('a move is neither a joiner nor a leaver, and never counted twice', async () => {
-    const t = await buildReport('turnover', T(), A, { from: '2026-10-01', to: '2026-11-30' })
-    // Month, Opening, Joiners, Leavers, Closing
-    for (const row of t.rows) { expect(row[2]).toBe(0); expect(row[3]).toBe(0) }
-    expect(t.rows[0]![1]).toBe(t.rows[1]![4])
-    const total = async (asOf: string) => {
-      const h = await buildReport('headcount', T(), A, { asOf })
-      return h.rows[h.rows.length - 1]![h.rows[0]!.length - 1]
+  // Danish's formats (2026-10-15) replaced the old headcount / turnover
+  // reports: a moved person is on ONE company's month and ONE current list.
+  it('a moved person is never counted twice', async () => {
+    const once = (rows: unknown[][]) => {
+      const names = rows.map((r) => r[1])
+      expect(new Set(names).size).toBe(names.length)
     }
-    expect(await total('2026-10-15')).toBe(await total('2026-11-15'))
-    expect((await buildReport('new_joiners', T(), A, { from: '2024-01-01', to: '2026-11-30' })).rows
-      .some((r) => String(r[0]).startsWith('EMP-'))).toBe(false)
-    expect((await buildReport('separations', T(), A, { from: '2026-10-01', to: '2026-11-30' })).rows).toHaveLength(0)
+    for (const month of [K_1, K]) once((await buildReport('attendance_leaves', T(), A, { month })).rows)
+    once((await buildReport('lifecycle_dues', T(), A, {})).rows)
+    // The company's month before the move still has them; the head office's does not.
+    const before = await buildReport('attendance_leaves', [HO], HO, { month: K_1 })
+    expect(before.rows.some((r) => String(r[1]) === 'Person mgr')).toBe(false)
   })
 })
 

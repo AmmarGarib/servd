@@ -259,6 +259,77 @@ function LoginTab({ p }: { p: Profile }) {
         {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
       </div>
       <KioskPinCard p={p} />
+      <WorkLocationsCard p={p} />
+    </div>
+  )
+}
+
+interface WorkLoc { locationId: string; name?: string; radiusMetres: number | null; isPrimary: boolean; hasPin?: boolean }
+interface LocationOpt { id: string; name: string; tenantId?: string | null; latitude?: number | string | null; longitude?: number | string | null }
+
+/** Where this person may punch (owner, 2026-10-15). One or more of the company's locations; the time clock measures
+ *  every punch against them. A punch outside is never refused — it is recorded and flagged for HR. */
+function WorkLocationsCard({ p }: { p: Profile }) {
+  const qc = useQueryClient()
+  const empId = p.employee.id
+  const { data: saved } = useQuery({ queryKey: ['hr-work-locations', empId], queryFn: () => api.get<{ items: WorkLoc[] }>(`/hr/employees/${empId}/work-locations`) })
+  const { data: all = [] } = useQuery({ queryKey: ['locations'], queryFn: () => api.get<LocationOpt[]>('/locations') })
+  const [items, setItems] = useState<WorkLoc[] | null>(null)
+  const [add, setAdd] = useState('')
+  const [msg, setMsg] = useState('')
+  const [ok, setOk] = useState(false)
+  // Only the employee's own company's locations (the API refuses any other).
+  const mine = all.filter((l) => !l.tenantId || l.tenantId === p.employee.tenantId)
+  const cur = items ?? saved?.items ?? []
+  const pinOf = (id: string) => {
+    const l = mine.find((x) => x.id === id)
+    if (l) return l.latitude != null && l.longitude != null && l.latitude !== '' && l.longitude !== ''
+    return cur.find((c) => c.locationId === id)?.hasPin ?? true
+  }
+  const nameOf = (id: string) => mine.find((x) => x.id === id)?.name ?? cur.find((c) => c.locationId === id)?.name ?? id
+  const edit = (next: WorkLoc[]) => { setItems(next); setOk(false); setMsg('') }
+  const save = useMutation({
+    mutationFn: () => api.put(`/hr/employees/${empId}/work-locations`, { items: cur.map((c) => ({ locationId: c.locationId, radiusMetres: c.radiusMetres ?? null, isPrimary: c.isPrimary })) }),
+    onSuccess: () => { setOk(true); setMsg(''); setItems(null); void qc.invalidateQueries({ queryKey: ['hr-work-locations', empId] }); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
+    onError: (e: Error) => { setMsg(e.message); setOk(false) },
+  })
+  const available = mine.filter((l) => !cur.some((c) => c.locationId === l.id))
+  return (
+    <div className="rounded-2xl p-5 lg:col-span-2" style={card}>
+      <p className="text-sm font-black text-white/85 mb-2">Work locations</p>
+      <p className="text-sm text-white/60 mb-3">Where this person works. Their clock-in is measured against these. A punch from anywhere else is still recorded, and flagged for HR.</p>
+      {cur.length === 0 && <p className="text-xs text-white/45 mb-3">None set — punches are measured against all of the company&rsquo;s locations.</p>}
+      <div className="space-y-2 mb-3">
+        {cur.map((c) => (
+          <div key={c.locationId} className="flex flex-wrap items-center gap-3 rounded-xl px-3 py-2" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+            <span className="text-sm font-bold text-white/85 min-w-[140px]">{nameOf(c.locationId)}</span>
+            <label className="flex items-center gap-1.5 text-xs text-white/60">
+              <input type="radio" name="primary-work-location" checked={c.isPrimary} onChange={() => edit(cur.map((x) => ({ ...x, isPrimary: x.locationId === c.locationId })))} /> Primary
+            </label>
+            <input className={`${inp} max-w-[150px]`} inputMode="numeric" placeholder="Radius (m)" aria-label={`Radius in metres for ${nameOf(c.locationId)}`}
+              value={c.radiusMetres ?? ''} onChange={(e) => { const n = e.target.value.replace(/\D/g, ''); edit(cur.map((x) => x.locationId === c.locationId ? { ...x, radiusMetres: n ? Number(n) : null } : x)) }} />
+            {!pinOf(c.locationId) && <span className="text-[11px]" style={{ color: 'var(--erp-danger)' }}>No map pin — punches here cannot be measured. Set the pin under Configuration → Locations.</span>}
+            <button className="ml-auto text-xs text-white/40 hover:text-red-700" onClick={() => {
+              const rest = cur.filter((x) => x.locationId !== c.locationId)
+              edit(rest.length && !rest.some((x) => x.isPrimary) ? rest.map((x, i) => ({ ...x, isPrimary: i === 0 })) : rest)
+            }}>Remove</button>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2 max-w-md">
+        <Select className={inp} value={add} onChange={(e) => setAdd(e.target.value)} aria-label="Add a work location">
+          <option value="">Add a location…</option>
+          {available.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </Select>
+        <button className={btnGhost} disabled={!add || cur.length >= 10} onClick={() => { edit([...cur, { locationId: add, radiusMetres: null, isPrimary: cur.length === 0 }]); setAdd('') }}>Add</button>
+      </div>
+      <p className="text-[11px] text-white/35 mt-2">Radius is optional — blank uses the location&rsquo;s own radius, then the company&rsquo;s. The primary location is shown as the Branch Location.</p>
+      {msg && <p className="text-xs text-red-700 mt-2">{msg}</p>}
+      {ok && <p className="text-xs text-primary-ink mt-2">Saved.</p>}
+      <div className="flex gap-2 mt-3">
+        <button className={btn} disabled={!items || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save work locations'}</button>
+        {items && <button className={btnGhost} onClick={() => { setItems(null); setMsg('') }}>Discard</button>}
+      </div>
     </div>
   )
 }

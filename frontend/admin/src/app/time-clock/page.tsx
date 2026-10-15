@@ -28,6 +28,8 @@ interface PunchResult {
   /** A clock-in left open from an earlier day: flagged for HR, no hours. */
   missedClockOut?: { since: string; note: string }
   location?: string | null
+  /** Where the punch was taken; outOfArea = outside every work location (recorded and flagged, never refused). */
+  where?: { location?: string | null; outOfArea?: boolean; matched?: boolean | null; distanceM?: number | null; flagged?: boolean } | null
   hrLinked?: boolean
   attendance?: { status: string | null; lateMinutes: number | null } | null
   action?: 'in' | 'out'
@@ -38,6 +40,15 @@ const attendanceLine = (r: PunchResult) => {
   const a = r.attendance
   if (!a) return r.hrLinked === false ? ' (no HR record — attendance is not kept for this login)' : ''
   if (a.status === 'late') return ` Marked late by ${a.lateMinutes} min.`
+  return ''
+}
+
+/** The line under a punch: where it was taken. Outside is allowed but flagged. */
+const whereLine = (r: PunchResult) => {
+  const w = r.where
+  if (!w) return ''
+  if (w.outOfArea) return ' Outside your work location — recorded and flagged for HR.'
+  if (w.matched) return ` At ${w.location ?? r.location ?? 'your work location'} \u2713`
   return ''
 }
 
@@ -53,6 +64,7 @@ export default function TimeClockPage() {
   const [pin, setPin] = useState('')
   const [stage, setStage] = useState<Stage>('idle')
   const [feedback, setFeedback] = useState('')
+  const [flagged, setFlagged] = useState(false)
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [geoErr, setGeoErr] = useState('')
 
@@ -105,9 +117,11 @@ export default function TimeClockPage() {
   }
 
   async function run(fn: () => Promise<string>) {
-    setStage('working'); setFeedback('')
+    setStage('working'); setFeedback(''); setFlagged(false)
     try {
-      setFeedback(await fn())
+      const msg = await fn()
+      setFlagged(msg.includes('flagged for HR'))
+      setFeedback(msg)
       setStage('success')
       void qc.invalidateQueries({ queryKey: ['time-clock-status'] })
     } catch (err) {
@@ -125,16 +139,16 @@ export default function TimeClockPage() {
     const missed = r.missedClockOut ? ` ${r.missedClockOut.note}` : ''
     if (r.notClockedIn) return `You were not clocked in.${missed}`
     return dir === 'in'
-      ? `Clocked in${r.location ? ` at ${r.location}` : ''}, ${user?.name ?? ''}.${attendanceLine(r)}${missed}`
-      : 'Clocked out. Have a good night.'
+      ? `Clocked in, ${user?.name ?? ''}.${whereLine(r)}${attendanceLine(r)}${missed}`
+      : `Clocked out. Have a good night.${whereLine(r)}`
   })
 
   const punchKiosk = () => run(async () => {
     const r = await api.post<PunchResult>('/time-clock/kiosk/punch', { employeeCode: code.trim(), pin, ...where(), selfieUrl: await selfieUrl() })
     setPin(''); setCode('')
     return r.action === 'in'
-      ? `Welcome, ${r.employee?.fullName}. You are clocked in.${attendanceLine(r)}`
-      : `Goodbye, ${r.employee?.fullName}. You are clocked out.`
+      ? `Welcome, ${r.employee?.fullName}. You are clocked in.${whereLine(r)}${attendanceLine(r)}`
+      : `Goodbye, ${r.employee?.fullName}. You are clocked out.${whereLine(r)}`
   })
 
   const punchedIn = status.data?.punchedIn ?? false
@@ -204,8 +218,8 @@ export default function TimeClockPage() {
         {stage === 'working' && <p className="text-center py-6 text-sm text-white/85 animate-pulse">Recording…</p>}
         {feedback && (
           <div className="rounded-xl px-4 py-4 text-center mt-2"
-            style={stage === 'error' ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' } : { background: 'var(--erp-accent-dim)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.6)' }}>
-            <p className="text-sm font-bold" style={{ color: stage === 'error' ? 'var(--erp-danger)' : 'var(--erp-success)' }}>{feedback}</p>
+            style={stage === 'error' || flagged ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' } : { background: 'var(--erp-accent-dim)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.6)' }}>
+            <p className="text-sm font-bold" style={{ color: stage === 'error' || flagged ? 'var(--erp-danger)' : 'var(--erp-success)' }}>{feedback}</p>
           </div>
         )}
       </div>

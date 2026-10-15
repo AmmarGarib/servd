@@ -117,7 +117,7 @@ export interface PunchRow {
   employeeCode: string | null
   userId: string | null
   role: string | null
-  punches: Array<{ type: 'in' | 'out'; at: string; source: string; geofenceMatched?: boolean | null; geofenceDistanceM?: number | null; selfieUrl?: string | null }>
+  punches: Array<{ type: 'in' | 'out'; at: string; source: string; geofenceMatched?: boolean | null; geofenceDistanceM?: number | null; outOfArea?: boolean | null; selfieUrl?: string | null }>
   attendance: { id: string; status: string | null; lateMinutes: number | null; checkIn: string | null; checkOut: string | null; source: string | null } | null
 }
 

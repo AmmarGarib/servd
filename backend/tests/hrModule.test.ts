@@ -694,28 +694,27 @@ describe('HR through the API', () => {
     expect((await call('hr', 'POST', '/forms/nope/activate', { version: 1 })).statusCode).toBe(404)
   })
 
-  it('builds every §30 report, as a preview and as CSV, for HR only', async () => {
+  it('builds each of Danish\'s four formats, as a preview, CSV and Excel, for HR only', async () => {
     const list = (await call('hr', 'GET', '/reports')).json() as Array<{ key: string }>
-    // 25 reports of §30 + 'statutory', which points to Accounting → Statutory payments.
-    expect(list).toHaveLength(26)
+    // The old §30 reports were replaced by Danish's formats (owner, 2026-10-15).
+    expect(list.map((r) => r.key)).toEqual(['employee_master', 'lifecycle_dues', 'attendance_leaves', 'payroll_report'])
     for (const r of list) {
-      const q = '?from=2026-01-01&to=2026-12-31&period=2026-09&days=365'
+      const q = '?month=2026-09'
       const preview = await call('hr', 'GET', `/reports/${r.key}${q}`)
       expect(preview.statusCode, r.key).toBe(200)
       expect(Array.isArray(preview.json().header), r.key).toBe(true)
       const file = await call('hr', 'GET', `/reports/${r.key}.csv${q}`)
       expect(file.statusCode, r.key).toBe(200)
       expect(file.headers['content-type']).toMatch(/text\/csv/)
+      const xlsx = await call('hr', 'GET', `/reports/${r.key}.xlsx${q}`)
+      expect(xlsx.statusCode, r.key).toBe(200)
+      expect(xlsx.headers['content-type']).toMatch(/spreadsheetml/)
     }
-    const eobi = (await call('hr', 'GET', '/reports/eobi?period=2026-09')).json()
-    expect(eobi.rows.length).toBeGreaterThan(0)
-    const joiners = (await call('hr', 'GET', '/reports/new_joiners?from=2020-01-01&to=2030-12-31')).json()
-    expect(joiners.rows.length).toBeGreaterThan(0)
-    expect((await call('cook', 'GET', '/reports/salary')).statusCode).toBe(403)
+    const payroll = (await call('hr', 'GET', '/reports/payroll_report?month=2026-09')).json()
+    expect(payroll.rows.length).toBeGreaterThan(0)
+    expect((await call('cook', 'GET', '/reports/employee_master')).statusCode).toBe(403)
     expect((await call('hr', 'GET', '/reports/nope')).statusCode).toBe(404)
-    // Statutory accrued vs paid is ONE computation, in Accounting: HR links to it.
-    const statutory = (await call('hr', 'GET', '/reports/statutory')).json()
-    expect(statutory.link).toEqual({ path: '/accounting/statutory', label: 'Accounting → Statutory payments' })
+    expect((await call('hr', 'GET', '/reports/salary')).statusCode).toBe(404)
   })
 
   it('lets an employee withdraw only a request nobody has acted on yet', async () => {
@@ -1411,10 +1410,8 @@ describe('HR through the API', () => {
       const master = (await portfolio('/reports/employee_master')).json()
       const at = (name: string) => master.rows.find((r: unknown[]) => r[1] === name)
       expect(at('Other Co Barista')[master.header.indexOf('Designation')]).toBe('Barista')
-      expect(at('Other Co Runner')[master.header.indexOf('Manager')]).toBe('Other Co Barista')
-      expect(at('Line Cook')[master.header.indexOf('Manager')]).toBe('Head Chef')
-      const hc = (await portfolio('/reports/headcount?asOf=2026-09-01')).json()
-      expect(hc.rows.find((r: unknown[]) => r[2] === 'Barista')?.[4]).toBe(2)
+      expect(at('Other Co Runner')[master.header.indexOf('Reporting Manager')]).toBe('Other Co Barista')
+      expect(at('Line Cook')[master.header.indexOf('Reporting Manager')]).toBe('Head Chef')
       const list = (await portfolio('/employees')).json() as Array<{ fullName: string; designation: string | null; manager: string | null }>
       expect(list.find((e) => e.fullName === 'Other Co Runner')).toMatchObject({ designation: 'Barista', manager: 'Other Co Barista' })
     } finally {
@@ -1431,29 +1428,6 @@ describe('HR through the API', () => {
     expect(line).not.toMatch(/,150000,/)
     expect(line).not.toContain(cookEmp)
     expect(line.match(/Line Cook/g)).toHaveLength(2) // the Employee column and the form's employee field
-  })
-
-  it('counts headcount on a last working day, and drops staff marked gone without one once their status changed', async () => {
-    const total = async (q: string) => { const rows = (await call('hr', 'GET', `/reports/headcount${q}`)).json().rows as unknown[][]; return rows[rows.length - 1]!.at(-1) as number }
-    const may = async () => (await call('hr', 'GET', '/reports/turnover?from=2026-05-01&to=2026-05-31')).json().rows[0] as unknown[]
-    const made: string[] = []
-    try {
-      const before = await total('')
-      made.push((await prisma.hrEmployee.create({ data: { tenantId, employeeCode: 'T5-0001', fullName: 'Leaving Today', joiningDate: new Date('2025-01-01'), lastWorkingDay: pktToday() } })).id)
-      expect(await total('')).toBe(before + 1)
-
-      const [on10, on11, mayBefore] = [await total('?asOf=2026-05-10'), await total('?asOf=2026-05-11'), await may()]
-      made.push((await prisma.hrEmployee.create({ data: { tenantId, employeeCode: 'T5-0002', fullName: 'Terminated In Master', status: 'terminated', joiningDate: new Date('2025-01-01'), updatedAt: new Date('2026-05-10T10:00:00Z') } })).id)
-      expect(await total('?asOf=2026-05-10')).toBe(on10 + 1)
-      expect(await total('?asOf=2026-05-11')).toBe(on11)
-      const mayAfter = await may()
-      // [month, opening, joiners, leavers, closing, %]: opens with them, leaves with them.
-      expect(mayAfter[1]).toBe((mayBefore[1] as number) + 1)
-      expect(mayAfter[3]).toBe((mayBefore[3] as number) + 1)
-      expect(mayAfter[4]).toBe(mayBefore[4])
-    } finally {
-      await prisma.hrEmployee.deleteMany({ where: { id: { in: made } } })
-    }
   })
 
   it('shows the OT hours approved on the dashboard, beside the amount they were priced on', async () => {

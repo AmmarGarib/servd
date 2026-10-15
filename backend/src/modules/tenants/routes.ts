@@ -721,6 +721,9 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
     // HR back office.
     tx.hrOrgUnit, tx.hrFormDefinition, tx.hrLetterTemplate, tx.hrEmployee, tx.hrPayrollRun, tx.hrPayslip, tx.hrRecord, tx.hrDocument,
+    // Attendance by work location (2026-10-15): work locations (unique per employee + location, so a straight
+    // repoint — the locations move with the company) and the punch log's company.
+    tx.hrWorkLocation, tx.clockLog,
   ]
   for (const model of repoint) {
     await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })
