@@ -807,24 +807,57 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   under `reconciliation`, receiving accounts on `/setup` (finance).
   Runbooks: `docs/raast.md` (finance + cashier), `docs/raast-sms-forwarder.md` (IT).
 
-### Cash requests (H3, 2026-10-14; replaces the cash-voucher flow)
+### Cash vouchers (owner 2026-10-15; replaces the H3 HOD flow of 2026-10-14)
 
-- **Flow:** anyone raises a request → their HOD signs → the director (role
-  `admin`, never the HOD's login: 409 `SAME_SIGNER`) approves → the box's
-  custodian (the cashier) pays → the holder uploads receipts (kept for the
-  file). **The PAY is the expense:** Dr the category's 6xxx / Cr 1011 through
-  `recordPettyCashSpendTx`; `pettyCashPosting.ts` `cashRequestPayLine` /
-  `cashRequestPaidAccountTx` are the one switch. Receipts book nothing;
-  settlement lines reclass out of the paid account (equipment: Dr 1340 / Cr
-  the paid 6xxx, with the request's brand); change handed back is Dr 1011 /
-  Cr the paid account. No 1355 in new code (legacy advances settle against
-  1355). Daily flag `cash_request_receipts_overdue` (09:10 PKT worker).
+- **Flow:** anyone raises (`POST /trustops/cash-vouchers`, kind `request`) →
+  status `submitted` at once (no draft step) → **finance** approves
+  (`/:id/finance-approve`: role `finance` with the accounting module, or the
+  CEO; never its own — 409 `SELF_APPROVE`) → the **CEO** gives the final
+  approval (`/:id/approve`; never the raiser/holder, never the finance
+  approver — 409 `SAME_SIGNER`) → the box's custodian pays → the holder
+  uploads supporting documents and records what was spent → **finance verifies
+  the documents and the expense is booked** (`/:id/verify-docs`) → `posted`.
+  Finance or the CEO may **return for correction** (`/:id/return`, note;
+  `returnCount`) — the raiser edits and `/:id/resubmit`s — or reject. The HOD
+  step is retired (`/sign-hod` → 410); legacy `draft` = waiting for finance,
+  legacy `hod_signed` = waiting for the CEO. Finance may also raise kind
+  `expense` for an outside payee (`payeeName`, `grossCents` − `discountCents`
+  = `amountCents`, CHECK `cash_vouchers_discount_chk`) — straight to the CEO.
+  A discount is finance's only.
+- **Money:** the PAY is a hold, not the expense: `recordPettyCashSpendTx`
+  nature `voucher_hold` books Dr **1357** Petty Cash Vouchers Awaiting
+  Documents / Cr 1011 and sets `expenseOnVerify`. Verification (≥1
+  `supporting` document, else 422 `DOCS_REQUIRED`) is ONE transaction:
+  conditional claim (disbursed, `postedAt` null → `posted`; again 409
+  `ALREADY_POSTED`), change back into a box (Dr 1011 / Cr 1357) or an
+  overspend paid from a box (a second hold Dr 1357 / Cr 1011), stock / capex
+  lines onto their registers, and ONE entry `cashvoucher.post:<id>`
+  (`pettyCashPosting.ts postCashVoucherVerifiedTx`) Dr each line / Cr 1357 —
+  1357 nets to zero per voucher; `postedJournalEntryId` stamped. The lines
+  live on the voucher's one settlement row; a settlement of such a voucher is
+  booked by the voucher's entry (`postCashVoucherSettlementTx` dispatches),
+  never `cashvoucher.settle`. Close check `vouchers_awaiting_docs`
+  (overridable block); tie-out compares paid-unverified vouchers with 1357.
+- **Legacy H3 rows** (`expenseOnVerify` false, paid before 2026-10-15) keep
+  their rules: the pay was the expense (Dr 6xxx / Cr 1011,
+  `cashRequestPayLine` / `cashRequestPaidAccountTx`), receipts book nothing,
+  settlements reclass out of the paid account, change is Dr 1011 / Cr the
+  paid account; `/receipts`, `/settlements`, `/return-change` answer 409
+  `USE_DOCUMENTS` on a new-flow voucher. No 1355 in new code. Daily flag
+  `cash_request_receipts_overdue` (09:10 PKT; now "supporting documents
+  overdue" for the new flow).
 - `CashVoucher` / `CashVoucherAttachment` (tenantId; number `CV-00001` per
-  company under an advisory lock; files stored as bytes, ≤3 MB, magic bytes
-  checked, PDF allowed). API `/trustops/cash-vouchers`; admin
+  company under an advisory lock; files stored as bytes). Supporting
+  documents (`/:id/documents`, kind `supporting`, ≤5 MB, ≤20): PDF, images,
+  Excel / Word / PowerPoint, CSV / text through `lib/evidenceFile.ts`
+  `allowOffice` (extension, mime and magic bytes must agree; Office / text
+  download as attachments). Also `GET /dashboard`, `GET /:id/history`,
+  `GET /:id/export.pdf|xlsx` (approved or later). Admin
   `/finance/cash-vouchers` is a personal page (open to every login; the API
-  scopes the list). Approvals inbox types `cash_voucher` (CEO) and
-  `cash_request_hod`.
+  scopes the list). Approvals inbox types `cash_request_finance` (finance)
+  and `cash_voucher` (CEO), each with Approve / Return / Reject
+  (`ApprovalAction.kind` includes `'return'`); `cash_request_hod` is retired
+  (the id still parses, no provider).
 - **Petty cash is on 1011** (H2): a top-up needs a source (Garibsons → 2210,
   H1; the safe 1010; a bank); a till top-up is a drawer payout keyed
   `pettycash.till_topup:<cashMovementId>`. **`recordPettyCashSpendTx`

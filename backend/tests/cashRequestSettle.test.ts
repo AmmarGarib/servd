@@ -1,5 +1,9 @@
 // Cash requests after payment (H3, Hasnain 2026-10-14: "expense at payment;
-// receipts kept for the file").
+// receipts kept for the file") — the LEGACY rules: since 2026-10-15 every new
+// pay is held on 1357 and booked when finance verifies the documents
+// (cashVoucherFlow20261015.test.ts). Rows paid under H3 (expenseOnVerify
+// false) keep these rules, so the requests here are paid the H3 way
+// (legacyPay: the pay as it was booked before 2026-10-15).
 //
 //   - The pay booked Dr <category 6xxx> / Cr 1011. Receipts are evidence and
 //     book nothing; a settlement only RECLASSES what they show out of that
@@ -29,7 +33,8 @@ import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
-import { pettyCashTieOut, postCashVoucherSettlementTx, postPettyCashMovementTx } from '../src/modules/accounting/pettyCashPosting.js'
+import { cashRequestPayLine, pettyCashTieOut, postCashVoucherSettlementTx, postPettyCashMovementTx } from '../src/modules/accounting/pettyCashPosting.js'
+import { recordPettyCashSpendTx } from '../src/modules/trustops/pettyCash.js'
 import { recordCapexPaymentFromCashTx } from '../src/modules/financePlanning/capexPosting.js'
 
 const P = `crs${Date.now()}`
@@ -61,16 +66,39 @@ const call = (key: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: str
 const V = '/trustops/cash-vouchers'
 type Req = { id: string; tenantId: string; number: string; status: string; stage: string; settledCents: number; returnedCents: number; remainingCents: number; pettyCashMovementId: string | null; settlements?: Array<{ id: string; lines: Array<{ id: string; kind: string; accountCode: string }> }> }
 
-/** Raised by finA for `holder`, HOD mgrA, director ceoA, paid by cashA from box A. */
+/**
+ * Finance (finA2) and the CEO (ceoA) approve; then the pay exactly as it was
+ * booked under H3, before 2026-10-15 (one expense line in the category, Dr
+ * 6xxx / Cr 1011; expenseOnVerify false) — the legacy rows this file covers.
+ */
+async function legacyPay(id: string, boxId: string): Promise<void> {
+  expect((await call('finA2', 'POST', `${V}/${id}/finance-approve`)).statusCode).toBe(200)
+  expect((await call('ceoA', 'POST', `${V}/${id}/approve`)).statusCode).toBe(200)
+  const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id } })
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.cashVoucher.updateMany({
+      where: { id, status: 'approved' },
+      data: { status: 'disbursed', boxId, disbursedAt: new Date(), disbursedById: U['cashA']!.id, dueBy: new Date(Date.now() + 30 * 86_400_000) },
+    })
+    expect(claimed.count).toBe(1)
+    const s = await recordPettyCashSpendTx(tx, {
+      box: { id: boxId }, amountCents: v.amountCents, reason: `Cash request ${v.number}: ${v.purpose}`, vendorName: v.payeeName,
+      approvedById: v.directorSignedById, createdById: U['cashA']!.id, nature: 'expense', lines: [cashRequestPayLine(v)], cashVoucherId: id,
+      conceptId: v.conceptId, actor: { id: U['cashA']!.id, role: 'cashier' }, allowExplicit: true, equipmentCheck: false, stockAllowed: false,
+    })
+    await tx.cashVoucher.update({ where: { id }, data: { pettyCashMovementId: s.movement.id } })
+  })
+}
+
+/** Raised by finA for `holder`, approved by finance and the CEO, paid (H3) by cashA from box A. */
 async function paid(amountCents: number, holder = 'cookA', categoryKey = 'transport'): Promise<Req> {
   const r = await call('finA', 'POST', V, { purpose: `Market run ${amountCents}`, categoryKey, amountCents, holderUserId: U[holder]!.id })
   expect(r.statusCode, r.body).toBe(201)
   const id = (r.json() as Req).id
-  expect((await call('mgrA', 'POST', `${V}/${id}/sign-hod`)).statusCode).toBe(200)
-  expect((await call('ceoA', 'POST', `${V}/${id}/approve`)).statusCode).toBe(200)
-  const p = await call('cashA', 'POST', `${V}/${id}/pay`, { boxId: box['A'] })
+  await legacyPay(id, box['A']!)
+  const p = await call('finA', 'GET', `${V}/${id}`)
   expect(p.statusCode, p.body).toBe(200)
-  return p.json().voucher as Req
+  return p.json() as Req
 }
 async function receipt(key: string, id: string): Promise<string> {
   const r = await call(key, 'POST', `${V}/${id}/receipts`, PHOTO)
@@ -91,6 +119,7 @@ beforeAll(async () => {
   invalidateSetupCache()
   await mkUser('ceoA', 'admin', [T.A])
   await mkUser('finA', 'finance', [T.A])
+  await mkUser('finA2', 'finance', [T.A])
   await mkUser('mgrA', 'management', [T.A])
   await mkUser('cashA', 'cashier', [T.A])
   await mkUser('cookA', 'boh', [T.A])
@@ -311,9 +340,7 @@ describe('a settlement reclasses out of the account the pay booked', () => {
     const r = await call('finA', 'POST', V, { purpose: 'Blender for brand A', categoryKey: 'transport', amountCents: 4_000, holderUserId: U['cookA']!.id, conceptId: conceptA })
     expect(r.statusCode, r.body).toBe(201)
     const id = (r.json() as Req).id
-    expect((await call('mgrA', 'POST', `${V}/${id}/sign-hod`)).statusCode).toBe(200)
-    expect((await call('ceoA', 'POST', `${V}/${id}/approve`)).statusCode).toBe(200)
-    expect((await call('cashA', 'POST', `${V}/${id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
+    await legacyPay(id, box['A']!)
     const r1 = await receipt('cookA', id)
     const s = await call('finA', 'POST', `${V}/${id}/settlements`, {
       lines: [{ kind: 'capex', capexLineId: capex['A'], amountCents: 4_000, description: 'Blender' }], receiptIds: [r1],
@@ -339,9 +366,7 @@ describe('a settlement reclasses out of the account the pay booked', () => {
     const r = await call('finA', 'POST', V, { purpose: 'Market run for K', categoryKey: 'transport', amountCents: 5_000, holderUserId: U['cookA']!.id })
     expect(r.statusCode, r.body).toBe(201)
     const id = (r.json() as Req).id
-    expect((await call('mgrA', 'POST', `${V}/${id}/sign-hod`)).statusCode).toBe(200)
-    expect((await call('ceoA', 'POST', `${V}/${id}/approve`)).statusCode).toBe(200)
-    expect((await call('cashA', 'POST', `${V}/${id}/pay`, { boxId: boxK })).statusCode).toBe(200)
+    await legacyPay(id, boxK)
     const r1 = await receipt('cookA', id)
     const s = await call('cookA', 'POST', `${V}/${id}/settlements`, {
       lines: [{ kind: 'stock', inventoryItemId: item['tomato'], quantity: 1_000, unit: 'g', amountCents: 3_000 }], receiptIds: [r1],

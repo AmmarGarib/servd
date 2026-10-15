@@ -806,12 +806,13 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       if (!raiser && !keeper && !viewer.financeApprover) throw new ForbiddenError('Only whoever raised this voucher, finance or a manager can edit it')
     } else if (onlyHolder && !v.payeeUserId && v.kind === 'request' && (WAIT_CEO.includes(v.status) || v.status === 'approved' || (v.status === 'disbursed' && !v.expenseOnVerify))) {
       if (!keeper) throw new ForbiddenError('Only finance or a manager can name who holds this cash')
-    } else if (WAIT_CEO.includes(v.status) && financeFields && (viewer.financeApprover || (keeper && categoryOrBox))) {
+    } else if (WAIT_CEO.includes(v.status) && financeFields) {
       // finance (any of these fields) or a keeper (account / box)
+      if (!viewer.financeApprover && !(keeper && categoryOrBox)) {
+        throw new ForbiddenError('Only finance can change this voucher once finance has approved it (a manager may change the account or the box)')
+      }
     } else if (categoryOrBox && v.status === 'approved') {
       if (!keeper) throw new ForbiddenError('Only finance or a manager can change the category or the box once it is approved')
-    } else if (categoryOrBox && WAIT_CEO.includes(v.status)) {
-      throw new ForbiddenError('Only finance or a manager can change the category or the box once finance has approved it')
     } else {
       throw wrongStatus('VOUCHER_NOT_DRAFT', v, 'only a voucher waiting for finance, or returned, can be edited (finance may change the account until it is paid)')
     }

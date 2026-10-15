@@ -9,7 +9,7 @@
 //   - Module access still applies through the module's own queue route.
 //   - The plugin works registered under /api/v1 (registerApprovalsPlugin).
 //   - Finance wave B types (fixed-asset requests, inter-company transfers, bad
-//     debts, Raast voids, GRNI write-offs, cash requests for the HOD, stock
+//     debts, Raast voids, GRNI write-offs, cash vouchers for finance, stock
 //     differences, on-account clients): per company, CEO-only buttons through
 //     the module routes.
 //
@@ -311,7 +311,9 @@ describe('each role sees only the types it can approve', () => {
     expect(await typesOf('foh_management')).toEqual(['stock_transfer'])
     // The HOD: their team's request, and the kitchen's transfers.
     expect(await typesOf('hodA')).toEqual(['hr_request', 'stock_transfer'])
-    for (const r of ['cashier', 'foh', 'boh', 'kitchen', 'expediter', 'procurement', 'finance', 'marketing', 'brand_manager', 'it']) {
+    // Finance: the cash-voucher finance step (2026-10-15 flow).
+    expect(await typesOf('finance')).toEqual(['cash_request_finance'])
+    for (const r of ['cashier', 'foh', 'boh', 'kitchen', 'expediter', 'procurement', 'marketing', 'brand_manager', 'it']) {
       expect(await typesOf(r), r).toEqual([])
     }
   })
@@ -629,37 +631,45 @@ describe('finance wave B types', () => {
     await prisma.cashVoucher.delete({ where: { id: own.id } })
   })
 
-  it("cash_request_hod: the holder's line manager signs from the inbox; nobody else's request is theirs", async () => {
-    // The line manager is a non-keeper login (a head chef, role boh): the HR reporting line decides.
-    const lead = await mkUser('chefLead', 'boh', [T.A])
+  it("cash_request_finance: finance approves, returns or rejects from the inbox; never its own; another company's never", async () => {
     const holder = await mkUser('chefHolder', 'kitchen', [T.A])
     const stranger = await mkUser('chefOther', 'boh', [T.A])
-    const leadEmp = await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-lead`, fullName: 'Lead chef', userId: lead.id } })
-    await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-holder`, fullName: 'Line cook', userId: holder.id, managerId: leadEmp.id } })
-    await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-other`, fullName: 'Other chef', userId: stranger.id } })
-    const draft = await prisma.cashVoucher.create({
+    const submitted = await prisma.cashVoucher.create({
       data: {
         tenantId: T.A, seq: 3, number: 'CV-00003', voucherDate: new Date(), payeeName: 'Line cook', payeeUserId: holder.id, purpose: 'Market run for herbs',
-        amountCents: 3_000_00, status: 'draft', preparedById: holder.id,
+        category: 'transport', amountCents: 3_000_00, status: 'submitted', preparedById: holder.id, submittedById: holder.id, submittedAt: new Date(),
+      },
+    })
+    const own = await prisma.cashVoucher.create({
+      data: {
+        tenantId: T.A, seq: 4, number: 'CV-00004', voucherDate: new Date(), payeeName: 'Finance', payeeUserId: U['finance']!.id, purpose: 'Own request',
+        category: 'transport', amountCents: 1_000_00, status: 'submitted', preparedById: U['finance']!.id,
       },
     })
     try {
-      const body = (await inbox('chefLead')).json() as Inbox
-      const item = body.items.find((i) => i.type === 'cash_request_hod')!
-      expect(item).toMatchObject({ id: draft.id, tenantId: T.A })
-      const sign = item.actions.find((a) => a.kind === 'approve')!
-      expect(sign).toMatchObject({ method: 'POST', path: `/trustops/cash-vouchers/${draft.id}/sign-hod` })
-      expect(item.actions.find((a) => a.kind === 'reject')).toMatchObject({ path: `/trustops/cash-vouchers/${draft.id}/reject`, input: { field: 'note', required: true } })
-      // Not the stranger's, not the holder's own; company B's CEO never sees it.
-      expect(((await inbox('chefOther')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
-      expect(((await inbox('chefHolder')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
-      expect(((await inbox('adminB')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
-      expect((await act('chefOther', sign)).statusCode).toBe(403)
-      expect((await act('chefLead', sign)).statusCode).toBe(200)
-      expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe('hod_signed')
-      expect(((await inbox('chefLead')).json() as Inbox).items.some((i) => i.id === draft.id)).toBe(false)
+      const body = (await inbox('finance')).json() as Inbox
+      const item = body.items.find((i) => i.id === submitted.id)!
+      expect(item).toMatchObject({ type: 'cash_request_finance', tenantId: T.A })
+      expect(item.actions.map((a) => a.kind)).toEqual(['approve', 'return', 'reject'])
+      const approve = item.actions.find((a) => a.kind === 'approve')!
+      expect(approve).toMatchObject({ method: 'POST', path: `/trustops/cash-vouchers/${submitted.id}/finance-approve` })
+      expect(item.actions.find((a) => a.kind === 'return')).toMatchObject({ path: `/trustops/cash-vouchers/${submitted.id}/return`, input: { field: 'note', required: true } })
+      expect(item.actions.find((a) => a.kind === 'reject')).toMatchObject({ path: `/trustops/cash-vouchers/${submitted.id}/reject`, input: { field: 'note', required: true } })
+      // Never finance's own; not the stranger's, not the holder's; company B never sees it; the CEO's inbox holds only the final step.
+      expect(body.items.some((i) => i.id === own.id)).toBe(false)
+      expect(((await inbox('chefOther')).json() as Inbox).items.some((i) => i.id === submitted.id)).toBe(false)
+      expect(((await inbox('chefHolder')).json() as Inbox).items.some((i) => i.id === submitted.id)).toBe(false)
+      expect(((await inbox('adminB')).json() as Inbox).items.some((i) => i.id === submitted.id)).toBe(false)
+      expect(((await inbox('admin')).json() as Inbox).items.some((i) => i.id === submitted.id)).toBe(false)
+      expect((await act('chefOther', approve)).statusCode).toBe(403)
+      expect((await act('finance', approve)).statusCode).toBe(200)
+      expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: submitted.id } })).status).toBe('finance_approved')
+      expect(((await inbox('finance')).json() as Inbox).items.some((i) => i.id === submitted.id)).toBe(false)
+      // Now it is the CEO's final step.
+      expect(((await inbox('admin')).json() as Inbox).items.find((i) => i.id === submitted.id)?.type).toBe('cash_voucher')
+      void stranger
     } finally {
-      await prisma.cashVoucher.delete({ where: { id: draft.id } })
+      await prisma.cashVoucher.deleteMany({ where: { id: { in: [submitted.id, own.id] } } })
     }
   })
 

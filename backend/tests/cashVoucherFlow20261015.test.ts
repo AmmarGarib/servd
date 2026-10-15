@@ -19,6 +19,7 @@
 //     close check; tie-out; period lock rolls verification back.
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
+import { readFileSync } from 'node:fs'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -115,6 +116,11 @@ async function balanceOf(code: string, tenantId = T.A): Promise<number> {
 const floatOf = async (id: string) => (await prisma.pettyCashBox.findUniqueOrThrow({ where: { id } })).floatCents
 
 beforeAll(async () => {
+  // The migration's SQL-only CHECK (db push in tests/setup.ts does not create it): read from the migration itself.
+  const mig = readFileSync(new URL('../prisma/migrations/20261015140000_petty_cash_expense_vouchers/migration.sql', import.meta.url), 'utf8')
+  const chk = /ALTER TABLE "cash_vouchers" ADD CONSTRAINT "cash_vouchers_discount_chk"[\s\S]*?\);/.exec(mig)![0]
+  const has = await prisma.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM pg_constraint WHERE conname = 'cash_vouchers_discount_chk'`
+  if (has[0]!.n === 0) await prisma.$executeRawUnsafe(chk)
   T.A = (await prisma.tenant.create({ data: { name: 'Flow Co A', slug: `${P}-a` } })).id
   T.B = (await prisma.tenant.create({ data: { name: 'Flow Co B', slug: `${P}-b` } })).id
   await ensureChartOfAccounts(T.A)

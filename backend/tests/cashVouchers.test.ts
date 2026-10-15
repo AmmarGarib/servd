@@ -1,15 +1,16 @@
-// Cash requests (owner 2026-10-13; accountant H3 2026-10-14: "expense at
-// payment; receipts kept for the file").
+// Cash requests (owner 2026-10-13; the 2026-10-15 flow: finance replaces the
+// HOD, the expense is booked when finance verifies the documents — the
+// verification itself is tested in cashVoucherFlow20261015.test.ts).
 //
-//   - Anyone raises in the ACTIVE company (draft, holder = self by default);
-//     the holder, box and brand must be that company's.
-//   - HOD = a cash keeper or the holder's direct reporting manager's login
-//     (HR's rule); anyone else 403 NOT_HOD; the holder 409 SELF_SIGN_HOD.
-//   - The director is the CEO (ADMIN_ONLY) and never the HOD signer.
+//   - Anyone raises in the ACTIVE company (submitted at once, holder = self by
+//     default); the holder, box and brand must be that company's.
+//   - Finance approves (403 NOT_FINANCE for anyone else; never its own: 409
+//     SELF_APPROVE); the HOD step is retired (410 HOD_STEP_RETIRED).
+//   - The final approval is the CEO's (ADMIN_ONLY), never the finance approver.
 //   - POST /:id/pay (no photo) by the box's custodian is the ONLY step that
-//     moves cash: Dr <category 6xxx> / Cr 1011, dueBy set, float lowered —
-//     once, rolled back whole on INSUFFICIENT_FLOAT. The old /disburse and
-//     /photo are gone.
+//     moves cash: Dr 1357 / Cr 1011 (held until the documents are verified),
+//     dueBy set, float lowered — once, rolled back whole on
+//     INSUFFICIENT_FLOAT. The old /disburse and /photo are gone.
 //   - Two companies: B gets 404 on every route of A's request.
 //   - Legacy rows with no holder are 'needs review': keepers only, until
 //     finance names the holder.
@@ -60,6 +61,7 @@ type Req = {
   id: string; tenantId: string; number: string; seq: number; status: string; stage: string; amountCents: number; boxId: string | null
   preparedById: string; payeeUserId: string | null; payeeName: string; category: string | null; hodSignedById: string | null
   directorSignedById: string | null; disbursedById: string | null; pettyCashMovementId: string | null; cashierName: string | null
+  financeApprovedById: string | null; canFinanceApprove: boolean
   dueBy: string | null; companyName: string | null; holderName: string | null; canSignHod: boolean; canApprove: boolean; canPay: boolean
   remainingCents: number; needsReview: boolean
 }
@@ -71,10 +73,10 @@ async function raise(key: string, overrides: Record<string, unknown> = {}): Prom
   expect(r.statusCode, r.body).toBe(201)
   return r.json() as Req
 }
-/** Raised by finA for cookA, HOD-signed by mgrA, approved by ceoA. */
+/** Raised by finA for cookA, approved by finance (finA2) and the CEO (ceoA). */
 async function approved(overrides: Record<string, unknown> = {}): Promise<Req> {
   const v = await raise('finA', { holderUserId: U['cookA']!.id, ...overrides })
-  const s = await call('mgrA', 'POST', `${V}/${v.id}/sign-hod`)
+  const s = await call('finA2', 'POST', `${V}/${v.id}/finance-approve`)
   expect(s.statusCode, s.body).toBe(200)
   const r = await call('ceoA', 'POST', `${V}/${v.id}/approve`)
   expect(r.statusCode, r.body).toBe(200)
@@ -99,6 +101,7 @@ beforeAll(async () => {
   await mkUser('ceoA2', 'admin', [T.A])
   await mkUser('ceoB', 'admin', [T.B])
   await mkUser('finA', 'finance', [T.A])
+  await mkUser('finA2', 'finance', [T.A])
   await mkUser('finB', 'finance', [T.B])
   await mkUser('mgrA', 'management', [T.A])
   await mkUser('cashA', 'cashier', [T.A])
@@ -146,11 +149,11 @@ afterAll(async () => {
 // ─── Raise ────────────────────────────────────────────────────────────────────
 
 describe('anyone raises a request in the active company', () => {
-  it('a cashier and a cook raise: draft, holder = self, numbered per company, category stored, no cash moves', async () => {
+  it('a cashier and a cook raise: submitted at once, holder = self, numbered per company, category stored, no cash moves', async () => {
     const before = await floatOf(box['A']!)
     const a1 = await raise('cookA', { conceptId: C.A, department: 'Kitchen' })
     expect(a1).toMatchObject({
-      tenantId: T.A, status: 'draft', stage: 'draft', preparedById: U['cookA']!.id, payeeUserId: U['cookA']!.id,
+      tenantId: T.A, status: 'submitted', stage: 'waiting_finance', preparedById: U['cookA']!.id, payeeUserId: U['cookA']!.id,
       payeeName: `${P} cookA`, holderName: `${P} cookA`, category: 'transport', companyName: 'Voucher Co A', boxId: null, pettyCashMovementId: null,
     })
     expect(a1.number).toBe('CV-00001')
@@ -200,49 +203,48 @@ describe('anyone raises a request in the active company', () => {
   })
 })
 
-// ─── HOD ──────────────────────────────────────────────────────────────────────
+// ─── Finance ──────────────────────────────────────────────────────────────────
 
-describe("the HOD is HR's reporting manager (or a cash keeper)", () => {
-  it('an unrelated staff member → 403 NOT_HOD; the holder → 409 SELF_SIGN_HOD; the direct manager signs', async () => {
+describe('finance approves (the HOD step is retired)', () => {
+  it('a non-finance login → 403 NOT_FINANCE; the raiser / holder → 409 SELF_APPROVE; finance approves', async () => {
     const v = await raise('cookA')
-    // Waiting for my signature: the direct manager sees it, an unrelated login does not.
-    const hodList = (await call('hodA', 'GET', `${V}?view=hod`)).json() as { items: Req[] }
-    expect(hodList.items.map((x) => x.id)).toContain(v.id)
-    expect(hodList.items.find((x) => x.id === v.id)!.canSignHod).toBe(true)
-    expect(((await call('waiterA', 'GET', `${V}?view=hod`)).json() as { items: Req[] }).items).toHaveLength(0)
+    // Waiting for finance: finance sees it in its view, a stranger does not.
+    const finList = (await call('finA', 'GET', `${V}?view=finance`)).json() as { items: Req[] }
+    expect(finList.items.find((x) => x.id === v.id)!.canFinanceApprove).toBe(true)
+    expect(((await call('waiterA', 'GET', `${V}?view=finance`)).json() as { items: Req[] }).items).toHaveLength(0)
     expect((await call('waiterA', 'GET', `${V}/${v.id}`)).statusCode).toBe(403)
 
-    const unrelated = await call('waiterA', 'POST', `${V}/${v.id}/sign-hod`)
-    expect(unrelated.statusCode).toBe(403)
-    expect(unrelated.json().error.code).toBe('NOT_HOD')
-    const self = await call('cookA', 'POST', `${V}/${v.id}/sign-hod`)
-    expect(self.statusCode).toBe(409)
-    expect(self.json().error.code).toBe('SELF_SIGN_HOD')
-    const ok = await call('hodA', 'POST', `${V}/${v.id}/sign-hod`)
+    for (const who of ['waiterA', 'hodA', 'mgrA', 'cashA']) {
+      const r = await call(who, 'POST', `${V}/${v.id}/finance-approve`)
+      expect(r.statusCode, who).toBe(403)
+      expect(r.json().error.code, who).toBe('NOT_FINANCE')
+    }
+    expect((await call('hodA', 'POST', `${V}/${v.id}/sign-hod`)).json().error.code).toBe('HOD_STEP_RETIRED')
+    expect((await call('finNoBooks', 'POST', `${V}/${v.id}/finance-approve`)).statusCode).toBe(403)
+    const own = await raise('finA', { holderUserId: U['cookA']!.id })
+    expect((await call('finA', 'POST', `${V}/${own.id}/finance-approve`)).json().error.code).toBe('SELF_APPROVE')
+    const held = await raise('finA2', { holderUserId: U['finA']!.id })
+    expect((await call('finA', 'POST', `${V}/${held.id}/finance-approve`)).json().error.code).toBe('SELF_APPROVE')
+
+    const ok = await call('finA', 'POST', `${V}/${v.id}/finance-approve`)
     expect(ok.statusCode, ok.body).toBe(200)
-    expect(ok.json()).toMatchObject({ status: 'hod_signed', hodSignedById: U['hodA']!.id })
-    // Signed: the draft can no longer be edited by its raiser.
+    expect(ok.json()).toMatchObject({ status: 'finance_approved', stage: 'waiting_ceo', financeApprovedById: U['finA']!.id })
+    // Approved by finance: the raiser can no longer edit it.
     const late = await call('cookA', 'PATCH', `${V}/${v.id}`, { amountCents: 1 })
     expect(late.statusCode).toBe(409)
     expect(late.json().error.code).toBe('VOUCHER_NOT_DRAFT')
+    expect((await call('cookA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })).statusCode).toBe(403)
   })
 
-  it('a cash keeper may sign as HOD; a keeper who holds the cash may not', async () => {
-    const v = await raise('waiterA')
-    expect((await call('mgrA', 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
-    const own = await raise('finA')
-    expect((await call('finA', 'POST', `${V}/${own.id}/sign-hod`)).json().error.code).toBe('SELF_SIGN_HOD')
-  })
-
-  it('the HOD can reject a draft with a note; the director a HOD-signed one; nobody else', async () => {
+  it('finance can reject a submitted voucher with a note; the CEO a finance-approved one; nobody else', async () => {
     const d = await raise('cookA')
     expect((await call('waiterA', 'POST', `${V}/${d.id}/reject`, { note: 'not mine' })).statusCode).toBe(403)
-    const r = await call('hodA', 'POST', `${V}/${d.id}/reject`, { note: 'Use the market float' })
+    const r = await call('finA', 'POST', `${V}/${d.id}/reject`, { note: 'Use the market float' })
     expect(r.statusCode).toBe(200)
     expect(r.json()).toMatchObject({ status: 'rejected', rejectNote: 'Use the market float' })
     const s = await raise('cookA')
-    expect((await call('hodA', 'POST', `${V}/${s.id}/sign-hod`)).statusCode).toBe(200)
-    expect((await call('hodA', 'POST', `${V}/${s.id}/reject`, { note: 'changed mind' })).statusCode).toBe(403)
+    expect((await call('finA', 'POST', `${V}/${s.id}/finance-approve`)).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `${V}/${s.id}/reject`, { note: 'changed mind' })).statusCode).toBe(403)
     expect((await call('ceoA', 'POST', `${V}/${s.id}/reject`, { note: 'no' })).statusCode).toBe(400)
     expect((await call('ceoA', 'POST', `${V}/${s.id}/reject`, { note: 'Not this month' })).json().status).toBe('rejected')
     expect((await call('ceoA', 'POST', `${V}/${s.id}/approve`)).statusCode).toBe(409)
@@ -251,11 +253,11 @@ describe("the HOD is HR's reporting manager (or a cash keeper)", () => {
 
 // ─── Director ─────────────────────────────────────────────────────────────────
 
-describe('the director is the CEO, never the HOD who signed', () => {
-  it('finance / a manager → 403; HOD signer → 409 SAME_SIGNER; another CEO approves', async () => {
-    const v = await raise('ceoA', { holderUserId: U['cookA']!.id })
-    expect((await call('ceoA', 'POST', `${V}/${v.id}/approve`)).json().error.code).toBe('VOUCHER_NOT_HOD_SIGNED')
-    expect((await call('ceoA', 'POST', `${V}/${v.id}/sign-hod`)).statusCode).toBe(200)
+describe('the final approval is the CEO\'s, never the finance approver\'s', () => {
+  it('finance / a manager → 403; the finance approver → 409 SAME_SIGNER; another CEO approves', async () => {
+    const v = await raise('mgrA', { holderUserId: U['cookA']!.id })
+    expect((await call('ceoA', 'POST', `${V}/${v.id}/approve`)).json().error.code).toBe('VOUCHER_NOT_FINANCE_APPROVED')
+    expect((await call('ceoA', 'POST', `${V}/${v.id}/finance-approve`)).statusCode).toBe(200)
     expect((await call('finA', 'POST', `${V}/${v.id}/approve`)).statusCode).toBe(403)
     expect((await call('mgrA', 'POST', `${V}/${v.id}/approve`)).statusCode).toBe(403)
     const same = await call('ceoA', 'POST', `${V}/${v.id}/approve`)
@@ -263,14 +265,14 @@ describe('the director is the CEO, never the HOD who signed', () => {
     expect(same.json().error.code).toBe('SAME_SIGNER')
     const other = await call('ceoA2', 'POST', `${V}/${v.id}/approve`)
     expect(other.statusCode).toBe(200)
-    expect(other.json()).toMatchObject({ status: 'approved', hodSignedById: U['ceoA']!.id, directorSignedById: U['ceoA2']!.id })
+    expect(other.json()).toMatchObject({ status: 'approved', financeApprovedById: U['ceoA']!.id, directorSignedById: U['ceoA2']!.id })
   })
 })
 
 // ─── Pay ──────────────────────────────────────────────────────────────────────
 
-describe('the custodian pays — no photo — and the money is expensed at once (H3)', () => {
-  it('pay posts Dr <category> / Cr 1011, sets dueBy and lowers the float; only this moves cash', async () => {
+describe('the custodian pays — no photo — and the money waits on 1357 for its documents', () => {
+  it('pay posts Dr 1357 / Cr 1011, sets dueBy and lowers the float; only this moves cash', async () => {
     const boxId = box['A']!
     const start = await floatOf(boxId)
     const v = await approved({ amountCents: 25_000, purpose: 'Diesel for the generator', categoryKey: 'transport', conceptId: C.A })
@@ -285,7 +287,7 @@ describe('the custodian pays — no photo — and the money is expensed at once 
     const paid = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId })
     expect(paid.statusCode, paid.body).toBe(200)
     const body = paid.json() as { voucher: Req; movement: { id: string; amountCents: number; journalEntryId: string | null }; newFloatCents: number }
-    expect(body.voucher).toMatchObject({ status: 'disbursed', stage: 'paid', boxId, disbursedById: U['cashA']!.id, cashierName: `${P} cashA`, remainingCents: 25_000 })
+    expect(body.voucher).toMatchObject({ status: 'disbursed', stage: 'awaiting_docs', boxId, disbursedById: U['cashA']!.id, cashierName: `${P} cashA`, remainingCents: 25_000 })
     expect(body.voucher.pettyCashMovementId).toBe(body.movement.id)
     const due = new Date(body.voucher.dueBy!).getTime() - Date.now()
     expect(due).toBeGreaterThan(29 * 86_400_000)
@@ -294,12 +296,12 @@ describe('the custodian pays — no photo — and the money is expensed at once 
     expect(body.movement.journalEntryId).toBeTruthy()
     expect(body.newFloatCents).toBe(start - 25_000)
     expect(await floatOf(boxId)).toBe(start - 25_000)
-    // Expensed at once: Dr 6140 Travel / Cr 1011 — never 1355.
-    expect(await linesOf(`pettycash.spend:${body.movement.id}`, T.A)).toEqual([['1011', 'credit', 25_000], ['6140', 'debit', 25_000]])
+    // Held: Dr 1357 / Cr 1011 — no expense until finance verifies the documents, never 1355.
+    expect(await linesOf(`pettycash.spend:${body.movement.id}`, T.A)).toEqual([['1011', 'credit', 25_000], ['1357', 'debit', 25_000]])
     const m = await prisma.pettyCashMovement.findUniqueOrThrow({ where: { id: body.movement.id }, include: { lines: true } })
-    expect(m).toMatchObject({ type: 'spend', amountCents: -25_000, cashVoucherId: v.id, conceptId: C.A, createdById: U['cashA']!.id, approvedById: U['ceoA']!.id })
-    expect(m.lines).toHaveLength(1)
-    expect(m.lines[0]).toMatchObject({ kind: 'expense', categoryKey: 'transport', accountCode: '6140', amountCents: 25_000 })
+    expect(m).toMatchObject({ type: 'spend', amountCents: -25_000, cashVoucherId: v.id, conceptId: C.A, createdById: U['cashA']!.id, approvedById: U['ceoA']!.id, accountCode: '1357' })
+    expect(m.lines).toHaveLength(0)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).expenseOnVerify).toBe(true)
     expect(await prisma.journalEntry.count({ where: { tenantId: T.A, lines: { some: { account: { code: '1355' } } } } })).toBe(0)
 
     // Paying twice is refused, and nothing moves.
@@ -309,16 +311,17 @@ describe('the custodian pays — no photo — and the money is expensed at once 
     expect(await floatOf(boxId)).toBe(start - 25_000)
 
     const steps = await prisma.auditLog.findMany({ where: { entity: 'CashVoucher', entityId: v.id }, select: { action: true, tenantId: true } })
-    expect(steps.map((s) => s.action).sort()).toEqual(['cash_voucher.approve', 'cash_voucher.create', 'cash_voucher.pay', 'cash_voucher.sign_hod'])
+    expect(steps.map((s) => s.action).sort()).toEqual(['cash_voucher.approve', 'cash_voucher.create', 'cash_voucher.finance_approve', 'cash_voucher.pay'])
     expect(steps.every((s) => s.tenantId === T.A)).toBe(true)
   })
 
-  it("a custodian with ONE open box pays from it by default; a keeper's explicit category code is booked", async () => {
+  it("a custodian with ONE open box pays from it by default; a keeper's explicit category code is kept for verification", async () => {
     const v = await approved({ amountCents: 3_000, categoryKey: null, accountCode: '6170' })
     const r = await call('cashA3', 'POST', `${V}/${v.id}/pay`, {})
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().voucher.boxId).toBe(box['A_one'])
-    expect(await linesOf(`pettycash.spend:${r.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 3_000], ['6170', 'debit', 3_000]])
+    expect(r.json().voucher.category).toBe('6170')
+    expect(await linesOf(`pettycash.spend:${r.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 3_000], ['1357', 'debit', 3_000]])
   })
 
   it('two pays at the same moment pay once', async () => {
@@ -381,7 +384,7 @@ describe('the custodian pays — no photo — and the money is expensed at once 
 // ─── Category until paid ──────────────────────────────────────────────────────
 
 describe('finance may change the category until the request is paid', () => {
-  it('keeper PATCH after HOD / director; the raiser cannot; after pay 409', async () => {
+  it('keeper PATCH after finance / the CEO; the raiser cannot; after pay 409', async () => {
     const v = await approved({ amountCents: 2_000, categoryKey: 'transport' })
     expect((await call('finA', 'PATCH', `${V}/${v.id}`, { amountCents: 5 })).json().error.code).toBe('VOUCHER_NOT_DRAFT')
     expect((await call('cookA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })).statusCode).toBe(403)
@@ -389,7 +392,8 @@ describe('finance may change the category until the request is paid', () => {
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().category).toBe('office')
     const paid = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
-    expect(await linesOf(`pettycash.spend:${paid.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 2_000], ['6170', 'debit', 2_000]])
+    expect(paid.json().voucher.category).toBe('office')
+    expect(await linesOf(`pettycash.spend:${paid.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 2_000], ['1357', 'debit', 2_000]])
     expect((await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'transport' })).statusCode).toBe(409)
   })
 
@@ -480,9 +484,9 @@ describe("company B never reaches company A's request", () => {
     const page2 = (await call('finA', 'GET', `${V}?limit=2&cursor=${page1.nextCursor}`)).json() as { items: Req[] }
     expect(page2.items.length).toBeGreaterThan(0)
     for (const v of page2.items) expect(page1.items.map((x) => x.id)).not.toContain(v.id)
-    const drafts = (await call('finA', 'GET', `${V}?status=draft`)).json() as { items: Req[] }
+    const drafts = (await call('finA', 'GET', `${V}?status=submitted`)).json() as { items: Req[] }
     expect(drafts.items.length).toBeGreaterThan(0)
-    expect(drafts.items.every((v) => v.status === 'draft')).toBe(true)
+    expect(drafts.items.every((v) => v.status === 'submitted')).toBe(true)
     expect(JSON.stringify(drafts)).not.toContain('"data"')
     const bVoucher = await prisma.cashVoucher.findFirstOrThrow({ where: { tenantId: T.B } })
     expect((await call('finA', 'GET', `${V}?cursor=${bVoucher.id}`)).statusCode).toBe(400)
@@ -494,7 +498,7 @@ describe("company B never reaches company A's request", () => {
 // ─── Cancel ───────────────────────────────────────────────────────────────────
 
 describe('cancel', () => {
-  it('the raiser cancels a draft; a keeper until it is paid; never after payment', async () => {
+  it('the raiser cancels a submitted voucher; a keeper until it is paid; never after payment', async () => {
     const d = await raise('cookA')
     expect((await call('cookA', 'POST', `${V}/${d.id}/cancel`, { note: 'x' })).statusCode).toBe(400)
     expect((await call('waiterA', 'POST', `${V}/${d.id}/cancel`, { note: 'not mine' })).statusCode).toBe(403)
@@ -565,12 +569,12 @@ type Inbox = {
   items: Array<{ type: string; id: string; tenantId: string | null; actions: Array<{ kind: string; method: string; path: string; body: Record<string, unknown>; input?: { field: string; required: boolean }; disabledReason?: string }> }>
 }
 
-describe('approvals inbox: the request waiting for the director', () => {
-  it("lists company A's HOD-signed request for A's CEO only; Approve calls the request route", async () => {
+describe('approvals inbox: the request waiting for the CEO', () => {
+  it("lists company A's finance-approved request for A's CEO only; Approve calls the request route", async () => {
     const a = await raise('cookA', { purpose: 'Inbox item A' })
-    expect((await call('hodA', 'POST', `${V}/${a.id}/sign-hod`)).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `${V}/${a.id}/finance-approve`)).statusCode).toBe(200)
     const b = await raise('cookB', { purpose: 'Inbox item B' })
-    expect((await call('finB', 'POST', `${V}/${b.id}/sign-hod`)).statusCode).toBe(200)
+    expect((await call('finB', 'POST', `${V}/${b.id}/finance-approve`)).statusCode).toBe(200)
 
     const inboxA = (await call('ceoA', 'GET', '/approvals')).json() as Inbox
     const itemsA = inboxA.items.filter((i) => i.type === 'cash_voucher')
