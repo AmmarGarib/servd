@@ -251,6 +251,24 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
     const gm = await call('gmA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
     expect(gm.statusCode, gm.body).toBe(200)
     expect(gm.json().status).toBe('approved')
+    // §7.8: a plain member decision writes approval.decide too, in A.
+    const a = await prisma.auditLog.findFirst({ where: { entityId: id, action: 'approval.decide', userId: U.gmA!.id } })
+    expect(a?.tenantId).toBe(A)
+    expect(a?.metadata).toMatchObject({ type: 'hr_request', decision: 'approve', via: 'role', path: 'member' })
+  })
+
+  it('an unstamped request raised by a head-office member: a member decision still writes approval.decide in its company', async () => {
+    // hoMgr is employed by HO; his own request is raised in HO (unstamped).
+    const r = await call('hoMgr', 'POST', '/records/salary_revision', { payload: revision(await prisma.hrEmployee.findFirstOrThrow({ where: { userId: U.hoMgr!.id } }).then((e) => e.id)) })
+    expect(r.statusCode, r.body).toBe(201)
+    const id = r.json().id as string
+    const rec = await prisma.hrRecord.findUniqueOrThrow({ where: { id } })
+    expect(rec.viaHeadOfficeId ?? null).toBeNull()
+    const ok = await call('hoHr2', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const a = await prisma.auditLog.findFirst({ where: { entityId: id, action: 'approval.decide', userId: U.hoHr2!.id } })
+    expect(a?.tenantId).toBe(rec.tenantId)
+    expect(a?.metadata).toMatchObject({ via: 'role', path: 'member' })
   })
 
   it('GET /hr/approvals agrees: reach lists non-final HR steps, a delegate lists final steps', async () => {
@@ -344,6 +362,10 @@ describe('payroll through head office', () => {
     expect(await prisma.hrPayslip.count({ where: { runId: run.id, employee: { userId: U.gmA!.id } } })).toBe(1)
     const ok = await call('gmA', 'POST', `/payroll/runs/${run.id}/approve`)
     expect(ok.statusCode, ok.body).toBe(200)
+    // §7.8: every payroll decision writes approval.decide, in the run's company.
+    const a = await prisma.auditLog.findFirst({ where: { entityId: run.id, action: 'approval.decide', userId: U.gmA!.id } })
+    expect(a?.tenantId).toBe(A)
+    expect(a?.metadata).toMatchObject({ type: 'payroll_run', via: 'role' })
   })
 
   it("the head office's own payroll goes to the CEO, and posts to the head office's books", async () => {

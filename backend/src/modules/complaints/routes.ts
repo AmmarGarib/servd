@@ -296,10 +296,15 @@ export async function complaintRoutes(fastify: FastifyInstance) {
       }
       const closing = body.status === 'closed' && complaint.status !== 'closed'
       const resolution = body.resolution?.trim() || (closing ? 'Block kept after review' : undefined)
-      let updated
+      // Conditional on the status we read: a lift (/crm/bans/:id/lift →
+      // resolveOpenAppealsTx) or another reviewer may have decided the appeal
+      // since the read. Then nothing is written, no audit and no notice — the
+      // customer is never told "the block stays" for a block just lifted, and
+      // two concurrent declines send one notice.
+      let hit
       try {
-        updated = await prisma.orderComplaint.update({
-          where: { id: complaint.id },
+        hit = await prisma.orderComplaint.updateMany({
+          where: { id: complaint.id, status: complaint.status },
           data: {
             ...(body.status && { status: body.status }),
             ...(body.priority && { priority: body.priority }),
@@ -313,6 +318,10 @@ export async function complaintRoutes(fastify: FastifyInstance) {
         }
         throw err
       }
+      if (hit.count === 0) {
+        throw new AppError('APPEAL_ALREADY_DECIDED', 'This appeal has been decided. The customer can send a new one.', 409)
+      }
+      const updated = await prisma.orderComplaint.findUniqueOrThrow({ where: { id: complaint.id } })
 
       if (closing) {
         await audit({

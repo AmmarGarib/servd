@@ -1108,8 +1108,10 @@ async function transitionOrder(
      * Cancel / reject only: run inside the cancel transaction, straight after
      * the pre-bills are cancelled, and only when this call's claim changed the
      * status (the order lock is held). A throw rolls the whole cancel back.
+     * `ctx.fromStatus` is the status the claim was made FROM (what the order
+     * really was when it was cancelled) — guards read it, never an earlier read.
      */
-    inCancelTx?: (tx: Prisma.TransactionClient) => Promise<void>
+    inCancelTx?: (tx: Prisma.TransactionClient, ctx: { fromStatus: OrderStatus }) => Promise<void>
   } = {},
 ) {
   const order = await prisma.order.findFirst({ where: { id, deletedAt: null } })
@@ -1178,7 +1180,7 @@ async function transitionOrder(
       if (r.count > 0) {
         const { markPreBillsCancelledTx } = await import('../prebills/service.js')
         await markPreBillsCancelledTx(tx, id, opts.approverId ?? null, opts.cancellationReason ?? null, now)
-        if (opts.inCancelTx) await opts.inCancelTx(tx)
+        if (opts.inCancelTx) await opts.inCancelTx(tx, { fromStatus: order.status })
       }
       return r
     }, { maxWait: 10_000, timeout: 15_000 })
@@ -1453,7 +1455,7 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
   const returned = input.returned ?? null
   // Read under the order lock, inside the cancel transaction, so the guard
   // and the returned-food stamps act on the state the claim was made on.
-  const inCancelTx = async (tx: Prisma.TransactionClient): Promise<void> => {
+  const inCancelTx = async (tx: Prisma.TransactionClient, ctx: { fromStatus: OrderStatus }): Promise<void> => {
     const o = await tx.order.findUniqueOrThrow({
       where: { id },
       select: { fulfilmentType: true, riderId: true, deliveredAt: true, pickedUpAt: true, riderAssignedAt: true },
@@ -1464,7 +1466,7 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
     // system auto-cancel (no actor) and an intake reject are exempt. OFF:
     // today's behaviour.
     if (!returned && input.actor && status !== 'rejected'
-      && deliveryOutWithRider({ ...o, status: before.status })
+      && deliveryOutWithRider({ ...o, status: ctx.fromStatus })
       && await codeOnlyDelivery(tx, before.concept.tenantId)) {
       throw new AppError('USE_EMERGENCY_OVERRIDE', USE_EMERGENCY_OVERRIDE_MESSAGE, 409)
     }

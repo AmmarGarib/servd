@@ -17,7 +17,9 @@
 //                raises posting_failed in the drop's company; the bank is the
 //                one resolver's (unlinked → 422, two banks unnamed → 422).
 //   COD          cod-due carries rider / age / overdue; by-tender keeps COD
-//                not in a drawer out of Cash. (POST /orders/:id/cod-unpaid is
+//                not in a drawer out of Cash: with the rider, or booked as
+//                owed by the rider (codRiderDebtAt, H5 — the legacy
+//                'cod_unpaid' strike is no longer read). (POST /orders/:id/cod-unpaid is
 //                gone — 2026-10-15: COD a rider collected and never paid in is
 //                the rider's debt, see codRiderDebt.test.ts; food that came
 //                back is foodReturned.test.ts.)
@@ -384,25 +386,24 @@ describe('cash on delivery', () => {
     expect(await prisma.customerStrike.count({ where: { sourceType: 'order', sourceId: cod } })).toBe(0)
   })
 
-  it('by-tender keeps COD not in a drawer out of Cash: with the rider, or reported not collected', async () => {
-    // A legacy 'cod_unpaid' report (the removed route's strike, still read by
-    // older rows) on the PKR 6,000 COD, plus a paid COD in a drawer.
-    const order = await prisma.order.findUniqueOrThrow({ where: { id: cod }, select: { customerId: true } })
-    await prisma.customerStrike.create({
-      data: { customerId: order.customerId!, kind: 'cod_unpaid', sourceType: 'order', sourceId: cod, severity: 2, tenantId: A.tenantId },
-    })
+  it('by-tender keeps COD not in a drawer out of Cash: with the rider, or owed by the rider', async () => {
+    // The PKR 6,000 COD is a rider COD finance booked as owed by the rider
+    // (H5: codRiderDebtAt on its pending cash row), plus a paid COD in a drawer.
+    await prisma.order.update({ where: { id: cod }, data: { fulfilmentType: 'delivery', riderId: rider } })
+    await prisma.payment.updateMany({ where: { orderId: cod, method: 'cash' }, data: { codRiderDebtAt: new Date() } })
     await codOrder(A, 10_000, { pay: 'paid' })
     await codOrder(A, 10_000, { source: 'pos' })
     await codOrder(A, 10_000, { status: 'received' })
     const r = await call(finA, 'GET', `/reports/by-tender?dateFrom=${DAY}&dateTo=${DAY}`)
     expect(r.statusCode, r.body).toBe(200)
     const by = new Map((r.json().tenders as Array<{ tender: string; amountCents: number; label: string }>).map((t) => [t.tender, t]))
-    expect(by.get('cod_not_collected')).toMatchObject({ amountCents: 600_000, label: 'Cash on delivery – not collected' })
+    expect(by.get('cod_rider_owes')).toMatchObject({ amountCents: 600_000, label: 'Cash on delivery – owed by rider' })
+    expect(by.get('cod_not_collected')).toBeUndefined()
     // fresh (40,000) + the received order is not sold; the till order's
     // pending row is not money; the paid COD (10,000) is drawer cash.
     expect(by.get('cod_with_rider')).toMatchObject({ amountCents: 40_000 })
     expect(by.get('cash')).toMatchObject({ amountCents: 10_000 })
-    expect(r.json().cod).toEqual({ paidInCents: 10_000, paidInCount: 1, withRiderCents: 40_000, withRiderCount: 1, notCollectedCents: 600_000, notCollectedCount: 1 })
+    expect(r.json().cod).toEqual({ paidInCents: 10_000, paidInCount: 1, withRiderCents: 40_000, withRiderCount: 1, riderOwesCents: 600_000, riderOwesCount: 1, notCollectedCents: 600_000, notCollectedCount: 1 })
     const total = (r.json().tenders as Array<{ amountCents: number }>).reduce((s, t) => s + t.amountCents, 0)
     expect(r.json().totalCents).toBe(total)
   })
