@@ -442,7 +442,7 @@ describe('shared costs — posted allocations and one head-office line', () => {
     expect(pnl.brands.find((b) => b.conceptId === conceptA)!.opexCents).toBe(600_000)
     expect(pnl.brands.find((b) => b.conceptId === conceptA2)!.opexCents).toBe(400_000)
     // Software had no rule: one head-office line, not spread.
-    expect(pnl.headOffice.name).toBe('Head office (unallocated)')
+    expect(pnl.headOffice.name).toBe('Company overhead (unallocated)')
     expect(pnl.headOffice.opexCents).toBe(200_000)
     expect(pnl.company.opexCents).toBe(1_200_000)
   })

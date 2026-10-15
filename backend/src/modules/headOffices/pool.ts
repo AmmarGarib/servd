@@ -103,9 +103,16 @@ export async function computePool(db: Db, hoId: string, period: string): Promise
       journalEntry: {
         tenantId: hoId,
         entryDate: { gte: from, lte: to },
-        NOT: [
-          { reference: { startsWith: HO_RECHARGE_REF_PREFIX } },
-          ...(excludedRefs.length > 0 ? [{ reference: { in: excludedRefs } }] : []),
+        // A NULL reference (rows from before every posting carried its key) counts;
+        // spelled out because NOT over a nullable column would drop it.
+        OR: [
+          { reference: null },
+          {
+            AND: [
+              { NOT: { reference: { startsWith: HO_RECHARGE_REF_PREFIX } } },
+              ...(excludedRefs.length > 0 ? [{ NOT: { reference: { in: excludedRefs } } }] : []),
+            ],
+          },
         ],
       },
     },

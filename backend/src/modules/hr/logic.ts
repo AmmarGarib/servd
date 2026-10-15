@@ -7,6 +7,12 @@
 // constants: they change, they differ between provinces, and the HR team is
 // the authority on them. Defaults are starting points, each marked where it
 // needs confirming.
+//
+// decideRight (head office, D3) is the one exception: it reads hand-overs and
+// head-office links, through lazy imports, so nothing here loads the database
+// unless it is called.
+
+import type { FastifyRequest } from 'fastify'
 
 export interface HrSettings {
   /** Days a monthly salary is divided by for daily rate, absence and OT. */
@@ -744,6 +750,9 @@ export interface ApprovalEntry {
   at: string
   note?: string
   override?: boolean
+  /** Head office (D3): decided through reach or an HR hand-over (absent = a member's own right). */
+  via?: 'reach' | 'delegation'
+  delegationId?: string
 }
 
 const HR_APPROVERS = ['hr', 'admin', 'owner', 'management']
@@ -779,6 +788,159 @@ export function canActOnStep(
   if (role === 'management' && MGMT_APPROVERS.includes(actor.role)) return { ok: true, override: false }
   if (actor.role === 'admin') return { ok: true, override: true }
   return { ok: false, override: false, reason: `This step needs ${role === 'hod' ? 'the reporting manager' : role === 'hr' ? 'HR' : 'management'}` }
+}
+
+// ─── Head office: who may decide a step (D3, spec §7.4.3 + A20) ─────────────
+//
+// decideRight wraps canActOnStep with the head-office rules. With no head
+// office and no hand-over (today's live state) it IS canActOnStep for a member
+// of the record's company, and "not found" for anyone else — exactly the old
+// guard (the record was looked up in the caller's member companies).
+//
+//   member of rec.tenantId   today's rules. On the FINAL step of a record that
+//                            came through a head office (A3) a non-CEO member
+//                            needs a live HR hand-over instead (HODs submit to
+//                            the CEO, not to a company GM).
+//   reach-only (HO staff)    may APPROVE a non-final 'hr' step (HR review work,
+//                            forwarding it). A reject at any step, or any
+//                            action on the final step, needs a live HR
+//                            hand-over covering rec.tenantId (A20); otherwise
+//                            403 FINAL_STEP_NEEDS_HANDOVER.
+//   anyone else              404 (the id is not confirmed).
+//
+// Separation of duties is canActOnStep's: never your own request, never two
+// steps of one request — a hand-over does not lift it. On success the request's
+// RLS context is widened to the record's company. The head-office helpers are
+// imported lazily so this file stays free of database imports.
+
+export interface DecideActor {
+  id: string
+  role: string
+  memberTenantIds?: string[]
+  reachTenantIds?: string[]
+}
+
+export type DecideRight =
+  | { ok: true; override: boolean; via: 'member' | 'reach' | 'delegation'; delegationId?: string }
+  | { ok: false; status: 403 | 404; code: string; message: string }
+
+/** The facts of an HR record decideRight reads. */
+export interface DecideRecord {
+  id: string
+  tenantId: string
+  createdById: string | null
+  createdAt: Date
+  viaHeadOfficeId?: string | null
+}
+
+/**
+ * May the caller decide this step of this record? `decision` null = "would
+ * they approve it" (the waiting-on-me list). `through` = the head offices the
+ * record came through (approvalRights.throughHeadOfficeBatch), when the caller
+ * already has it; otherwise it is read when needed (final steps only).
+ */
+export async function decideRight(
+  req: FastifyRequest,
+  rec: DecideRecord,
+  step: { role: 'hod' | 'hr' | 'management' },
+  isLast: boolean,
+  ctx: {
+    subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] }
+    decision: 'approved' | 'rejected' | null
+    through?: string[]
+  },
+): Promise<DecideRight> {
+  const actor: DecideActor | undefined = req.staffUser
+  const notFound: DecideRight = { ok: false, status: 404, code: 'NOT_FOUND', message: 'HR record not found' }
+  if (!actor) return notFound
+  const isAdmin = actor.role === 'admin'
+  const member = (actor.memberTenantIds ?? []).includes(rec.tenantId)
+  const reachOnly = !member && (actor.reachTenantIds ?? []).includes(rec.tenantId)
+  const s = ctx.subject
+  const own = !!((s.employeeUserId && s.employeeUserId === actor.id) || (s.createdById && s.createdById === actor.id))
+  const again = (s.priorApproverIds ?? []).includes(actor.id)
+  const who = canActOnStep(step.role, actor, s)
+  const rejecting = ctx.decision === 'rejected'
+
+  const { throughHeadOfficeIds, delegationCovering } = await import('../../lib/approvalRights.js')
+  const { widenRls } = await import('../../lib/headOffice.js')
+  let through = ctx.through
+  const throughIds = async () => (through ??= await throughHeadOfficeIds({
+    tenantId: rec.tenantId, submittedByIds: [rec.createdById], submittedAt: rec.createdAt, viaHeadOfficeId: rec.viaHeadOfficeId ?? null,
+  }))
+  const granted = (g: Extract<DecideRight, { ok: true }>): DecideRight => {
+    widenRls(req, [rec.tenantId])
+    return g
+  }
+  // A live HR hand-over covering the record's company (and, A13, the head
+  // office it came through). Never for the CEO's own login (not a delegate)
+  // and never over separation of duties.
+  const handover = async (): Promise<DecideRight | null> => {
+    if (isAdmin || own || again) return null
+    const d = await delegationCovering(actor.id, 'hr_request', {
+      tenantId: rec.tenantId, touchesTenantIds: [rec.tenantId], throughHeadOfficeIds: await throughIds(),
+    })
+    return d ? granted({ ok: true, override: false, via: 'delegation', delegationId: d.id }) : null
+  }
+
+  if (member) {
+    if (who.ok) {
+      // The through-head-office rule (A3): the final sign-off of an HOD's
+      // submission is the CEO's, or a hand-over's — never a company approver's.
+      if (!isAdmin && isLast && (await throughIds()).length > 0) {
+        return (await handover()) ?? {
+          ok: false, status: 403, code: 'APPROVAL_NOT_YOURS',
+          message: 'This request came through head office — its final sign-off needs the CEO or the HR approver',
+        }
+      }
+      return granted({ ok: true, override: who.override, via: 'member' })
+    }
+    // A member who is also a head-office delegate may still take the final
+    // step (or a rejection) through the hand-over.
+    if ((isLast || rejecting) && !own && !again) {
+      const h = await handover()
+      if (h) return h
+    }
+    return { ok: false, status: 403, code: 'FORBIDDEN', message: who.reason ?? 'You cannot approve this step' }
+  }
+
+  if (reachOnly) {
+    if (own || again) return { ok: false, status: 403, code: 'FORBIDDEN', message: who.reason ?? 'You cannot approve this step' }
+    // A20: forwarding an HR review step is HR's work through head office.
+    if (!rejecting && !isLast && step.role === 'hr' && who.ok && !who.override) {
+      return granted({ ok: true, override: false, via: 'reach' })
+    }
+    if (isLast || rejecting) {
+      const h = await handover()
+      if (h) return h
+    }
+    return {
+      ok: false, status: 403, code: 'FINAL_STEP_NEEDS_HANDOVER',
+      message: "Through head office you can forward HR's review step only — the final sign-off or a rejection needs the CEO or an HR hand-over",
+    }
+  }
+
+  // Not a member and not reached: only a hand-over could reach it (a delegate
+  // is always a head-office member, so this is defensive).
+  if (isLast || rejecting) {
+    const h = await handover()
+    if (h) return h
+  }
+  return notFound
+}
+
+/**
+ * Can the caller see this company's HR records for a decision at all — a
+ * member, a reach-only head-office member, or the delegate of a live HR
+ * hand-over covering it? Anything else is 404 before any other check.
+ */
+export async function mayReachForDecision(req: FastifyRequest, tenantId: string): Promise<boolean> {
+  const actor: DecideActor | undefined = req.staffUser
+  if (!actor) return false
+  if ((actor.memberTenantIds ?? []).includes(tenantId)) return true
+  if ((actor.reachTenantIds ?? []).includes(tenantId)) return true
+  const { delegatedTenantsByType } = await import('../../lib/approvalRights.js')
+  return !!(await delegatedTenantsByType(actor.id)).get('hr_request')?.has(tenantId)
 }
 
 // ─── Headcount ──────────────────────────────────────────────────────────────

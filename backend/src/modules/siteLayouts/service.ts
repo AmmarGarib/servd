@@ -10,6 +10,7 @@ import type { FastifyRequest } from 'fastify'
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import { assertHoMayPropose, isReachOnly } from '../../lib/headOffice.js'
 import { audit } from '../../lib/audit.js'
 import { fontFamiliesUsed, brandKitSchema, kitLibraryFontIds, cleanFontFamily, type BrandKit } from './schemas.js'
 
@@ -91,6 +92,20 @@ export async function assertRowInScope(req: FastifyRequest, row: Pick<SiteLayout
   if (row.tenantId === null) return
   const ids = await tenantIdsFor(req, mode)
   if (!ids.includes(row.tenantId)) throw new NotFoundError('SiteLayout', row.slug)
+}
+
+/**
+ * D1 lens (spec §6.4, Marketing): a head-office member viewing a company it
+ * serves (x-servd-active-tenant = that company, not a member of it) may only
+ * draft, discard and submit rows OF THAT COMPANY. Shared rows (`servd:*`,
+ * `page:*`, a pop-up with no brand — tenantId null) and rows of any other
+ * company are never allowed through head office → 403
+ * HEAD_OFFICE_SUBMIT_ONLY. Anyone else is unaffected.
+ */
+export async function assertLensLayoutAllowed(req: FastifyRequest, tenantId: string | null, what: string): Promise<void> {
+  const lens = req.staffUser?.submitTenantId
+  if (!lens || !isReachOnly(req, lens)) return
+  await assertHoMayPropose(req, lens, tenantId !== null && tenantId === lens, what)
 }
 
 /**

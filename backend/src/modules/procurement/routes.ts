@@ -1,9 +1,15 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, PROCUREMENT_TEAM } from '../auth/middleware.js'
 import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
+import { assertHoMayPropose, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
+import {
+  APPROVAL_RIGHTS, approvalInputOf, approvalQueueTenantIds, approvalSubject, assertCanApprove, auditApproval,
+  canApprove, delegatedTenantsByType, type ApprovalGrant, type ApprovalType,
+} from '../../lib/approvalRights.js'
 import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './scope.js'
 import type { UserRole } from '@prisma/client'
 
@@ -25,7 +31,8 @@ import type { UserRole } from '@prisma/client'
 //     balance or company move — money moves and the books, kept apart from
 //     whoever raised the order. Each of these writes an 'accounting' audit
 //     row under the supplier's company.
-//   ADMIN_ONLY: approve / reject, the approval threshold, the backfill.
+//   ADMIN_ONLY: the approval threshold, the backfill. Approve / reject: the CEO or a live
+//     Procurement hand-over (lib/approvalRights.ts — see poDecisionRight below).
 //   AP_READERS (PROCUREMENT_TEAM + finance, wave 3 UI-07): READ the payables
 //     — supplier list (every supplier of the company, not just assigned
 //     ones), supplier statements, POs, bills, the 3-way match and supplier
@@ -55,6 +62,22 @@ import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { parsePktEndOfDay, fmtPktDate } from '../accounting/dates.js'
 
 const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
+
+const PO_TYPE: ApprovalType = 'purchase_order'
+
+/**
+ * The approve / reject / queue routes are ALL_STAFF (a hand-over may name a
+ * buyer), so the old role gate moves in here: the role list of the type
+ * (lib/approvalRights.ts APPROVAL_RIGHTS — the CEO for POs), or a live
+ * hand-over of the type. Anyone else gets exactly the 403 the old
+ * requireAuth(...ADMIN_ONLY) gave.
+ */
+async function assertApproverRoleOrDelegate(req: FastifyRequest, type: ApprovalType): Promise<void> {
+  const su = req.staffUser!
+  if ((APPROVAL_RIGHTS[type].roles as readonly string[]).includes(su.role)) return
+  if (((await delegatedTenantsByType(su.id)).get(type)?.size ?? 0) > 0) return
+  throw new ForbiddenError(`Role '${su.role}' is not allowed for this resource`)
+}
 
 // Supplier payments and credit notes name the company bank account the money
 // used; lists show it by name. A payment's bank is always its supplier's
@@ -464,7 +487,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     const body = poCreateSchema.parse(req.body)
     // Don't let the operator post a PO against a supplier they can't see.
     // createPo then checks every line's item is the supplier's company's.
-    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    // Through a head-office lens ('write' = members ∪ the lens company) a new
+    // DRAFT is a proposal (spec §6.4) — allowed; it goes nowhere until submitted.
+    const supplier = await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    if (supplier.tenantId) await assertHoMayPropose(req, supplier.tenantId, true, 'a purchase order')
     const po = await createPo({ ...body, createdBy: req.staffUser!.id })
     return reply.status(201).send(po)
   })
@@ -474,38 +500,95 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   async function guardPo(req: FastifyRequest, poId: string) {
     const po = await prisma.purchaseOrder.findFirst({
       where:  { id: poId, supplier: await supplierScopeWhere(req, 'write') },
-      select: { id: true },
+      select: { id: true, status: true, createdBy: true, supplier: { select: { tenantId: true } } },
     })
     if (!po) throw new NotFoundError('PurchaseOrder', poId)
+    return po
   }
 
+  // Submit. Through a head-office lens only your OWN PO (createdBy), and it
+  // always goes to pending_approval whatever the threshold — the CEO (or the
+  // Procurement hand-over) decides it (spec §6.4, A3). Everyone else: as before.
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/submit',
     { preHandler: requireAuth(...PROCUREMENT_TEAM) },
-    async (req) => { await guardPo(req, req.params.id); return submitPo(req.params.id, req.staffUser!.id) },
+    async (req) => {
+      const po = await guardPo(req, req.params.id)
+      const tenantId = po.supplier.tenantId
+      if (!tenantId) return submitPo(req.params.id, req.staffUser!.id)
+      await assertHoMayPropose(req, tenantId, po.createdBy === req.staffUser!.id, "submitting someone else's purchase order")
+      const via = await viaHeadOfficeForSubmit(req, tenantId)
+      if (!via) return submitPo(req.params.id, req.staffUser!.id)
+      const result = await submitPo(req.params.id, req.staffUser!.id, { forceApproval: true, viaHeadOfficeId: via })
+      await audit({
+        category: 'accounting', action: 'po.submit', entity: 'PurchaseOrder', entityId: req.params.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId,
+        metadata: { status: result.status, viaHeadOfficeId: via },
+      })
+      return result
+    },
   )
+
+  // Approve / reject (D3, spec §7.3 + A5). The guard is ALL_STAFF plus the
+  // module gate; who may decide is lib/approvalRights.ts: the CEO (role path,
+  // in their member companies) or a live Procurement hand-over covering the
+  // PO's company — never anyone who raised it. The PO's facts are read on
+  // serviceClient BEFORE the right is proven (approvalSubject), then the
+  // service re-reads it through `prisma` (RLS widened by assertCanApprove)
+  // and claims it on status 'pending_approval' (a lost race → 409).
+  // With no head office and no hand-over this answers exactly as the old
+  // ADMIN_ONLY + guardPo did (same 403 role message, same 404).
+  async function poDecisionRight(req: FastifyRequest, poId: string, action: 'approve' | 'reject') {
+    await assertApproverRoleOrDelegate(req, PO_TYPE)
+    const s = await approvalSubject(PO_TYPE, poId)
+    if (!s) throw new NotFoundError('PurchaseOrder', poId)
+    // A PO of a supplier with no company: the old guard admitted it only to an
+    // operator with some company in scope; keep that.
+    if (s.companyIds.length === 0 && (req.staffUser!.memberTenantIds ?? []).length === 0) throw new NotFoundError('PurchaseOrder', poId)
+    let grant: ApprovalGrant
+    try {
+      grant = await assertCanApprove(req, approvalInputOf(PO_TYPE, poId, s, { entity: 'PurchaseOrder', action: `${action} purchase order` }))
+    } catch (err) {
+      if (err instanceof AppError && err.statusCode === 404) throw new NotFoundError('PurchaseOrder', poId)
+      throw err
+    }
+    return { s, grant }
+  }
 
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/approve',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
-    async (req) => { await guardPo(req, req.params.id); return approvePo(req.params.id, req.staffUser!.id) },
-  )
-
-  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
-    '/purchase-orders/:id/reject',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      await guardPo(req, req.params.id)
-      const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
-      return rejectPo(req.params.id, req.staffUser!.id, reason)
+      const { s, grant } = await poDecisionRight(req, req.params.id, 'approve')
+      const result = await approvePo(req.params.id, req.staffUser!.id, grant)
+      await auditApproval(req, { type: PO_TYPE, id: req.params.id, tenantId: s.ownerTenantId, decision: 'approve', grant, entity: 'PurchaseOrder' })
+      return result
     },
   )
 
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
+    '/purchase-orders/:id/reject',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const { s, grant } = await poDecisionRight(req, req.params.id, 'reject')
+      const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
+      const result = await rejectPo(req.params.id, req.staffUser!.id, reason, grant)
+      await auditApproval(req, { type: PO_TYPE, id: req.params.id, tenantId: s.ownerTenantId, decision: 'reject', grant, entity: 'PurchaseOrder', metadata: { reason } })
+      return result
+    },
+  )
+
+  // Cancel. Through a head-office lens only your OWN PO, while it is still a
+  // draft or waiting for approval (spec §6.4).
+  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/purchase-orders/:id/cancel',
     { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
-      await guardPo(req, req.params.id)
+      const po = await guardPo(req, req.params.id)
+      if (po.supplier.tenantId) {
+        const own = po.createdBy === req.staffUser!.id && (po.status === 'draft' || po.status === 'pending_approval')
+        await assertHoMayPropose(req, po.supplier.tenantId, own, "cancelling this purchase order")
+      }
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
       return cancelPo(req.params.id, req.staffUser!.id, reason)
     },
@@ -927,16 +1010,44 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // ── Approvals queue ────────────────────────────────────────────────────────
 
-  fastify.get('/approvals', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const tenantWhere = await supplierScopeWhere(req, 'read')
-    return prisma.purchaseOrder.findMany({
-      where: { status: 'pending_approval', supplier: tenantWhere },
+  // The queue (D3, spec §7.4.5): the companies whose PO approvals the caller
+  // may decide — (view ∩ members) for the CEO's role path, plus every company
+  // a live Procurement hand-over covers (approvalQueueTenantIds, RLS widened).
+  // A delegate never sees their own POs or one that came through another head
+  // office (canApprove per row). A role-path caller keeps the old list
+  // (suppliers with no company included). Nobody else: the old 403.
+  fastify.get('/approvals', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    await assertApproverRoleOrDelegate(req, PO_TYPE)
+    const su = req.staffUser!
+    const roleAllows = (APPROVAL_RIGHTS[PO_TYPE].roles as readonly string[]).includes(su.role)
+    const members = new Set(su.memberTenantIds ?? [])
+    const roleIds = roleAllows ? (await resolveTenantScope(req)).tenantIds.filter((t) => members.has(t)) : []
+    const queueIds = await approvalQueueTenantIds(req, PO_TYPE)
+    if (queueIds.length === 0 && roleIds.length === 0) {
+      return []
+    }
+    const supplierWhere: Prisma.SupplierWhereInput = roleIds.length > 0
+      ? { OR: [{ tenantId: { in: queueIds } }, { tenantId: null }] }
+      : { tenantId: { in: queueIds } }
+    const rows = await prisma.purchaseOrder.findMany({
+      where: { status: 'pending_approval', supplier: supplierWhere },
       include: {
-        supplier: { select: { name: true } },
+        supplier: { select: { name: true, tenantId: true } },
         lines:    { include: { inventoryItem: { select: { name: true, unit: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     })
+    const roleSet = new Set(roleIds)
+    const keep = await Promise.all(rows.map(async (po) => {
+      const t = po.supplier.tenantId
+      if (t === null || roleSet.has(t)) return true
+      // A company reached only through a hand-over: list what the delegate may decide.
+      return canApprove(req, approvalInputOf(PO_TYPE, po.id, {
+        companyIds: [t], ownerTenantId: t, submitterIds: po.createdBy ? [po.createdBy] : [],
+        viaHeadOfficeId: po.viaHeadOfficeId, status: po.status, submittedAt: null,
+      }))
+    }))
+    return rows.filter((_, i) => keep[i])
   })
 
   // ── Backfill: bills / payments that never reached the ledger ───────────────

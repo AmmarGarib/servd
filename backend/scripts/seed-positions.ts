@@ -1,29 +1,41 @@
 // Seed the workforce position catalogue from the operator's payroll spec.
 //
 // Layout (matches the screenshots the CEO walked us through):
+//   GS Head Office (kind head_office, D1)  ← the shared head-office staff, 100% its own
+//     Procurement, Finance, Marketing teams; recharged to the companies by the
+//     % split (v1: GS Foods 37.5% / GS x Viva 62.5% — 300k / 500k of 800k)
 //   GS Foods (Bukhari) tenant
-//     ├── Head Office (no concept)  ← shared, GS Foods bears ~37.5% of gross
-//     │     Procurement, Finance, Marketing teams
 //     ├── 42C Commissary (no concept; commissary is multi-brand support)
 //     ├── Stax     (concept = Stax)
 //     └── Simmer   (concept = Simmer)
 //   GS x Viva (Clifton) tenant
 //     └── Flipd / Viva ops (concept = Flipd; JV tenant pays 100% of combined)
 //
+// Before D1 the head-office seats sat in GS Foods and a TenantContribution
+// (GS x Viva → GS Foods, 500k head_office) netted them; the head office, its
+// two links and split v1 replace both (owner, 2026-10-15). Run on a database
+// the old seed filled, the old seats move into the head office and the old
+// contribution ends (positions/headOfficeSetup.ts applyHeadOfficePeople).
+// Planning is the same either way: GS Foods 300k + its company-level seats,
+// GS x Viva 500k.
+//
 // Idempotent: re-running won't duplicate. Uses upsert on (tenantId, name).
+// Needs an admin login that is a member of both companies (it becomes the head
+// office's owner, as when the CEO creates one).
 //
 // Run with:  npx tsx scripts/seed-positions.ts
 
-import { PrismaClient, PositionStatus } from '@prisma/client'
+import { PrismaClient, PositionStatus, type Prisma } from '@prisma/client'
+import { createHeadOffice, linkCompany } from '../src/modules/headOffices/service.js'
+import { createSplitVersion, splitForOrNull } from '../src/modules/headOffices/splits.js'
+import { applyHeadOfficePeople } from '../src/modules/positions/headOfficeSetup.js'
+import { planMonth } from '../src/lib/labour-budget.js'
 
 const prisma = new PrismaClient()
 
-// Head office sits 100% on GS Foods (Bukhari) — the entity actually issues
-// the salaries. The JV's contribution back to GS Foods (500k = 200k Garibsons
-// 40% + 300k Viva 60%) is tracked separately as a TenantContribution so
-// projections can show "gross HO cost" and "net HO cost after JV contribution"
-// as distinct numbers.
-const HEAD_OFFICE_GS_SHARE_PCT = 1.0
+const HEAD_OFFICE_NAME = 'GS Head Office'
+// Split v1 (owner, 2026-10-15): GS Foods 37.5% / GS x Viva 62.5%.
+const SPLIT_V1_BPS = { gs: 3750, viva: 6250 } as const
 
 interface PositionSeed {
   title: string
@@ -53,7 +65,7 @@ async function ensureConcept(tenantId: string, slug: string) {
 async function upsertDepartment(
   tenantId: string,
   name: string,
-  opts: { emoji?: string; isHeadOffice?: boolean; order?: number } = {},
+  opts: { emoji?: string; order?: number } = {},
 ) {
   return prisma.department.upsert({
     where: { tenantId_name: { tenantId, name } },
@@ -121,6 +133,52 @@ async function seedPosition(p: {
   })
 }
 
+/**
+ * The head office, linked to both companies, with split v1 and the setup
+ * marker — the same pieces the CEO's setup wizard creates
+ * (headOffices/setup.ts). Re-runnable: what exists is kept.
+ */
+async function ensureHeadOffice(gsId: string, vivaId: string) {
+  const admin = await prisma.user.findFirst({
+    where: {
+      role: 'admin', deletedAt: null,
+      AND: [gsId, vivaId].map((t) => ({ OR: [{ tenantId: t }, { tenantMemberships: { some: { tenantId: t } } }] })),
+    },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  if (!admin) throw new Error('Expected an admin login that is a member of both gs-foods-bukhari and gs-x-viva-clifton')
+  const month = planMonth()
+  return prisma.$transaction(async (tx) => {
+    let ho = await tx.tenant.findFirst({ where: { kind: 'head_office', name: HEAD_OFFICE_NAME, deletedAt: null }, select: { id: true, name: true } })
+    if (!ho) ho = await createHeadOffice(tx, { name: HEAD_OFFICE_NAME, actorId: admin.id })
+    else if (!await tx.tenantMember.findFirst({ where: { tenantId: ho.id, userId: admin.id } })) {
+      await tx.tenantMember.create({ data: { tenantId: ho.id, userId: admin.id, role: 'owner' } })
+    }
+    for (const companyId of [gsId, vivaId]) {
+      const live = await tx.headOfficeLink.findFirst({ where: { tenantId: ho.id, companyTenantId: companyId, endedAt: null } })
+      if (!live) await linkCompany(tx, { hoId: ho.id, companyId, actorId: admin.id })
+    }
+    if (!await splitForOrNull(tx, ho.id, month) && !await tx.rechargeSplit.findFirst({ where: { tenantId: ho.id } })) {
+      await createSplitVersion(tx, {
+        hoId: ho.id, effectiveFrom: month, actorId: admin.id, note: 'Split v1 (seed)',
+        lines: [{ companyTenantId: gsId, shareBps: SPLIT_V1_BPS.gs }, { companyTenantId: vivaId, shareBps: SPLIT_V1_BPS.viva }],
+      })
+    }
+    // A database the old seed filled: its head-office seats move here and the
+    // old head_office contribution ends (no double count).
+    const people = await applyHeadOfficePeople(tx, { hoId: ho.id, companyIds: [gsId, vivaId] })
+    const books = await tx.headOfficeBooks.findUnique({ where: { tenantId: ho.id }, select: { setupAppliedAt: true } })
+    if (books && !books.setupAppliedAt && !await tx.headOfficeBooks.findFirst({ where: { setupAppliedAt: { not: null } } })) {
+      await tx.headOfficeBooks.update({
+        where: { tenantId: ho.id },
+        data: { setupAppliedAt: new Date(), setupAppliedById: admin.id, setupSummary: JSON.parse(JSON.stringify({ seeded: true, people })) as Prisma.InputJsonValue },
+      })
+    }
+    return ho
+  }, { timeout: 60_000 })
+}
+
 async function main() {
   const { gs, viva } = await ensureTenants()
   const stax   = await ensureConcept(gs.id, 'stax')
@@ -135,10 +193,11 @@ async function main() {
   const sb_18_26    = await upsertShiftBand(gs.id, '6pm-2am',    '18:00', '26:00', 3)
   const sb_10_18_p  = await upsertShiftBand(gs.id, '10am-6pm (prep)', '10:00', '18:00', 4)
 
-  // ─── Head Office (shared cost-bearer) ────────────────────────────────────
-  const procurement = await upsertDepartment(gs.id, 'Procurement',  { emoji: '📦', isHeadOffice: true, order: 1 })
-  const finance     = await upsertDepartment(gs.id, 'Finance',      { emoji: '🧾', isHeadOffice: true, order: 2 })
-  const marketing   = await upsertDepartment(gs.id, 'Marketing',    { emoji: '📣', isHeadOffice: true, order: 3 })
+  // ─── Head office (D1): a tenant of its own, linked to both companies ─────
+  const ho = await ensureHeadOffice(gs.id, viva.id)
+  const procurement = await upsertDepartment(ho.id, 'Procurement',  { emoji: '📦', order: 1 })
+  const finance     = await upsertDepartment(ho.id, 'Finance',      { emoji: '🧾', order: 2 })
+  const marketing   = await upsertDepartment(ho.id, 'Marketing',    { emoji: '📣', order: 3 })
 
   const headOfficeRoles: Array<{ dept: string; title: string; pkr: number }> = [
     { dept: 'Procurement', title: 'Procurement Manager',           pkr: 100_000 },
@@ -153,17 +212,15 @@ async function main() {
   ]
   const deptMap = { Procurement: procurement, Finance: finance, Marketing: marketing }
   for (const r of headOfficeRoles) {
-    const gross  = pkr(r.pkr)
-    const share  = Math.round(gross * HEAD_OFFICE_GS_SHARE_PCT)
+    const gross = pkr(r.pkr)
     await seedPosition({
-      tenantId: gs.id,
-      conceptId: null, // head office is tenant-level, not concept-level
+      tenantId: ho.id,
+      conceptId: null, // a head office has no brands
       departmentId: deptMap[r.dept as keyof typeof deptMap].id,
       shiftBandId: null,
       title: r.title,
       monthlySalaryCents: gross,
-      tenantCostShareCents: share,
-      costShareNote: `Head office: GS Foods carries 100% of gross PKR ${r.pkr.toLocaleString()}. The JV (GS x Viva) contributes 500k/month back via a separate TenantContribution row covering all HO salaries collectively.`,
+      tenantCostShareCents: gross, // 100% the head office's; the % split carries it to the companies
     })
   }
 
@@ -307,42 +364,9 @@ async function main() {
     })
   }
 
-  // ─── JV head-office contribution ─────────────────────────────────────────
-  // GS Foods carries 100% of the 800k HO salaries. GS x Viva contributes
-  // 500k/month back — internally 200k from Garibsons' 40% JV share, 300k
-  // from Viva's 60%. Net to GS Foods P&L: 800k - 500k = 300k.
-  const existingContribution = await prisma.tenantContribution.findFirst({
-    where: {
-      sourceTenantId: viva.id,
-      destinationTenantId: gs.id,
-      category: 'head_office',
-    },
-  })
-  const contributionData = {
-    sourceTenantId: viva.id,
-    destinationTenantId: gs.id,
-    category: 'head_office' as const,
-    monthlyCents: pkr(500_000),
-    label: 'GS x Viva HO contribution',
-    description: 'JV contributes 500k/month toward shared head-office salaries (procurement, finance, marketing). Internally split 40/60 (Garibsons / Viva).',
-    internalSplit: [
-      { label: 'Garibsons 40%', cents: pkr(200_000) },
-      { label: 'Viva 60%',      cents: pkr(300_000) },
-    ],
-    isActive: true,
-  }
-  if (existingContribution) {
-    await prisma.tenantContribution.update({
-      where: { id: existingContribution.id },
-      data: contributionData,
-    })
-  } else {
-    await prisma.tenantContribution.create({ data: contributionData })
-  }
-
   const total = await prisma.position.count()
   const contribTotal = await prisma.tenantContribution.count({ where: { isActive: true } })
-  console.log(`✅ seed-positions complete — ${total} active positions, ${contribTotal} active contribution(s)`)
+  console.log(`✅ seed-positions complete — ${total} positions, ${contribTotal} active contribution(s), head office ${ho.name}`)
 }
 
 main()

@@ -16,6 +16,14 @@
 // Cost-share model: monthlySalaryCents = gross; tenantCostShareCents = what
 // the current tenant's P&L bears. /summary returns totals using cost-share
 // (what shows up in OpEx) and gross (what gets paid out to humans).
+//
+// D1 (spec §8, amendment A15) — the cost share is retired once the CEO has run
+// the head-office setup wizard (headOfficeSetupApplied): shared seats live in
+// the head office at 100% and the % split carries the cost, so the API strips
+// tenantCostShareCents / costShareNote from input and keeps share = gross.
+// Until then the input is accepted as before, and a salary edit that does not
+// name a share scales the share by new/old salary (the seat's ratio stays —
+// no silent planning change before the wizard normalises it).
 
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -24,7 +32,8 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, HR_TEAM } from '../auth/middleware.js'
 import type { UserRole } from '@prisma/client'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { budgetedLabour } from '../../lib/labour-budget.js'
+import { budgetedLabour, PLAN_LABELS } from '../../lib/labour-budget.js'
+import { headOfficeSetupApplied } from '../headOffices/books.js'
 import { contributionRoutes } from './contributions.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 
@@ -162,7 +171,8 @@ export async function positionRoutes(fastify: FastifyInstance) {
     { preHandler: POSITION_READ_GUARD },
     async (req) => {
       const { conceptId, departmentId, status } = req.query
-      return prisma.position.findMany({
+      const applied = await headOfficeSetupApplied()
+      const rows = await prisma.position.findMany({
         where: {
           ...(await scopeTenantWhere(req, 'read')),
           ...(conceptId ? { conceptId } : {}),
@@ -183,6 +193,13 @@ export async function positionRoutes(fastify: FastifyInstance) {
           { monthlySalaryCents: 'desc' },
         ],
       })
+      if (!applied) return rows
+      // D1: after the head-office setup a head-office department is one that
+      // lives in a head office; Department.isHeadOffice is no longer read.
+      const hoTenants = new Set((await prisma.tenant.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.tenantId))] }, kind: 'head_office' }, select: { id: true },
+      })).map((t) => t.id))
+      return rows.map((r) => (r.department ? { ...r, department: { ...r.department, isHeadOffice: hoTenants.has(r.tenantId) } } : r))
     },
   )
 
@@ -199,16 +216,24 @@ export async function positionRoutes(fastify: FastifyInstance) {
     const perCompany = await Promise.all(tenantIds.map((t) => monthlyLabourCents(t)))
     const seatsCents = perCompany.reduce((a, l) => a + l.seatsCents, 0)
     const b = await budgetedLabour(tenantIds)
+    const net = seatsCents + b.outgoingContributionMonthlyCents - b.incomingContributionMonthlyCents
+      + b.headOfficeChargesMonthlyCents - b.rechargedOutMonthlyCents
     return {
       totalPositions: b.positions,
       totalHeadcount: perCompany.reduce((a, l) => a + l.headcount, 0),
       totalGrossMonthlyCents:       perCompany.reduce((a, l) => a + l.grossSalaryCents, 0),
       totalTenantShareMonthlyCents: seatsCents,
-      netMonthlyCents:              seatsCents + b.outgoingContributionMonthlyCents - b.incomingContributionMonthlyCents,
+      netMonthlyCents:              net,
       incomingContributionMonthlyCents: b.incomingContributionMonthlyCents,
       outgoingContributionMonthlyCents: b.outgoingContributionMonthlyCents,
+      // D1 (after the head-office setup): this scope's head-office charges
+      // (plan) and, for a head office in scope, what it recharges out.
+      headOfficeChargesMonthlyCents: b.headOfficeChargesMonthlyCents,
+      headOfficeCharges: b.headOfficeCharges,
+      rechargedOutMonthlyCents: b.rechargedOutMonthlyCents,
+      labels: PLAN_LABELS,
       annualisedTenantShareCents: seatsCents * 12,
-      annualisedNetCents:         (seatsCents + b.outgoingContributionMonthlyCents - b.incomingContributionMonthlyCents) * 12,
+      annualisedNetCents:         net * 12,
       // Frozen seats are shown, never budgeted.
       frozenShareMonthlyCents: b.frozenShareMonthlyCents,
       byConcept: b.byConcept,
@@ -265,14 +290,18 @@ export async function positionRoutes(fastify: FastifyInstance) {
   }
 
   fastify.post('/', { preHandler: POSITION_EDIT_GUARD }, async (req) => {
-    const { designationId, ...body } = positionSchema.parse(req.body)
+    const { designationId, ...parsed } = positionSchema.parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before adding a position', 422)
+    const applied = await headOfficeSetupApplied()
+    // After the head-office setup the cost share is not an input (share = gross).
+    const { tenantCostShareCents: shareIn, costShareNote, ...rest } = parsed
+    const body = applied ? rest : { ...rest, costShareNote }
     await checkSeatRefs(tenantId, body)
     const title = await seatTitle(tenantId, { title: body.title, designationId })
     if (!title) throw new AppError('TITLE_REQUIRED', 'Pick the designation this seat is for', 400)
-    // Default cost-share to gross if not provided.
-    const tenantCostShareCents = body.tenantCostShareCents ?? body.monthlySalaryCents
+    // Default cost-share to gross if not provided (always gross after setup).
+    const tenantCostShareCents = applied ? body.monthlySalaryCents : (shareIn ?? body.monthlySalaryCents)
     return prisma.position.create({
       data: {
         ...body,
@@ -287,14 +316,34 @@ export async function positionRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: POSITION_EDIT_GUARD },
     async (req) => {
-      const { designationId, ...body } = positionSchema.partial().parse(req.body)
-      const seat = await prisma.position.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true, tenantId: true, shiftBandId: true } })
+      const { designationId, ...parsed } = positionSchema.partial().parse(req.body)
+      const seat = await prisma.position.findFirst({
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+        select: { id: true, tenantId: true, shiftBandId: true, monthlySalaryCents: true, tenantCostShareCents: true },
+      })
       if (!seat) throw new NotFoundError('Position', req.params.id)
+      const applied = await headOfficeSetupApplied()
+      const { tenantCostShareCents: shareIn, costShareNote, ...rest } = parsed
+      const salaryChanged = rest.monthlySalaryCents !== undefined && rest.monthlySalaryCents !== seat.monthlySalaryCents
+      let share: number | undefined
+      if (applied) {
+        // After setup: share is never an input; it follows the salary.
+        if (rest.monthlySalaryCents !== undefined) share = rest.monthlySalaryCents
+      } else if (shareIn !== undefined) {
+        share = shareIn
+      } else if (salaryChanged) {
+        // A15: keep the seat's share ratio (share × new / old) until the wizard
+        // normalises it; a seat with no salary before takes the new gross.
+        share = seat.monthlySalaryCents > 0
+          ? Math.round((seat.tenantCostShareCents * rest.monthlySalaryCents!) / seat.monthlySalaryCents)
+          : rest.monthlySalaryCents!
+      }
+      const body = applied ? rest : { ...rest, ...(costShareNote !== undefined && { costShareNote }) }
       await checkSeatRefs(seat.tenantId, body, seat.shiftBandId)
       const title = await seatTitle(seat.tenantId, { title: body.title, designationId })
       return prisma.position.update({
         where: { id: seat.id },
-        data: { ...body, ...(title !== undefined && { title }) },
+        data: { ...body, ...(share !== undefined && { tenantCostShareCents: share }), ...(title !== undefined && { title }) },
       })
     },
   )

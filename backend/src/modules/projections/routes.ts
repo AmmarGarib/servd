@@ -25,6 +25,7 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { requireActiveCompany, assertConceptAttachable, assertConceptOfCompany } from '../financePlanning/companyRefs.js'
 import { monthlyLabourCents } from './labour.js'
+import { PLAN_LABELS } from '../../lib/labour-budget.js'
 import { toCents } from '../../lib/money.js'
 
 const brandInputSchema = z.object({
@@ -136,10 +137,13 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       // shows.
       const labour = await monthlyLabourCents(tenantId)
       const staffByBrand = labour.byConcept
-      // Company-level labour that no brand carries: head-office seats, plus
+      // Company-level labour that no brand carries: company-level seats, plus
       // what this company pays towards another's shared staff, minus what it
-      // receives (the JV contribution). Charged every month of the scenario.
-      const headOfficeLabourMonthlyCents = labour.headOfficeCents + labour.outgoingContributionCents - labour.incomingContributionCents
+      // receives (contributions), plus its head-office charges (plan), minus
+      // what it recharges when it is itself a head office (D1, after the setup
+      // wizard). Charged every month of the scenario.
+      const headOfficeLabourMonthlyCents = labour.companyLevelSeatsCents + labour.outgoingContributionCents - labour.incomingContributionCents
+        + labour.headOfficeChargesCents - labour.rechargedOutCents
 
       // Aggregate monthly-equivalent opex per concept
       const opexLines = await prisma.opexLine.findMany({
@@ -246,8 +250,9 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         }
       })
 
-      // Combined sum across brands, plus the company-level labour line (head
-      // office net of the JV contribution) — a scenario is one company's.
+      // Combined sum across brands, plus the company-level labour line
+      // (company-level seats net of contributions, plus head-office charges)
+      // — a scenario is one company's.
       const combined: Array<{
         month: number; revenueCents: number; variableCents: number
         staffCents: number; headOfficeLabourCents: number; opexCents: number; totalCostCents: number
@@ -287,12 +292,18 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         brands,
         combined,
         labour: {
-          rule: 'open + filled seats at the company cost share; frozen seats excluded; JV contribution netted',
-          brandSeatsMonthlyCents: labour.seatsCents - labour.headOfficeCents,
-          headOfficeSeatsMonthlyCents: labour.headOfficeCents,
+          rule: 'open + filled seats at the company cost share; frozen seats excluded; contributions and head-office charges netted',
+          brandSeatsMonthlyCents: labour.seatsCents - labour.companyLevelSeatsCents,
+          companyLevelSeatsMonthlyCents: labour.companyLevelSeatsCents,
+          /** @deprecated alias of companyLevelSeatsMonthlyCents (admin, until D5). */
+          headOfficeSeatsMonthlyCents: labour.companyLevelSeatsCents,
           incomingContributionMonthlyCents: labour.incomingContributionCents,
           outgoingContributionMonthlyCents: labour.outgoingContributionCents,
+          headOfficeChargesMonthlyCents: labour.headOfficeChargesCents,
+          headOfficeCharges: labour.headOfficeCharges,
+          rechargedOutMonthlyCents: labour.rechargedOutCents,
           netMonthlyCents: labour.netCents,
+          labels: PLAN_LABELS,
         },
         summary: {
           totalCapexCents,

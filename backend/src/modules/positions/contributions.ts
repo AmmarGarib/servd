@@ -16,11 +16,13 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import type { UserRole } from '@prisma/client'
-import { ForbiddenError, NotFoundError } from '../../lib/errors.js'
+import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { assertBothSidesOwned as assertPairOwned } from '../../lib/companyPairs.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { zInt4Cents } from '../../lib/money.js'
+import { countedContributions } from '../../lib/labour-budget.js'
+import { headOfficeSetupApplied } from '../headOffices/books.js'
 
 // Companies whose contributions this request may SEE (view-aware: the active
 // company, or every member company in "All companies" view).
@@ -72,7 +74,9 @@ const splitItemSchema = z.object({
 const contributionSchema = z.object({
   sourceTenantId:      z.string().min(1),
   destinationTenantId: z.string().min(1),
-  category: z.enum(['head_office', 'commissary', 'shared_services', 'other']).default('head_office'),
+  // D1: no default any more (the column defaults to 'other'); a caller names
+  // the category, so nothing becomes a head-office contribution by accident.
+  category: z.enum(['head_office', 'commissary', 'shared_services', 'other']),
   // tenant_contributions.monthlyCents is INT4 (BOOKS-06 left it there: one
   // company's monthly transfer to another stays well under PKR 21,474,836.47).
   // Above it the request is 422 AMOUNT_TOO_LARGE, never a raw 500 at insert.
@@ -92,6 +96,25 @@ const CONTRIBUTION_READERS = Array.from(new Set([...MANAGERS, 'hr', 'finance']))
 // Same module rule as the Positions reads (HR 'staff_directory', finance
 // 'capital'); manager tiers unchanged (W3B-RV-1).
 const CONTRIBUTION_READ_GUARD = [requireAuth(...CONTRIBUTION_READERS), moduleGateForNewRoles(['staff_directory', 'capital'])]
+
+/**
+ * D1 (spec §8, amendment A15): a shared head office is a head office (CEO →
+ * Head offices), not a contribution. Once the setup wizard has run
+ * (headOfficeSetupApplied), recording a new head_office contribution, or
+ * changing one (or turning a row into one), is 422 USE_HEAD_OFFICE. Until then
+ * POST and PATCH behave as today, so an existing row can still be corrected in
+ * the gap before the wizard. Ending one (DELETE) is always allowed.
+ */
+async function assertNotHeadOfficeAfterSetup(category: string | undefined): Promise<void> {
+  if (category !== 'head_office') return
+  if (await headOfficeSetupApplied()) {
+    throw new AppError(
+      'USE_HEAD_OFFICE',
+      'Shared head-office salaries are planned through the head office now (CEO → Head offices → % split), not a contribution',
+      422,
+    )
+  }
+}
 
 export async function contributionRoutes(fastify: FastifyInstance) {
 
@@ -114,21 +137,32 @@ export async function contributionRoutes(fastify: FastifyInstance) {
       orderBy: [{ isActive: 'desc' }, { startedAt: 'desc' }],
     })
 
-    const incoming = all.filter((c) => tenants.includes(c.destinationTenantId))
-    const outgoing = all.filter((c) => tenants.includes(c.sourceTenantId))
+    // Planning counts only what countedContributions keeps: every active row,
+    // except (after the head-office setup) a head_office row whose companies
+    // are linked to a head office. Ended rows are listed read-only.
+    const applied = await headOfficeSetupApplied()
+    const counted = new Set((await countedContributions(all.filter((c) => c.isActive), applied)).map((c) => c.id))
+    const shown = all.map((c) => ({
+      ...c,
+      counts: counted.has(c.id),
+      readOnly: !c.isActive || (applied && c.category === 'head_office'),
+    }))
+    const incoming = shown.filter((c) => tenants.includes(c.destinationTenantId))
+    const outgoing = shown.filter((c) => tenants.includes(c.sourceTenantId))
 
     return {
       incoming,
       outgoing,
       // Totals make life easier on the UI side — destination tenant adds these
       // up to show "monthly inflows" without re-summing client-side.
-      incomingMonthlyCents: incoming.filter((c) => c.isActive).reduce((s, c) => s + c.monthlyCents, 0),
-      outgoingMonthlyCents: outgoing.filter((c) => c.isActive).reduce((s, c) => s + c.monthlyCents, 0),
+      incomingMonthlyCents: incoming.filter((c) => c.counts).reduce((s, c) => s + c.monthlyCents, 0),
+      outgoingMonthlyCents: outgoing.filter((c) => c.counts).reduce((s, c) => s + c.monthlyCents, 0),
     }
   })
 
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = contributionSchema.parse(req.body)
+    await assertNotHeadOfficeAfterSetup(body.category)
     await assertBothSidesOwned(req, body.sourceTenantId, body.destinationTenantId)
     const created = await prisma.tenantContribution.create({
       data: {
@@ -151,6 +185,10 @@ export async function contributionRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = contributionSchema.partial().parse(req.body)
       const existing = await findEditable(req, req.params.id)
+      // A15: an existing head_office row may be corrected until the setup
+      // wizard has run; after it (or turning a row into one) → USE_HEAD_OFFICE.
+      await assertNotHeadOfficeAfterSetup(existing.category)
+      await assertNotHeadOfficeAfterSetup(body.category)
       // Re-pointing either side: the resulting pair must still be two of the
       // operator's companies, one of them active.
       if (body.sourceTenantId !== undefined || body.destinationTenantId !== undefined) {

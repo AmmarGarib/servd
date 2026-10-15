@@ -946,7 +946,7 @@ export async function costOfSalesSplit(db: Db, tenantId: string, a: { from: Date
 // brand only through a POSTED allocation (the /allocations rules post their
 // runs with each debit tagged to its brand). Whatever no rule has allocated —
 // head-office rent, untagged overhead, manual entries, older postings — is
-// shown as ONE "Head office (unallocated)" line, never spread across brands
+// shown as ONE "Company overhead (unallocated)" line, never spread across brands
 // by revenue share. Labour is the wage accounts (6030–6035): tagged wages are
 // the brand's, untagged wages are head office's.
 //
@@ -956,7 +956,10 @@ export async function costOfSalesSplit(db: Db, tenantId: string, a: { from: Date
 // definition), not total revenue. 42xx other income is apart from revenue.
 
 export const WAGE_CODES = ['6030', '6031', '6032', '6035'] as const
-export const HEAD_OFFICE_LABEL = 'Head office (unallocated)'
+// D1 (spec §1): renamed so it never collides with a real head office (a Tenant
+// of kind 'head_office'). The row is still the company's untagged cost; the
+// response key stays `headOffice`. reports/foodCost.ts imports this constant.
+export const HEAD_OFFICE_LABEL = 'Company overhead (unallocated)'
 
 export interface BrandPnlRow {
   conceptId: string | null          // null = head office (unallocated)

@@ -20,7 +20,7 @@ import { audit } from '../../lib/audit.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import {
   HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, withSystemFields, ORG_UNIT_KINDS, DOCUMENT_TYPES,
-  EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
+  EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, transferTargetsOutsideCompany, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
 } from './forms.js'
 import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
@@ -29,7 +29,7 @@ import {
   salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
 } from './service.js'
 import {
-  mergeSettings, canActOnStep, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
+  mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
   nextPeriod, settlementParts, settlementNet,
   type ApprovalEntry, type HrSettings,
 } from './logic.js'
@@ -47,6 +47,12 @@ import { hasKioskPin, setKioskPin, clearKioskPin } from './kioskPin.js'
 import { loginsToDeactivate, deactivateLeftLogins } from './separations.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
+import { assertHoMayPropose, isHeadOfficeTenant, isReachOnly, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
+import {
+  approvalSubject as approvalSubjectOf, approvalInputOf, assertCanApprove, auditApproval, delegatedTenantsByType,
+  throughHeadOfficeBatch, type ApprovalGrant,
+} from '../../lib/approvalRights.js'
+import { headOfficeSetupApplied } from '../headOffices/books.js'
 
 const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 /** The HR back office under /hr/records (audit PPL-R2-01). lib/moduleAccess.ts
@@ -88,8 +94,11 @@ function readTenants(req: FastifyRequest): string[] {
   const su = req.staffUser!
   const wantsAll = req.headers['x-servd-portfolio'] === '1'
   if (wantsAll && su.memberTenantIds.length) {
+    // Head office (D1): a portfolio read also spans the companies reached
+    // through a head office (read only; empty unless a live link exists).
+    const seen = new Set([...su.memberTenantIds, ...(su.reachTenantIds ?? [])])
     const f = su.tenantFilter
-    if (f && typeof f === 'object' && 'in' in f) return f.in.filter((id) => su.memberTenantIds.includes(id))
+    if (f && typeof f === 'object' && 'in' in f) return f.in.filter((id) => seen.has(id))
     return su.memberTenantIds
   }
   return su.tenantId ? [su.tenantId] : []
@@ -108,7 +117,112 @@ async function pickerTenant(req: FastifyRequest): Promise<string> {
   if (own) return want
   throw new ForbiddenError('You do not belong to that company')
 }
-const writeTenants = (req: FastifyRequest) => ({ tenantId: { in: req.staffUser!.memberTenantIds.length ? req.staffUser!.memberTenantIds : [activeTenant(req)] } })
+/** Companies a write may touch: every member company, plus — on a
+ *  head-office submit route through the lens (HO_SUBMIT_ROUTES) — the lens
+ *  company, where each route then allows only a proposal (assertHoMayPropose). */
+const writeTenants = (req: FastifyRequest) => {
+  const su = req.staffUser!
+  const ids = su.memberTenantIds.length ? [...su.memberTenantIds] : [activeTenant(req)]
+  if (su.submitTenantId && !ids.includes(su.submitTenantId)) ids.push(su.submitTenantId)
+  return { tenantId: { in: ids } }
+}
+
+/** Head office (D1, A3): the head office this proposal goes through, stamped
+ *  on the record / run as viaHeadOfficeId — null for everyone else. */
+const viaFor = (req: FastifyRequest, tenantId: string) => viaHeadOfficeForSubmit(req, tenantId)
+
+/** Nobody has acted on this record yet: still a draft or waiting at its first
+ *  step with no decision recorded. */
+const notActedOn = (rec: Pick<HrRecord, 'status' | 'approvals'>) =>
+  (rec.status === 'draft' || rec.status === 'submitted') && (rec.approvals as unknown as ApprovalEntry[]).length === 0
+
+/** Through the head-office lens a caller may only touch their OWN record that
+ *  nobody has acted on (D1 §6.4). No-op for members of the company. */
+async function assertLensOwnRecord(req: FastifyRequest, rec: Pick<HrRecord, 'tenantId' | 'createdById' | 'status' | 'approvals'>, what: string) {
+  if (!isReachOnly(req, rec.tenantId)) return
+  await assertHoMayPropose(req, rec.tenantId, rec.createdById === req.staffUser!.id && notActedOn(rec), what)
+}
+
+/** A payroll step through head office stamps the run (A3), so its approval
+ *  goes to the CEO or a hand-over — never to a company approver. */
+async function stampRunVia(req: FastifyRequest, run: { id: string; tenantId: string; viaHeadOfficeId: string | null }) {
+  if (run.viaHeadOfficeId) return
+  const via = await viaFor(req, run.tenantId)
+  if (via) await prisma.hrPayrollRun.updateMany({ where: { id: run.id, viaHeadOfficeId: null, status: 'draft' }, data: { viaHeadOfficeId: via } })
+}
+
+/**
+ * Payroll approve / lock / reopen (D3 §7.3, A5, A14, A19). The run is found by
+ * id on its own (serviceClient), then the approval rights decide: the role path
+ * (admin, owner, management of the run's company — and, for a non-CEO, not a
+ * run prepared through head office) or a live HR hand-over covering it.
+ * Anyone who cannot see the company gets 404, a member without the right 403.
+ * `preparer` runs the route's own separation-of-duties rule first (approve).
+ *
+ * OWN_PAY_IN_RUN (A14, v1): on the hand-over path, and on any run of a head
+ * office, a non-CEO whose own payslip is on the run may not decide it — the
+ * head office's own payroll goes to the CEO. A company approver deciding
+ * their company's run is unchanged (owner question before widening it).
+ */
+async function payrollDecision(
+  req: FastifyRequest, id: string, action: 'approve' | 'lock' | 'reopen',
+  preparer?: (run: { createdById: string | null; preparedByIds: string[] }) => void,
+) {
+  const subj = await approvalSubjectOf('payroll_run', id)
+  if (!subj) throw new NotFoundError('Payroll', id)
+  const found = await prisma.hrPayrollRun.findUnique({ where: { id } })
+  if (!found) throw new NotFoundError('Payroll', id)
+  const su = req.staffUser!
+  const sees = su.memberTenantIds.includes(found.tenantId) || (su.reachTenantIds ?? []).includes(found.tenantId)
+    || !!(await delegatedTenantsByType(su.id)).get('payroll_run')?.has(found.tenantId)
+  if (!sees) throw new NotFoundError('Payroll', id)
+  preparer?.(found)
+  // Lock and reopen keep today's rule (no preparer check); the run's
+  // head-office stamp still routes an HOD-prepared run away from company
+  // approvers. Approve also names every preparer.
+  const grant = await assertCanApprove(req, approvalInputOf('payroll_run', id, subj, {
+    entity: 'HrPayrollRun', action: `${action} a payroll`,
+    ...(action === 'approve' ? {} : { submittedByIds: [] }),
+  }))
+  if (su.role !== 'admin' && (grant.via === 'delegation' || (await isHeadOfficeTenant(found.tenantId)))) {
+    const mine = await prisma.hrPayslip.count({ where: { runId: id, employee: { userId: su.id } } })
+    if (mine > 0) {
+      throw new AppError('OWN_PAY_IN_RUN', 'Your own pay is on this payroll — the CEO decides it', 403)
+    }
+  }
+  return { run: found, grant }
+}
+
+/** approval.decide for a payroll decision through a hand-over or on a run
+ *  prepared through head office — in the run's company (A19). */
+async function auditPayrollDecision(req: FastifyRequest, run: { id: string; tenantId: string; period: string; viaHeadOfficeId: string | null }, grant: ApprovalGrant, decision: string) {
+  if (grant.via !== 'delegation' && !run.viaHeadOfficeId) return
+  await auditApproval(req, {
+    type: 'payroll_run', id: run.id, tenantId: run.tenantId, decision, grant, entity: 'HrPayrollRun',
+    metadata: { period: run.period, ...(run.viaHeadOfficeId && { viaHeadOfficeId: run.viaHeadOfficeId }) },
+  })
+}
+
+/**
+ * Department.isHeadOffice is retired once a head office is set up (spec §8:
+ * "head office" is then a kind of company, not a department flag). Until the
+ * setup wizard has run (headOfficeSetupApplied) it is kept exactly as today;
+ * after it, writes ignore it and responses leave it out.
+ */
+function withoutRetiredFlag<T extends { isHeadOffice?: boolean }>(row: T, retired: boolean): T | Omit<T, 'isHeadOffice'> {
+  if (!retired) return row
+  const { isHeadOffice: _gone, ...rest } = row
+  return rest
+}
+
+/** A16: refuse a transfer that names another company's department or manager. */
+async function assertTransferInCompany(db: Tx | typeof prisma, section: string, tenantId: string, data: Record<string, unknown>) {
+  if (section !== 'transfer') return
+  const bad = await transferTargetsOutsideCompany(db, tenantId, data)
+  if (bad.length) {
+    throw new AppError('TRANSFER_OTHER_COMPANY', `${bad.map((b) => b.label).join(' and ')}: must be in this company — moving someone to another company is "Move to head office" (CEO)`, 422)
+  }
+}
 
 /** The caller's own employee record. One login may be an employee in each
  *  company (decision 31): the active company's record wins, else the one
@@ -315,6 +429,7 @@ async function prepareRecord(tx: Tx, tenantId: string, section: string, fields: 
   // minus Rs 5,000 is a deduction, and has its own kind.
   const negative = negativeMoney(section, fields, data)
   if (negative.length) throw new AppError('NEGATIVE_AMOUNT', `${negative.join(', ')} cannot be negative`, 400)
+  await assertTransferInCompany(tx, section, tenantId, data)
   if (section === 'shift_swap' && cols.employeeId) await checkSwapPartner(tx, tenantId, cols.employeeId, data, cols.startDate as Date | null | undefined)
   if (section === 'leave') {
     if (cols.employeeId) await lockEmployeeLeave(tx, cols.employeeId)
@@ -625,7 +740,7 @@ async function auditShiftsRemoved(req: FastifyRequest, rec: HrRecord) {
 // copy for HR and the accountant exports (D16). Re-exported for existing callers.
 export { csv }
 
-async function createRecord(req: FastifyRequest, tenantId: string, section: string, input: Record<string, unknown>, opts: { submit: boolean; forEmployeeId?: string }) {
+async function createRecord(req: FastifyRequest, tenantId: string, section: string, input: Record<string, unknown>, opts: { submit: boolean; forEmployeeId?: string; viaHeadOfficeId?: string | null }) {
   const sec = recordSection(section)
   // A section whose work moved (eobi_challan → Accounting → Statutory
   // payments): its old rows stay readable, no new ones — here once, for
@@ -661,6 +776,7 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
         stage: fmt.stages[0] ?? null,
         data: v.data as Prisma.InputJsonValue,
         createdById: req.staffUser!.id,
+        ...(opts.viaHeadOfficeId && { viaHeadOfficeId: opts.viaHeadOfficeId }),
       },
     })
     // No approval steps: approved on creation, through the same final-approval
@@ -674,6 +790,7 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
   await audit({
     category: 'identity', action: `hr.${section}.create`, entity: 'HrRecord', entityId: rec.id,
     userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { section, status: rec.status },
+    ...(opts.viaHeadOfficeId && { metadata: { viaHeadOfficeId: opts.viaHeadOfficeId } }),
   })
   void sec
   return rec
@@ -828,11 +945,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // ── Organization setup ────────────────────────────────────────────────────
   fastify.get<{ Querystring: { tenantId?: string } }>('/org', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const tenantId = await pickerTenant(req)
-    const [units, departments, locations] = await Promise.all([
+    const [units, rawDepartments, locations, retired] = await Promise.all([
       prisma.hrOrgUnit.findMany({ where: { tenantId }, orderBy: [{ kind: 'asc' }, { name: 'asc' }] }),
       prisma.department.findMany({ where: { tenantId }, orderBy: [{ order: 'asc' }, { name: 'asc' }], select: { id: true, name: true, emoji: true, isHeadOffice: true, order: true, archivedAt: true } }),
       prisma.location.findMany({ where: { tenantId }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+      headOfficeSetupApplied(),
     ])
+    const departments = rawDepartments.map((d) => withoutRetiredFlag(d, retired))
     // Pickers get the live departments; an archived one is listed apart so
     // Org setup can bring it back and old records still show its name.
     return {
@@ -863,23 +982,28 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // (ledger.ts wageAccountFor), so a rename is audited.
   fastify.post('/org/departments', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const tenantId = activeTenant(req)
-    const body = z.object({
+    const retired = await headOfficeSetupApplied()
+    const parsed = z.object({
       name: z.string().min(1).max(120), emoji: z.string().max(8).nullable().optional(),
       isHeadOffice: z.boolean().optional(), order: z.number().int().optional(),
     }).parse(req.body)
+    // Once a head office is set up the flag is retired (spec §8): stripped.
+    const body = retired ? { ...parsed, isHeadOffice: undefined } : parsed
     const name = body.name.trim()
     const exists = await prisma.department.findFirst({ where: { tenantId, name: { equals: name, mode: 'insensitive' } } })
     if (exists) throw new AppError('DUPLICATE', `"${name}" already exists${exists.archivedAt ? ' (archived — bring it back instead)' : ''}`, 409)
     const dept = await prisma.department.create({ data: { tenantId, name, emoji: body.emoji ?? null, isHeadOffice: body.isHeadOffice ?? false, order: body.order ?? 0 } })
     await audit({ category: 'identity', action: 'hr.department.create', entity: 'Department', entityId: dept.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { name } })
-    return reply.status(201).send(dept)
+    return reply.status(201).send(withoutRetiredFlag(dept, retired))
   })
 
   fastify.patch<{ Params: { id: string } }>('/org/departments/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const body = z.object({
+    const retired = await headOfficeSetupApplied()
+    const parsed = z.object({
       name: z.string().min(1).max(120).optional(), emoji: z.string().max(8).nullable().optional(),
       isHeadOffice: z.boolean().optional(), order: z.number().int().optional(), archived: z.boolean().optional(),
     }).parse(req.body)
+    const body = retired ? { ...parsed, isHeadOffice: undefined } : parsed
     const dept = await prisma.department.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!dept || !dept.tenantId) throw new NotFoundError('Department', req.params.id)
     const name = body.name?.trim()
@@ -906,9 +1030,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     })
     await audit({
       category: 'identity', action: 'hr.department.update', entity: 'Department', entityId: dept.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: dept.tenantId,
-      before: { name: dept.name, archivedAt: dept.archivedAt, isHeadOffice: dept.isHeadOffice }, after: { name: updated.name, archivedAt: updated.archivedAt, isHeadOffice: updated.isHeadOffice },
+      before: { name: dept.name, archivedAt: dept.archivedAt, ...(!retired && { isHeadOffice: dept.isHeadOffice }) },
+      after: { name: updated.name, archivedAt: updated.archivedAt, ...(!retired && { isHeadOffice: updated.isHeadOffice }) },
     })
-    return updated
+    return withoutRetiredFlag(updated, retired)
   })
 
   // ── Lookups for pickers (names only — no salaries) ────────────────────────
@@ -1305,13 +1430,24 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { section: string } }>('/records/:section', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
     const body = z.object({ data: z.record(z.unknown()), submit: z.boolean().default(true) }).parse(req.body)
-    return reply.status(201).send(await createRecord(req, activeTenant(req), req.params.section, body.data, { submit: body.submit }))
+    const tenantId = activeTenant(req)
+    // Through the head-office lens (D1 §6.4): only a section whose format has
+    // an approval step — a section with none would approve on save.
+    if (isReachOnly(req, tenantId)) {
+      const sec = recordSection(req.params.section)
+      const fmt = await getFormat(tenantId, sec.key)
+      await assertHoMayPropose(req, tenantId, fmt.workflow.length > 0, `a ${sec.title.toLowerCase()} record (it has no approval step, so it would take effect at once)`)
+    }
+    const via = await viaFor(req, tenantId)
+    return reply.status(201).send(await createRecord(req, tenantId, req.params.section, body.data, { submit: body.submit, viaHeadOfficeId: via }))
   })
 
   fastify.patch<{ Params: { section: string; id: string } }>('/records/:section/:id', { preHandler: HR_BACK_OFFICE }, async (req) => {
     const body = z.object({ data: z.record(z.unknown()) }).parse(req.body)
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('HR record', req.params.id)
+    await assertLensOwnRecord(req, rec, 'changing a record you did not raise, or one already acted on,')
+    const via = await viaFor(req, rec.tenantId)
     // A moved section's old rows are kept as they were, read-only.
     const recSec = sectionByKey(rec.section)
     if (recSec?.movedTo) throw sectionMoved(recSec)
@@ -1346,7 +1482,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (rec.section === 'shift_swap' && (swapPartnerOf(v.data) !== swapPartnerOf(stored) || String(cols.startDate ?? '') !== String(rec.startDate ?? ''))) delete system['_partner']
     return prisma.$transaction(async (tx) => {
       await prepareRecord(tx, rec.tenantId, rec.section, fmt.fields, cols, v.data, rec.id)
-      return tx.hrRecord.update({ where: { id: rec.id }, data: { ...cols, data: { ...v.data, ...system } as Prisma.InputJsonValue } })
+      return tx.hrRecord.update({ where: { id: rec.id }, data: { ...cols, data: { ...v.data, ...system } as Prisma.InputJsonValue, ...(via && { viaHeadOfficeId: via }) } })
     })
   })
 
@@ -1354,11 +1490,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('HR record', req.params.id)
     if (rec.createdById !== req.staffUser!.id && !(await hrBackOffice(req))) throw new ForbiddenError('Not your request')
+    await assertLensOwnRecord(req, rec, 'submitting a record you did not raise')
     if (rec.status !== 'draft') throw new AppError('NOT_DRAFT', 'Only a draft can be submitted', 409)
+    const via = await viaFor(req, rec.tenantId)
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
     // With no approval steps, submitting is approving — through the same
     // final-approval path as /decide.
     const approveNow = fmt.workflow.length === 0
+    // Through the lens nothing may approve on submit (its format lost its steps).
+    if (approveNow) await assertHoMayPropose(req, rec.tenantId, !isReachOnly(req, rec.tenantId), 'a record with no approval step')
     await prisma.$transaction(async (tx) => {
       // A draft leave is checked again now it starts to count, under the
       // employee's booking lock, and its days are recomputed from its dates.
@@ -1370,7 +1510,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       const leaveDays = days != null && days !== rec.quantity
         ? { quantity: days, data: { ...(rec.data as Record<string, unknown>), [fmt.fields.find((f) => f.bind === 'quantity')?.key ?? 'days']: days } as Prisma.InputJsonValue }
         : {}
-      const claimed = await tx.hrRecord.updateMany({ where: { id: rec.id, status: 'draft' }, data: { status: approveNow ? 'approved' : 'submitted', ...leaveDays } })
+      const claimed = await tx.hrRecord.updateMany({ where: { id: rec.id, status: 'draft' }, data: { status: approveNow ? 'approved' : 'submitted', ...leaveDays, ...(via && { viaHeadOfficeId: via }) } })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
       if (approveNow) await finalApproval(tx, rec, { actorId: req.staffUser!.id })
     })
@@ -1391,15 +1531,21 @@ export async function hrRoutes(fastify: FastifyInstance) {
       paidFrom: z.enum(['bank', 'cash']).optional(),
       bankAccountId: z.string().min(1).max(64).nullable().optional(),
     }).parse(req.body)
-    const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...writeTenants(req) } })
-    if (!rec) throw new NotFoundError('HR record', req.params.id)
+    // Loaded by id, then its company decides who may see it (D3 §7.4.5): a
+    // member, a head-office member who reaches it, or an HR hand-over's
+    // delegate. Anyone else gets 404 before anything about it is said.
+    const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section } })
+    if (!rec || !(await mayReachForDecision(req, rec.tenantId))) throw new NotFoundError('HR record', req.params.id)
     if (rec.status !== 'submitted') throw new AppError('NOT_PENDING', 'This request is not waiting for approval', 409)
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
     const step: WorkflowStep | undefined = fmt.workflow[rec.currentStep]
     if (!step) throw new AppError('NO_STEP', 'This request has no approval step left', 409)
     const subject = await approvalSubject(rec)
-    const who = canActOnStep(step.role, { id: req.staffUser!.id, role: req.staffUser!.role }, subject)
-    if (!who.ok) throw new ForbiddenError(who.reason ?? 'You cannot approve this step')
+    const isLast = rec.currentStep >= fmt.workflow.length - 1
+    // canActOnStep plus the head-office rules (logic.ts decideRight).
+    const right = await decideRight(req, rec, step, isLast, { subject, decision: body.decision })
+    if (!right.ok) throw right.status === 404 ? new NotFoundError('HR record', req.params.id) : new AppError(right.code, right.message, right.status)
+    const who = { ok: true, override: right.override }
     // HR's step (or HR standing in for a missing HOD) is the back office: the
     // CEO's untick of 'staff_hr' closes it (PPL-R2-01). A reporting manager's
     // own step and a management step stay with their approvers.
@@ -1416,8 +1562,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
       step: step.key, role: step.role, decision: body.decision, byUserId: req.staffUser!.id,
       byName: req.staffUser!.name ?? req.staffUser!.email ?? 'Unknown', at: new Date().toISOString(),
       ...(body.note && { note: body.note }), ...(who.override && { override: true }),
+      ...(right.via !== 'member' && { via: right.via }), ...(right.delegationId && { delegationId: right.delegationId }),
     }
-    const isLast = rec.currentStep >= fmt.workflow.length - 1
     const nextStatus = body.decision === 'rejected' ? 'rejected' : isLast ? 'approved' : 'submitted'
     // OT hours an approver settles on are kept on the record at every step, so
     // the next approver starts from them and the final amount pays them — not
@@ -1426,6 +1572,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // A loan's paying account, when the last approver names it.
     const payout = rec.section === 'loan' && nextStatus === 'approved' && (body.paidFrom !== undefined || body.bankAccountId !== undefined)
     if (payout && body.paidFrom === 'cash' && body.bankAccountId) throw new AppError('BANK_ACCOUNT_ON_CASH', 'A loan paid in cash does not use a bank account', 422)
+    // A16: a transfer approved into another company's department or manager.
+    if (nextStatus === 'approved') await assertTransferInCompany(prisma, rec.section, rec.tenantId, (rec.data ?? {}) as Record<string, unknown>)
     const data = {
       ...(rec.data as Record<string, unknown>),
       ...(hours != null && { approvedHours: hours }),
@@ -1460,6 +1608,16 @@ export async function hrRoutes(fastify: FastifyInstance) {
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: rec.tenantId,
       after: { step: step.key, status: nextStatus, override: who.override },
     })
+    // D3 §7.8: a decision through head office (reach or a hand-over), or on a
+    // record that came through one, also writes approval.decide — in the
+    // record's company (A19), never the decider's.
+    if (right.via !== 'member' || rec.viaHeadOfficeId) {
+      const grant: ApprovalGrant = right.via === 'delegation' && right.delegationId ? { via: 'delegation', delegationId: right.delegationId } : { via: 'role' }
+      await auditApproval(req, {
+        type: 'hr_request', id: rec.id, tenantId: rec.tenantId, decision: body.decision === 'approved' ? 'approve' : 'reject', grant, entity: 'HrRecord',
+        metadata: { section: rec.section, step: step.key, path: right.via, ...(rec.viaHeadOfficeId && { viaHeadOfficeId: rec.viaHeadOfficeId }) },
+      })
+    }
     return updated
   })
 
@@ -1477,6 +1635,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { section: string; id: string } }>('/records/:section/:id/cancel', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('HR record', req.params.id)
+    // Through the head-office lens: only your own record nobody has acted on.
+    await assertLensOwnRecord(req, rec, "cancelling a record you did not raise, or one already acted on,")
+    const via = await viaFor(req, rec.tenantId)
     // HR's power to cancel anyone's record needs the back-office module too
     // (PPL-R2-01); without it an HR login withdraws only its own requests.
     if (!(await hrBackOffice(req))) {
@@ -1531,7 +1692,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       }
       const claimed = await tx.hrRecord.updateMany({
         where: { id: rec.id, status: rec.status, currentStep: rec.currentStep, appliedAt: null },
-        data: { status: 'cancelled' },
+        data: { status: 'cancelled', ...(via && { viaHeadOfficeId: via }) },
       })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'This record changed while you were cancelling it — reload', 409)
       // An approved loan was paid out on the books; cancelling takes it back —
@@ -1576,7 +1737,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/records/offer/:id/create-employee', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: 'offer', ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('Offer', req.params.id)
+    // Through the head-office lens (A6): only from your own offer.
+    if (isReachOnly(req, rec.tenantId)) await assertHoMayPropose(req, rec.tenantId, rec.createdById === req.staffUser!.id, "creating an employee from an offer you did not raise")
     if (rec.status !== 'approved') throw new AppError('NOT_APPROVED', 'The offer must be approved first', 409)
+    const via = await viaFor(req, rec.tenantId)
     const d = rec.data as Record<string, unknown>
     if (d['acceptance'] && d['acceptance'] !== 'accepted') throw new AppError('NOT_ACCEPTED', 'The offer has not been accepted', 409)
     if (d['_employeeId']) throw new AppError('ALREADY_CREATED', 'An employee was already created from this offer', 409)
@@ -1602,8 +1766,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
         data: { fromOfferId: rec.id } as Prisma.InputJsonValue,
       },
     })
-    await prisma.hrRecord.update({ where: { id: rec.id }, data: { data: { ...d, _employeeId: emp.id } as Prisma.InputJsonValue } })
-    await audit({ category: 'identity', action: 'hr.employee.create_from_offer', entity: 'HrEmployee', entityId: emp.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: rec.tenantId, after: { offerId: rec.id } })
+    await prisma.hrRecord.update({ where: { id: rec.id }, data: { data: { ...d, _employeeId: emp.id } as Prisma.InputJsonValue, ...(via && { viaHeadOfficeId: via }) } })
+    await audit({
+      category: 'identity', action: 'hr.employee.create_from_offer', entity: 'HrEmployee', entityId: emp.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: rec.tenantId, after: { offerId: rec.id },
+      ...(via && { metadata: { viaHeadOfficeId: via } }),
+    })
     return reply.status(201).send(emp)
   })
 
@@ -1764,11 +1931,17 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post('/payroll/runs', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const tenantId = activeTenant(req)
     const { period } = z.object({ period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) }).parse(req.body)
+    // Through the head-office lens (A6) a run is prepared only for a month the
+    // company has none for — never pre-empting or replacing the company's own.
     if (await prisma.hrPayrollRun.findFirst({ where: { tenantId, period } })) throw new AppError('EXISTS', `There is already a payroll for ${period}`, 409)
+    const via = await viaFor(req, tenantId)
     const s = await getSettings(tenantId)
-    const run = await prisma.hrPayrollRun.create({ data: { tenantId, period, settings: s as unknown as Prisma.InputJsonValue, createdById: req.staffUser!.id } })
+    const run = await prisma.hrPayrollRun.create({ data: { tenantId, period, settings: s as unknown as Prisma.InputJsonValue, createdById: req.staffUser!.id, ...(via && { viaHeadOfficeId: via }) } })
     await flagMissingPunches(tenantId)
     await calculateRun(tenantId, run.id, req.staffUser!.id)
+    if (via) {
+      await audit({ category: 'identity', action: 'hr.payroll.create', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { period }, metadata: { viaHeadOfficeId: via } })
+    }
     return reply.status(201).send(await prisma.hrPayrollRun.findUnique({ where: { id: run.id } }))
   })
 
@@ -1782,6 +1955,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/recalculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
+    if (isReachOnly(req, run.tenantId)) await assertHoMayPropose(req, run.tenantId, run.status === 'draft', 'recalculating a payroll that is no longer a draft')
+    await stampRunVia(req, run)
     await flagMissingPunches(run.tenantId)
     return calculateRun(run.tenantId, run.id, req.staffUser!.id)
   })
@@ -1797,22 +1972,24 @@ export async function hrRoutes(fastify: FastifyInstance) {
       deductionAdjustmentsCents: z.number().int().min(0).optional(),
       loanInstallmentsCents: z.number().int().min(0).optional(),
     }).parse(req.body)
-    const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, ...writeTenants(req) }, include: { run: { select: { id: true, tenantId: true, status: true, viaHeadOfficeId: true } } } })
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
+    if (isReachOnly(req, slip.run.tenantId)) await assertHoMayPropose(req, slip.run.tenantId, slip.run.status === 'draft', 'editing a payslip on a payroll that is no longer a draft')
+    await stampRunVia(req, slip.run)
     await recalcPayslip(slip.id, body, req.staffUser!.id)
     return prisma.hrPayslip.findUnique({ where: { id: slip.id } })
   })
 
-  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/approve', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
-    const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
-    if (!run) throw new NotFoundError('Payroll', req.params.id)
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/approve', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     // Whoever prepared payroll — created it, recalculated it or edited a
     // payslip on it — does not also approve it, except the CEO, who is
     // allowed to run a one-person office.
     const me = req.staffUser!.id
-    if ((run.createdById === me || run.preparedByIds.includes(me)) && req.staffUser!.role !== 'admin') {
-      throw new ForbiddenError('Payroll must be approved by someone other than the people who prepared or edited it')
-    }
+    const { run, grant } = await payrollDecision(req, req.params.id, 'approve', (r) => {
+      if ((r.createdById === me || r.preparedByIds.includes(me)) && req.staffUser!.role !== 'admin') {
+        throw new ForbiddenError('Payroll must be approved by someone other than the people who prepared or edited it')
+      }
+    })
     const blocker = await runBlocker(run.id)
     if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
     // …and not in between: an edit of theirs landing after the check above.
@@ -1820,22 +1997,22 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'draft', ...unedited }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
     if (n.count === 0) throw new AppError('NOT_DRAFT', 'This payroll is not a draft', 409)
     await audit({ category: 'identity', action: 'hr.payroll.approve', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, totals: run.totals } })
+    await auditPayrollDecision(req, run, grant, 'approve')
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 
-  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/reopen', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
-    const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
-    if (!run) throw new NotFoundError('Payroll', req.params.id)
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/reopen', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const { run, grant } = await payrollDecision(req, req.params.id, 'reopen')
     const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'approved' }, data: { status: 'draft', approvedById: null, approvedAt: null } })
     if (n.count === 0) throw new AppError('NOT_APPROVED', 'Only an approved (not locked) payroll can be reopened', 409)
+    await auditPayrollDecision(req, run, grant, 'reopen')
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 
   // Lock: final. Loans show as recovered from here (payroll already treats an
   // installment on any other run as taken), and nothing changes after.
-  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/lock', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
-    const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
-    if (!run) throw new NotFoundError('Payroll', req.params.id)
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/lock', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const { run, grant } = await payrollDecision(req, req.params.id, 'lock')
     const blocker = await runBlocker(run.id)
     if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
     // Locking posts the month's payroll to the books, in the same transaction:
@@ -1846,6 +2023,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       await postPayrollAccrual(tx, run.id, req.staffUser!.id)
     })
     await audit({ category: 'identity', action: 'hr.payroll.lock', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period } })
+    await auditPayrollDecision(req, run, grant, 'lock')
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 
@@ -1881,6 +2059,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/payroll/runs/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
+    // Through the head-office lens (A6): only a run you alone prepared.
+    if (isReachOnly(req, run.tenantId)) {
+      const me = req.staffUser!.id
+      await assertHoMayPropose(req, run.tenantId, run.createdById === me && run.preparedByIds.every((id) => id === me), 'deleting a payroll someone else prepared')
+    }
     if (run.status !== 'draft') throw new AppError('NOT_DRAFT', 'Only a draft payroll can be deleted', 409)
     await prisma.hrPayrollRun.delete({ where: { id: run.id } })
     return reply.status(204).send()
@@ -2000,22 +2183,34 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // The ONE "what is waiting on me" resolver — /approvals lists it, /team
   // counts it.
   async function approvalsWaitingOn(req: FastifyRequest) {
+    // The same companies /decide accepts (decideRight): members, plus — only
+    // once a head office is linked or a hand-over exists — the companies
+    // reached through a head office and those an HR hand-over covers.
+    const su = req.staffUser!
+    const delegated = await delegatedTenantsByType(su.id)
+    const tenants = Array.from(new Set([...su.memberTenantIds, ...(su.reachTenantIds ?? []), ...(delegated.get('hr_request') ?? [])]))
     const pending = await prisma.hrRecord.findMany({
-      where: { tenantId: { in: req.staffUser!.memberTenantIds }, status: 'submitted' },
+      where: { tenantId: { in: tenants }, status: 'submitted' },
       include: { employee: { select: { id: true, fullName: true, employeeCode: true } } },
       orderBy: { createdAt: 'asc' },
       take: 500,
     })
+    // Which records came through a head office (A3), in one batch — the
+    // final-step rule needs it. Nothing to read for the CEO.
+    const through = su.role === 'admin' || pending.length === 0
+      ? pending.map(() => [] as string[])
+      : await throughHeadOfficeBatch(pending.map((r) => ({ tenantId: r.tenantId, submittedByIds: [r.createdById], submittedAt: r.createdAt, viaHeadOfficeId: r.viaHeadOfficeId })))
     const out = []
     // HR steps wait on HR only while HR holds the back-office module — the
     // same rule /decide applies (PPL-R2-01). Read once, only if needed.
     let staffHr: boolean | null = null
-    for (const rec of pending) {
+    for (const [i, rec] of pending.entries()) {
       const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
       const step = fmt.workflow[rec.currentStep]
       if (!step) continue
       const subject = await approvalSubject(rec)
-      const who = canActOnStep(step.role, { id: req.staffUser!.id, role: req.staffUser!.role }, subject)
+      const isLast = rec.currentStep >= fmt.workflow.length - 1
+      const who = await decideRight(req, rec, step, isLast, { subject, decision: null, through: through[i] ?? [] })
       // An admin override is possible on everything; only list it for the CEO
       // when it is genuinely theirs, or nothing would ever leave their queue.
       if (!who.ok || who.override) continue

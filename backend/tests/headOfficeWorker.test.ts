@@ -184,6 +184,8 @@ describe('drift', () => {
     expect(await flags('recharge_drift', HB)).toHaveLength(0)
 
     await cost(HB, '2026-09-25', 200_000)
+    // The next day's first tick after 06:00 (the drift check runs once a day).
+    resetHeadOfficeRechargeDailyMark()
     await runHeadOfficeRechargeTick(DAY6)
     expect(await flags('recharge_drift', HB, 'open')).toHaveLength(1)
     let hb = await runsOf(HB)

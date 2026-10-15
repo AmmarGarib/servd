@@ -7,7 +7,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { accountStateOf } from '../auth/accountStatus.js'
 import {
-  HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS, withSystemFields,
+  HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS, withSystemFields, transferTargetsOutsideCompany,
   type HrField, type HrSection, type WorkflowStep,
 } from './forms.js'
 import {
@@ -270,6 +270,12 @@ function effectUpdate(rec: HrRecord, emp: HrEmployee): Record<string, unknown> {
  */
 async function applyEffect(tx: Tx, rec: HrRecord, emp: HrEmployee): Promise<void> {
   const upd = effectUpdate(rec, emp)
+  // A16: a transfer never points the employee at another company's
+  // department or manager (save and approval refuse it; this is the last line).
+  if (rec.section === 'transfer') {
+    const foreign = await transferTargetsOutsideCompany(tx, emp.tenantId, (rec.data ?? {}) as Record<string, unknown>)
+    for (const f of foreign) delete upd[f.key === 'newDepartment' ? 'departmentId' : 'managerId']
+  }
   if (rec.effectiveDate && Object.keys(upd).length) {
     const later = await tx.hrRecord.findMany({
       where: { tenantId: rec.tenantId, employeeId: emp.id, section: { in: EFFECT_SECTIONS }, status: 'approved', appliedAt: { not: null }, effectiveDate: { gt: rec.effectiveDate }, id: { not: rec.id } },
@@ -657,7 +663,7 @@ export async function payableEmployees(tenantId: string, period: string, q: Db =
   const from = periodStart(period)
   const to = periodEnd(period)
   const settled = await settledEmployeeIds(tenantId, period, undefined, q)
-  return q.hrEmployee.findMany({
+  const rows = await q.hrEmployee.findMany({
     where: {
       tenantId,
       OR: [{ joiningDate: null }, { joiningDate: { lte: to } }],
@@ -666,6 +672,13 @@ export async function payableEmployees(tenantId: string, period: string, q: Db =
       ...(settled.size > 0 && { id: { notIn: Array.from(settled) } }),
     },
     orderBy: { employeeCode: 'asc' },
+  })
+  // Moved to a head office (hr/transfer.ts keeps the joining date for
+  // continuity): the head office pays from the move's effective month only —
+  // the old company paid every month before it.
+  return rows.filter((e) => {
+    const moved = ((e.data ?? {}) as { transferredFrom?: { effectiveDate?: unknown } }).transferredFrom?.effectiveDate
+    return typeof moved !== 'string' || new Date(`${moved.slice(0, 10)}T00:00:00Z`) <= to
   })
 }
 

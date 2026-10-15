@@ -151,8 +151,18 @@ export async function createPo(input: CreatePoInput) {
  * Submit a draft PO for approval, or auto-approve it under the threshold.
  * Approved is not sent: the PO goes to the supplier through sendPoToSupplier
  * or markPoSent.
+ *
+ * Head office (D1/D3, spec §6.4 + A3): a PO submitted through a head office
+ * (`viaHeadOfficeId`, from lib/headOffice.ts viaHeadOfficeForSubmit) ALWAYS
+ * goes to pending_approval, whatever the threshold (`forceApproval`), and is
+ * stamped with that head office in the same transaction. With neither option
+ * the behaviour is exactly the pre-head-office one.
  */
-export async function submitPo(poId: string, userId: string) {
+export async function submitPo(
+  poId: string,
+  userId: string,
+  opts: { forceApproval?: boolean; viaHeadOfficeId?: string | null } = {},
+) {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, include: { supplier: { select: { tenantId: true } } } })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   if (po.status !== 'draft') throw new AppError('INVALID_STATE', `Cannot submit PO in status ${po.status}`, 400)
@@ -160,18 +170,28 @@ export async function submitPo(poId: string, userId: string) {
   // The PO's company's threshold (its supplier's company).
   const threshold = await getApprovalThresholdCents(po.supplier.tenantId)
   const total = toCents(po.totalCents)
-  const needsApproval = total >= threshold
+  const via = opts.viaHeadOfficeId ?? null
+  const forced = !!opts.forceApproval && total < threshold
+  const needsApproval = total >= threshold || !!opts.forceApproval
 
   return prisma.$transaction(async (tx) => {
     const newStatus = needsApproval ? 'pending_approval' : 'approved'
-    await tx.purchaseOrder.update({
-      where: { id: poId },
-      data: needsApproval
-        ? { status: 'pending_approval' }
-        : { status: 'approved', approvedById: userId, approvedAt: new Date() },
+    // Claim the draft: two submits racing never both pass.
+    const claimed = await tx.purchaseOrder.updateMany({
+      where: { id: poId, status: 'draft' },
+      data: {
+        ...(needsApproval
+          ? { status: 'pending_approval' }
+          : { status: 'approved', approvedById: userId, approvedAt: new Date() }),
+        ...(via ? { viaHeadOfficeId: via } : {}),
+      },
     })
+    if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO changed meanwhile — reload it', 409)
     await tx.poActivityLog.create({
-      data: { purchaseOrderId: poId, userId, action: 'submitted', details: { needsApproval, threshold, total } },
+      data: {
+        purchaseOrderId: poId, userId, action: 'submitted',
+        details: { needsApproval, threshold, total, ...(via ? { viaHeadOfficeId: via } : {}), ...(forced ? { forcedApproval: true } : {}) },
+      },
     })
     if (!needsApproval) {
       await tx.poActivityLog.create({
@@ -182,32 +202,51 @@ export async function submitPo(poId: string, userId: string) {
   })
 }
 
-export async function approvePo(poId: string, approverId: string) {
+/**
+ * How an approval decision was granted (lib/approvalRights.ts): recorded on
+ * the PO's activity log only when it came through a hand-over, so a role-path
+ * decision writes exactly the row it always did.
+ */
+export interface PoDecisionVia { via: 'role' | 'delegation'; delegationId?: string }
+
+function decisionDetails(via?: PoDecisionVia): Record<string, unknown> | null {
+  return via?.via === 'delegation' ? { via: 'delegation', delegationId: via.delegationId ?? null } : null
+}
+
+/**
+ * pending_approval → approved. The claim is a conditional update on the
+ * status: a second approver (a deputy, the CEO) racing this one gets 409.
+ */
+export async function approvePo(poId: string, approverId: string, decision?: PoDecisionVia) {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId } })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   if (po.status !== 'pending_approval') throw new AppError('INVALID_STATE', `Cannot approve PO in status ${po.status}`, 400)
 
   return prisma.$transaction(async (tx) => {
-    await tx.purchaseOrder.update({
-      where: { id: poId },
+    const claimed = await tx.purchaseOrder.updateMany({
+      where: { id: poId, status: 'pending_approval' },
       data:  { status: 'approved', approvedById: approverId, approvedAt: new Date() },
     })
-    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'approved' } })
+    if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO was decided meanwhile — reload it', 409)
+    const details = decisionDetails(decision)
+    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'approved', ...(details ? { details: details as Prisma.InputJsonValue } : {}) } })
     return { id: poId, status: 'approved' }
   })
 }
 
-export async function rejectPo(poId: string, approverId: string, reason: string) {
+/** pending_approval → draft with the reason; claimed on the status like approvePo. */
+export async function rejectPo(poId: string, approverId: string, reason: string, decision?: PoDecisionVia) {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId } })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   if (po.status !== 'pending_approval') throw new AppError('INVALID_STATE', `Cannot reject PO in status ${po.status}`, 400)
 
   return prisma.$transaction(async (tx) => {
-    await tx.purchaseOrder.update({
-      where: { id: poId },
+    const claimed = await tx.purchaseOrder.updateMany({
+      where: { id: poId, status: 'pending_approval' },
       data:  { status: 'draft', rejectedReason: reason },
     })
-    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'rejected', details: { reason } } })
+    if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO was decided meanwhile — reload it', 409)
+    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'rejected', details: { reason, ...(decisionDetails(decision) ?? {}) } as Prisma.InputJsonValue } })
     return { id: poId, status: 'draft' }
   })
 }

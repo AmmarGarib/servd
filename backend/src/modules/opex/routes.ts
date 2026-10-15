@@ -19,6 +19,8 @@ import { liveRevisionsFor } from '../accounting/sourcePosting.js'
 import { isPayrollCategory, expenseCodeForCategoryName } from '../accounting/expenseCategories.js'
 import { profitAndLoss } from '../accounting/reports.js'
 import { monthlyLabourCents } from '../projections/labour.js'
+import { countedContributions, headOfficePlanCharges, PLAN_LABELS } from '../../lib/labour-budget.js'
+import { headOfficeSetupApplied } from '../headOffices/books.js'
 import { moduleGateForNewRoles } from './moduleGate.js'
 import { assertMoneyFits, toCents, zMoneyCents } from '../../lib/money.js'
 import { audit } from '../../lib/audit.js'
@@ -1076,7 +1078,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
     // The budgeted payroll: THE labour rule (projections/labour.ts, owner
     // decision 25) — open and filled seats at each company's cost share,
-    // frozen seats excluded, JV / head-office contributions netted — summed
+    // frozen seats excluded, contributions and head-office charges netted — summed
     // over the companies in view. The Projections labour line is the same
     // figure. Edits in workforce/positions show on the next refresh.
     const labours = await Promise.all(tenantIds.map((t) => monthlyLabourCents(t)))
@@ -1084,18 +1086,27 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const budgetedGrossMonthly = labours.reduce((s, l) => s + l.grossSalaryCents, 0)
     const headcountTotal       = labours.reduce((s, l) => s + l.headcount, 0)
     const openSeats            = labours.reduce((s, l) => s + l.openSeats, 0)
-    // Contributions between two companies BOTH in view cancel out.
+    const companyLevelSeatsMonthly = labours.reduce((s, l) => s + l.companyLevelSeatsCents, 0)
+    // Contributions between two companies BOTH in view cancel out. Only the
+    // contributions planning counts (lib/labour-budget.ts countedContributions:
+    // after the head-office setup a linked head_office row no longer counts).
     let incomingMonthly = labours.reduce((s, l) => s + l.incomingContributionCents, 0)
     let outgoingMonthly = labours.reduce((s, l) => s + l.outgoingContributionCents, 0)
     if (tenantIds.length > 1) {
-      const internal = await prisma.tenantContribution.aggregate({
+      const internalRows = await prisma.tenantContribution.findMany({
         where: { isActive: true, sourceTenantId: { in: tenantIds }, destinationTenantId: { in: tenantIds } },
-        _sum: { monthlyCents: true },
+        select: { sourceTenantId: true, destinationTenantId: true, category: true, monthlyCents: true },
       })
-      incomingMonthly -= internal._sum.monthlyCents ?? 0
-      outgoingMonthly -= internal._sum.monthlyCents ?? 0
+      const internal = (await countedContributions(internalRows, await headOfficeSetupApplied()))
+        .reduce((s, c) => s + c.monthlyCents, 0)
+      incomingMonthly -= internal
+      outgoingMonthly -= internal
     }
-    const netMonthly = budgetedMonthly + outgoingMonthly - incomingMonthly
+    // Head office charges (plan) for the companies in view — the one helper
+    // (headOfficePlanCharges); a head office and a company both in view cancel.
+    // Empty until the head-office setup wizard has run.
+    const hoPlan = await headOfficePlanCharges(tenantIds)
+    const netMonthly = budgetedMonthly + outgoingMonthly - incomingMonthly + hoPlan.chargesMonthlyCents - hoPlan.rechargedOutMonthlyCents
 
     return {
       runs,
@@ -1113,6 +1124,13 @@ export async function opexRoutes(fastify: FastifyInstance) {
         // after chargebacks.
         incomingContributionMonthlyCents: incomingMonthly,
         outgoingContributionMonthlyCents: outgoingMonthly,
+        // D1 (after the setup wizard): "Company-level seats" and "Head office
+        // charges (plan)" lines; a head office in view shows what it recharges.
+        companyLevelSeatsMonthlyCents:    companyLevelSeatsMonthly,
+        headOfficeChargesMonthlyCents:    hoPlan.chargesMonthlyCents,
+        headOfficeCharges:                hoPlan.charges,
+        rechargedOutMonthlyCents:         hoPlan.rechargedOutMonthlyCents,
+        labels:                           PLAN_LABELS,
         netMonthlyCents:                  netMonthly,
       },
     }

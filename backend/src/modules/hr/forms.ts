@@ -1019,3 +1019,46 @@ export function checkFormat(section: HrSection, fields: HrField[], workflow?: Wo
   }
   return problems
 }
+
+// ─── Transfers stay inside one company (A16) ────────────────────────────────
+//
+// The 'transfer' section (Movement, spec 21) moves someone to another branch,
+// department or manager WITHIN their company. Moving a person to a head office
+// is a different tool (hr/transfer.ts, "Move to head office", CEO only), so the
+// section's effect refuses a department or a manager of another company: 422
+// TRANSFER_OTHER_COMPANY, at save, at the final approval, and (defensively)
+// when the effect is applied. A department with no company (a global
+// template) is allowed, as everywhere else in HR.
+
+/** The system fields of 'transfer' that must point inside the record's company. */
+export const TRANSFER_COMPANY_FIELDS = [
+  { key: 'newDepartment', label: 'New department', kind: 'department' },
+  { key: 'newManager', label: 'New manager', kind: 'employee' },
+] as const
+
+/** The lookups transferTargetsOutsideCompany needs (a Prisma client or transaction). */
+export interface TransferTargetDb {
+  department: { findMany(args: { where: { id: { in: string[] } }; select: { id: true; tenantId: true } }): Promise<Array<{ id: string; tenantId: string | null }>> }
+  hrEmployee: { findMany(args: { where: { id: { in: string[] } }; select: { id: true; tenantId: true } }): Promise<Array<{ id: string; tenantId: string }>> }
+}
+
+/**
+ * The 'transfer' targets (department / manager) of `data` that belong to a
+ * company other than `tenantId`, or to no row at all — by field key. Empty for
+ * any other section's data.
+ */
+export async function transferTargetsOutsideCompany(db: TransferTargetDb, tenantId: string, data: Record<string, unknown>): Promise<Array<{ key: string; label: string }>> {
+  const want = (k: string) => (typeof data[k] === 'string' && data[k] ? (data[k] as string) : null)
+  const dept = want('newDepartment')
+  const mgr = want('newManager')
+  const bad: Array<{ key: string; label: string }> = []
+  if (dept) {
+    const rows = await db.department.findMany({ where: { id: { in: [dept] } }, select: { id: true, tenantId: true } })
+    if (!rows.some((r) => r.tenantId === tenantId || r.tenantId === null)) bad.push({ key: 'newDepartment', label: 'New department' })
+  }
+  if (mgr) {
+    const rows = await db.hrEmployee.findMany({ where: { id: { in: [mgr] } }, select: { id: true, tenantId: true } })
+    if (!rows.some((r) => r.tenantId === tenantId)) bad.push({ key: 'newManager', label: 'New manager' })
+  }
+  return bad
+}

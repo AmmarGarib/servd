@@ -4,6 +4,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { normalisePhone } from './otp.js'
 import { usesOtpLogin, OTP_LOGIN_ROLES } from './middleware.js'
+import { approvalInputOf, approvalSubject, assertCanApprove, type ApprovalGrant } from '../../lib/approvalRights.js'
 
 /**
  * Staff-account rules shared by every route that creates, edits, approves or
@@ -220,4 +221,51 @@ export function staffInCompaniesWhere(tenantIds: string[], includeOrphans: boole
 /** The company an identity-trail row about this login is filed under: the TARGET's primary company. */
 export function auditCompanyOf(target: { tenantId?: string | null; companies?: string[] }): string | null {
   return target.tenantId ?? target.companies?.[0] ?? null
+}
+
+// ─── Deciding a pending login (D3: hand-over) ────────────────────────────────
+
+/**
+ * The right to approve / reject the pending login `id` (spec §7.3, §7.4).
+ *
+ *  • The CEO: exactly today's rule first (findManagedStaff — 404 for a login
+ *    outside their companies, 403 LOGIN_IN_OTHER_COMPANY for one that is also
+ *    in a company they are not in; a company-less legacy row is theirs), then
+ *    assertCanApprove, which always passes for them on the role path.
+ *  • Anyone else: only through a live Operations hand-over that covers EVERY
+ *    company of the login, and only a FLOOR login (cashier, FOH, BOH, kitchen,
+ *    expediter) — every password login stays with the CEO (item-level
+ *    ceoOnly). The inviter never decides their own invite (separation of
+ *    duties: invitedById). A login that is no longer pending → 409 NOT_PENDING.
+ *
+ * The facts are read on serviceClient (A5) before the right is proven.
+ */
+export async function loginDecisionRight(
+  req: FastifyRequest,
+  id: string,
+  action: 'approve' | 'reject',
+): Promise<{ grant: ApprovalGrant; companies: string[]; tenantId: string | null }> {
+  const isAdmin = req.staffUser?.role === 'admin'
+  let companies: string[]
+  if (isAdmin) {
+    companies = (await findManagedStaff(req, id, { id: true })).companies
+  } else {
+    const row = await prisma.user.findFirst({
+      where: { id, deletedAt: null },
+      select: { tenantId: true, tenantMemberships: { select: { tenantId: true } } },
+    })
+    if (!row) throw new NotFoundError('Staff member')
+    companies = companiesOf(row)
+  }
+  const s = await approvalSubject('staff_login', id)
+  if (!s) throw new NotFoundError('Staff member')
+  const grant = await assertCanApprove(req, approvalInputOf('staff_login', id, s, {
+    touchesTenantIds: companies,
+    entity: 'User',
+    action: `${action} a new login`,
+  }))
+  if (!isAdmin && s.status !== 'pending') {
+    throw new AppError('NOT_PENDING', 'This login is no longer waiting for approval.', 409)
+  }
+  return { grant, companies, tenantId: s.ownerTenantId }
 }

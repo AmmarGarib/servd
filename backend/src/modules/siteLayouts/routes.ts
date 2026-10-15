@@ -27,7 +27,9 @@ import { Prisma, type SiteLayout } from '@prisma/client'
 import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
+import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, delegatedTenantsByType, type ApprovalGrant } from '../../lib/approvalRights.js'
+import { viaHeadOfficeForSubmit, widenRls } from '../../lib/headOffice.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
@@ -39,7 +41,7 @@ import {
 import {
   parseSlug, parseSlugOrThrow, resolveLayoutTenant, assertRowInScope, publishDraft, publishDueLayouts,
   publicShape, resolveFonts, namesById, assertKitFontsInCompany, kitOf, resolveKitFonts,
-  kitLiveSettingsTx, syncKitToConceptTx, unapplyKitTx, stripServerSettings,
+  kitLiveSettingsTx, syncKitToConceptTx, unapplyKitTx, stripServerSettings, assertLensLayoutAllowed,
 } from './service.js'
 
 const PREVIEW_TOKEN_TYPE = 'site_preview'
@@ -74,6 +76,8 @@ async function assertStorefrontModule(req: FastifyRequest, _reply: FastifyReply)
 
 const STOREFRONT = { preHandler: [requireAuth(), assertStorefrontModule] }
 const CEO = { preHandler: requireAuth(...ADMIN_ONLY) }
+/** Approve / reject: any signed-in staff; assertCanApprove (decisionRow) decides. */
+const DECIDE = { preHandler: requireAuth(...ALL_STAFF) }
 
 /** The row at `slug`, 404 unless its company is in `mode`'s scope. */
 async function loadRow(req: FastifyRequest, slug: string, mode: 'read' | 'write'): Promise<SiteLayout> {
@@ -82,6 +86,28 @@ async function loadRow(req: FastifyRequest, slug: string, mode: 'read' | 'write'
   if (!row) throw new NotFoundError('SiteLayout', slug)
   await assertRowInScope(req, row, mode)
   return row
+}
+
+/**
+ * D3: the row at `slug` and the right to decide it (spec §7.3). The facts are
+ * read on serviceClient (A5); assertCanApprove admits the CEO (in the row's
+ * company, or any shared row) and — once storefront_publish is switched on —
+ * a live Marketing hand-over covering the row's company. A row with no
+ * company is CEO only (ceoOnly). Separation of duties: whoever submitted or
+ * last edited the draft never decides it (the CEO excepted).
+ */
+async function decisionRow(req: FastifyRequest, slug: string, action: 'approve' | 'reject'): Promise<{ row: SiteLayout; grant: ApprovalGrant }> {
+  parseSlugOrThrow(slug)
+  const s = await approvalSubject('storefront_publish', slug)
+  if (!s) throw new NotFoundError('SiteLayout', slug)
+  const grant = await assertCanApprove(req, approvalInputOf('storefront_publish', slug, s, {
+    ceoOnly: s.ownerTenantId === null,
+    entity: 'SiteLayout',
+    action: `${action} a website change`,
+  }))
+  const row = await prisma.siteLayout.findUnique({ where: { slug } })
+  if (!row) throw new NotFoundError('SiteLayout', slug)
+  return { row, grant }
 }
 
 function actor(req: FastifyRequest) {
@@ -342,9 +368,13 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         status: z.enum(['pending', 'draft', 'scheduled', 'all']).default('all'),
         kind:   z.enum(LAYOUT_KINDS).optional(),
       }).parse(req.query)
+      // D3: plus the companies a live Marketing hand-over of website changes
+      // covers (none while DELEGATION_ENABLED.storefront_publish is off).
+      const delegated = [...((await delegatedTenantsByType(req.staffUser?.id ?? '')).get('storefront_publish') ?? [])]
+      if (delegated.length > 0) widenRls(req, delegated)
       const rows = await prisma.siteLayout.findMany({
         where: {
-          OR: [{ tenantId: null }, await scopeTenantWhere(req, 'read')],
+          OR: [{ tenantId: null }, await scopeTenantWhere(req, 'read'), ...(delegated.length > 0 ? [{ tenantId: { in: delegated } }] : [])],
           ...(q.status !== 'all' ? { draftStatus: q.status } : {}),
           ...(q.kind ? { kind: q.kind } : {}),
         },
@@ -447,7 +477,10 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
 
     const before = await prisma.siteLayout.findUnique({ where: { slug } })
     if (before) await assertRowInScope(req, before, 'write')
+    // Through head office: only the lens company's own rows (never servd:*).
+    if (before) await assertLensLayoutAllowed(req, before.tenantId, 'editing this page')
     const tenantId = await resolveLayoutTenant(req, slug, before ? 'write' : 'create', pageSettings?.popup?.brands)
+    await assertLensLayoutAllowed(req, tenantId, 'editing this page')
     if (kitSettings) await assertKitFontsInCompany(kitSettings.kit, tenantId)
 
     const now = new Date()
@@ -461,6 +494,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       draftUpdatedAt: now,
       submittedById: null,
       submittedAt: null,
+      viaHeadOfficeId: null, // stamped again at submit (A3)
       publishAt: null,
     }
     const saved = before
@@ -486,6 +520,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
   fastify.delete<SlugParams>('/:slug/draft', STOREFRONT, async (req, reply) => {
     const slug = slugOf(req)
     const row = await loadRow(req, slug, 'write')
+    await assertLensLayoutAllowed(req, row.tenantId, 'discarding this draft')
     if (row.liveVersion === 0) {
       // Conditional: a first publish landing between the read and the delete
       // (it already synced a kit to the brand) must not lose its row.
@@ -497,7 +532,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         data: {
           draftBlocks: Prisma.DbNull, draftSettings: Prisma.DbNull, draftStatus: 'none',
           draftUpdatedAt: null, draftUpdatedById: null, submittedAt: null, submittedById: null,
-          publishAt: null, reviewNote: null,
+          viaHeadOfficeId: null, publishAt: null, reviewNote: null,
         },
       })
     }
@@ -513,27 +548,36 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
   fastify.post<SlugParams>('/:slug/submit', STOREFRONT, async (req) => {
     const slug = slugOf(req)
     const row = await loadRow(req, slug, 'write')
+    await assertLensLayoutAllowed(req, row.tenantId, 'submitting this page')
     if (row.draftBlocks === null || row.draftStatus !== 'draft') {
       throw new ConflictError(row.draftStatus === 'none' ? 'There is no draft to submit' : `This draft is already ${row.draftStatus}`)
     }
+    // A3: the head office it came through (an HOD of a head office serving
+    // the company — through the lens or as a dual member), else null.
+    const viaHeadOfficeId = row.tenantId ? await viaHeadOfficeForSubmit(req, row.tenantId) : null
     const saved = await prisma.siteLayout.update({
       where: { id: row.id },
-      data: { draftStatus: 'pending', submittedById: req.staffUser!.id, submittedAt: new Date(), reviewNote: null },
+      data: { draftStatus: 'pending', submittedById: req.staffUser!.id, submittedAt: new Date(), reviewNote: null, viaHeadOfficeId },
     })
     await audit({
       category: 'identity', ...actor(req),
       action: 'site_layout.submit', entity: 'SiteLayout', entityId: row.id, after: { slug },
+      ...(viaHeadOfficeId ? { metadata: { viaHeadOfficeId } } : {}),
     })
     return editShape(saved)
   })
 
   // CEO: publish now, or schedule for publishAt.
-  fastify.post<SlugParams>('/:slug/approve', CEO, async (req) => {
+  // D3: the CEO; a company's own brand page may be handed to a head office's
+  // Marketing approver once the owner switches storefront_publish on
+  // (DELEGATION_ENABLED) — until then only the CEO passes, as before. Shared
+  // pages (servd:*, no company) are CEO only, always.
+  fastify.post<SlugParams>('/:slug/approve', DECIDE, async (req) => {
     const slug = slugOf(req)
     const body = z.object({
       publishAt: z.preprocess((v) => (v === '' || v === null ? undefined : v), z.string().datetime({ offset: true }).optional()),
     }).parse(req.body ?? {})
-    const row = await loadRow(req, slug, 'write')
+    const { row, grant } = await decisionRow(req, slug, 'approve')
     if (row.draftBlocks === null || row.draftStatus === 'none') throw new ConflictError('There is no draft to approve')
 
     const publishAt = body.publishAt ? new Date(body.publishAt) : null
@@ -552,6 +596,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         action: 'site_layout.schedule', entity: 'SiteLayout', entityId: row.id,
         after: { slug, publishAt: publishAt.toISOString() },
       })
+      await auditApproval(req, { type: 'storefront_publish', id: row.id, tenantId: row.tenantId, decision: 'approve', grant, entity: 'SiteLayout', metadata: { slug, publishAt: publishAt.toISOString() } })
       return editShape(saved)
     }
 
@@ -562,14 +607,15 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       action: 'site_layout.publish', entity: 'SiteLayout', entityId: row.id,
       before: { liveVersion: row.liveVersion }, after: { slug, version },
     })
+    await auditApproval(req, { type: 'storefront_publish', id: row.id, tenantId: row.tenantId, decision: 'approve', grant, entity: 'SiteLayout', metadata: { slug, version } })
     return editShape(await prisma.siteLayout.findUniqueOrThrow({ where: { id: row.id } }))
   })
 
   // CEO: send it back with a note.
-  fastify.post<SlugParams>('/:slug/reject', CEO, async (req) => {
+  fastify.post<SlugParams>('/:slug/reject', DECIDE, async (req) => {
     const slug = slugOf(req)
     const body = z.object({ note: z.string().trim().min(1).max(2000) }).parse(req.body)
-    const row = await loadRow(req, slug, 'write')
+    const { row, grant } = await decisionRow(req, slug, 'reject')
     if (row.draftStatus !== 'pending' && row.draftStatus !== 'scheduled') {
       throw new ConflictError('Only a submitted or scheduled draft can be sent back')
     }
@@ -582,6 +628,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       action: 'site_layout.reject', entity: 'SiteLayout', entityId: row.id,
       before: { draftStatus: row.draftStatus }, after: { slug, note: body.note },
     })
+    await auditApproval(req, { type: 'storefront_publish', id: row.id, tenantId: row.tenantId, decision: 'reject', grant, entity: 'SiteLayout', metadata: { slug } })
     return editShape(saved)
   })
 

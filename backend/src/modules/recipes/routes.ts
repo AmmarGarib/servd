@@ -3,17 +3,25 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import type { UserRole } from '@prisma/client'
-import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
 import { costsHiddenFor } from '../inventory/routes.js'
-import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import {
   buildRecipeGraph, loadRecipeGraph, recipeCost,
   type CostRecipe, type RecipeCost, type RecipeGraph, type RecipeLineCost,
 } from '../../lib/recipeCost.js'
 import { costClassOf } from '../../lib/inventoryClass.js'
-import { scopeTenantWhere, assertConceptOwned, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, assertConceptOwned, resolveTenantScope, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { serviceClient } from '../../lib/prisma.js'
+import { ForbiddenError } from '../../lib/errors.js'
+import { assertHoMayPropose, isReachOnly, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
+import { assertNotAmongSubmitters } from '../../lib/separation-of-duties.js'
+import {
+  APPROVAL_RIGHTS, approvalInputOf, approvalQueueTenantIds, approvalSubject, assertCanApprove, auditApproval, canApprove, decideApproval,
+  delegatedTenantsByType, throughHeadOfficeBatch, type ApprovalGrant, type ApprovalSubject, type ApprovalType,
+} from '../../lib/approvalRights.js'
 import { toCents } from '../../lib/money.js'
+import { audit } from '../../lib/audit.js'
 
 // Every cost on this module comes from lib/recipeCost.ts — THE plate cost the
 // ledger books as COGS and the stock depletion explodes. That is: each
@@ -417,7 +425,17 @@ async function assertRecipeInScope(
   recipeId: string,
   notFound: () => Error = () => new NotFoundError('Recipe', recipeId),
 ): Promise<OwnedRecipe> {
-  const r = await prisma.recipe.findUnique({
+  const r = await loadRecipeForOwner(recipeId)
+  if (!r) throw notFound()
+  // 'write': editing an existing row is allowed for any company the operator
+  // belongs to, independent of which one the portfolio header is viewing.
+  if (!(await recipeInScope(r, await recipeScope(req, 'write')))) throw notFound()
+  return ownedOf(r)
+}
+
+/** The recipe with what OwnedRecipe needs — no scope check (callers prove the right first). */
+async function loadRecipeForOwner(recipeId: string) {
+  return prisma.recipe.findUnique({
     where: { id: recipeId },
     select: {
       id: true, kind: true, status: true, pendingMenuItem: true,
@@ -426,10 +444,9 @@ async function assertRecipeInScope(
       ingredients: { select: { inventoryItemId: true, prepRecipeId: true, section: true } },
     },
   })
-  if (!r) throw notFound()
-  // 'write': editing an existing row is allowed for any company the operator
-  // belongs to, independent of which one the portfolio header is viewing.
-  if (!(await recipeInScope(r, await recipeScope(req, 'write')))) throw notFound()
+}
+
+async function ownedOf(r: NonNullable<Awaited<ReturnType<typeof loadRecipeForOwner>>>): Promise<OwnedRecipe> {
   let ownerTenantId: string | null = null
   let serviceVessel: string | null = null
   if (r.kind === 'plate') {
@@ -442,6 +459,100 @@ async function assertRecipeInScope(
     ownerTenantId = r.modifier?.group.menuItem.concept.tenantId ?? null
   }
   return { id: r.id, kind: r.kind, status: r.status, ownerTenantId, serviceVessel, lines: r.ingredients }
+}
+
+// ─── Head office (D1/D3, spec §6.4 + A6, A21) ────────────────────────────────
+//
+// A recipe has no tenantId: its companies are derived (a plate's / add-on's
+// brand company; a component's users and stock). Through a head-office lens a
+// caller may only PROPOSE: create (bound to the lens company), edit and log
+// test cooks on a recipe THEY created while it is in iteration, and submit.
+// Every editor is remembered (createdById, editedByIds), so a recipe any
+// head-office person touched goes to the CEO (or the Operations hand-over),
+// never to a company owner. With no head office none of this changes anything.
+
+const RECIPE_TYPE: ApprovalType = 'recipe'
+
+/** The recipe's companies for the lens check (no-company markers left out). */
+async function recipeTenantSet(owned: Pick<OwnedRecipe, 'id' | 'kind' | 'ownerTenantId'>): Promise<string[]> {
+  if (owned.ownerTenantId) return [owned.ownerTenantId]
+  if (owned.kind !== 'component') return []
+  return [...(await loadComponentCompanies())(owned.id)].filter((t) => t !== NO_COMPANY)
+}
+
+/** The first of the recipe's companies the caller sees only through a head office, or null. */
+async function lensCompanyOf(req: FastifyRequest, owned: Pick<OwnedRecipe, 'id' | 'kind' | 'ownerTenantId'>): Promise<string | null> {
+  if ((req.staffUser?.reachTenantIds ?? []).length === 0) return null
+  return (await recipeTenantSet(owned)).find((t) => isReachOnly(req, t)) ?? null
+}
+
+/** Append the caller to the recipe's editors (A6) — inside the write's own transaction. */
+async function noteEditor(tx: Prisma.TransactionClient, recipeId: string, userId: string): Promise<void> {
+  const row = await tx.recipe.findUnique({ where: { id: recipeId }, select: { editedByIds: true } })
+  if (!row || row.editedByIds.includes(userId)) return
+  await tx.recipe.update({ where: { id: recipeId }, data: { editedByIds: { push: userId } } })
+}
+
+/**
+ * The approve / reject / queue routes admit the type's role list (APPROVERS)
+ * or a live hand-over of the type; anyone else gets exactly the 403 the old
+ * requireAuth(...APPROVERS) gave.
+ */
+async function assertApproverRoleOrDelegate(req: FastifyRequest, type: ApprovalType): Promise<void> {
+  const su = req.staffUser!
+  if ((APPROVAL_RIGHTS[type].roles as readonly string[]).includes(su.role)) return
+  if (((await delegatedTenantsByType(su.id)).get(type)?.size ?? 0) > 0) return
+  throw new ForbiddenError(`Role '${su.role}' is not allowed for this resource`)
+}
+
+const OWN_WORK_MESSAGE = 'You submitted this — it needs the CEO to approve. Owners cannot approve their own work.'
+
+/**
+ * A5 + A21: the right to decide a recipe. Its companies / submitters come from
+ * serviceClient (approvalSubject) BEFORE the right is proven; submitters are
+ * createdById ∪ editedByIds ∪ submittedById. The owner rule keeps its own
+ * message (and flag); a no-company recipe is CEO only; a 404 keeps the old
+ * shape. The handler re-reads the row through `prisma` afterwards.
+ */
+async function recipeDecisionRight(req: FastifyRequest, recipeId: string, action: 'approve' | 'reject'): Promise<{ s: ApprovalSubject; grant: ApprovalGrant }> {
+  await assertApproverRoleOrDelegate(req, RECIPE_TYPE)
+  const s = await approvalSubject(RECIPE_TYPE, recipeId)
+  if (!s) throw new NotFoundError('Recipe', recipeId)
+  const input = approvalInputOf(RECIPE_TYPE, recipeId, s, { entity: 'Recipe', action })
+  const d = await decideApproval(req, input)
+  if (!d.ok && d.status === 404) throw new NotFoundError('Recipe', recipeId)
+  if (s.status !== 'pending_approval') {
+    throw new AppError('BAD_STATUS', action === 'approve'
+      ? `Only recipes pending approval can be promoted (this one is ${s.status})`
+      : `Only recipes pending approval can be rejected (this one is ${s.status})`, 409)
+  }
+  if (!d.ok && d.selfApproval) {
+    // A co-owner cannot sign off their own (or their edited) work — it escalates to the CEO.
+    await assertNotAmongSubmitters(req.staffUser!, s.submitterIds, { tenantId: s.ownerTenantId, action, entity: 'Recipe', entityId: recipeId, message: OWN_WORK_MESSAGE })
+  }
+  let grant: ApprovalGrant
+  try {
+    grant = await assertCanApprove(req, input)
+  } catch (err) {
+    if (err instanceof AppError && err.statusCode === 404) throw new NotFoundError('Recipe', recipeId)
+    throw err
+  }
+  return { s, grant }
+}
+
+/** A RecipeScope over an explicit set of companies (the approval queue's role part). */
+async function recipeScopeFor(tenantIds: string[], mode: ScopeMode): Promise<RecipeScope> {
+  const concepts = tenantIds.length === 0 ? [] : await prisma.concept.findMany({
+    where: { deletedAt: null, tenantId: { in: tenantIds } },
+    select: { id: true },
+  })
+  let index: Promise<ComponentCompanies> | null = null
+  return {
+    mode,
+    conceptIds: new Set(concepts.map((c) => c.id)),
+    tenantIds: new Set(tenantIds),
+    components: () => (index ??= loadComponentCompanies()),
+  }
 }
 
 /** True when `tenantId` is inside a scopeTenantWhere result. */
@@ -1155,18 +1266,51 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // GET /recipes/pending-approval — CEO/owner inbox. Recipes a manager has
   // submitted for promotion and that are waiting on sign-off. Defined before
   // GET /:id so the static segment isn't swallowed by the param route.
-  fastify.get('/pending-approval', { preHandler: requireAuth(...APPROVERS) }, async (req) => {
-    // Only the companies in view — an approver at one company must not see
-    // (or learn the existence of) another company's pending recipes.
-    const recipes = await filterInScope(await prisma.recipe.findMany({
+  fastify.get('/pending-approval', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    // Who may list (D3, spec §7.4.5): the approver roles (APPROVERS), over the
+    // companies in view that they belong to — an approver at one company must
+    // not see (or learn the existence of) another company's pending recipes —
+    // plus, for a live Operations hand-over, the recipes it lets them decide
+    // (never their own, never one that came through another head office).
+    // A non-admin approver no longer sees a recipe a head-office person
+    // created, edited or submitted: that one goes to the CEO.
+    await assertApproverRoleOrDelegate(req, RECIPE_TYPE)
+    const su = req.staffUser!
+    // Widens RLS to the companies a live hand-over covers (A5), before any read.
+    await approvalQueueTenantIds(req, RECIPE_TYPE)
+    const pending = await prisma.recipe.findMany({
       where: { status: 'pending_approval' },
       include: {
         menuItem: { select: { name: true, conceptId: true, concept: { select: { name: true } } } },
         modifier: { select: { group: { select: { menuItem: { select: { conceptId: true, concept: { select: { name: true } } } } } } } },
       },
       orderBy: { submittedAt: 'asc' },
-    }), await recipeScope(req, 'read'))
-    return recipes.map((r) => ({
+    })
+    const roleAllows = (APPROVAL_RIGHTS[RECIPE_TYPE].roles as readonly string[]).includes(su.role)
+    let roleRows: typeof pending = []
+    if (roleAllows) {
+      const members = new Set(su.memberTenantIds ?? [])
+      const roleIds = (await resolveTenantScope(req)).tenantIds.filter((t) => members.has(t))
+      roleRows = await filterInScope(pending, await recipeScopeFor(roleIds, 'read'))
+      // Through head office (A3/A6): only when a head office is linked at all.
+      if (su.role !== 'admin' && roleRows.length > 0 && (await serviceClient.headOfficeLink.findFirst({ select: { id: true } }))) {
+        const subjects = await Promise.all(roleRows.map((r) => approvalSubject(RECIPE_TYPE, r.id)))
+        const through = await throughHeadOfficeBatch(subjects.map((x) => ({
+          tenantId: x?.ownerTenantId ?? null, submittedByIds: x?.submitterIds ?? [], submittedAt: x?.submittedAt ?? null, viaHeadOfficeId: x?.viaHeadOfficeId ?? null,
+        })))
+        roleRows = roleRows.filter((_, i) => (through[i] ?? []).length === 0 && !subjects[i]?.viaHeadOfficeId)
+      }
+    }
+    const listed = new Set(roleRows.map((r) => r.id))
+    const delegated = (await delegatedTenantsByType(su.id)).get(RECIPE_TYPE)
+    const extra = delegated && delegated.size > 0
+      ? (await Promise.all(pending.filter((r) => !listed.has(r.id)).map(async (r) => {
+          const subj = await approvalSubject(RECIPE_TYPE, r.id)
+          return subj && (await canApprove(req, approvalInputOf(RECIPE_TYPE, r.id, subj))) ? r : null
+        }))).filter((r): r is (typeof pending)[number] => r !== null)
+      : []
+    const keep = new Set([...listed, ...extra.map((r) => r.id)])
+    return pending.filter((r) => keep.has(r.id)).map((r) => ({
       id:            r.id,
       kind:          r.kind,
       name:          r.menuItem?.name ?? r.name ?? '—',
@@ -1582,6 +1726,22 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     }
     const lineWarnings = await validateRecipeLines(req, { kind: body.kind, tenantIds: [ownerTenantId] }, body.ingredients)
 
+    // Through a head-office lens (A21): the new recipe must belong to the lens
+    // company — a new dish of one of its brands, or a recipe whose every line
+    // is that company's own stock. Anything else is 422.
+    if (isReachOnly(req, ownerTenantId)) {
+      const newDish = body.kind === 'plate' && !body.menuItemId && !!body.newMenuItem
+      let ownStock = body.ingredients.length > 0 && body.ingredients.every((i) => !!i.inventoryItemId && !i.prepRecipeId)
+      if (!newDish && ownStock) {
+        const ids = [...new Set(body.ingredients.map((i) => i.inventoryItemId!))]
+        const items = await prisma.inventoryItem.findMany({ where: { id: { in: ids } }, select: { tenantId: true } })
+        ownStock = items.length === ids.length && items.every((it) => it.tenantId === ownerTenantId)
+      }
+      if (!newDish && !ownStock) {
+        throw new AppError('RECIPE_NOT_IN_LENS_COMPANY', 'Through head office a new recipe must belong to the company you are viewing: a new dish of one of its brands, or a recipe that uses only its own stock.', 422)
+      }
+    }
+
     // Plate recipes are 1:1 with a MenuItem, modifier recipes with a Modifier —
     // check for an existing recipe to surface a clean 409 instead of a Prisma
     // unique-violation. Component recipes have neither (several components
@@ -1644,6 +1804,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           category:                body.category ?? null,
           photoUrl:                body.photoUrl ?? null,
           methodSteps:             body.methodSteps ?? Prisma.DbNull,
+          createdById:             req.staffUser!.id,
           ingredients:  { create: body.ingredients.map(ingredientRow) },
         },
         include: {
@@ -1676,6 +1837,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = recipeUpdateSchema.parse(req.body)
       const owned = await assertRecipeInScope(req, req.params.id)
+      // Through a head-office lens (A6): only a recipe you created, while it
+      // is in iteration, and never the live menu price of a linked dish.
+      const lens = await lensCompanyOf(req, owned)
+      if (lens) {
+        const meta = await prisma.recipe.findUnique({ where: { id: req.params.id }, select: { createdById: true, menuItemId: true } })
+        await assertHoMayPropose(req, lens, meta?.createdById === req.staffUser!.id && owned.status === 'iteration', "changing a recipe you didn't create")
+        await assertHoMayPropose(req, lens, !(body.actualSellingPriceCents != null && meta?.menuItemId), 'changing the live menu price')
+      }
       // Only new or changed lines are refused (validateRecipeLines): a line the
       // user did not touch never blocks the save.
       const lineWarnings = body.ingredients
@@ -1683,6 +1852,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         : []
       const warnings = saveWarnings(lineWarnings, owned.kind, owned.serviceVessel, body.ingredients ?? owned.lines)
       return prisma.$transaction(async (tx) => {
+        await noteEditor(tx, req.params.id, req.staffUser!.id)
         if (body.ingredients) {
           await tx.recipeIngredient.deleteMany({ where: { recipeId: req.params.id } })
         }
@@ -1772,6 +1942,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // with a note.
 
   // POST /recipes/:id/submit — iteration → pending_approval (any manager).
+  // The submitter joins the recipe's editors (A6). Through a head office the
+  // recipe is stamped with it (A3) and goes to the CEO / the hand-over.
   fastify.post<{ Params: { id: string } }>(
     '/:id/submit',
     { preHandler: requireAuth(...MANAGERS) },
@@ -1782,96 +1954,114 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (recipe.status !== 'iteration') {
         throw new AppError('BAD_STATUS', `Only recipes in iteration can be submitted (this one is ${recipe.status})`, 409)
       }
-      const updated = await prisma.recipe.update({
-        where: { id: req.params.id },
-        data: {
-          status:          'pending_approval',
-          submittedById:   req.staffUser!.id,
-          submittedAt:     new Date(),
-          rejectionReason: null,   // clear any prior rejection note on re-submit
-        },
+      const companies = await recipeTenantSet(owned)
+      let via: string | null = null
+      for (const t of companies) { via = await viaHeadOfficeForSubmit(req, t); if (via) break }
+      const updated = await prisma.$transaction(async (tx) => {
+        await noteEditor(tx, req.params.id, req.staffUser!.id)
+        const claimed = await tx.recipe.updateMany({
+          where: { id: req.params.id, status: 'iteration' },
+          data: {
+            status:          'pending_approval',
+            submittedById:   req.staffUser!.id,
+            submittedAt:     new Date(),
+            rejectionReason: null,   // clear any prior rejection note on re-submit
+            ...(via ? { viaHeadOfficeId: via } : {}),
+          },
+        })
+        if (claimed.count === 0) throw new AppError('BAD_STATUS', 'This recipe changed meanwhile — reload it', 409)
+        return tx.recipe.findUniqueOrThrow({ where: { id: req.params.id } })
       })
+      if (via) {
+        await audit({
+          category: 'identity', action: 'recipe.submit', entity: 'Recipe', entityId: req.params.id,
+          userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: companies[0] ?? null,
+          metadata: { viaHeadOfficeId: via, companies },
+        })
+      }
       return { ...updated, warnings: saveWarnings([], owned.kind, owned.serviceVessel, owned.lines) }
     },
   )
 
-  // POST /recipes/:id/approve — pending_approval → production (CEO/owner only).
+  // POST /recipes/:id/approve — pending_approval → production.
+  // Who (D3, spec §7.3 + A5/A6/A21): the CEO/owner role path in the recipe's
+  // companies (an owner never their own or edited work, nor one that came
+  // through a head office), or a live Operations hand-over covering every
+  // company of the recipe. The decision is claimed on the status (409 if
+  // someone decided it meanwhile).
   fastify.post<{ Params: { id: string } }>(
     '/:id/approve',
-    { preHandler: requireAuth(...APPROVERS) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
+      const { s: subj, grant } = await recipeDecisionRight(req, req.params.id, 'approve')
       // A packaging-vessel brand's dish with no Packaging line is approved
       // with warning PACKAGING_MISSING — never refused (owner's FINAL rule).
-      const owned = await assertRecipeInScope(req, req.params.id)
+      const row = await loadRecipeForOwner(req.params.id)
+      if (!row) throw new NotFoundError('Recipe', req.params.id)
+      const owned = await ownedOf(row)
       const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
-      if (recipe.status !== 'pending_approval') {
-        throw new AppError('BAD_STATUS', `Only recipes pending approval can be promoted (this one is ${recipe.status})`, 409)
-      }
-      // A co-owner cannot sign off their own submission — escalates to the CEO.
-      await assertNotSelfApproval({ actor: req.staffUser!, creatorId: recipe.submittedById, action: 'approve', entity: 'Recipe', entityId: recipe.id, message: 'You submitted this — it needs the CEO to approve. Owners cannot approve their own work.' })
 
-      const data: Prisma.RecipeUpdateInput = {
-        status:          'production',
-        approvedById:    req.staffUser!.id,
-        approvedAt:      new Date(),
-        rejectionReason: null,
-      }
-
-      // Approval is when a testing plate finally opens its menu item. If this
-      // plate deferred creation (has a pendingMenuItem and no menuItem yet),
-      // create the MenuItem now — seeded with the recipe's selling price and
-      // availability — link it, and clear the pending payload + carried name.
-      if (recipe.kind === 'plate' && !recipe.menuItemId && recipe.pendingMenuItem) {
-        const pm = recipe.pendingMenuItem as { conceptId: string; categoryId: string; name: string; description: string | null }
-        // The deferred item opens under its brand's own category only (the
-        // brand itself was checked by assertRecipeInScope above).
-        const cat = await prisma.category.findFirst({
-          where: { id: pm.categoryId, conceptId: pm.conceptId, deletedAt: null },
-          select: { id: true },
+      const approved = await prisma.$transaction(async (tx) => {
+        const claimed = await tx.recipe.updateMany({
+          where: { id: req.params.id, status: 'pending_approval' },
+          data:  { status: 'production', approvedById: req.staffUser!.id, approvedAt: new Date(), rejectionReason: null },
         })
-        if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'The category this dish was filed under is no longer part of its brand — edit the recipe first', 422)
-        const item = await prisma.menuItem.create({
-          data: {
-            conceptId:   pm.conceptId,
-            categoryId:  pm.categoryId,
-            name:        pm.name,
-            description: pm.description ?? null,
-            priceCents:  recipe.actualSellingPriceCents ?? 0,
-            isAvailable: recipe.isActive,
-          },
-        })
-        data.menuItem = { connect: { id: item.id } }
-        data.pendingMenuItem = Prisma.DbNull
-        data.name = null   // plate now inherits its name from the menu item
-      }
-
-      const approved = await prisma.recipe.update({ where: { id: req.params.id }, data })
+        if (claimed.count === 0) {
+          throw new AppError('BAD_STATUS', 'This recipe was decided meanwhile — reload it', 409)
+        }
+        // Approval is when a testing plate finally opens its menu item. If this
+        // plate deferred creation (has a pendingMenuItem and no menuItem yet),
+        // create the MenuItem now — seeded with the recipe's selling price and
+        // availability — link it, and clear the pending payload + carried name.
+        if (recipe.kind === 'plate' && !recipe.menuItemId && recipe.pendingMenuItem) {
+          const pm = recipe.pendingMenuItem as { conceptId: string; categoryId: string; name: string; description: string | null }
+          // The deferred item opens under its brand's own category only (the
+          // brand itself is one of the companies the right was proven for).
+          const cat = await tx.category.findFirst({
+            where: { id: pm.categoryId, conceptId: pm.conceptId, deletedAt: null },
+            select: { id: true },
+          })
+          if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'The category this dish was filed under is no longer part of its brand — edit the recipe first', 422)
+          const item = await tx.menuItem.create({
+            data: {
+              conceptId:   pm.conceptId,
+              categoryId:  pm.categoryId,
+              name:        pm.name,
+              description: pm.description ?? null,
+              priceCents:  recipe.actualSellingPriceCents ?? 0,
+              isAvailable: recipe.isActive,
+            },
+          })
+          return tx.recipe.update({
+            where: { id: req.params.id },
+            data:  { menuItem: { connect: { id: item.id } }, pendingMenuItem: Prisma.DbNull, name: null },   // plate now inherits its name from the menu item
+          })
+        }
+        return tx.recipe.findUniqueOrThrow({ where: { id: req.params.id } })
+      })
+      await auditApproval(req, { type: RECIPE_TYPE, id: req.params.id, tenantId: subj.ownerTenantId, decision: 'approve', grant, entity: 'Recipe', metadata: { companies: subj.companyIds } })
       return { ...approved, warnings: saveWarnings([], owned.kind, owned.serviceVessel, owned.lines) }
     },
   )
 
-  // POST /recipes/:id/reject — pending_approval → iteration (CEO/owner only).
+  // POST /recipes/:id/reject — pending_approval → iteration (same right as approve).
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/reject',
-    { preHandler: requireAuth(...APPROVERS) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { reason } = z.object({ reason: z.string().max(1000).optional() }).parse(req.body ?? {})
-      await assertRecipeInScope(req, req.params.id)
-      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
-      if (!recipe) throw new NotFoundError('Recipe', req.params.id)
-      if (recipe.status !== 'pending_approval') {
-        throw new AppError('BAD_STATUS', `Only recipes pending approval can be rejected (this one is ${recipe.status})`, 409)
-      }
-      // Same escalation rule as approve — an owner can't rule on their own work.
-      await assertNotSelfApproval({ actor: req.staffUser!, creatorId: recipe.submittedById, action: 'reject', entity: 'Recipe', entityId: recipe.id, message: 'You submitted this — it needs the CEO to approve. Owners cannot approve their own work.' })
-      return prisma.recipe.update({
-        where: { id: req.params.id },
+      const { s: subj, grant } = await recipeDecisionRight(req, req.params.id, 'reject')
+      const claimed = await prisma.recipe.updateMany({
+        where: { id: req.params.id, status: 'pending_approval' },
         data: {
           status:          'iteration',
           rejectionReason: reason?.trim() || null,
         },
       })
+      if (claimed.count === 0) throw new AppError('BAD_STATUS', 'This recipe was decided meanwhile — reload it', 409)
+      await auditApproval(req, { type: RECIPE_TYPE, id: req.params.id, tenantId: subj.ownerTenantId, decision: 'reject', grant, entity: 'Recipe', metadata: { companies: subj.companyIds, reason: reason?.trim() || null } })
+      return prisma.recipe.findUniqueOrThrow({ where: { id: req.params.id } })
     },
   )
 
@@ -1913,9 +2103,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = testAttemptSchema.parse(req.body)
-      await assertRecipeInScope(req, req.params.id)
-      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id }, select: { id: true } })
+      const owned = await assertRecipeInScope(req, req.params.id)
+      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id }, select: { id: true, createdById: true } })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+      // Through a head-office lens (A6): only on a recipe you created, in iteration.
+      const lens = await lensCompanyOf(req, owned)
+      if (lens) await assertHoMayPropose(req, lens, recipe.createdById === req.staffUser!.id && owned.status === 'iteration', "logging a test cook on a recipe you didn't create")
 
       // Next version = current max + 1. The (recipeId, version) unique index
       // guards against a duplicate if two cooks log at the same instant.
@@ -1924,16 +2117,19 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         orderBy: { version: 'desc' },
         select: { version: true },
       })
-      const attempt = await prisma.recipeTestAttempt.create({
-        data: {
-          recipeId:     req.params.id,
-          version:      (last?.version ?? 0) + 1,
-          notes:        body.notes.trim(),
-          outcome:      body.outcome ?? null,
-          rating:       body.rating ?? null,
-          testedById:   req.staffUser!.id,
-          testedByName: req.staffUser!.name ?? req.staffUser!.email ?? null,
-        },
+      const attempt = await prisma.$transaction(async (tx) => {
+        await noteEditor(tx, req.params.id, req.staffUser!.id)
+        return tx.recipeTestAttempt.create({
+          data: {
+            recipeId:     req.params.id,
+            version:      (last?.version ?? 0) + 1,
+            notes:        body.notes.trim(),
+            outcome:      body.outcome ?? null,
+            rating:       body.rating ?? null,
+            testedById:   req.staffUser!.id,
+            testedByName: req.staffUser!.name ?? req.staffUser!.email ?? null,
+          },
+        })
       })
       return reply.status(201).send(attempt)
     },

@@ -15,7 +15,7 @@ import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin } from './managerPin.j
 import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
 import {
   normaliseStaffPhone, normaliseStaffPhoneLenient, assertPhoneForRole, assertPhoneFree, withStaffPhoneLock, findManagedStaff,
-  assertCompaniesInScope, staffInCompaniesWhere, auditCompanyOf,
+  assertCompaniesInScope, staffInCompaniesWhere, auditCompanyOf, loginDecisionRight,
 } from './staffAccounts.js'
 import { maskPhoneForLog } from '../../lib/notify.js'
 import { PRACTICE_NOTE, practiceCodeField, sandboxBlocks, refuseCodeRequestInPractice } from '../../lib/sandbox.js'
@@ -27,12 +27,14 @@ import { requireModule } from '../notifications/requireModule.js'
 import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
 import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
 import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
-import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, usesOtpLogin } from './middleware.js'
+import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, usesOtpLogin, OTP_LOGIN_ROLES } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { childRolesFor } from '../../lib/workspaces.js'
+import { approvalInputOf, approvalQueueTenantIds, auditApproval, canApprove } from '../../lib/approvalRights.js'
+import { viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
 import { withoutCeoOnlyModules } from '../../lib/moduleAccess.js'
 import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
@@ -940,16 +942,53 @@ export async function authRoutes(fastify: FastifyInstance) {
   // Company-scoped (decision 47): the CEO's READ scope — the active company, or
   // every company they belong to in "All companies" view. Company-less legacy
   // rows (the old self-signup made them) stay the CEO's to clear.
-  fastify.get('/staff/pending', { preHandler: requireAuth('admin') }, async (req) => {
-    const scope = await scopeTenantWhere(req, 'read')
-    const pending = await prisma.user.findMany({
-      where: { ...whereAccountState('pending'), deletedAt: null, OR: [scope, { tenantId: null }] },
-      select: {
-        id: true, name: true, email: true, phone: true, role: true,
-        signupReason: true, createdAt: true, tenantId: true, invitedById: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    })
+  //
+  // D3 (hand-over): the CEO's list is exactly today's. Anyone else sees only
+  // what they may decide — the floor logins of the companies a live
+  // Operations hand-over gives them (approvalQueueTenantIds), never their own
+  // invites, each checked with the same rule as the approve route (canApprove).
+  // No right anywhere → 403, so the inbox drops the type.
+  fastify.get('/staff/pending', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const select = {
+      id: true, name: true, email: true, phone: true, role: true,
+      signupReason: true, createdAt: true, tenantId: true, invitedById: true, viaHeadOfficeId: true,
+    } as const
+    let pending: Array<{
+      id: string; name: string | null; email: string | null; phone: string | null; role: UserRole
+      signupReason: string | null; createdAt: Date; tenantId: string | null; invitedById: string | null; viaHeadOfficeId: string | null
+    }>
+    if (req.staffUser!.role === 'admin') {
+      const scope = await scopeTenantWhere(req, 'read')
+      pending = await prisma.user.findMany({
+        where: { ...whereAccountState('pending'), deletedAt: null, OR: [scope, { tenantId: null }] },
+        select,
+        orderBy: { createdAt: 'desc' },
+      })
+    } else {
+      const queue = await approvalQueueTenantIds(req, 'staff_login')
+      if (queue.length === 0) throw new AppError('FORBIDDEN', 'Only the CEO, or the Operations approver they handed new logins to, sees this list.', 403)
+      const me = req.staffUser!.id
+      const rows = await prisma.user.findMany({
+        where: {
+          ...whereAccountState('pending'), deletedAt: null,
+          tenantId: { in: queue },
+          role: { in: OTP_LOGIN_ROLES },
+          OR: [{ invitedById: null }, { invitedById: { not: me } }],
+        },
+        select: { ...select, tenantMemberships: { select: { tenantId: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      })
+      pending = []
+      for (const { tenantMemberships, ...r } of rows) {
+        const companies = Array.from(new Set([...(r.tenantId ? [r.tenantId] : []), ...tenantMemberships.map((m) => m.tenantId)]))
+        const ok = await canApprove(req, approvalInputOf('staff_login', r.id, {
+          companyIds: companies, ownerTenantId: r.tenantId, submitterIds: r.invitedById ? [r.invitedById] : [],
+          viaHeadOfficeId: r.viaHeadOfficeId, status: 'pending', submittedAt: r.createdAt, role: r.role,
+        }))
+        if (ok) pending.push(r)
+      }
+    }
     const inviterIds = Array.from(new Set(pending.map((p) => p.invitedById).filter((x): x is string => !!x)))
     const inviters = inviterIds.length
       ? await prisma.user.findMany({ where: { id: { in: inviterIds } }, select: { id: true, name: true } })
@@ -963,6 +1002,13 @@ export async function authRoutes(fastify: FastifyInstance) {
   // CHILD_ROLES); the account is created PENDING in the caller's ACTIVE
   // company and cannot sign in until the CEO approves it. The CEO's own
   // direct path (POST /auth/users) is unchanged and needs no approval.
+  //
+  // Through head office (D1, HO_SUBMIT_ROUTES): an HOD viewing a company it
+  // serves (the lens header) proposes the login IN THAT COMPANY — the
+  // middleware makes it the active company for this route only — within the
+  // HOD's own childRoles, and the row is stamped with the head office it came
+  // through (User.viaHeadOfficeId, A3), so it is decided by the CEO or that
+  // head office's Operations approver, never the company's own staff.
   fastify.post('/staff/invite', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = z.object({
       name:       z.string().trim().min(1).max(120),
@@ -1012,6 +1058,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     // link sent on approval (or the CEO issues one from Workforce).
     const password = await hashPassword(generateStaffPassword())
     // Check and write under one per-number lock (AUTH-R5).
+    const viaHeadOfficeId = await viaHeadOfficeForSubmit(req, tenantId)
     const user = await withStaffPhoneLock(phone, async (tx) => {
       await assertPhoneFree(req, phone, { role: body.role, db: tx })
       return tx.user.create({
@@ -1026,6 +1073,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           isActive: true,
           mustChangePassword: true,
           invitedById: req.staffUser!.id,
+          ...(viaHeadOfficeId ? { viaHeadOfficeId } : {}),
           // Linked to the HrEmployee on approval (validated above, re-checked then).
           ...(body.employeeId ? { inviteEmployeeId: body.employeeId } : {}),
           tenantMemberships: { create: [{ tenant: { connect: { id: tenantId } }, role: 'member' }] },
@@ -1042,6 +1090,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       userEmail: req.staffUser!.email,
       tenantId,
       after: { name: user.name, email: user.email, role: user.role, tenantId, employeeId: body.employeeId ?? null },
+      ...(viaHeadOfficeId ? { metadata: { viaHeadOfficeId } } : {}),
     })
     return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined })
   })
@@ -1063,11 +1112,18 @@ export async function authRoutes(fastify: FastifyInstance) {
   // password from Workforce as before.
   fastify.patch<{ Params: { id: string } }>(
     '/staff/:id/approve',
-    { preHandler: requireAuth('admin') },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      const user = await findManagedStaff(req, req.params.id, {
-        id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true, tenantId: true, inviteEmployeeId: true,
+      // D3: the CEO as today, or the Operations approver a head office was
+      // handed new logins to (floor logins only; never their own invite).
+      const right = await loginDecisionRight(req, req.params.id, 'approve')
+      const isCeo = req.staffUser!.role === 'admin'
+      const found = await prisma.user.findFirst({
+        where: { id: req.params.id, deletedAt: null },
+        select: { id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true, tenantId: true, inviteEmployeeId: true },
       })
+      if (!found) throw new NotFoundError('Staff member')
+      const user = { ...found, companies: right.companies }
       if (accountStateOf(user) === 'active') {
         const { inviteEmployeeId: _drop, companies: _c, ...shown } = user
         return reply.status(200).send({ ...shown, message: 'Already active' })
@@ -1089,13 +1145,18 @@ export async function authRoutes(fastify: FastifyInstance) {
       // it in turn is approved.
       const updated = await withStaffPhoneLock(phone, async (tx) => {
         await assertPhoneFree(req, phone, { role: user.role, excludeUserId: user.id, countPending: false, db: tx })
-        return tx.user.update({
-          where: { id: req.params.id },
-          // The pending link is spent either way. A number stored the old way
-          // (0300…, +92…) is rewritten in the one normalised form.
-          data: { ...approveData(), inviteEmployeeId: null, ...(phone && phone !== user.phone ? { phone } : {}) },
-          select: { id: true, name: true, email: true, role: true, accountStatus: true },
-        })
+        // The pending link is spent either way. A number stored the old way
+        // (0300…, +92…) is rewritten in the one normalised form.
+        const data = { ...approveData(), inviteEmployeeId: null, ...(phone && phone !== user.phone ? { phone } : {}) }
+        if (!isCeo) {
+          // A delegate claims the PENDING row: two approvers (or an approve
+          // racing a reject) act once.
+          const claimed = await tx.user.updateMany({ where: { id: req.params.id, accountStatus: 'pending', deletedAt: null }, data })
+          if (claimed.count === 0) throw new AppError('NOT_PENDING', 'This login is no longer waiting for approval.', 409)
+        }
+        return isCeo
+          ? tx.user.update({ where: { id: req.params.id }, data, select: { id: true, name: true, email: true, role: true, accountStatus: true } })
+          : tx.user.findUniqueOrThrow({ where: { id: req.params.id }, select: { id: true, name: true, email: true, role: true, accountStatus: true } })
       })
 
       // Link the HR employee named at invite time — re-validated now: still in
@@ -1136,8 +1197,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         tenantId: auditCompanyOf(user),
         before: { accountStatus: user.accountStatus },
         after: { accountStatus: updated.accountStatus, targetEmail: user.email, role: user.role, linkedEmployeeId, passwordLink },
-        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null, via: right.grant.via, ...(right.grant.delegationId ? { delegationId: right.grant.delegationId } : {}) },
       })
+      await auditApproval(req, { type: 'staff_login', id: user.id, tenantId: auditCompanyOf(user), decision: 'approve', grant: right.grant, entity: 'User' })
       return reply.status(200).send({ ...updated, linkedEmployeeId, passwordLink })
     },
   )
@@ -1147,14 +1209,26 @@ export async function authRoutes(fastify: FastifyInstance) {
   // restoring it.
   fastify.patch<{ Params: { id: string } }>(
     '/staff/:id/reject',
-    { preHandler: requireAuth('admin') },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      const before = await findManagedStaff(req, req.params.id, { accountStatus: true, email: true })
-      const updated = await prisma.user.update({
-        where: { id: req.params.id },
-        data: suspendData(),
-        select: { id: true, name: true, accountStatus: true },
-      })
+      // D3: the CEO as today, or the Operations approver of a floor login
+      // (pending only; never their own invite).
+      const right = await loginDecisionRight(req, req.params.id, 'reject')
+      const isCeo = req.staffUser!.role === 'admin'
+      const found = await prisma.user.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { accountStatus: true, email: true, tenantId: true } })
+      if (!found) throw new NotFoundError('Staff member')
+      const before = { ...found, companies: right.companies }
+      if (!isCeo) {
+        const claimed = await prisma.user.updateMany({ where: { id: req.params.id, accountStatus: 'pending', deletedAt: null }, data: suspendData() })
+        if (claimed.count === 0) throw new AppError('NOT_PENDING', 'This login is no longer waiting for approval.', 409)
+      }
+      const updated = isCeo
+        ? await prisma.user.update({
+            where: { id: req.params.id },
+            data: suspendData(),
+            select: { id: true, name: true, accountStatus: true },
+          })
+        : await prisma.user.findUniqueOrThrow({ where: { id: req.params.id }, select: { id: true, name: true, accountStatus: true } })
       await revokeAllForSubject(req.params.id) // kill the rejected user's sessions now
       await audit({
         category: 'identity',
@@ -1166,8 +1240,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         tenantId: auditCompanyOf(before),
         before: { accountStatus: before.accountStatus },
         after: { accountStatus: updated.accountStatus, targetEmail: before.email },
-        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null, via: right.grant.via, ...(right.grant.delegationId ? { delegationId: right.grant.delegationId } : {}) },
       })
+      await auditApproval(req, { type: 'staff_login', id: req.params.id, tenantId: auditCompanyOf(before), decision: 'reject', grant: right.grant, entity: 'User' })
       return reply.status(200).send(updated)
     },
   )

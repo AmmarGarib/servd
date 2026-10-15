@@ -22,19 +22,18 @@ import { prisma, serviceClient } from '../../lib/prisma.js'
 import { isTestTenant } from '../../lib/testCompany.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
-import { encryptSecret, secretHint } from '../../lib/secretBox.js'
 import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
 import { requireAuth } from '../auth/middleware.js'
 import { activeTenantId, assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
 import type { UserRole } from '@prisma/client'
 import type { ConnectorKindT, FiscalPayload } from '../../connectors/types.js'
+import { parseFiscalSettings, reportingRequiredOf, AUTHORITIES } from '../../connectors/config.js'
 import {
-  assertUrlAllowed, fiscalSettingsSchema, terminalSettingsSchema, parseFiscalSettings, parseTerminalSettings, parseRaastSettings,
-  reportingRequiredOf, AUTHORITIES, terminalEntrySchema,
-} from '../../connectors/config.js'
+  applyConnectorConfig, asObject, lockConnectorTx, prepareConnectorConfig, putBody, viewOf, webhookUrl,
+} from './applyConfig.js'
 import { raastOverview } from './raastRoutes.js'
 import {
-  buildCtx, ensureConnectorRow, getConnectorFresh, invalidateConnector, isKnownDriver, listDrivers, newWebhookToken,
+  buildCtx, ensureConnectorRow, getConnectorFresh, invalidateConnector, listDrivers, newWebhookToken,
   fiscalDriverOf, terminalDriverOf, connectorNow,
 } from '../../connectors/registry.js'
 import { fiscalCounts, releaseHeld, retryDocument, retryFailedForTenant, recordManualFiling } from '../../connectors/fiscal/outbox.js'
@@ -44,7 +43,8 @@ import { chargeView } from '../../connectors/terminal/service.js'
 import { testApproval } from '../../connectors/drivers/test.js'
 import { handleInboundEvent } from '../../connectors/inbound.js'
 import { isoPkt, scrubMessage, withTimeout } from '../../connectors/util.js'
-import { practiceConnectorRow } from '../../lib/sandbox.js'
+
+export type { ConnectorView } from './applyConfig.js'
 
 const ADMINS = [...CONNECTOR_ADMINS] as UserRole[]
 const VIEWERS = [...CONNECTOR_ADMINS, 'management'] as UserRole[]
@@ -52,85 +52,6 @@ const CEO = ['admin'] as UserRole[]
 
 const kindParam = z.object({ kind: z.enum(['fiscal', 'terminal']) })
 const idParam = z.object({ id: z.string().min(1).max(64) })
-
-function webhookUrl(token: string): string {
-  const base = (process.env['API_URL'] ?? 'https://api.servd.pk').replace(/\/+$/, '')
-  return `${base}/api/v1/webhooks/pos/${token}`
-}
-
-export interface ConnectorView {
-  id: string
-  kind: ConnectorKindT
-  driver: string
-  enabled: boolean
-  isTest: boolean
-  liveSince: string | null
-  baseUrl: string | null
-  apiKeyHint: string | null
-  webhookSecretHint: string | null
-  webhookUrl: string
-  settings: unknown
-  lastTestAt: string | null
-  lastTestOk: boolean | null
-  lastTestDetail: string | null
-  lastOkAt: string | null
-  lastError: string | null
-  lastErrorAt: string | null
-}
-
-function viewOf(row: PosConnector): ConnectorView {
-  row = practiceConnectorRow(row) // practice copy: the page shows the test driver it really runs on
-  return {
-    id: row.id,
-    kind: row.kind,
-    driver: row.driver,
-    enabled: row.enabled,
-    isTest: row.driver === 'test',
-    liveSince: row.liveSince?.toISOString() ?? null,
-    baseUrl: row.baseUrl,
-    apiKeyHint: row.apiKeyHint,
-    webhookSecretHint: row.webhookSecretHint,
-    webhookUrl: webhookUrl(row.webhookToken),
-    settings: row.kind === 'fiscal' ? parseFiscalSettings(row.settings) : row.kind === 'raast' ? parseRaastSettings(row.settings) : parseTerminalSettings(row.settings),
-    lastTestAt: row.lastTestAt?.toISOString() ?? null,
-    lastTestOk: row.lastTestOk,
-    lastTestDetail: row.lastTestDetail,
-    lastOkAt: row.lastOkAt?.toISOString() ?? null,
-    lastError: row.lastError,
-    lastErrorAt: row.lastErrorAt?.toISOString() ?? null,
-  }
-}
-
-function asObject(v: unknown): Record<string, unknown> {
-  return v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : {}
-}
-
-/** The connector row, locked for the rest of the transaction (read-modify-write of its settings). */
-async function lockConnectorTx(tx: Prisma.TransactionClient, id: string): Promise<PosConnector> {
-  await tx.$queryRaw`SELECT id FROM pos_connectors WHERE id = ${id} FOR UPDATE`
-  return tx.posConnector.findUniqueOrThrow({ where: { id } })
-}
-
-/** The saved form of a base URL (as assertUrlAllowed returns it), without any DNS — for the early live check only. */
-function looseUrl(raw: string): string | null {
-  const v = raw.trim()
-  if (!v) return null
-  try { return new URL(v).toString().replace(/\/+$/, '') } catch { return v }
-}
-
-function switchOffFirst(what: string): AppError {
-  return new AppError('SWITCH_OFF_FIRST', `The fiscal POS is live — the CEO switches it off before ${what} can be changed, and goes live again after a successful test`, 409)
-}
-
-async function locationsOfCompany(tenantId: string, ids: string[], db: Prisma.TransactionClient | typeof prisma = prisma): Promise<Set<string>> {
-  if (ids.length === 0) return new Set()
-  const rows = await db.location.findMany({ where: { id: { in: ids }, tenantId, deletedAt: null }, select: { id: true } })
-  return new Set(rows.map((r) => r.id))
-}
-
-function notInCompany(what: string): AppError {
-  return new AppError('NOT_IN_COMPANY', `${what} does not belong to this company`, 422)
-}
 
 /** The brands of the company and their POS ids. */
 async function brandPosIds(tenantId: string) {
@@ -143,21 +64,6 @@ async function brandPosIds(tenantId: string) {
 }
 
 // ─── Body schemas ─────────────────────────────────────────────────────────────
-
-const putBody = z.object({
-  driver: z.string().min(1).max(40).optional(),
-  baseUrl: z.string().max(500).optional(),
-  apiKey: z.string().max(1000).optional(),
-  webhookSecret: z.string().max(1000).optional(),
-  regenerateWebhookSecret: z.boolean().optional(),
-  enabled: z.boolean().optional(),
-  settings: z.record(z.unknown()).optional(),
-}).strict()
-
-const fiscalSettingsPatch = fiscalSettingsSchema.partial().strict()
-const terminalSettingsPatch = terminalSettingsSchema.partial().extend({
-  terminals: z.array(terminalEntrySchema.extend({ id: z.string().min(1).max(64).optional() })).max(100).optional(),
-}).strict()
 
 const docsQuery = z.object({
   status: z.enum(['held', 'waiting', 'pending', 'submitting', 'filed', 'rejected', 'failed', 'skipped', 'manual_required', 'manual_filed']).optional(),
@@ -278,110 +184,14 @@ export async function connectorRoutes(fastify: FastifyInstance) {
     const { kind } = kindParam.parse(req.params)
     const body = putBody.parse(req.body)
     const tenantId = activeTenantId(req, 'the POS connector belongs to one company')
-    const seeded = await ensureConnectorRow(tenantId, kind)
-    // Early refusal (re-checked under the lock below) before any DNS work.
-    if (kind === 'fiscal' && seeded.enabled) {
-      if (body.driver !== undefined && body.driver !== seeded.driver) throw switchOffFirst('the fiscal POS driver')
-      if (body.baseUrl !== undefined && looseUrl(body.baseUrl) !== seeded.baseUrl) throw switchOffFirst('the fiscal POS address')
-    }
-    const checkedUrl = body.baseUrl !== undefined && body.baseUrl.trim() ? await assertUrlAllowed(body.baseUrl) : null
-    let newWebhookSecret: string | undefined
-
-    const { row, updated, changed } = await prisma.$transaction(async (tx) => {
-      const row = await lockConnectorTx(tx, seeded.id)
-      const data: Prisma.PosConnectorUpdateInput = {}
-      const changed: string[] = []
-
-      if (body.driver !== undefined && body.driver !== row.driver) {
-        if (!isKnownDriver(kind, body.driver)) throw new AppError('UNKNOWN_DRIVER', `No ${kind} driver called '${body.driver}'`, 422)
-        // W1-R6: a LIVE fiscal POS is never re-pointed from here — switching
-        // the filer (http ↔ test, or to none) bypasses the CEO's switch-off and
-        // the go-live readiness check. The CEO switches off, IT changes it, the
-        // CEO goes live again.
-        if (kind === 'fiscal' && row.enabled) throw switchOffFirst('the fiscal POS driver')
-        data.driver = body.driver
-        changed.push('driver')
-      }
-      const driver = body.driver ?? row.driver
-
-      if (body.baseUrl !== undefined) {
-        const url = body.baseUrl.trim() ? checkedUrl : null
-        if (url !== row.baseUrl) {
-          if (kind === 'fiscal' && row.enabled) throw switchOffFirst('the fiscal POS address')
-          data.baseUrl = url
-          changed.push('baseUrl')
-        }
-      }
-      if (body.apiKey !== undefined) {
-        const v = body.apiKey.trim()
-        data.apiKeyEnc = v ? encryptSecret(v) : null
-        data.apiKeyHint = v ? secretHint(v) : null
-        changed.push('apiKey')
-      }
-      if (body.regenerateWebhookSecret) {
-        newWebhookSecret = randomBytes(32).toString('hex')
-        data.webhookSecretEnc = encryptSecret(newWebhookSecret)
-        data.webhookSecretHint = secretHint(newWebhookSecret)
-        changed.push('webhookSecret')
-      } else if (body.webhookSecret !== undefined) {
-        const v = body.webhookSecret.trim()
-        data.webhookSecretEnc = v ? encryptSecret(v) : null
-        data.webhookSecretHint = v ? secretHint(v) : null
-        changed.push('webhookSecret')
-      }
-
-      // Settings: partial merge over the current (locked) values, then the full schema.
-      const stored = asObject(row.settings)
-      let mergedSettings: Record<string, unknown> | null = null
-      if (body.settings !== undefined) {
-        if (kind === 'fiscal') {
-          const patch = fiscalSettingsPatch.parse(body.settings)
-          const next = fiscalSettingsSchema.parse({ ...parseFiscalSettings(stored), ...patch })
-          const locs = await locationsOfCompany(tenantId, [...new Set(next.outlets.map((o) => o.locationId))], tx)
-          for (const o of next.outlets) {
-            if (!locs.has(o.locationId)) throw notInCompany('An outlet in the POS id overrides')
-            if (o.conceptId) {
-              const c = await tx.concept.findFirst({ where: { id: o.conceptId, tenantId, deletedAt: null }, select: { id: true } })
-              if (!c) throw notInCompany('A brand in the POS id overrides')
-            }
-          }
-          // The company switch (§17.7) is not a driver setting: kept as stored (read under the lock), changed only by the CEO's own route.
-          mergedSettings = { ...next, ...('fiscalReportingRequired' in stored && { fiscalReportingRequired: stored['fiscalReportingRequired'] }) }
-        } else {
-          const patch = terminalSettingsPatch.parse(body.settings)
-          const terminals = patch.terminals?.map((t) => ({ ...t, id: t.id ?? `trm_${randomBytes(6).toString('hex')}` }))
-          const next = terminalSettingsSchema.parse({ ...parseTerminalSettings(stored), ...patch, ...(terminals && { terminals }) })
-          const ids = new Set<string>()
-          for (const t of next.terminals) {
-            if (ids.has(t.id)) throw new AppError('INVALID_SETTINGS', 'Two card machines share an id', 422)
-            ids.add(t.id)
-          }
-          const locs = await locationsOfCompany(tenantId, [...new Set(next.terminals.map((t) => t.locationId))], tx)
-          for (const t of next.terminals) if (!locs.has(t.locationId)) throw notInCompany(`The outlet of card machine '${t.label}'`)
-          mergedSettings = next
-        }
-        data.settings = JSON.parse(JSON.stringify(mergedSettings)) as Prisma.InputJsonValue
-        changed.push('settings')
-      }
-
-      if (kind === 'terminal') {
-        const effective = parseTerminalSettings(mergedSettings ?? stored)
-        if (driver === 'none' && !effective.allowManualRef) throw new AppError('INVALID_SETTINGS', 'The manual card reference cannot be switched off while no card machine driver is set', 422)
-        if (body.enabled !== undefined && body.enabled !== row.enabled) {
-          if (body.enabled && driver === 'none') throw new AppError('INVALID_SETTINGS', 'Pick a card machine driver before switching it on', 422)
-          data.enabled = body.enabled
-          changed.push('enabled')
-        } else if (driver === 'none' && row.enabled) {
-          data.enabled = false
-          changed.push('enabled')
-        }
-      }
-      // body.enabled is ignored for fiscal: go-live / switch-off are the CEO's.
-
-      data.updatedById = req.staffUser!.id
-      const updated = await tx.posConnector.update({ where: { id: row.id }, data })
-      return { row, updated, changed }
-    }, { maxWait: 10_000, timeout: 15_000 })
+    // Seed the row, refuse early on a live fiscal POS (re-checked under the
+    // lock) and run the SSRF guard before the transaction (applyConfig.ts —
+    // the one writer, shared with approved IT change requests).
+    const prepared = await prepareConnectorConfig(tenantId, kind, body)
+    const { row, updated, changed, newWebhookSecret } = await prisma.$transaction(
+      (tx) => applyConnectorConfig(tx, tenantId, kind, body, { userId: req.staffUser!.id }, prepared),
+      { maxWait: 10_000, timeout: 15_000 },
+    )
     invalidateConnector(tenantId, kind)
     await audit({
       category: 'identity', action: 'connectors.update', entity: 'PosConnector', entityId: row.id,

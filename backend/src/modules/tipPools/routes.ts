@@ -48,7 +48,9 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma, type UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, APPROVERS, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, delegatedTenantsByType } from '../../lib/approvalRights.js'
+import { widenRls } from '../../lib/headOffice.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
@@ -634,6 +636,39 @@ async function poolInScope(req: FastifyRequest, id: string, mode: 'read' | 'writ
   return pool
 }
 
+/**
+ * D3: the right to post or pay a pool (spec §7.3). The pool's own company
+ * (TipPool.tenantId, A19) decides: the role path is today's APPROVERS in the
+ * caller's member companies; a Finance hand-over from a head office that
+ * serves the company also passes. Separation of duties: whoever computed the
+ * draft (createdById) never posts or pays it (the CEO excepted), and a pool
+ * created through a head office goes to the CEO or that head office's
+ * delegate, never the company's own owners. The facts are read on
+ * serviceClient (A5); on success the request's RLS context covers the pool's
+ * company, so the pool is then read by id.
+ */
+async function poolDecision(req: FastifyRequest, id: string, action: 'post' | 'pay') {
+  const s = await approvalSubject('tip_pool', id)
+  if (!s) throw new NotFoundError('TipPool', id)
+  const grant = await assertCanApprove(req, approvalInputOf('tip_pool', id, s, { entity: 'TipPool', action: `${action} a tip pool` }))
+  const pool = await prisma.tipPool.findUnique({ where: { id } })
+  if (!pool) throw new NotFoundError('TipPool', id)
+  return { pool, grant }
+}
+
+/**
+ * Read scope for the pool screens: the companies in view, plus — for a
+ * delegate — the companies a live Finance hand-over of tip pools covers
+ * (whatever the view), so the delegate can review what they are asked to post.
+ */
+async function poolReadWhere(req: FastifyRequest): Promise<Prisma.TipPoolWhereInput> {
+  const scope = await scopeTenantWhere(req, 'read')
+  const delegated = [...((await delegatedTenantsByType(req.staffUser?.id ?? '')).get('tip_pool') ?? [])]
+  if (delegated.length === 0) return scope
+  widenRls(req, delegated)
+  return { OR: [scope, { tenantId: { in: delegated } }] }
+}
+
 const MEMBER_INCLUDE = {
   members: {
     orderBy: { userName: 'asc' as const },
@@ -656,11 +691,20 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
       // The pool's own company (view-aware), narrowed to a brand when one is
       // asked for or picked in the global brand filter.
       const inScope = await conceptIdsInScope(req, 'read')
+      // D3: a delegate also sees the pools of the companies handed to them.
+      const delegated = [...((await delegatedTenantsByType(req.staffUser?.id ?? '')).get('tip_pool') ?? [])]
+      if (delegated.length > 0) {
+        widenRls(req, delegated)
+        const theirs = await prisma.concept.findMany({ where: { tenantId: { in: delegated }, deletedAt: null }, select: { id: true } })
+        for (const c of theirs) if (!inScope.includes(c.id)) inScope.push(c.id)
+      }
       const ids = req.query.conceptId ? inScope.filter((c) => c === req.query.conceptId) : inScope
       return prisma.tipPool.findMany({
         where: {
-          ...(await scopeTenantWhere(req, 'read')),
-          ...(req.query.conceptId ? { conceptId: { in: ids } } : { OR: [{ conceptId: { in: ids } }, { conceptId: null }] }),
+          AND: [
+            await poolReadWhere(req),
+            req.query.conceptId ? { conceptId: { in: ids } } : { OR: [{ conceptId: { in: ids } }, { conceptId: null }] },
+          ],
         },
         orderBy: { periodStart: 'desc' },
         include: { _count: { select: { members: true } }, },
@@ -675,7 +719,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...POOL_TEAM) },
     async (req) => {
       const pool = await prisma.tipPool.findFirst({
-        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
+        where: { AND: [{ id: req.params.id }, await poolReadWhere(req)] },
         include: MEMBER_INCLUDE,
       })
       if (!pool) throw new NotFoundError('TipPool', req.params.id)
@@ -932,13 +976,14 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
   // is already on the books from each order's tip).
   fastify.post<{ Params: { id: string }; Body: { leaveOutStaff?: { employeeIds: string[]; reason: string }; leaveOutKioskStaff?: { employeeIds: string[]; reason: string } } | undefined }>(
     '/:id/post',
-    { preHandler: requireAuth(...APPROVERS) },
+    // D3: APPROVERS of the pool's company, or a Finance hand-over — assertCanApprove decides.
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const body = z.object({ leaveOutStaff: LeaveOutStaff.optional(), leaveOutKioskStaff: LeaveOutStaff.optional() }).parse(req.body ?? {})
       // `leaveOutKioskStaff` is the field's old name (until 2026-10-12).
       const leaveOut = body.leaveOutStaff ?? body.leaveOutKioskStaff
       // The pool's own company decides — another company's pool is not found.
-      const found = await poolInScope(req, req.params.id, 'write')
+      const { pool: found, grant } = await poolDecision(req, req.params.id, 'post')
 
       // Posting splits what the draft holds, so the draft must still be the
       // whole story (audit HR-R3 / HR-R4): the window is over, nobody who
@@ -1029,6 +1074,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         // purpose (HR-R7): who, their hours, and the approver's reason.
         ...(leftOut.length > 0 && { metadata: { staffLeftOut: leftOut, reason: leaveOut?.reason ?? null } }),
       })
+      await auditApproval(req, { type: 'tip_pool', id: pool.id, tenantId: poolTenantId, decision: 'post', grant, entity: 'TipPool' })
 
       // Per-member audit row so each individual share is independently
       // verifiable. Without this, a manager could quietly give themselves a
@@ -1076,10 +1122,11 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
   // is already on their member row from posting; the entry is the pool's.
   fastify.post<{ Params: { id: string }; Body: { paidFromAccountCode?: string } }>(
     '/:id/pay',
-    { preHandler: requireAuth(...APPROVERS) },
+    // D3: APPROVERS of the pool's company, or a Finance hand-over — assertCanApprove decides.
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const body = z.object({ paidFromAccountCode: z.string().optional() }).parse(req.body ?? {})
-      const pool = await poolInScope(req, req.params.id, 'write')
+      const { pool, grant } = await poolDecision(req, req.params.id, 'pay')
       if (pool.status !== 'posted') throw new AppError('NOT_POSTABLE', `Pool is ${pool.status}`, 422)
 
       // The money leaves a cash or bank account of the pool's own company —
@@ -1092,7 +1139,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         const tills = await tillsHoldingTips(pool.conceptId, pool.periodStart, pool.periodEnd)
         if (tills.length) throw new AppError('TILL_OPEN', `Not paid: ${tillText(tills)}.`, 409, { tills })
       }
-      return prisma.$transaction(async (tx) => {
+      const paid = await prisma.$transaction(async (tx) => {
         if (pool.conceptId) {
           await lockBrandPools(tx, pool.conceptId)
           const clash = await overlappingPool(tx, pool.conceptId, pool.periodStart, pool.periodEnd, { exceptId: pool.id, statuses: ['paid'] })
@@ -1116,6 +1163,8 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         }
         return tx.tipPool.findUniqueOrThrow({ where: { id: pool.id }, include: MEMBER_INCLUDE })
       })
+      await auditApproval(req, { type: 'tip_pool', id: pool.id, tenantId: pool.tenantId, decision: 'pay', grant, entity: 'TipPool' })
+      return paid
     },
   )
 }

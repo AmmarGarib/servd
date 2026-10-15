@@ -8,16 +8,28 @@
 // (never skipped — there is no operator skip of a real sale) and shown on the
 // connector page, but they are not a backlog to warn about (BOOKS-R2-02 /
 // FOH-R2-02). Switched back on, they count again and release as usual.
+//
+// Head offices (A24, Tenant.kind 'head_office') have no fiscal POS, card
+// machine or Raast: every check skips them.
 
 import { prisma } from '../lib/prisma.js'
 import { secretKeyConfigured } from '../lib/secretBox.js'
 import { connectorNow } from './registry.js'
 import { parseRaastSettings, reportingRequiredOf } from './config.js'
 
-/** Companies whose CEO switched "Fiscal reporting required" OFF. */
+/** Head offices (A24): no brands, no sales, no fiscal POS — never counted here. */
+export async function headOfficeTenantIds(): Promise<string[]> {
+  const rows = await prisma.tenant.findMany({ where: { kind: 'head_office' }, select: { id: true } })
+  return rows.map((r) => r.id)
+}
+
+/** Companies whose CEO switched "Fiscal reporting required" OFF — and every head office (A24). */
 export async function reportingOffTenantIds(): Promise<string[]> {
-  const rows = await prisma.posConnector.findMany({ where: { kind: 'fiscal' }, select: { tenantId: true, settings: true } })
-  return rows.filter((r) => !reportingRequiredOf(r.settings)).map((r) => r.tenantId)
+  const [rows, hos] = await Promise.all([
+    prisma.posConnector.findMany({ where: { kind: 'fiscal' }, select: { tenantId: true, settings: true } }),
+    headOfficeTenantIds(),
+  ])
+  return [...new Set([...rows.filter((r) => !reportingRequiredOf(r.settings)).map((r) => r.tenantId), ...hos])]
 }
 
 export type ConnectorCheck = 'ok' | 'warn' | 'off'
@@ -31,11 +43,16 @@ export async function connectorHealthChecks(): Promise<ConnectorHealth> {
   const details: Record<string, string> = {}
   const checks: ConnectorHealth['checks'] = { fiscalConnector: 'off', cardTerminal: 'off', connectorSecretKey: 'off', raastSms: 'off' }
   const now = connectorNow()
+  // A24: head offices are skipped by every check below (no fiscal POS, card
+  // machine or Raast at a head office). Empty → no filter, today's queries.
+  let hoIds: string[] = []
+  try { hoIds = await headOfficeTenantIds() } catch { hoIds = [] }
+  const notHo = hoIds.length > 0 ? { tenantId: { notIn: hoIds } } : {}
 
   // ── Fiscal ──
   try {
     const live = await prisma.posConnector.findMany({
-      where: { kind: 'fiscal', enabled: true, driver: { not: 'none' } },
+      where: { ...notHo, kind: 'fiscal', enabled: true, driver: { not: 'none' } },
       select: { tenantId: true, driver: true, lastError: true, lastErrorAt: true },
     })
     const reasons: string[] = []
@@ -72,10 +89,10 @@ export async function connectorHealthChecks(): Promise<ConnectorHealth> {
 
   // ── Card terminal ──
   try {
-    const enabled = await prisma.posConnector.count({ where: { kind: 'terminal', enabled: true, driver: { not: 'none' } } })
+    const enabled = await prisma.posConnector.count({ where: { ...notHo, kind: 'terminal', enabled: true, driver: { not: 'none' } } })
     const [attention, unknown] = await Promise.all([
-      prisma.terminalCharge.count({ where: { status: 'needs_attention' } }),
-      prisma.terminalCharge.count({ where: { status: 'unknown', createdAt: { lt: new Date(now.getTime() - 10 * 60_000) } } }),
+      prisma.terminalCharge.count({ where: { ...notHo, status: 'needs_attention' } }),
+      prisma.terminalCharge.count({ where: { ...notHo, status: 'unknown', createdAt: { lt: new Date(now.getTime() - 10 * 60_000) } } }),
     ])
     if (enabled > 0 || attention > 0 || unknown > 0) checks.cardTerminal = 'ok'
     const reasons: string[] = []
@@ -93,7 +110,7 @@ export async function connectorHealthChecks(): Promise<ConnectorHealth> {
   // sender was not understood in 24 h, a Raast bill needs a person, or an
   // intent has waited past twice its TTL (the expiry sweep is not running).
   try {
-    const on = await prisma.posConnector.findMany({ where: { kind: 'raast', enabled: true }, select: { tenantId: true, settings: true } })
+    const on = await prisma.posConnector.findMany({ where: { ...notHo, kind: 'raast', enabled: true }, select: { tenantId: true, settings: true } })
     const reasons: string[] = []
     const dayAgo = new Date(now.getTime() - 86_400_000)
     const [unparsed, attention] = await Promise.all([

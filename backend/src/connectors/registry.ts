@@ -14,6 +14,7 @@ import { parseFiscalSettings, parseRaastSettings, parseTerminalSettings } from '
 import { testFiscalDriver, testTerminalDriver } from './drivers/test.js'
 import { httpFiscalDriver, httpTerminalDriver } from './drivers/http.js'
 import { isSandbox, practiceConnectorRow } from '../lib/sandbox.js'
+import { isHeadOfficeTenant } from '../lib/headOffice.js'
 
 export const FISCAL_DRIVERS: Readonly<Record<string, FiscalDriver>> = {
   test: testFiscalDriver,
@@ -133,13 +134,20 @@ function load(row: PosConnector): LoadedConnector {
   }
 }
 
-/** The company's connector row for `kind`, created lazily (driver none, off). Never cached. */
+/**
+ * The company's connector row for `kind`, created lazily (driver none, off). Never cached.
+ *
+ * A24 (D1): a head office (Tenant.kind 'head_office') has no brands, no sales
+ * and no fiscal POS — its fiscal row is created with "Fiscal reporting
+ * required" OFF, so it never holds a backlog and /health never counts it.
+ */
 export async function ensureConnectorRow(tenantId: string, kind: ConnectorKindT): Promise<PosConnector> {
   const existing = await prisma.posConnector.findUnique({ where: { tenantId_kind: { tenantId, kind } } })
   if (existing) return existing
+  const settings: Prisma.InputJsonValue = kind === 'fiscal' && await isHeadOfficeTenant(tenantId) ? { fiscalReportingRequired: false } : {}
   try {
     return await prisma.posConnector.create({
-      data: { tenantId, kind, driver: 'none', enabled: false, webhookToken: newWebhookToken(), settings: {} },
+      data: { tenantId, kind, driver: 'none', enabled: false, webhookToken: newWebhookToken(), settings },
     })
   } catch (err) {
     // Two first reads at once: the loser reads the winner's row.
