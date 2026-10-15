@@ -2908,11 +2908,18 @@ model CostAllocationRule {
   isActive          Boolean          @default(true)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
+  // Trash bin (2026-10-15): a rule with runs is referenced by the ledger's
+  // allocation runs, so it is soft-deleted (never erased). Who deleted it is in
+  // trash_entries — never a second column here.
+  deletedAt         DateTime?
 
   weights AllocationRuleWeight[]
   runs    CostAllocationRun[]
 
-  @@unique([tenantId, sourceAccountCode])
+  // One LIVE rule per (company, source account): partial unique index
+  // cost_allocation_rules_tenant_source_live_key WHERE "deletedAt" IS NULL —
+  // SQL only (Prisma cannot express it); do not re-declare @@unique here.
+  @@index([tenantId, deletedAt])
   @@map("cost_allocation_rules")
 }
 
@@ -3732,14 +3739,20 @@ model PromoCode {
   isActive         Boolean  @default(true)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  // Trash bin (2026-10-15): orders and usages point at a code, so a deleted
+  // code is soft-deleted. EVERY redemption read (lib/promoEval.ts) filters
+  // deletedAt: null — a trashed code is never redeemable.
+  deletedAt        DateTime?
 
   concept Concept?         @relation(fields: [conceptId], references: [id])
   usages  PromoCodeUsage[]
   orders  Order[]
 
-  // A code is unique within its company, never across companies (ONL-12).
-  @@unique([tenantId, code])
+  // A LIVE code is unique within its company, never across companies (ONL-12):
+  // partial unique index promo_codes_tenant_code_live_key on (tenantId, code)
+  // WHERE "deletedAt" IS NULL — SQL only; do not re-declare @@unique here.
   @@index([tenantId])
+  @@index([tenantId, code])
   @@map("promo_codes")
 }
 
@@ -8144,4 +8157,75 @@ model HrWorkLocation {
   @@index([tenantId])
   @@index([locationId])
   @@map("hr_work_locations")
+}
+
+// ── Trash bin (owner, 2026-10-15) ─────────────────────────────────────────────
+// modules/trash/README.md is the contract. One row per thing in the Trash:
+//   - a master deleted with deletedAt (strategy 'soft'): the row's deletedAt is
+//     the truth, this row is the index + WHO deleted it;
+//   - a master hard-deleted after a snapshot (strategy 'snapshot'): `snapshot`
+//     holds the row and its children; restore re-creates them with the same ids;
+//   - a status master (dismissed exception, archived position, ended
+//     contribution, inactive OpEx line): meta.previous holds what restore writes back;
+//   - a money record that a route still erases (F1–F5: tax-payment void, card
+//     payout undo, CapEx instalment delete, period reopen, payment unapply):
+//     snapshot, never erasable, never restorable;
+//   - a voided / cancelled transaction the CEO ARCHIVED (hidden from the default
+//     list). Transactions are otherwise read from their own status — no row here.
+// Kind, module, roles and erasable rules come from the registry
+// (modules/trash/registry.ts) by entityType — never stored per row.
+// Written ONLY by lib/trash.ts moveToTrash / the trash service, in the same
+// transaction as the delete. One OPEN row per (entityType, entityId): partial
+// unique index trash_entries_open_key WHERE restoredAt IS NULL AND purgedAt IS
+// NULL — SQL only. tenantId is the row's company; null only for deliberate
+// company-less rows (servd:* site pages, legacy company-less logins) — CEO only.
+// Moves with its company on POST /tenants/merge (tenants/routes.ts repoint list).
+model TrashEntry {
+  id           String    @id @default(uuid())
+  tenantId     String?
+  entityType   String // registry key: 'menu_item', 'promo_code', 'sales_tax_payment', …
+  entityId     String
+  conceptId    String? // brand, when the row has one (filter + brand-in-trash parent check)
+  title        String // shown in the list; kept after purge (tombstone)
+  subtitle     String?
+  parentType   String?
+  parentId     String?
+  reason       String?
+  deletedById  String? // null = deleted before the Trash existed (backfill)
+  deletedAt    DateTime  @default(now())
+  snapshot     Json? // strategy 'snapshot': { v, model, row, children }; null after purge
+  meta         Json      @default("{}") // restore hints: previous status / isActive, unlinked table ids, brand links
+  restoredAt   DateTime?
+  restoredById String?
+  purgedAt     DateTime? // CEO "Delete forever" (row erased / snapshot dropped); this row stays as the record
+  purgedById   String?
+  purgeReason  String?
+  archivedAt   DateTime? // CEO hid it from the default list (transactions, never-erasable masters)
+  archivedById String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([tenantId, deletedAt(sort: Desc)])
+  @@index([tenantId, entityType, deletedAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@map("trash_entries")
+}
+
+// One "Recover as copy" of a voided / cancelled transaction (or money snapshot).
+// The original keeps its own status; this is only the log so the Trash can say
+// "copied 2x — last by X" and link the new draft. newEntityId is null for a
+// prefill copy (the user submits the module's own form; nothing is created here).
+model TrashCopy {
+  id            String   @id @default(uuid())
+  tenantId      String?
+  entityType    String
+  entityId      String
+  mode          String // 'created' | 'prefill'
+  newEntityType String?
+  newEntityId   String?
+  copiedById    String
+  copiedAt      DateTime @default(now())
+
+  @@index([tenantId, entityType, entityId])
+  @@map("trash_copies")
 }
