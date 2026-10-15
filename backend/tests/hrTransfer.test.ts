@@ -19,6 +19,7 @@ import { runWithRlsContext } from '../src/lib/rlsContext.js'
 import { hrHeadOfficeTransferRoutes } from '../src/modules/hr/transferRoutes.js'
 import { payableEmployees, leaveBalancesFor } from '../src/modules/hr/service.js'
 import { LEFT_STATUSES } from '../src/modules/hr/separations.js'
+import { buildReport } from '../src/modules/hr/reports.js'
 
 const P = `hrt-${Date.now()}`
 const EFFECTIVE = '2026-11-01'
@@ -418,5 +419,23 @@ describe('an archived head-office department', () => {
     const n = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: r.json().moved[0].toEmployeeId } })
     expect(n.departmentId).toBe(archived)
     expect((await prisma.department.findUniqueOrThrow({ where: { id: archived } })).archivedAt).toBeNull()
+  })
+})
+
+describe('HR reports after the moves (spec §5 step 3)', () => {
+  const T = () => [A, A2, HO]
+  it('a move is neither a joiner nor a leaver, and never counted twice', async () => {
+    const t = await buildReport('turnover', T(), A, { from: '2026-10-01', to: '2026-11-30' })
+    // Month, Opening, Joiners, Leavers, Closing
+    for (const row of t.rows) { expect(row[2]).toBe(0); expect(row[3]).toBe(0) }
+    expect(t.rows[0]![1]).toBe(t.rows[1]![4])
+    const total = async (asOf: string) => {
+      const h = await buildReport('headcount', T(), A, { asOf })
+      return h.rows[h.rows.length - 1]![h.rows[0]!.length - 1]
+    }
+    expect(await total('2026-10-15')).toBe(await total('2026-11-15'))
+    expect((await buildReport('new_joiners', T(), A, { from: '2024-01-01', to: '2026-11-30' })).rows
+      .some((r) => String(r[0]).startsWith('EMP-'))).toBe(false)
+    expect((await buildReport('separations', T(), A, { from: '2026-10-01', to: '2026-11-30' })).rows).toHaveLength(0)
   })
 })

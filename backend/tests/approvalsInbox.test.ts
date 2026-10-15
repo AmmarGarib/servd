@@ -489,6 +489,20 @@ describe('review fixes', () => {
     expect(spanning.elsewhere).toBe(0)
   })
 
+  it('§7.6: a type spanning member companies (HR) also keeps the companies the user reaches through a head office', async () => {
+    const base = APPROVAL_PROVIDERS.find((p) => p.type === 'purchase_order')!
+    const row = (id: string, tenantId: string) => ({ type: base.type, id, tenantId, title: id, facts: [], waitingSince: null, link: null, actions: [] })
+    const rows = [row('a', T.A), row('b', T.B)]
+    const spans = { ...base, spansMemberCompanies: true, load: async () => rows.map((r) => ({ ...r })) }
+    const ctx = { user: { id: U['admin']!.id, role: 'admin' as never }, tenantIds: [T.A], memberTenantIds: [T.A], read: async () => null }
+    expect((await collectApprovals(ctx, { providers: [spans] })).items.map((i) => i.id)).toEqual(['a'])
+    const reached = await collectApprovals({ ...ctx, reachTenantIds: [T.B] }, { providers: [spans] })
+    expect(reached.items.map((i) => i.id).sort()).toEqual(['a', 'b'])
+    // A view-scoped type is unaffected by reach.
+    const scoped = await collectApprovals({ ...ctx, reachTenantIds: [T.B] }, { providers: [{ ...base, load: async () => rows.map((r) => ({ ...r })) }] })
+    expect(scoped.items.map((i) => i.id)).toEqual(['a'])
+  })
+
   it('stock transfers point at the inbox itself (no admin transfer screen exists)', async () => {
     const body = (await counts('fnb_manager')).json() as Inbox & { types: Array<{ type: string; link: string }> }
     expect(body.types.find((t) => t.type === 'stock_transfer')!.link).toBe('/ceo/approvals?type=stock_transfer')
@@ -583,6 +597,22 @@ describe('finance wave B types', () => {
     expect((await act('admin', approve)).statusCode).toBe(200)
     expect((await prisma.customerAccount.findUniqueOrThrow({ where: { id: ids.A['on_account_client']! } })).status).toBe('active')
     expect(countOf((await counts('admin')).json() as Inbox, 'on_account_client')).toBe(0)
+  })
+
+  it('on_account_client is not listed at all while nothing is pending and no company in view is cut over (the switch is off)', async () => {
+    const provider = APPROVAL_PROVIDERS.find((p) => p.type === 'on_account_client')!
+    const ctx = { user: { id: U['adminB']!.id, role: 'admin' as never }, tenantIds: [T.B], memberTenantIds: [T.B], read: async <R,>() => ({ items: [] }) as R }
+    const off = await collectApprovals(ctx, { providers: [provider] })
+    expect(off.types.some((t) => t.type === 'on_account_client')).toBe(false)
+    expect(off.total).toBe(0)
+    const key = tillClearingCutoverKey(T.B)
+    await prisma.setting.create({ data: { key, value: new Date().toISOString() } })
+    try {
+      const on = await collectApprovals(ctx, { providers: [provider] })
+      expect(on.types.find((t) => t.type === 'on_account_client')).toMatchObject({ count: 0 })
+    } finally {
+      await prisma.setting.deleteMany({ where: { key } })
+    }
   })
 
   it("bad_debt on a client's statement names the client and the statement period", async () => {
@@ -689,6 +719,23 @@ describe('finance wave B types', () => {
     expect(item!.facts.find((f) => f.label === 'Kind')!.value).toBe('Add-on')
     // Company B's CEO does not see it.
     expect(((await inbox('adminB')).json() as Inbox).items.some((i) => i.id === r.id)).toBe(false)
+  })
+
+  it("A21: a component recipe is sectioned by the companies of the dishes that use it — 'ceo' only when it has none", async () => {
+    const used = await prisma.recipe.create({ data: { kind: 'component', name: `${P} sauce`, status: 'pending_approval', submittedById: U['hodA']!.id, submittedAt: new Date() } })
+    const orphan = await prisma.recipe.create({ data: { kind: 'component', name: `${P} orphan`, status: 'pending_approval', submittedById: U['hodA']!.id, submittedAt: new Date() } })
+    const line = await prisma.recipeIngredient.create({ data: { recipeId: ids.A['recipe']!, prepRecipeId: used.id, quantity: 10, unit: 'g' } })
+    try {
+      type Item = Inbox['items'][number] & { section?: string; touchesTenantIds?: string[] }
+      const items = ((await inbox('admin')).json() as Inbox).items as Item[]
+      const u = items.find((i) => i.id === used.id)
+      expect(u).toMatchObject({ tenantId: null, section: 'operations', touchesTenantIds: [T.A] })
+      const o = items.find((i) => i.id === orphan.id)
+      if (o) expect(o).toMatchObject({ tenantId: null, section: 'ceo', touchesTenantIds: [] })
+    } finally {
+      await prisma.recipeIngredient.delete({ where: { id: line.id } })
+      await prisma.recipe.deleteMany({ where: { id: { in: [used.id, orphan.id] } } })
+    }
   })
 
   it('stock_difference: not listed while its route 404s; once it answers, rows map per company with CEO-only buttons', async () => {
@@ -905,6 +952,36 @@ describe('sections, hand-over and the new providers (D3)', () => {
         const res = await collectApprovals(ctx, { providers: [fake], delegations: LIVE_DELEGATIONS })
         // Both came through the head office (HO-member submitters): the colleague's is theirs by hand-over, their own never.
         expect(res.items.map((i) => i.id)).toEqual(['tp-colleague'])
+      } finally {
+        await prisma.approvalDelegation.update({ where: { id: d.id }, data: { revokedAt: new Date() } })
+      }
+    })
+
+    it("A21: a component recipe used only by company A's dishes is handed over with A's operations; one used by nothing stays the CEO's", async () => {
+      const provider = APPROVAL_PROVIDERS.find((p) => p.type === 'recipe')!
+      const row = (id: string, touches: string[]) => ({
+        type: 'recipe' as const, id, tenantId: null, title: id, facts: [], waitingSince: null, link: null, actions: [], submittedByIds: [U['hodA']!.id],
+        touchesTenantIds: touches, ownerTenantId: touches[0] ?? null, section: (touches.length ? 'operations' : 'ceo') as never,
+      })
+      const fake = { ...provider, async load() { return [row('comp-a', [T.A]), row('comp-ab', [T.A, T.B]), row('comp-none', [])] } }
+      await mkUser('hoCook', 'fnb_manager', [HO])
+      const d = await prisma.approvalDelegation.create({
+        data: { tenantId: HO, companyTenantId: T.A, section: 'operations', approvalTypes: ['recipe'], delegateUserId: U['hoCook']!.id, grantedById: U['admin']!.id, note: 'test' },
+      })
+      try {
+        const { LIVE_DELEGATIONS } = await import('../src/modules/approvals/delegations.js')
+        // The CEO: comp-a is handed over; comp-ab touches B (not covered) and comp-none is CEO-only.
+        const ceo = await collectApprovals({ user: { id: U['admin']!.id, role: 'admin' as never }, tenantIds: [T.A], memberTenantIds: [T.A, HO], read: async () => null },
+          { providers: [fake], delegations: LIVE_DELEGATIONS })
+        expect(ceo.items.map((i) => i.id).sort()).toEqual(['comp-ab', 'comp-none'])
+        expect(ceo.handedOverItems?.map((i) => i.id)).toEqual(['comp-a'])
+        // The delegate: only comp-a — never the CEO-only or the two-company one.
+        const ctx = {
+          user: { id: U['hoCook']!.id, role: 'procurement' as never }, tenantIds: [HO], memberTenantIds: [HO],
+          delegated: await LIVE_DELEGATIONS.tenantsByType!(U['hoCook']!.id), read: async () => null,
+        }
+        const del = await collectApprovals(ctx, { providers: [fake], delegations: LIVE_DELEGATIONS })
+        expect(del.items.map((i) => i.id)).toEqual(['comp-a'])
       } finally {
         await prisma.approvalDelegation.update({ where: { id: d.id }, data: { revokedAt: new Date() } })
       }

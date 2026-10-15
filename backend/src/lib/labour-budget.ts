@@ -200,6 +200,20 @@ export async function countedContributions<T extends { category: string; sourceT
   return rows.filter((r) => contributionCounts(r, applied, linked))
 }
 
+/** The head_office contributions the setup wizard ended (from the applied setup's summary). */
+async function setupEndedContributionIds(): Promise<string[]> {
+  const books = await serviceClient.headOfficeBooks.findMany({
+    where: { setupAppliedAt: { not: null }, tenant: { isTest: false } },
+    select: { setupSummary: true },
+  })
+  const ids: string[] = []
+  for (const b of books) {
+    const ended = (b.setupSummary as { people?: { contributionsEnded?: Array<{ id?: unknown }> } } | null)?.people?.contributionsEnded
+    if (Array.isArray(ended)) for (const c of ended) if (typeof c?.id === 'string') ids.push(c.id)
+  }
+  return ids
+}
+
 // ─── The budget ──────────────────────────────────────────────────────────────
 
 export interface LabourBudgetOptions {
@@ -246,6 +260,12 @@ export interface LabourBudget {
     id: string; label: string; category: string; monthlyCents: number; internalSplit: unknown; description: string | null
     direction: 'incoming' | 'outgoing'
     sourceTenant: { id: string; name: string }; destinationTenant: { id: string; name: string }
+    /**
+     * true = a head_office contribution the head-office setup retired (ended by
+     * the wizard, or still active but replaced by a live head-office link).
+     * Listed for the record only — never in incoming / outgoing / net.
+     */
+    ended?: true
   }>
 }
 
@@ -329,6 +349,31 @@ export async function budgetedLabour(tenantIds: string[], opts: LabourBudgetOpti
         description: c.description,
         direction: inbound ? 'incoming' : 'outgoing', sourceTenant: c.sourceTenant, destinationTenant: c.destinationTenant,
       })
+    }
+    if (applied) {
+      // Retired head_office rows: shown as "ended", never summed. Active ones
+      // the head-office link replaced, plus the ones the setup wizard ended
+      // (their ids are in the setup summary — not every inactive row ever).
+      const counted = new Set(rows.map((c) => c.id))
+      const replaced = all.filter((c) => !counted.has(c.id))
+      const endedIds = (await setupEndedContributionIds()).filter((id) => !all.some((c) => c.id === id))
+      const endedBySetup = endedIds.length ? await prisma.tenantContribution.findMany({
+        where: {
+          id: { in: endedIds }, isActive: false, category: 'head_office',
+          OR: [{ destinationTenantId: { in: tenantIds } }, { sourceTenantId: { in: tenantIds } }],
+        },
+        include: { sourceTenant: { select: { id: true, name: true } }, destinationTenant: { select: { id: true, name: true } } },
+        orderBy: { startedAt: 'asc' },
+      }) : []
+      for (const c of [...replaced, ...endedBySetup]) {
+        out.contributions.push({
+          id: c.id, label: c.label, category: c.category, monthlyCents: c.monthlyCents, internalSplit: c.internalSplit,
+          description: c.description,
+          direction: tenantIds.includes(c.destinationTenantId) ? 'incoming' : 'outgoing',
+          sourceTenant: c.sourceTenant, destinationTenant: c.destinationTenant,
+          ended: true,
+        })
+      }
     }
     if (applied) {
       const plan = await headOfficePlanCharges(tenantIds, opts.month ?? planMonth(), { applied })
