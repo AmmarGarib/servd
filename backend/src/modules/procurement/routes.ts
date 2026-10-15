@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { trashReasonOf } from '../../lib/trash.js'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -849,7 +850,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const cn = await guardCreditNote(req, req.params.id)
       const { billId } = z.object({ billId: z.string().uuid() }).parse(req.body)
       await assertBillsInScope(req, [billId])
-      const r = await unapplyCreditNote(req.params.id, billId)
+      const r = await unapplyCreditNote(req.params.id, billId, { userId: req.staffUser!.id, reason: trashReasonOf(req) })
       await auditMoney(req, 'supplier.credit_note.unapply', 'SupplierBill', req.params.id, cn.supplier.tenantId, { billId, amountCents: r.amountCents })
       return { creditNoteId: r.creditNoteId, billId: r.billId, amountCents: r.amountCents, billStatus: r.billStatus }
     },
@@ -944,7 +945,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const payment = await guardPayment(req, req.params.id)
       const { billId } = z.object({ billId: z.string().uuid() }).parse(req.body)
       await assertBillsInScope(req, [billId])
-      const r = await unapplyPayment(req.params.id, billId)
+      const r = await unapplyPayment(req.params.id, billId, { userId: req.staffUser!.id, reason: trashReasonOf(req) })
       await auditMoney(req, 'supplier.payment.unapply', 'SupplierPayment', req.params.id, payment.supplier.tenantId, { billId, amountCents: r.amountCents })
       return { paymentId: req.params.id, billId, amountCents: r.amountCents, billStatus: r.bill.status }
     },

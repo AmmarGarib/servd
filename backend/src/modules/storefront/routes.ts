@@ -841,7 +841,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       // Atomic increment: only succeeds if limit not yet reached
       if (promo.maxUsageCount != null) {
         const updated = await prisma.promoCode.updateMany({
-          where: { id: promo.id, usedCount: { lt: promo.maxUsageCount } },
+          where: { id: promo.id, deletedAt: null, usedCount: { lt: promo.maxUsageCount } },
           data: { usedCount: { increment: 1 } },
         })
         if (updated.count === 0) throw new AppError('PROMO_EXHAUSTED', 'Promo code usage limit reached', 400)

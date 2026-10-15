@@ -13,21 +13,20 @@
 // Company: a transfer belongs to BOTH parties; the row is shown to a member of
 // either, stamped with the caller's side (the active company when it is a
 // party). Roles: list = FINANCIALS_VIEWERS (the transfers list's guard), copy =
-// the preparers (admin, finance — intercompany/routes.ts TRANSFER_PREPARERS,
-// not exported there); module `accounting`.
+// the preparers (intercompany/routes.ts TRANSFER_PREPARERS); module `accounting`.
 
 import type { Prisma, UserRole } from '@prisma/client'
 import { serviceClient as db } from '../../../../lib/prisma.js'
 import { NotFoundError } from '../../../../lib/errors.js'
 import { FINANCIALS_VIEWERS } from '../../../auth/middleware.js'
+import { TRANSFER_PREPARERS } from '../../../intercompany/routes.js'
 import type { TrashCtx, TrashProvider, TrashRow } from '../../types.js'
 import { atWhere, n, pkr, pktDate, prefill, qWhere, roles, scopeIds } from './common.js'
 
 export const TRASH_INTERCOMPANY = { intercompany_transfer: 'intercompany_transfer' } as const
 
 const FIN = roles(FINANCIALS_VIEWERS)
-/** = intercompany/routes.ts TRANSFER_PREPARERS (not exported). */
-const IC_PREPARE: readonly UserRole[] = ['admin', 'finance']
+const IC_PREPARE: readonly UserRole[] = TRANSFER_PREPARERS
 const LINK = '/accounting/intercompany'
 const SYSTEM_NOT_COPYABLE = 'A system transfer (head-office recharge, COD or shared fleet) is made again by its own source, not copied'
 

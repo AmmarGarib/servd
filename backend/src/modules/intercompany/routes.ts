@@ -69,7 +69,7 @@ import {
 import { LEGACY_CODES, controlTieOut, legacyDifference, writeOffLegacy, type LegacyCode } from './legacy.js'
 
 /** Who prepares a transfer: finance and the CEO. Only the CEO approves, posts at once, reverses, sets rates. */
-const TRANSFER_PREPARERS = ['admin', 'finance'] as UserRole[]
+export const TRANSFER_PREPARERS = ['admin', 'finance'] as UserRole[]
 const STATUSES = ['submitted', 'posted', 'rejected', 'reversed'] as const
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 const ISO_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/
