@@ -168,6 +168,25 @@ describe('the finance wave B tables move', () => {
   })
 })
 
+describe('feedback and the contact inbox move (SEO round 1)', () => {
+  it('a contact message (no brand) and a brand feedback row follow the merge', async () => {
+    const S = await company('FbSource')
+    const D = await company('FbTarget')
+    const contact = await prisma.feedbackEntry.create({
+      data: { tenantId: S.id, kind: 'contact', comment: 'Catering for 40?', contactName: 'Ayesha', replyEmail: 'a@example.com', topic: 'catering', source: 'contact_page' },
+    })
+    const brand = await prisma.feedbackEntry.create({ data: { tenantId: S.id, conceptId: S.conceptId, kind: 'nps', score: 9 } })
+    const theirs = await prisma.feedbackEntry.create({ data: { tenantId: D.id, kind: 'contact', comment: 'Hello', topic: 'other' } })
+    const res = await merge(ceo, S.id, D.id)
+    expect(res.statusCode, res.body).toBe(200)
+    for (const id of [contact.id, brand.id, theirs.id]) {
+      expect((await prisma.feedbackEntry.findUniqueOrThrow({ where: { id } })).tenantId).toBe(D.id)
+    }
+    expect(await prisma.feedbackEntry.count({ where: { tenantId: S.id } })).toBe(0)
+    expect(await isDeleted(S.id)).toBe(true)
+  })
+})
+
 describe('merges the books cannot absorb are refused (422), nothing written', () => {
   it('inter-company activity → MERGE_HAS_INTERCOMPANY', async () => {
     const S = await company('IcSource')

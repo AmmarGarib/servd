@@ -38,15 +38,17 @@ function apiBase(): string {
   return (internal ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001').replace(/\/+$/, '')
 }
 
-async function getJson(path: string): Promise<{ ok: boolean; body: unknown }> {
+/** `status` is the HTTP status the API answered, or 0 when it did not answer
+ *  (timeout, network error, unreadable body). */
+async function getJson(path: string): Promise<{ ok: boolean; status: number; body: unknown }> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
   try {
     const res = await fetch(`${apiBase()}${path}`, { cache: 'no-store', signal: ctrl.signal })
-    if (!res.ok) return { ok: false, body: null }
-    return { ok: true, body: await res.json() }
+    if (!res.ok) return { ok: false, status: res.status, body: null }
+    return { ok: true, status: res.status, body: await res.json() }
   } catch {
-    return { ok: false, body: null }
+    return { ok: false, status: 0, body: null }
   } finally {
     clearTimeout(timer)
   }
@@ -75,18 +77,18 @@ export async function liveBrandSlugs(): Promise<Set<string> | null> {
 
 /**
  * True ONLY when the API answered and `slug` is not a brand: not in the live
- * list and not a test company's brand. Anything uncertain is false.
+ * list AND the direct-by-slug lookup answered HTTP 404. Anything uncertain is
+ * false — a timeout, a network error, a 5xx or a 429 (the API's per-IP limit)
+ * means "don't know", and is never cached. A 200 means the brand exists (a test
+ * company's brand, or one made visible since the list was read).
  */
 export async function isCertainlyNotABrand(slug: string): Promise<boolean> {
   const live = await liveBrandSlugs()
   if (!live || live.has(slug)) return false
   const until = notABrand.get(slug)
   if (until && until > Date.now()) return true
-  if (/^[a-z0-9][a-z0-9-]{0,80}$/i.test(slug)) {
-    const { ok, body } = await getJson(`/api/v1/storefront/${encodeURIComponent(slug)}/menu`)
-    const c = (body as { concept?: { slug?: unknown; isTestCompany?: unknown } } | null)?.concept
-    if (ok && c?.isTestCompany === true && c.slug === slug) return false
-  }
+  const { status } = await getJson(`/api/v1/storefront/${encodeURIComponent(slug)}/menu`)
+  if (status !== 404) return false
   if (notABrand.size >= MAX_NEGATIVES) notABrand.clear()
   notABrand.set(slug, Date.now() + TTL_MS)
   return true

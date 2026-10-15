@@ -537,6 +537,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         // The brand's public profiles (Marketing → Brands): Restaurant JSON-LD
         // sameAs / hasMap and the brand pages' Elsewhere links.
         sameAs: true, googleMapsUrl: true,
+        // The sitemap's <lastmod> for the brand's pages (SEO round 1).
+        updatedAt: true,
         serviceHours: {
           select: { dayOfWeek: true, openMin: true, closeMin: true },
           orderBy: [{ dayOfWeek: 'asc' }, { openMin: 'asc' }],
