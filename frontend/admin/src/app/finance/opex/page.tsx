@@ -124,6 +124,10 @@ interface PayrollBudget {
   openSeats: number
   incomingContributionMonthlyCents: number
   outgoingContributionMonthlyCents: number
+  companyLevelSeatsMonthlyCents?: number
+  headOfficeChargesMonthlyCents?: number
+  headOfficeCharges?: Array<{ headOfficeId: string; name: string; companyTenantId: string; companyName: string; shareBps: number; monthlyCents: number }>
+  labels?: { headOfficeCharges?: string; companyLevelSeats?: string }
   netMonthlyCents: number       // == monthlyCents after add/subtract
 }
 interface ContributionLine {
@@ -588,6 +592,21 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                   style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                   {c.direction === 'incoming' ? '-' : '+'} {PKR(c.monthlyCents)}
                 </span>
+              </div>
+            ))}
+            {(payrollSnap.budget.companyLevelSeatsMonthlyCents ?? 0) > 0 && (
+              <div className="flex justify-between">
+                <span className="text-white/55">{payrollSnap.budget.labels?.companyLevelSeats ?? 'Company-level seats'} (in gross)</span>
+                <span className="font-bold text-white/70">{PKR(payrollSnap.budget.companyLevelSeatsMonthlyCents ?? 0)}</span>
+              </div>
+            )}
+            {(payrollSnap.budget.headOfficeCharges ?? []).map((h) => (
+              <div key={`${h.headOfficeId}:${h.companyTenantId}`} className="flex justify-between items-baseline">
+                <span className="text-white/55">
+                  {payrollSnap.budget?.labels?.headOfficeCharges ?? 'Head office charges (plan)'}
+                  <span className="text-[10px] text-white/35"> ({h.name})</span>
+                </span>
+                <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>+ {PKR(h.monthlyCents)}</span>
               </div>
             ))}
             <div className="border-t border-white/10 mt-1 pt-2 flex justify-between items-baseline text-sm">

@@ -10,6 +10,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { card, inp, btn, human, type OrgData } from '../../../lib/hr'
 import { HrShell, useHrOrg } from '../../../components/hr/HrShell'
+import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 
 type Unit = OrgData['units'][number]
 
@@ -36,6 +37,7 @@ export default function HrOrgPage() {
 
 function DepartmentsPanel({ departments, archived }: { departments: OrgData['departments']; archived: NonNullable<OrgData['archivedDepartments']> }) {
   const qc = useQueryClient()
+  const { headOfficeSetupApplied } = useHeadOfficeMe()
   const [name, setName] = useState('')
   const refresh = () => void qc.invalidateQueries({ queryKey: ['hr-org'] })
   const add = useMutation({
@@ -56,6 +58,7 @@ function DepartmentsPanel({ departments, archived }: { departments: OrgData['dep
         {departments.map((d) => (
           <DepartmentRow key={d.id} d={d}
             onRename={(n) => patch.mutate({ id: d.id, body: { name: n } })}
+            setupApplied={headOfficeSetupApplied}
             onHeadOffice={() => patch.mutate({ id: d.id, body: { isHeadOffice: !d.isHeadOffice } })}
             onArchive={() => patch.mutate({ id: d.id, body: { archived: true } })} />
         ))}
@@ -79,7 +82,7 @@ function DepartmentsPanel({ departments, archived }: { departments: OrgData['dep
   )
 }
 
-function DepartmentRow({ d, onRename, onHeadOffice, onArchive }: { d: OrgData['departments'][number]; onRename: (name: string) => void; onHeadOffice: () => void; onArchive: () => void }) {
+function DepartmentRow({ d, onRename, onHeadOffice, onArchive, setupApplied = false }: { d: OrgData['departments'][number]; onRename: (name: string) => void; onHeadOffice: () => void; onArchive: () => void; setupApplied?: boolean }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(d.name)
   return (
@@ -92,9 +95,9 @@ function DepartmentRow({ d, onRename, onHeadOffice, onArchive }: { d: OrgData['d
         </>
       ) : (
         <>
-          <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && <span className="text-[10px] font-bold text-amber-700 ml-2">HEAD OFFICE</span>}</span>
+          <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && !setupApplied && <span className="text-[10px] font-bold text-amber-700 ml-2">HEAD OFFICE</span>}</span>
           <button className="text-[11px] text-white/40 hover:text-white" onClick={() => { setName(d.name); setEditing(true) }}>Rename</button>
-          <button className="text-[11px] text-white/40 hover:text-white" onClick={onHeadOffice}>{d.isHeadOffice ? 'Not head office' : 'Head office'}</button>
+          {!setupApplied && <button className="text-[11px] text-white/40 hover:text-white" onClick={onHeadOffice}>{d.isHeadOffice ? 'Not head office' : 'Head office'}</button>}
           <button className="text-[11px] text-white/40 hover:text-white" onClick={onArchive}>Archive</button>
         </>
       )}

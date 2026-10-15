@@ -21,18 +21,13 @@ import type { HrFormat, HrRecord } from '../../../lib/hr'
 import { Modal, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { RecordDetail } from '../../../components/hr/RecordDetail'
 import { PENDING_LAYOUTS_KEY } from '../../../components/storefront/ApprovalsPanel'
-import { APPROVALS_INBOX_KEY, APPROVALS_ROOT, type ApprovalTypeSummary } from '../approvalsData'
+import { ApprovalActionDialog } from '../../../components/approvals/ApprovalActionDialog'
+import {
+  APPROVALS_INBOX_KEY, APPROVALS_ROOT, useHeadOffices,
+  type ApprovalAction as Action, type ApprovalHandedOverTo, type ApprovalSectionId, type ApprovalSectionSummary, type ApprovalTypeSummary,
+} from '../approvalsData'
+import { useAuthStore } from '../../../store/auth'
 
-interface Action {
-  kind: 'approve' | 'reject' | 'return'
-  label: string
-  method: 'POST' | 'PATCH'
-  path: string
-  body: Record<string, unknown>
-  input?: { field: string; label: string; required: boolean }
-  confirm?: string
-  disabledReason?: string
-}
 interface Item {
   type: string
   id: string
@@ -46,8 +41,14 @@ interface Item {
   link: string | null
   actions: Action[]
   record?: HrRecord & { format: HrFormat; sectionTitle: string; employee?: { fullName: string } | null }
+  section?: ApprovalSectionId
+  viaHeadOfficeId?: string | null
+  handedOverTo?: ApprovalHandedOverTo
 }
-interface ApprovalInbox { total: number; elsewhere?: number; types: ApprovalTypeSummary[]; items: Item[] }
+interface ApprovalInbox {
+  total: number; elsewhere?: number; types: ApprovalTypeSummary[]; items: Item[]
+  sections?: ApprovalSectionSummary[]; handedOver?: number; handedOverItems?: Item[]
+}
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
@@ -82,12 +83,32 @@ function ApprovalsInbox() {
     refetchInterval: 60_000,
   })
 
+  const isCeo = useAuthStore((st) => st.isRole('admin'))
+  const { data: offices = [] } = useHeadOffices(isCeo)
+  const hoName = (id?: string | null) => id ? (offices.find((o) => o.id === id)?.name ?? null) : null
+  const [section, setSection] = useState<string>('all')
+  const [showHanded, setShowHanded] = useState(false)
+
+  const sections = data?.sections ?? []
+  // Section tabs only matter when there is more than one section or a hand-over.
+  const showTabs = sections.length > 1 || (data?.handedOver ?? 0) > 0
+  const inSection = (i: { type: string; section?: string }) =>
+    section === 'all' || (i.section ?? data?.types.find((t) => t.type === i.type)?.section) === section
+  const types = (data?.types ?? []).filter((t) => section === 'all' || !t.section || t.section === section)
   const items = useMemo(
-    () => (data?.items ?? []).filter((i) => filter === 'all' || i.type === filter),
-    [data, filter],
+    () => (data?.items ?? []).filter((i) => inSection(i) && (filter === 'all' || i.type === filter)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, filter, section],
   )
-  const companies = new Set((data?.items ?? []).map((i) => i.tenantId).filter(Boolean))
+  const handedItems = (data?.handedOverItems ?? []).filter((i) => inSection(i))
+  const groups = useMemo(() => {
+    const m = new Map<string, Item[]>()
+    for (const i of items) m.set(i.type, [...(m.get(i.type) ?? []), i])
+    return [...m.entries()]
+  }, [items])
+  const companies = new Set([...(data?.items ?? []), ...(data?.handedOverItems ?? [])].map((i) => i.tenantId).filter(Boolean))
   const showCompany = companies.size > 1
+  const typeLabel = (t: string) => data?.types.find((x) => x.type === t)?.label ?? t
 
   function refresh() {
     // The inbox, its badge, and the module queues that share a cache key.
@@ -107,10 +128,27 @@ function ApprovalsInbox() {
         exactly what the module&rsquo;s own screen does, and the module still checks who you are.
       </p>
 
+      {isCeo && (
+        <Link href="/ceo/approvals/hand-over" className="inline-block mt-2 text-xs font-bold hover:underline" style={{ color: 'var(--erp-primary-ink)' }}>
+          Hand over approvals to head office →
+        </Link>
+      )}
+
+      {showTabs && (
+        <div className="mt-5 flex flex-wrap gap-2" role="tablist">
+          <Chip on={section === 'all'} onClick={() => { setSection('all'); setFilter('all') }} label="All" count={data?.total ?? 0} />
+          {sections.map((sc) => (
+            <Chip key={sc.id} on={section === sc.id} onClick={() => { setSection(sc.id); setFilter('all') }}
+              label={sc.id === 'ceo' ? 'CEO only' : sc.title} count={sc.count} />
+          ))}
+        </div>
+      )}
+
       {/* Counts per type */}
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Chip on={filter === 'all'} onClick={() => setFilter('all')} label="All" count={data?.total ?? 0} />
-        {(data?.types ?? []).map((t) => (
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Chip on={filter === 'all'} onClick={() => setFilter('all')} label={showTabs ? 'Every type' : 'All'}
+          count={section === 'all' ? (data?.total ?? 0) : (sections.find((x) => x.id === section)?.count ?? 0)} />
+        {types.map((t) => (
           <Chip key={t.type} on={filter === t.type} onClick={() => setFilter(t.type)} label={t.label} count={t.count} error={t.error} />
         ))}
       </div>
@@ -153,15 +191,54 @@ function ApprovalsInbox() {
             {t.label}: the module&rsquo;s queue could not be read just now. <Link href={t.link} className="underline">Open it directly</Link>.
           </p>
         ))}
-        {items.map((i) => (
-          <ItemCard key={`${i.type}:${i.id}`} item={i} typeLabel={data?.types.find((t) => t.type === i.type)?.label ?? i.type}
-            showCompany={showCompany} onDone={refresh} onOpenHr={() => setOpenHr(i)} />
+        {groups.map(([type, rows]) => (
+          <section key={type} className="space-y-3">
+            {(groups.length > 1 || showTabs) && (
+              <h2 className="text-xs font-black uppercase tracking-wider text-white/50 pt-1">
+                {typeLabel(type)} <span className="text-white/35">{rows.length}</span>
+              </h2>
+            )}
+            {rows.map((i) => (
+              <ItemCard key={`${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={hoName(i.viaHeadOfficeId)}
+                showCompany={showCompany} onDone={refresh} onOpenHr={() => setOpenHr(i)} />
+            ))}
+          </section>
         ))}
+        {handedItems.length > 0 && (
+          <div className="rounded-2xl" style={card}>
+            <button onClick={() => setShowHanded((v) => !v)} aria-expanded={showHanded}
+              className="w-full flex items-center gap-2 px-4 py-3 text-left">
+              <span className="text-sm font-black text-white/80">
+                {handedLabel(handedItems)}
+              </span>
+              <span className="rounded-full px-1.5 text-[10px] font-black" style={{ background: 'rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.6)' }}>{handedItems.length}</span>
+              <span className="ml-auto text-xs text-white/45">{showHanded ? 'Hide' : 'Show'}</span>
+            </button>
+            {showHanded && (
+              <div className="px-3 pb-3 space-y-3">
+                <p className="text-xs text-white/50 px-1">You can still decide these yourself; the first decision wins.</p>
+                {handedItems.map((i) => (
+                  <ItemCard key={`h:${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={hoName(i.viaHeadOfficeId)}
+                    showCompany={showCompany} onDone={refresh} onOpenHr={() => setOpenHr(i)} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {openHr?.record && <HrRecordModal item={openHr} onClose={() => setOpenHr(null)} onChanged={() => { setOpenHr(null); refresh() }} />}
     </div>
   )
+}
+
+function handedLabel(rows: Item[]): string {
+  const names = [...new Set(rows.map((r) => r.handedOverTo?.name).filter(Boolean))]
+  const ends = rows.map((r) => r.handedOverTo?.endsAt).filter((x): x is string => !!x).sort()
+  const who = names.length === 1 ? names[0] : names.length > 1 ? `${names.length} people` : 'a delegate'
+  const until = ends.length === rows.filter((r) => r.handedOverTo).length && ends.length > 0
+    ? ` until ${new Date(ends[ends.length - 1]!).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''
+  return `Handed over to ${who}${until}`
 }
 
 function Chip({ on, onClick, label, count, error }: { on: boolean; onClick: () => void; label: string; count: number; error?: boolean }) {
@@ -182,28 +259,27 @@ function Chip({ on, onClick, label, count, error }: { on: boolean; onClick: () =
   )
 }
 
-function ItemCard({ item, typeLabel, showCompany, onDone, onOpenHr }: {
-  item: Item; typeLabel: string; showCompany: boolean; onDone: () => void; onOpenHr: () => void
+function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onOpenHr }: {
+  item: Item; typeLabel: string; viaName: string | null; showCompany: boolean; onDone: () => void; onOpenHr: () => void
 }) {
   const [pending, setPending] = useState<Action | null>(null)
-  const [text, setText] = useState('')
   const [err, setErr] = useState<string | null>(null)
 
+  // A button with no input and no tick-boxes is one click; the rest open the dialog.
   const run = useMutation({
     mutationFn: (a: Action) => {
-      const body = { ...a.body, ...(a.input && text.trim() ? { [a.input.field]: text.trim() } : {}) }
       // Pin the write to the item's company, so "All companies" view never
       // asks which company — the row already has one.
       const extra = item.tenantId ? { tenantId: item.tenantId } : undefined
-      return a.method === 'PATCH' ? api.patch(a.path, body, extra) : api.post(a.path, body, extra)
+      return a.method === 'PATCH' ? api.patch(a.path, a.body, extra) : api.post(a.path, a.body, extra)
     },
-    onSuccess: () => { setPending(null); setText(''); setErr(null); onDone() },
+    onSuccess: () => { setErr(null); onDone() },
     onError: (e: Error) => setErr(e.message),
   })
 
   function click(a: Action) {
     setErr(null)
-    if (a.input) { setPending(pending?.label === a.label ? null : a); return }
+    if (a.input || (a.options?.length ?? 0) > 0) { setPending(pending?.label === a.label ? null : a); return }
     if (a.confirm && !window.confirm(a.confirm)) return
     run.mutate(a)
   }
@@ -216,6 +292,10 @@ function ItemCard({ item, typeLabel, showCompany, onDone, onOpenHr }: {
         {showCompany && item.companyName && (
           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
             style={{ background: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', color: 'var(--erp-secondary)' }}>{item.companyName}</span>
+        )}
+        {item.viaHeadOfficeId && (
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+            style={{ background: 'rgb(var(--erp-accent-rgb) / 0.15)', color: 'var(--erp-success)' }}>via {viaName ?? 'head office'}</span>
         )}
         <span className="ml-auto text-[11px] text-white/40">{waited(item.waitingSince)}</span>
       </div>
@@ -260,26 +340,10 @@ function ItemCard({ item, typeLabel, showCompany, onDone, onOpenHr }: {
         )}
       </div>
 
-      {pending?.input && (
-        <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--elevated)' }}>
-          <label className="text-[11px] font-bold text-white/60">{pending.input.label}</label>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
-            className="mt-1 w-full rounded-lg px-2 py-1.5 text-sm"
-            style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }} />
-          <div className="mt-2 flex gap-2">
-            <button disabled={run.isPending || (pending.input.required && !text.trim())}
-              onClick={() => run.mutate(pending)}
-              className="rounded-lg px-3 py-1.5 text-xs font-black disabled:opacity-50"
-              style={pending.kind === 'approve'
-                ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
-                : pending.kind === 'return'
-                  ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
-                  : { background: 'var(--erp-danger)', color: 'var(--erp-on-secondary)' }}>
-              {pending.label}
-            </button>
-            <button onClick={() => { setPending(null); setText('') }} className="text-xs font-bold text-white/50 px-2">Cancel</button>
-          </div>
-        </div>
+      {pending && (
+        <ApprovalActionDialog action={pending} tenantId={item.tenantId}
+          warnings={item.facts.find((f) => f.label === 'Warnings')?.value ?? null}
+          onClose={() => setPending(null)} onDone={() => { setPending(null); onDone() }} />
       )}
       {err && <p className="mt-2 text-xs" style={{ color: 'var(--erp-danger)' }}>{err}</p>}
     </div>

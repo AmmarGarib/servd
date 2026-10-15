@@ -28,13 +28,25 @@ export interface TenantLite {
   name: string
   slug?: string
   industry?: string | null
+  /** 'company' | 'head_office' (D1). Pickers for writes only offer companies. */
+  kind?: 'company' | 'head_office'
+  /** Set only on a reached (lens) company — never offered by a picker. */
+  access?: string
+}
+
+/** A trading company the user belongs to: never a head office, never a reached company. */
+export function isPickableCompany(t: { kind?: string; access?: string }): boolean {
+  return (t.kind ?? 'company') === 'company' && t.access !== 'head_office'
 }
 
 /** Hook: fetch the operator's tenant memberships once, cache for 5 minutes. */
 export function useMyTenants() {
   return useQuery<TenantLite[]>({
     queryKey: ['my-tenants'],
-    queryFn:  () => api.get('/tenants/mine'),
+    queryFn:  () => api.get<TenantLite[]>('/tenants/mine'),
+    // Writes bind to a company the user belongs to; reached companies and
+    // head offices are never offered.
+    select: (rows) => rows.filter(isPickableCompany),
     staleTime: 5 * 60_000,
   })
 }

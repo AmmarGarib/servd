@@ -9,7 +9,7 @@ import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
 import { useSyncRoleModules } from '../../store/roleModules'
 import { usePermissions } from '../../hooks/useCan'
 import { useTeam } from '../../hooks/useTeam'
-import { useMyWorkspaces } from '../../hooks/useWorkspaces'
+import { useMyWorkspaces, useHeadOfficeMe } from '../../hooks/useWorkspaces'
 import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
 import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath } from '../../lib/moduleCatalog'
@@ -17,6 +17,7 @@ import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
 import { useApprovalCounts } from '../../app/ceo/approvalsData'
 import { TestCompanyBanner } from './TestCompanyBanner'
+import { LensBanner } from './LensBanner'
 import { SandboxBanner } from '../SandboxBanner'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -161,6 +162,10 @@ function NavLinks({
   // "Approvals" link.
   const { data: approvalCounts } = useApprovalCounts(Boolean(me))
   const approvalsWaiting = approvalCounts?.total ?? 0
+  // A login the CEO handed an approval section to sees Approvals while the
+  // hand-over is live, even with nothing waiting yet (D3).
+  const { delegations: myDelegations } = useHeadOfficeMe()
+  const isDelegate = myDelegations.length > 0
 
   const groups: NavGroup[] = useMemo(() => {
     return workspaces.map((w) => {
@@ -204,14 +209,14 @@ function NavLinks({
     const addsLogins = me?.role !== 'admin' && (me?.childRoles?.length ?? 0) > 0
     const show: Record<string, boolean> = {
       '/team': hasTeam || addsLogins,
-      '/ceo/approvals': !allowedModules.has('approvals') && (hasTeam || approvalsWaiting > 0 || (team?.pendingApprovals ?? 0) > 0),
+      '/ceo/approvals': !allowedModules.has('approvals') && (hasTeam || isDelegate || approvalsWaiting > 0 || (team?.pendingApprovals ?? 0) > 0),
       '/hr/me': Boolean(team?.me),
     }
     return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
       href: p.href, label: p.label, icon: '·',
       ...(p.href === '/ceo/approvals' && approvalsWaiting > 0 && { badge: String(approvalsWaiting) }),
     }))
-  }, [team, me?.role, me?.childRoles, allowedModules, approvalsWaiting])
+  }, [team, me?.role, me?.childRoles, allowedModules, approvalsWaiting, isDelegate])
 
   // Workspace open/closed — entries "id:1" / "id:0" once the user has chosen;
   // until then the first (own) workspace and any they own start open, and the
@@ -823,6 +828,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
         <PortfolioBanner />
         <TestCompanyBanner />
+        <LensBanner />
         <ImpersonationBanner />
         <main className="flex-1 min-h-0 overflow-y-auto animate-fade-in pb-20 md:pb-0">
           <PageGuard pathname={pathname}>{children}</PageGuard>

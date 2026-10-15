@@ -22,6 +22,8 @@ interface Tenant {
   slug: string
   industry: string | null
   role?: string
+  kind?: 'company' | 'head_office'
+  access?: string
 }
 
 export function PortfolioWriteGuardModal() {
@@ -31,6 +33,8 @@ export function PortfolioWriteGuardModal() {
   const { data: tenants = [] } = useQuery<Tenant[]>({
     queryKey: ['my-tenants'],
     queryFn: () => api.get<Tenant[]>('/tenants/mine'),
+    // Only companies the user belongs to: never a head office or a reached company.
+    select: (rows) => rows.filter((t) => (t.kind ?? 'company') === 'company' && t.access !== 'head_office'),
     staleTime: 30_000,
     enabled: open,                 // only fetch when actually shown
   })

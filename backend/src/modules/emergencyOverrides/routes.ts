@@ -33,7 +33,7 @@ declare module 'fastify' {
 }
 
 const settingsBody = z.object({
-  tenantId: z.string().uuid(),
+  tenantId: z.string().trim().min(1).max(64),
   codeOnly: z.boolean(),
   reason: z.string().trim().min(10).max(500),
 }).strict()

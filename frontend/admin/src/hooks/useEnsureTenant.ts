@@ -13,6 +13,7 @@
 // that haven't been swept yet.
 
 import { useViewAllTenants } from '../components/ui/TenantSwitcher'
+import { readLensTenant } from '../lib/api'
 
 const GUARD_REQUEST_EVENT  = 'servd:portfolio-write-request'
 const GUARD_RESOLVE_EVENT  = 'servd:portfolio-write-resolve'
@@ -43,7 +44,9 @@ export function useEnsureTenant() {
   const inPortfolio = useViewAllTenants()
 
   return function ensureTenant(action: () => void, intent?: string): void {
-    if (!inPortfolio) {
+    // Through the head-office lens the company is already chosen (and the
+    // server only accepts submit-for-approval routes there): nothing to ask.
+    if (!inPortfolio || readLensTenant()) {
       action()
       return
     }

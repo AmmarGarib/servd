@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
 import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
 import { usePermissions } from '../../hooks/useCan'
+import { useHeadOfficeMe, type ReachEntry } from '../../hooks/useWorkspaces'
+import { useLens, writeLens } from '../../hooks/useLens'
 import { APP_ROLES, roleLabel } from '../../lib/appRoles'
 import { BrandColumn, brandLabel, useBrandOptions, type PickerConcept } from './BrandPicker'
 
@@ -91,6 +93,10 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
   // Only the CEO (admin) can view as other roles — the real role from the
   // server, never the role being viewed as.
   const { data: me } = usePermissions()
+  // Head-office lens: companies reached (not belonged to) through a head
+  // office. Picking one sets the lens; it never calls /tenants/switch.
+  const { reach } = useHeadOfficeMe()
+  const { lensId, lens, setLens } = useLens()
   const isSuper = me?.role === 'admin'
   const setViewAsRole = useViewAsRole((s) => s.setRole)
   // When the CEO impersonates a non-admin role, portfolio view is incoherent
@@ -144,6 +150,7 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
   const switchTo = useMutation({
     mutationFn: (id: string) => api.post(`/tenants/switch/${id}`, {}),
     onSuccess: () => {
+      writeLens(null)
       writeViewAll(false)
       setViewAll(false)
       qc.invalidateQueries()
@@ -153,6 +160,7 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
   })
 
   function activateViewAll() {
+    writeLens(null)
     writeViewAll(true)
     setViewAll(true)
     qc.invalidateQueries()
@@ -184,17 +192,20 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
   }, [open])
 
   const active = tenants.find((t) => t.isActive) ?? tenants[0]
-  const activeIsTest = !viewAll && !!active?.isTest
-  const companyLabel = viewAll ? 'All companies' : (active?.name ?? '—')
-  const initial = viewAll ? '∞' : (active?.name ?? '?')[0]?.toUpperCase()
+  const activeIsTest = !viewAll && !lens && !!active?.isTest
+  const companyLabel = lens ? lens.name : viewAll ? 'All companies' : (active?.name ?? '—')
+  const initial = lens ? lens.name[0]?.toUpperCase() : viewAll ? '∞' : (active?.name ?? '?')[0]?.toUpperCase()
   const brandText = showBrands ? brandLabel(brand.current) : null
   const viewAsText = isSuper && viewAsRole ? roleLabel(viewAsRole) : null
 
-  if (tenants.length === 0 && !isSuper) return null
+  if (tenants.length === 0 && !isSuper && reach.length === 0) return null
 
   const panel = open && (
     <SwitcherPopover panelRef={popRef} tenants={tenants}
-      activeId={viewAll ? '__ALL__' : (active?.id ?? '')}
+      activeId={lens ? '__LENS__' : viewAll ? '__ALL__' : (active?.id ?? '')}
+      reach={reach}
+      lensId={lensId}
+      onPickLens={(id) => { setLens(id); setOpen(false); router.refresh() }}
       onSwitch={(id) => switchTo.mutate(id)}
       onActivateAll={activateViewAll}
       allowPortfolio={!isImpersonating}
@@ -275,7 +286,7 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
         {badge}
         <span className="flex-1 min-w-0">
           <span className="block text-[10px] font-bold uppercase tracking-wider text-white/35 leading-none">
-            {viewAll ? 'Portfolio' : 'Company'}
+            {lens ? 'Through head office' : viewAll ? 'Portfolio' : 'Company'}
           </span>
           <span className="flex items-center gap-1.5 mt-0.5 min-w-0">
             <span className="block text-xs font-bold truncate" style={{ color: viewAll ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.85)' }}>
@@ -304,11 +315,15 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
 
 const ROLE_TARGETS = APP_ROLES.filter((r) => r.value !== 'admin')
 
-const SwitcherPopover = ({ panelRef, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, brands, brandId, brandNotHere, onPickBrand, viewAs, triggerRef, placement }: {
+const SwitcherPopover = ({ panelRef, tenants, reach, lensId, onPickLens, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, brands, brandId, brandNotHere, onPickBrand, viewAs, triggerRef, placement }: {
   // Not `ref`: on React 18 a function component never receives `ref` as a
   // prop, which left the outside-click check blind to the panel.
   panelRef: React.MutableRefObject<HTMLDivElement | null>
   tenants: Tenant[]
+  /** Companies reached through a head office (the lens); [] hides the group. */
+  reach: ReachEntry[]
+  lensId: string | null
+  onPickLens: (companyId: string) => void
   activeId: string                // tenant id, or '__ALL__' when in portfolio view
   onSwitch: (id: string) => void
   onActivateAll: () => void
@@ -451,6 +466,39 @@ const SwitcherPopover = ({ panelRef, tenants, activeId, onSwitch, onActivateAll,
             </button>
           )
         })}
+        {reach.length > 0 && (
+          <div className="border-t border-white/[0.08]">
+            {Array.from(new Set(reach.flatMap((c) => c.via.map((v) => v.name || 'Head office')))).map((hoName) => (
+              <div key={hoName}>
+                <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider font-bold text-white/40">Through {hoName}</p>
+                {reach.filter((c) => c.via.some((v) => (v.name || 'Head office') === hoName)).map((c) => {
+                  const isLens = c.companyId === lensId
+                  return (
+                    <button key={c.companyId} onClick={() => { if (!isLens) onPickLens(c.companyId) }}
+                      disabled={isLens || !!switching} aria-pressed={isLens}
+                      className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${isLens ? 'bg-primary/10' : 'hover:bg-white/[0.04]'} disabled:cursor-default`}>
+                      <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[11px] font-black"
+                        style={{
+                          background: isLens ? 'rgb(var(--erp-primary-rgb) / 0.18)' : 'rgb(var(--fg-rgb) / 0.05)',
+                          border: `1px solid ${isLens ? 'rgb(var(--erp-primary-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.08)'}`,
+                          color: isLens ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.85)',
+                        }}>
+                        {c.name[0]?.toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-bold text-white/90 truncate">{c.name}</p>
+                          {isLens && <span className="text-[9px] font-black uppercase tracking-wider text-primary-ink">Viewing</span>}
+                        </div>
+                        <p className="text-[10px] text-white/40 truncate mt-0.5">Look and send for approval</p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       </div>
       {brands && (

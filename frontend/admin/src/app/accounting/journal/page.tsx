@@ -8,9 +8,13 @@
 //     credits, and the server checks again (postJournalEntry).
 //   • Period lock: an entry dated in a closed period is refused by the server;
 //     its message ("books are closed through …") is shown as-is.
-//   • CEO only, like the API — every manual entry and every reversal lands in
-//     the Exceptions inbox and on the accounting audit trail. Others see the
-//     list read-only.
+//   • Direct posting is CEO only, like the API — every manual entry and every
+//     reversal lands in the Exceptions inbox and on the accounting audit trail.
+//   • Everyone else who prepares journals (owner, management, finance) uses
+//     "Send for approval": a draft / submitted / returned / posted REQUEST
+//     (modules/accounting/journalRequests.ts) that the CEO approves. Their
+//     "My requests" tab lists them with edit, send and withdraw; the CEO has a
+//     Requests tab to approve or return.
 //   • A wrong entry is undone by a reversing entry (every line flipped), never
 //     deleted. Each manual entry can be reversed once.
 import { useMemo, useState } from 'react'
@@ -21,6 +25,7 @@ import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { Select } from '@/components/ui/Select'
+import { JournalRequests, type JournalRequest } from './JournalRequests'
 
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
 interface Brand { id: string; name: string; tenantId: string | null }
@@ -63,9 +68,17 @@ const blankLine = (): DraftLine => ({ key: ++lineSeq, accountId: '', debit: '', 
 
 const inputCls = 's-input py-1.5'
 
+type PageTab = 'entry' | 'requests'
+const PREPARER_ROLES = ['admin', 'owner', 'management', 'finance']
+
 export default function JournalEntryPage() {
   const qc = useQueryClient()
   const isAdmin = useAuthStore((s) => s.isRole('admin'))
+  const canPrepare = useAuthStore((s) => s.isRole(...PREPARER_ROLES))
+  const [tab, setTab] = useState<PageTab>('entry')
+  /** The request being edited in the form (a draft or returned one of mine). */
+  const [editing, setEditing] = useState<JournalRequest | null>(null)
+  const [reqRefresh, setReqRefresh] = useState(0)
   const { data: myTenants = [] } = useMyTenants()
 
   const { data: accounts = [] } = useQuery<Account[]>({
@@ -73,9 +86,9 @@ export default function JournalEntryPage() {
     queryFn: () => api.get('/setup/chart-of-accounts'),
   })
   const { data: brands = [] } = useQuery<Brand[]>({
-    queryKey: ['concepts'],
-    queryFn: () => api.get('/concepts'),
-    enabled: isAdmin,
+    queryKey: ['concepts', isAdmin ? 'all' : 'picker'],
+    queryFn: () => api.get(isAdmin ? '/concepts' : '/concepts?view=picker'),
+    enabled: canPrepare,
   })
   const { data: lock } = useQuery<CurrentLock>({
     queryKey: ['period-close'],
@@ -157,6 +170,63 @@ export default function JournalEntryPage() {
     onError: (err: Error) => setResult({ ok: false, msg: err.message }),
   })
 
+  /** The form's lines in the request shape (paisa, brand optional). */
+  const requestLines = () => used.map((p) => ({
+    accountId: p.line.accountId,
+    type: p.debit > 0 ? 'debit' : 'credit',
+    amountCents: p.debit > 0 ? p.debit : p.credit,
+    ...(p.line.memo.trim() && { memo: p.line.memo.trim() }),
+    ...(p.line.conceptId && { conceptId: p.line.conceptId }),
+  }))
+  function resetForm() {
+    setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setEditing(null); setDate(todayPktIso())
+  }
+
+  /** Save the request (create or edit) and, when `send`, submit it. Never touches the books. */
+  const saveRequest = useMutation({
+    mutationFn: async (send: boolean) => {
+      const body = {
+        description: description.trim(),
+        reference: reference.trim() || null,
+        entryDate: entryInstant(date) ?? null,
+        lines: requestLines(),
+      }
+      let id = editing?.id
+      const pin = { tenantId: editing?.tenantId ?? company }
+      if (id) await api.patch(`/accounting/journal-requests/${id}`, body, pin)
+      else id = (await api.post<{ request: { id: string } }>('/accounting/journal-requests', { kind: 'post', ...body }, pin)).request.id
+      if (send) await api.post(`/accounting/journal-requests/${id}/submit`, {}, pin)
+      return send
+    },
+    onSuccess: (send) => {
+      setResult({ ok: true, msg: send ? 'Sent for approval — the CEO will see it in the approvals inbox. Nothing is posted yet.' : 'Saved as a draft. Send it when it is ready.' })
+      resetForm()
+      setReqRefresh((n) => n + 1)
+      void qc.invalidateQueries({ queryKey: ['journal-requests'] })
+      if (!isAdmin) setTab('requests')
+    },
+    onError: (err: Error) => setResult({ ok: false, msg: err.message }),
+  })
+
+  /** Load a draft / returned request of mine back into the form. */
+  function editRequest(r: JournalRequest) {
+    const ls = Array.isArray(r.lines) ? r.lines : []
+    setEditing(r)
+    setPickedCompany(r.tenantId)
+    setDescription(r.description)
+    setReference(r.reference ?? '')
+    setDate(r.entryDate ? pktDate(r.entryDate) : todayPktIso())
+    setLines(ls.length >= 2
+      ? ls.map((l) => ({
+        key: ++lineSeq, accountId: l.accountId, memo: l.memo ?? '', conceptId: l.conceptId ?? '',
+        debit: l.type === 'debit' ? (l.amountCents / 100).toFixed(2) : '',
+        credit: l.type === 'credit' ? (l.amountCents / 100).toFixed(2) : '',
+      }))
+      : [blankLine(), blankLine()])
+    setResult(null)
+    setTab('entry')
+  }
+
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
@@ -169,10 +239,31 @@ export default function JournalEntryPage() {
       </header>
 
       <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4">
-        {!isAdmin && (
-          <div className="s-card p-4 text-sm text-s-muted">
-            Only the CEO posts or reverses manual journal entries — every one is reviewed in the Exceptions inbox. The entries below are read-only.
+        {canPrepare && (
+          <div role="tablist" aria-label="Journal sections" className="flex gap-1 border-b border-s-border">
+            {([['entry', editing ? 'Editing a request' : 'New entry'], ['requests', isAdmin ? 'Requests' : 'My requests']] as Array<[PageTab, string]>).map(([k, label]) => (
+              <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}
+                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold ${tab === k ? 'text-s-text' : 'border-transparent text-s-muted hover:text-s-text'}`}
+                style={tab === k ? { borderColor: 'var(--erp-accent)' } : undefined}>
+                {label}
+              </button>
+            ))}
           </div>
+        )}
+
+        {!canPrepare && (
+          <div className="s-card p-4 text-sm text-s-muted">
+            Manual journal entries are prepared by finance and posted by the CEO — every one is reviewed in the Exceptions inbox. The entries below are read-only.
+          </div>
+        )}
+        {canPrepare && !isAdmin && tab === 'entry' && (
+          <div className="s-card p-4 text-sm text-s-muted">
+            Only the CEO posts directly. Prepare the entry here and send it for approval — it reaches the books when the CEO approves it.
+          </div>
+        )}
+
+        {canPrepare && tab === 'requests' && (
+          <JournalRequests mode={isAdmin ? 'all' : 'mine'} accounts={accounts} canDecide={isAdmin} onEdit={editRequest} refreshKey={reqRefresh} />
         )}
 
         {result && (
@@ -182,13 +273,20 @@ export default function JournalEntryPage() {
           </div>
         )}
 
-        {isAdmin && (
+        {canPrepare && tab === 'entry' && (
           <section className="s-card p-4 space-y-4" aria-label="New journal entry">
+            {editing && (
+              <p className="text-xs text-s-muted">
+                Editing your {editing.status === 'returned' ? 'returned ' : ''}request for {companyName(editing.tenantId)}.
+                {editing.decisionNote && editing.status === 'returned' && <> The CEO said: “{editing.decisionNote}”.</>}
+                {' '}<button type="button" className="underline" onClick={resetForm}>Start a new entry instead</button>
+              </p>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               {companyIds.length > 1 && (
                 <label className="block sm:col-span-4">
                   <span className="block text-xs text-s-muted mb-1">Company (whose books)</span>
-                  <Select value={pickedCompany} onChange={(e) => { setPickedCompany(e.target.value); setLines([blankLine(), blankLine()]) }} className="s-select py-1.5">
+                  <Select value={pickedCompany} disabled={!!editing} onChange={(e) => { setPickedCompany(e.target.value); setLines([blankLine(), blankLine()]) }} className="s-select py-1.5">
                     <option value="">— pick a company —</option>
                     {companyIds.map((id) => <option key={id} value={id}>{companyName(id)}</option>)}
                   </Select>
@@ -291,21 +389,34 @@ export default function JournalEntryPage() {
               <ul className="text-xs text-s-muted space-y-0.5">
                 {blockers.map((b) => <li key={b}>{b}</li>)}
               </ul>
-              <button type="button" onClick={() => { setResult(null); post.mutate() }}
-                disabled={blockers.length > 0 || post.isPending} className="s-btn-primary text-sm">
-                {post.isPending ? 'Posting…' : 'Post entry'}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {isAdmin && !editing && (
+                  <button type="button" onClick={() => { setResult(null); post.mutate() }}
+                    disabled={blockers.length > 0 || post.isPending || saveRequest.isPending} className="s-btn-primary text-sm">
+                    {post.isPending ? 'Posting…' : 'Post entry'}
+                  </button>
+                )}
+                <button type="button" onClick={() => { setResult(null); saveRequest.mutate(false) }}
+                  disabled={blockers.length > 0 || saveRequest.isPending || post.isPending} className="s-btn-secondary text-sm">
+                  Save as draft
+                </button>
+                <button type="button" onClick={() => { setResult(null); saveRequest.mutate(true) }}
+                  disabled={blockers.length > 0 || saveRequest.isPending || post.isPending}
+                  className={isAdmin && !editing ? 's-btn-secondary text-sm' : 's-btn-primary text-sm'}>
+                  {saveRequest.isPending ? 'Saving…' : 'Send for approval'}
+                </button>
+              </div>
             </div>
           </section>
         )}
 
-        <RecentManualEntries isAdmin={isAdmin} companyName={companyName} multiCompany={companyIds.length > 1} />
+        <RecentManualEntries isAdmin={isAdmin} canRequest={canPrepare} companyName={companyName} multiCompany={companyIds.length > 1} />
       </div>
     </div>
   )
 }
 
-function RecentManualEntries({ isAdmin, companyName, multiCompany }: { isAdmin: boolean; companyName: (id: string | null) => string; multiCompany: boolean }) {
+function RecentManualEntries({ isAdmin, canRequest, companyName, multiCompany }: { isAdmin: boolean; canRequest: boolean; companyName: (id: string | null) => string; multiCompany: boolean }) {
   const from = daysAgoPkt(90)
   const to = todayPktIso()
   const { data, isLoading, error } = useQuery<LedgerPage>({
@@ -325,21 +436,34 @@ function RecentManualEntries({ isAdmin, companyName, multiCompany }: { isAdmin: 
       {!isLoading && !error && entries.length === 0 && (
         <p className="px-4 py-6 text-sm text-s-muted text-center">No manual entries in the last 90 days.</p>
       )}
-      {entries.map((e) => <ManualEntryRow key={e.id} e={e} isAdmin={isAdmin} company={multiCompany ? companyName(e.tenantId) : null} />)}
+      {entries.map((e) => <ManualEntryRow key={e.id} e={e} isAdmin={isAdmin} canRequest={canRequest} company={multiCompany ? companyName(e.tenantId) : null} />)}
       {data?.hasMore && <p className="px-4 py-3 text-xs text-s-muted">Showing the latest 100 — older entries are in the ledger.</p>}
     </section>
   )
 }
 
-function ManualEntryRow({ e, isAdmin, company }: { e: LedgerEntry; isAdmin: boolean; company: string | null }) {
+function ManualEntryRow({ e, isAdmin, canRequest, company }: { e: LedgerEntry; isAdmin: boolean; canRequest: boolean; company: string | null }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState('')
   const [date, setDate] = useState(todayPktIso())
   const [err, setErr] = useState<string | null>(null)
+  const [asked, setAsked] = useState(false)
   const isReversal = !!e.reference?.startsWith('manual.reversal:')
   const total = e.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
 
+  // A non-CEO preparer asks for the reversal: a 'reverse' request the CEO approves.
+  const requestReversal = useMutation({
+    mutationFn: () => api.post('/accounting/journal-requests', {
+      kind: 'reverse', reverseEntryId: e.id, reason: reason.trim(), submit: true,
+      ...(entryInstant(date) && { entryDate: entryInstant(date) }),
+    }, e.tenantId ? { tenantId: e.tenantId } : undefined),
+    onSuccess: () => {
+      setOpen(false); setReason(''); setErr(null); setAsked(true)
+      void qc.invalidateQueries({ queryKey: ['journal-requests'] })
+    },
+    onError: (x: Error) => setErr(x.message),
+  })
   const reverse = useMutation({
     mutationFn: () => api.post(`/accounting/journal/${e.id}/reverse`, {
       reason: reason.trim(),
@@ -367,8 +491,9 @@ function ManualEntryRow({ e, isAdmin, company }: { e: LedgerEntry; isAdmin: bool
         <span className="font-mono text-xs text-s-text shrink-0">{fmtPkr(total)}</span>
         {isReversal && <span className="s-badge-muted shrink-0">Reversal</span>}
         {e.reversedBy && <span className="s-badge-amber shrink-0">Reversed {pktDate(e.reversedBy.entryDate)}</span>}
-        {isAdmin && !isReversal && !e.reversedBy && !open && (
-          <button type="button" onClick={() => setOpen(true)} className="s-btn-secondary text-xs px-3 py-1 shrink-0">Reverse</button>
+        {asked && <span className="s-badge-amber shrink-0">Reversal requested</span>}
+        {(isAdmin || canRequest) && !isReversal && !e.reversedBy && !open && !asked && (
+          <button type="button" onClick={() => setOpen(true)} className="s-btn-secondary text-xs px-3 py-1 shrink-0">{isAdmin ? 'Reverse' : 'Request reversal'}</button>
         )}
       </div>
       {open && (
@@ -382,9 +507,15 @@ function ManualEntryRow({ e, isAdmin, company }: { e: LedgerEntry; isAdmin: bool
             <span className="block text-xs text-s-muted mb-1">Reversal date</span>
             <input type="date" value={date} onChange={(x) => setDate(x.target.value)} className={inputCls} />
           </label>
-          <button type="button" onClick={() => reverse.mutate()} disabled={reason.trim().length < 5 || reverse.isPending} className="s-btn-danger text-sm">
-            {reverse.isPending ? 'Reversing…' : 'Post reversal'}
-          </button>
+          {isAdmin ? (
+            <button type="button" onClick={() => reverse.mutate()} disabled={reason.trim().length < 5 || reverse.isPending} className="s-btn-danger text-sm">
+              {reverse.isPending ? 'Reversing…' : 'Post reversal'}
+            </button>
+          ) : (
+            <button type="button" onClick={() => requestReversal.mutate()} disabled={reason.trim().length < 5 || requestReversal.isPending} className="s-btn-primary text-sm">
+              {requestReversal.isPending ? 'Sending…' : 'Send for approval'}
+            </button>
+          )}
           <button type="button" onClick={() => { setOpen(false); setErr(null) }} className="s-btn-ghost text-sm">Cancel</button>
           {err && <p role="alert" className="sm:col-span-4 text-xs text-s-red">{err}</p>}
         </div>

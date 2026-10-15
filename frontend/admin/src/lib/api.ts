@@ -8,6 +8,7 @@
 
 import { useAuthStore } from '../store/auth'
 import { useBrandFilter } from '../store/brandFilter'
+import { toast } from 'sonner'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -41,6 +42,19 @@ async function errorFrom(res: Response, fallbackCode: string, fallbackMessage: s
     data?.error?.message ?? fallbackMessage,
     data?.error?.details,
   )
+}
+
+// ─── Head-office lens (D3, spec §10) ─────────────────────────────────────────
+//
+// A head-office member can LOOK at a company they reach (never a member of).
+// The chosen company lives in localStorage; while it is set every request
+// carries `x-servd-active-tenant: <lens>` unless the caller pinned a tenantId.
+// hooks/useLens.ts owns reading it into React and validating it against
+// /permissions/me.reach; this is the one raw reader for the fetch layer.
+export const LENS_KEY = 'servd_lens_tenant'
+export function readLensTenant(): string | null {
+  if (typeof window === 'undefined') return null
+  try { return localStorage.getItem(LENS_KEY) || null } catch { return null }
 }
 
 let _refreshing: Promise<string | null> | null = null
@@ -119,6 +133,8 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
 function isPortfolioGuarded(path: string, method: string): boolean {
   if (typeof window === 'undefined') return false
   if (localStorage.getItem('servd_view_all_tenants') !== '1') return false
+  // Through the lens the company is already chosen: nothing to ask.
+  if (readLensTenant()) return false
   // Only POST needs the guard. PATCH/PUT/DELETE target existing rows and the
   // backend derives the tenant from the row itself — prompting the operator
   // would be both wrong (could move the row cross-tenant accidentally) and
@@ -192,7 +208,9 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   // `x-servd-portfolio` header rather than mutating the URL — keeps the
   // existing route shapes intact, easy to toggle off centrally if it ever
   // misbehaves.
+  const lens = readLensTenant()
   const portfolio = typeof window !== 'undefined'
+    && !lens
     && localStorage.getItem('servd_view_all_tenants') === '1'
     && ['GET', 'HEAD'].includes(method)
 
@@ -215,7 +233,8 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
       ...(token && { Authorization: `Bearer ${token}` }),
       ...(portfolio && { 'x-servd-portfolio': '1' }),
       ...(brand && { 'x-servd-brand': brand }),
-      ...(resolvedTenantId && { 'x-servd-active-tenant': resolvedTenantId }),
+      // An explicit tenantId wins; otherwise the head-office lens, if on.
+      ...((resolvedTenantId ?? lens) && { 'x-servd-active-tenant': (resolvedTenantId ?? lens) as string }),
       ...options.headers,
     },
   })
@@ -232,7 +251,11 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   }
 
   if (!res.ok) {
-    throw await errorFrom(res, 'HTTP_' + res.status, `Request failed (${res.status})`)
+    const err = await errorFrom(res, 'HTTP_' + res.status, `Request failed (${res.status})`)
+    if (err.status === 403 && err.code === 'HEAD_OFFICE_SUBMIT_ONLY' && typeof window !== 'undefined') {
+      toast.error(err.message || 'Through head office you can look and send changes for approval, but not change this directly.', { id: 'head-office-submit-only' })
+    }
+    throw err
   }
 
   if (brand && typeof window !== 'undefined') {
@@ -253,7 +276,8 @@ async function download(path: string, filename: string, retry = true): Promise<v
     // Same view as the screen it was downloaded from: portfolio spans companies.
     headers: {
       ...(token && { Authorization: `Bearer ${token}` }),
-      ...(localStorage.getItem('servd_view_all_tenants') === '1' && { 'x-servd-portfolio': '1' }),
+      ...(!readLensTenant() && localStorage.getItem('servd_view_all_tenants') === '1' && { 'x-servd-portfolio': '1' }),
+      ...(readLensTenant() && { 'x-servd-active-tenant': readLensTenant() as string }),
     },
   })
   if (res.status === 401 && retry) {
@@ -510,6 +534,7 @@ export const PAYMENT_METHOD_LABEL: Record<string, string> = {
   card: 'Card – Keenu',
   raast: 'Raast QR',
   keenu_qr: 'Keenu QR (retired)',
+  on_account: 'On account',
   comp: 'Comp',
   split: 'Split',
   wallet: 'Wallet',
@@ -563,6 +588,10 @@ export interface ZReport {
   /** Of raastSales: not on a bank statement yet / matched to one. */
   raastProvisionalCents?: number
   raastMatchedCents?: number
+  /** On-account takings on this drawer (absent while on-account is off). */
+  onAccountSales?: number
+  onAccountCount?: number
+  onAccountByClient?: Array<{ number: string; name: string; cents: number; count: number }>
   cashMovements: { drops: number; adds: number; payouts: number; payins: number }
   expectedCashCents: number
   varianceCents: number | null

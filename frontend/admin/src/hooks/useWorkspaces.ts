@@ -96,3 +96,40 @@ export function useMyWorkspaces(): { workspaces: MyWorkspace[]; role: string | u
 
   return { workspaces, role: isSuper && viewAs ? viewAs : me?.role, isLoading }
 }
+
+// ─── Head office (D1/D3) — the extra fields on GET /permissions/me ───────────
+// Same query key as usePermissions(), so there is ONE request; these types
+// only describe the head-office part of the answer.
+
+/** A head office the caller is a member of. */
+export interface MyHeadOffice { id: string; name: string }
+/** A company the caller reaches through a head office without belonging to it. */
+export interface ReachEntry { companyId: string; name: string; via: Array<{ id: string; name: string }> }
+/** A live approval hand-over (CEO -> this login). */
+export interface MyDelegation { id: string; section: string; scopeName: string; endsAt: string | null }
+
+export interface HeadOfficeMe {
+  headOffices?: MyHeadOffice[]
+  reach?: ReachEntry[]
+  delegations?: MyDelegation[]
+  /** The CEO's head-office setup has run (retires the old cost-share UIs). */
+  headOfficeSetupApplied?: boolean
+}
+
+/** The head-office part of /permissions/me; every list is [] until a head office is linked. */
+export function useHeadOfficeMe(): { headOffices: MyHeadOffice[]; reach: ReachEntry[]; delegations: MyDelegation[]; headOfficeSetupApplied: boolean; loaded: boolean } {
+  const { data } = useQuery<HeadOfficeMe>({
+    queryKey: ['permissions', 'me'],
+    queryFn: () => api.get<HeadOfficeMe>('/permissions/me'),
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  })
+  return {
+    headOffices: data?.headOffices ?? [],
+    reach: data?.reach ?? [],
+    delegations: data?.delegations ?? [],
+    headOfficeSetupApplied: data?.headOfficeSetupApplied === true,
+    loaded: data !== undefined,
+  }
+}

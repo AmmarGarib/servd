@@ -25,6 +25,7 @@ import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { fmtPkrWhole } from '../../../lib/money'
 import { usePermissions } from '../../../hooks/useCan'
+import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { useManagerRoles } from '../../../lib/roles'
 import { Select } from '@/components/ui/Select'
 
@@ -93,6 +94,14 @@ interface ContributionSummary {
   internalSplit: Array<{ label: string; cents: number }> | null
   description?: string | null
 }
+interface HeadOfficeChargeLine {
+  headOfficeId: string
+  name: string
+  companyTenantId: string
+  companyName: string
+  shareBps: number
+  monthlyCents: number
+}
 interface Summary {
   totalPositions: number
   totalHeadcount: number
@@ -107,6 +116,9 @@ interface Summary {
   byDepartment: Array<{ id: string; name: string; emoji: string | null; isHeadOffice: boolean; grossCents: number; shareCents: number; count: number }>
   byStatus: { open: number; filled: number; frozen: number }
   contributions: ContributionSummary[]
+  headOfficeCharges?: HeadOfficeChargeLine[]
+  headOfficeChargesMonthlyCents?: number
+  labels?: { headOfficeCharges?: string }
 }
 
 const STATUS_META: Record<Position['status'], { label: string; color: string; bg: string }> = {
@@ -124,6 +136,8 @@ const STATUS_META: Record<Position['status'], { label: string; color: string; bg
 export function PositionsView({ embedded = false }: { embedded?: boolean } = {}) {
   const qc = useQueryClient()
   const { isManager, canEditSeats } = usePositionAccess()
+  // After the CEO's head-office setup the old head-office cost-share UI is retired.
+  const { headOfficeSetupApplied } = useHeadOfficeMe()
   const { data: positions = [], isLoading } = useQuery<Position[]>({
     queryKey: ['positions'],
     queryFn:  () => api.get('/positions'),
@@ -348,6 +362,30 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
               />
             </div>
 
+            {(summary.headOfficeCharges ?? []).length > 0 && (
+              <div className="mt-4 rounded-xl border border-s-border bg-s-surface overflow-hidden">
+                <div className="px-4 py-3 border-b border-s-border">
+                  <p className="text-sm font-bold">{summary.labels?.headOfficeCharges ?? 'Head office charges (plan)'}</p>
+                  <p className="text-[11px] text-s-muted">Each company&apos;s planned share of its head office&apos;s cost</p>
+                </div>
+                <div className="px-4 py-3 grid gap-2">
+                  {(summary.headOfficeCharges ?? []).map((h) => (
+                    <div key={`${h.headOfficeId}:${h.companyTenantId}`} className="flex justify-between text-xs font-mono items-baseline">
+                      <span className="text-s-muted">
+                        {h.name} &rarr; {h.companyName}
+                        <span className="text-[10px] text-s-muted/70"> ({Number((h.shareBps / 100).toFixed(2))}%)</span>
+                      </span>
+                      <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>+ {fmtPkrWhole(h.monthlyCents)}</span>
+                    </div>
+                  ))}
+                  <div className="border-t border-s-border mt-1 pt-2 flex justify-between text-xs font-mono">
+                    <span className="font-bold">Total</span>
+                    <span className="font-black">{fmtPkrWhole(summary.headOfficeChargesMonthlyCents ?? 0)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 rounded-xl border border-s-border bg-s-surface overflow-hidden">
               <div className="px-4 py-3 border-b border-s-border flex items-center justify-between gap-3">
                 <div>
@@ -405,8 +443,16 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                         </div>
                       )}
                     </>)
-                    // Only managers may change a contribution; everyone else
-                    // reads the line.
+                    // After the setup, old head-office contributions are ended:
+                    // shown read-only. Only managers may change any other one.
+                    if (headOfficeSetupApplied && c.category === 'head_office') {
+                      return (
+                        <div key={c.id} className="rounded-md px-1 py-1 -mx-1 opacity-60">
+                          {line}
+                          <p className="pl-5 text-[10px] uppercase tracking-wider font-bold text-s-muted">ended</p>
+                        </div>
+                      )
+                    }
                     return isManager ? (
                       <button key={c.id} type="button" onClick={() => setContribModal(c)}
                         className="text-left rounded-md px-1 py-1 -mx-1 hover:bg-s-bg/40 transition-colors">
@@ -471,7 +517,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     <p className="text-sm font-bold flex items-center gap-2">
                       <span>{dept.emoji ?? '·'}</span>
                       <span>{dept.title}</span>
-                      {dept.isHeadOffice && (
+                      {dept.isHeadOffice && !headOfficeSetupApplied && (
                         <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
                           style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                           Head office
@@ -505,6 +551,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                           departments={departments}
                           shiftBands={shiftBands}
                           designations={designations}
+                          setupApplied={headOfficeSetupApplied}
                         />
                       ))}
                     </div>
@@ -567,7 +614,7 @@ function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
 type Designation = { id: string; name: string }
 
 function PositionRow({
-  position, canEdit, expanded, onExpand, onClose, onChange, departments, shiftBands, designations,
+  position, canEdit, expanded, onExpand, onClose, onChange, departments, shiftBands, designations, setupApplied,
 }: {
   position: Position
   /** False = read-only viewer (finance, or while the role loads): no expand-to-edit. */
@@ -579,6 +626,7 @@ function PositionRow({
   departments: Department[]
   shiftBands: ShiftBand[]
   designations: Designation[]
+  setupApplied: boolean
 }) {
   const status = STATUS_META[position.status]
   const summary = (<>
@@ -599,7 +647,7 @@ function PositionRow({
           <span className="text-[10px] text-s-muted">→ {position.filledBy.name}</span>
         )}
       </div>
-      {position.costShareNote && position.tenantCostShareCents !== position.monthlySalaryCents && (
+      {!setupApplied && position.costShareNote && position.tenantCostShareCents !== position.monthlySalaryCents && (
         <p className="text-[10px] text-s-muted mt-0.5 italic truncate">{position.costShareNote}</p>
       )}
     </div>
@@ -629,14 +677,14 @@ function PositionRow({
       </button>
       {expanded && (
         <PositionEditor position={position} onChange={onChange} onClose={onClose}
-          departments={departments} shiftBands={shiftBands} designations={designations} />
+          departments={departments} shiftBands={shiftBands} designations={designations} setupApplied={setupApplied} />
       )}
     </div>
   )
 }
 
 function PositionEditor({
-  position, onChange, onClose, departments, shiftBands, designations,
+  position, onChange, onClose, departments, shiftBands, designations, setupApplied,
 }: {
   position: Position
   onChange: () => void
@@ -644,6 +692,7 @@ function PositionEditor({
   departments: Department[]
   shiftBands: ShiftBand[]
   designations: Designation[]
+  setupApplied: boolean
 }) {
   const current = designations.find((d) => d.name.toLowerCase() === position.title.toLowerCase())
   const [designationId, setDesignationId] = useState(current?.id ?? '')
@@ -661,12 +710,12 @@ function PositionEditor({
       // The title is only ever set from an HR designation.
       ...(designationId && designationId !== current?.id && { designationId }),
       monthlySalaryCents: gross,
-      tenantCostShareCents: share,
+      ...(!setupApplied && { tenantCostShareCents: share }),
       headcount,
       status,
       departmentId: departmentId || null,
       shiftBandId: shiftBandId || null,
-      costShareNote: costShareNote.trim() || null,
+      ...(!setupApplied && { costShareNote: costShareNote.trim() || null }),
       notes: notes.trim() || null,
     }),
     onSuccess: () => { onChange(); onClose() },
@@ -713,19 +762,21 @@ function PositionEditor({
         <Field label="Gross monthly salary" hint="What the person earns (full salary).">
           <MoneyInput value={gross} onChange={setGross} />
         </Field>
-        <Field label="Tenant cost-share" hint="What THIS tenant's P&L bears. Defaults to gross.">
-          <MoneyInput value={share} onChange={setShare} />
-        </Field>
+        {!setupApplied && (
+          <Field label="Tenant cost-share" hint="What THIS tenant's P&L bears. Defaults to gross.">
+            <MoneyInput value={share} onChange={setShare} />
+          </Field>
+        )}
         <Field label="Headcount" hint="Number of identical seats in this row.">
           <input type="number" min={1} value={headcount} onChange={(e) => setHeadcount(parseInt(e.target.value) || 1)}
             className={inputCls} />
         </Field>
-        <div className="md:col-span-2">
+        {!setupApplied && <div className="md:col-span-2">
           <Field label="Cost-share note" hint="Explain why share < gross (e.g. head office allocation, JV split).">
             <input value={costShareNote} onChange={(e) => setCostShareNote(e.target.value)} className={inputCls}
               placeholder="e.g. Head office: GS Foods bears 37.5% of gross." />
           </Field>
-        </div>
+        </div>}
         <div className="md:col-span-2">
           <Field label="Notes">
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls + ' min-h-[60px]'} />

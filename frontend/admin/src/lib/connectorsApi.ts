@@ -256,6 +256,55 @@ export interface ReportingRequiredResult {
   heldNote: string | null
 }
 
+// ─── Change requests (head office D1/D3; backend connectors/changeRequests.ts) ──
+//
+// IT prepares a change to a company's fiscal POS or card-machine settings and
+// the CEO (or a live Dev hand-over) applies it. Secrets are typed ONCE in the
+// request: the server seals them and never returns them — `patch` carries only
+// the markers 'set' / 'clear'. Go-live, switch-off, "fiscal reporting required"
+// and releasing held sales are never requestable (CEO's own buttons).
+
+export type ChangeRequestStatus = 'submitted' | 'applied' | 'rejected' | 'withdrawn'
+
+/** What a request asks for. Secrets appear only as 'set' / 'clear'. */
+export interface ChangeRequestPatch {
+  driver?: string
+  baseUrl?: string
+  enabled?: boolean
+  settings?: Record<string, unknown>
+  apiKey?: 'set' | 'clear'
+  webhookSecret?: 'set' | 'clear'
+}
+
+export interface ConnectorChangeRequest {
+  id: string
+  tenantId: string
+  kind: ConnectorKind
+  status: ChangeRequestStatus
+  patch: ChangeRequestPatch
+  secretsIncluded: boolean
+  preparedById: string
+  preparedByIds: string[]
+  preparedByName: string | null
+  preparedAt: string
+  viaHeadOfficeId: string | null
+  decidedById: string | null
+  decidedAt: string | null
+  decisionNote: string | null
+  decidedVia: string | null
+}
+
+/** POST /connectors/:kind/change-requests body. '' on a secret asks to clear it. Regenerating secrets is refused by the server. */
+export interface ChangeRequestBody {
+  driver?: string
+  baseUrl?: string
+  apiKey?: string
+  webhookSecret?: string
+  /** Terminal only — the server refuses `enabled` on the fiscal POS (go-live is the CEO's). */
+  enabled?: boolean
+  settings?: Record<string, unknown>
+}
+
 // ─── Raast QR bank alerts (/connectors/raast/*) ─────────────────────────────
 
 export interface RaastCounts {
@@ -556,6 +605,19 @@ export const connectorsApi = {
     api.post<TerminalChargeView>(`/pos/terminal/charges/${encodeURIComponent(id)}/resolve`, body),
   reverseCharge: (id: string, body: { markRefundedOnMachine?: boolean; note?: string }) =>
     api.post<TerminalChargeView>(`/pos/terminal/charges/${encodeURIComponent(id)}/reverse`, body),
+
+  // Change requests (the ACTIVE company; the lens company for a head-office IT member).
+  changeRequests: (f: { status?: ChangeRequestStatus; kind?: ConnectorKind; limit?: number } = {}) =>
+    api.get<{ changes: ConnectorChangeRequest[] }>(`/connectors/change-requests${q(f)}`),
+  sendChangeRequest: (kind: ConnectorKind, body: ChangeRequestBody) =>
+    api.post<ConnectorChangeRequest>(`/connectors/${kind}/change-requests`, body),
+  /** CEO or a Dev hand-over; applies the change in the same transaction. */
+  approveChangeRequest: (id: string, tenantId?: string) =>
+    api.post<{ change: ConnectorChangeRequest }>(`/connectors/change-requests/${encodeURIComponent(id)}/approve`, {}, tenantId ? { tenantId } : undefined),
+  rejectChangeRequest: (id: string, note: string, tenantId?: string) =>
+    api.post<ConnectorChangeRequest>(`/connectors/change-requests/${encodeURIComponent(id)}/reject`, { note }, tenantId ? { tenantId } : undefined),
+  withdrawChangeRequest: (id: string, tenantId?: string) =>
+    api.post<ConnectorChangeRequest>(`/connectors/change-requests/${encodeURIComponent(id)}/withdraw`, {}, tenantId ? { tenantId } : undefined),
 
   // Raast QR bank alerts (/connectors/raast — the ACTIVE company).
   raastSettings: () => api.get<RaastSettingsPage>('/connectors/raast/settings'),

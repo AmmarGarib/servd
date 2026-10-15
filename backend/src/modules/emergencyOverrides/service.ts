@@ -97,7 +97,7 @@ export async function switchCodeOnly(a: { tenantId: string; codeOnly: boolean; r
  */
 export async function orderInScope(orderId: string, scope: TenantIdWhere): Promise<{ id: string; tenantId: string }> {
   const ids = tenantIdsOf(scope)
-  if (ids.length === 0 || !isUuid(orderId)) throw orderNotFound()
+  if (ids.length === 0 || !orderId || orderId.length > 64) throw orderNotFound()
   const o = await serviceClient.order.findFirst({
     where: { id: orderId, deletedAt: null, concept: { deletedAt: null, tenantId: { in: ids } } },
     select: { id: true, concept: { select: { tenantId: true } } },
@@ -109,10 +109,6 @@ export async function orderInScope(orderId: string, scope: TenantIdWhere): Promi
 /** 409 CODE_ONLY_OFF unless the order's company has code-only delivery on. */
 export async function assertCodeOnly(tenantId: string): Promise<void> {
   if (!(await codeOnlyDelivery(serviceClient, tenantId))) throw codeOnlyOff()
-}
-
-function isUuid(s: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
 }
 
 // ─── The list ───────────────────────────────────────────────────────────────

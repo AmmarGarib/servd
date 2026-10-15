@@ -307,10 +307,17 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
     enabled: !!detailId,
   })
 
+  const [sentNotice, setSentNotice] = useState<string | null>(null)
   const actionMut = useMutation({
     mutationFn: ({ id, action, body }: { id: string; action: string; body?: unknown }) =>
       api.post(`/procurement/purchase-orders/${id}/${action}`, body ?? {}),
-    onSuccess: () => {
+    onSuccess: (res, vars) => {
+      // A submit that lands in the approvals inbox says so (also via a head office).
+      const r = res as { status?: string; viaHeadOfficeId?: string | null } | null
+      if (vars.action === 'submit' && r && ((r.status && ['pending_approval', 'submitted'].includes(r.status)) || r.viaHeadOfficeId)) {
+        setSentNotice('Sent for approval')
+        setTimeout(() => setSentNotice(null), 6000)
+      }
       void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
       void qc.invalidateQueries({ queryKey: ['procurement', 'po', detailId] })
       void qc.invalidateQueries({ queryKey: ['procurement', 'approvals'] })
@@ -342,6 +349,7 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
           onClose={() => setShowCreate(false)} />
       )}
 
+      {sentNotice && <p className="text-xs font-bold text-success">{sentNotice}</p>}
       {actionMut.error && (
         <p className="text-xs text-s-red">{actionMut.error instanceof Error ? actionMut.error.message : 'That did not work'}</p>
       )}

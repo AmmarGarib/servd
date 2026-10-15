@@ -1206,7 +1206,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
   return <ModalShell title={`${line ? 'Edit' : 'Add'} ${scope} line`} onClose={onClose} wide>
     {onRegister && (
       <div className="rounded-xl px-4 py-3 text-xs text-white/70" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.08)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.25)' }}>
-        This item is on the fixed-asset register (or waiting for the CEO), so its name, cost, quantity, tax and dates are fixed.
+        This item is on the fixed-asset register (or sent for approval), so its name, cost, quantity, tax and dates are fixed.
         Void the asset on the register and prepare it again to change them.
       </div>
     )}

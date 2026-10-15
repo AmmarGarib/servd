@@ -236,9 +236,17 @@ export default function RecipesPage() {
   // Submit a testing (iteration) recipe for CEO sign-off — moves it to
   // pending_approval so it appears in /accounting/recipes/approvals. Saves the
   // operator from opening the editor just to hit "Submit for production".
+  const [sentNotice, setSentNotice] = useState<string | null>(null)
   const submitMut = useMutation({
     mutationFn: (id: string) => api.post(`/recipes/${id}/submit`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['recipes'] }),
+    onSuccess: (res) => {
+      const r = res as { status?: string; viaHeadOfficeId?: string | null } | null
+      if (r && ((r.status && ['pending_approval', 'submitted'].includes(r.status)) || r.viaHeadOfficeId)) {
+        setSentNotice('Sent for approval')
+        setTimeout(() => setSentNotice(null), 6000)
+      }
+      return qc.invalidateQueries({ queryKey: ['recipes'] })
+    },
     onError: (e: Error) => alert(e.message),
   })
 
@@ -621,6 +629,7 @@ export default function RecipesPage() {
                               Submit
                             </button>
                           )}
+                          {sentNotice && <span className="text-[11px] font-bold text-success self-center">{sentNotice}</span>}
                           <button onClick={() => openEdit(r)}
                             className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-primary/10 transition-colors">
                             Edit
