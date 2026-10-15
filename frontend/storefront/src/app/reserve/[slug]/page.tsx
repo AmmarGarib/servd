@@ -21,14 +21,15 @@ import { formatBrandName, type ServiceHourSlot } from '../../../lib/concept'
 import { breadcrumbSchema, jsonLdScript, restaurantSchema } from '../../../lib/jsonLd'
 import { fetchLiveConcepts, isServdCompanyBrand, lookupConcept } from '../../../lib/liveConcepts'
 import { brandDescriptor, cityOf } from '../../brand/[slug]/meta'
+import { liveSectionFields } from '../../../sections/liveFields'
+import { str } from '../../../sections/safe'
 import ReserveScreen from './ReserveScreen'
+import { MAX_PARTY } from './partySizes'
 
 export const dynamic = 'force-dynamic'
 
 type Params = { params: Promise<{ slug: string }> | { slug: string } }
 
-/** The largest party the widget offers (its party-size list). */
-const MAX_PARTY = 20
 
 export default async function ReserveBrandPage({ params }: Params) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
@@ -67,9 +68,14 @@ export default async function ReserveBrandPage({ params }: Params) {
     ]),
   ]
 
+  // The sentences' words are the servd:reserve page's picker section fields
+  // (Admin → Storefront), today's text as the spec defaults.
+  const words = await liveSectionFields('servd:reserve', 'servd.reservePicker')
   const intro = (
     <p data-reserve-intro style={{ color: 'var(--servd-mute)', fontSize: '0.92rem', lineHeight: 1.55, maxWidth: '40rem', marginTop: '0.75rem' }}>
-      {factualParagraph(name, loc)}
+      {factualParagraph(name, loc, {
+        address: str(words['introAddress']), phone: str(words['introPhone']), booking: str(words['introBooking']),
+      })}
     </p>
   )
 
@@ -85,17 +91,17 @@ export default async function ReserveBrandPage({ params }: Params) {
  *  every day, 6 pm to 1 am. Phone +92 …. Book a table online for 1 to 20
  *  people: …" — plain facts from the brand record, no exclamation marks
  *  (Simmer's rules hold on every page that names it). */
-function factualParagraph(name: string, loc: BrandLocation): string {
+function factualParagraph(name: string, loc: BrandLocation, words: { address: string; phone: string; booking: string }): string {
   const parts: string[] = [`${name} — ${brandDescriptor(loc)}.`]
   // The full address only when a street is on file (the area alone is
   // already in the line above).
   const street = filled(loc.street)
-  if (street) parts.push(`The address is ${[street, filled(loc.area), cityOf(loc)].filter(Boolean).join(', ')}.`)
+  if (street && words.address.trim()) parts.push(words.address.trim().replace(/\{address\}/g, [street, filled(loc.area), cityOf(loc)].filter(Boolean).join(', ')))
   const hours = hoursSentence(loc.hours ?? [])
   if (hours) parts.push(hours)
   const phone = filled(loc.phone)
-  if (phone) parts.push(`Phone ${phone}.`)
-  parts.push(`Book a table online for 1 to ${MAX_PARTY} people: choose a date and party size, then a time. You get a link to confirm or cancel your booking straight after.`)
+  if (phone && words.phone.trim()) parts.push(words.phone.trim().replace(/\{phone\}/g, phone))
+  if (words.booking.trim()) parts.push(words.booking.trim().replace(/\{max\}/g, String(MAX_PARTY)))
   return parts.join(' ')
 }
 

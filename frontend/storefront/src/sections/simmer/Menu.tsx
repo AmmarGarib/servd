@@ -3,7 +3,8 @@
 // notes and prices, the service date as the single orange signal.
 //
 //   • No published items → the placeholder card (ported from SimmerMenu),
-//     every course and dish a field, marked "draft — pending kitchen".
+//     every course and dish a field, with an optional draft note (empty by
+//     default — the owner fills it).
 //   • Items published   → the live menu (fetchBrandMenu): one course per
 //     category with a roman numeral, dish + description + price, and an
 //     order button in place of the "flag your server" note.
@@ -25,6 +26,9 @@ import { HEADING_RESET, simmerConcept, simmerHref, simmerLines, simmerText, stam
 
 interface Dish { name: string; body: string; price: string; soldOut?: boolean }
 interface Course { rubric: string; title: string; items: Dish[] }
+
+/** The h1's words when the field is empty (also the spec default). */
+export const MENU_HEADING_DEFAULT = '{{brand.name}} menu in {{city}}'
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX']
 
@@ -64,9 +68,12 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
   const live = hasMenuItems(categories)
   const courses = live ? liveCourses(categories) : placeholderCourses(f['courses'])
 
-  // The h1: what this page is, in plain words. Name and city are the brand
-  // record's (formatBrandName, Concept.addressLocality), never typed here.
-  const menuHeading = `${formatBrandName(concept.name)} menu in ${filled(locationFromConcept(concept).city) || 'Karachi'}`
+  // The h1: what this page is, in plain words. The words are the section's
+  // `heading` field; {{brand.name}} and {{city}} are the brand record's
+  // (formatBrandName, Concept.addressLocality). Empty = the spec default.
+  const menuHeading = simmerText(str(f['heading']).trim() || MENU_HEADING_DEFAULT)
+    .replace(/\{\{\s*brand\.name\s*\}\}/g, formatBrandName(concept.name))
+    .replace(/\{\{\s*city\s*\}\}/g, filled(locationFromConcept(concept).city) || 'Karachi')
   const kicker = simmerText(f['kicker'])
   const wordmark = simmerText(f['wordmark'])
   const mark = simmerText(f['mark'])

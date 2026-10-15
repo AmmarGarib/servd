@@ -29,6 +29,7 @@ import { brandCanonical } from '../../../lib/brandDomains'
 import { useCustomerAuth } from '../../../store/customerAuth'
 // GA4 events (no-op without GA4 / consent) — the shared contract in lib/analytics.
 import { track } from '../../../lib/analytics'
+import { PARTY_SIZES } from './partySizes'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -322,7 +323,7 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
                   className="servd-input"
                   style={{ marginTop: '0.4rem' }}
                 >
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 20].map((n) => (
+                  {PARTY_SIZES.map((n) => (
                     <option key={n} value={n}>{n} {n === 1 ? 'person' : 'people'}</option>
                   ))}
                 </select>

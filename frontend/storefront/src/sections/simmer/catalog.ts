@@ -310,6 +310,7 @@ export const specs: SectionSpec[] = [
     fields: [
       { key: 'eyebrow', label: 'Eyebrow', kind: 'text', hint: RULES_HINT },
       stampField,
+      { key: 'heading', label: 'Page heading (h1)', kind: 'text', hint: 'What search engines read. {{brand.name}} and {{city}} fill in from the brand. Empty = “{{brand.name}} menu in {{city}}”.' },
       { key: 'kicker', label: 'Kicker above the wordmark', kind: 'text' },
       { key: 'wordmark', label: 'Masthead line (the page heading)', kind: 'text' },
       { key: 'mark', label: 'Orange mark after it', kind: 'text' },
@@ -345,7 +346,9 @@ export const specs: SectionSpec[] = [
       kicker: 'the menu',
       wordmark: 'simmer down',
       mark: '.',
-      draftNote: 'draft — pending kitchen',
+      // Empty by default: no placeholder wording reaches guests or Google.
+      draftNote: '',
+      heading: '{{brand.name}} menu in {{city}}',
       courses: [
         {
           rubric: 'I.', title: 'small plates',

@@ -17,6 +17,9 @@ const row: CSSProperties = { margin: '0.35rem 0 0', fontSize: '0.95rem', lineHei
 const anchor: CSSProperties = { color: 'inherit', fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }
 const label: CSSProperties = { color: 'var(--servd-mute)', fontWeight: 600, marginRight: '0.4rem' }
 
+/** Inner padding of the contact cards (servd-card has none of its own). */
+const CARD_PAD = 'clamp(1.1rem, 3vw, 1.5rem)'
+
 const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, '')}`
 const waDigits = (v: string) => v.replace(/\D/g, '')
 
@@ -58,7 +61,7 @@ export function ContactDetails({ fields, ctx }: SectionProps) {
         )}
         {intro && <p style={{ fontSize: '1.1rem', lineHeight: 1.6, maxWidth: '40rem', margin: '0 0 2rem' }}>{intro}</p>}
 
-        <div className="servd-card" style={{ maxWidth: '40rem', marginBottom: '2rem' }}>
+        <div className="servd-card" style={{ maxWidth: '40rem', marginBottom: '2rem', padding: CARD_PAD }}>
           {company && <p style={{ margin: 0, fontWeight: 800, fontSize: '1.1rem' }}>{company}</p>}
           {companyAddress && <p style={row}>{companyAddress}</p>}
           {companyEmail && (
@@ -82,7 +85,7 @@ export function ContactDetails({ fields, ctx }: SectionProps) {
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(16rem, 1fr))', gap: '1rem' }}>
               {kitchens.map((k) => (
-                <div key={k.slug} className="servd-card">
+                <div key={k.slug} className="servd-card" style={{ padding: CARD_PAD }}>
                   <h3 style={{ margin: 0, fontWeight: 800, fontSize: '1.1rem' }}>
                     <a href={brandCanonical(k.slug)} style={{ color: 'inherit', textDecoration: 'none' }}>{k.name}</a>
                   </h3>

@@ -6,7 +6,7 @@
 import Link from 'next/link'
 import type { ServiceHourSlot } from '../../lib/concept'
 import { typeLabel } from '../../lib/concept'
-import { locationFromConcept, fetchBrandKitchens, mapsLinkFor, type BrandKitchen } from '../../lib/brandLocations'
+import { filled, locationFromConcept, fetchBrandKitchens, mapsLinkFor, type BrandKitchen } from '../../lib/brandLocations'
 import type { SectionProps } from '../types'
 import { color, link, str } from '../safe'
 import { TEXT_SURFACE, brandHref, brandNameOf, fill, orLive } from './util'
@@ -124,11 +124,11 @@ export async function VisitInfo({ fields, ctx }: SectionProps) {
             </p>
           )}
 
-          {concept.phone && (
+          {filled(concept.phone) && (
             <p style={{ marginBottom: '0.5rem' }}>
-              <a href={`tel:${concept.phone}`}
+              <a href={`tel:${filled(concept.phone).replace(/[^+\d]/g, '')}`}
                 style={{ color: accent, fontWeight: 600, fontSize: '0.95rem' }}>
-                {concept.phone}
+                {filled(concept.phone)}
               </a>
             </p>
           )}

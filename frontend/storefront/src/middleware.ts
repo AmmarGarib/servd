@@ -5,7 +5,7 @@ import {
 import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE } from './lib/abVariant'
 import { isEditorFramePath } from './lib/editorFrame'
 import { frameAncestors } from './lib/adminOrigins'
-import { isCertainlyNotABrand, liveBrandSlugs } from './lib/crawlGate'
+import { isCertainlyNotABrand, isCertainlyNotAPage, liveBrandSlugs } from './lib/crawlGate'
 
 // Host-based brand routing.
 //
@@ -220,8 +220,7 @@ const UNMATCHED_PATH = '/__not-found/a/b/c/d'
  * (see lib/crawlGate.ts). Fails open: unknown / API down → null.
  */
 async function serverNotFound(req: NextRequest, slug: string | null, newVisitorId: string | null) {
-  const target = orderingSlug(req.nextUrl.pathname)
-  if (!target || !(await isCertainlyNotABrand(target))) return null
+  if (!(await certainlyMissing(req.nextUrl.pathname, slug))) return null
   const url = req.nextUrl.clone()
   url.pathname = UNMATCHED_PATH
   const headers = new Headers(req.headers)
@@ -230,6 +229,18 @@ async function serverNotFound(req: NextRequest, slug: string | null, newVisitorI
   if (slug) headers.set(BRAND_HOST_HEADER, slug)
   withVisitorCookie(headers, newVisitorId)
   return setVisitorCookie(NextResponse.rewrite(url, { request: { headers } }), newVisitorId)
+}
+
+/** A brand ordering / booking path whose slug is certainly not a brand, or
+ *  (on servd's own host) a /pages/<slug> with no live page. */
+async function certainlyMissing(pathname: string, hostSlug: string | null): Promise<boolean> {
+  const target = orderingSlug(pathname)
+  if (target) return isCertainlyNotABrand(target)
+  const page = hostSlug ? null : /^\/pages\/([^/]+)\/?$/.exec(pathname)?.[1]
+  if (page) {
+    try { return await isCertainlyNotAPage(decodeURIComponent(page)) } catch { return false } // malformed %-escape
+  }
+  return false
 }
 
 /** Hosts that are dev / preview stand-ins, never a brand's public domain. */

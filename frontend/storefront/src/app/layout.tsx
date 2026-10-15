@@ -8,9 +8,12 @@ import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackSlot } from '../components/feedback/FeedbackSlot'
 import { PopupHost } from '../components/popups/PopupHost'
-import { Analytics } from '../components/analytics/Analytics'
+import { Analytics, type ConsentWords } from '../components/analytics/Analytics'
 import { SERVD_ORIGIN, SERVD_OG_IMAGE, BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { ManagedPage } from '../sections/ManagedPage'
+import { liveSectionFields } from '../sections/liveFields'
+import { link, str } from '../sections/safe'
+import { gaConfigured } from '../lib/analytics'
 import { allKitsCss } from '../lib/brandKit'
 import { getLiveKits } from '../lib/brandKitFetch'
 // The share card's own alt and type (app/opengraph-image.tsx), restated below:
@@ -185,6 +188,10 @@ export default async function StorefrontLayout({ children }: { children: React.R
   // pages, ordering skins, checkout, the tracker and servd.pk's cross-brand
   // tiles all follow. API down → {} → the defaults, which are in code.
   const brandKitCss = allKitsCss(await getLiveKits())
+  // The cookie notice's words: the servd footer section's consent fields
+  // (Admin → Storefront → Footer). Only read when GA is configured — without
+  // it the notice never renders.
+  const consentWords = gaConfigured() ? consentWordsOf(await liveSectionFields('servd:footer', 'servd.footer')) : undefined
   // The servd header and footer are content pages (`servd:header`,
   // `servd:footer` — Admin → Storefront), rendered here on the server and
   // handed to the client gates that hide them on brand microsites and the
@@ -211,7 +218,7 @@ export default async function StorefrontLayout({ children }: { children: React.R
           <ManagedPage slug="servd:header" />
         </StorefrontNav>
         {/* GA4 + consent notice. Renders nothing without NEXT_PUBLIC_GA4_ID. */}
-        <Analytics initialBrandSlug={initialBrandSlug} />
+        <Analytics initialBrandSlug={initialBrandSlug} words={consentWords} />
         <main id="main">{children}</main>
         <StorefrontFooter initialBrandSlug={initialBrandSlug}>
           <ManagedPage slug="servd:footer" />
@@ -222,4 +229,16 @@ export default async function StorefrontLayout({ children }: { children: React.R
       </body>
     </html>
   )
+}
+
+/** The consent notice's words from the servd footer section's fields. */
+function consentWordsOf(f: Record<string, unknown>): ConsentWords {
+  const l = link(f['consentLink'])
+  return {
+    text: str(f['consentText']),
+    linkText: l.text,
+    linkHref: l.href,
+    decline: str(f['consentDecline']),
+    accept: str(f['consentAccept']),
+  }
 }

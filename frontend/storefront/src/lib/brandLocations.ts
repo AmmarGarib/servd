@@ -24,15 +24,37 @@
 import { formatBrandName, type Concept, type ServiceHourSlot } from './concept'
 
 /**
+ * The known fake phone numbers, by their national digits (no +92 / 0092 / 0):
+ *   - 21 3456 789x — the seed's "+92 21 3456 7890 / 7891" brand numbers;
+ *   - 300 123 456x — the old "+92 300 1234567x" fallback numbers;
+ *   - a subscriber part that is one digit repeated (021 0000000, 0300 1111111).
+ * Exact families only, so a real number is never caught.
+ */
+function isFakePhone(s: string): boolean {
+  if (!/^[+\d\s().-]+$/.test(s)) return false // not written as a phone number
+  let d = s.replace(/\D/g, '')
+  if (d.startsWith('0092')) d = d.slice(4)
+  else if (d.startsWith('92') && d.length >= 11) d = d.slice(2)
+  else if (d.startsWith('0')) d = d.slice(1)
+  if (/^213456789\d$/.test(d)) return true
+  if (/^300123456\d$/.test(d)) return true
+  // Area code (2 digits for landlines like 21 / 42, 3 for mobiles 3xx) + a
+  // subscriber number that is a single digit repeated.
+  if (/^(?:\d{2}|3\d{2})(\d)\1{6,7}$/.test(d)) return true
+  return false
+}
+
+/**
  * A NAP value that is really there: '' for empty strings and the unfilled
  * placeholders this fallback carries (TODO_FILL_STREET / TODO_FILL_AREA) and
- * the old fake +92 300 1234567x numbers. Everything public — titles, H1s,
- * JSON-LD, the sitemap, map queries, contact links — reads NAP through this,
- * so a placeholder can never reach a customer or Google.
+ * the known fake phone numbers (isFakePhone). Everything public — titles,
+ * H1s, JSON-LD, the sitemap, map queries, contact links, llms.txt, footers —
+ * reads NAP through this, so a placeholder can never reach a customer or
+ * Google.
  */
 export function filled(v: string | null | undefined): string {
   const s = (v ?? '').trim()
-  if (!s || /^TODO_FILL/i.test(s) || /placeholder/i.test(s) || /^\+?92\s?300\s?123\s?456/.test(s)) return ''
+  if (!s || /^TODO_FILL/i.test(s) || /placeholder/i.test(s) || isFakePhone(s)) return ''
   return s
 }
 

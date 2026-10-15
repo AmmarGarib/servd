@@ -179,9 +179,30 @@ function ensureGtag(): GtagWindow['gtag'] {
   return w.gtag
 }
 
+/** A path for GA: no query string (tokens, codes) and no order id. */
+function maskPath(pathname: string): string {
+  return pathname.replace(/\/order\/[^/]+/, '/order/_')
+}
+
 /** Page URL for GA: no query string (tokens, codes) and no order id. */
 function cleanPath(): string {
-  return window.location.pathname.replace(/\/order\/[^/]+/, '/order/_')
+  return maskPath(window.location.pathname)
+}
+
+/** The referrer for GA, cleaned the same way (no query, no hash, no order id). */
+function cleanReferrer(): string {
+  try {
+    if (!document.referrer) return ''
+    const r = new URL(document.referrer)
+    return r.origin + maskPath(r.pathname)
+  } catch { return '' }
+}
+
+/** The page fields every GA hit carries. gtag.js would otherwise send the raw
+ *  document.location (query string and order id included) as `dl`. */
+function gaPage(): { page_location: string; page_path: string; page_referrer: string } {
+  const path = cleanPath()
+  return { page_location: window.location.origin + path, page_path: path, page_referrer: cleanReferrer() }
 }
 
 /** Loads GA once, only when configured, on an allowed path, with consent granted. */
@@ -193,7 +214,9 @@ function loadGa(): void {
   gtag('consent', 'update', { analytics_storage: 'granted' })
   gtag('js', new Date())
   // Page views are sent by hand on every route change (sendPageView).
-  gtag('config', GA4_ID, { send_page_view: false, allow_google_signals: false, allow_ad_personalization_signals: false })
+  // page_location is the cleaned URL, never document.location (sg-4); it is
+  // refreshed on every route change in sendPageView.
+  gtag('config', GA4_ID, { send_page_view: false, allow_google_signals: false, allow_ad_personalization_signals: false, ...gaPage() })
   const s = document.createElement('script')
   s.async = true
   s.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(GA4_ID)}`
@@ -228,18 +251,20 @@ function gaOn(): boolean {
 /** page_view for the current route (call after every navigation). */
 export function sendPageView(): void {
   if (!gaOn()) return
-  const path = cleanPath()
-  ;(window as GtagWindow).gtag!('event', 'page_view', {
-    page_location: window.location.origin + path,
-    page_path: path,
-    page_title: document.title,
-  })
+  const page = gaPage()
+  const gtag = (window as GtagWindow).gtag!
+  // Every later event of this route carries the cleaned URL too.
+  gtag('set', page)
+  gtag('event', 'page_view', { ...page, page_title: document.title })
 }
 
 function gaEvent(event: GaEvent, params?: Record<string, unknown>): void {
   try {
     if (!gaOn()) return
-    ;(window as GtagWindow).gtag!('event', event, params ?? {})
+    // The cleaned page fields go on the event itself as well, so an event sent
+    // before this route's page_view (e.g. purchase on the order page) never
+    // carries the raw URL.
+    ;(window as GtagWindow).gtag!('event', event, { ...(params ?? {}), ...gaPage() })
   } catch { /* analytics must never break the app */ }
 }
 

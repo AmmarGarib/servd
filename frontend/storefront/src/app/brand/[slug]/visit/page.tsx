@@ -14,7 +14,7 @@ import { Breadcrumbs } from '../../../../components/Breadcrumbs'
 import { brandCanonical } from '../../../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo, type Block } from '../../../../lib/blocks'
 import { fetchBrandKitchens, filled, locationFromConcept, type BrandLocation } from '../../../../lib/brandLocations'
-import { brandAccent, formatBrandName, type Concept } from '../../../../lib/concept'
+import { brandAccent, brandSurface, formatBrandName, type Concept } from '../../../../lib/concept'
 import { getLiveKits } from '../../../../lib/brandKitFetch'
 import { faqSchema, jsonLdScript } from '../../../../lib/jsonLd'
 import { fetchLiveConcepts, findConceptOrThrow, fitSentences, resolveConcept } from '../../../../lib/liveConcepts'
@@ -94,11 +94,14 @@ export default async function BrandVisitPage({ params }: Params) {
   return (
     <>
       {ld.length > 0 && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />}
-      <Breadcrumbs items={[
+      <ManagedPage slug={pageSlug} {...(layout ? { layout } : {})} {...(concepts.length ? { concepts } : {})} />
+      {/* The visible trail sits under the page, above the footer (Apple-style):
+          the top of every brand page is its own header — Flipd's is fixed and
+          would sit on top of it. */}
+      <Breadcrumbs color={brandSurface(slug).text} items={[
         { name: formatBrandName(concept.name), href: brandCanonical(slug) },
         { name: SUBPAGE_TITLE.visit, href: brandCanonical(slug, 'visit') },
       ]} />
-      <ManagedPage slug={pageSlug} {...(layout ? { layout } : {})} {...(concepts.length ? { concepts } : {})} />
     </>
   )
 }

@@ -93,3 +93,25 @@ export async function isCertainlyNotABrand(slug: string): Promise<boolean> {
   notABrand.set(slug, Date.now() + TTL_MS)
   return true
 }
+
+// slug → expiry of "the API says servd has no live page:<slug>".
+const notAPage = new Map<string, number>()
+
+/**
+ * True ONLY when the API answered that servd has no live custom page
+ * `page:<slug>` (/pages/<slug>): HTTP 200 for that very slug with no blocks —
+ * the same test app/pages/[slug] uses before it 404s. Timeouts, network
+ * errors, 5xx and 429 are "don't know" (false) and never cached.
+ */
+export async function isCertainlyNotAPage(slug: string): Promise<boolean> {
+  if (!/^[a-z0-9][a-z0-9_-]{0,80}$/i.test(slug)) return false
+  const until = notAPage.get(slug)
+  if (until && until > Date.now()) return true
+  const { ok, body } = await getJson(`/api/v1/site-layouts/${encodeURIComponent(`page:${slug}`)}`)
+  const row = body as { slug?: unknown; blocks?: unknown } | null
+  if (!ok || !row || row.slug !== `page:${slug}`) return false
+  if (Array.isArray(row.blocks) && row.blocks.length > 0) return false
+  if (notAPage.size >= MAX_NEGATIVES) notAPage.clear()
+  notAPage.set(slug, Date.now() + TTL_MS)
+  return true
+}

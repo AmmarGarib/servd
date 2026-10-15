@@ -15,6 +15,9 @@ import { inBrandOrder } from '../../lib/liveConcepts'
 import type { SectionProps } from '../../sections/types'
 import { str } from '../../sections/safe'
 
+/** Inner padding of the form and the success notice (servd-card has none). */
+const CARD_PAD = 'clamp(1.1rem, 3vw, 1.5rem)'
+
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 const TOPICS = ['catering', 'complaint', 'press', 'jobs', 'other'] as const
@@ -91,12 +94,12 @@ export function ContactForm({ fields, ctx }: SectionProps) {
         {str(fields.intro) && <p style={{ margin: '0 0 1.5rem', color: 'var(--servd-mute)', lineHeight: 1.55 }}>{str(fields.intro)}</p>}
 
         {done ? (
-          <div className="servd-card" role="status">
+          <div className="servd-card" role="status" style={{ padding: CARD_PAD }}>
             <p style={{ margin: 0, fontWeight: 800, fontSize: '1.15rem' }}>{str(fields.doneTitle) || 'Message received.'}</p>
             <p style={{ margin: '0.5rem 0 0', lineHeight: 1.55 }}>{str(fields.doneBody)}</p>
           </div>
         ) : (
-          <form onSubmit={onSubmit} noValidate className="servd-card">
+          <form onSubmit={onSubmit} noValidate className="servd-card" style={{ padding: CARD_PAD, position: 'relative' }}>
             {/* Honeypot: off-screen, not in the tab order, ignored by screen readers. */}
             <div aria-hidden="true" style={{ position: 'absolute', left: '-10000px', width: 1, height: 1, overflow: 'hidden' }}>
               <label htmlFor={`${uid}-website`}>Website</label>

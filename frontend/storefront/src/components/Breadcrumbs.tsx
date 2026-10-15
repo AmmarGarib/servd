@@ -35,19 +35,24 @@ export function Breadcrumbs({
   origin = '',
   jsonLd = true,
   className,
+  color = 'inherit',
 }: {
   items: Crumb[]
   origin?: string
   /** false = the trail only (the page emits its own BreadcrumbList). */
   jsonLd?: boolean
   className?: string
+  /** The trail's foreground. Default: inherit the page's. A brand page whose
+   *  trail sits above its own surface passes the brand's surface text
+   *  (brandSurface(slug).text), never a servd colour. */
+  color?: string
 }) {
   if (items.length === 0) return null
   const schema = breadcrumbSchema(items.map((it) => ({ name: it.name, url: absoluteCrumbUrl(it.href, origin) })))
   return (
     <>
       {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />}
-      <nav aria-label="Breadcrumb" className={className}>
+      <nav aria-label="Breadcrumb" className={className} style={{ color }}>
         <ol
           style={{
             display: 'flex',
@@ -61,7 +66,7 @@ export function Breadcrumbs({
             marginInline: 'auto',
             fontSize: '0.8125rem',
             lineHeight: 1.4,
-            color: 'inherit',
+            color: 'currentColor',
           }}
         >
           {items.map((it, i) => {

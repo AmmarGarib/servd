@@ -7,7 +7,7 @@ import Link from 'next/link'
 import type { SectionProps } from '../types'
 import { str, link } from '../safe'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../../components/brand/parts/OpenStatusBadge'
-import { locationFromConcept } from '../../lib/brandLocations'
+import { filled, locationFromConcept } from '../../lib/brandLocations'
 import { StackdFrame, stackdConcept, fill, stackdHref } from './shared'
 
 const CONTACT_LINK = { color: 'var(--stackd-cream)', textDecoration: 'none', borderBottom: '1px solid currentColor' } as const
@@ -21,7 +21,7 @@ export function StackdVisit({ fields, ctx }: SectionProps) {
   const reserveTo = stackdHref(reserve.href, ctx, concept)
 
   const address = str(fields.address).trim() || concept.address || str(fields.addressMissing)
-  const phone = fields.showPhone !== false ? concept.phone : null
+  const phone = fields.showPhone !== false ? filled(concept.phone) || null : null
   // The brand's guest email (admin → Brands → Contact); the bundled default
   // only fills in when the API is down.
   const email = fields.showEmail !== false ? locationFromConcept(concept).email : null

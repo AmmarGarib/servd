@@ -11,7 +11,7 @@ import { notFound } from 'next/navigation'
 import { Breadcrumbs } from '../../../../components/Breadcrumbs'
 import { brandCanonical } from '../../../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../../../lib/blocks'
-import { brandStory, formatBrandName } from '../../../../lib/concept'
+import { brandStory, brandSurface, formatBrandName } from '../../../../lib/concept'
 import { jsonLdScript, restaurantId } from '../../../../lib/jsonLd'
 import { fetchLiveConcepts, findConceptOrThrow, resolveConcept } from '../../../../lib/liveConcepts'
 import { ManagedPage } from '../../../../sections/ManagedPage'
@@ -65,11 +65,14 @@ export default async function BrandAboutPage({ params }: Params) {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
-      <Breadcrumbs items={[
+      <ManagedPage slug={`brand:${slug}:about`} {...(concepts.length ? { concepts } : {})} />
+      {/* The visible trail sits under the page, above the footer (Apple-style):
+          the top of every brand page is its own header — Flipd's is fixed and
+          would sit on top of it. */}
+      <Breadcrumbs color={brandSurface(slug).text} items={[
         { name: formatBrandName(concept.name), href: brandCanonical(slug) },
         { name: SUBPAGE_TITLE.about, href: url },
       ]} />
-      <ManagedPage slug={`brand:${slug}:about`} {...(concepts.length ? { concepts } : {})} />
     </>
   )
 }

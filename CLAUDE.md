@@ -185,6 +185,14 @@ module id belongs to exactly one workspace (tested). The admin sidebar,
 `GET /permissions/workspaces` — never keep a copy in the frontend. A new
 module id must be placed in a workspace in the same change.
 
+- **Brands is the CEO's (owner, 2026-10-14).** The brand editor is CEO →
+  Brands (`/ceo/brands`; `/marketing/brands` redirects). `brands` is a
+  CEO-only module (`CEO_ONLY_MODULES` in `lib/moduleAccess.ts`: dropped from
+  every non-admin role, saved row and moduleAllow; one-time revoke
+  `MODULE_REVOKES`) and `PATCH /concepts/:id` + `GET ?view=brand` answer 403
+  `BRAND_CEO_ONLY` to every other role. Marketing keeps Storefront and the
+  Brand kit (CEO-approved). One-setting writers keep their own routes (POS
+  ids on `/connectors`, Raast account on `/setup`, the look via the kit).
 - **Team = the HR reporting line** (`HrEmployee.managerId`). `GET /hr/team`
   returns the whole tree under the caller. Don't build another hierarchy.
 - **Owners add logins only for roles under them** (`childRoles`;
@@ -330,7 +338,7 @@ the media (owner, 2026-10-12) — `showTitle` off keeps the title only as an
   copy is stale and wrong; that is Flipd's territory. Storefront copy lives in
   `BRAND_STORIES` in `frontend/storefront/src/lib/concept.ts`, but the
   **`description` shown in page titles, JSON-LD and cross-brand cards comes
-  from the DB `Concept.description`** — edit it in admin → Marketing → Brands,
+  from the DB `Concept.description`** — edit it in admin → CEO → Brands,
   not in code (the code string is only an API-down fallback).
 
   Palette is Pantone 19-2025 Red Plum (`#7C2946`) + Pantone 9180 cream

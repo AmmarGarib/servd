@@ -136,7 +136,8 @@ export function brandHref(
       // Never the placeholder number: wa.me to it messages a stranger.
       case '@whatsapp':  return filled(loc.whatsapp) ? { href: whatsappLink(loc), external: true } : null
       case '@email':     return loc.email ? { href: `mailto:${loc.email}`, external: false } : null
-      case '@phone':     return c.phone ? { href: `tel:${c.phone}`, external: false } : null
+      // Never a placeholder / known fake number (filled()).
+      case '@phone':     return filled(c.phone) ? { href: `tel:${filled(c.phone).replace(/[^+\d]/g, '')}`, external: false } : null
       default:           return null
     }
   }

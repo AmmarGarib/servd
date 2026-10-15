@@ -6,6 +6,7 @@ import {
   sendPageView, setConsent, track, type ConsentChoice,
 } from '../../lib/analytics'
 import { useOnBrandMicrosite } from '../../lib/host'
+import { safeHref } from '../../sections/safe'
 
 // Google Analytics 4 + the consent notice (SEO round 1, WP5).
 //
@@ -32,7 +33,26 @@ function whatsappAnchor(target: EventTarget | null): HTMLAnchorElement | null {
   } catch { return null }
 }
 
-export function Analytics({ initialBrandSlug = null }: { initialBrandSlug?: string | null }) {
+/** The notice's words: the servd footer section's consent fields (read on the
+ *  server in app/layout.tsx); each falls back to today's text. */
+export interface ConsentWords { text: string; linkText: string; linkHref: string; decline: string; accept: string }
+const DEFAULT_WORDS: ConsentWords = {
+  text: 'We use Google Analytics to see which pages and dishes people use, so we can improve the site. It sets cookies only if you accept. Ordering works either way.',
+  linkText: 'Privacy',
+  linkHref: 'https://servd.pk/privacy',
+  decline: 'Only necessary',
+  accept: 'Accept',
+}
+
+export function Analytics({ initialBrandSlug = null, words }: { initialBrandSlug?: string | null; words?: ConsentWords }) {
+  const w: ConsentWords = {
+    text: words?.text.trim() || DEFAULT_WORDS.text,
+    // An empty label hides the link; no words at all → the default link.
+    linkText: words ? words.linkText.trim() : DEFAULT_WORDS.linkText,
+    linkHref: safeHref(words ? words.linkHref : DEFAULT_WORDS.linkHref, DEFAULT_WORDS.linkHref),
+    decline: words?.decline.trim() || DEFAULT_WORDS.decline,
+    accept: words?.accept.trim() || DEFAULT_WORDS.accept,
+  }
   const pathname = usePathname() ?? '/'
   const onBrandHost = useOnBrandMicrosite(initialBrandSlug)
   const brandLook = onBrandHost || pathname.startsWith('/brand/')
@@ -85,16 +105,15 @@ export function Analytics({ initialBrandSlug = null }: { initialBrandSlug?: stri
       className={`sv-consent ${brandLook ? 'sv-consent--neutral' : 'sv-consent--servd'}`}
     >
       <p className="sv-consent__text">
-        We use Google Analytics to see which pages and dishes people use, so we can improve the
-        site. It sets cookies only if you accept. Ordering works either way.{' '}
-        <a href="https://servd.pk/privacy" className="sv-consent__link">Privacy</a>
+        {w.text}
+        {w.linkText && <>{' '}<a href={w.linkHref} className="sv-consent__link">{w.linkText}</a></>}
       </p>
       <div className="sv-consent__actions">
         <button type="button" className="sv-consent__btn sv-consent__btn--quiet" onClick={() => setConsent('denied')}>
-          Only necessary
+          {w.decline}
         </button>
         <button type="button" className="sv-consent__btn sv-consent__btn--primary" onClick={() => setConsent('granted')}>
-          Accept
+          {w.accept}
         </button>
       </div>
       <style>{CSS}</style>
