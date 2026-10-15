@@ -15,7 +15,7 @@ export default function RunsTab({ detail }: { detail: HeadOfficeDetail }) {
     <div>
       <div className="flex items-center justify-between gap-3 mb-3">
         <p className="text-sm text-white/60">The last {runs.length || 12} monthly recharge runs. Read-only here.</p>
-        <Link href="/finance/intercompany?tab=head-office" className="text-xs font-bold hover:underline" style={{ color: 'var(--erp-primary-ink)' }}>
+        <Link href="/accounting/intercompany?tab=recharges" className="text-xs font-bold hover:underline" style={{ color: 'var(--erp-primary-ink)' }}>
           Accounting → Inter-company → Head office
         </Link>
       </div>

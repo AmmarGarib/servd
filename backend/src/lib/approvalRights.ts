@@ -842,6 +842,22 @@ async function recipeCompanies(id: string, db: Db): Promise<string[] | null> {
   return [...out]
 }
 
+/**
+ * A21 for many recipes at once (the inbox's recipe provider): id → the
+ * companies approvalSubject('recipe') will derive for it, so the inbox's
+ * section and hand-over checks match the approve route. Missing ids → [].
+ */
+export async function recipeCompaniesBatch(ids: readonly string[], db: Db = serviceClient): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  await Promise.all(uniq([...ids]).map(async (id) => { out.set(id, (await recipeCompanies(id, db)) ?? []) }))
+  return out
+}
+
+/** The owner company approvalSubject('recipe') picks from an A21 set (null = CEO only). */
+export function recipeOwnerOf(companies: readonly string[]): string | null {
+  return companies.length === 1 ? companies[0]! : (companies.length ? [...companies].sort()[0]! : null)
+}
+
 const subject = (s: Omit<ApprovalSubject, 'companyIds' | 'submitterIds'> & { companyIds: Array<string | null | undefined>; submitterIds: Array<string | null | undefined> }): ApprovalSubject => ({
   ...s, companyIds: clean(s.companyIds), submitterIds: clean(s.submitterIds),
 })
@@ -875,7 +891,7 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const companies = (await recipeCompanies(id, db)) ?? []
       // A21: an empty set = no company of its own → CEO only (owner null).
       return subject({
-        companyIds: companies, ownerTenantId: companies.length === 1 ? companies[0]! : (companies.length ? [...companies].sort()[0]! : null),
+        companyIds: companies, ownerTenantId: recipeOwnerOf(companies),
         submitterIds: [r.submittedById, r.createdById, ...r.editedByIds], viaHeadOfficeId: r.viaHeadOfficeId, status: r.status, submittedAt: r.submittedAt,
       })
     }

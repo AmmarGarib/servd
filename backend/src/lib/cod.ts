@@ -21,6 +21,7 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { toCents } from './money.js'
+import { DELIVERY_CODE_ONLY_SETTING } from './deliveryRules.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -92,4 +93,40 @@ export async function riderCashHeldCents(db: Db, riderId: string): Promise<numbe
     _sum: { amountCents: true },
   })
   return toCents(agg._sum.amountCents ?? 0)
+}
+
+/**
+ * The COD cash a rider is holding that counts as CUSTODY: only orders of a
+ * company with code-only delivery ON (the COD custody switch — codPosting.ts
+ * COD_CUSTODY_OFF otherwise), completed at or after that switch-on. With the
+ * switch off nothing counts, so the rider app shows no reminder. Used by the
+ * rider's shift-off warning.
+ */
+export async function riderCustodyCashHeldCents(db: Db, riderId: string): Promise<number> {
+  if (!riderId) return 0
+  const where = codDueWhere({})
+  const rows = await db.payment.findMany({
+    where: { ...where, order: { ...(where.order as Prisma.OrderWhereInput), fulfilmentType: 'delivery', riderId } },
+    select: { amountCents: true, createdAt: true, order: { select: { completedAt: true, concept: { select: { tenantId: true } } } } },
+  })
+  if (rows.length === 0) return 0
+  const tenants = [...new Set(rows.map((r) => r.order.concept.tenantId).filter((t): t is string => !!t))]
+  const settings = tenants.length === 0 ? [] : await db.setting.findMany({
+    where: { key: { in: tenants.map((t) => `${DELIVERY_CODE_ONLY_SETTING}:${t}`) } },
+    select: { key: true, value: true },
+  })
+  const since = new Map<string, Date>()
+  for (const s of settings) {
+    const t = s.key.slice(DELIVERY_CODE_ONLY_SETTING.length + 1)
+    const at = new Date(String(s.value))
+    since.set(t, Number.isNaN(at.getTime()) ? new Date(0) : at)
+  }
+  let sum = 0
+  for (const r of rows) {
+    const t = r.order.concept.tenantId
+    const from = t ? since.get(t) : undefined
+    if (!from) continue
+    if ((r.order.completedAt ?? r.createdAt) >= from) sum += toCents(r.amountCents)
+  }
+  return sum
 }

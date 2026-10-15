@@ -50,6 +50,17 @@ export interface CollectOptions {
 
 type Kept = { item: ApprovalItem; byDelegation: boolean }
 
+/**
+ * The company an item is checked against for hand-overs: its tenantId, else
+ * (a component recipe, A21) the owner of the companies it derives — the same
+ * one approvalSubject gives the approve route. Null = CEO only.
+ */
+function handOverTenant(i: ApprovalItem): string | null {
+  if (i.tenantId) return i.tenantId
+  const touches = i.touchesTenantIds ?? []
+  return touches.length ? (i.ownerTenantId ?? touches[0]!) : null
+}
+
 export async function collectApprovals(ctx: ProviderContext, opts: CollectOptions = {}): Promise<ApprovalInbox> {
   const providers = opts.providers ?? APPROVAL_PROVIDERS
   const delegations = opts.delegations ?? NO_DELEGATIONS
@@ -57,6 +68,8 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
   const delegatedTenants = ctx.delegated ?? (delegations.tenantsByType ? await delegations.tenantsByType(ctx.user.id) : new Map())
   const inView = new Set(ctx.tenantIds)
   const member = new Set(ctx.memberTenantIds)
+  // Spec §7.6: a type spanning member companies (HR) widens to member ∪ reach ∪ delegated.
+  const reach = new Set(ctx.reachTenantIds ?? [])
   const isAdmin = ctx.user.role === 'admin'
   const eligible = providers.filter((p) => mayApprove(p, ctx.user.role, delegatedTypes))
   // Test companies are left out of "All companies" (lib/testCompany.ts), so
@@ -77,18 +90,21 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
       // legacy case (a company-less signup, an orphan supplier, a shared site
       // page) that its queue route already chose to show. A hand-over's
       // companies are kept whatever the view.
-      const keepRole = (id: string) => byRole && (p.spansMemberCompanies ? member.has(id) || inView.has(id) : inView.has(id))
+      const keepRole = (id: string) => byRole && (p.spansMemberCompanies ? member.has(id) || reach.has(id) || inView.has(id) : inView.has(id))
       const kept: Kept[] = []
       for (const i of rows) {
         // A company-less row is CEO-only by definition (shared servd:* pages,
         // company-less recipes and logins): kept only on the role path.
+        // A component recipe (tenantId null, derived companies) may still be
+        // a delegate's through its derived company (checked in full below).
+        const via = handOverTenant(i)
         if ((i.tenantId === null && byRole) || (i.tenantId !== null && keepRole(i.tenantId))) kept.push({ item: i, byDelegation: false })
-        else if (i.tenantId !== null && del?.has(i.tenantId)) kept.push({ item: i, byDelegation: true })
+        else if (via !== null && del?.has(via)) kept.push({ item: i, byDelegation: true })
       }
       // Other companies of the user's own: counted (never listed) so the page
       // can point at "All companies".
       const elsewhere = rows.filter((i) => i.tenantId !== null && !keepRole(i.tenantId) && !del?.has(i.tenantId)
-        && member.has(i.tenantId) && !tests.has(i.tenantId)).length
+        && (member.has(i.tenantId) || (p.spansMemberCompanies && reach.has(i.tenantId))) && !tests.has(i.tenantId)).length
       return { p, kept, elsewhere, error: false, refused: false }
     } catch {
       return { p, kept: [] as Kept[], elsewhere: 0, error: true, refused: false }
@@ -139,12 +155,12 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
   if (delegatedKept.length) {
     const own = delegations.asDelegate ? await delegations.asDelegate(ctx.user.id) : null
     const candidates = own && own.delegations.length
-      ? delegatedKept.filter((k) => !(k.item.submittedByIds ?? []).includes(ctx.user.id) && k.item.section !== 'ceo' && k.item.tenantId)
+      ? delegatedKept.filter((k) => !(k.item.submittedByIds ?? []).includes(ctx.user.id) && k.item.section !== 'ceo' && handOverTenant(k.item))
       : []
     const need = candidates.filter((k) => APPROVAL_RIGHTS[k.item.type].ownership === 'company' && !throughOf.has(k.item))
     if (need.length) {
       const through = await throughHeadOfficeBatch(need.map((k) => ({
-        tenantId: k.item.tenantId, submittedByIds: k.item.submittedByIds ?? [], viaHeadOfficeId: k.item.viaHeadOfficeId ?? null,
+        tenantId: handOverTenant(k.item), submittedByIds: k.item.submittedByIds ?? [], viaHeadOfficeId: k.item.viaHeadOfficeId ?? null,
         submittedAt: k.item.waitingSince,
       })))
       need.forEach((k, n) => throughOf.set(k.item, through[n] ?? []))
@@ -152,10 +168,11 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
     const keep = new Set<Kept>()
     for (const k of candidates) {
       const i = k.item
+      const tenant = handOverTenant(i)!
       const headOfficeOwned = APPROVAL_RIGHTS[i.type].ownership === 'head_office'
-      const owner = headOfficeOwned ? (i.ownerTenantId ?? i.tenantId!) : i.tenantId!
-      const base = i.touchesTenantIds?.length ? i.touchesTenantIds : [i.tenantId!]
-      const touches = headOfficeOwned ? Array.from(new Set([...base, i.tenantId!])) : base
+      const owner = headOfficeOwned ? (i.ownerTenantId ?? tenant) : tenant
+      const base = i.touchesTenantIds?.length ? i.touchesTenantIds : [tenant]
+      const touches = headOfficeOwned ? Array.from(new Set([...base, tenant])) : base
       const item = {
         tenantId: owner, touchesTenantIds: touches, section: i.section,
         throughHeadOfficeIds: headOfficeOwned ? [] : (throughOf.get(i) ?? []),
@@ -172,15 +189,16 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
   const handedOver = new Set<ApprovalItem>()
   if (handOver && handOver.delegations.length) {
     const candidates = results.flatMap((r) => r.kept.map((k) => k.item))
-      .filter((i) => i.tenantId && APPROVAL_RIGHTS[i.type].delegable && i.section !== 'ceo')
+      .filter((i) => handOverTenant(i) && APPROVAL_RIGHTS[i.type].delegable && i.section !== 'ceo')
     const through = await throughHeadOfficeBatch(candidates.map((i) => ({
-      tenantId: i.tenantId, submittedByIds: i.submittedByIds ?? [], viaHeadOfficeId: i.viaHeadOfficeId ?? null, submittedAt: i.waitingSince,
+      tenantId: handOverTenant(i), submittedByIds: i.submittedByIds ?? [], viaHeadOfficeId: i.viaHeadOfficeId ?? null, submittedAt: i.waitingSince,
     })))
     candidates.forEach((i, n) => {
-      const touches = i.touchesTenantIds?.length ? i.touchesTenantIds : [i.tenantId!]
+      const tenant = handOverTenant(i)!
+      const touches = i.touchesTenantIds?.length ? i.touchesTenantIds : [tenant]
       const d = handOver.delegations.find((x) => !(i.submittedByIds ?? []).includes(x.delegateUserId)
         && delegationCovers(x, i.type, {
-          tenantId: APPROVAL_RIGHTS[i.type].ownership === 'head_office' ? (i.ownerTenantId ?? i.tenantId) : i.tenantId,
+          tenantId: APPROVAL_RIGHTS[i.type].ownership === 'head_office' ? (i.ownerTenantId ?? tenant) : tenant,
           touchesTenantIds: touches, section: i.section, throughHeadOfficeIds: through[n] ?? [],
         }, handOver.linked))
       if (!d) return

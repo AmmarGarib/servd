@@ -389,3 +389,34 @@ describe('the move', () => {
     expect(await prisma.journalEntry.count({ where: { tenantId: { in: [A, A2, HO] } } })).toBe(0)
   })
 })
+
+describe('a login still employed in another linked company', () => {
+  it('keeps that membership (preview warns), even when not picked to keep', async () => {
+    const p = (await call('ceo', '/head-office-transfers/preview', body([emp.dupA!]))).json()
+    expect(p.ok).toBe(true)
+    const e = p.employees[0]
+    expect(e.login.removeMemberships).toEqual([A])
+    expect(e.login.keepMemberships).toEqual([A2])
+    expect(e.warnings.join(' ')).toMatch(/Keeps the GS x Viva membership: their login is still a current employee there/)
+
+    const r = await call('ceo', '/head-office-transfers', body([emp.dupA!]))
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().moved[0].removedMemberships).toEqual([A])
+    const m = (await prisma.tenantMember.findMany({ where: { userId: users.dup!.id } })).map((x) => x.tenantId).sort()
+    expect(m).toEqual([HO, A2].sort())
+    expect((await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emp.dupA2! } })).status).toBe('active')
+  })
+})
+
+describe('an archived head-office department', () => {
+  it('is brought back rather than left archived', async () => {
+    const dept = (await prisma.department.create({ data: { tenantId: A, name: 'Stores' } })).id
+    const archived = (await prisma.department.create({ data: { tenantId: HO, name: 'Stores', archivedAt: new Date() } })).id
+    const id = await mkEmp('stores', A, { departmentId: dept })
+    const r = await call('ceo', '/head-office-transfers', body([id]))
+    expect(r.statusCode, r.body).toBe(201)
+    const n = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: r.json().moved[0].toEmployeeId } })
+    expect(n.departmentId).toBe(archived)
+    expect((await prisma.department.findUniqueOrThrow({ where: { id: archived } })).archivedAt).toBeNull()
+  })
+})

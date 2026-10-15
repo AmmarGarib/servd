@@ -45,7 +45,7 @@ import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import {
-  assignRider, unassignRider, markDelivered, setRiderStatus, recordRiderFix, riderFixSchema, stillWithRiderWhere,
+  assignRider, unassignRider, markDelivered, setRiderStatus, recordRiderFix, riderFixSchema, stillWithRiderWhere, boardOverrideInfo,
 } from './service.js'
 import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
 import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
@@ -186,6 +186,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
     const orderTenants = [...new Set(riders.flatMap((r) => r.orders.map((o) => o.concept.tenantId)).filter((t): t is string => !!t))]
     const codeOnlyTenants = new Set<string>()
     for (const t of orderTenants) if (await codeOnlyDelivery(serviceClient, t)) codeOnlyTenants.add(t)
+    const extras = await boardOverrideInfo(riders.flatMap((r) => r.orders.map((o) => ({ id: o.id, riderId: r.id }))))
     const now = Date.now()
     return riders.map(({ tenantId, orders, ...r }) => ({
       ...r,
@@ -193,6 +194,8 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
         ...o,
         concept,
         codeOnly: !!orderTenantId && codeOnlyTenants.has(orderTenantId),
+        handoverRerouteByName: extras.get(o.id)?.handoverRerouteByName ?? null,
+        doorProblem: extras.get(o.id)?.doorProblem ?? null,
       })),
       // True for a rider of another company carrying our orders under a
       // fleet agreement — the board can label them.

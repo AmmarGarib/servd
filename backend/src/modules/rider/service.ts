@@ -14,7 +14,7 @@ import { customerScope } from '../../lib/outboundScope.js'
 import { DELIVERY_OTP_MAX_ATTEMPTS, deliveryOtpMatches, generateDeliveryOtp } from '../../lib/deliveryOtp.js'
 import { fleetMayCarry } from '../../lib/fleet.js'
 import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
-import { riderCashHeldCents } from '../../lib/cod.js'
+import { riderCustodyCashHeldCents } from '../../lib/cod.js'
 import { normalisePhone } from '../auth/otp.js'
 import {
   claimHandoverAttempt, markDelivered, recordJobEvent, releaseHandoverAttempt, riderOpenOrderWhere,
@@ -243,8 +243,9 @@ export async function setShift(rider: SignedInRider, online: boolean): Promise<R
     updated = await setRiderStatus(rider.id, 'busy')
     throw refused()
   }
-  // Going off shift with COD cash in hand is allowed — this is a warning only.
-  const cashHeldCents = await riderCashHeldCents(prisma, rider.id)
+  // Going off shift with COD cash in hand is allowed — this is a warning only,
+  // and only for custody (a company with code-only delivery ON); 0 otherwise.
+  const cashHeldCents = await riderCustodyCashHeldCents(prisma, rider.id)
   return { ...riderPublic({ ...rider, status: updated.status }), cashHeldCents }
 }
 

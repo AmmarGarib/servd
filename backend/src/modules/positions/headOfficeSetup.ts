@@ -16,6 +16,8 @@
 //      shift band and designation follow by name, so the seat stays editable);
 //   3. normalises every other listed seat to share = gross;
 //   4. ends the head_office contributions (isActive false, endedAt now) — the
+//      (only contributions BETWEEN the setup's companies; one with an outside
+//      company → 422 CONTRIBUTION_OUTSIDE_SETUP, nothing written)
 //      rows stay, read-only.
 // Planning totals are the same before and after when the old records were
 // consistent (the HO seats' gross = what the companies bore between them):
@@ -86,6 +88,14 @@ export interface HeadOfficePeoplePlan {
 type Seat = {
   id: string; tenantId: string; conceptId: string | null; departmentId: string | null; title: string; status: string
   headcount: number; monthlySalaryCents: number; tenantCostShareCents: number; filledByUserId: string | null
+}
+
+export const CONTRIBUTION_OUTSIDE_SETUP_MESSAGE =
+  'A head-office contribution involves a company outside this setup — end it on Contributions, or add that company, before setting up'
+
+/** Active head_office contributions whose other side is not one of the setup's companies. */
+function outsideContributions<C extends { sourceTenantId: string; destinationTenantId: string }>(ids: readonly string[], hoContribs: readonly C[]): C[] {
+  return hoContribs.filter((c) => !ids.includes(c.sourceTenantId) || !ids.includes(c.destinationTenantId))
 }
 
 /** Today's records for the companies: departments, seats, contributions. */
@@ -197,8 +207,9 @@ export async function planHeadOfficePeople(
   const split = (input.split ?? suggestedSplit.lines.map((l) => ({ companyTenantId: l.companyTenantId, shareBps: l.shareBps })))
   const splitTotal = split.reduce((a, l) => a + l.shareBps, 0)
   if (splitTotal < FULL_BPS) warnings.push(`The split adds up to ${(splitTotal / 100).toFixed(2)}% — ${((FULL_BPS - splitTotal) / 100).toFixed(2)}% stays with the head office`)
-  if (hoContribs.some((c) => !r.ids.includes(c.sourceTenantId) || !r.ids.includes(c.destinationTenantId))) {
-    warnings.push('A head-office contribution involves a company outside this setup — it is ended too')
+  const outside = outsideContributions(r.ids, hoContribs)
+  if (outside.length) {
+    warnings.push(`${CONTRIBUTION_OUTSIDE_SETUP_MESSAGE}: ${outside.map((c) => `${c.label} (${c.sourceTenant.name} → ${c.destinationTenant.name})`).join(', ')}`)
   }
   const filledBy = r.moving.filter((s) => s.filledByUserId)
   if (filledBy.length) warnings.push(`${filledBy.length} moving seat(s) are filled — the people stay on their company's payroll until they are moved with "Move to head office"`)
@@ -309,6 +320,13 @@ export async function applyHeadOfficePeople(tx: Tx, input: { hoId: string; compa
   const ho = await tx.tenant.findUnique({ where: { id: input.hoId }, select: { kind: true } })
   if (!ho || ho.kind !== 'head_office') throw new AppError('NOT_A_HEAD_OFFICE', 'Seats move only into a head office', 422)
   const r = await readRecords(tx, input.companyIds)
+  // Company separation: the setup only ends head_office contributions BETWEEN
+  // its own companies — one with an outside company (possibly one the CEO is
+  // not a member of) is that company's planning row, never ours to end.
+  const outside = outsideContributions(r.ids, r.contributions.filter((c) => c.category === 'head_office'))
+  if (outside.length) {
+    throw new AppError('CONTRIBUTION_OUTSIDE_SETUP', CONTRIBUTION_OUTSIDE_SETUP_MESSAGE, 422, { contributionIds: outside.map((c) => c.id) })
+  }
   const summary: HeadOfficePeopleSummary = { departments: [], seatsMoved: [], seatsNormalised: [], contributionsEnded: [], designationsCopied: [], shiftBandsCopied: [] }
 
   // 1. Departments, by name (two companies' "Finance" become one).

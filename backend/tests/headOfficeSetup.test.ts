@@ -202,12 +202,44 @@ describe('apply', () => {
     expect(await headOfficeSetupApplied()).toBe(false)
   })
 
+  it('refuses a head_office contribution with a company outside the setup (422 CONTRIBUTION_OUTSIDE_SETUP); it stays active', async () => {
+    const outside = await prisma.tenantContribution.create({
+      data: { sourceTenantId: F, destinationTenantId: GS, category: 'head_office', monthlyCents: K(50), label: 'Foreign HO share' },
+    })
+    try {
+      const p = (await call('ceo', 'GET', `/head-offices/setup/preview?companyIds=${GS},${VV}`)).json()
+      expect(p.warnings.some((w: string) => w.includes('outside this setup') && w.includes('Foreign HO share'))).toBe(true)
+      const r = await call('ceo', 'POST', '/head-offices/setup', { companyIds: [GS, VV] })
+      expect(r.statusCode, r.body).toBe(422)
+      expect(code(r)).toBe('CONTRIBUTION_OUTSIDE_SETUP')
+      expect((r.json() as { error: { details: { contributionIds: string[] } } }).error.details.contributionIds).toEqual([outside.id])
+      const still = await prisma.tenantContribution.findUniqueOrThrow({ where: { id: outside.id } })
+      expect(still.isActive).toBe(true)
+      expect(still.endedAt).toBeNull()
+      expect((await prisma.tenantContribution.findUniqueOrThrow({ where: { id: hoContrib } })).isActive).toBe(true)
+      expect(await prisma.tenant.count({ where: { kind: 'head_office' } })).toBe(0)
+      expect(await headOfficeSetupApplied()).toBe(false)
+    } finally {
+      await prisma.tenantContribution.delete({ where: { id: outside.id } })
+    }
+  })
+
+  it('split v1 starts this Karachi month — any other effectiveFrom is 422', async () => {
+    const [y, m] = planMonth().split('-').map(Number) as [number, number]
+    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
+    const r = await call('ceo', 'POST', '/head-offices/setup', { effectiveFrom: next })
+    expect(r.statusCode).toBe(422)
+    expect(code(r)).toBe('EFFECTIVE_FROM_NOT_CURRENT_MONTH')
+    expect(await prisma.tenant.count({ where: { kind: 'head_office' } })).toBe(0)
+    expect(await headOfficeSetupApplied()).toBe(false)
+  })
+
   it('creates the head office, links, split v1, moves the people, ends the contribution, sets the marker', async () => {
     const beforeGS = (await budgetedLabour([GS])).netMonthlyCents
     const beforeVV = (await budgetedLabour([VV])).netMonthlyCents
     const beforeAll = (await budgetedLabour([GS, VV])).netMonthlyCents
 
-    const res = await call('ceo', 'POST', '/head-offices/setup', { addHodMemberships: [hodUser] })
+    const res = await call('ceo', 'POST', '/head-offices/setup', { addHodMemberships: [hodUser], effectiveFrom: planMonth() })
     expect(res.statusCode, res.body).toBe(201)
     const out = res.json()
     HO = out.headOffice.id

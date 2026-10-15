@@ -184,8 +184,15 @@ export async function grantDelegation(actor: Actor, input: GrantInput) {
   // "All types" while some type of the section is still locked: store the
   // switched-on ones explicitly, so flipping a constant later never widens
   // an existing grant on its own.
-  const types: ApprovalType[] = (asked.length ? asked : (enabled.length === inSection.length ? [] : enabled)) as ApprovalType[]
-  const effectiveTypes = types.length ? types : enabled
+  // A company-scoped grant never carries a head-office-wide-only type
+  // (ho_recharge): "all types" for one company stores the rest explicitly,
+  // so the row, the module check and the hand-over list all omit it.
+  const enabledHere = companyId ? enabled.filter((t) => !APPROVAL_RIGHTS[t as ApprovalType].hoWideOnly) : enabled
+  if (enabledHere.length === 0) {
+    throw new AppError('TYPE_NOT_IN_SECTION', 'This section is handed over head-office-wide only (no company)', 422)
+  }
+  const types: ApprovalType[] = (asked.length ? asked : (enabledHere.length === inSection.length ? [] : enabledHere)) as ApprovalType[]
+  const effectiveTypes = types.length ? types : enabledHere
 
   // The delegate: an active, non-admin login, a member of the head office.
   const u = await serviceClient.user.findUnique({

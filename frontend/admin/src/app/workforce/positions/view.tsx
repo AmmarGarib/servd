@@ -88,6 +88,8 @@ interface ContributionSummary {
   label: string
   category: 'head_office' | 'commissary' | 'shared_services' | 'other'
   monthlyCents: number
+  /** Set by the server on a retired head-office row; never inferred from the category. */
+  ended?: boolean
   sourceTenant:      { id: string; name: string }
   destinationTenant: { id: string; name: string }
   direction: 'incoming' | 'outgoing'
@@ -427,7 +429,8 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                     <span className="font-bold">{fmtPkrWhole(summary.totalTenantShareMonthlyCents)}</span>
                   </div>
                   {summary.contributions.map((c) => {
-                    const ended = headOfficeSetupApplied && c.category === 'head_office'
+                    // Server flag only: a contribution that still counts toward Net is never 'ended'.
+                    const ended = c.ended === true
                     const line = (<>
                       <div className="flex justify-between text-xs font-mono items-baseline">
                         <span className="text-s-muted flex items-center gap-1.5">
@@ -441,7 +444,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                           </span>
                         </span>
                         <span className="font-bold"
-                          style={{ color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
+                          style={ended ? undefined : { color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
                           {ended ? '' : (c.direction === 'incoming' ? '- ' : '+ ')}{fmtPkrWhole(c.monthlyCents)}
                         </span>
                       </div>

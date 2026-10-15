@@ -536,8 +536,8 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
         if (body.creditLimitCents !== undefined) {
           const current = toCents(a.creditLimitCents)
           const wanted = body.creditLimitCents
-          if (a.status === 'pending' || (wanted > current && me.role === 'admin')) {
-            // A new client's whole record waits for the CEO anyway; the CEO's own increase applies.
+          if (a.status === 'pending' || target === 'pending' || (wanted > current && me.role === 'admin')) {
+            // A new (or resubmitted) client's whole record waits for the CEO anyway; the CEO's own increase applies.
             if (wanted !== current) actions.push(wanted > current ? 'limit_raised' : 'limit_lowered')
             data.creditLimitCents = wanted
             data.requestedCreditLimitCents = null
@@ -849,7 +849,9 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
     } catch (err) {
       // Not sent: give today's reminder back so it can be tried again.
       await prisma.customerAccount.updateMany({ where: { id: a.id, lastRemindedAt: now }, data: { lastRemindedAt: a.lastRemindedAt } })
-      throw new AppError('EMAIL_FAILED', `The reminder could not be sent: ${(err as Error).message}`, 502)
+      // The mailer's own message can name the SMTP host or auth details: log it, never return it.
+      req.log.warn({ err, accountId: a.id }, 'on-account reminder email failed')
+      throw new AppError('EMAIL_FAILED', 'The reminder could not be sent. Check the email settings and try again.', 502)
     }
     await audit({
       category: 'accounting', action: 'on_account.client.remind', entity: 'CustomerAccount', entityId: a.id,

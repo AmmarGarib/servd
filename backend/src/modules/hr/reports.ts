@@ -214,7 +214,7 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
       const on = parseDate(q.asOf, pktToday())
       const all = await prisma.hrEmployee.findMany({ where: T })
       const exits = await exitDates(all)
-      const emps = all.filter((e) => employedOn(e, on, exits.get(e.id)))
+      const emps = all.filter((e) => employedOn(onBooksFrom(e), on, exits.get(e.id)))
       const label = await employeeLabelsAcross(emps)
       const keyOf = (e: HrEmployee) =>
         key === 'branch_headcount' ? [label(e.locationId) ?? 'Unassigned']
@@ -237,7 +237,10 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
     case 'new_joiners': case 'separations': {
       const [from, to] = range(q)
       const col = key === 'new_joiners' ? 'joiningDate' : 'lastWorkingDay'
-      const emps = await prisma.hrEmployee.findMany({ where: { ...T, [col]: { gte: from, lte: to } }, orderBy: { [col]: 'asc' } })
+      // A move to head office (hr/transfer.ts) is neither a joiner (the head
+      // office's new record) nor a separation (the company's old record).
+      const emps = (await prisma.hrEmployee.findMany({ where: { ...T, [col]: { gte: from, lte: to } }, orderBy: { [col]: 'asc' } }))
+        .filter((e) => (key === 'new_joiners' ? !movedInAt(e) : e.status !== 'transferred'))
       const label = await employeeLabelsAcross(emps)
       if (key === 'new_joiners') {
         return {
@@ -272,10 +275,13 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
         const monthEnd = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0, 23, 59, 59, 999))
         // Opening is who was on the books as the month began, closing who still
         // was once it ended — so someone leaving on the 31st is a leaver, not closing.
-        const opening = emps.filter((e) => onBooksAt(e, new Date(monthStart.getTime() - 1), exits.get(e.id))).length
-        const closing = emps.filter((e) => onBooksAt(e, monthEnd, exits.get(e.id))).length
-        const joiners = emps.filter((e) => e.joiningDate && e.joiningDate >= monthStart && e.joiningDate <= monthEnd).length
-        const leavers = emps.filter((e) => { const g = gone(e); return g && g >= monthStart && g <= monthEnd }).length
+        // A move to head office is neither a joiner nor a leaver: the old
+        // record ('transferred') leaves the company's books, the new one joins
+        // the head office's from the move date, and neither counts as turnover.
+        const opening = emps.filter((e) => onBooksAt(onBooksFrom(e), new Date(monthStart.getTime() - 1), exits.get(e.id))).length
+        const closing = emps.filter((e) => onBooksAt(onBooksFrom(e), monthEnd, exits.get(e.id))).length
+        const joiners = emps.filter((e) => !movedInAt(e) && e.joiningDate && e.joiningDate >= monthStart && e.joiningDate <= monthEnd).length
+        const leavers = emps.filter((e) => { if (e.status === 'transferred') return false; const g = gone(e); return g && g >= monthStart && g <= monthEnd }).length
         const avg = (opening + closing) / 2
         rows.push([monthStart.toISOString().slice(0, 7), opening, joiners, leavers, closing, avg > 0 ? `${((leavers / avg) * 100).toFixed(1)}%` : '—'])
         cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
@@ -424,4 +430,19 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
       return recordReport(def.title, ['performance_review'], tenantIds, activeTenantId, q)
   }
   throw new AppError('UNKNOWN_REPORT', `No HR report "${key}"`, 404)
+}
+
+/** A head-office record made by a move from a company (hr/transfer.ts): the
+ *  move's effective date, else null. Its joining date may be the original one
+ *  (service kept), but it is on the head office's books only from the move. */
+function movedInAt(e: HrEmployee): Date | null {
+  const eff = ((e.data ?? {}) as { transferredFrom?: { effectiveDate?: unknown } }).transferredFrom?.effectiveDate
+  return typeof eff === 'string' && /^\d{4}-\d{2}-\d{2}/.test(eff) ? new Date(`${eff.slice(0, 10)}T00:00:00Z`) : null
+}
+
+/** The record as headcount reads it: a moved-in record starts on the move date,
+ *  so a person is never counted in the company and the head office at once. */
+function onBooksFrom(e: HrEmployee): HrEmployee {
+  const moved = movedInAt(e)
+  return moved && (!e.joiningDate || e.joiningDate < moved) ? { ...e, joiningDate: moved } : e
 }

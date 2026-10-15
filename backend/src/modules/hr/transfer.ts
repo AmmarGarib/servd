@@ -198,6 +198,21 @@ async function linkedCompanyIds(hoId: string): Promise<string[]> {
   return [...new Set(links.map((l) => l.companyTenantId))]
 }
 
+/**
+ * Linked companies where this login still has a CURRENT employee record that is
+ * not being moved in this batch. The login keeps those memberships whatever the
+ * CEO picked: removing one would cut a current employee off from their own
+ * company (ESS, payslips, seat).
+ */
+async function stillEmployedIn(q: Tx | typeof prisma, userId: string, linked: string[], batchIds: string[]): Promise<string[]> {
+  if (linked.length === 0) return []
+  const rows = await q.hrEmployee.findMany({
+    where: { userId, tenantId: { in: linked }, status: { in: CURRENT }, id: { notIn: batchIds } },
+    select: { tenantId: true },
+  })
+  return [...new Set(rows.map((r) => r.tenantId))]
+}
+
 /** Blockers that read the database (re-checked inside the transaction). */
 async function stateBlockers(q: Tx | typeof prisma, emp: HrEmployee, hoId: string, effective: Date): Promise<TransferBlocker[]> {
   const out: TransferBlocker[] = []
@@ -365,8 +380,18 @@ async function assess(input: TransferInput, actor: TransferActor): Promise<Asses
       if (user?.tenantId) mine.add(user.tenantId)
       const isCeo = user?.role === 'admin'
       const inLinked = [...mine].filter((t) => linked.includes(t))
-      const remove = isCeo ? [] : inLinked.filter((t) => !keep.includes(t) && actor.memberTenantIds.includes(t))
+      const held = await stillEmployedIn(prisma, e.userId, linked, [...batch])
+      const remove = isCeo ? [] : inLinked.filter((t) => !keep.includes(t) && !held.includes(t) && actor.memberTenantIds.includes(t))
       if (isCeo) warnings.push('This login is the CEO\'s — it keeps every company membership')
+      if (!isCeo) {
+        const forced = held.filter((t) => inLinked.includes(t) && !keep.includes(t))
+        if (forced.length) {
+          const names = await prisma.tenant.findMany({ where: { id: { in: forced } }, select: { id: true, name: true } })
+          for (const t of forced) {
+            warnings.push(`Keeps the ${names.find((n) => n.id === t)?.name ?? 'other company'} membership: their login is still a current employee there`)
+          }
+        }
+      }
       login = {
         userId: e.userId,
         addHeadOfficeMembership: !mine.has(ho.id),
@@ -427,7 +452,14 @@ async function twinDepartment(tx: Tx, hoId: string, sourceId: string | null, cac
   const src = await tx.department.findUnique({ where: { id: sourceId }, select: { name: true, emoji: true, order: true } })
   let id: string | null = null
   if (src) {
-    const have = await tx.department.findFirst({ where: { tenantId: hoId, name: { equals: src.name, mode: 'insensitive' } }, select: { id: true } })
+    // A live department first; an archived one of that name is brought back
+    // (its name is unique per company, so a second one cannot be created).
+    const have = await tx.department.findFirst({
+      where: { tenantId: hoId, name: { equals: src.name, mode: 'insensitive' } },
+      orderBy: [{ archivedAt: { sort: 'asc', nulls: 'first' } }],
+      select: { id: true, archivedAt: true },
+    })
+    if (have?.archivedAt) await tx.department.update({ where: { id: have.id }, data: { archivedAt: null } })
     id = have?.id ?? (await tx.department.create({ data: { tenantId: hoId, name: src.name, emoji: src.emoji, order: src.order }, select: { id: true } })).id
   }
   cache.set(sourceId, id)
@@ -644,7 +676,9 @@ export async function transferEmployeesToHeadOffice(input: TransferInput, actor:
           update: {},
         })
         // Only companies the CEO belongs to (company separation) and never the CEO's own login.
-        const remove = user?.role === 'admin' ? [] : linked.filter((t) => !keep.includes(t) && actor.memberTenantIds.includes(t))
+        // Never a company where the login is still a current employee (outside this batch).
+        const held = await stillEmployedIn(tx, e.userId, linked, emps.map((x) => x.id))
+        const remove = user?.role === 'admin' ? [] : linked.filter((t) => !keep.includes(t) && !held.includes(t) && actor.memberTenantIds.includes(t))
         const removed = new Set<string>()
         if (remove.length) {
           const gone = await tx.tenantMember.findMany({ where: { userId: e.userId, tenantId: { in: remove } }, select: { tenantId: true } })

@@ -367,7 +367,7 @@ export default function DispatchPage() {
                           </Link>
                         )}
                         <div className="mt-2 flex gap-3 flex-wrap items-start">
-                          {gate && onTheRoad(o) && (
+                          {gate && onTheRoad(o) && o.codeOnly === true && (
                             <EnterCode orderId={o.id} onDone={() => qc.invalidateQueries({ queryKey: ['dispatch-board'] })} />
                           )}
                           {gate?.canMark && (

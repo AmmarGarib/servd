@@ -72,7 +72,7 @@ export interface HeadOfficeLinkRow {
 export interface RunSummary {
   id: string; period: string; kind: string; status: string; stale: boolean
   baseCents: number; rechargedCents: number; retainedCents: number
-  submittedAt: string | null; postedAt: string | null; createdAt: string
+  submittedAt: string | null; postedAt: string | null; createdAt?: string
 }
 export interface HoWideDelegation {
   id: string; section: string; approvalTypes: string[]; delegateUserId: string; delegateName: string | null
@@ -233,7 +233,7 @@ export const headOfficeApi = {
 
   // Recharge runs (read-only on these pages)
   runsSummary: (id: string) => api.get<RechargeRunsSummary>(`/accounting/intercompany/recharge-runs/summary?headOfficeId=${e(id)}`),
-  runs: (id: string) => api.get<{ items?: RunSummary[] }>(`/accounting/intercompany/recharge-runs?headOfficeId=${e(id)}&limit=24`),
+  runs: (id: string) => api.get<{ runs: RunSummary[] }>(`/accounting/intercompany/recharge-runs?headOfficeId=${e(id)}&limit=24`).then((r) => ({ items: r.runs })),
 
   // Reconciliation
   balances: () => api.getAcrossTenants<{ asOf: string | null; pairs: PairBalance[] }>('/accounting/intercompany/balances'),

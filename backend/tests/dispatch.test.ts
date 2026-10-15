@@ -21,10 +21,11 @@
 //     shift: off shift, nothing is stored.
 import { describe, it, expect, beforeAll } from 'vitest'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
-import { assignRider, unassignRider, markDelivered, recordRiderFix } from '../src/modules/dispatch/service.js'
+import { assignRider, unassignRider, markDelivered, recordRiderFix, boardOverrideInfo } from '../src/modules/dispatch/service.js'
 import { DELIVERY_OTP_MAX_ATTEMPTS } from '../src/lib/deliveryOtp.js'
 import { runDispatchSweep } from '../src/workers/riderDispatch.js'
 import { setCodeOnlyDelivery } from '../src/lib/deliveryRules.js'
+import { riderCustodyCashHeldCents, riderCashHeldCents } from '../src/lib/cod.js'
 
 let tenantA: string
 let tenantB: string
@@ -283,5 +284,42 @@ describe('auto-dispatch worker', () => {
     await runDispatchSweep()
     expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).riderId).toBe(own.id)
     expect((await prisma.rider.findUniqueOrThrow({ where: { id: own.id } })).status).toBe('busy')
+  })
+})
+
+describe('board extras and COD custody reminder (read-only)', () => {
+  it('boardOverrideInfo names the manager who sent the code and the current rider\'s door problem', async () => {
+    const r = await rider(tenantA, { status: 'busy' })
+    const mgr = await prisma.user.create({ data: { name: 'Mina Manager', email: 'mina.board@gsfoods.pk', password: 'x', role: 'manager', tenantId: tenantA } })
+    const o = await order(conceptA, 'ready', { riderId: r.id })
+    const plain = await order(conceptA, 'ready', { riderId: r.id })
+    await prisma.riderJobEvent.create({ data: { type: 'door_problem', riderId: r.id, orderId: o.id, tenantId: tenantA, riderTenantId: tenantA, note: 'refused: no one home' } })
+    await prisma.riderJobEvent.create({ data: { type: 'code_rerouted', riderId: r.id, orderId: o.id, tenantId: tenantA, riderTenantId: tenantA, actorId: mgr.id } })
+    const m = await boardOverrideInfo([{ id: o.id, riderId: r.id }, { id: plain.id, riderId: r.id }])
+    expect(m.get(o.id)?.handoverRerouteByName).toBe('Mina Manager')
+    expect(m.get(o.id)?.doorProblem?.kind).toBe('refused')
+    expect(m.get(plain.id)).toEqual({ handoverRerouteByName: null, doorProblem: null })
+  })
+
+  it('the rider cash reminder counts only a company with the switch ON, and only cash completed since', async () => {
+    const tOn = (await prisma.tenant.create({ data: { name: 'Cod On', slug: 'cod-on-dispatch' } })).id
+    const cOn = (await prisma.concept.create({ data: { name: 'Cod On K', slug: 'cod-on-k', type: 'restaurant', tenantId: tOn } })).id
+    const ceo = await prisma.user.create({ data: { name: 'ceo-cod', email: 'ceo-cod.dispatch@gsfoods.pk', password: 'x', role: 'admin', tenantId: tOn } })
+    const r = await rider(tOn)
+    const mk = async (conceptId: string, completedAt: Date) => {
+      const o = await order(conceptId, 'completed', { riderId: r.id, fulfilmentType: 'delivery' })
+      await prisma.order.update({ where: { id: o.id }, data: { completedAt } })
+      await prisma.payment.create({ data: { orderId: o.id, method: 'cash', status: 'pending', amountCents: 12_300 } })
+    }
+    const old = new Date(Date.now() - 3 * 86_400_000)
+    await mk(cOn, old)
+    // Switch OFF: nothing is custody, though the raw sum is not zero.
+    expect(await riderCustodyCashHeldCents(prisma, r.id)).toBe(0)
+    expect(await riderCashHeldCents(prisma, r.id)).toBe(12_300)
+    await prisma.$transaction((tx) => setCodeOnlyDelivery(tx, { tenantId: tOn, on: true, actorId: ceo.id, reason: 'on from now' }))
+    // ON: the old delivery (before the switch) still does not count; a new one does.
+    expect(await riderCustodyCashHeldCents(prisma, r.id)).toBe(0)
+    await mk(cOn, new Date(Date.now() + 1000))
+    expect(await riderCustodyCashHeldCents(prisma, r.id)).toBe(12_300)
   })
 })

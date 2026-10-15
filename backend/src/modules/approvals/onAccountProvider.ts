@@ -9,9 +9,15 @@
 // Until the company's till clearing is split off 1110 the route answers 409
 // TILL_CLEARING_NOT_SPLIT, so Approve is listed disabled with that reason;
 // Reject stays.
+//
+// The switch: while nothing is pending and none of the user's companies is cut
+// over, load() answers null so the inbox does not list the type at all —
+// nothing new shows on live before on-account is switched on.
 
 import type { UserRole } from '@prisma/client'
 import { APPROVAL_RIGHTS } from '../../lib/approvalRights.js'
+import { serviceClient } from '../../lib/prisma.js'
+import { tillClearingCodeTx } from '../accounting/tillClearingCode.js'
 import type { ApprovalItem, ApprovalProvider } from './types.js'
 
 const RIGHTS = APPROVAL_RIGHTS.on_account_client
@@ -61,7 +67,13 @@ export const onAccountClients: ApprovalProvider = {
   async load(ctx) {
     const res = await ctx.read<{ items: ClientRow[] }>(`${BASE}?pending=1`)
     if (res === null) return null
-    return (res.items ?? []).filter((r) => r.pending).map((r): ApprovalItem => {
+    const pending = (res.items ?? []).filter((r) => r.pending)
+    if (pending.length === 0) {
+      const ids = [...new Set([...ctx.tenantIds, ...ctx.memberTenantIds])]
+      const codes = await Promise.all(ids.map((t) => tillClearingCodeTx(serviceClient, t)))
+      if (!codes.includes('1115')) return null
+    }
+    return pending.map((r): ApprovalItem => {
       const isNew = r.pending === 'new_client'
       const newLimit = isNew ? r.creditLimitCents : r.requestedCreditLimitCents ?? r.creditLimitCents
       const name = r.tradeName && r.tradeName !== r.legalName ? `${r.legalName} (${r.tradeName})` : r.legalName

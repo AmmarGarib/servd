@@ -8,7 +8,8 @@
 // Apply runs in ONE transaction:
 //   1. createHeadOffice('GS Head Office')       (service.ts; recharge OFF)
 //   2. link every company                        (service.ts linkCompany: pair accounts, charges account)
-//   3. split v1 effective this Karachi month     (splits.ts createSplitVersion)
+//   3. split v1 effective this Karachi month     (splits.ts createSplitVersion; any other
+//                                                 effectiveFrom → 422 EFFECTIVE_FROM_NOT_CURRENT_MONTH)
 //   4. applyHeadOfficePeople                     (positions/headOfficeSetup.ts: departments, seats,
 //                                                 share = gross, head_office contributions ended)
 //   5. optional: the ticked HOD logins become members of the head office (A3 —
@@ -24,7 +25,9 @@
 // (anything else → 404); a company that is not an active trading company is
 // refused by linkCompany (422 LINK_TARGET_NOT_A_COMPANY), any test company by
 // 422 TEST_COMPANY_NOT_ALLOWED (the marker is platform-wide); an HOD login must already belong to one of the
-// companies (422 HOD_NOT_IN_COMPANIES).
+// companies (422 HOD_NOT_IN_COMPANIES); an active head_office contribution with
+// a company outside the setup is refused (422 CONTRIBUTION_OUTSIDE_SETUP) —
+// the setup never ends another company's planning row.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma } from '@prisma/client'
@@ -139,7 +142,13 @@ export async function headOfficeSetupRoutes(fastify: FastifyInstance) {
       throw new AppError('NO_COMPANIES', 'There are no head-office records to set up — name the companies the head office serves', 422)
     }
     const name = body.name ?? DEFAULT_HEAD_OFFICE_NAME
-    const effectiveFrom = body.effectiveFrom ?? planMonth()
+    // Spec §14.3: split v1 starts THIS Karachi month. A later month would set
+    // the marker (head_office contributions stop counting, seats leave the
+    // companies) while no split covers today → planning would drop until then.
+    const effectiveFrom = planMonth()
+    if (body.effectiveFrom !== undefined && body.effectiveFrom !== effectiveFrom) {
+      throw new AppError('EFFECTIVE_FROM_NOT_CURRENT_MONTH', `Split v1 starts this month (${effectiveFrom})`, 422, { effectiveFrom })
+    }
     // The preview the CEO saw (with the split chosen) — its planning is returned and kept.
     const plan = await planHeadOfficePeople(serviceClient, { hoName: name, companyIds, split: body.split })
     const split = plan.split

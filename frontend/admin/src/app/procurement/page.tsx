@@ -1,5 +1,5 @@
 'use client'
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -308,6 +308,8 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
   })
 
   const [sentNotice, setSentNotice] = useState<string | null>(null)
+  const sentTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (sentTimer.current) clearTimeout(sentTimer.current) }, [])
   const actionMut = useMutation({
     mutationFn: ({ id, action, body }: { id: string; action: string; body?: unknown }) =>
       api.post(`/procurement/purchase-orders/${id}/${action}`, body ?? {}),
@@ -316,7 +318,8 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
       const r = res as { status?: string; viaHeadOfficeId?: string | null } | null
       if (vars.action === 'submit' && r && ((r.status && ['pending_approval', 'submitted'].includes(r.status)) || r.viaHeadOfficeId)) {
         setSentNotice('Sent for approval')
-        setTimeout(() => setSentNotice(null), 6000)
+        if (sentTimer.current) clearTimeout(sentTimer.current)
+        sentTimer.current = setTimeout(() => setSentNotice(null), 6000)
       }
       void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
       void qc.invalidateQueries({ queryKey: ['procurement', 'po', detailId] })

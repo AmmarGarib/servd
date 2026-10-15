@@ -19,7 +19,7 @@
 import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { isSelfApprovalExempt } from '../../lib/separation-of-duties.js'
-import { APPROVAL_RIGHTS, sectionOf } from '../../lib/approvalRights.js'
+import { APPROVAL_RIGHTS, recipeCompaniesBatch, recipeOwnerOf, sectionOf } from '../../lib/approvalRights.js'
 import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } from './types.js'
 import { onAccountClients } from './onAccountProvider.js'
 import { karachiDay } from '../../connectors/util.js'
@@ -269,15 +269,27 @@ const recipes: ApprovalProvider = {
         ?? null,
     ]))
     const concepts = await conceptInfo([...conceptOf.values()])
+    // A component (no brand of its own): the A21 company set the approve route
+    // derives (lib/approvalRights.ts approvalSubject) — the dishes / add-ons
+    // that use it and its own stock — so its section and hand-over match.
+    const componentIds = rows.filter((r) => !conceptOf.get(r.id)).map((r) => r.id)
+    const derived = componentIds.length ? await recipeCompaniesBatch(componentIds) : new Map<string, string[]>()
     return rows.map((r): ApprovalItem => {
       const cid = conceptOf.get(r.id)
+      const set = cid ? null : (derived.get(r.id) ?? [])
       return {
         type: 'recipe',
         id: r.id,
         // A plate's company is its dish's brand's; an add-on's, its dish's (via
-        // the modifier group). A component recipe has no brand of its own; its
-        // company follows the plates that use it (the module scoped it already).
+        // the modifier group). A component recipe keeps tenantId null (listed
+        // on the role path as before) and carries its derived companies: 'ceo'
+        // only when that set is empty.
         tenantId: cid ? (concepts.get(cid)?.tenantId ?? null) : null,
+        ...(set && {
+          touchesTenantIds: set,
+          ownerTenantId: recipeOwnerOf(set),
+          section: sectionOf('recipe', { tenantId: set.length ? set[0]! : null }),
+        }),
         submittedByIds: idList(r.submittedById, r.createdById, r.editedByIds ?? []),
         viaHeadOfficeId: r.viaHeadOfficeId ?? null,
         title: r.name,

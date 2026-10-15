@@ -29,6 +29,7 @@ import { View, Text, ScrollView, Pressable, Alert, TextInput } from 'react-nativ
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 
 import { api, ApiError } from '../../src/lib/api'
+import { useSessionStore } from '../../src/store/session'
 import { useSocketEvent } from '../../src/lib/socket'
 import { theme } from '../../src/lib/theme'
 import { orderRef } from '../../src/lib/orderRef'
@@ -84,6 +85,8 @@ function jobStage(o: ActiveOrder): keyof typeof STAGE | null {
 
 /** Wrong hand-over codes before the job locks — DELIVERY_OTP_MAX_ATTEMPTS in backend lib/deliveryOtp.ts. */
 const OTP_MAX_ATTEMPTS = 5
+/** The API's MANAGERS (backend modules/auth/middleware.ts). */
+const MANAGER_ROLES = new Set(['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'])
 
 /**
  * What this screen offers on a delivery (docs/rider-app.md, "The hand-over
@@ -93,11 +96,14 @@ const OTP_MAX_ATTEMPTS = 5
  *  - otherwise "Delivered" only when the code locked, the rider never took the
  *    job in the app, or the order predates the rider app.
  */
-function deliverGate(o: ActiveOrder, codeOnly: boolean): { canMark: boolean; locked: boolean; note: string | null } {
+function deliverGate(o: ActiveOrder, codeOnly: boolean, isManager: boolean): { canMark: boolean; locked: boolean; note: string | null } {
   if (o.status !== 'ready') return { canMark: false, locked: false, note: null }
   const locked = (o.deliveryOtpAttempts ?? 0) >= OTP_MAX_ATTEMPTS
   if (codeOnly) {
     return { canMark: false, locked, note: locked ? 'Code locked. Ask a manager: Emergency overrides.' : null }
+  }
+  if (!isManager) {
+    return { canMark: false, locked, note: locked ? 'Code locked — a manager marks it delivered.' : 'A manager marks it delivered.' }
   }
   const inApp = !!o.riderAssignedAt && !!o.riderAcceptedAt
   if (inApp && !locked) return { canMark: false, locked, note: "Rider closes it with the customer's code." }
@@ -112,6 +118,8 @@ function attemptsLeftOf(err: unknown): number | null {
   return typeof v === 'number' ? v : null
 }
 export default function DispatchScreen() {
+  const role = useSessionStore(s => s.user?.role)
+  const isManager = MANAGER_ROLES.has(role ?? '')
   const qc = useQueryClient()
 
   const orders = useQuery({
@@ -232,7 +240,7 @@ export default function DispatchScreen() {
         </Lane>
         <Lane title="WITH RIDER" count={lanes.withRider.length} tone="warn">
           {lanes.withRider.map(order => {
-            const gate = deliverGate(order, codeOnlyIds.has(order.id))
+            const gate = deliverGate(order, codeOnlyIds.has(order.id), isManager)
             return (
               <OrderCard key={order.id} order={order} riders={[]} onAssign={() => undefined}
                 onVerify={order.status === 'ready' ? (otp) => verifyCode(order.id, otp) : undefined}

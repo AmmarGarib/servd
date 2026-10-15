@@ -192,8 +192,10 @@ does not count against the rider's lost-order rate.
 Cash collected on a delivery is held by the rider until handed in at the
 counter. Delivered cash not yet paid in is a receivable from the rider (1351),
 never revenue lost. `POST /rider/shift { online: false }` also returns
-`cashHeldCents`; when above zero the app shows "You are holding PKR x - hand
-it in at the counter". It is a reminder only and never blocks going off shift.
+`cashHeldCents`; when above zero the app shows "You are holding Rs X" with
+"Hand it in at the counter." It counts only cash on orders of a company with
+code-only delivery switched ON (completed since the switch), so it is 0 while
+the switch is off. It is a reminder only and never blocks going off shift.
 
 ## Clients
 

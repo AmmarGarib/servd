@@ -180,6 +180,10 @@ const EXPECTED_BIGINT_FIELDS = [
   'CardSettlementDay.grossCents',
   'CustomerAccount.creditLimitCents', 'CustomerAccount.requestedCreditLimitCents',
   'ReceivableInvoice.writtenOffCents', 'ReceivableWriteOff.amountCents', 'ReceivableWriteOff.recoveredCents',
+  // Head office D1 (migration 20261015120000): journal requests and recharge runs are company-level money.
+  'JournalRequest.totalCents',
+  'RechargeRun.poolCents', 'RechargeRun.priorCents', 'RechargeRun.baseCents', 'RechargeRun.rechargedCents', 'RechargeRun.retainedCents', 'RechargeRun.driftAtApprovalCents',
+  'RechargeRunLine.amountCents',
 ].sort()
 
 describe('(1) the money boundary', () => {
@@ -204,10 +208,10 @@ describe('(1) the money boundary', () => {
     expect(() => JSON.stringify({ a: 2n ** 60n })).toThrow(expect.objectContaining({ code: 'AMOUNT_OUT_OF_RANGE' }))
   })
 
-  it('DMMF canary: the BIGINT fields are exactly the 92 money fields', () => {
+  it('DMMF canary: the BIGINT fields are exactly the 100 money fields', () => {
     const got = Prisma.dmmf.datamodel.models.flatMap((m) => m.fields.filter((f) => f.type === 'BigInt').map((f) => `${m.name}.${f.name}`)).sort()
     expect(got).toEqual(EXPECTED_BIGINT_FIELDS)
-    expect(got).toHaveLength(92)
+    expect(got).toHaveLength(100)
   })
 
   describe('a PKR 25m entry reads back as an exact JS number through every shape, on both clients', () => {
@@ -754,7 +758,7 @@ describe('(7) no bigint in src/ outside lib/money.ts', () => {
 describe('(8) a monthly head-office contribution above INT4 is 422 AMOUNT_TOO_LARGE, never a raw 500', () => {
   it('create: PKR 25m/month is 422 and nothing is saved; at the cap it records', async () => {
     const big = await call('ceoAB', 'POST', '/positions/contributions', {
-      sourceTenantId: tenantA, destinationTenantId: tenantB, label: `HO ${RUN}`, monthlyCents: 2_500_000_000,
+      sourceTenantId: tenantA, destinationTenantId: tenantB, label: `HO ${RUN}`, category: 'shared_services', monthlyCents: 2_500_000_000,
     })
     expect(big.statusCode, big.body).toBe(422)
     expect(big.json().error.code).toBe('AMOUNT_TOO_LARGE')
@@ -762,7 +766,7 @@ describe('(8) a monthly head-office contribution above INT4 is 422 AMOUNT_TOO_LA
     expect(await prisma.tenantContribution.count({ where: { label: `HO ${RUN}` } })).toBe(0)
 
     const ok = await call('ceoAB', 'POST', '/positions/contributions', {
-      sourceTenantId: tenantA, destinationTenantId: tenantB, label: `HO ${RUN}`, monthlyCents: INT4_MAX_CENTS,
+      sourceTenantId: tenantA, destinationTenantId: tenantB, label: `HO ${RUN}`, category: 'shared_services', monthlyCents: INT4_MAX_CENTS,
     })
     expect(ok.statusCode, ok.body).toBe(201)
     expect(ok.json().monthlyCents).toBe(INT4_MAX_CENTS)
@@ -775,7 +779,7 @@ describe('(8) a monthly head-office contribution above INT4 is 422 AMOUNT_TOO_LA
 
   it('a negative or fractional amount is still a 400 validation error', async () => {
     const neg = await call('ceoAB', 'POST', '/positions/contributions', {
-      sourceTenantId: tenantA, destinationTenantId: tenantB, label: `Neg ${RUN}`, monthlyCents: -1,
+      sourceTenantId: tenantA, destinationTenantId: tenantB, label: `Neg ${RUN}`, category: 'shared_services', monthlyCents: -1,
     })
     expect(neg.statusCode).toBe(400)
   })

@@ -911,3 +911,46 @@ export async function recordRiderFix(
 
   return { ok: true, recordedAt: now.toISOString() }
 }
+
+// ─── Board read-only extras ──────────────────────────────────────────────────
+
+const BOARD_DOOR_KINDS = ['no_code', 'refused', 'unreachable'] as const
+
+/**
+ * Read-only extras for GET /dispatch/board, for orders on a rider's hands:
+ * who sent the hand-over code to the rider (the latest `code_rerouted` event's
+ * staff user) and the rider's latest door problem (by the order's CURRENT
+ * rider). Writes nothing.
+ */
+export async function boardOverrideInfo(
+  orders: { id: string; riderId: string }[],
+): Promise<Map<string, { handoverRerouteByName: string | null; doorProblem: { kind: string; at: Date } | null }>> {
+  const out = new Map<string, { handoverRerouteByName: string | null; doorProblem: { kind: string; at: Date } | null }>()
+  if (orders.length === 0) return out
+  const riderOf = new Map(orders.map((o) => [o.id, o.riderId]))
+  const events = await prisma.riderJobEvent.findMany({
+    where: { orderId: { in: [...riderOf.keys()] }, type: { in: ['door_problem', 'code_rerouted'] } },
+    orderBy: { createdAt: 'desc' },
+    select: { orderId: true, riderId: true, type: true, note: true, createdAt: true, actorId: true },
+  })
+  const by = new Map<string, string | null>()
+  const door = new Map<string, { kind: string; at: Date }>()
+  for (const e of events) {
+    if (e.type === 'code_rerouted' && !by.has(e.orderId)) by.set(e.orderId, e.actorId)
+    if (e.type === 'door_problem' && !door.has(e.orderId) && e.riderId === riderOf.get(e.orderId)) {
+      const kind = BOARD_DOOR_KINDS.find((k) => e.note === k || e.note?.startsWith(`${k}:`))
+      if (kind) door.set(e.orderId, { kind, at: e.createdAt })
+    }
+  }
+  const actorIds = [...new Set([...by.values()].filter((x): x is string => !!x))]
+  const users = actorIds.length === 0 ? [] : await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } })
+  const nameOf = new Map(users.map((u) => [u.id, u.name]))
+  for (const id of riderOf.keys()) {
+    const actor = by.get(id)
+    out.set(id, {
+      handoverRerouteByName: actor ? (nameOf.get(actor) ?? null) : null,
+      doorProblem: door.get(id) ?? null,
+    })
+  }
+  return out
+}

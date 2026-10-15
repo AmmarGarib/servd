@@ -139,6 +139,8 @@ interface ContributionLine {
   label: string
   category: 'head_office' | 'commissary' | 'shared_services' | 'other'
   monthlyCents: number
+  /** Set by the server on a retired head-office row; never inferred from the category. */
+  ended?: boolean
   sourceTenant:      { id: string; name: string }
   destinationTenant: { id: string; name: string }
   direction: 'incoming' | 'outgoing'
@@ -585,7 +587,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
               // After the head-office setup, old head-office contributions are
               // ended: the server leaves them out of Net, so show them muted
               // with no sign (same as /workforce/positions).
-              const ended = headOfficeSetupApplied && c.category === 'head_office'
+              const ended = c.ended === true
               return (
               <div key={c.id} className={`flex justify-between items-baseline${ended ? ' opacity-60' : ''}`}>
                 <span className="text-white/55 flex items-center gap-1.5">

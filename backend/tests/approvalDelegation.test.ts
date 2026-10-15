@@ -154,7 +154,9 @@ describe('grant, list and revoke', () => {
 
   it('"all types" of a section with a locked type stores the switched-on types (flipping a constant never widens it)', async () => {
     const row = await prisma.approvalDelegation.findFirstOrThrow({ where: { tenantId: T.HO, section: 'finance', companyTenantId: T.C1 } })
-    expect(row.approvalTypes.sort()).toEqual(['ho_recharge', 'intercompany_transfer', 'tip_pool'])
+    // A company-scoped grant never stores the head-office-wide-only recharge type.
+    expect(row.approvalTypes.sort()).toEqual(['intercompany_transfer', 'tip_pool'])
+    expect(row.approvalTypes).not.toContain('ho_recharge')
     expect(row.approvalTypes).not.toContain('journal_request')
   })
 

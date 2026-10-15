@@ -188,7 +188,8 @@ export async function setRecharge(
  * flag, not company data) and never cached.
  */
 export async function headOfficeSetupApplied(db: Db = serviceClient): Promise<boolean> {
-  const n = await db.headOfficeBooks.count({ where: { setupAppliedAt: { not: null } } })
+  // Same filter as the wizard's alreadyApplied(): a test head office never counts.
+  const n = await db.headOfficeBooks.count({ where: { setupAppliedAt: { not: null }, tenant: { isTest: false } } })
   return n > 0
 }
 

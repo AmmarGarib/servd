@@ -671,7 +671,7 @@ export default function RidersPage() {
                         <Link href="/emergency-overrides" className="text-primary-ink underline">Open Emergency overrides</Link>
                       </p>
                     )}
-                    {(order.status === 'ready' || order.status === 'completed') && (
+                    {(order.status === 'ready' || order.status === 'completed') && order.codeOnly === true && (
                       <div className="mt-3 flex justify-center">
                         <EnterCode orderId={order.id} onDone={refreshBoards} />
                       </div>
