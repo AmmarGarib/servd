@@ -113,7 +113,7 @@ export interface ModuleMeta {
 export const MODULES: ModuleMeta[] = [
   { id: 'ceo_overview',       label: 'CEO Overview',        section: 'Executive' },
   { id: 'approvals',          label: 'Approvals inbox',     section: 'Executive' },
-  { id: 'business_info',      label: 'Business Info',       section: 'Executive' },
+  { id: 'business_info',      label: 'Locations & delivery zones', section: 'Executive' },
   { id: 'role_management',    label: 'Staff approvals',     section: 'Executive' },
   { id: 'role_modules',       label: 'Module Access',       section: 'Executive' },
   { id: 'audit_log',          label: 'User audit log',      section: 'Executive' },
