@@ -3,13 +3,14 @@
 //
 // Pages: servd:home (/home), servd:header (global nav), servd:footer (global
 // footer), servd:feedback (the floating feedback button and its sheet),
-// servd:waitlist, servd:press, servd:reserve (/reserve index) and
+// servd:waitlist, servd:about, servd:faq, servd:press, servd:reserve (/reserve index) and
 // servd:location (the /locations/[loc] template — sections read ctx.params.loc).
 // The old `servd:hero` layout (one `scrollHero` block) and the `siteLogo` block
 // on `servd:header` are retired: their content lives in servd.scrollHero and
 // servd.nav.
 import type { FieldSpec, PageDefault, SectionSpec } from '../types'
 import { FEEDBACK_DEFAULTS } from './feedbackDefaults'
+import { FAQ_DEFAULTS } from './faqData'
 
 const BRAND_HINT = 'Brand slug, e.g. stackd, simmer, flipd'
 
@@ -337,6 +338,7 @@ export const specs: SectionSpec[] = [
         { text: 'All kitchens', href: '/#kitchens' },
         { text: 'Reserve a table', href: '/reserve' },
         { text: 'Waitlist', href: '/waitlist' },
+        { text: 'FAQ', href: '/faq' },
         { text: 'My account', href: '/account' },
         { text: 'Order history', href: '/orders' },
         { text: 'Sign in', href: '/login' },
@@ -346,7 +348,11 @@ export const specs: SectionSpec[] = [
         { text: 'GS Foods Pvt. Ltd.', href: '' },
         { text: 'Karachi · Pakistan', href: '' },
         { text: 'servd@gsfoods.pk', href: 'mailto:servd@gsfoods.pk' },
+        { text: 'About servd', href: '/about' },
+        { text: 'Contact', href: '/contact' },
         { text: 'Press', href: '/press' },
+        { text: 'Privacy', href: '/privacy' },
+        { text: 'Terms', href: '/terms' },
       ],
       copyright: '© {year} GS Foods. All rights reserved.',
       tagline: 'Made in Karachi. Cooked in Karachi. For Karachi.',
@@ -434,6 +440,73 @@ export const specs: SectionSpec[] = [
       titleAccent: 'in Karachi?',
       body: 'Three kitchens, one operator. Below is what’s on offer, who to reach, and what we don’t do.',
       tight: true,
+    },
+  },
+
+  // ─── servd:about, servd:faq ───────────────────────────────────────────────
+  {
+    variant: 'servd.aboutIntro',
+    label: 'servd about (what is servd + kitchens table)',
+    group: 'servd',
+    description: 'An H1, a short factual answer to “what is servd” (the paragraph search engines and AI tools quote) and a table of the kitchens, read live from the brand records.',
+    icon: 'AB',
+    pages: ['servd:about', 'servd:*', 'page:*'],
+    summaryKey: 'heading',
+    fields: [
+      { key: 'eyebrow', label: 'Eyebrow', kind: 'text', hint: 'Empty = none.' },
+      { key: 'heading', label: 'Heading (the page’s H1)', kind: 'text' },
+      { key: 'intro', label: 'Answer', kind: 'textarea', rows: 5, hint: 'Two or three plain, factual sentences, answer first. {brands} = the live kitchen names (“Simmer, Stackd and Flipd”), {count} = how many.' },
+      { key: 'showTable', label: 'Show the kitchens table', kind: 'toggle', hint: 'Cuisine, area, price range and hours come from Admin → Marketing → Brands. A missing value shows the dash below, never a guess.' },
+      { key: 'tableHeading', label: 'Table heading', kind: 'text', hint: 'Empty = none.' },
+      { key: 'colKitchen', label: 'Column: kitchen', kind: 'text' },
+      { key: 'colCuisine', label: 'Column: cuisine', kind: 'text' },
+      { key: 'colArea', label: 'Column: area', kind: 'text' },
+      { key: 'colPrice', label: 'Column: price range', kind: 'text' },
+      { key: 'colHours', label: 'Column: hours', kind: 'text' },
+      { key: 'colOrder', label: 'Column: order', kind: 'text' },
+      { key: 'orderText', label: 'Order link text', kind: 'text' },
+      { key: 'emptyText', label: 'Shown when a value is not on file', kind: 'text' },
+      { key: 'note', label: 'Note under the table', kind: 'textarea', hint: 'Empty = none.' },
+    ],
+    defaults: {
+      eyebrow: 'About servd',
+      heading: 'What is servd?',
+      intro: 'servd is the online ordering platform of GS Foods, a restaurant group in Karachi, Pakistan. It brings {count} kitchens together in one place: {brands}. Pick a kitchen, see its menu with prices in PKR, and order for pickup, delivery or dining in, then pay with cash, card or Raast QR.',
+      showTable: true,
+      tableHeading: 'The kitchens on servd',
+      colKitchen: 'Kitchen',
+      colCuisine: 'Cuisine',
+      colArea: 'Area',
+      colPrice: 'Price range',
+      colHours: 'Hours',
+      colOrder: 'Order',
+      orderText: 'Order',
+      emptyText: '—',
+      note: 'Prices are in Pakistani rupees (PKR). Hours are Karachi time.',
+    },
+  },
+  {
+    variant: 'servd.faq',
+    label: 'servd FAQ',
+    group: 'servd',
+    description: 'Questions and answers that open on tap. The same text becomes the page’s FAQ structured data for Google.',
+    icon: 'FQ',
+    pages: ['servd:faq', 'servd:*', 'page:*'],
+    summaryKey: 'heading',
+    fields: [
+      { key: 'heading', label: 'Heading', kind: 'text', hint: 'Empty = none.' },
+      { key: 'items', label: 'Questions', kind: 'list', itemLabel: 'Question', max: 40,
+        hint: 'The starting answers are drafts: check each against how servd really works before publishing. A question with no answer is left out.',
+        item: [
+          { key: 'question', label: 'Question', kind: 'text' },
+          { key: 'answer', label: 'Answer', kind: 'textarea', rows: 4, hint: 'Plain text; a new line is a line break. Keep it short and factual: search engines and AI tools quote it as written.' },
+        ] },
+      { key: 'openFirst', label: 'Open the first question', kind: 'toggle' },
+    ],
+    defaults: {
+      heading: '',
+      items: FAQ_DEFAULTS,
+      openFirst: false,
     },
   },
 
@@ -620,6 +693,23 @@ export const pages: PageDefault[] = [
   {
     slug: 'servd:press',
     sections: [{ variant: 'servd.pageHeader' }, { variant: 'servd.pressCards' }],
+  },
+  {
+    slug: 'servd:about',
+    sections: [{ variant: 'servd.aboutIntro' }, { variant: 'servd.howItWorks' }],
+  },
+  {
+    slug: 'servd:faq',
+    sections: [
+      { variant: 'servd.pageHeader', fields: {
+        eyebrow: 'FAQ',
+        title: 'Questions,',
+        titleAccent: 'answered.',
+        body: 'Ordering, delivery, payment, Insiders rewards, reservations and refunds on servd.',
+        tight: true,
+      } },
+      { variant: 'servd.faq' },
+    ],
   },
   {
     slug: 'servd:reserve',

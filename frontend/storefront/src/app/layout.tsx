@@ -8,6 +8,7 @@ import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackSlot } from '../components/feedback/FeedbackSlot'
 import { PopupHost } from '../components/popups/PopupHost'
+import { Analytics } from '../components/analytics/Analytics'
 import { SERVD_ORIGIN, SERVD_OG_IMAGE, BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { ManagedPage } from '../sections/ManagedPage'
 import { allKitsCss } from '../lib/brandKit'
@@ -107,6 +108,13 @@ const fontVariables = [inter, bricolage, syne, amarante, playfair, jetbrainsMono
 // and restarting it is enough — no image rebuild. Unset: no tag.
 const googleSiteVerification = process.env['GOOGLE_SITE_VERIFICATION']?.trim()
 
+// Bing Webmaster Tools meta-tag verification (msvalidate.01), same model as the
+// Google one: NEXT_PUBLIC_BING_SITE_VERIFICATION (build arg) or BING_SITE_VERIFICATION
+// (container env, read at start); unset = no tag. (BingSiteAuth.xml
+// or a DNS CNAME also work; the tag is the no-file option.)
+const bingSiteVerification =
+  (process.env['NEXT_PUBLIC_BING_SITE_VERIFICATION'] ?? process.env['BING_SITE_VERIFICATION'])?.trim()
+
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one
   // source for the public host; override it with NEXT_PUBLIC_SITE_URL per env.
@@ -130,7 +138,15 @@ export const metadata: Metadata = {
     images: [{ url: SERVD_OG_IMAGE, width: 1200, height: 630, alt: servdOgImageAlt, type: servdOgImageType }],
   },
   twitter: { card: 'summary_large_image' },
-  ...(googleSiteVerification ? { verification: { google: googleSiteVerification } } : {}),
+  ...(googleSiteVerification || bingSiteVerification
+    ? {
+        verification: {
+          ...(googleSiteVerification ? { google: googleSiteVerification } : {}),
+          // Bing Webmaster Tools meta tag: <meta name="msvalidate.01" content="…">
+          ...(bingSiteVerification ? { other: { 'msvalidate.01': bingSiteVerification } } : {}),
+        },
+      }
+    : {}),
 }
 
 export const viewport: Viewport = {
@@ -194,6 +210,8 @@ export default async function StorefrontLayout({ children }: { children: React.R
         <StorefrontNav initialBrandSlug={initialBrandSlug}>
           <ManagedPage slug="servd:header" />
         </StorefrontNav>
+        {/* GA4 + consent notice. Renders nothing without NEXT_PUBLIC_GA4_ID. */}
+        <Analytics initialBrandSlug={initialBrandSlug} />
         <main id="main">{children}</main>
         <StorefrontFooter initialBrandSlug={initialBrandSlug}>
           <ManagedPage slug="servd:footer" />

@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { MANUAL_CONVERT_ATTR, useConversion } from '../blocks/conversion'
+import { track } from '../../lib/analytics'
 
 // The servd new-brand waitlist form: details + consent → WhatsApp code →
 // "You're on the list." Used by /waitlist and the `waitlist_form` block (pages
@@ -141,6 +142,7 @@ export function WaitlistForm({
       setAlreadyOnList(r.data['alreadyOnList'] === true)
       setStep('done')
       convert()
+      track('waitlist_join', { method: 'whatsapp' }) // GA4: no phone, no name
     } catch {
       setError('Could not reach servd. Check your connection and try again.')
     } finally {

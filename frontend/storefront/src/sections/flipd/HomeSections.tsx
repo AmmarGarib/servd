@@ -11,7 +11,7 @@
 
 import type { CSSProperties } from 'react'
 import { formatBrandName } from '../../lib/concept'
-import { locationFromConcept } from '../../lib/brandLocations'
+import { filled, locationFromConcept } from '../../lib/brandLocations'
 import { CrossBrandStrip } from '../../components/brand/parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../../components/brand/parts/OpenStatusBadge'
 import type { SectionProps } from '../types'
@@ -129,10 +129,13 @@ export function FlipdVisit({ fields, ctx }: SectionProps) {
   const reservations = concept ? concept.reservationsEnabled !== false : false
 
   const address = str(fields.address).trim() || concept?.address || str(fields.addressMissing)
-  const phone = str(fields.phone).trim() || concept?.phone || ''
+  const phone = str(fields.phone).trim() || filled(concept?.phone)
   // The brand's guest email (admin → Brands → Contact); the bundled default
   // only fills in when the API is down.
   const email = str(fields.email).trim() || (concept ? locationFromConcept(concept).email : '')
+  // WhatsApp: the brand's own number (admin → Brands → Contact); no number
+  // (or only the unfilled placeholder) → no link.
+  const waDigits = concept ? filled(locationFromConcept(concept).whatsapp).replace(/\D/g, '') : ''
   const book = link(fields.book)
   // Booking is a servd page: absolute on servd's origin from flipd.pk.
   const bookTo = reservations && book.text ? flipdHref(book.href, ctx) : null
@@ -170,6 +173,11 @@ export function FlipdVisit({ fields, ctx }: SectionProps) {
             {phone && (
               <p style={{ fontSize: '0.92rem', margin: 0 }}>
                 <a href={safeHref(`tel:${phone.replace(/\s/g, '')}`)} style={contactLink}>{phone}</a>
+              </p>
+            )}
+            {waDigits && str(fields.whatsappLabel).trim() && (
+              <p style={{ fontSize: '0.92rem', margin: '0.5rem 0 0' }}>
+                <a href={`https://wa.me/${waDigits}`} target="_blank" rel="noopener noreferrer" style={contactLink}>{str(fields.whatsappLabel)}</a>
               </p>
             )}
             {email && (

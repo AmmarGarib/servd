@@ -28,9 +28,12 @@ import { conceptsOrFallback, fetchConceptList } from '../lib/liveConcepts'
 // placeholder locations, drafts, and the account / checkout / order-tracker
 // URLs.
 //
-// lastModified is the page's real publish time (SiteLayout.publishedAt), and
-// is left out when a page has never been published — a made-up date (the old
-// "now at boot", identical on every URL) teaches Google to ignore the field.
+// lastModified is the page's real change time and nothing else: the latest of
+// its layout's publish time (SiteLayout.publishedAt) and, for a page built
+// from a brand's record (ordering, reservations, the microsite, the location
+// pages, /locations), the brand's own updatedAt when the API sends it. It is
+// left out when no real date is known — a made-up date (the old "now at boot",
+// identical on every URL) teaches Google to ignore the field.
 // changeFrequency and priority are hints Google ignores; kept for other
 // crawlers.
 
@@ -58,13 +61,33 @@ function lastModifiedOf(published: Map<string, string>, layoutSlug: string): Pic
   return { lastModified: at }
 }
 
+/** A date string as a timestamp, or NaN. */
+function ms(at: string | null | undefined): number {
+  return at ? Date.parse(at) : Number.NaN
+}
+
+/** The brand record's own last-change time, when the storefront API sends it
+ *  (Concept.updatedAt). Read loosely: the field is optional in the payload. */
+function recordUpdatedAt(c: { updatedAt?: unknown } | undefined): string | undefined {
+  const at = c?.updatedAt
+  return typeof at === 'string' && !Number.isNaN(Date.parse(at)) ? at : undefined
+}
+
+/** The latest of the known real dates, as a sitemap date; nothing when none is known. */
+function latest(...dates: Array<string | undefined>): Pick<Entry, 'lastModified'> {
+  const known = dates.filter((d): d is string => !!d && !Number.isNaN(ms(d)))
+  if (known.length === 0) return {}
+  return { lastModified: new Date(Math.max(...known.map(ms))).toISOString() }
+}
+
 /** A brand microsite at its canonical URLs, plus the owner's own brand pages. */
-function brandEntries(slug: string, published: Map<string, string>, livePages: string[]): Entry[] {
+function brandEntries(slug: string, published: Map<string, string>, livePages: string[], record?: string): Entry[] {
+  const at = (layoutSlug: string) => latest(published.get(layoutSlug), record)
   const fixed: Entry[] = [
-    { url: brandCanonical(slug),          ...lastModifiedOf(published, `brand:${slug}`),       changeFrequency: 'weekly',  priority: 0.9 },
-    { url: brandCanonical(slug, 'menu'),  ...lastModifiedOf(published, `brand:${slug}:menu`),  changeFrequency: 'daily',   priority: 0.9 },
-    { url: brandCanonical(slug, 'about'), ...lastModifiedOf(published, `brand:${slug}:about`), changeFrequency: 'monthly', priority: 0.7 },
-    { url: brandCanonical(slug, 'visit'), ...lastModifiedOf(published, `brand:${slug}:visit`), changeFrequency: 'monthly', priority: 0.7 },
+    { url: brandCanonical(slug),          ...at(`brand:${slug}`),       changeFrequency: 'weekly',  priority: 0.9 },
+    { url: brandCanonical(slug, 'menu'),  ...at(`brand:${slug}:menu`),  changeFrequency: 'daily',   priority: 0.9 },
+    { url: brandCanonical(slug, 'about'), ...at(`brand:${slug}:about`), changeFrequency: 'monthly', priority: 0.7 },
+    { url: brandCanonical(slug, 'visit'), ...at(`brand:${slug}:visit`), changeFrequency: 'monthly', priority: 0.7 },
   ]
   const own: Entry[] = []
   for (const layoutSlug of livePages) {
@@ -77,8 +100,10 @@ function brandEntries(slug: string, published: Map<string, string>, livePages: s
   return [...fixed, ...own]
 }
 
-/** servd.pk's own pages. */
-function servdEntries(brands: BrandLocation[], published: Map<string, string>, livePages: string[]): Entry[] {
+/** servd.pk's own pages. `record` maps a brand slug to its record's updatedAt. */
+function servdEntries(
+  brands: BrandLocation[], published: Map<string, string>, livePages: string[], record: Map<string, string>,
+): Entry[] {
   const top: Entry[] = [
     { url: `${SERVD_ORIGIN}/`,     ...lastModifiedOf(published, 'servd:home'),     changeFrequency: 'daily',   priority: 1.0 },
     { url: `${SERVD_ORIGIN}/reserve`,  ...lastModifiedOf(published, 'servd:reserve'),  changeFrequency: 'weekly',  priority: 0.8 },
@@ -86,33 +111,58 @@ function servdEntries(brands: BrandLocation[], published: Map<string, string>, l
     { url: `${SERVD_ORIGIN}/press`,    ...lastModifiedOf(published, 'servd:press'),    changeFrequency: 'monthly', priority: 0.5 },
   ]
 
+  // The servd content pages (Admin → Storefront: servd:<page>). A date only
+  // once the owner has published one; until then the default sections render
+  // and no change time is claimed.
+  const content: Entry[] = [
+    { page: 'about',   changeFrequency: 'monthly' as const, priority: 0.7 },
+    { page: 'faq',     changeFrequency: 'monthly' as const, priority: 0.7 },
+    { page: 'contact', changeFrequency: 'monthly' as const, priority: 0.6 },
+    { page: 'privacy', changeFrequency: 'yearly'  as const, priority: 0.3 },
+    { page: 'terms',   changeFrequency: 'yearly'  as const, priority: 0.3 },
+  ].map(({ page, changeFrequency, priority }) => ({
+    url: `${SERVD_ORIGIN}/${page}`, ...lastModifiedOf(published, `servd:${page}`), changeFrequency, priority,
+  }))
+
   // Ordering (the menu you order from) and, where the brand takes bookings,
-  // its reservation page.
+  // its reservation page. Both are built from the brand's record.
   const ordering: Entry[] = brands.flatMap((b) => [
-    { url: `${SERVD_ORIGIN}/${b.slug}`, changeFrequency: 'daily' as const, priority: 0.9 },
+    { url: `${SERVD_ORIGIN}/${b.slug}`, ...latest(record.get(b.slug)), changeFrequency: 'daily' as const, priority: 0.9 },
     ...(b.acceptsReservations
-      ? [{ url: `${SERVD_ORIGIN}/reserve/${b.slug}`, changeFrequency: 'weekly' as const, priority: 0.6 }]
+      ? [{ url: `${SERVD_ORIGIN}/reserve/${b.slug}`, ...latest(record.get(b.slug)), changeFrequency: 'weekly' as const, priority: 0.6 }]
       : []),
   ])
 
   // One page per kitchen with a real address. A placeholder area would put
   // "TODO_FILL_AREA" in a title Google indexes.
-  const locationTemplate = lastModifiedOf(published, 'servd:location')
-  const locations: Entry[] = brands
-    .filter(isPublishableLocation)
-    .map((b) => ({ url: `${SERVD_ORIGIN}/locations/${b.locationSlug}`, ...locationTemplate, changeFrequency: 'monthly' as const, priority: 0.7 }))
+  const publishable = brands.filter(isPublishableLocation)
+  const locations: Entry[] = publishable.map((b) => ({
+    url: `${SERVD_ORIGIN}/locations/${b.locationSlug}`,
+    ...latest(published.get('servd:location'), record.get(b.slug)),
+    changeFrequency: 'monthly' as const,
+    priority: 0.7,
+  }))
+  // The hub lists them all: it changed when the template or any listed brand did.
+  const hub: Entry[] = publishable.length > 0
+    ? [{
+        url: `${SERVD_ORIGIN}/locations`,
+        ...latest(published.get('servd:location'), ...publishable.map((b) => record.get(b.slug))),
+        changeFrequency: 'weekly' as const,
+        priority: 0.8,
+      }]
+    : []
 
   // Brands with no domain of their own live under servd.pk/brand/<slug>.
   const hostedMicrosites: Entry[] = brands
     .filter((b) => !hasOwnDomain(b.slug))
-    .flatMap((b) => brandEntries(b.slug, published, livePages))
+    .flatMap((b) => brandEntries(b.slug, published, livePages, record.get(b.slug)))
 
   // The owner's servd pages: page:<slug> → /pages/<slug>.
   const custom: Entry[] = livePages
     .filter((s) => s.startsWith('page:') && PAGE_NAME.test(s.slice('page:'.length)))
     .map((s) => ({ url: `${SERVD_ORIGIN}/pages/${s.slice('page:'.length)}`, ...lastModifiedOf(published, s), changeFrequency: 'monthly' as const, priority: 0.5 }))
 
-  return [...top, ...ordering, ...locations, ...hostedMicrosites, ...custom]
+  return [...top, ...content, ...hub, ...ordering, ...locations, ...hostedMicrosites, ...custom]
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -122,7 +172,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     fetchConceptList(),
     fetchLivePages(),
   ])
-  const brands = conceptsOrFallback(list ?? []).map((c) => locationFromConcept(c))
+  const concepts = conceptsOrFallback(list ?? [])
+  const brands = concepts.map((c) => locationFromConcept(c))
+  // Each brand's record change time (Concept.updatedAt), when the API sends it.
+  const record = new Map<string, string>()
+  for (const c of concepts) {
+    const at = recordUpdatedAt(c as { updatedAt?: unknown })
+    if (at) record.set(c.slug, at)
+  }
 
   const published = new Map<string, string>()
   for (const p of pages) if (p.publishedAt) published.set(p.slug, p.publishedAt)
@@ -132,8 +189,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // has no domain of its own — a dev / preview host — has its canonical URLs
   // on servd, so it gets servd's sitemap.)
   const entries = hostSlug && hasOwnDomain(hostSlug)
-    ? brandEntries(hostSlug, published, livePages)
-    : servdEntries(brands, published, livePages)
+    ? brandEntries(hostSlug, published, livePages, record.get(hostSlug))
+    : servdEntries(brands, published, livePages, record)
 
   // One entry per URL.
   const seen = new Set<string>()

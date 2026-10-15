@@ -9,6 +9,8 @@ import { ReservePicker } from './ReservePicker'
 import { WaitlistSignup } from './WaitlistSignup'
 import { LocationHero } from './LocationHero'
 import { LocationDetails } from './LocationDetails'
+import { AboutIntro } from './About'
+import { Faq } from './Faq'
 import {
   ScrollHero, Kitchens, HowItWorks, Insiders, Visit, WaitlistStrip, Nav, Feedback,
 } from './lazy'
@@ -29,4 +31,6 @@ export const renderers: Record<string, SectionComponent> = {
   'servd.waitlistSignup': WaitlistSignup,
   'servd.locationHero': LocationHero,
   'servd.locationDetails': LocationDetails,
+  'servd.aboutIntro': AboutIntro,
+  'servd.faq': Faq,
 }

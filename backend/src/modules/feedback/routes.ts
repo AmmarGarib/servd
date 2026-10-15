@@ -8,14 +8,97 @@
 // require auth — anonymous suggestions land too. Auth, if present, links the
 // entry to a Customer for personalized follow-up.
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
-import { conceptWhere } from '../../lib/tenantScope.js'
+import { conceptWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { verifyCustomerToken } from '../auth/service.js'
+import { publicBrandWhere } from '../../lib/publicBrands.js'
+import { primaryTenantId } from '../../lib/setup-config.js'
+import { contactAddressOver, contactIdentityOver } from './contactLimit.js'
 
-const FEEDBACK_KINDS = ['nps', 'csat', 'open'] as const
+const FEEDBACK_KINDS = ['nps', 'csat', 'open', 'contact'] as const
+/** Topics the public contact form offers (SEO round 1, WP4). */
+export const CONTACT_TOPICS = ['catering', 'complaint', 'press', 'jobs', 'other'] as const
+
+// Reply phone: digits with the usual separators, 7-20 digits (+92 21 ..., 0300-...).
+const PHONE_RE = /^\+?[0-9][0-9 ()\-]{5,24}[0-9]$/
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+const clean = (v: string | null | undefined, max: number) => {
+  const t = (v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max)
+  return t || null
+}
+
+type ContactBody = {
+  comment?: string | null; conceptId?: string | null; brandSlug?: string | null
+  name?: string | null; replyPhone?: string | null; replyEmail?: string | null
+  topic?: (typeof CONTACT_TOPICS)[number] | null; website?: string | null
+}
+
+const bad = (reply: FastifyReply, code: string, message: string, status = 422) =>
+  reply.status(status).send({ error: { code, message } })
+
+// POST /feedback with kind 'contact' — the public contact form. Stored in the
+// same inbox as other feedback; the company is the chosen brand's (resolved
+// here from a live, public brand), else the primary company. Nothing is sent
+// to the reply address on submit.
+async function submitContact(req: FastifyRequest, reply: FastifyReply, body: ContactBody) {
+  // Honeypot: bots fill every field. Answer as if it worked, store nothing.
+  if (body.website && body.website.trim()) return reply.status(201).send({ id: null })
+
+  const name = clean(body.name, 120)
+  const message = clean(body.comment, 2000)
+  const phone = clean(body.replyPhone, 40)
+  const email = clean(body.replyEmail, 200)?.toLowerCase() ?? null
+  if (!name) return bad(reply, 'NAME_REQUIRED', 'Please tell us your name')
+  if (!message || message.length < 10) return bad(reply, 'MESSAGE_TOO_SHORT', 'Please write at least a sentence')
+  if (!phone && !email) return bad(reply, 'REPLY_CONTACT_REQUIRED', 'Give a phone number or an email so we can reply')
+  if (phone && !PHONE_RE.test(phone)) return bad(reply, 'BAD_PHONE', 'That phone number does not look right')
+  if (email && !EMAIL_RE.test(email)) return bad(reply, 'BAD_EMAIL', 'That email address does not look right')
+  if (!body.topic) return bad(reply, 'TOPIC_REQUIRED', 'Pick a topic')
+  const replyPhone = phone ? phone.replace(/[^0-9+]/g, '') : null
+
+  // Caps BEFORE anything is stored.
+  if ((await contactAddressOver(req.ip)) || (await contactIdentityOver(replyPhone, email))) {
+    return bad(reply, 'RATE_LIMITED', 'Too many messages — please try again in an hour', 429)
+  }
+
+  // The brand (optional) decides the company. A client tenant is never read.
+  let conceptId: string | null = null
+  let tenantId: string | null = null
+  if (body.conceptId || body.brandSlug) {
+    const concept = await prisma.concept.findFirst({
+      where: {
+        isActive: true, deletedAt: null, storefrontVisible: true, tenantId: { not: null },
+        ...publicBrandWhere(),
+        ...(body.conceptId ? { id: body.conceptId } : { slug: body.brandSlug! }),
+      },
+      select: { id: true, tenantId: true },
+    })
+    if (!concept) return bad(reply, 'BRAND_NOT_FOUND', 'That brand is not taking messages')
+    conceptId = concept.id
+    tenantId = concept.tenantId
+  } else {
+    tenantId = await primaryTenantId()
+  }
+  if (!tenantId) return bad(reply, 'NO_COMPANY', 'Messages are not being accepted right now', 503)
+
+  let customerId: string | null = null
+  const auth = req.headers.authorization
+  if (auth?.startsWith('Bearer ')) {
+    try { customerId = verifyCustomerToken(auth.slice(7)).sub } catch { /* anonymous is fine */ }
+  }
+
+  const entry = await prisma.feedbackEntry.create({
+    data: {
+      tenantId, conceptId, customerId,
+      kind: 'contact', comment: message, source: 'contact_page',
+      contactName: name, replyPhone, replyEmail: email, topic: body.topic,
+    },
+  })
+  return reply.status(201).send({ id: entry.id })
+}
 
 export async function feedbackRoutes(fastify: FastifyInstance) {
   // POST /feedback — public. Captures one-tap NPS / CSAT / open suggestions.
@@ -30,8 +113,19 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
         score:     z.number().int().nullable().optional(),
         comment:   z.string().max(2000).nullable().optional(),
         conceptId: z.string().uuid().nullable().optional(),
+        // Contact form only. The brand can be named by slug too (brand pages
+        // know their slug, not their id).
+        brandSlug: z.string().max(80).nullable().optional(),
+        name:      z.string().max(120).nullable().optional(),
+        replyPhone: z.string().max(40).nullable().optional(),
+        replyEmail: z.string().max(200).nullable().optional(),
+        topic:     z.enum(CONTACT_TOPICS).nullable().optional(),
+        // Spam honeypot: a hidden field real visitors never fill.
+        website:   z.string().max(500).nullable().optional(),
         context:   z.record(z.string(), z.unknown()).nullable().optional(),
       }).parse(req.body)
+
+      if (body.kind === 'contact') return submitContact(req, reply, body)
 
       // Score validation per kind.
       if (body.kind === 'nps' && body.score != null && (body.score < 0 || body.score > 10)) {
@@ -54,8 +148,16 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
         } catch { /* anonymous is fine */ }
       }
 
+      // Company is the brand's, resolved on the server — never from the client.
+      let tenantId: string | null = null
+      if (body.conceptId) {
+        const c = await prisma.concept.findFirst({ where: { id: body.conceptId, deletedAt: null }, select: { tenantId: true } })
+        tenantId = c?.tenantId ?? null
+      }
+
       const entry = await prisma.feedbackEntry.create({
         data: {
+          tenantId,
           kind:       body.kind,
           score:      body.score ?? null,
           comment:    body.comment?.trim() || null,
@@ -71,18 +173,25 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
   )
 
   // GET /feedback — staff inbox. Rolling NPS + CSAT + suggestions feed.
-  fastify.get<{ Querystring: { kind?: string; conceptId?: string; limit?: string } }>(
+  fastify.get<{ Querystring: { kind?: string; conceptId?: string; limit?: string; topic?: string } }>(
     '/',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const { kind, conceptId, limit } = req.query
+      const { kind, conceptId, limit, topic } = req.query
       // Company scope. There was none: `where` started empty and a client
       // conceptId was used on trust, so any staff member of any company could
       // read every company's feedback — and the include below carries the
-      // submitter's name, email and phone. Same shape as the hole closed in
-      // /reviews; this one was missed at the time.
-      const where: Record<string, unknown> = { ...(await conceptWhere(req, conceptId, 'read')) }
+      // submitter's name, email and phone. Rows carry their own company
+      // (`tenantId`, set from the brand on the server), so a message with no
+      // brand (a contact message to the company) is scoped too. A client
+      // conceptId must be a brand of the operator's companies (else 404).
+      const tenant = await scopeTenantWhere(req, 'read')
+      const cw = await conceptWhere(req, conceptId, 'read')
+      const where: Record<string, unknown> = conceptId
+        ? { ...tenant, ...cw }
+        : { ...tenant, OR: [cw, { conceptId: null }] }
       if (kind && (FEEDBACK_KINDS as readonly string[]).includes(kind)) where.kind = kind
+      if (topic && (CONTACT_TOPICS as readonly string[]).includes(topic)) where.topic = topic
 
       const entries = await prisma.feedbackEntry.findMany({
         where,
@@ -121,6 +230,7 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
       const where = {
         createdAt: { gte: since },
         customerId: { not: null },
+        ...(await scopeTenantWhere(req, 'read')),
         ...(await conceptWhere(req, req.query.conceptId, 'read')),
       }
 

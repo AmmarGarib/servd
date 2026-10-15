@@ -20,7 +20,8 @@ import { renderers as brand } from './brand/renderers'
 import { renderers as stackd } from './stackd/renderers'
 import { renderers as simmer } from './simmer/renderers'
 import { renderers as flipd } from './flipd/renderers'
+import { renderers as legal } from './legal/renderers'
 
 export const SECTION_RENDERERS: Record<string, SectionComponent> = {
-  ...servd, ...brand, ...stackd, ...simmer, ...flipd,
+  ...servd, ...brand, ...stackd, ...simmer, ...flipd, ...legal,
 }

@@ -17,7 +17,30 @@ import { BRAND_ORIGIN, SERVD_ORIGIN, hostBrand } from '../lib/brandDomains'
 // disallowed: checkout, the printable QR card and draft previews. Those are
 // noindexed with an X-Robots-Tag header (next.config.js), and a crawler has to
 // be allowed to fetch a page to see its noindex.
+// AI crawlers (owner, 2026-10-14: training ones too) are ALLOWED, and named
+// explicitly so the intent is on record and a future blanket rule can't catch
+// them by accident. A crawler with its own group ignores the `*` group
+// entirely, so the private-URL disallows below are repeated for them — naming
+// a bot must never open a token URL to it. llms.txt / llms-full.txt (served per
+// host) are the AI-readable summaries; robots.txt has no comment channel in
+// Next's MetadataRoute.Robots, so that pointer lives here.
+const AI_CRAWLERS = [
+  'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+  'ClaudeBot', 'Claude-SearchBot', 'Claude-User',
+  'PerplexityBot', 'Perplexity-User',
+  'Google-Extended', 'Applebot-Extended', 'CCBot',
+  'Bingbot',
+]
 
+const PRIVATE_PATHS = [
+  '/*/order/', '/reserve/claim/', '/reserve/confirm/', '/group-order/',
+  '/orders', '/account', '/login', '/signup',
+  // The rider app's web version, and everything under it.
+  '/rider',
+  '/*cart=',
+  // The storefront's own JSON (the admin's section catalogue).
+  '/api/',
+]
 
 export default async function robots(): Promise<MetadataRoute.Robots> {
   const host = headers().get('host') ?? ''
@@ -32,15 +55,12 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
       {
         userAgent: '*',
         allow:    ['/'],
-        disallow: [
-          '/*/order/', '/reserve/claim/', '/reserve/confirm/', '/group-order/',
-          '/orders', '/account', '/login', '/signup',
-          // The rider app's web version, and everything under it.
-          '/rider',
-          '/*cart=',
-          // The storefront's own JSON (the admin's section catalogue).
-          '/api/',
-        ],
+        disallow: PRIVATE_PATHS,
+      },
+      {
+        userAgent: AI_CRAWLERS,
+        allow:    ['/'],
+        disallow: PRIVATE_PATHS,
       },
     ],
     sitemap: `${origin}/sitemap.xml`,

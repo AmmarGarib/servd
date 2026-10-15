@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { fmt, isLight } from '../../../../lib/ui'
 import { useCustomerAuth } from '../../../../store/customerAuth'
 import { LoadingScreen } from '../../../../components/ui/Loader'
+import { trackPurchaseOnce } from '../../../../lib/analytics'
 
 // /<concept>/order/[id] — live order tracker.
 // Restyled onto the on-system --servd-* tokens. Status icons are inline
@@ -148,6 +149,13 @@ export default function OrderStatusPage() {
         }
         prevStatus.current = data.status
         setOrder(data)
+        // GA4 purchase: once, only for the order this tab just placed (value,
+        // currency and order reference only — no personal data). Test
+        // companies never count.
+        trackPurchaseOnce({
+          id: data.id, totalCents: data.totalCents, taxCents: data.taxCents, slug: data.concept.slug,
+          isTest: data.isTestCompany === true || data.concept.isTestCompany === true, status: data.status,
+        })
         if (trackingDone(data)) stop()
       } catch { /* keep polling */ }
     }

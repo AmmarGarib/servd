@@ -8,13 +8,14 @@
 
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import { Breadcrumbs } from '../../../../components/Breadcrumbs'
 import { brandCanonical } from '../../../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../../../lib/blocks'
 import { brandStory, formatBrandName } from '../../../../lib/concept'
 import { jsonLdScript, restaurantId } from '../../../../lib/jsonLd'
 import { fetchLiveConcepts, findConceptOrThrow, resolveConcept } from '../../../../lib/liveConcepts'
 import { ManagedPage } from '../../../../sections/ManagedPage'
-import { SUBPAGE_TITLE, brandBreadcrumb, brandCtx, brandPageMetadata, leadText, pageBlocks, type Params } from '../meta'
+import { SUBPAGE_TITLE, brandCtx, brandPageMetadata, leadText, pageBlocks, type Params } from '../meta'
 
 // force-dynamic + cache: 'no-store' so a single API outage at deploy
 // time can't poison the ISR cache and return 404s for the lifetime of
@@ -49,7 +50,6 @@ export default async function BrandAboutPage({ params }: Params) {
 
   const url = brandCanonical(slug, 'about')
   const ld = [
-    brandBreadcrumb(concept, SUBPAGE_TITLE.about, 'about'),
     {
       '@context': 'https://schema.org',
       '@type':    'AboutPage',
@@ -65,6 +65,10 @@ export default async function BrandAboutPage({ params }: Params) {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
+      <Breadcrumbs items={[
+        { name: formatBrandName(concept.name), href: brandCanonical(slug) },
+        { name: SUBPAGE_TITLE.about, href: url },
+      ]} />
       <ManagedPage slug={`brand:${slug}:about`} {...(concepts.length ? { concepts } : {})} />
     </>
   )

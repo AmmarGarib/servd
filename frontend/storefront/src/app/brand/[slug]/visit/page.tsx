@@ -10,6 +10,8 @@
 
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import { Breadcrumbs } from '../../../../components/Breadcrumbs'
+import { brandCanonical } from '../../../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo, type Block } from '../../../../lib/blocks'
 import { fetchBrandKitchens, filled, locationFromConcept, type BrandLocation } from '../../../../lib/brandLocations'
 import { brandAccent, formatBrandName, type Concept } from '../../../../lib/concept'
@@ -21,7 +23,7 @@ import { ManagedPage } from '../../../../sections/ManagedPage'
 import { faqSchemaEntries } from '../../../../sections/brand/faq'
 import { str } from '../../../../sections/safe'
 import { fill } from '../../../../sections/brand/util'
-import { SUBPAGE_TITLE, brandBreadcrumb, brandCtx, brandPageMetadata, cityOf, pageBlocks, type Params } from '../meta'
+import { SUBPAGE_TITLE, brandCtx, brandPageMetadata, cityOf, pageBlocks, type Params } from '../meta'
 
 // force-dynamic + cache: 'no-store' so a single API outage at deploy
 // time can't poison the ISR cache and return 404s for the lifetime of
@@ -86,12 +88,16 @@ export default async function BrandVisitPage({ params }: Params) {
   const qa = pageBlocks(pageSlug, layout).flatMap((b) =>
     b.type === 'section' && b.variant === 'brand.faq' ? faqSchemaEntries(mergeFields(b.variant, b.fields), ctx) : [])
 
-  const ld: Record<string, unknown>[] = [brandBreadcrumb(concept, SUBPAGE_TITLE.visit, 'visit')]
+  const ld: Record<string, unknown>[] = []
   if (qa.length > 0) ld.push(faqSchema(qa))
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
+      {ld.length > 0 && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />}
+      <Breadcrumbs items={[
+        { name: formatBrandName(concept.name), href: brandCanonical(slug) },
+        { name: SUBPAGE_TITLE.visit, href: brandCanonical(slug, 'visit') },
+      ]} />
       <ManagedPage slug={pageSlug} {...(layout ? { layout } : {})} {...(concepts.length ? { concepts } : {})} />
     </>
   )

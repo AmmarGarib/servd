@@ -165,6 +165,7 @@ export const specs: SectionSpec[] = [
       { key: 'addressMissing', label: 'Address when none is set', kind: 'text' },
       { key: 'phone', label: 'Phone', kind: 'text', hint: 'Empty = the brand\'s live phone.' },
       { key: 'email', label: 'Email', kind: 'text', hint: 'Empty = the brand\'s live guest email.' },
+      { key: 'whatsappLabel', label: 'WhatsApp link text', kind: 'text', hint: 'Links to the brand\'s live WhatsApp number (Brands → Contact); hidden while it has none. Empty = no link.' },
       { key: 'book', label: 'Booking button', kind: 'link', hint: 'Shown only while reservations are on for the brand. Empty text = hidden. ' + LINK_HINT },
     ],
     defaults: {
@@ -177,6 +178,7 @@ export const specs: SectionSpec[] = [
       addressMissing: 'Karachi · address TBA',
       phone: '',
       email: '',
+      whatsappLabel: 'Message us on WhatsApp',
       book: { text: 'Book a table', href: '@book' },
     },
   },

@@ -98,10 +98,16 @@ export default function ReviewsPage() {
         <div>
           <h1 className="text-2xl font-black text-s-text mt-1">Order Reviews</h1>
         </div>
+        <div className="flex items-center gap-3">
+        <Link href="/reviews/messages"
+          className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:bg-s-surface">
+          Messages
+        </Link>
         <button onClick={() => setShowManual(true)}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + Log manual review
         </button>
+        </div>
       </header>
 
       {/* Manual review form */}

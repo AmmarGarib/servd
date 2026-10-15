@@ -90,6 +90,15 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
     return target && label ? [{ label, ...target }] : []
   })
 
+  // Privacy / terms / contact: servd's pages (one policy for every kitchen),
+  // absolute on servd's origin from a brand domain (brandHref's servd path).
+  const legalLinks = list(fields.legalLinks).flatMap((item) => {
+    const l = link(item)
+    const target = to(l.href)
+    const label = fill(l.text, ctx, name)
+    return target && label ? [{ label, ...target }] : []
+  })
+
   return (
     <footer className="relative overflow-hidden"
       style={{
@@ -219,6 +228,13 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
           color: surface.muted,
         }}>
           <span>© {new Date().getFullYear()} {name}{str(fields.legal).trim() ? ` · ${fill(fields.legal, ctx, name)}` : ''}</span>
+          {legalLinks.length > 0 && (
+            <nav aria-label="Legal" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem 1.1rem' }}>
+              {legalLinks.map((l, i) => (
+                <a key={`${l.href}-${i}`} href={l.href} className="brand-footer-tap" style={{ color: surface.muted, textDecoration: 'none' }}>{l.label}</a>
+              ))}
+            </nav>
+          )}
           {backLink.text && (
             <Link href={backLink.href} className="brand-footer-tap" style={{ color: surface.muted, textDecoration: 'none' }}>
               {backLink.text}<span style={{ color: accent }}>.</span> →

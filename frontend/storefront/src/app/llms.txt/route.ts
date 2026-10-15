@@ -12,11 +12,12 @@
 // 200 HTML page on every host.
 
 import type { NextRequest } from 'next/server'
-import { BRAND_ORIGIN, SERVD_ORIGIN, brandCanonical, hostBrand } from '../../lib/brandDomains'
+import { BRAND_ORIGIN, SERVD_ORIGIN, brandCanonical, brandOrigin, hostBrand } from '../../lib/brandDomains'
 import { filled, isPublishableLocation, locationFromConcept, type BrandLocation } from '../../lib/brandLocations'
 import { formatBrandName, type Concept } from '../../lib/concept'
 import { conceptsOrFallback, fetchLiveConcepts, findConcept } from '../../lib/liveConcepts'
 import { simmerText } from '../../sections/simmer/shared'
+import { hoursSummary, priceWords } from '../../sections/servd/brandFacts'
 
 const SERVD_EMAIL = 'servd@gsfoods.pk'
 
@@ -28,6 +29,8 @@ interface Brand {
   name: string
   description: string
   loc: BrandLocation
+  /** Opening hours on file ('' = none; never invented). */
+  hours: string
 }
 
 /** One line of text. Simmer's copy keeps Simmer's rules (no exclamation
@@ -51,6 +54,7 @@ function toBrand(c: Concept): Brand {
     // no live rows looks only there, own properties only).
     description: oneLine(c.slug, c.description || findConcept(c.slug, [])?.description),
     loc,
+    hours: hoursSummary(c.serviceHours),
   }
 }
 
@@ -65,6 +69,18 @@ function listNames(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
+/** " Cuisine, price range, area, hours." — only what is on file. */
+function facts(b: Brand): string {
+  const bits = [
+    filled(b.loc.cuisine) && `${filled(b.loc.cuisine)}`,
+    filled(b.loc.priceRange) && `price range ${priceWords(b.loc.priceRange)}`,
+    place(b.loc),
+    b.hours && `open ${b.hours} (Karachi time)`,
+    filled(b.loc.phone) && `phone ${filled(b.loc.phone)}`,
+  ].filter(Boolean)
+  return bits.length ? ` (${bits.join('; ')})` : ''
+}
+
 function servdText(brands: Brand[]): string {
   const names = listNames(brands.map((b) => b.name))
   const reservable = brands.filter((b) => b.loc.acceptsReservations)
@@ -77,11 +93,12 @@ function servdText(brands: Brand[]): string {
     '',
     '## Kitchens',
     '',
-    ...brands.map((b) => `- [${label(b.name)}](${brandCanonical(b.slug)})${b.description ? `: ${b.description}` : ''}`),
+    ...brands.map((b) => `- [${label(b.name)}](${brandCanonical(b.slug)})${b.description ? `: ${b.description}` : ''}${facts(b)}`),
     '',
     '## Menus and ordering',
     '',
     `- [servd home](${SERVD_ORIGIN}/): every kitchen on servd in one place`,
+    `- [Full menus, prices and details](${SERVD_ORIGIN}/llms-full.txt): every kitchen's complete menu in PKR, addresses, hours, phones and the FAQ in one plain-text file`,
     ...brands.flatMap((b) => [
       `- [${label(b.name)} menu](${brandCanonical(b.slug, 'menu')}): the ${label(b.name)} menu`,
       `- [Order from ${label(b.name)}](${SERVD_ORIGIN}/${b.slug}): order online on servd`,
@@ -106,6 +123,10 @@ function servdText(brands: Brand[]): string {
     '',
     '## About servd',
     '',
+    `- [What is servd](${SERVD_ORIGIN}/about): who servd is and the kitchens on it`,
+    `- [FAQ](${SERVD_ORIGIN}/faq): ordering, delivery, payment (Cash, Card, Raast QR), Insiders rewards, reservations and refunds`,
+    `- [Contact](${SERVD_ORIGIN}/contact): contact servd`,
+    `- [Privacy](${SERVD_ORIGIN}/privacy) and [Terms](${SERVD_ORIGIN}/terms)`,
     `- [Press](${SERVD_ORIGIN}/press): press information and media contact`,
     `- [Email servd](mailto:${SERVD_EMAIL}): ${SERVD_EMAIL}`,
     '',
@@ -122,6 +143,13 @@ function brandText(b: Brand): string {
     ...(b.description ? [`> ${b.description}`, ''] : []),
     `${b.name} is in ${where || 'Karachi'}.${filled(b.loc.cuisine) ? ` Cuisine: ${filled(b.loc.cuisine)}.` : ''} Orders are taken online through servd (${SERVD_ORIGIN}/), GS Foods' ordering platform in Karachi.`,
     '',
+    '## At a glance',
+    '',
+    `- Address: ${[filled(b.loc.street), place(b.loc)].filter(Boolean).join(', ') || 'Karachi, Pakistan'}`,
+    `- Opening hours (Karachi time): ${b.hours || 'not listed'}`,
+    `- Phone: ${filled(b.loc.phone) || 'not listed'}`,
+    ...(filled(b.loc.priceRange) ? [`- Price range: ${priceWords(b.loc.priceRange)}`] : []),
+    '',
     '## Pages',
     '',
     `- [Home](${brandCanonical(b.slug)}): ${label(b.name)}'s website`,
@@ -132,6 +160,8 @@ function brandText(b: Brand): string {
     '## Order and book',
     '',
     `- [Order online](${SERVD_ORIGIN}/${b.slug}): order from ${label(b.name)} on servd`,
+    `- [Full menu and details](${brandOrigin(b.slug)}/llms-full.txt): the complete ${label(b.name)} menu in PKR, address, hours, phone and the FAQ in one plain-text file`,
+    `- [FAQ](${SERVD_ORIGIN}/faq): ordering, delivery, payment, rewards, reservations and refunds`,
     ...(b.loc.acceptsReservations
       ? [`- [Book a table](${SERVD_ORIGIN}/reserve/${b.slug}): reserve at ${label(b.name)}`]
       : []),
@@ -139,7 +169,8 @@ function brandText(b: Brand): string {
       ? [`- [Location](${SERVD_ORIGIN}/locations/${b.loc.locationSlug}): ${label(b.name)} on the map`]
       : []),
   ]
-  if (email) out.push('', '## Contact', '', `- [Email ${label(b.name)}](mailto:${email}): ${email}`)
+  out.push('', '## Contact', '', `- [Contact servd](${SERVD_ORIGIN}/contact)`)
+  if (email) out.push(`- [Email ${label(b.name)}](mailto:${email}): ${email}`)
   out.push('')
   return out.join('\n')
 }

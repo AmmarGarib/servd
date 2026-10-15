@@ -74,6 +74,9 @@ export function PagesPanel() {
     { slug: 'servd:feedback', label: 'Feedback button', hint: 'the floating feedback button and sheet on every servd page' },
     { slug: 'servd:waitlist', label: 'Waitlist', hint: '/waitlist' },
     { slug: 'servd:press', label: 'Press', hint: '/press' },
+    { slug: 'servd:privacy', label: 'Privacy policy', hint: '/privacy (draft wording to approve)' },
+    { slug: 'servd:terms', label: 'Terms of service', hint: '/terms (draft wording to approve)' },
+    { slug: 'servd:contact', label: 'Contact', hint: '/contact (details + the contact form)' },
     { slug: 'servd:reserve', label: 'Reserve', hint: '/reserve' },
     { slug: 'servd:location', label: 'Location pages', hint: 'the template for every /locations page' },
   ]

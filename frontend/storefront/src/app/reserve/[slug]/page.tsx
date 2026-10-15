@@ -20,7 +20,7 @@ import { filled, locationFromConcept, type BrandLocation } from '../../../lib/br
 import { formatBrandName, type ServiceHourSlot } from '../../../lib/concept'
 import { breadcrumbSchema, jsonLdScript, restaurantSchema } from '../../../lib/jsonLd'
 import { fetchLiveConcepts, isServdCompanyBrand, lookupConcept } from '../../../lib/liveConcepts'
-import { brandDescriptor } from '../../brand/[slug]/meta'
+import { brandDescriptor, cityOf } from '../../brand/[slug]/meta'
 import ReserveScreen from './ReserveScreen'
 
 export const dynamic = 'force-dynamic'
@@ -81,13 +81,16 @@ export default async function ReserveBrandPage({ params }: Params) {
   )
 }
 
-/** "Simmer — small plates in DHA Phase 6, Karachi, at 42/C, Lane 8, …. Open
+/** "Simmer — small plates in DHA Phase 6, Karachi. The address is 42/C, …. Open
  *  every day, 6 pm to 1 am. Phone +92 …. Book a table online for 1 to 20
  *  people: …" — plain facts from the brand record, no exclamation marks
  *  (Simmer's rules hold on every page that names it). */
 function factualParagraph(name: string, loc: BrandLocation): string {
-  const street = [filled(loc.street), filled(loc.area)].filter(Boolean).join(', ')
-  const parts: string[] = [`${name} — ${brandDescriptor(loc)}${street ? `, at ${street}` : ''}.`]
+  const parts: string[] = [`${name} — ${brandDescriptor(loc)}.`]
+  // The full address only when a street is on file (the area alone is
+  // already in the line above).
+  const street = filled(loc.street)
+  if (street) parts.push(`The address is ${[street, filled(loc.area), cityOf(loc)].filter(Boolean).join(', ')}.`)
   const hours = hoursSentence(loc.hours ?? [])
   if (hours) parts.push(hours)
   const phone = filled(loc.phone)

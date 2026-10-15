@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  hostBrand, BRAND_HOST_HEADER, SERVD_HOSTS, SERVD_ORIGIN, isBrandRewritePath,
+  hostBrand, BRAND_HOST_HEADER, SERVD_HOSTS, SERVD_ORIGIN, SERVD_LINK_ORIGIN, isBrandRewritePath,
 } from './lib/brandDomains'
 import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE } from './lib/abVariant'
 import { isEditorFramePath } from './lib/editorFrame'
 import { frameAncestors } from './lib/adminOrigins'
+import { isCertainlyNotABrand, liveBrandSlugs } from './lib/crawlGate'
 
 // Host-based brand routing.
 //
@@ -99,9 +100,23 @@ function brandSelfPath(pathname: string, slug: string): string | null {
 
 /** The app's own top-level routes: /<one of these>/menu is not a brand's. */
 const TOP_LEVEL_ROUTES = new Set([
-  'account', 'api', 'auth', 'brand', 'editor-frame', 'group-order', 'home', 'locations', 'login',
-  'orders', 'pages', 'press', 'preview', 'reserve', 'signup', 'waitlist',
+  'about', 'account', 'api', 'auth', 'brand', 'contact', 'editor-frame', 'faq', 'group-order', 'home',
+  'locations', 'login', 'orders', 'pages', 'press', 'preview', 'privacy', 'reserve', 'rider', 'signup',
+  'terms', 'waitlist',
 ])
+
+/** servd's own pages: on a brand's domain they live on servd.pk instead. */
+const SERVD_ONLY_TOP = new Set(['home', 'locations', 'press', 'waitlist', 'faq', 'contact', 'privacy', 'terms'])
+
+/** The slug of a brand ORDERING path — /<slug> or /reserve/<slug> (nothing
+ *  deeper: checkout / order tracking have no slug gate) — else null. */
+function orderingSlug(pathname: string): string | null {
+  const reserve = /^\/reserve\/([^/]+)\/?$/.exec(pathname)
+  if (reserve?.[1]) return reserve[1]
+  const top = /^\/([^/]+)\/?$/.exec(pathname)
+  if (!top?.[1] || TOP_LEVEL_ROUTES.has(top[1].toLowerCase())) return null
+  return top[1]
+}
 
 /**
  * /<brand>/menu and /<brand>/order → /<brand>: the menu IS the ordering
@@ -187,6 +202,67 @@ async function apexRedirect(req: NextRequest, host: string): Promise<NextRespons
   return NextResponse.redirect(`${https ? 'https' : 'http'}://${apex}${path}${search}`, 308)
 }
 
+
+/**
+ * A URL that NO route matches. `[concept]` is a one-segment catch-all
+ * (/__not-found alone would be a "brand" and 404 through its layout, bare), and
+ * `[concept]/checkout`, `[concept]/order/[id]` are the deepest dynamic routes,
+ * so five static-looking segments match nothing and Next draws the real
+ * server-rendered 404 (root layout + app/not-found.tsx).
+ */
+const UNMATCHED_PATH = '/__not-found/a/b/c/d'
+
+/**
+ * A path that is certainly not a brand's ordering page → rewrite it onto a URL
+ * no route matches, so Next draws the REAL server-rendered 404 (status 404,
+ * root layout, <title>, app/not-found.tsx) instead of the bare
+ * `__next_error__` shell it sends for a notFound() thrown in a page or layout
+ * (see lib/crawlGate.ts). Fails open: unknown / API down → null.
+ */
+async function serverNotFound(req: NextRequest, slug: string | null, newVisitorId: string | null) {
+  const target = orderingSlug(req.nextUrl.pathname)
+  if (!target || !(await isCertainlyNotABrand(target))) return null
+  const url = req.nextUrl.clone()
+  url.pathname = UNMATCHED_PATH
+  const headers = new Headers(req.headers)
+  headers.delete(BRAND_HOST_HEADER)
+  // On a brand's domain the 404 page links back to that brand.
+  if (slug) headers.set(BRAND_HOST_HEADER, slug)
+  withVisitorCookie(headers, newVisitorId)
+  return setVisitorCookie(NextResponse.rewrite(url, { request: { headers } }), newVisitorId)
+}
+
+/** Hosts that are dev / preview stand-ins, never a brand's public domain. */
+function isDevOrPreviewHost(bare: string): boolean {
+  return /(^|\.)(localhost|servd\.app|servd\.pk)$/.test(bare) || bare === '127.0.0.1' || bare === '[::1]'
+}
+
+/**
+ * On a brand's own domain, where does a servd-only path live? servd.pk's
+ * /home, /locations, /press, /waitlist, /faq, /contact, /privacy, /terms, the
+ * reservation index, and ANOTHER brand's ordering / reservation / microsite
+ * pages are not part of this brand's site: each is one permanent hop to the
+ * same path on servd.pk (so simmer.pk/stackd stops being a duplicate of
+ * servd.pk/stackd). The brand's own ordering, checkout, tracker, /reserve/<own>,
+ * login and account pages stay. null = stay. Needs a configured servd origin
+ * (so local dev, where SERVD_LINK_ORIGIN is empty, never leaves the host).
+ */
+async function servdOnlyPath(pathname: string, own: string, bare: string): Promise<string | null> {
+  if (!SERVD_LINK_ORIGIN || isDevOrPreviewHost(bare)) return null
+  const parts = pathname.split('/').filter(Boolean)
+  const first = (parts[0] ?? '').toLowerCase()
+  if (!first) return null
+  if (first === 'home') return '/' + parts.slice(1).join('/')
+  if (SERVD_ONLY_TOP.has(first)) return pathname
+  if (first === 'reserve' && parts.length === 1) return pathname
+  const otherSlug = first === 'reserve' || first === 'brand' ? parts[1] : parts[0]
+  if (!otherSlug || otherSlug === own) return null
+  if (first !== 'reserve' && first !== 'brand' && TOP_LEVEL_ROUTES.has(first)) return null
+  if (first === 'brand' && parts.length === 1) return null
+  const live = await liveBrandSlugs()
+  return live?.has(otherSlug) ? pathname : null
+}
+
 export async function middleware(req: NextRequest) {
   const host = req.headers.get('host') ?? ''
 
@@ -206,7 +282,7 @@ export async function middleware(req: NextRequest) {
     const bare = bareHost(host)
     const devHost = process.env.NODE_ENV !== 'production' && (bare === '127.0.0.1' || bare === '[::1]')
     if (!isEditorFramePath(req.nextUrl.pathname) || (!isServdHost(bare) && !devHost)) {
-      const res = NextResponse.rewrite(new URL('/__editor-frame-not-here', req.url))
+      const res = NextResponse.rewrite(new URL(UNMATCHED_PATH, req.url))
       res.headers.set('Content-Security-Policy', "frame-ancestors 'none'")
       res.headers.set('X-Frame-Options', 'DENY')
       return res
@@ -238,10 +314,22 @@ export async function middleware(req: NextRequest) {
     return setVisitorCookie(NextResponse.redirect(url, settled.status), newVisitorId)
   }
 
-  if (!slug) return setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
+  if (!slug) {
+    return (await serverNotFound(req, null, newVisitorId))
+      ?? setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
+  }
 
   const { pathname } = req.nextUrl
-  if (!isBrandRewritePath(pathname)) return setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
+  if (!isBrandRewritePath(pathname)) {
+    // servd-only paths (and the other brands') live on servd.pk — one
+    // permanent hop. The host was positively placed (hostBrand), so 308.
+    const away = await servdOnlyPath(pathname, slug, bare)
+    if (away !== null) {
+      return setVisitorCookie(NextResponse.redirect(`${SERVD_LINK_ORIGIN}${away}${req.nextUrl.search}`, 308), newVisitorId)
+    }
+    return (await serverNotFound(req, slug, newVisitorId))
+      ?? setVisitorCookie(passThrough(req, newVisitorId), newVisitorId)
+  }
 
   const url = req.nextUrl.clone()
   url.pathname = pathname === '/' ? `/brand/${slug}` : `/brand/${slug}${pathname}`

@@ -10,14 +10,16 @@
 
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import { Breadcrumbs } from '../../../../components/Breadcrumbs'
 import { fetchSiteLayout, pageSeo } from '../../../../lib/blocks'
 import { locationFromConcept } from '../../../../lib/brandLocations'
 import { formatBrandName } from '../../../../lib/concept'
+import { brandCanonical } from '../../../../lib/brandDomains'
 import { jsonLdScript, menuSchema } from '../../../../lib/jsonLd'
 import { asSentence, fetchLiveConcepts, findConceptOrThrow, fitSentences, joinNames, resolveConcept } from '../../../../lib/liveConcepts'
 import { fetchBrandMenu, hasMenuItems } from '../../../../sections/data'
 import { ManagedPage } from '../../../../sections/ManagedPage'
-import { SUBPAGE_TITLE, brandBreadcrumb, brandCtx, brandPageMetadata, leadText, pageBlocks, brandDescriptor, type Params } from '../meta'
+import { SUBPAGE_TITLE, brandCtx, brandPageMetadata, leadText, pageBlocks, brandDescriptor, type Params } from '../meta'
 
 // Force-dynamic + no-store so a single bad fetch at first request
 // doesn't get baked into the ISR cache for the next 60s.
@@ -51,7 +53,7 @@ export default async function BrandMenuPage({ params }: Params) {
   const concept = findConceptOrThrow(slug, concepts)
   if (!concept) notFound()
 
-  const ld: Record<string, unknown>[] = [brandBreadcrumb(concept, SUBPAGE_TITLE.menu, 'menu')]
+  const ld: Record<string, unknown>[] = []
   if (hasMenuItems(menu)) {
     ld.push(menuSchema({
       loc: locationFromConcept(concept),
@@ -61,7 +63,11 @@ export default async function BrandMenuPage({ params }: Params) {
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
+      {ld.length > 0 && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />}
+      <Breadcrumbs items={[
+        { name: formatBrandName(concept.name), href: brandCanonical(slug) },
+        { name: SUBPAGE_TITLE.menu, href: brandCanonical(slug, 'menu') },
+      ]} />
       <ManagedPage slug={`brand:${slug}:menu`} {...(concepts.length ? { concepts } : {})} />
     </>
   )

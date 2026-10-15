@@ -1465,18 +1465,30 @@ model FeedbackEntry {
   id         String   @id @default(uuid())
   customerId String?
   conceptId  String? // null = brand-agnostic / servd-wide feedback
-  kind       String // 'nps' | 'csat' | 'open'
-  score      Int? // 0..10 for nps, 1..5 for csat, null for open
+  kind       String // 'nps' | 'csat' | 'open' | 'contact'
+  score      Int? // 0..10 for nps, 1..5 for csat, null for open / contact
   comment    String?
   context    Json? // { page, orderId, reservationId, etc. } — set by client
   source     String   @default("storefront")
   createdAt  DateTime @default(now())
+  // SEO round 1 (WP4): the company that owns the entry — always derived on
+  // the server (the chosen brand's company, else the primary company for a
+  // contact message), never from the client. Null only on legacy rows with no
+  // brand, which no company can read.
+  tenantId   String?
+  // 'contact' kind only: who wrote, how to reply (never messaged on submit),
+  // and the topic (catering | complaint | press | jobs | other).
+  contactName String?
+  replyPhone  String?
+  replyEmail  String?
+  topic       String?
 
   customer Customer? @relation(fields: [customerId], references: [id])
   concept  Concept?  @relation(fields: [conceptId], references: [id])
 
   @@index([conceptId, createdAt])
   @@index([customerId, createdAt])
+  @@index([tenantId, kind, createdAt])
   @@map("feedback_entries")
 }
 

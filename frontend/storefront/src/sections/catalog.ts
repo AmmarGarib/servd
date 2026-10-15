@@ -8,8 +8,9 @@ import * as brand from './brand/catalog'
 import * as stackd from './stackd/catalog'
 import * as simmer from './simmer/catalog'
 import * as flipd from './flipd/catalog'
+import * as legal from './legal/catalog'
 
-const GROUPS = [servd, brand, stackd, simmer, flipd]
+const GROUPS = [servd, brand, stackd, simmer, flipd, legal]
 
 export const SECTION_SPECS: SectionSpec[] = GROUPS.flatMap((g) => g.specs)
 export const PAGE_DEFAULTS: PageDefault[] = GROUPS.flatMap((g) => g.pages)

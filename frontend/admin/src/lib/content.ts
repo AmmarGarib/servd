@@ -257,7 +257,7 @@ export const brandOfKitSlug = (slug: string) => (isKitSlug(slug) ? slug.split(':
 export const kitHref = (brandSlug: string) => `/storefront/kit/${encodeURIComponent(brandSlug)}`
 
 const SERVD_PATHS: Record<string, string> = {
-  home: '/home', header: '/home', footer: '/home', feedback: '/home', waitlist: '/waitlist', press: '/press', reserve: '/reserve',
+  home: '/home', header: '/home', footer: '/home', feedback: '/home', waitlist: '/waitlist', press: '/press', reserve: '/reserve', privacy: '/privacy', terms: '/terms', contact: '/contact',
 }
 
 /** Where the live page is on the storefront (null for pop-ups / templates). */

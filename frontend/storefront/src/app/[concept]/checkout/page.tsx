@@ -6,7 +6,7 @@ import { useCart } from '../../../store/cart'
 import { useCustomerAuth } from '../../../store/customerAuth'
 import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
-import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
+import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed, track, armPurchase } from '../../../lib/analytics'
 import DeliveryPin, { type LatLng } from '../../../components/checkout/DeliveryPin'
 import { fulfilmentFor, type FulfilmentOption } from '../../../lib/fulfilment'
 
@@ -409,6 +409,8 @@ export default function CheckoutPage() {
   useEffect(() => {
     if (items.length > 0) {
       trackCheckoutStarted(slug, items.length, subtotalCents())
+      // GA4 begin_checkout (no-op without GA4 + consent).
+      track('begin_checkout', { currency: 'PKR', value: subtotalCents() / 100, item_brand: slug, items: items.length })
     }
     return () => {
       if (!_orderPlaced.current) {
@@ -615,6 +617,7 @@ export default function CheckoutPage() {
         if (appliedPromo) trackPromoApplied(appliedPromo, slug, promoDiscountCents)
         _orderPlaced.current = true
         trackOrderPlaced(order.id, slug, order.totalCents ?? displayTotal ?? 0, paymentMethod)
+        armPurchase(order.id) // the tracker page fires GA4 `purchase` once for this order
         clearCart()
         if (order.giftCardError?.message) {
           // Placed at full price — the customer must see why before the tracker.

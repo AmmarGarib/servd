@@ -8,14 +8,17 @@
 //     category with a roman numeral, dish + description + price, and an
 //     order button in place of the "flag your server" note.
 //
-// Outline: the masthead line is the page's h1, each course an h2, each dish
-// an h3, the closing headline an h2 — in the same type as before (the h-tag
+// Outline: the page's h1 says what the page is ("Simmer menu in Karachi" —
+// the words search engines and AI answers read), the wordmark line under it is
+// a styled paragraph (it is the tagline "simmer down." and stays below the
+// wordmark), each course an h2, each dish an h3, the closing headline an h2 — in the same type as before (the h-tag
 // defaults in globals.css are reset inline; see HEADING_RESET).
 
 import Link from 'next/link'
 import { Fragment } from 'react'
 import type { SectionProps } from '../types'
 import { fetchBrandMenu, hasMenuItems, type MenuCategory } from '../data'
+import { filled, locationFromConcept } from '../../lib/brandLocations'
 import { formatBrandName } from '../../lib/concept'
 import { link, list, str } from '../safe'
 import { HEADING_RESET, simmerConcept, simmerHref, simmerLines, simmerText, stampOr } from './shared'
@@ -61,6 +64,9 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
   const live = hasMenuItems(categories)
   const courses = live ? liveCourses(categories) : placeholderCourses(f['courses'])
 
+  // The h1: what this page is, in plain words. Name and city are the brand
+  // record's (formatBrandName, Concept.addressLocality), never typed here.
+  const menuHeading = `${formatBrandName(concept.name)} menu in ${filled(locationFromConcept(concept).city) || 'Karachi'}`
   const kicker = simmerText(f['kicker'])
   const wordmark = simmerText(f['wordmark'])
   const mark = simmerText(f['mark'])
@@ -98,18 +104,23 @@ export async function Menu({ fields: f, ctx }: SectionProps) {
           </div>
 
           <div style={{ textAlign: 'center', padding: '2.4rem 0 0.6rem' }}>
+            <h1 className="utility" style={{
+              ...HEADING_RESET, fontSize: '0.78rem', opacity: 0.85, margin: '0 0 1rem',
+            }}>
+              {menuHeading}
+            </h1>
             {kicker && (
               <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1rem' }}>
                 {kicker}
               </p>
             )}
             {(wordmark || mark) && (
-              <h1 className="wordmark amarante" style={{
+              <p className="wordmark amarante" style={{
                 ...HEADING_RESET,
                 fontSize: 'clamp(2.6rem, 8vw, 4.2rem)', lineHeight: 1, margin: 0,
               }}>
                 {wordmark}{mark && <span className="signal">{mark}</span>}
-              </h1>
+              </p>
             )}
             {!live && draftNote && (
               <p className="utility" style={{

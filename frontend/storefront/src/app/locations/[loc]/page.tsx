@@ -17,8 +17,9 @@
 
 import type { Metadata } from 'next'
 import { notFound, permanentRedirect } from 'next/navigation'
+import { Breadcrumbs } from '../../../components/Breadcrumbs'
 import { addressLine, filled, isPublishableLocation, type BrandLocation } from '../../../lib/brandLocations'
-import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
+import { restaurantSchema, jsonLdScript } from '../../../lib/jsonLd'
 import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../../lib/brandDomains'
 import { fetchSiteLayout, pageSeo } from '../../../lib/blocks'
 import { asSentence, fetchLiveConcepts, fitSentences, isServdCompanyBrand } from '../../../lib/liveConcepts'
@@ -75,16 +76,19 @@ export default async function LocationPage({ params }: Params) {
     // The brand's own description and hours (restaurantSchema's defaults),
     // so this node matches the one on the brand's domain and /home.
     restaurantSchema({ loc: brand, ownedByServd: isServdCompanyBrand(brand.slug, live) }),
-    breadcrumbSchema([
-      { name: 'servd',                            url: `${SERVD_ORIGIN}/` },
-      { name: brand.name,                         url: brandCanonical(brand.slug) },
-      { name: addressLine(brand) || brand.name,   url: canonicalFor(brand) },
-    ]),
   ]
 
   return (
     <PageSurface slug="servd:location">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schemaGraph) }} />
+      <Breadcrumbs
+        origin={SERVD_ORIGIN}
+        items={[
+          { name: 'servd', href: '/' },
+          { name: 'Locations', href: '/locations' },
+          { name: brand.name, href: `/locations/${brand.locationSlug}` },
+        ]}
+      />
       <ManagedPage slug="servd:location" params={{ loc: brand.locationSlug }} />
     </PageSurface>
   )
