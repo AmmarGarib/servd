@@ -12,6 +12,8 @@
 //   POST /jobs/:orderId/picked-up     accepted → picked up (order must be ready)
 //   POST /jobs/:orderId/arrived       picked up → at the door
 //   POST /jobs/:orderId/deliver       the customer's code → delivered
+//   POST /jobs/:orderId/door-problem  no code / refused / unreachable (code-only
+//                                     companies; 10/min)
 //   POST /location                    a fix (rate limit keyed on the rider);
 //                                     409 OFF_SHIFT while 'offline'
 //
@@ -26,7 +28,7 @@ import { requireRider, riderRateKey } from '../riderAuth/middleware.js'
 import { riderPublic } from '../riderAuth/service.js'
 import { offShiftError, recordRiderFix, riderFixSchema } from '../dispatch/service.js'
 import {
-  acceptJob, arriveJob, declineJob, deliverJob, getJob, listJobs, openJobWhere, pickUpJob, setShift,
+  acceptJob, arriveJob, declineJob, deliverJob, getJob, listJobs, openJobWhere, pickUpJob, reportDoorProblem, setShift,
   OtpMismatchError,
 } from './service.js'
 
@@ -54,7 +56,9 @@ export async function riderAppRoutes(fastify: FastifyInstance) {
 
   fastify.post('/shift', { config: limit(30, '1 minute') }, async (req) => {
     const body = z.object({ online: z.boolean() }).parse(req.body)
-    return { rider: await setShift(req.rider!, body.online) }
+    const rider = await setShift(req.rider!, body.online)
+    // Off shift: cashHeldCents (COD not yet handed in) is a warning only.
+    return { rider, ...(rider.cashHeldCents !== undefined ? { cashHeldCents: rider.cashHeldCents } : {}) }
   })
 
   fastify.get('/jobs', { config: limit(120, '1 minute') }, async (req) => {
@@ -84,6 +88,15 @@ export async function riderAppRoutes(fastify: FastifyInstance) {
   fastify.post<JobParams>('/jobs/:orderId/arrived', { config: limit(60, '1 minute') }, async (req) => {
     const body = posSchema.parse(req.body ?? {})
     return { job: await arriveJob(req.rider!, req.params.orderId, body) }
+  })
+
+  fastify.post<JobParams>('/jobs/:orderId/door-problem', { config: limit(10, '1 minute') }, async (req) => {
+    const body = z.object({
+      kind: z.enum(['no_code', 'refused', 'unreachable']),
+      note: z.string().trim().max(300).optional(),
+      ...pos,
+    }).parse(req.body)
+    return reportDoorProblem(req.rider!, req.params.orderId, body)
   })
 
   fastify.post<JobParams>('/jobs/:orderId/deliver', { config: limit(30, '1 minute') }, async (req, reply) => {

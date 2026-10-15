@@ -57,6 +57,7 @@ import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../accounting/dates.js'
 import { refundShareOf, giftCardAppliedOf, saleBookingOf, voidSplitOf, netOfVoidRefunds, isSplitVoidRefund, type RefundShare, type SaleOrderFields } from '../accounting/orderPosting.js'
 import { tenderLabel } from '../../lib/tenders.js'
+import { codStatusOf } from '../../lib/cod.js'
 
 export interface SalesQuery {
   /** Company scope — scopeTenantWhere(req, 'read'), or `{ tenantId }` in a worker. */
@@ -540,11 +541,12 @@ export async function stationTimes(q: SalesQuery): Promise<StationTimes> {
 // Card – Keenu, Raast QR and the retired Keenu QR's old rows — plus wallet
 // credit (Order.walletAmountCents) and gift cards (redemptions). Cash on
 // delivery whose cash has NOT reached a drawer (still 'pending' on a sold
-// non-till order) is its own row, never "Cash": 'cod_with_rider' while the
-// rider still holds it, 'cod_not_collected' once a manager has reported it
-// never paid (POST /orders/:id/cod-unpaid). The rows still add up to the
-// sales; where that unpaid cash lands in the books is pending owner decision
-// G1. Comps are not money: reported apart, never in a share. sharePct is each
+// non-till order) is its own row, never "Cash": 'cod_rider_owes' once
+// finance booked it as owed by the rider (H5: Payment.codRiderDebtAt, 1351 /
+// the inter-company 'cod' transfer — status from lib/cod.ts codStatusOf),
+// 'cod_with_rider' otherwise (still out with the rider, overdue, or a pickup's
+// cash not yet at the counter). The rows still add up to the sales. On-account
+// bills (the client's account, invoiced on a statement) are their own row. Comps are not money: reported apart, never in a share. sharePct is each
 // tender's share of the money tenders (everything but comp). Raast is split
 // by its reconciliation state: provisional (no bank statement has shown it
 // yet), matched, written off as not received. Refunds by tender are the money
@@ -570,16 +572,27 @@ export interface SalesByTender {
   totalCents: number
   comp: { amountCents: number; orders: number }
   raast: { provisionalCents: number; provisionalCount: number; matchedCents: number; matchedCount: number; unreceivedCents: number; unreceivedCount: number }
-  /** Cash on delivery by where the cash is: paid into a drawer, still with the rider, reported never paid. */
-  cod: { paidInCents: number; paidInCount: number; withRiderCents: number; withRiderCount: number; notCollectedCents: number; notCollectedCount: number }
+  /**
+   * Cash on delivery by where the cash is: paid into a drawer, still with the
+   * rider, booked as owed by the rider (H5). `notCollected*` are DEPRECATED
+   * aliases of `riderOwes*` (same values) kept for older admin builds.
+   */
+  cod: {
+    paidInCents: number; paidInCount: number; withRiderCents: number; withRiderCount: number
+    riderOwesCents: number; riderOwesCount: number
+    /** @deprecated use riderOwesCents */
+    notCollectedCents: number
+    /** @deprecated use riderOwesCount */
+    notCollectedCount: number
+  }
   refunds: Array<{ tender: string; label: string; amountCents: number; count: number }>
 }
 
-const TENDER_ORDER = ['cash', 'cod_with_rider', 'cod_not_collected', 'card', 'raast', 'keenu_qr', 'wallet', 'gift_card'] as const
+const TENDER_ORDER = ['cash', 'cod_with_rider', 'cod_rider_owes', 'card', 'raast', 'on_account', 'keenu_qr', 'wallet', 'gift_card'] as const
 /** The two COD rows are not payment methods — their labels live here. */
 const COD_LABELS: Record<string, string> = {
   cod_with_rider: 'Cash on delivery – with rider',
-  cod_not_collected: 'Cash on delivery – not collected',
+  cod_rider_owes: 'Cash on delivery – owed by rider',
 }
 
 export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
@@ -596,15 +609,14 @@ export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
         { status: 'pending', method: 'cash', order: { source: { not: 'pos' } } },
       ],
     },
-    select: { method: true, status: true, amountCents: true, orderId: true, raastReceipt: { select: { status: true } }, order: { select: { source: true } } },
+    select: {
+      method: true, status: true, amountCents: true, orderId: true, createdAt: true, codRiderDebtAt: true,
+      raastReceipt: { select: { status: true } },
+      order: { select: { source: true, fulfilmentType: true, riderId: true, deliveredAt: true, completedAt: true } },
+    },
   })
-  // COD a manager reported never paid: a cod_unpaid strike on the order.
-  const pendingCodOrders = [...new Set(rows.filter((p) => p.status === 'pending').map((p) => p.orderId))]
-  const reportedUnpaid = new Set(pendingCodOrders.length === 0 ? [] : (await prisma.customerStrike.findMany({
-    where: { kind: 'cod_unpaid', sourceType: 'order', sourceId: { in: pendingCodOrders } },
-    select: { sourceId: true },
-  })).map((s) => s.sourceId))
-  const cod = { paidInCents: 0, paidInCount: 0, withRiderCents: 0, withRiderCount: 0, notCollectedCents: 0, notCollectedCount: 0 }
+  const cod = { paidInCents: 0, paidInCount: 0, withRiderCents: 0, withRiderCount: 0, riderOwesCents: 0, riderOwesCount: 0 }
+  const now = new Date()
   const by = new Map<string, { amountCents: number; payments: number; orders: Set<string> }>()
   const add = (tender: string, cents: number, orderId: string, receipts = 1) => {
     const s = by.get(tender) ?? { amountCents: 0, payments: 0, orders: new Set<string>() }
@@ -617,9 +629,11 @@ export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
   for (const p of rows) {
     if (p.method === 'cash' && p.status === 'pending') {
       // Cash on delivery not in a drawer — never counted as Cash received.
-      if (reportedUnpaid.has(p.orderId)) {
-        add('cod_not_collected', p.amountCents, p.orderId)
-        cod.notCollectedCents += p.amountCents; cod.notCollectedCount++
+      // The ONE status rule (lib/cod.ts): booked to the rider (H5) is its own
+      // row; with the rider, overdue or at the counter stay 'with rider'.
+      if (codStatusOf(p, p.order, now) === 'rider_owes') {
+        add('cod_rider_owes', p.amountCents, p.orderId)
+        cod.riderOwesCents += p.amountCents; cod.riderOwesCount++
       } else {
         add('cod_with_rider', p.amountCents, p.orderId)
         cod.withRiderCents += p.amountCents; cod.withRiderCount++
@@ -676,7 +690,8 @@ export async function salesByTender(q: SalesQuery): Promise<SalesByTender> {
     from: q.from, to: q.to, tenders, totalCents,
     comp: { amountCents: comp?.amountCents ?? 0, orders: comp?.orders.size ?? 0 },
     raast,
-    cod,
+    // notCollected* — deprecated aliases of riderOwes* (same values) until the admin reads the new keys.
+    cod: { ...cod, notCollectedCents: cod.riderOwesCents, notCollectedCount: cod.riderOwesCount },
     refunds: [...refundBy].map(([tender, s]) => ({ tender, label: tenderLabel(tender), ...s })).sort((a, b) => b.amountCents - a.amountCents),
   }
 }

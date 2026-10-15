@@ -3,8 +3,9 @@
 //
 // What this guards:
 //   - cancelOrder is the only way an order ends without a sale, and every
-//     entry point (manager cancel, expo reject, refused-at-door, the
-//     auto-cancel sweep) gets the same effects: cancelledAt + reason on the
+//     entry point (manager cancel, expo reject, food a rider brought back —
+//     orders/returnedFood.ts, see foodReturned.test.ts — the auto-cancel
+//     sweep) gets the same effects: cancelledAt + reason on the
 //     order, the wallet / gift card given back, a promo usage released, one
 //     audit entry — exactly once, however often it is called.
 //   - 'rejected' restores what the customer paid, like 'cancelled'.

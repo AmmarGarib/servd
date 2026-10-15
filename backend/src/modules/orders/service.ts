@@ -18,6 +18,7 @@ import { generateDeliveryOtp } from '../../lib/deliveryOtp.js'
 import { courseOf, isLiveLine, isFireable, fireOrderItems } from '../expo/fire.js'
 import type { FiscalView } from '../../connectors/fiscal/view.js'
 import { withSavepoint } from '../../lib/savepoint.js'
+import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
 
 // ─── Inventory (recipe-driven, FIFO lots) ────────────────────────────────────
 //
@@ -1103,6 +1104,12 @@ async function transitionOrder(
     via?: CompletionVia
     /** Cancel / reject: the MANAGER who approved it (null = the system), stamped on the order's pre-bills. */
     approverId?: string | null
+    /**
+     * Cancel / reject only: run inside the cancel transaction, straight after
+     * the pre-bills are cancelled, and only when this call's claim changed the
+     * status (the order lock is held). A throw rolls the whole cancel back.
+     */
+    inCancelTx?: (tx: Prisma.TransactionClient) => Promise<void>
   } = {},
 ) {
   const order = await prisma.order.findFirst({ where: { id, deletedAt: null } })
@@ -1171,6 +1178,7 @@ async function transitionOrder(
       if (r.count > 0) {
         const { markPreBillsCancelledTx } = await import('../prebills/service.js')
         await markPreBillsCancelledTx(tx, id, opts.approverId ?? null, opts.cancellationReason ?? null, now)
+        if (opts.inCancelTx) await opts.inCancelTx(tx)
       }
       return r
     }, { maxWait: 10_000, timeout: 15_000 })
@@ -1356,8 +1364,8 @@ async function releasePromoUsage(orderId: string, promoCodeId: string): Promise<
 // ─── Cancel / reject ──────────────────────────────────────────────────────────
 //
 // The one way an order ends without a sale. Every entry point — the manager
-// cancel on /orders and /refunds, the expo reject, refused-at-door and the
-// auto-cancel sweep — comes through here, so each one gets the state machine,
+// cancel on /orders and /refunds, the expo reject, food a rider brought back
+// (orders/returnedFood.ts) and the auto-cancel sweep — comes through here, so each one gets the state machine,
 // the cancelledAt + reason stamp, the customer notice, the restores (wallet,
 // gift card, points earned on it, the stock the sale took), the promo release
 // and an audit entry.
@@ -1386,9 +1394,48 @@ export interface CancelOrderInput {
    * never left the kitchen) — the photo, when one was taken, rides on the
    * waste logs. Unfired lines always go back into their lots. Default
    * { wasteReason: 'cancelled_after_fire' }: every cancel follows this rule,
-   * a picked-up delivery included (the delivery-specific path is PARKED).
+   * A delivery the rider brought back (`returned`) wastes EVERY line as
+   * 'returned_food' (wasteAll — the food left the kitchen in the bag).
    */
-  cookedFood?: { wasteReason: 'cancelled_after_fire'; photoUrl?: string }
+  cookedFood?: { wasteReason: 'cancelled_after_fire' | 'returned_food'; photoUrl?: string; wasteAll?: boolean }
+  /**
+   * The food came back with the rider (orders/returnedFood.ts — Emergency
+   * overrides → Food came back). Inside the cancel transaction the order is
+   * stamped returnedAt / returnCause and its PENDING cash (cash on delivery
+   * that was never collected) becomes 'failed' with gatewayMeta.voided — no
+   * posting: nothing was booked for money that never arrived. Every line is
+   * then wasted 'returned_food' (cookedFood is ignored).
+   */
+  returned?: {
+    cause: ReturnCause
+    actorId: string
+    /**
+     * Called inside the cancel transaction once THIS call's claim stamped the
+     * return (never on a replay or a lost race) with the cash on delivery it
+     * voided. Its effect is only meaningful once cancelOrder resolves.
+     */
+    onClaimed?: (r: { codVoidedCents: number; codPaymentIds: string[] }) => void
+  }
+}
+
+export const RETURN_CAUSES = ['refused', 'unreachable', 'other'] as const
+export type ReturnCause = typeof RETURN_CAUSES[number]
+
+/** The cancel guard's message (code-only delivery on — lib/deliveryRules.ts). */
+export const USE_EMERGENCY_OVERRIDE_MESSAGE =
+  'This delivery is out with the rider. If the food comes back, a manager logs it in Emergency overrides.'
+
+/**
+ * Is this delivery out with its rider? Ready, not delivered, a rider on it,
+ * and either picked up (an app job) or handed to a rider without the app (a
+ * dispatcher's assignment: rider set, never offered through the app).
+ */
+export function deliveryOutWithRider(o: {
+  fulfilmentType: string; status: string; riderId: string | null; deliveredAt: Date | null
+  pickedUpAt: Date | null; riderAssignedAt: Date | null
+}): boolean {
+  if (o.fulfilmentType !== 'delivery' || o.status !== 'ready' || !o.riderId || o.deliveredAt) return false
+  return !!o.pickedUpAt || !o.riderAssignedAt
 }
 
 export async function cancelOrder(id: string, input: CancelOrderInput) {
@@ -1403,10 +1450,58 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
   if (!before) throw new NotFoundError('Order', id)
 
   const approverId = input.approverId === undefined ? (input.actor?.id ?? null) : input.approverId
+  const returned = input.returned ?? null
+  // Read under the order lock, inside the cancel transaction, so the guard
+  // and the returned-food stamps act on the state the claim was made on.
+  const inCancelTx = async (tx: Prisma.TransactionClient): Promise<void> => {
+    const o = await tx.order.findUniqueOrThrow({
+      where: { id },
+      select: { fulfilmentType: true, riderId: true, deliveredAt: true, pickedUpAt: true, riderAssignedAt: true },
+    })
+    // Code-only delivery ON (per company): a delivery out with its rider is
+    // not cancelled by hand — if the food comes back it is logged through
+    // Emergency overrides (booked as waste, the rider accounted for). The
+    // system auto-cancel (no actor) and an intake reject are exempt. OFF:
+    // today's behaviour.
+    if (!returned && input.actor && status !== 'rejected'
+      && deliveryOutWithRider({ ...o, status: before.status })
+      && await codeOnlyDelivery(tx, before.concept.tenantId)) {
+      throw new AppError('USE_EMERGENCY_OVERRIDE', USE_EMERGENCY_OVERRIDE_MESSAGE, 409)
+    }
+    if (!returned) return
+    const at = new Date()
+    await tx.order.update({ where: { id }, data: { returnedAt: at, returnCause: returned.cause } })
+    // The uncollected cash on delivery: claimed row by row (the order lock is
+    // held) so a concurrent pay-in cannot be overwritten — only a row still
+    // 'pending' moves.
+    const cod = await tx.payment.findMany({
+      where: { orderId: id, method: 'cash', status: 'pending' },
+      select: { id: true, gatewayMeta: true, amountCents: true },
+    })
+    let codVoidedCents = 0
+    const codPaymentIds: string[] = []
+    for (const p of cod) {
+      const meta = (p.gatewayMeta && typeof p.gatewayMeta === 'object' && !Array.isArray(p.gatewayMeta))
+        ? (p.gatewayMeta as Prisma.JsonObject) : {}
+      const claimed = await tx.payment.updateMany({
+        where: { id: p.id, status: 'pending' },
+        data: {
+          status: 'failed',
+          gatewayMeta: { ...meta, voided: { reason: 'returned_undelivered', at: at.toISOString(), by: returned.actorId } },
+        },
+      })
+      if (claimed.count > 0) {
+        codVoidedCents += p.amountCents
+        codPaymentIds.push(p.id)
+      }
+    }
+    returned.onClaimed?.({ codVoidedCents, codPaymentIds })
+  }
   const { order, changed } = await transitionOrder(id, status, {
     cancellationReason: reason,
     onlyFrom: input.onlyFrom,
     approverId,
+    inCancelTx,
   })
 
   // No sale → what the kitchen had not started goes back into its lots, and
@@ -1420,7 +1515,9 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
   if (changed) {
     try {
       await restoreInventoryForOrder(id, {
-        cookedFood: input.cookedFood ?? { wasteReason: 'cancelled_after_fire' },
+        cookedFood: returned
+          ? { wasteReason: 'returned_food', wasteAll: true }
+          : (input.cookedFood ?? { wasteReason: 'cancelled_after_fire' }),
         actorId: input.actor?.id ?? null,
         approverId,
       })
@@ -1476,7 +1573,7 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
       tenantId: before.concept.tenantId ?? input.actor?.tenantId ?? null,
       before: { status: before.status, totalCents: before.totalCents },
       after: { status },
-      metadata: { reason, approverId, ...(input.metadata ?? {}) },
+      metadata: { reason, approverId, ...(returned ? { returnCause: returned.cause } : {}), ...(input.metadata ?? {}) },
     })
   }
   return order

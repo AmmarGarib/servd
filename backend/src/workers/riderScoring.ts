@@ -17,12 +17,12 @@ export function startRiderScoringWorker(): void {
 }
 
 export async function runOnce(): Promise<{ checked: number; flagged: number }> {
-  // One sweep per company: each company's own riders, scored on that
+  // One sweep per company (head offices have no riders and are skipped): each company's own riders, scored on that
   // company's orders only, flagged into that company's inbox. Riders with no
   // company are nobody's and are skipped. (Thresholds are constants for now;
   // OperationsConfig has no rider tolerance yet — when it does, read it here
   // per company, the way shrinkageTrend reads its window.)
-  const tenants = await prisma.tenant.findMany({ where: { deletedAt: null }, select: { id: true } })
+  const tenants = await prisma.tenant.findMany({ where: { deletedAt: null, kind: 'company' }, select: { id: true } })
   let checked = 0
   let flagged = 0
   for (const t of tenants) {
@@ -52,11 +52,24 @@ export async function runForTenant(tenantId: string): Promise<{ checked: number;
     if (total < 5) continue        // not enough orders to score reliably
 
     const otpFailedOrders = await prisma.order.count({
-      where: { ...ofCompany, riderId: rider.id, deliveryOtpAttempts: { gte: 3 }, completedAt: { gte: since } },
+      where: {
+        ...ofCompany, riderId: rider.id, completedAt: { gte: since },
+        // A reroute resets deliveryOtpAttempts, so the count it kept and the
+        // reroute itself are OTP trouble too.
+        OR: [{ deliveryOtpAttempts: { gte: 3 } }, { handoverRerouteAttempts: { gte: 3 } }, { handoverReroutedAt: { not: null } }],
+      },
+    })
+    const reroutedOrders = await prisma.order.count({
+      where: { ...ofCompany, riderId: rider.id, handoverReroutedAt: { not: null }, completedAt: { gte: since } },
     })
 
     const cancelled = await prisma.order.count({
-      where: { ...ofCompany, riderId: rider.id, status: 'cancelled', updatedAt: { gte: since } },
+      // A food return the customer refused is not the rider's loss. (OR, not
+      // `not: 'refused'`, which would drop the NULLs.)
+      where: {
+        ...ofCompany, riderId: rider.id, status: 'cancelled', updatedAt: { gte: since },
+        OR: [{ returnCause: null }, { returnCause: { not: 'refused' } }],
+      },
     })
 
     const lostRate = total > 0 ? (cancelled + otpFailedOrders) / total : 0
@@ -85,7 +98,7 @@ export async function runForTenant(tenantId: string): Promise<{ checked: number;
       entityType: 'User',
       entityId: rider.id,
       actorId: rider.id,
-      metadata: { totalOrders: total, otpFailedOrders, cancelled, lostRate, windowDays: WINDOW_DAYS },
+      metadata: { totalOrders: total, otpFailedOrders, reroutedOrders, cancelled, lostRate, windowDays: WINDOW_DAYS },
     })
     flagged++
   }

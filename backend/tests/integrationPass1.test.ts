@@ -4,7 +4,8 @@
 //   6   the till's override flags carry their own kinds: 'manager_pin_failed'
 //       (the wrong-PIN lock), 'discount_above_cap' and 'price_override' —
 //       not 'self_approval' / 'comp_above_threshold' / 'high_value_void'.
-//   7   POST /orders/:id/cancel and /orders/:id/refused-at-door count a PIN
+//   7   POST /orders/:id/cancel and logging a till delivery the rider brought
+//       back (returnUndeliveredOrder — refused-at-door is gone) count a PIN
 //       against the ORDER's bucket too, so wrong PINs on one order cannot be
 //       spread across the void and cancel doors.
 //   10  petty-cash top-up over the box limit: no PIN → 403 TOPUP_OVER_LIMIT;
@@ -24,6 +25,7 @@ import { setManagerPin } from '../src/modules/auth/managerPin.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { setFiscalKicker } from '../src/connectors/fiscal/outbox.js'
 import { recordPunch } from '../src/modules/hr/attendance.js'
+import { returnUndeliveredOrder } from '../src/modules/orders/returnedFood.js'
 import { prisma, mkCompany, mkUser, caller, resetConnectorCache, type Company, type Who } from './connectorsFixtures.js'
 
 let app: FastifyInstance
@@ -51,8 +53,18 @@ const voidLine = (who: Who, orderId: string, orderItemId: string, pin: string) =
   call(who, 'POST', `/pos/orders/${orderId}/void`, { orderItemId, reason: 'guest left', managerOverridePin: pin })
 const cancel = (who: Who, orderId: string, pin?: string) =>
   call(who, 'POST', `/orders/${orderId}/cancel`, { reason: 'guest walked out', ...(pin !== undefined && { managerOverridePin: pin }) })
-const refused = (who: Who, orderId: string, pin?: string) =>
-  call(who, 'POST', `/orders/${orderId}/refused-at-door`, { reason: 'refused', ...(pin !== undefined && { managerOverridePin: pin }) })
+/** Food came back (Emergency overrides) for a till delivery: the error code it refuses with, or null. */
+const refused = async (who: Who, orderId: string, pin?: string): Promise<string | null> => {
+  try {
+    await returnUndeliveredOrder(orderId, {
+      actor: { id: who.id, email: null, tenantId: A.tenantId, role: who.role }, cause: 'refused', reason: 'refused',
+      ...(pin !== undefined && { managerOverridePin: pin }),
+    })
+    return null
+  } catch (err) {
+    return (err as AppError).code
+  }
+}
 
 const cashier = (tag: string, co: Company) => mkUser(`ip1-${tag}-${randomUUID().slice(0, 6)}`, 'cashier', co.tenantId)
 
@@ -158,14 +170,17 @@ describe('7 — order cancels count PINs against the order', () => {
     expect(audit?.tenantId).toBe(A.tenantId)
   })
 
-  it('wrong PINs spread over void, cancel and refused-at-door lock the ORDER after 5', async () => {
+  it('wrong PINs spread over void, cancel and food-came-back lock the ORDER after 5', async () => {
     const [c1, c2, c3, c4] = await Promise.all(['p1', 'p2', 'p3', 'p4'].map((t) => cashier(t, A)))
     const customer = await prisma.customer.create({ data: { name: 'Door Guest', phone: `+92300${Math.floor(1_000_000 + Math.random() * 8_999_999)}` } })
     const o = await ticket(c1, A)
     await prisma.order.update({ where: { id: o.id }, data: { customerId: customer.id } })
     for (let i = 0; i < 2; i++) expect((await voidLine(c1!, o.id, o.items[0]!.id, `93000${i}`)).json().error.code).toBe('INVALID_MANAGER_PIN')
     for (let i = 0; i < 2; i++) expect((await cancel(c2!, o.id, `93100${i}`)).json().error.code).toBe('INVALID_MANAGER_PIN')
-    expect((await refused(c3!, o.id, '932000')).json().error.code).toBe('INVALID_MANAGER_PIN')
+    // Out with a rider without the app, so "Food came back" reaches its PIN check.
+    const rider = await prisma.rider.create({ data: { tenantId: A.tenantId, name: 'ip1 rider', phone: '03125550202', status: 'busy', isActive: true } })
+    await prisma.order.update({ where: { id: o.id }, data: { fulfilmentType: 'delivery', status: 'ready', riderId: rider.id } })
+    expect(await refused(c3!, o.id, '932000')).toBe('INVALID_MANAGER_PIN')
     // Five wrong on this order from three people: a fourth cashier, even with
     // the right PIN, is refused for this order.
     const locked = await cancel(c4!, o.id, PIN_A)

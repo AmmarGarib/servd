@@ -250,7 +250,11 @@ export async function orderRoutes(fastify: FastifyInstance) {
       if (status === 'completed') {
         const door = completionDoor(order)
         if (door === 'delivery') {
-          throw new AppError('COMPLETE_ON_DELIVERY', 'A delivery completes when the rider marks it delivered (or the customer\'s OTP is verified) — use Dispatch.', 409)
+          throw new AppError(
+            'COMPLETE_ON_DELIVERY',
+            'A delivery completes only with the customer\'s code — the rider enters it in the rider app, or staff use Enter customer\'s code on Dispatch. If the customer can\'t give it, a manager can send it to the rider (Emergency overrides).',
+            409,
+          )
         }
         if (door === 'payment') {
           throw new AppError('COMPLETE_ON_PAYMENT', 'A till sale completes when it is paid at the till.', 409)
@@ -271,8 +275,11 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // other-company PIN). Reason required, the approver always recorded (audit
   // and the order's pre-bills, which become 'cancelled'); goes through
   // cancelOrder like every other way an order can end without a sale (expo
-  // reject, refused-at-door, the auto-cancel sweep). Nothing goes to the
-  // fiscal POS — there was no sale.
+  // reject, food a rider brought back, the auto-cancel sweep). Nothing goes
+  // to the fiscal POS — there was no sale. With code-only delivery on for the
+  // order's company, a delivery out with its rider answers 409
+  // USE_EMERGENCY_OVERRIDE: food that comes back is logged through Emergency
+  // overrides, so it is booked as waste and the rider is accounted for.
   fastify.post<{ Params: { id: string }; Body: { reason: string; managerOverridePin?: string } }>(
     '/:id/cancel',
     { preHandler: requireAuth(...CASHIERS) },
@@ -321,151 +328,14 @@ export async function orderRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Naughty list triggers ──────────────────────────────────────────────
-  // POST /orders/:id/cod-unpaid — a manager reports that a delivered
-  // cash-on-delivery order's cash never reached the till. Only a real COD:
-  // an online (non-till) order, completed, with its cash row still pending
-  // (not paid into a drawer). Records ONE strike per order (a second report
-  // of the same order is a no-op, so it cannot stack into a ban) and audits
-  // in the ORDER's company. It used to take any order from any staff role,
-  // and two calls on a PKR 5,000+ order banned the customer.
-  //
-  // The BOOKS are untouched: what happens to the sale when the cash never
-  // arrives (customer owes / rider owes / write-off / not delivered) is
-  // pending owner decision G1 — the payment stays pending, the sale stays
-  // booked, and the order stays on /pos/cod-due until the cash is taken in.
-  fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
-    '/:id/cod-unpaid',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
-      // Company-scoped — assertConceptAccess bypasses for management roles.
-      const order = await prisma.order.findFirst({
-        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
-        select: {
-          id: true, conceptId: true, customerId: true, totalCents: true, status: true, source: true,
-          concept: { select: { tenantId: true } },
-          payments: { where: { method: 'cash', amountCents: { gt: 0 } }, select: { id: true, status: true, amountCents: true } },
-        },
-      })
-      if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
-      await assertConceptAccess(req.staffUser!, order.conceptId)
-      if (order.source === 'pos' || order.payments.length === 0) {
-        throw new AppError('NOT_CASH_ON_DELIVERY', 'This order was not paid cash on delivery', 422)
-      }
-      if (order.status !== 'completed') {
-        throw new AppError('ORDER_NOT_COMPLETED', `This order is ${order.status} — only a delivered (completed) order can be reported unpaid`, 409)
-      }
-      const unpaid = order.payments.filter((p) => p.status === 'pending')
-      if (unpaid.length === 0) {
-        throw new AppError('COD_ALREADY_PAID', 'No cash is still owed on this order — it has been paid in or handed back', 409)
-      }
-      if (!order.customerId) {
-        throw new AppError('NO_CUSTOMER', 'Cash-unpaid strike requires a linked customer.', 422)
-      }
-
-      const { recordStrike } = await import('../../lib/strikes.js')
-      // High-value orders sting more — sev=2 means 2 incidents → ban.
-      const severity = order.totalCents >= 500_000 /* PKR 5,000+ */ ? 2 : 1
-      const strike = await recordStrike({
-        customerId: order.customerId,
-        kind: 'cod_unpaid',
-        sourceType: 'order',
-        sourceId: order.id,
-        severity,
-        reason: body.reason ?? 'Cash on delivery — not paid',
-        recordedById: req.staffUser?.id,
-      })
-
-      const unpaidCents = unpaid.reduce((s, p) => s + p.amountCents, 0)
-      await audit({ category: 'identity',
-        action: 'order.cod_unpaid', entity: 'Order', entityId: order.id,
-        userId: req.staffUser?.id ?? null, tenantId: order.concept.tenantId, userEmail: req.staffUser?.email ?? null,
-        metadata: { reason: body.reason, severity, totalCents: order.totalCents, unpaidCents, duplicate: strike.duplicate },
-      })
-      return { ok: true, severity, duplicate: strike.duplicate, unpaidCents }
-    },
-  )
-
-  // POST /orders/:id/refused-at-door — driver/staff marks a delivery as
-  // refused on arrival. Order goes to 'cancelled' (food was prepared but
-  // refused), and the customer gets a strike. Optional `reason` captures
-  // what the driver was told ("looked rude", "different person at door", etc.)
-  fastify.post<{ Params: { id: string }; Body: { reason?: string; managerOverridePin?: string } }>(
-    '/:id/refused-at-door',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req, reply) => {
-      const body = z.object({
-        reason: z.string().max(500).optional(),
-        // §17.4: a rung-up (till) order is only cancelled with a manager.
-        managerOverridePin: z.string().min(4).max(8).optional(),
-      }).parse(req.body ?? {})
-      // Company-scoped — assertConceptAccess bypasses for management roles, so
-      // the lookup itself must enforce the company boundary.
-      const order = await prisma.order.findFirst({
-        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
-        select: { id: true, conceptId: true, customerId: true, totalCents: true, status: true, source: true, concept: { select: { tenantId: true } } },
-      })
-      if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
-      await assertConceptAccess(req.staffUser!, order.conceptId)
-      if (!order.customerId) {
-        return reply.status(422).send({ error: { code: 'NO_CUSTOMER', message: 'Refused-at-door strike requires a linked customer.' } })
-      }
-      // Only an order still in service can be refused. This used to overwrite
-      // ANY status with 'cancelled' — a completed sale kept its revenue and
-      // journal entry while showing as cancelled (and was stamped completedAt
-      // as it went). A completed order that comes back is a refund.
-      if (!['received', 'confirmed', 'preparing', 'ready'].includes(order.status)) {
-        throw new AppError(
-          'ORDER_NOT_IN_SERVICE',
-          order.status === 'completed'
-            ? 'This order is already completed — refund it instead of marking it refused.'
-            : `This order is already ${order.status}.`,
-          409,
-        )
-      }
-
-      // §17.4: refusing a RUNG-UP order (rung at the till — a delivery the
-      // till sent out) cancels the whole order, which needs a manager. An
-      // online order refused at the door stays as it was (the rider / staff
-      // member reports it; the actor is recorded).
-      const approval = order.source === 'pos'
-        ? await requireManagerApproval({
-          actorId: req.staffUser!.id,
-          actorRole: req.staffUser!.role,
-          managerOverridePin: body.managerOverridePin,
-          tenantId: order.concept.tenantId,
-          action: 'Cancelling a rung-up order',
-          orderId: order.id,
-        })
-        : { approverId: req.staffUser!.id, viaPin: false }
-
-      // Cancel through the one cancel path — the food's already cooked, so
-      // there is no revenue to book, and whatever the customer paid with
-      // wallet or gift card is given back.
-      const severity = order.totalCents >= 500_000 ? 2 : 1
-      const reason = body.reason?.trim() || 'Customer refused order at the door.'
-      await cancelOrder(order.id, {
-        reason,
-        actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
-        approverId: approval.approverId,
-        action: 'order.refused_at_door',
-        metadata: { severity, totalCents: order.totalCents, approvedByPin: approval.viaPin },
-      })
-
-      const { recordStrike } = await import('../../lib/strikes.js')
-      await recordStrike({
-        customerId: order.customerId,
-        kind: 'cod_refused',
-        sourceType: 'order',
-        sourceId: order.id,
-        severity,
-        reason,
-        recordedById: req.staffUser?.id,
-      })
-      return { ok: true, severity }
-    },
-  )
+  // There is no POST /orders/:id/cod-unpaid and no POST
+  // /orders/:id/refused-at-door (removed 2026-10-15 with code-only delivery).
+  // A delivery that comes back — refused, unpaid, customer unreachable — is
+  // logged by a manager through Emergency overrides → Food came back
+  // (orders/returnedFood.ts): the order is cancelled, the uncollected cash on
+  // delivery voided, the food booked as waste and, for a refusal, one strike.
+  // COD cash a rider collected but never paid in is the rider's debt
+  // (lib/cod.ts), never a customer strike.
 
   // There is no POST /orders/:id/refund. Refunds go through the ONE refund
   // engine, POST /pos/orders/:orderId/refund (refundOrder in pos/service.ts):

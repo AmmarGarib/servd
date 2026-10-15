@@ -68,6 +68,7 @@ const { runDispatchSweep, pruneRiderLocations, OFFER_TIMEOUT_MS, DISPATCH_WINDOW
 const { generateDeliveryOtp, deliveryOtpMatches } = await import('../src/lib/deliveryOtp.js')
 const { normalisePhone } = await import('../src/modules/auth/otp.js')
 const { riderLocationFanout } = await import('../src/lib/ws.js')
+const { setCodeOnlyDelivery } = await import('../src/lib/deliveryRules.js')
 
 let app: FastifyInstance
 let tenantA: string
@@ -1248,5 +1249,58 @@ describe('GET /riders', () => {
     expect(b.map((r) => r.id)).toContain(riders['b1']!.id)
     expect(b.map((r) => r.id)).not.toContain(riders['a1']!.id)
     expect(b.every((r) => r.tenant?.name === 'GSX Viva')).toBe(true)
+  })
+})
+
+// ─── Code-only delivery: the rerouted code and the switch ───────────────────
+
+describe('the rerouted hand-over code and the code-only switch', () => {
+  it('deliver is unchanged with the switch off; the Job carries no code and no door-problem option', async () => {
+    await onlyAvailable('a1')
+    const o = await mkOrder(conceptA, { status: 'ready', otp: '3141' })
+    await prisma.order.update({ where: { id: o.id }, data: { riderId: riders['a1']!.id, riderAssignedAt: new Date(), riderAcceptedAt: new Date(), pickedUpAt: new Date() } })
+    const job = (await rider('a1', 'GET', `/jobs/${o.id}`)).json().job
+    expect(job.handover).toEqual({ rerouted: false, reroutedAt: null, code: null, whatsappSent: false })
+    expect(job.doorProblem).toBeNull()
+    expect(job.doorProblemEnabled).toBe(false)
+    const bad = await rider('a1', 'POST', `/jobs/${o.id}/deliver`, { otp: '0000' })
+    expect(bad.statusCode).toBe(403)
+    expect(bad.json().error.attemptsLeft).toBe(4)
+    expect((await rider('a1', 'POST', `/jobs/${o.id}/deliver`, { otp: '3141' })).statusCode).toBe(200)
+  })
+
+  it('handover.code shows only to the rider it was rerouted to, and the admin read follows the switch', async () => {
+    await onlyAvailable('a1', 'a2')
+    const o = await mkOrder(conceptA, { status: 'ready', otp: '2718' })
+    await prisma.order.update({
+      where: { id: o.id },
+      data: {
+        riderId: riders['a1']!.id, riderAssignedAt: new Date(), riderAcceptedAt: new Date(), pickedUpAt: new Date(),
+        handoverReroutedAt: new Date(), handoverRerouteRiderId: riders['a1']!.id,
+      },
+    })
+    const mine = (await rider('a1', 'GET', `/jobs/${o.id}`)).json().job
+    expect(mine.handover).toMatchObject({ rerouted: true, code: '2718' })
+    // Another rider never sees the order at all; a job row read for another
+    // rider id would carry rerouted: true but no code.
+    expect((await rider('a2', 'GET', `/jobs/${o.id}`)).statusCode).toBe(404)
+    expect(JSON.stringify((await rider('a1', 'GET', '/jobs')).json())).toContain('2718')
+
+    const off = await asStaff('adminAB', 'GET', `/orders/${o.id}`)
+    expect(off.json().deliveryOtp).toBe('2718')
+    await prisma.$transaction((tx) => setCodeOnlyDelivery(tx, { tenantId: tenantA, on: true, actorId: staff['adminAB']!.id, reason: 'test switch on' }))
+    try {
+      // The admin read rule follows the switch (lib/deliveryOtp.ts); the orders
+      // route passes codeOnlyDelivery() to it — wired by the DLV-core stream.
+      const { codeOnlyDelivery } = await import('../src/lib/deliveryRules.js')
+      const { redactDeliveryOtp } = await import('../src/lib/deliveryOtp.js')
+      const codeOnly = await codeOnlyDelivery(prisma, tenantA)
+      expect(codeOnly).toBe(true)
+      expect(redactDeliveryOtp({ deliveryOtp: '2718' }, 'admin', codeOnly).deliveryOtp).toBeNull()
+      expect(redactDeliveryOtp({ deliveryOtp: '2718' }, 'admin', false).deliveryOtp).toBe('2718')
+      expect((await rider('a1', 'GET', `/jobs/${o.id}`)).json().job.doorProblemEnabled).toBe(true)
+    } finally {
+      await prisma.$transaction((tx) => setCodeOnlyDelivery(tx, { tenantId: tenantA, on: false, actorId: staff['adminAB']!.id, reason: 'test switch off' }))
+    }
   })
 })

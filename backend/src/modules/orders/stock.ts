@@ -655,8 +655,14 @@ export async function orderCogsFixDoc(sourceType: OrderCogsFixSource, sourceId: 
 // ─── Giving back: cancel, unfired void ───────────────────────────────────────
 
 export interface RestoreOptions {
-  /** Fired lines of a cancelled order are wasted with this reason (and photo). Default 'cancelled_after_fire'. */
-  cookedFood?: { wasteReason: 'cancelled_after_fire'; photoUrl?: string }
+  /**
+   * Fired lines of a cancelled order are wasted with this reason (and photo).
+   * Default 'cancelled_after_fire'. `wasteAll`: EVERY live line is wasted,
+   * fired or not, and nothing goes back to the lots — a delivery the rider
+   * brought back ('returned_food', orders/returnedFood.ts): the food left the
+   * kitchen in the bag.
+   */
+  cookedFood?: { wasteReason: 'cancelled_after_fire' | 'returned_food'; photoUrl?: string; wasteAll?: boolean }
   actorId?: string | null
   approverId?: string | null
 }
@@ -666,7 +672,9 @@ export interface RestoreOptions {
  * that was not fired goes back into the very lots it came from; every fired
  * line is wasted 'cancelled_after_fire' (food that never left the kitchen) —
  * Dr 1290 / Cr class inventory in the order's company (H20 suspense; the CEO
- * approves it into 5040). Lines voided earlier
+ * approves it into 5040). With `cookedFood.wasteAll` (a delivery the rider
+ * brought back) every live line is wasted with the given reason and nothing
+ * goes back to the lots; the claim row records wasteAll. Lines voided earlier
  * were handled by their void. Menu items the depletion 86'd are NOT switched
  * back on (the kitchen re-enables them). A refused waste posting is flagged
  * posting_failed after commit; any other failure throws (the caller flags it).
@@ -677,9 +685,33 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
     if (!order) return null
     const { depleted, restored } = await claimsTx(tx, orderId)
     if (!depleted || restored) return null
+    const wasteAll = !!o.cookedFood?.wasteAll
     if (!isFifoClaim(depleted.metadata)) {
-      const fix = await legacyRestoreTx(tx, orderId, order, depleted, o)
-      return { tenantId: order.tenantId, conceptId: null, failures: [], fixFailures: [fix] }
+      // A pre-cut-over order brought back: each live line is wasted off the
+      // depletion's `taken` JSON first (wasteSoldLineTx's legacy path), so the
+      // give-back below finds nothing left to return.
+      const legacyFailures: Array<{ line: { id: string; name: string; quantity: number }; waste: SoldLineWasteResult }> = []
+      let conceptId: string | null = null
+      let claim = depleted
+      if (wasteAll && order.tenantId) {
+        const ord = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { conceptId: true } })
+        conceptId = ord.conceptId
+        const live = await tx.orderItem.findMany({
+          where: { orderId, status: { not: 'voided' }, voidedAt: null },
+          select: { id: true, name: true, quantity: true },
+          orderBy: { id: 'asc' },
+        })
+        for (const l of live) {
+          const w = await wasteSoldLineTx(tx, {
+            orderId, tenantId: order.tenantId, line: { id: l.id }, wasteReason: o.cookedFood?.wasteReason ?? 'returned_food',
+            actorId: o.actorId ?? null, conceptId, approverId: o.approverId ?? null, photoUrl: o.cookedFood?.photoUrl ?? null,
+          })
+          if (w.postingError) legacyFailures.push({ line: l, waste: w })
+        }
+        claim = (await tx.auditLog.findUniqueOrThrow({ where: { id: depleted.id }, select: { id: true, metadata: true } }))
+      }
+      const fix = await legacyRestoreTx(tx, orderId, order, claim, o)
+      return { tenantId: order.tenantId, conceptId, failures: legacyFailures, fixFailures: [fix] }
     }
     const tenantId = order.tenantId
     if (!tenantId) return null
@@ -705,7 +737,7 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
     for (const l of lines) {
       const rows = outByLine.get(l.id) ?? []
       if (rows.length === 0) continue
-      if (UNFIRED.has(l.status)) {
+      if (UNFIRED.has(l.status) && !wasteAll) {
         const r = await returnToLotsTx(tx, {
           rows, kind: 'sale_return', sourceType: ORDER_STOCK_SOURCE.ret, sourceId: l.id, occurredAt: at, tenantId, createdById: o.actorId ?? null,
         })
@@ -724,7 +756,10 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
     await tx.auditLog.create({
       data: {
         category: 'stock', tenantId, action: STOCK_RESTORE, entity: 'Order', entityId: orderId,
-        metadata: { mode: 'fifo', status: order.status, returnedCents, wastedCents, costBooked: booked } as Prisma.InputJsonValue,
+        metadata: {
+          mode: 'fifo', status: order.status, returnedCents, wastedCents, costBooked: booked,
+          ...(wasteAll ? { wasteAll: true, wasteReason: o.cookedFood?.wasteReason ?? null } : {}),
+        } as Prisma.InputJsonValue,
       },
     })
     // Never booked: the late-receipt settles of its shortfalls (each already
@@ -834,7 +869,7 @@ async function legacyRestoreTx(
   await tx.auditLog.create({
     data: {
       category: 'stock', tenantId, action: STOCK_RESTORE, entity: 'Order', entityId: orderId,
-      metadata: { restored: taken, status: order.status } as Prisma.InputJsonValue,
+      metadata: { restored: taken, status: order.status, ...(o.cookedFood?.wasteAll ? { wasteAll: true, wasteReason: o.cookedFood.wasteReason } : {}) } as Prisma.InputJsonValue,
     },
   })
   return fix

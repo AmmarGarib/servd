@@ -6,7 +6,8 @@
 //     cashier void cap is treated as 0 — even a free line or a generous
 //     cashier cap; the manager cap still applies.
 //   - Cancelling / voiding a whole rung-up order (POST /orders/:id/cancel,
-//     and refused-at-door of a till order) likewise.
+//     and logging a till delivery the rider brought back —
+//     returnUndeliveredOrder, Emergency overrides → Food came back) likewise.
 //   - 403 MANAGER_OVERRIDE_REQUIRED without a PIN; 403 INVALID_MANAGER_PIN
 //     for a wrong PIN or another company's manager's PIN.
 //   - approverId is ALWAYS recorded (the manager's own id when they act).
@@ -27,6 +28,7 @@ import { setFiscalKicker } from '../src/connectors/fiscal/outbox.js'
 import { prisma, mkCompany, mkUser, caller, resetConnectorCache, type Company, type Who } from './connectorsFixtures.js'
 import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 import { deductInventoryForOrder } from '../src/modules/orders/service.js'
+import { returnUndeliveredOrder } from '../src/modules/orders/returnedFood.js'
 
 let app: FastifyInstance
 let A: Company, B: Company
@@ -215,17 +217,25 @@ describe('cancelling a whole rung-up order is manager-only', () => {
     expect((log.metadata as { approverId?: string }).approverId).toBe(mgrA.id)
   })
 
-  it('refused at the door: a rung-up order needs a manager; with the PIN it cancels', async () => {
+  it('food a rider brought back: a rung-up delivery needs a manager; with the PIN it cancels (refused-at-door is gone)', async () => {
     const o = await ticket(cashierA, A)
     const customer = await prisma.customer.create({ data: { name: 'Door Guest' } })
-    await prisma.order.update({ where: { id: o.id }, data: { customerId: customer.id, fulfilmentType: 'delivery' } })
-    const no = await call(cashierA, 'POST', `/orders/${o.id}/refused-at-door`, { reason: 'not home' })
-    expect(no.statusCode).toBe(403)
-    expect(no.json().error.code).toBe('MANAGER_OVERRIDE_REQUIRED')
-    const yes = await call(cashierA, 'POST', `/orders/${o.id}/refused-at-door`, { reason: 'not home', managerOverridePin: PIN_A })
-    expect(yes.statusCode, yes.body).toBe(200)
-    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.refused_at_door', entityId: o.id } })
+    const r = await prisma.rider.create({ data: { tenantId: A.tenantId, name: 'mvoid rider', phone: '03125550101', status: 'busy', isActive: true } })
+    // A dispatcher's rider without the app (no riderAssignedAt), out with the food.
+    await prisma.order.update({ where: { id: o.id }, data: { customerId: customer.id, fulfilmentType: 'delivery', status: 'ready', riderId: r.id } })
+    const actor = { id: cashierA.id, email: null, tenantId: A.tenantId, role: 'cashier' }
+    await expect(returnUndeliveredOrder(o.id, { actor, cause: 'refused', reason: 'not home' }))
+      .rejects.toMatchObject({ code: 'MANAGER_OVERRIDE_REQUIRED', statusCode: 403 })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('ready')
+    await expect(returnUndeliveredOrder(o.id, { actor, cause: 'refused', reason: 'not home', managerOverridePin: PIN_B }))
+      .rejects.toMatchObject({ code: 'INVALID_MANAGER_PIN' })
+    const yes = await returnUndeliveredOrder(o.id, { actor, cause: 'refused', reason: 'not home', managerOverridePin: PIN_A })
+    expect(yes.ok).toBe(true)
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ status: 'cancelled', returnCause: 'refused' })
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.returned_by_rider', entityId: o.id } })
+    expect(log.tenantId).toBe(A.tenantId)
     expect((log.metadata as { approverId?: string }).approverId).toBe(mgrA.id)
+    expect((await call(cashierA, 'POST', `/orders/${o.id}/refused-at-door`, { reason: 'x', managerOverridePin: PIN_A })).statusCode).toBe(404)
   })
 
   it('company B gets 404 on A\'s order — before any PIN is tried', async () => {

@@ -16,10 +16,11 @@
 //   Deposits     the posting is awaited; a refused posting keeps the drop and
 //                raises posting_failed in the drop's company; the bank is the
 //                one resolver's (unlinked → 422, two banks unnamed → 422).
-//   COD          cod-unpaid: managers only, a real unpaid COD only, one strike
-//                per order, audited in the order's company, books untouched;
-//                cod-due carries rider / age / overdue; by-tender keeps COD
-//                not in a drawer out of Cash.
+//   COD          cod-due carries rider / age / overdue; by-tender keeps COD
+//                not in a drawer out of Cash. (POST /orders/:id/cod-unpaid is
+//                gone — 2026-10-15: COD a rider collected and never paid in is
+//                the rider's debt, see codRiderDebt.test.ts; food that came
+//                back is foodReturned.test.ts.)
 //   Reservations release audits in the reservation's company and refuses when
 //                nothing is held; a no-show capture debits 1030, zeroes the
 //                deposit, and a refused posting keeps the deposit held.
@@ -378,41 +379,21 @@ describe('cash on delivery', () => {
     expect((await call(ceoB, 'GET', '/pos/cod-due')).json().payments.map((p: { order: { id: string } }) => p.order.id)).not.toContain(cod)
   })
 
-  it('cod-unpaid: managers only, and only a completed COD whose cash is still out', async () => {
-    expect((await call(cashA, 'POST', `/orders/${cod}/cod-unpaid`, {})).statusCode).toBe(403)
-    expect((await call(ceoB, 'POST', `/orders/${cod}/cod-unpaid`, {})).statusCode).toBe(404)
-    const till = await codOrder(A, 10_000, { source: 'pos' })
-    expect((await call(ceoA, 'POST', `/orders/${till}/cod-unpaid`, {})).json().error.code).toBe('NOT_CASH_ON_DELIVERY')
-    const open = await codOrder(A, 10_000, { status: 'received' })
-    expect((await call(ceoA, 'POST', `/orders/${open}/cod-unpaid`, {})).json().error.code).toBe('ORDER_NOT_COMPLETED')
-    const paid = await codOrder(A, 10_000, { pay: 'paid' })
-    expect((await call(ceoA, 'POST', `/orders/${paid}/cod-unpaid`, {})).json().error.code).toBe('COD_ALREADY_PAID')
-    expect(await prisma.customerStrike.count({ where: { sourceId: { in: [till, open, paid] } } })).toBe(0)
-  })
-
-  it('one strike per order, audited in the order\'s company, the books untouched', async () => {
-    const entriesBefore = await prisma.journalEntry.count({ where: { tenantId: A.tenantId } })
-    // "both" works in B; the order is A's.
-    const first = await call(both, 'POST', `/orders/${cod}/cod-unpaid`, { reason: 'Rider says the customer refused to pay' })
-    expect(first.statusCode, first.body).toBe(200)
-    expect(first.json()).toMatchObject({ ok: true, severity: 2, duplicate: false, unpaidCents: 600_000 })
-    const again = await call(ceoA, 'POST', `/orders/${cod}/cod-unpaid`, {})
-    expect(again.json()).toMatchObject({ ok: true, duplicate: true })
-
-    const strikes = await prisma.customerStrike.findMany({ where: { sourceType: 'order', sourceId: cod } })
-    expect(strikes).toHaveLength(1)
-    const customer = await prisma.customer.findUniqueOrThrow({ where: { id: strikes[0]!.customerId } })
-    expect(customer.strikeCount).toBe(2)   // two reports of a PKR 6,000 order no longer make 4 → a ban
-    expect(customer.bannedAt).toBeNull()
-
-    const audits = await prisma.auditLog.findMany({ where: { action: 'order.cod_unpaid', entityId: cod } })
-    expect(audits.map((x) => x.tenantId)).toEqual([A.tenantId, A.tenantId])
-    // G1 pending: no posting, the cash row still pending.
-    expect(await prisma.journalEntry.count({ where: { tenantId: A.tenantId } })).toBe(entriesBefore)
-    expect((await prisma.payment.findFirstOrThrow({ where: { orderId: cod } })).status).toBe('pending')
+  it('POST /orders/:id/cod-unpaid is gone (404) — rider COD debt is codRiderDebt.test.ts', async () => {
+    expect((await call(ceoA, 'POST', `/orders/${cod}/cod-unpaid`, {})).statusCode).toBe(404)
+    expect(await prisma.customerStrike.count({ where: { sourceType: 'order', sourceId: cod } })).toBe(0)
   })
 
   it('by-tender keeps COD not in a drawer out of Cash: with the rider, or reported not collected', async () => {
+    // A legacy 'cod_unpaid' report (the removed route's strike, still read by
+    // older rows) on the PKR 6,000 COD, plus a paid COD in a drawer.
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: cod }, select: { customerId: true } })
+    await prisma.customerStrike.create({
+      data: { customerId: order.customerId!, kind: 'cod_unpaid', sourceType: 'order', sourceId: cod, severity: 2, tenantId: A.tenantId },
+    })
+    await codOrder(A, 10_000, { pay: 'paid' })
+    await codOrder(A, 10_000, { source: 'pos' })
+    await codOrder(A, 10_000, { status: 'received' })
     const r = await call(finA, 'GET', `/reports/by-tender?dateFrom=${DAY}&dateTo=${DAY}`)
     expect(r.statusCode, r.body).toBe(200)
     const by = new Map((r.json().tenders as Array<{ tender: string; amountCents: number; label: string }>).map((t) => [t.tender, t]))

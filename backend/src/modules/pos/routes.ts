@@ -12,6 +12,7 @@ import { assertShiftHasNoActiveCharges } from '../../connectors/terminal/guard.j
 import { audit } from '../../lib/audit.js'
 import { REFUND_TENDERS, legacyRingUpTender } from '../../lib/tenders.js'
 import type { RaastTenderMeta } from './raastTender.js'
+import { COD_PAY_IN_HOURS, codDueWhere, codStatusOf, codHoursSince } from '../../lib/cod.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -305,27 +306,22 @@ export async function posRoutes(fastify: FastifyInstance) {
   )
 
   // GET /pos/cod-due — delivered cash-on-delivery orders whose cash has not
-  // been paid into a drawer yet, for the rider pay-in screen. Each row names
-  // the rider holding the cash and how long it has been out
-  // (hoursSinceDelivered, from the drop-off — else completion), and is marked
-  // `overdue` past COD_PAY_IN_HOURS (TODO: a per-company setting with the
-  // overdue flag/alert, finance gaps item 1). What the books do with cash that
-  // never comes in is pending owner decision G1 — nothing posts from here.
-  const COD_PAY_IN_HOURS = 12
+  // been paid into a drawer yet, for the rider pay-in screen. What counts as
+  // COD and its status come from the ONE definition, lib/cod.ts (codDueWhere,
+  // codStatusOf, COD_PAY_IN_HOURS). Each row names the rider holding the cash,
+  // how long it has been out (hoursSinceDelivered, from the drop-off — else
+  // completion), its `status` (with_rider / overdue / rider_owes /
+  // at_counter) and, when finance booked it as owed by the rider (H5, 1351),
+  // `riderOwes` { at, byName }. `overdue` stays for older clients. Nothing
+  // posts from here.
   fastify.get('/cod-due', { preHandler: requireAuth(...CASHIERS) }, async (req) => {
     const rows = await prisma.payment.findMany({
-      where: {
-        method: 'cash',
-        status: 'pending',
-        // A bill a gift card / wallet covered in full owes nothing (ONL-R2-06).
-        amountCents: { gt: 0 },
-        order: { source: { not: 'pos' }, status: 'completed', concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-      },
+      where: codDueWhere({ deletedAt: null, ...(await scopeTenantWhere(req, 'write')) }),
       select: {
-        id: true, amountCents: true, createdAt: true,
+        id: true, amountCents: true, createdAt: true, codRiderDebtAt: true, codRiderDebtById: true,
         order: {
           select: {
-            id: true, completedAt: true, deliveredAt: true, customerName: true,
+            id: true, completedAt: true, deliveredAt: true, customerName: true, fulfilmentType: true, riderId: true,
             concept: { select: { name: true } },
             rider: { select: { id: true, name: true } },
           },
@@ -334,16 +330,23 @@ export async function posRoutes(fastify: FastifyInstance) {
       orderBy: { createdAt: 'asc' },
       take: 200,
     })
-    const now = Date.now()
+    const bookerIds = [...new Set(rows.map((p) => p.codRiderDebtById).filter((id): id is string => !!id))]
+    const bookers = new Map(bookerIds.length === 0 ? [] : (await prisma.user.findMany({
+      where: { id: { in: bookerIds } }, select: { id: true, name: true },
+    })).map((u) => [u.id, u.name]))
+    const now = new Date()
     return {
       overdueAfterHours: COD_PAY_IN_HOURS,
-      payments: rows.map((p) => {
-        const since = p.order.deliveredAt ?? p.order.completedAt ?? p.createdAt
-        const hoursSinceDelivered = Math.max(0, Math.floor(((now - since.getTime()) / 3_600_000) * 10) / 10)
+      payments: rows.map(({ codRiderDebtById, ...p }) => {
+        const status = codStatusOf(p, p.order, now)
+        const hoursSinceDelivered = codHoursSince(p, p.order, now)
         return {
           ...p,
           rider: p.order.rider ?? null,
           hoursSinceDelivered,
+          status,
+          riderOwes: p.codRiderDebtAt ? { at: p.codRiderDebtAt, byName: (codRiderDebtById && bookers.get(codRiderDebtById)) || null } : null,
+          // Older clients: past the pay-in time (whatever the status says now).
           overdue: hoursSinceDelivered >= COD_PAY_IN_HOURS,
         }
       }),

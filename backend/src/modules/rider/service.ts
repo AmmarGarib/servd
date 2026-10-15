@@ -13,6 +13,8 @@ import { sendText } from '../../lib/whatsapp.js'
 import { customerScope } from '../../lib/outboundScope.js'
 import { DELIVERY_OTP_MAX_ATTEMPTS, deliveryOtpMatches, generateDeliveryOtp } from '../../lib/deliveryOtp.js'
 import { fleetMayCarry } from '../../lib/fleet.js'
+import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
+import { riderCashHeldCents } from '../../lib/cod.js'
 import { normalisePhone } from '../auth/otp.js'
 import {
   claimHandoverAttempt, markDelivered, recordJobEvent, releaseHandoverAttempt, riderOpenOrderWhere,
@@ -36,7 +38,9 @@ export function openJobWhere(riderId: string): Prisma.OrderWhereInput {
 const JOB_SELECT = {
   id: true, conceptId: true, status: true, placedAt: true, customerName: true, deliveryNotes: true, rawPayload: true,
   riderAssignedAt: true, riderAcceptedAt: true, pickedUpAt: true, arrivedAt: true, deliveredAt: true,
-  deliveryOtp: true, deliveryOtpAttempts: true,
+  deliveryOtp: true, deliveryOtpAttempts: true, handoverReroutedAt: true, handoverRerouteRiderId: true,
+  // The latest door problem the rider reported (note = 'kind' or 'kind: note').
+  riderJobEvents: { where: { type: 'door_problem' }, orderBy: { createdAt: 'desc' }, take: 1, select: { note: true, createdAt: true } },
   concept: {
     select: {
       name: true, slug: true, phone: true, address: true, addressLocality: true, latitude: true, longitude: true,
@@ -71,7 +75,15 @@ export interface Job {
   pickedUpAt: Date | null
   arrivedAt: Date | null
   otpAttemptsLeft: number
+  /** Emergency override (a): the code goes to THIS rider only when a manager rerouted it to them. */
+  handover: { rerouted: boolean; reroutedAt: Date | null; code: string | null; whatsappSent: boolean }
+  doorProblem: { kind: DoorProblemKind; at: Date } | null
+  /** The order's company has code-only delivery on (the rider may report door problems). */
+  doorProblemEnabled: boolean
 }
+
+export type DoorProblemKind = 'no_code' | 'refused' | 'unreachable'
+const DOOR_KINDS: readonly DoorProblemKind[] = ['no_code', 'refused', 'unreachable']
 
 export function jobStage(o: Pick<JobRow, 'riderAcceptedAt' | 'pickedUpAt' | 'arrivedAt'>): JobStage {
   if (o.arrivedAt) return 'arrived'
@@ -84,8 +96,18 @@ function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
-/** The Job shape (docs/rider-app.md). Never carries the hand-over code. */
-export function toJob(o: JobRow): Job {
+export interface JobContext {
+  /** The signed-in rider; the rerouted code is shown to this rider only. */
+  riderId?: string | null
+  doorProblemEnabled?: boolean
+  whatsappSent?: boolean
+}
+
+/**
+ * The Job shape (docs/rider-app.md). The hand-over code is carried ONLY when a
+ * manager rerouted it to this very rider (Emergency overrides); never otherwise.
+ */
+export function toJob(o: JobRow, ctx: JobContext = {}): Job {
   const raw = (o.rawPayload && typeof o.rawPayload === 'object' ? o.rawPayload : {}) as Record<string, unknown>
   const brandName = formatBrandName(o.concept.name)
   const loc = o.location
@@ -126,7 +148,38 @@ export function toJob(o: JobRow): Job {
     pickedUpAt: o.pickedUpAt,
     arrivedAt: o.arrivedAt,
     otpAttemptsLeft: Math.max(0, DELIVERY_OTP_MAX_ATTEMPTS - o.deliveryOtpAttempts),
+    handover: {
+      rerouted: !!o.handoverReroutedAt,
+      reroutedAt: o.handoverReroutedAt ?? null,
+      code: o.handoverReroutedAt && !o.deliveredAt && ctx.riderId && o.handoverRerouteRiderId === ctx.riderId
+        ? o.deliveryOtp : null,
+      whatsappSent: !!o.handoverReroutedAt && !!ctx.whatsappSent,
+    },
+    doorProblem: doorProblemOf(o),
+    doorProblemEnabled: ctx.doorProblemEnabled ?? false,
   }
+}
+
+function doorProblemOf(o: Pick<JobRow, 'riderJobEvents'>): { kind: DoorProblemKind; at: Date } | null {
+  const e = o.riderJobEvents?.[0]
+  if (!e) return null
+  const kind = DOOR_KINDS.find((k) => e.note === k || e.note?.startsWith(`${k}:`))
+  return kind ? { kind, at: e.createdAt } : null
+}
+
+/** toJob with the company switch and the reroute's WhatsApp outcome resolved. */
+async function jobFor(riderId: string, o: JobRow): Promise<Job> {
+  const doorProblemEnabled = await codeOnlyDelivery(prisma, o.concept.tenantId)
+  let whatsappSent = false
+  if (o.handoverReroutedAt && o.handoverRerouteRiderId === riderId) {
+    const a = await prisma.auditLog.findFirst({
+      where: { action: 'delivery.code_rerouted', entity: 'Order', entityId: o.id },
+      orderBy: { createdAt: 'desc' }, select: { metadata: true },
+    })
+    const m = (a?.metadata && typeof a.metadata === 'object' ? a.metadata : {}) as Record<string, unknown>
+    whatsappSent = m['sentToRider'] === true
+  }
+  return toJob(o, { riderId, doorProblemEnabled, whatsappSent })
 }
 
 export async function listJobs(riderId: string): Promise<Job[]> {
@@ -136,7 +189,7 @@ export async function listJobs(riderId: string): Promise<Job[]> {
     orderBy: [{ placedAt: 'asc' }],
     take: 50,
   })
-  return rows.map(toJob)
+  return Promise.all(rows.map((r) => jobFor(riderId, r)))
 }
 
 async function loadJobRow(riderId: string, orderId: string): Promise<JobRow> {
@@ -146,7 +199,7 @@ async function loadJobRow(riderId: string, orderId: string): Promise<JobRow> {
 }
 
 export async function getJob(riderId: string, orderId: string): Promise<Job> {
-  return toJob(await loadJobRow(riderId, orderId))
+  return jobFor(riderId, await loadJobRow(riderId, orderId))
 }
 
 function event(rider: Rider, row: JobRow, type: 'accepted' | 'picked_up' | 'arrived' | 'otp_failed', pos: Pos, note?: string) {
@@ -164,7 +217,7 @@ function event(rider: Rider, row: JobRow, type: 'accepted' | 'picked_up' | 'arri
  * already carrying a job). Going off shift is refused while carrying an
  * accepted job; offers not yet accepted are handed back to dispatch.
  */
-export async function setShift(rider: SignedInRider, online: boolean): Promise<RiderPublic> {
+export async function setShift(rider: SignedInRider, online: boolean): Promise<RiderPublic & { cashHeldCents?: number }> {
   if (online) {
     const carrying = await prisma.order.count({ where: openJobWhere(rider.id) })
     const updated = await setRiderStatus(rider.id, carrying > 0 ? 'busy' : 'available')
@@ -190,7 +243,9 @@ export async function setShift(rider: SignedInRider, online: boolean): Promise<R
     updated = await setRiderStatus(rider.id, 'busy')
     throw refused()
   }
-  return riderPublic({ ...rider, status: updated.status })
+  // Going off shift with COD cash in hand is allowed — this is a warning only.
+  const cashHeldCents = await riderCashHeldCents(prisma, rider.id)
+  return { ...riderPublic({ ...rider, status: updated.status }), cashHeldCents }
 }
 
 // ─── Job steps ───────────────────────────────────────────────────────────────
@@ -203,7 +258,7 @@ export async function setShift(rider: SignedInRider, online: boolean): Promise<R
  */
 export async function acceptJob(rider: Rider, orderId: string, pos: Pos): Promise<Job> {
   const row = await loadJobRow(rider.id, orderId)
-  if (row.riderAcceptedAt) return toJob(row)
+  if (row.riderAcceptedAt) return jobFor(rider.id, row)
   if (!(await fleetMayCarry(rider.tenantId, row.concept.tenantId))) {
     await takeRiderOff(row.id, {
       event: 'unassigned', note: 'fleet agreement ended', onlyIfRiderId: rider.id, onlyIfNotAccepted: true,
@@ -257,7 +312,7 @@ export async function declineJob(rider: Rider, orderId: string, opts: Pos & { re
  */
 export async function pickUpJob(rider: Rider, orderId: string, pos: Pos): Promise<Job> {
   const row = await loadJobRow(rider.id, orderId)
-  if (row.pickedUpAt) return toJob(row)
+  if (row.pickedUpAt) return jobFor(rider.id, row)
   if (!row.riderAcceptedAt) throw new AppError('NOT_ACCEPTED', 'Accept the job before picking it up.', 409)
   if (row.status !== 'ready' && row.status !== 'completed') {
     throw new AppError('NOT_READY', `The order is ${row.status} — the kitchen has not finished it yet.`, 409)
@@ -282,7 +337,7 @@ export async function pickUpJob(rider: Rider, orderId: string, pos: Pos): Promis
 export async function arriveJob(rider: Rider, orderId: string, pos: Pos): Promise<Job> {
   const row = await loadJobRow(rider.id, orderId)
   if (!row.pickedUpAt) throw new AppError('NOT_PICKED_UP', 'Pick the order up first.', 409)
-  if (row.arrivedAt) return toJob(row)
+  if (row.arrivedAt) return jobFor(rider.id, row)
   const res = await prisma.order.updateMany({
     where: { id: row.id, riderId: rider.id, arrivedAt: null, deliveredAt: null },
     data: { arrivedAt: new Date() },
@@ -293,12 +348,14 @@ export async function arriveJob(rider: Rider, orderId: string, pos: Pos): Promis
 
 /** Thrown for a wrong hand-over code; the route sends `attemptsLeft` with it. */
 export class OtpMismatchError extends AppError {
-  constructor(public readonly attemptsLeft: number) {
+  constructor(public readonly attemptsLeft: number, codeOnly = false) {
     super(
       'OTP_MISMATCH',
       attemptsLeft > 0
         ? `That is not the customer's code. ${attemptsLeft} ${attemptsLeft === 1 ? 'try' : 'tries'} left.`
-        : "That is not the customer's code, and there are no tries left. Call the dispatcher.",
+        : codeOnly
+          ? "That is not the customer's code, and there are no tries left. Call your manager — they can send the code to you."
+          : "That is not the customer's code, and there are no tries left. Call the dispatcher.",
       403,
       { attemptsLeft },
     )
@@ -320,15 +377,24 @@ export async function deliverJob(rider: Rider, orderId: string, input: Pos & { o
   if (done) throw new AppError('ALREADY_DELIVERED', 'This order has already been delivered.', 409)
   const row = await loadJobRow(rider.id, orderId)
   if (!row.pickedUpAt) throw new AppError('NOT_PICKED_UP', 'Pick the order up first.', 409)
+  const codeOnly = await codeOnlyDelivery(prisma, row.concept.tenantId)
   if (!row.deliveryOtp) {
-    throw new AppError('NO_OTP', 'This order has no hand-over code. Call the dispatcher to mark it delivered.', 409)
+    throw new AppError(
+      'NO_OTP',
+      codeOnly
+        ? 'This order has no hand-over code. Call your manager.'
+        : 'This order has no hand-over code. Call the dispatcher to mark it delivered.',
+      409,
+    )
   }
 
   const slot = await claimHandoverAttempt(row.id, DELIVERY_OTP_MAX_ATTEMPTS, { riderId: rider.id })
   if (!slot.claimed) {
     throw new AppError(
       'OTP_LOCKED',
-      'Too many wrong codes. The dispatcher has to mark this order delivered.',
+      codeOnly
+        ? 'Ask a manager to send the code to you (Emergency overrides).'
+        : 'Too many wrong codes. The dispatcher has to mark this order delivered.',
       423,
     )
   }
@@ -349,7 +415,9 @@ export async function deliverJob(rider: Rider, orderId: string, input: Pos & { o
           ? `Hand-over locked on order ${orderRefOf(row.id)} after ${attempts} wrong codes`
           : `OTP failed ${attempts} times on order ${orderRefOf(row.id)}`,
         description: attemptsLeft === 0
-          ? 'The rider entered the wrong hand-over code too many times and the order is locked. Confirm with the customer, then mark it delivered from Dispatch.'
+          ? (codeOnly
+            ? 'The rider entered the wrong hand-over code too many times and the order is locked. Confirm with the customer, then send the code to the rider from Dispatch (Emergency overrides).'
+            : 'The rider entered the wrong hand-over code too many times and the order is locked. Confirm with the customer, then mark it delivered from Dispatch.')
           : 'The rider has entered the wrong hand-over code three times. Either the customer is disputing the delivery or the rider is at the wrong door. Check before it is marked delivered.',
         entityType: 'Order',
         entityId: row.id,
@@ -357,7 +425,7 @@ export async function deliverJob(rider: Rider, orderId: string, input: Pos & { o
         metadata: { attempts, riderId: rider.id, riderTenantId: rider.tenantId },
       })
     }
-    throw new OtpMismatchError(attemptsLeft)
+    throw new OtpMismatchError(attemptsLeft, codeOnly)
   }
 
   // The right code: give the slot back — a clean hand-over is not a failed
@@ -380,17 +448,75 @@ export async function sendHandoverCode(orderId: string): Promise<void> {
         concept: { select: { name: true, tenantId: true } },
       },
     })
+    const codeOnly = o ? await codeOnlyDelivery(prisma, o.concept.tenantId) : false
     const phone = o?.customer?.phone ? normalisePhone(o.customer.phone) : ''
     if (!o?.deliveryOtp || phone.length < 11) return
     const ref = orderRefOf(o.id)
     const brand = formatBrandName(o.concept.name)
     await sendText(
       phone,
-      `Your ${brand} order ${ref} is on its way. When your rider arrives, give them this code: ${o.deliveryOtp}. `
-      + 'Only share it once you have your order in hand.',
+      codeOnly
+        ? `Your ${brand} order ${ref} is on its way. Your delivery code is ${o.deliveryOtp} — `
+          + 'give this code to your rider once you have your order and have paid.'
+        : `Your ${brand} order ${ref} is on its way. When your rider arrives, give them this code: ${o.deliveryOtp}. `
+          + 'Only share it once you have your order in hand.',
       customerScope(o.concept.tenantId), // a test company never messages its customer
     )
   } catch (err) {
     console.warn(`[rider] hand-over code WhatsApp failed for order ${orderRefOf(orderId)}: ${(err as Error).message}`)
   }
+}
+
+
+// ─── Door problems ───────────────────────────────────────────────────────────
+
+const DOOR_DEDUPE_MS = 5 * 60_000
+
+/**
+ * The rider reports a problem at the door (no code / refused / unreachable).
+ * Only on their own picked-up job, and only where the company runs code-only
+ * delivery. Writes a `door_problem` job event (never an outcome) and flags the
+ * ORDER's company. The same kind on the same order within 5 minutes is a
+ * duplicate and writes nothing.
+ */
+export async function reportDoorProblem(
+  rider: Rider,
+  orderId: string,
+  input: Pos & { kind: DoorProblemKind; note?: string | null },
+): Promise<{ ok: true; duplicate: boolean }> {
+  const row = await loadJobRow(rider.id, orderId)
+  if (!row.pickedUpAt) throw new AppError('NOT_PICKED_UP', 'Pick the order up first.', 409)
+  if (!(await codeOnlyDelivery(prisma, row.concept.tenantId))) {
+    throw new AppError('DOOR_PROBLEM_OFF', 'Door problems are not switched on for this company.', 409)
+  }
+  const recent = await prisma.riderJobEvent.findFirst({
+    where: {
+      orderId: row.id, riderId: rider.id, type: 'door_problem',
+      createdAt: { gte: new Date(Date.now() - DOOR_DEDUPE_MS) },
+      OR: [{ note: input.kind }, { note: { startsWith: `${input.kind}:` } }],
+    },
+    select: { id: true },
+  })
+  if (recent) return { ok: true, duplicate: true }
+  const note = input.note?.trim() ? `${input.kind}: ${input.note.trim().slice(0, 300)}` : input.kind
+  await recordJobEvent({
+    type: 'door_problem', riderId: rider.id, orderId: row.id,
+    tenantId: row.concept.tenantId, riderTenantId: rider.tenantId,
+    lat: input.lat, lng: input.lng, note,
+  })
+  const label = { no_code: 'the customer has no code', refused: 'the customer refused the order', unreachable: 'the customer is unreachable' }[input.kind]
+  await flagException({
+    tenantId: row.concept.tenantId,
+    conceptId: row.conceptId,
+    kind: 'delivery_door_problem',
+    severity: input.kind === 'refused' ? 'high' : 'medium',
+    title: `Door problem on order ${orderRefOf(row.id)}: ${label}`,
+    description: `The rider reported at the door that ${label}.${input.note?.trim() ? ` Note: ${input.note.trim().slice(0, 300)}` : ''} `
+      + 'Call the customer; if needed send the code to the rider or take the food back (Emergency overrides).',
+    entityType: 'Order',
+    entityId: row.id,
+    actorId: null,
+    metadata: { kind: input.kind, riderId: rider.id, riderTenantId: rider.tenantId },
+  })
+  return { ok: true, duplicate: false }
 }

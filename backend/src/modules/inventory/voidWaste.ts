@@ -4,10 +4,15 @@
 //   void_after_fire        a line voided at the till after the kitchen fired it
 //   cancelled_after_fire   an order cancelled after some of its lines were fired
 //                          (food that never left the kitchen)
-//   returned_food          RESERVED for the parked delivery work (refused /
-//                          returned food logged through Emergency overrides).
-//                          Kept in the list so that work resumes without a
-//                          change — NOTHING writes it in wave B.
+//   returned_food          a delivery the rider brought back (refused,
+//                          unreachable, other) — logged through Emergency
+//                          overrides → Food came back (orders/returnedFood.ts):
+//                          cancelOrder's `returned` hook wastes EVERY live
+//                          line of the order (restoreInventoryForOrder
+//                          wasteAll), fired or not. Same entry and key as the
+//                          others; Reconciliation → Backfill unposted re-posts
+//                          it through the 'pos.void_waste' reposter, which
+//                          reads every reason in VOID_WASTE_REASONS.
 //
 // wasteSoldLineTx runs inside the void's / cancel's transaction (the order
 // row is locked, as the depletion and the restore lock it):
@@ -59,7 +64,7 @@ const STOCK_RESTORE = 'stock.sale_restore'
 
 export const VOID_WASTE_REASONS = ['void_after_fire', 'cancelled_after_fire', 'returned_food'] as const
 export type VoidWasteReason = typeof VOID_WASTE_REASONS[number]
-/** Returned / refused food — PARKED with the delivery work: nothing writes it in wave B. */
+/** Returned / refused food — a delivery the rider brought back (orders/returnedFood.ts, via cancelOrder `returned`). */
 export const RETURN_WASTE_REASON = 'returned_food' as const
 /** @deprecated the till void's reason; kept for older importers (reconciliation backfill). Use VOID_WASTE_REASONS. */
 export const VOID_WASTE_REASON = 'void_after_fire'
