@@ -52,7 +52,7 @@ import { audit } from '../../lib/audit.js'
 import { type DbMoney, toCents, zInt4Cents, zMoneyCents } from '../../lib/money.js'
 import { FILER_STATUSES, WHT_SECTIONS } from '../../lib/withholding.js'
 import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
-import { parsePktEndOfDay } from '../accounting/dates.js'
+import { parsePktEndOfDay, fmtPktDate } from '../accounting/dates.js'
 
 const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
 
@@ -604,7 +604,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           ...(req.query.overdue === 'true' && {
             kind:    'bill',
             status:  { in: ['open', 'partially_paid'] },
-            dueDate: { lt: new Date() },
+            dueDate: { lt: overdueCutoff() },
           }),
         },
         include: { supplier: { select: { name: true, tenantId: true } }, po: { select: { id: true, reference: true } } },
@@ -1015,4 +1015,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     await setApprovalThresholdCents(tenantId, thresholdCents)
     return { tenantId, thresholdCents }
   })
+}
+
+/** A bill is overdue once its due DAY is before Karachi today. dueDate is stored
+ *  as UTC midnight of its day, so the cut-off is UTC midnight of today's
+ *  Karachi date — a bill due today is not overdue at 05:00 PKT. */
+export function overdueCutoff(now: Date = new Date()): Date {
+  return new Date(`${fmtPktDate(now)}T00:00:00Z`)
 }

@@ -40,7 +40,7 @@ import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { WHT_SECTIONS } from '../../lib/withholding.js'
 import { getAssetClasses, classOf, SMALLWARE_TYPES, SMALLWARE_TYPE_LABELS } from '../fixedAssets/classes.js'
-import { FA_WRITER_ROLES, FA_APPROVER_ROLE, applyEvent } from '../fixedAssets/events.js'
+import { FA_WRITER_ROLES, FA_APPROVER_ROLE, applyEvent, isFuturePktDay } from '../fixedAssets/events.js'
 import { lastCompletedPeriodPkt } from '../fixedAssets/schedule.js'
 
 // Capital (the CapEx tracker and the old capital ledger) is the Finance
@@ -944,10 +944,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     const override = overrideData(body)
     const actor = actorOf(req)
     const canCapitalise = FA_WRITER_ROLES.includes(actor.role)
-    const paidAt = new Date(`${body.paidAt.slice(0, 10)}T12:00:00+05:00`)
-    if (Number.isNaN(paidAt.getTime()) || paidAt.getTime() > Date.now() + 86_400_000) {
-      throw new AppError('BAD_DATE', 'The payment date must be a real date, not in the future', 422)
-    }
+    const paidAt = quickBuyPaidAt(body.paidAt)
     const supplierName = body.supplierId ? (await prisma.supplier.findUnique({ where: { id: body.supplierId }, select: { name: true } }))?.name ?? null : null
 
     const out = await prisma.$transaction(async (tx) => {
@@ -1168,3 +1165,12 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // kept as history.
 }
 
+/** A Quick buy's payment day: noon PKT of the given 'YYYY-MM-DD'. Today (Karachi)
+ *  or earlier — any later Karachi day is refused, whatever the hour. */
+export function quickBuyPaidAt(input: string, now: Date = new Date()): Date {
+  const paidAt = new Date(`${input.slice(0, 10)}T12:00:00+05:00`)
+  if (Number.isNaN(paidAt.getTime()) || isFuturePktDay(paidAt, now)) {
+    throw new AppError('BAD_DATE', 'The payment date must be a real date, not in the future', 422)
+  }
+  return paidAt
+}

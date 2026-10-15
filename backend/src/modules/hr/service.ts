@@ -293,11 +293,13 @@ async function applyEffect(tx: Tx, rec: HrRecord, emp: HrEmployee): Promise<void
  *  extension: its date is the NEW end of probation, which has to be on the
  *  employee from now, not from the day it arrives. Everything else at its
  *  effective date. */
-function effectDue(rec: HrRecord, now: Date): boolean {
+export function effectDue(rec: Pick<HrRecord, 'section' | 'category' | 'effectiveDate'>, now: Date): boolean {
   if (rec.section === 'resignation' || rec.section === 'termination') return true
   if (rec.section === 'probation_review' && rec.category === 'extend') return true
+  // effectiveDate is UTC midnight of its Karachi day; compare with Karachi
+  // today in the same form (pktToday), so today's effects apply from 00:00 PKT.
   const on = rec.effectiveDate
-  return !on || on.getTime() <= now.getTime()
+  return !on || on.getTime() < pktToday(now).getTime() + 86_400_000
 }
 
 /** Apply every approved effect that has come due by today, in effective-date

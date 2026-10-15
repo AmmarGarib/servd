@@ -5,6 +5,11 @@ import { api } from '../../lib/api'
 import Link from 'next/link'
 import { Select } from '@/components/ui/Select'
 
+// Date inputs hold the Karachi day (UTC+5) of the stored instant, whatever the browser's zone.
+function isoToPktDay(iso: string): string {
+  return new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(0, 10)
+}
+
 interface SectionDiscount {
   id: string
   discountPercent: number
@@ -85,8 +90,8 @@ export default function DiscountsPage() {
       conceptId,
       categoryId: '',
       discountPercent: String(d.discountPercent),
-      startDate: d.startDate.slice(0, 10),
-      endDate: d.endDate.slice(0, 10),
+      startDate: isoToPktDay(d.startDate),
+      endDate: isoToPktDay(d.endDate),
       startTime: d.startTime,
       endTime: d.endTime,
       deliveryTypes: d.deliveryTypes,
@@ -102,8 +107,8 @@ export default function DiscountsPage() {
       conceptId: form.conceptId || undefined,
       categoryId: form.categoryId || undefined,
       discountPercent: parseFloat(form.discountPercent),
-      startDate: new Date(`${form.startDate}T00:00:00`).toISOString(),
-      endDate: new Date(`${form.endDate}T23:59:59`).toISOString(),
+      startDate: new Date(`${form.startDate}T00:00:00+05:00`).toISOString(),
+      endDate: new Date(`${form.endDate}T23:59:59+05:00`).toISOString(),
       startTime: form.startTime,
       endTime: form.endTime,
       deliveryTypes: form.deliveryTypes,

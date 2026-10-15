@@ -16,7 +16,7 @@ import { requireAuth, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { toCents } from '../../lib/money.js'
-import { FA_WRITER_ROLES, FA_COUNT_ROLES, WRITE_OFF_CAUSES } from './events.js'
+import { FA_WRITER_ROLES, FA_COUNT_ROLES, WRITE_OFF_CAUSES, isFuturePktDay } from './events.js'
 import { SMALLWARE_TYPE_LABELS } from './classes.js'
 import { loadAssetStates, accumulatedTotal, payloadOf } from './service.js'
 import { parseEffectiveDate, dateInput, raiseRequest } from './requests.js'
@@ -160,7 +160,7 @@ export async function fixedAssetPoolRoutes(fastify: FastifyInstance) {
     const pool = await prisma.fixedAssetPool.findFirst({ where: { id: req.params.poolId, ...(await scopeTenantWhere(req, 'write')) } })
     if (!pool) throw new NotFoundError('FixedAssetPool', req.params.poolId)
     const countedAt = parseEffectiveDate(body.countedAt)
-    if (countedAt && countedAt.getTime() > Date.now()) throw new AppError('EFFECTIVE_DATE', 'A count cannot be dated in the future', 422)
+    if (countedAt && isFuturePktDay(countedAt)) throw new AppError('EFFECTIVE_DATE', 'A count cannot be dated in the future', 422)
     const r = await raiseRequest(req, {
       kind: 'count',
       poolId: pool.id,

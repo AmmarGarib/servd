@@ -6,6 +6,14 @@ import Link from 'next/link'
 import { fmtPkrWhole } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
 
+// datetime-local inputs hold Karachi wall time (YYYY-MM-DDTHH:mm), whatever the browser's zone.
+function isoToPktLocal(iso: string): string {
+  return new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(0, 16)
+}
+function pktLocalToIso(v: string): string {
+  return new Date(`${v}:00+05:00`).toISOString()
+}
+
 interface PromoCode {
   id: string
   code: string
@@ -87,8 +95,8 @@ export default function PromosPage() {
       perCustomerLimit: p.perCustomerLimit ? String(p.perCustomerLimit) : '',
       conceptId: p.concept ? (concepts.find((c) => c.name === p.concept?.name)?.id ?? '') : '',
       isActive: p.isActive,
-      startsAt: p.startAt ? p.startAt.slice(0, 16) : '',
-      expiresAt: p.endAt ? p.endAt.slice(0, 16) : '',
+      startsAt: p.startAt ? isoToPktLocal(p.startAt) : '',
+      expiresAt: p.endAt ? isoToPktLocal(p.endAt) : '',
     })
     setShowForm(true)
   }
@@ -108,8 +116,8 @@ export default function PromosPage() {
       perCustomerLimit: form.perCustomerLimit ? parseInt(form.perCustomerLimit) : undefined,
       conceptId: form.conceptId || undefined,
       isActive: form.isActive,
-      startAt: form.startsAt ? new Date(form.startsAt).toISOString() : undefined,
-      endAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
+      startAt: form.startsAt ? pktLocalToIso(form.startsAt) : undefined,
+      endAt: form.expiresAt ? pktLocalToIso(form.expiresAt) : undefined,
     })
   }
 

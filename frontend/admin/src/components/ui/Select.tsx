@@ -74,9 +74,10 @@ export default Select
 const FOCUSABLE = 'a[href],button,input,select,textarea,[tabindex],[contenteditable="true"]'
 
 /** The next (dir 1) or previous (dir -1) tabbable element after `from`, in document order. */
-function neighbourFocusable(from: HTMLElement, dir: 1 | -1): HTMLElement | null {
+function neighbourFocusable(from: HTMLElement, dir: 1 | -1, skip?: HTMLElement | null): HTMLElement | null {
   const all = Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) =>
     el === from || (
+      !skip?.contains(el) &&
       el.tabIndex >= 0 && !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true' &&
       !el.closest('[inert],[hidden]') && el.getClientRects().length > 0
     ))
@@ -204,7 +205,7 @@ function SearchSelect({
       e.preventDefault()
       const trigger = triggerRef.current
       close(false)
-      if (trigger) (neighbourFocusable(trigger, e.shiftKey ? -1 : 1) ?? trigger).focus()
+      if (trigger) (neighbourFocusable(trigger, e.shiftKey ? -1 : 1, panelRef.current) ?? trigger).focus()
     }
   }
 
@@ -240,7 +241,7 @@ function SearchSelect({
           aria-activedescendant={shown[active] ? `${listId}-${active}` : undefined}
           onChange={(e) => { setQuery(e.target.value); setActive(0) }}
           onKeyDown={onSearchKey}
-          className="s-input !py-1.5" />
+          className={`s-input !py-1.5 ${dark ? "!bg-kds-bg !text-kds-text !border-kds-border" : ""}`} />
       </div>
       <div ref={listRef} id={listId} role="listbox" aria-label={ariaLabel ?? title ?? 'Options'} className="overflow-y-auto py-1 min-h-0 flex-1">
         {shown.length === 0 && <p className={`px-3 py-2 text-sm ${mutedCls}`} style={mutedStyle}>No matches</p>}

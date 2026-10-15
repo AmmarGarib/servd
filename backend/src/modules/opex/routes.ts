@@ -27,13 +27,16 @@ import {
   WHT_SECTIONS, computeWithholding, whtSectionOrNull, withholdingRatesFor, type WhtSection, type WithholdingResult,
 } from '../../lib/withholding.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
+import { fmtPktDate } from '../accounting/dates.js'
 
 /** A date the API is given: 'YYYY-MM-DD' or a full ISO timestamp. */
 const zDateString = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'Not a date')
 
-/** A paid date can be today or earlier — never a day still to come (Karachi day, one day of slack). */
-function assertNotFuturePaid(paidAt: Date | null | undefined): void {
-  if (paidAt && paidAt.getTime() > Date.now() + 86_400_000) {
+/** A paid date can be today or earlier — never a day still to come. Compared
+ *  as Karachi days: a 'YYYY-MM-DD' arrives as UTC midnight (05:00 PKT), so an
+ *  instant check refused today early and a day of slack let tomorrow through. */
+export function assertNotFuturePaid(paidAt: Date | null | undefined, now: Date = new Date()): void {
+  if (paidAt && fmtPktDate(paidAt) > fmtPktDate(now)) {
     throw new AppError('PAID_IN_FUTURE', 'A payment cannot be marked paid on a date that has not come yet', 422)
   }
 }
@@ -1118,13 +1121,12 @@ export async function opexRoutes(fastify: FastifyInstance) {
   // â”€â”€â”€ Cash-flow forecast (next 90 days) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.get('/cashflow', { preHandler: OPEX_GUARD }, async (req) => {
-    const now = new Date()
-    const horizon = new Date(now); horizon.setDate(horizon.getDate() + 90)
+    const { from, to } = cashflowWindow()
 
     const lines = await prisma.opexLine.findMany({
       where: {
         isActive: true,
-        nextDueDate: { gte: now, lte: horizon },
+        nextDueDate: { gte: from, lte: to },
         // Company scoping via the line's category tenant — matches every other
         // opex read in this module.
         category: await scopeTenantWhere(req, 'read'),
@@ -1143,6 +1145,14 @@ export async function opexRoutes(fastify: FastifyInstance) {
       vendor: l.vendor,
     }))
   })
+}
+
+/** The cash-flow window: today (Karachi) and the next 90 days. nextDueDate is
+ *  stored as UTC midnight of its day, so "today" is UTC midnight of Karachi's
+ *  date — a line due today stays in all day, not only until 05:00 PKT. */
+export function cashflowWindow(now: Date = new Date()): { from: Date; to: Date } {
+  const from = new Date(`${fmtPktDate(now)}T00:00:00Z`)
+  return { from, to: new Date(from.getTime() + 90 * 86_400_000) }
 }
 
 // Cadence â†’ equivalent monthly cents for budget comparison.

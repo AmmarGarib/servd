@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { todayPktIso } from '../../lib/money'
 
 /**
  * Master par sheet — the day's prep, per company.
@@ -26,7 +27,7 @@ interface ParRow {
 }
 
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10)
+  return todayPktIso() // the Karachi day, not the UTC day
 }
 
 function grams(g: number | null): string {

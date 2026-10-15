@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { todayPktIso } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
 
 interface FunnelStep {
@@ -67,7 +68,8 @@ const DATE_PRESETS = [
 ]
 
 function isoFrom(days: number) {
-  return new Date(Date.now() - days * 864e5).toISOString().slice(0, 10)
+  // Karachi day (UTC+5), same basis as todayPktIso
+  return new Date(Date.now() + 5 * 3600_000 - days * 864e5).toISOString().slice(0, 10)
 }
 
 export default function AnalyticsPage() {
@@ -75,7 +77,7 @@ export default function AnalyticsPage() {
   const [conceptId, setConceptId] = useState('')
 
   const dateFrom = isoFrom(days)
-  const dateTo = new Date().toISOString().slice(0, 10)
+  const dateTo = todayPktIso()
   const params = `?dateFrom=${dateFrom}&dateTo=${dateTo}${conceptId ? `&conceptId=${conceptId}` : ''}`
 
   const { data: concepts = [] } = useQuery<Concept[]>({

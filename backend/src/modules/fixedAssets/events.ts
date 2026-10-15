@@ -213,6 +213,13 @@ function pktDay(d: Date): string {
   return new Date(d.getTime() + 5 * 3600_000).toISOString().slice(0, 10)
 }
 
+/** True when `d` falls on a Karachi day after today's. A date-only input is
+ *  noon PKT of its day, so comparing instants would refuse TODAY before 12:00
+ *  PKT; the day is what the rule is about. */
+export function isFuturePktDay(d: Date, now: Date = new Date()): boolean {
+  return pktDay(d) > pktDay(now)
+}
+
 async function lateDate(tx: Db, tenantId: string, natural: Date): Promise<{ entryDate: Date; memoNote?: string }> {
   const d = await lateDatingFor(tx, tenantId, natural)
   if ('lockedThroughToday' in d) {
@@ -1120,7 +1127,7 @@ async function applyCapitalise(tx: Tx, event: FixedAssetEvent, payload: Record<s
   if (inputTax >= gross) throw new AppError('INPUT_TAX_TOO_LARGE', 'Input tax must be less than the cost', 422)
 
   const inServiceAt = p.inServiceAt ? parseDate(p.inServiceAt) : (line.installedDate ?? line.actualDeliveryDate ?? event.effectiveDate)
-  if (inServiceAt.getTime() > Date.now()) throw new AppError('IN_SERVICE_DATE', 'The in-service date cannot be in the future', 422)
+  if (isFuturePktDay(inServiceAt)) throw new AppError('IN_SERVICE_DATE', 'The in-service date cannot be in the future', 422)
   const leaseEndsAt = p.leaseEndsAt ? parseDate(p.leaseEndsAt) : null
   let life = cls.depreciable ? (p.usefulLifeMonths ?? cls.defaultLifeMonths ?? 12) : 0
   if (life > 0 && leaseEndsAt) {
