@@ -142,7 +142,7 @@ export default function RoleModulesPage() {
             </p>
             {isHr && (
               <p className="text-xs text-white/45 mt-2 max-w-2xl">
-                The CEO, Co-owner and HR presets, and the logins, module access, companies and books&rsquo; audit rows, are locked: {CEO_ONLY_NOTE.toLowerCase()}.
+                The CEO, Co-owner and HR presets, and the logins, module access, companies and books&rsquo; audit rows, are locked: only the CEO changes them.
               </p>
             )}
           </div>

@@ -1368,6 +1368,34 @@ bank transfers or any other payment mode is reconciled and closed" — and
 - **Month close** has the check `night_audit_days`: every business day of the
   month with sales must be `closed` (CEO-overridable).
 
+### Notification bell (owner, 2026-10-16)
+
+One bell at the top of the admin for every login, fed by what already exists
+(it never replaces the approvals inbox or /exceptions; it tells the right
+person and links there). Full list: `/me/notifications`. No phone push (owner:
+"bell only for now") — any future outbound push asks `sandboxBlocks` first.
+
+- **ONE writer:** `lib/staffNotify.ts` (`notifyStaff`, `notifyStaffMany`,
+  `queueStaffNotify`); `StaffNotification` has `tenantId`, RLS, and is in the
+  company-merge repoint list. A row's company comes from the ITEM, never the
+  actor; recipients outside that company are dropped; the actor is never told.
+  Never call it inside a `$transaction` body — queue it after commit; a notice
+  can never fail the business action. `lib/notify.ts` is the CUSTOMER
+  email/WhatsApp sender — a different thing.
+- **Approvals:** "whoever must act next" — `approverIdsFor`
+  (`lib/approvalRights.ts`) uses the approve route's own rule + the queue
+  module; the CEO is told only for items at the CEO's end; a handed-over item
+  tells the delegate AND the CEO. Decided notices go ONLY through
+  `auditApproval` (`metadata.waitingUserIds` when the route clears the
+  requester before the notice runs). A new approval type adds an
+  `APPROVAL_NOTIFY` entry (`modules/approvals/notify.ts`) and a waiting hook
+  (`approvalWaiting(type, id, { round })`) in the same change (tested).
+- **Unusual activity → the CEO only** (admins of the flag's company), via the
+  exception claim-poller (`workers/staffNotifications.ts`,
+  `ExceptionFlag.notifiedAt`). Night audit: day audited / closed / not run →
+  finance (with accounting) + the CEO. The "still awaiting settlement" warning
+  waits for the accountant (H45) — `TODO(H45)`.
+
 ### Closed books are the CEO's (owner, 2026-10-16)
 
 `accounting/closedBooks.ts`. A closed month refuses every posting (as

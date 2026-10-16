@@ -62,7 +62,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // CEO home: a top-down view of every department, first in the Dashboards section.
   ceo_overview:   [{ label: 'Home', href: '/home', icon: '⌂', lead: true }],
   role_management: [{ label: 'Pending logins', href: '/workforce?status=pending', hint: 'The CEO approves every login' }],
-  role_modules:   [{ label: 'Module access', href: '/configuration/role-modules', icon: '🗂' }],
+  role_modules:   [{ label: 'Role presets', href: '/configuration/role-modules', icon: '🗂' }],
   configuration:  [
     { label: 'Company rules', href: '/configuration/operations', icon: '⚙️', hint: 'Clock-in selfie and geofence, tip split, service charge — CEO only' },
     { label: 'Configuration hub', href: '/configuration', sub: true },
