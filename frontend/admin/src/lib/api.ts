@@ -262,9 +262,9 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
     }
     // Back-dated sale (CEO only): ask for a reason once, retry with it.
     if (err.status === 422 && err.code === 'BACKDATED_REASON_REQUIRED' && ['POST', 'PUT', 'PATCH'].includes(method)
-      && typeof window !== 'undefined' && typeof options.body === 'string') {
+      && typeof window !== 'undefined' && (options.body == null || typeof options.body === 'string')) {
       let parsed: unknown = null
-      try { parsed = JSON.parse(options.body) } catch { /* not JSON: leave it */ }
+      try { parsed = options.body == null ? {} : JSON.parse(options.body as string) } catch { /* not JSON: leave it */ }
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('backdatedReason' in parsed)) {
         const { askReason } = await import('../components/ui/ConfirmDialog')
         const reason = await askReason({
