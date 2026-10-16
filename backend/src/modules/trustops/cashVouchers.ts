@@ -219,6 +219,9 @@ export interface Viewer {
   heldBoxIds: Set<string>
   /** Companies where this login holds an OPEN box (it may pay an unboxed request there). */
   payBoxTenants: Set<string>
+  /** Pays approved vouchers (owner, 2026-10-16: "Paying a voucher should remain at Finance end"): role finance
+   *  with the accounting module ONLY — not a box's cashier, a manager or the CEO (who approved it). */
+  payer: boolean
 }
 
 export async function viewerOf(req: FastifyRequest): Promise<Viewer> {
@@ -237,6 +240,7 @@ export async function viewerOf(req: FastifyRequest): Promise<Viewer> {
     financeApprover: isAdmin || (su.role === 'finance' && keeper),
     heldBoxIds: new Set(boxes.map((b) => b.id)),
     payBoxTenants: new Set(boxes.filter((b) => b.isActive && b.tenantId).map((b) => b.tenantId!)),
+    payer: su.role === 'finance' && keeper,
   }
 }
 
@@ -308,7 +312,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canReject: financeStep || ceoStep || (s === 'returned' && (viewer.financeApprover || viewer.isAdmin) && !own),
     canResubmit: s === 'returned' && (raiser || (v.kind === 'expense' && viewer.financeApprover)),
     canCancel: (EDITABLE.includes(s) && raiser) || (viewer.keeper && PRE_PAY.includes(s)),
-    canPay: s === 'approved' && (viewer.keeper || viewer.financeApprover || custodian || (!v.boxId && viewer.payBoxTenants.has(v.tenantId))),
+    canPay: s === 'approved' && viewer.payer,
     canUpload: ((s === 'approved' || newPaid) && docsParty) || (s === 'posted' && viewer.keeper),
     canSendBack: newPaid && docState.closed && docState.booksState === 'pending' && viewer.financeApprover && !own,
     canRecordSpend: newPaid && docsParty,
@@ -681,18 +685,9 @@ export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId:
     let severity: NotifyInput['severity'] = 'info'
     let financeIds: string[] = []
     if (step === 'approved') {
-      if (v.boxId) {
-        const box = await serviceClient.pettyCashBox.findFirst({ where: { id: v.boxId, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { custodianId: true } })
-        userIds = box ? [box.custodianId] : []
-      } else {
-        const boxes = await serviceClient.pettyCashBox.findMany({ where: { tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { custodianId: true } })
-        userIds = [...new Set(boxes.map((b) => b.custodianId))]
-      }
-      // Finance pays from a box, cash on hand or a bank (owner, 2026-10-16): told whenever no box is named,
-      // or the named box is gone — a company with no boxes is never left with nobody to pay.
-      if (!v.boxId || userIds.length === 0) financeIds = (await financePayersOf(v.tenantId)).filter((u) => !userIds.includes(u))
+      // Only finance pays (owner, 2026-10-16) — from a box, cash on hand or a bank.
+      financeIds = await financePayersOf(v.tenantId)
       title = `Cash request ${v.number} is approved — ready to pay`
-      body = 'The CEO approved it. Hand over the cash from your box.'
     } else if (step === 'paid') {
       userIds = v.kind === 'request' && v.payeeUserId ? [v.payeeUserId] : []
       title = `Cash request ${v.number} paid — upload the supporting documents`
@@ -1376,6 +1371,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const v = await loadVoucher(req, req.params.id)
     const viewer = await viewerOf(req)
     if (!(await canSee(viewer, v))) throw new NotFoundError('CashVoucher', v.id)
+    if (!viewer.payer) throw new AppError('PAY_FINANCE_ONLY', 'Only finance pays a cash voucher', 403)
     const boxWhere: Prisma.PettyCashBoxWhereInput = { tenantId: v.tenantId, deletedAt: null, isActive: true }
     const boxes = await prisma.pettyCashBox.findMany({
       where: viewer.keeper ? boxWhere : v.boxId ? { ...boxWhere, id: v.boxId, custodianId: viewer.id } : { ...boxWhere, custodianId: viewer.id },
@@ -1429,6 +1425,9 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const v = await loadVoucher(req, req.params.id)
     const viewer = await viewerOf(req)
     const me = viewer.id
+    // Only finance pays (owner, 2026-10-16: "Paying a voucher should remain at Finance end") — never a box's
+    // cashier, a manager or the CEO, from any source.
+    if (!viewer.payer) throw new AppError('PAY_FINANCE_ONLY', 'Only finance pays a cash voucher', 403)
     if (PAID_STATUSES.includes(v.status)) throw new AppError('ALREADY_PAID', `Cash request ${v.number} has already been paid`, 409)
     if (v.status !== 'approved') throw wrongStatus('VOUCHER_NOT_APPROVED', v, 'only a voucher the CEO has approved can be paid')
     const direct = body.source !== 'box'
