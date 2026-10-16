@@ -43,6 +43,15 @@ export function OffboardButtons({ login, onDone }: { login: { id: string; name: 
     },
     onError: (e: Error) => setMsg(e.message),
   })
+  // A new password shown ONCE (owner, 2026-10-16: HR too) — POST
+  // /auth/users/:id/reissue-password. The old one stops working and every
+  // session ends; they set their own at the next sign-in.
+  const [issued, setIssued] = useState<string | null>(null)
+  const reissue = useMutation({
+    mutationFn: () => api.post<{ temporaryPassword: string }>(`/auth/users/${login.id}/reissue-password`, {}),
+    onSuccess: (r) => { setIssued(r?.temporaryPassword ?? null); setMsg('') },
+    onError: (e: Error) => setMsg(e.message),
+  })
   const role = me?.role
   if (role !== 'hr' && role !== 'admin') return null
   if (login.role === 'admin' || login.id === myId) return null
@@ -59,6 +68,16 @@ export function OffboardButtons({ login, onDone }: { login: { id: string; name: 
             })
             if (r) link.mutate()
           }}>{link.isPending ? 'Sending…' : 'Send password reset link'}</button>
+        )}
+        {login.status !== 'suspended' && login.status !== 'pending' && !FLOOR_LOGIN_ROLES.includes(login.role) && (role === 'admin' || login.role !== 'owner') && (
+          <button type="button" className={ghost} disabled={reissue.isPending} onClick={async () => {
+            const r = await confirm({
+              title: `Issue a new password for ${login.name}?`,
+              body: 'Their current password stops working now and they are signed out everywhere. You will see the new one once — give it to them in person; they set their own at the next sign-in.',
+              confirmLabel: 'Issue new password', danger: true,
+            })
+            if (r) reissue.mutate()
+          }}>{reissue.isPending ? 'Issuing…' : 'New password'}</button>
         )}
         {login.status !== 'suspended' ? (
           <button type="button" className={ghost} disabled={off.isPending} onClick={async () => {
@@ -82,6 +101,16 @@ export function OffboardButtons({ login, onDone }: { login: { id: string; name: 
           }}>Reinstate</button>
         )}
       </div>
+      {issued && (
+        <div className="mt-2 rounded-lg border border-accent/60 bg-accent-dim p-3">
+          <p className="text-[10px] uppercase tracking-wider text-success mb-1">New password for {login.name} — shown once</p>
+          <p className="font-mono text-sm font-bold text-success break-all select-all mb-2">{issued}</p>
+          <div className="flex gap-2">
+            <button type="button" className={ghost} onClick={() => { void navigator.clipboard?.writeText(issued).catch(() => undefined) }}>Copy</button>
+            <button type="button" className={ghost} onClick={() => setIssued(null)}>Done</button>
+          </div>
+        </div>
+      )}
       {msg && <p className="text-xs text-white/60 mt-2">{msg}</p>}
     </div>
   )

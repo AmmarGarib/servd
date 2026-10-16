@@ -225,3 +225,42 @@ describe('HR sends a password reset link', () => {
     expect(r.json().error.code).toBe('RESET_DELIVERY_UNAVAILABLE')
   })
 })
+
+// Owner, 2026-10-16: "Give this option to HR also" — Reissue password
+// (POST /auth/users/:id/reissue-password) for HR, same limits as the link.
+describe('HR issues a new password', () => {
+  const reissue = (key: string, id: string) =>
+    app.inject({ method: 'POST', url: `/api/v1/auth/users/${id}/reissue-password`, headers: auth(key), payload: {} })
+
+  it("HR of A issues one for A's login: shown once, the person must change it, audited with HR as actor", async () => {
+    const r = await reissue('hrA', U['staffA3']!.id)
+    expect(r.statusCode, r.body).toBe(200)
+    const pw = r.json().temporaryPassword as string
+    expect(pw.length).toBeGreaterThanOrEqual(12)
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: U['staffA3']!.id }, select: { password: true, mustChangePassword: true } })
+    expect(await bcrypt.compare(pw, row.password)).toBe(true)
+    expect(row.mustChangePassword).toBe(true)
+    const a = await prisma.auditLog.findFirst({ where: { entityId: U['staffA3']!.id, action: 'user.password_reissue' } })
+    expect(a?.userId).toBe(U['hrA']!.id)
+    expect(JSON.stringify(a)).not.toContain(pw)
+  })
+
+  it("HR of B gets 404 on A's login; a login shared with B is refused for A's HR", async () => {
+    expect((await reissue('hrB', U['staffA4']!.id)).statusCode).toBe(404)
+    expect((await reissue('hrA', U['sharedAB']!.id)).statusCode).toBe(403)
+  })
+
+  it("HR never for the CEO's, a co-owner's, its own or a floor login; the CEO may for a co-owner", async () => {
+    expect((await reissue('hrA', U['ceoA']!.id)).json().error.code).toBe('REISSUE_CEO_ONLY')
+    expect((await reissue('hrA', U['ownerA']!.id)).json().error.code).toBe('REISSUE_CEO_ONLY')
+    expect((await reissue('hrA', U['hrA']!.id)).json().error.code).toBe('REISSUE_SELF')
+    expect((await reissue('hrA', U['cashA']!.id)).json().error.code).toBe('NOT_A_PASSWORD_LOGIN')
+    expect((await reissue('ceoA', U['ownerA']!.id)).statusCode).toBe(200)
+  })
+
+  it('other roles and HR without the HR module are refused', async () => {
+    for (const k of ['finA', 'mgmtA', 'cashA', 'ownerA', 'hrNoModule']) {
+      expect((await reissue(k, U['staffA4']!.id)).statusCode, k).toBe(403)
+    }
+  })
+})

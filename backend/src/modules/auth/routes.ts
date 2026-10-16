@@ -657,10 +657,25 @@ export async function authRoutes(fastify: FastifyInstance) {
   //
   // Returns the plaintext ONCE, same contract as account creation: we store a
   // bcrypt hash and nobody, admin included, can read it back afterwards.
+  //
+  // HR too (owner, 2026-10-16: "Give this option to HR also"), with the same
+  // limits as offboarding and the reset link: HR with staff_hr, own companies
+  // only (findManagedStaff), never the CEO's or a co-owner's login (403
+  // REISSUE_CEO_ONLY), never their own (use Change password), never a floor
+  // login (they sign in with a WhatsApp code — 400 NOT_A_PASSWORD_LOGIN).
   fastify.post<{ Params: { id: string } }>(
     '/users/:id/reissue-password',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...OFFBOARDERS) },
     async (req, reply) => {
+      await assertHrBackOffice(req)
+      if (req.staffUser!.role !== 'admin') {
+        const t = await findManagedStaff(req, req.params.id, { id: true, role: true })
+        if (t.role === 'admin' || t.role === 'owner') {
+          throw new AppError('REISSUE_CEO_ONLY', "Only the CEO can issue a new password for the CEO's or a co-owner's login.", 403)
+        }
+        if (t.id === req.staffUser!.id) throw new AppError('REISSUE_SELF', 'Use "Change password" for your own login.', 403)
+        if (usesOtpLogin(t.role)) throw new AppError('NOT_A_PASSWORD_LOGIN', 'This login signs in with a WhatsApp code, not a password.', 400)
+      }
       // Same scope rule as every other staff-admin route (staffAccounts.ts):
       // another company's login is 404; a login shared with a company the
       // operator is not in is 403. This used to read `tenantFilter`, which for
@@ -693,7 +708,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         // that one of their people was changed. The actor's company rides along.
         tenantId: auditCompanyOf(target),
         after: { targetEmail: target.email },
-        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
+        metadata: { actorTenantId: req.staffUser?.tenantId ?? null, actorRole: req.staffUser?.role ?? null },
       })
 
       return reply.status(200).send({
