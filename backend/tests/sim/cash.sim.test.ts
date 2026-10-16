@@ -373,6 +373,8 @@ describe('5 Oct — equipment paid; rent with SRB input tax, withholding and a r
       expect(amt(lines, '1322', 'debit')).toBe(3_000_000)
       expect(amt(lines, '2040', 'credit')).toBe(w)
       expect(amt(lines, co.banks.main.code, 'credit')).toBe(23_000_000 - w)
+      const rentLine = await sim.prisma.journalLine.findFirstOrThrow({ where: { account: { tenantId: co.tenantId, code: '6010' }, journalEntry: { reference: `opex.payment:${p.id}` } } })
+      expect(rentLine.conceptId).toBe(co.brands.srb.id)
       // The landlord's invoice is an uploaded file on the payment (no URL field).
       const files = ok(await fin.post(`/record-files/opex_payment/${p.id}`, { files: [pdfFile('rent-oct.pdf')] }), 201)
       expect(JSON.stringify(files)).toContain('rent-oct.pdf')
@@ -567,6 +569,89 @@ describe('8–12 Oct — cash vouchers: ONE entry at pay, documents book nothing
   })
 })
 
+// ─── 12 Oct (afternoon): the guards a real month leans on ───────────────────────────────
+
+describe('12 Oct — guards: wrong-company ids, bank links, reused receipts, equipment through OpEx', () => {
+  it('another company\'s box / bank on a voucher pay, an OpEx payment or a CapEx instalment is refused; nothing posts', async () => {
+    sim.clock.at('2026-10-12', '15:00')
+    for (const [co, other] of [[sim.A, sim.B], [sim.B, sim.A]] as const) {
+      const fin = sim.as(co.finance, co)
+      const before = await entryCount(co)
+      const otherBefore = await entryCount(other)
+      const v = ok(await sim.as(co.cashier2, co).post(V, { purpose: 'Courier for the bank documents', categoryKey: 'courier', amountCents: 20_000 }), 201)
+      ok(await fin.post(`${V}/${v.id}/finance-approve`, {}), 200)
+      ok(await sim.as(sim.ceo, co).post(`${V}/${v.id}/approve`, {}), 200)
+      const box = await fin.post(`${V}/${v.id}/pay`, { source: 'box', boxId: st[other.key].boxId })
+      expect([404, 422], box.body).toContain(box.statusCode)
+      const bank = await fin.post(`${V}/${v.id}/pay`, { source: 'bank', bankAccountId: other.banks.main.id })
+      expect([404, 422], bank.body).toContain(bank.statusCode)
+      // Two banks and none named: the resolver never guesses.
+      expect(errCode(await fin.post(`${V}/${v.id}/pay`, { source: 'bank' }))).toBe('BANK_ACCOUNT_REQUIRED')
+      expect((await sim.prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('approved')
+      const capex = await fin.post(`/finance/capex/lines/${st[co.key].lines.shelving}/payments`, {
+        label: 'extra', amountCents: 10_000, paidAt: '2026-10-12', bankAccountId: other.banks.main.id,
+      })
+      expect([404, 422], capex.body).toContain(capex.statusCode)
+      expect(await entryCount(co)).toBe(before)
+      expect(await entryCount(other)).toBe(otherBefore)
+      // Paid from the box in the end (the voucher stays the company's).
+      ok(await fin.post(`${V}/${v.id}/pay`, { source: 'box', boxId: st[co.key].boxId }), 200)
+      st[co.key].docIds.push(v.id)
+      // Until its documents are checked the October close shows a WARN (never a block).
+      const close = ok(await fin.get('/accounting/period-close?lockedThrough=2026-10-31'), 200)
+      expect(close.checks.find((c: { key: string }) => c.key === 'vouchers_awaiting_docs')).toMatchObject({ severity: 'warn', count: 1, cents: 20_000, overridable: false })
+      ok(await sim.as(co.cashier2, co).post(`${V}/${v.id}/confirm-received`, {}), 200)
+      ok(await sim.as(co.cashier2, co).post(`${V}/${v.id}/documents`, pdfFile('courier-slip.pdf')), 201)
+      ok(await fin.post(`${V}/${v.id}/verify-docs`, {}), 200)
+    }
+  })
+
+  it('a bank account cannot be linked to petty cash, cash on hand or another bank\'s code', async () => {
+    for (const co of both()) {
+      for (const code of ['1011', '1010', '1357', co.banks.main.code]) {
+        const r = await sim.as(co.finance, co).post('/setup/bank-accounts', { name: `Bad link ${code}`, bankName: 'X', accountCode: code })
+        expect([409, 422], `${code}: ${r.body}`).toContain(r.statusCode)
+      }
+    }
+  })
+
+  it('a receipt already on a spend cannot satisfy another; a spend above the float is refused', async () => {
+    for (const co of both()) {
+      const used = st[co.key].receipts[0]!
+      const r = await sim.as(co.cashier, co).post('/trustops/petty-cash/movements', {
+        boxId: st[co.key].boxId, type: 'spend', amountCents: 60_000, reason: 'Second use of a receipt', categoryKey: 'cleaning', receiptIds: [used],
+      })
+      expect([400, 409, 422], r.body).toContain(r.statusCode)
+      const f = await floatOf(co)
+      const over = await sim.as(co.cashier, co).post('/trustops/petty-cash/movements', {
+        boxId: st[co.key].boxId, type: 'spend', amountCents: f + 100, reason: 'More than the box holds', categoryKey: 'cleaning', receiptIds: [await receipt(co, co.cashier)],
+      })
+      expect(over.statusCode, over.body).toBe(400)
+      expect(errCode(over)).toBe('INSUFFICIENT_FLOAT')
+      expect(await floatOf(co)).toBe(f)
+    }
+  })
+
+  it('equipment never comes in as OpEx (USE_CAPEX); a disposal with proceeds needs its payment reference', async () => {
+    for (const co of both()) {
+      const fin = sim.as(co.finance, co)
+      const cat = ok(await fin.post('/opex/categories', { name: 'IT running costs', expenseAccountCode: '6075' }), 201)
+      const line = ok(await fin.post('/opex/lines', { categoryId: cat.id, name: 'New laptop for the office', amountCents: 9_000_000, bankAccountId: co.banks.main.id }), 201)
+      const before = await entryCount(co)
+      const r = await fin.post('/opex/payments', {
+        lineId: line.id, periodStart: '2026-10-01', periodEnd: '2026-10-31', expectedCents: 9_000_000, invoiceCents: 9_000_000, paidAt: '2026-10-12', paymentRef: 'X',
+      })
+      expect(r.statusCode, r.body).toBe(422)
+      expect(errCode(r)).toBe('USE_CAPEX')
+      expect(await entryCount(co)).toBe(before)
+      const noRef = await fin.post(`${FA}/${st[co.key].assets.chiller}/dispose`, {
+        disposedAt: '2026-10-12', kind: 'sale', proceedsCents: 100_000, method: 'bank_transfer', bankAccountId: co.banks.main.id, reason: 'Probe without a reference',
+      })
+      expect(errCode(noRef), noRef.body).toBe('PAYMENT_REFERENCE_REQUIRED')
+    }
+  })
+})
+
 // ─── 10 Oct → 28 Oct: balance, deposit return, a sale ───────────────────────
 
 describe('later in October — the fryer\'s balance, the deposit returned 80/20, the chiller sold', () => {
@@ -597,8 +682,8 @@ describe('later in October — the fryer\'s balance, the deposit returned 80/20,
       expect(await linesOfRef(co, `capex.deposit_return:${st[co.key].payments.deposit}`)).toEqual([
         [co.banks.main.code, 'debit', 4_000_000], ['1360', 'credit', 5_000_000], ['6010', 'debit', 1_000_000],
       ].sort((a, b) => `${a[0]}${a[1]}`.localeCompare(`${b[0]}${b[1]}`)) as Line[])
-      const e1360 = await sim.prisma.journalLine.findMany({ where: { account: { tenantId: co.tenantId, code: '1360' } }, include: { journalEntry: { select: { reference: true } } } })
-      expect(await sim.ledger.balanceOf(co, '1360'), JSON.stringify(e1360.map((l) => [l.journalEntry.reference, l.type, Number(l.amountCents)]))).toBe(0)
+      // The return is dated noon of the day the money came back (later than the clock's 10:00).
+      expect(await sim.ledger.balanceOf(co, '1360', '2026-10-25')).toBe(0)
     }
   })
 
@@ -643,6 +728,9 @@ describe('1 Nov — the depreciation worker charges October and releases the pre
       expect(await charges('laptop')).toEqual([['2026-10', 500_000]])
       expect(await charges('chiller')).toEqual([])
       expect(dep6150).toBe(1_000_000)
+      // Charged to the project's brand (the asset's), in the asset's company.
+      const depLines = await sim.prisma.journalLine.findMany({ where: { account: { tenantId: co.tenantId, code: '6150' } }, select: { conceptId: true } })
+      expect(new Set(depLines.map((l) => l.conceptId))).toEqual(new Set([co.brands.srb.id]))
       expect(await sim.ledger.balanceOf(co, '1310', '2026-10-31')).toBe(10_000_000)
       expect(await sim.ledger.balanceOf(co, '6100', '2026-10-31')).toBe(2_000_000)
       const rel = await sim.prisma.prepaidRelease.findMany({ where: { tenantId: co.tenantId, sourceId: st[co.key].insurancePaymentId } })
@@ -660,6 +748,9 @@ describe('1 Nov — the depreciation worker charges October and releases the pre
       const rowOf = async (assetId: string) => ((ok(await fin.get(`${FA}/reports/tax`), 200)).rows as Array<Record<string, number | string>>).find((r) => r.assetId === assetId)
       expect(await rowOf(st[co.key].assets.fryer)).toMatchObject({ initialAllowanceBp: 2500, initialAllowanceCents: 7_500_000 })
       expect(await rowOf(st[co.key].assets.laptop)).toMatchObject({ initialAllowanceBp: 0, initialAllowanceCents: 0 })
+      // The chiller sold in its first tax year: no initial allowance, no depreciation, the proceeds come off the
+      // WDV — what is left (PKR 30,000) is the tax loss on disposal (tax.ts), shown in that year only.
+      expect(await rowOf(st[co.key].assets.chiller)).toMatchObject({ initialAllowanceCents: 0, depreciationCents: 0, disposalProceedsCents: 9_000_000, closingWdvCents: 3_000_000 })
       const before = await entryCount(co)
       const b1530 = await sim.ledger.balanceOf(co, '1530')
       // The manager cannot tick it; finance can.
@@ -696,8 +787,8 @@ describe('month end (as at 31 Oct) — the cash and asset accounts tie out', () 
       const floats = boxes.reduce((s, b) => s + b.floatCents, 0)
       expect(await sim.ledger.balanceOf(co, '1011', ASOF)).toBe(floats)
       const billDue = 500_000 - wht(co, 500_000, 1100)
-      // 20,000 + 30,000 + 5,000 − 1,200 − 2,000 − bill − 8,000 − 300 − 10,000 − 1,500 (A) − 4,500 (C)
-      expect(floats).toBe(5_500_000 - 120_000 - 200_000 - billDue - 800_000 - 30_000 - 1_000_000 - 150_000 - 450_000)
+      // 20,000 + 30,000 + 5,000 − 1,200 − 2,000 − bill − 8,000 − 300 − 10,000 − 1,500 (A) − 4,500 (C) − 200 (courier)
+      expect(floats).toBe(5_500_000 - 120_000 - 200_000 - billDue - 800_000 - 30_000 - 1_000_000 - 150_000 - 450_000 - 20_000)
       const tie = ok(await sim.as(co.finance, co).get('/trustops/petty-cash/tie-out'), 200)
       const row = tie.companies.find((c: { tenantId: string }) => c.tenantId === co.tenantId)
       expect(row, JSON.stringify(tie)).toMatchObject({ ok: true, unbookedMovements: 0 })
@@ -760,6 +851,14 @@ describe('month end (as at 31 Oct) — the cash and asset accounts tie out', () 
         const m = await sim.prisma.pettyCashMovement.findUniqueOrThrow({ where: { id }, select: { journalEntryId: true } })
         if (m.journalEntryId) expect((await sim.prisma.journalEntry.findUniqueOrThrow({ where: { id: m.journalEntryId } })).tenantId).toBe(co.tenantId)
       }
+    }
+  })
+
+  it('the month-close checklist for October: nothing about cash, vouchers, prepayments or assets is open', async () => {
+    for (const co of both()) {
+      const r = ok(await sim.as(co.finance, co).get('/accounting/period-close?lockedThrough=2026-10-31'), 200)
+      expect(r.checks, JSON.stringify(r.checks)).toEqual([])
+      expect(r.ready).toBe(true)
     }
   })
 
