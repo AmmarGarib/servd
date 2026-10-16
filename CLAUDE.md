@@ -932,8 +932,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   ONCE by `trustops/voucherHoldConversion.ts` (at every API boot for every
   company, and by `/:id/verify-docs` for one still held): ONE entry
   `cashvoucher.hold_convert:<voucherId>` Dr its expense account
-  (`resolveSpendAccount` of its category) / Cr 1357 for the held amount, under
-  the pay's brand, dated the day it runs, in the voucher's company; in the same
+  (`resolveSpendAccount` of its category) / Cr 1357 for the held amount — read
+  from the LIVE hold entry (`pettycash.spend:<movementId>` or
+  `cashvoucher.pay:<voucherId>`), which must exist, be un-reversed, sit under
+  one brand and equal the voucher's amount (else `HOLD_NOT_BOOKED` /
+  `HOLD_AMOUNT_MISMATCH` / `HOLD_SPLIT`, flagged) — under the brand the hold
+  debited 1357 with, dated the day it runs, in the voucher's company; in the same
   transaction `bookedAtPay` = true and `postedJournalEntryId` = that entry, so
   the documents check then books nothing (no change / overspend — a manual
   journal). Keyed per voucher + a conditional claim: never twice. No usable
@@ -941,8 +945,13 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   hold not on the books, or a refused posting (period lock, closed books) →
   NOT converted, flag `cash_voucher_hold_unconverted` (high, CEO + finance
   bell) in its company, left held; `/verify-docs` answers 409
-  `VOUCHER_STILL_HELD` until finance fixes the cause (e.g. sets the category)
-  or corrects it by manual journal. Ledger entries are never deleted: the old
+  `VOUCHER_STILL_HELD` until finance fixes the cause (finance — never the
+  raiser / holder — may set the expense account of a still-held voucher with
+  `PATCH /:id {categoryKey | accountCode}` only, conditional on it still being
+  held; the "Check the documents & book" panel does it) or corrects it by
+  manual journal. An old 1357 hold movement is never re-synced:
+  `postPettyCashMovementTx` returns its live entry unchanged (even with a
+  backfill date) and refuses one with no entry (409 `HOLD_RETIRED`). Ledger entries are never deleted: the old
   `cashvoucher.post:<id>` / hold entries stay as history; the tie-out still
   compares 1357 with Σ vouchers still held (0 once all converted).
 - **Legacy H3 rows** (`expenseOnVerify` false, paid before 2026-10-15) keep

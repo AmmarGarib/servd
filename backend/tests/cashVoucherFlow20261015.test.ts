@@ -42,7 +42,8 @@ import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { buildXlsx, zipStored } from '../src/lib/xlsxWriter.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { registerApprovalsPlugin } from '../src/modules/approvals/index.js'
-import { cashRequestPayLine, pettyCashTieOut, postPettyCashMovementTx } from '../src/modules/accounting/pettyCashPosting.js'
+import { cashRequestPayLine, pettyCashTieOut } from '../src/modules/accounting/pettyCashPosting.js'
+import { postJournalEntry } from '../src/modules/accounting/journal.js'
 import { recordPettyCashSpendTx } from '../src/modules/trustops/pettyCash.js'
 import { CLOSE_CHECKS } from '../src/modules/accounting/closeChecks.js'
 import { runCashAdvanceOverdueOnce } from '../src/workers/cashAdvanceOverdue.js'
@@ -126,7 +127,16 @@ async function holdPaid(body: Record<string, unknown> = {}, boxKey = 'A'): Promi
         vendorName: row.payeeName, createdById: U['payA']!.id, source: 'box', accountCode: '1357', cashVoucherId: row.id, conceptId: row.conceptId,
       },
     })
-    await postPettyCashMovementTx(tx, m.id)
+    // Written directly (as the retired 'voucher_hold' nature booked it): nothing in the code posts to 1357 any more.
+    const je = await postJournalEntry({
+      tenantId: row.tenantId, sourceType: 'pettycash.spend', sourceId: m.id, description: 'Cash voucher paid from petty cash (held until finance verifies the documents)',
+      postedBy: U['payA']!.id, entryDate: new Date(),
+      lines: [
+        { accountCode: '1357', type: 'debit', amountCents: row.amountCents, conceptId: row.conceptId },
+        { accountCode: '1011', type: 'credit', amountCents: row.amountCents, conceptId: row.conceptId },
+      ],
+    }, { tx })
+    await tx.pettyCashMovement.update({ where: { id: m.id }, data: { journalEntryId: je.entryId } })
     await tx.cashVoucher.update({
       where: { id: row.id },
       data: {
@@ -444,6 +454,35 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     // The period open again: the check converts it and books nothing else.
     expect((await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})).statusCode).toBe(200)
     expect(await entry(`cashvoucher.hold_convert:${v.id}`)).toEqual([['1357', 'credit', 3_000], ['6140', 'debit', 3_000]])
+  })
+})
+
+describe('held voucher with no usable category: finance sets it, then the check books it (gate)', () => {
+  it('409 VOUCHER_STILL_HELD; only finance (not the raiser, not another company) sets the account; then ONE entry in it', async () => {
+    const v = await holdPaid({ amountCents: 2_700, categoryKey: 'transport' })
+    // A legacy row as it may sit in the books: no category.
+    await prisma.cashVoucher.update({ where: { id: v.id }, data: { category: null } })
+    await upload('cookA', v.id)
+    const entries = await prisma.journalEntry.count({ where: { tenantId: T.A } })
+    const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
+    expect(r.statusCode, r.body).toBe(409)
+    expect(r.json().error.code).toBe('VOUCHER_STILL_HELD')
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entries)
+    // The raiser / holder never sets it; another company never sees it; nothing else may change on a paid voucher.
+    expect((await call('cookA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })).statusCode).toBe(403)
+    expect((await call('finB', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })).statusCode).toBe(404)
+    const more = await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office', purpose: 'changed' })
+    expect(more.statusCode).toBe(409)
+    expect(more.json().error.code).toBe('VOUCHER_NOT_DRAFT')
+    const set = await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })
+    expect(set.statusCode, set.body).toBe(200)
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entries)
+    const ok2 = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
+    expect(ok2.statusCode, ok2.body).toBe(200)
+    expect(await entry(`cashvoucher.hold_convert:${v.id}`)).toEqual([['1357', 'credit', 2_700], ['6170', 'debit', 2_700]])
+    expect(await prisma.exceptionFlag.count({ where: { kind: 'cash_voucher_hold_unconverted', entityId: v.id, status: 'open' } })).toBe(0)
+    // Booked: the account is fixed now (a manual journal moves it).
+    expect((await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'transport' })).statusCode).toBe(409)
   })
 })
 

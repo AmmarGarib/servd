@@ -112,7 +112,7 @@ async function heldOnLedger(db: Tx | typeof prisma, v: {
   } else {
     return { code: 'HOLD_NOT_BOOKED', reason: 'its pay is not on the books' }
   }
-  const { live } = await liveRevision(v.tenantId, source.type, source.id, db as Tx)
+  const { live } = await liveRevision(v.tenantId, source.type, source.id, db)
   const held = (live?.lines ?? []).filter((l) => l.accountCode === ACCT.VOUCHERS_AWAITING_DOCS)
   const net = held.reduce((t, l) => t + (l.type === 'debit' ? l.amountCents : -l.amountCents), 0)
   if (!live || held.length === 0) {

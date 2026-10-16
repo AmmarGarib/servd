@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
-import { postJournalEntry } from '../src/modules/accounting/journal.js'
+import { postJournalEntry, reverseJournalEntry } from '../src/modules/accounting/journal.js'
 import { postPettyCashMovementTx, postCashVoucherSourceTx } from '../src/modules/accounting/pettyCashPosting.js'
 import { recordPettyCashSpendTx } from '../src/modules/trustops/pettyCash.js'
 import { convertHeldVoucher, convertHeldVouchers, CASH_VOUCHER_HOLD_CONVERT_SOURCE, HOLD_UNCONVERTED_KIND } from '../src/modules/trustops/voucherHoldConversion.js'
@@ -62,7 +62,16 @@ async function heldFromBox(co: 'A' | 'B', amountCents: number, category: string 
         createdById: userId, source: 'box', accountCode: '1357', cashVoucherId: v.id, conceptId: C[co],
       },
     })
-    await postPettyCashMovementTx(tx, m.id)
+    // Written directly (as the retired 'voucher_hold' nature booked it): nothing in the code posts to 1357 any more.
+    const je = await postJournalEntry({
+      tenantId: T[co], sourceType: 'pettycash.spend', sourceId: m.id, description: 'Cash voucher paid from petty cash (held until finance verifies the documents)',
+      postedBy: userId, entryDate: new Date(),
+      lines: [
+        { accountCode: '1357', type: 'debit', amountCents: amountCents, conceptId: C[co] },
+        { accountCode: '1011', type: 'credit', amountCents: amountCents, conceptId: C[co] },
+      ],
+    }, { tx })
+    await tx.pettyCashMovement.update({ where: { id: m.id }, data: { journalEntryId: je.entryId } })
     return tx.cashVoucher.update({ where: { id: v.id }, data: { pettyCashMovementId: m.id } })
   })
 }
@@ -215,5 +224,53 @@ describe('trial balance: one net balance per account, zero balances hidden', () 
     expect(tb.companyTotals.find((c) => c.tenantId === T.A)).toMatchObject({ differenceCents: 0 })
     const listed = tb.rows.reduce((s, r) => s + r.debitCents, 0)
     expect(listed).toBe(tb.totals.debitCents)
+  })
+})
+
+describe('gate: the hold must be live and equal the voucher; replays never repost 1357; parallel runs book once', () => {
+  it('two conversions racing (two API instances booting) book ONE entry', async () => {
+    const v = await heldFromBox('B', 2_200, 'transport')
+    const rs = await Promise.all([convertHeldVoucher(v.id), convertHeldVoucher(v.id), convertHeldVoucher(v.id)])
+    expect(rs.filter((r) => r.outcome === 'converted')).toHaveLength(1)
+    expect(rs.filter((r) => r.outcome === 'not_held')).toHaveLength(2)
+    expect(await prisma.journalEntry.count({ where: { reference: { startsWith: `${CASH_VOUCHER_HOLD_CONVERT_SOURCE}:${v.id}` } } })).toBe(1)
+    expect(await balanceOf('1357', T.B)).toBe(0)
+  })
+
+  it('a reversed hold or a hold of another amount is never converted (flagged; nothing posts)', async () => {
+    const reversed = await heldFromBox('B', 1_500, 'transport')
+    await reverseJournalEntry(T.B, 'pettycash.spend', reversed.pettyCashMovementId!, 'test: hold corrected by hand', {})
+    const mism = await heldFromBox('B', 1_800, 'transport')
+    await prisma.cashVoucher.update({ where: { id: mism.id }, data: { amountCents: 1_900 } })
+    const entries = await prisma.journalEntry.count({ where: { tenantId: T.B } })
+    expect(await convertHeldVoucher(reversed.id)).toMatchObject({ outcome: 'refused', code: 'HOLD_NOT_BOOKED' })
+    expect(await convertHeldVoucher(mism.id)).toMatchObject({ outcome: 'refused', code: 'HOLD_AMOUNT_MISMATCH' })
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.B } })).toBe(entries)
+    for (const v of [reversed, mism]) {
+      expect(await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).toMatchObject({ bookedAtPay: false, postedJournalEntryId: null })
+      expect(await prisma.exceptionFlag.count({ where: { kind: HOLD_UNCONVERTED_KIND, entityId: v.id, tenantId: T.B, status: 'open' } })).toBe(1)
+    }
+    // Tidy: the amount put back, it converts for exactly its hold.
+    await prisma.cashVoucher.update({ where: { id: mism.id }, data: { amountCents: 1_800 } })
+    expect(await convertHeldVoucher(mism.id)).toMatchObject({ outcome: 'converted', amountCents: 1_800 })
+    expect(await balanceOf('1357', T.B)).toBe(0)
+  })
+
+  it('an old hold movement replays as a no-op (even with a backfill date); one with no entry is refused (HOLD_RETIRED)', async () => {
+    const v = await heldFromBox('B', 900, 'transport')
+    const m = await prisma.pettyCashMovement.findUniqueOrThrow({ where: { id: v.pettyCashMovementId! } })
+    const entries = await prisma.journalEntry.count({ where: { tenantId: T.B } })
+    const r = await prisma.$transaction((tx) => postPettyCashMovementTx(tx, m.id, { entryDate: new Date(Date.now() - 40 * 86_400_000), memoNote: 'backfill' }))
+    expect(r).toEqual({ entryId: m.journalEntryId, outcome: 'unchanged' })
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.B } })).toBe(entries)
+    // A 1357 movement that never got its entry: never booked now.
+    const loose = await prisma.pettyCashMovement.create({
+      data: { boxId: box.B, tenantId: T.B, type: 'spend', amountCents: -300, reason: 'old hold, never booked', createdById: userId, source: 'box', accountCode: '1357' },
+    })
+    await expect(prisma.$transaction((tx) => postPettyCashMovementTx(tx, loose.id))).rejects.toMatchObject({ code: 'HOLD_RETIRED' })
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.B } })).toBe(entries)
+    await prisma.pettyCashMovement.delete({ where: { id: loose.id } })
+    expect((await convertHeldVoucher(v.id)).outcome).toBe('converted')
+    expect(await balanceOf('1357', T.B)).toBe(0)
   })
 })
