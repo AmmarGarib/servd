@@ -903,7 +903,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   overspend paid from a box (a second hold Dr 1357 / Cr 1011), stock / capex
   lines onto their registers, and ONE entry `cashvoucher.post:<id>`
   (`pettyCashPosting.ts postCashVoucherVerifiedTx`) Dr each line / Cr 1357 —
-  1357 nets to zero per voucher; `postedJournalEntryId` stamped. The lines
+  1357 nets to zero per voucher; `postedJournalEntryId` stamped. **Pay
+  source (owner, 2026-10-16):** finance (with `accounting`) or the CEO may pay
+  from cash on hand or a bank instead (`paySource` `cash_on_hand` | `bank`,
+  account = `moneyAccountCode` of the VOUCHER's company; 403
+  `PAY_SOURCE_FINANCE_ONLY`): `cashvoucher.pay:<id>` Dr 1357 / Cr 1010 | bank,
+  no box; change / overspend at verification go back to / come from that same
+  account (`cashvoucher.change|overspend:<id>`, `postCashVoucherSourceTx`);
+  `GET /:id/pay-sources` is what the Pay picker lists. The "ready to pay"
+  bell also tells the company's finance payers when no box is named. The lines
   live on the voucher's one settlement row; a settlement of such a voucher is
   booked by the voucher's entry (`postCashVoucherSettlementTx` dispatches),
   never `cashvoucher.settle`. Close check `vouchers_awaiting_docs`

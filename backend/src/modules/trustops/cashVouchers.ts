@@ -81,6 +81,7 @@ import { EVIDENCE_MAX_BYTES, sendEvidence } from '../../lib/evidenceFile.js'
 import { resolveSpendAccount } from '../accounting/expenseCategories.js'
 import { cashRequestPaidAccountTx, categoryRefOf, paidFromLabel, postCashVoucherSourceTx } from '../accounting/pettyCashPosting.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { passesCashGuard, recordPettyCashSpendTx } from './pettyCash.js'
 import { cashRequestSettleRoutes } from './cashRequestSettle.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
@@ -678,6 +679,7 @@ export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId:
     let title = ''
     let body: string | null = null
     let severity: NotifyInput['severity'] = 'info'
+    let financeIds: string[] = []
     if (step === 'approved') {
       if (v.boxId) {
         const box = await serviceClient.pettyCashBox.findFirst({ where: { id: v.boxId, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { custodianId: true } })
@@ -686,6 +688,9 @@ export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId:
         const boxes = await serviceClient.pettyCashBox.findMany({ where: { tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { custodianId: true } })
         userIds = [...new Set(boxes.map((b) => b.custodianId))]
       }
+      // Finance pays from a box, cash on hand or a bank (owner, 2026-10-16): told whenever no box is named,
+      // or the named box is gone — a company with no boxes is never left with nobody to pay.
+      if (!v.boxId || userIds.length === 0) financeIds = (await financePayersOf(v.tenantId)).filter((u) => !userIds.includes(u))
       title = `Cash request ${v.number} is approved — ready to pay`
       body = 'The CEO approved it. Hand over the cash from your box.'
     } else if (step === 'paid') {
@@ -702,13 +707,37 @@ export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId:
       title = `Cash request ${v.number} verified and booked`
       severity = 'success'
     }
-    const rows: NotifyInput[] = userIds.filter((u) => u !== actorId).map((userId) => ({
-      userId, tenantId: v.tenantId, kind: 'task.next', severity, title, body,
+    const row = (userId: string, words: string | null): NotifyInput => ({
+      userId, tenantId: v.tenantId, kind: 'task.next', severity, title, body: words,
       link: `/finance/cash-vouchers?id=${encodeURIComponent(v.id)}`, entityType: 'cash_voucher', entityId: v.id, actorId,
       dedupeKey: `task.next:cash_voucher:${v.id}:${step}:r${v.returnCount}`,
-    }))
+    })
+    const rows: NotifyInput[] = [
+      ...userIds.filter((u) => u !== actorId).map((u) => row(u, body)),
+      ...financeIds.filter((u) => u !== actorId).map((u) => row(u, 'The CEO approved it. Pay it from a petty-cash box, cash on hand or a bank account.')),
+    ]
     return notifyStaffMany(rows)
   })
+}
+
+/**
+ * Finance logins of `tenantId` who may pay a voucher from cash on hand or a bank (viewerOf's financeApprover
+ * minus the CEO, who just approved it): role finance, active, a member of the company, holding the accounting
+ * module (CASH_MODULE_GATE's rule).
+ */
+async function financePayersOf(tenantId: string): Promise<string[]> {
+  const users = await serviceClient.user.findMany({
+    where: {
+      role: 'finance', isActive: true, accountStatus: 'active', deletedAt: null,
+      OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }],
+    },
+    select: { id: true, role: true, moduleAllow: true, moduleDeny: true },
+  })
+  const out: string[] = []
+  for (const u of users) {
+    if ((await effectiveModulesForUser({ role: u.role, moduleAllow: u.moduleAllow, moduleDeny: u.moduleDeny })).has('accounting')) out.push(u.id)
+  }
+  return out
 }
 
 const selfApprove = () => new AppError('SELF_APPROVE', 'You raised or hold this voucher — someone else must decide it', 409)

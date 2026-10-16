@@ -303,3 +303,59 @@ describe('verification of a cash-on-hand / bank voucher', () => {
     expect(row!.heldVouchersCents).toBeGreaterThan(0) // the cash-on-hand, bank and box vouchers above are still awaiting documents
   })
 })
+
+describe('gate: races, rollbacks and the ready-to-pay notice', () => {
+  it('box and bank pay at once: exactly one wins, one hold on 1357', async () => {
+    const v = await approved(3_000)
+    const start = await floatOf(box['A']!)
+    const [a, b, c] = await Promise.all([
+      pay('finA', v.id, { source: 'box', boxId: box['A'] }),
+      pay('finA', v.id, { source: 'bank', bankAccountId: bank['A1'] }),
+      pay('ceoA', v.id, { source: 'cash_on_hand' }),
+    ])
+    const codes = [a, b, c].map((r) => r.statusCode).sort()
+    expect(codes, [a, b, c].map((r) => r.body).join('\n')).toEqual([200, 409, 409])
+    const after = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })
+    const movements = await prisma.pettyCashMovement.count({ where: { cashVoucherId: v.id } })
+    const payEntries = await prisma.journalEntry.count({ where: { reference: `cashvoucher.pay:${v.id}` } })
+    expect(movements + payEntries).toBe(1)
+    if (after.paySource === 'box') {
+      expect(await floatOf(box['A']!)).toBe(start - 3_000)
+      expect(after.payJournalEntryId).toBeNull()
+    } else {
+      expect(await floatOf(box['A']!)).toBe(start)
+      expect(after.pettyCashMovementId).toBeNull()
+      expect(await held1357(v.id)).toBe(3_000)
+    }
+  })
+
+  it('a refused verification posting leaves no change entry and the voucher awaiting documents', async () => {
+    const v = await approved(8_000)
+    expect((await pay('finA', v.id, { source: 'cash_on_hand' })).statusCode).toBe(200)
+    await readyToVerify(v.id)
+    const lock = await prisma.periodLock.create({ data: { tenantId: T.A, lockedThrough: new Date(Date.now() + 86_400_000), lockedBy: 'test' } })
+    try {
+      const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, { lines: [{ categoryKey: 'transport', amountCents: 5_000, description: 'Taxi' }] })
+      expect(r.statusCode, r.body).toBe(422)
+    } finally {
+      await prisma.periodLock.delete({ where: { id: lock.id } })
+    }
+    expect(await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).toMatchObject({ status: 'disbursed', postedAt: null, returnedCents: 0 })
+    expect(await entry(`cashvoucher.change:${v.id}`)).toBeNull()
+    expect(await entry(`cashvoucher.post:${v.id}`)).toBeNull()
+    expect(await held1357(v.id)).toBe(8_000)
+  })
+
+  it('the ready-to-pay notice reaches finance of the voucher\'s company (not company B)', async () => {
+    const { flushNotifications } = await import('../src/lib/staffNotify.js')
+    const v = await approved(2_000)
+    await flushNotifications()
+    const told = await prisma.staffNotification.findMany({ where: { entityId: v.id, dedupeKey: { startsWith: `task.next:cash_voucher:${v.id}:approved` } }, select: { userId: true, tenantId: true } })
+    const ids = told.map((n) => n.userId)
+    expect(ids).toContain(U['finA']!.id)
+    expect(ids).toContain(U['cashA']!.id)
+    expect(ids).not.toContain(U['finB']!.id)
+    expect(ids).not.toContain(U['ceoA']!.id)
+    expect(told.every((n) => n.tenantId === T.A)).toBe(true)
+  })
+})
