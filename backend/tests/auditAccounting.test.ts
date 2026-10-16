@@ -115,11 +115,11 @@ describe('BOOKS-03 — manual journal entries can be reversed', () => {
     const flipped = reversal.lines.map((l) => `${l.account.code}:${l.type}:${l.amountCents}`).sort()
     expect(flipped).toEqual(['1020:credit:5000000', '3010:debit:5000000'])
 
-    // The two entries cancel: both accounts are back at zero.
+    // The two entries cancel: both accounts are back at zero — so the trial balance (net balances, zero rows
+    // hidden — owner, 2026-10-16) does not list them.
     const tb = await trialBalance([tenantA], new Date(Date.now() + 60_000))
     for (const code of ['1020', '3010']) {
-      const row = tb.rows.find((r) => r.code === code)!
-      expect(row.debitCents - row.creditCents).toBe(0)
+      expect(tb.rows.find((r) => r.code === code)).toBeUndefined()
     }
 
     const trail = await prisma.auditLog.findFirst({ where: { action: 'journal.reverse', entityId: reversal.id } })

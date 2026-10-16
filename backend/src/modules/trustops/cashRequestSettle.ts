@@ -15,37 +15,21 @@
 //     changeBoxId / topUpBoxId → 422 EXPENSE_BOOKED_AT_PAY: a change or an
 //     overspend is corrected by a manual journal (Finance → Journal).
 //
-// ── The 2026-10-15 hold flow (expenseOnVerify true, bookedAtPay false: paid
-//    before the one-entry rule) ──
-// The pay held the cash on 1357 (Dr 1357 / Cr 1011). Then:
-//   • POST /:id/documents { fileName, mime, dataBase64 } — supporting
-//     documents (kind 'supporting'): PDF, JPG / PNG / WebP, Excel, Word,
-//     PowerPoint, CSV, text (lib/evidenceFile.ts allowOffice: extension, mime
-//     and magic bytes must agree), ≤ 5 MB each, ≤ 20 per voucher. The
-//     requester (whoever raised it), the holder (kind request), finance or
-//     the cashier, from 'approved' on; after posting, keepers only. The first
-//     document a requester / holder attaches to a paid request also confirms
-//     the cash was received (they clearly have it). With ≥ 1 document the
-//     voucher shows CLOSED (books pending) until finance verifies it
-//     (cashVouchers.ts closedStateOf). DELETE /:id/documents/:aid — the
-//     uploader or finance, before verification. They book nothing.
-//   • POST /:id/spend { lines, note? } — what was actually spent (expense /
-//     stock / capex lines, Σ any amount: under the paid amount means change
-//     comes back, over means finance tops the holder up). Stored on the
-//     voucher's one settlement row; books NOTHING.
-//   • POST /:id/verify-docs { lines?, changeCents?, changeBoxId?, topUpBoxId?,
-//     note? } — finance confirms (or replaces) the lines; ≥ 1 supporting
-//     document (422 DOCS_REQUIRED). ONE transaction: the claim (disbursed,
-//     not posted → posted; 409 ALREADY_POSTED), change back into a box
-//     (Dr 1011 / Cr 1357) or the overspend paid from a box (a second
-//     recordPettyCashSpendTx, Dr 1357 / Cr 1011) — for a voucher paid from
-//     cash on hand / a bank, back to / from that same account instead
-//     ('cashvoucher.change:<id>' Dr source / Cr 1357, 'cashvoucher.overspend:<id>'
-//     Dr 1357 / Cr source; a box id is 422 PAY_SOURCE_NOT_BOX), stock / CapEx lines onto
-//     their registers, and ONE entry 'cashvoucher.post:<id>' Dr each line /
-//     Cr 1357 (postCashVoucherVerifiedTx) — 1357 ends at zero for the voucher.
-//     422 PERIOD_LOCKED / INSUFFICIENT_FLOAT roll it all back.
-//
+// ── Vouchers still held from the 2026-10-15 hold flow (expenseOnVerify true,
+//    bookedAtPay false) ──
+// Owner, 2026-10-16: "Don't post any entry in 1357 … only book one entry when
+// confirmed by finance". Their pay held the cash on 1357; nothing here books
+// out of 1357 line by line any more. The boot run (voucherHoldConversion.ts)
+// turns each into a one-entry voucher ('cashvoucher.hold_convert:<id>' Dr its
+// expense / Cr 1357, dated the day it runs) and POST /:id/verify-docs runs the
+// SAME conversion for one the boot could not convert yet, then checks the
+// documents like any one-entry voucher (books nothing). One that still cannot
+// convert (no usable category, equipment, a refused posting) is 409
+// VOUCHER_STILL_HELD — finance fixes the cause or corrects it by manual
+// journal. Supporting documents (POST/DELETE /:id/documents: PDF, images,
+// Office, CSV / text through lib/evidenceFile.ts allowOffice, ≤ 5 MB, ≤ 20)
+// work as for any voucher and book nothing; POST /:id/spend is retired.
+
 // ── Legacy H3 rows (expenseOnVerify false: paid before 2026-10-15) ──
 // H3 (Hasnain, 2026-10-14): "Expense at payment; receipts kept for the file."
 // The pay already booked the whole amount to the request's category (Dr 6xxx /
@@ -70,28 +54,26 @@
 // brands and outlets must be the request's own company's (422).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
-import { assertInt4Fits, zInt4Cents } from '../../lib/money.js'
+import { zInt4Cents } from '../../lib/money.js'
 import { decodeEvidenceFile } from '../../lib/evidenceFile.js'
-import { ACCT } from '../accounting/journal.js'
 import { flagException } from '../../lib/exceptions.js'
 import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { resolveSpendAccount } from '../accounting/expenseCategories.js'
 import {
-  bookCashLinesTx, cashRequestBrandTx, cashRequestPaidAccountTx, categoryRefOf, postCashVoucherSettlementTx, postCashVoucherVerifiedTx,
-  postCashVoucherSourceTx,
+  bookCashLinesTx, cashRequestPaidAccountTx, postCashVoucherSettlementTx,
   resolveSpendLinesTx, spendLineData, MAX_SPEND_LINES, type ResolvedSpendLine,
 } from '../accounting/pettyCashPosting.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
-import { CASH_GUARD, mayBuyStock, recordPettyCashSpendTx, recordPettyCashTopupTx } from './pettyCash.js'
+import { CASH_GUARD, mayBuyStock, recordPettyCashTopupTx } from './pettyCash.js'
 import {
   auditVoucher, detailOf, loadVisible, loadVoucher, remainingOf, viewerOf, voucherTaskNotice, wrongStatus, CASH_VOUCHER_PHOTO_MAX_BYTES,
   type Viewer, type VoucherRow,
 } from './cashVouchers.js'
+import { convertHeldVoucher } from './voucherHoldConversion.js'
 
 /** Receipts one request may carry. */
 export const MAX_RECEIPTS_PER_REQUEST = 20
@@ -136,35 +118,6 @@ function isDocsParty(viewer: Viewer, v: VoucherRow): boolean {
   return viewer.financeApprover || viewer.keeper || (!!v.box && v.box.custodianId === viewer.id)
     || v.preparedById === viewer.id
     || (v.kind === 'request' && !!v.payeeUserId && v.payeeUserId === viewer.id)
-}
-
-/** The voucher's one spend settlement (2026-10-15 flow), created on first use. */
-async function spendSettlementTx(tx: Prisma.TransactionClient, v: { id: string; tenantId: string }, actorId: string): Promise<{ id: string }> {
-  const cur = await tx.cashVoucherSettlement.findFirst({ where: { voucherId: v.id, tenantId: v.tenantId }, orderBy: { seq: 'asc' }, select: { id: true } })
-  if (cur) return cur
-  return tx.cashVoucherSettlement.create({ data: { tenantId: v.tenantId, voucherId: v.id, seq: 1, totalCents: 0, submittedById: actorId }, select: { id: true } })
-}
-
-/** Replace the voucher's spend lines (never booked yet) with `resolved`. */
-async function replaceSpendLinesTx(
-  tx: Prisma.TransactionClient, v: { id: string; tenantId: string }, resolved: ResolvedSpendLine[], actorId: string, note: string | null | undefined,
-): Promise<{ settlementId: string; lineIds: string[]; totalCents: number }> {
-  const st = await spendSettlementTx(tx, v, actorId)
-  const booked = await tx.pettyCashSpendLine.count({ where: { settlementId: st.id, OR: [{ receiptLineId: { not: null } }, { capexPaymentId: { not: null } }] } })
-  if (booked > 0) throw new AppError('ALREADY_POSTED', 'These lines are already booked', 409)
-  await tx.pettyCashSpendLine.deleteMany({ where: { settlementId: st.id, tenantId: v.tenantId } })
-  const lineIds: string[] = []
-  for (const l of resolved) {
-    const row = await tx.pettyCashSpendLine.create({ data: { ...spendLineData(v.tenantId, l), settlementId: st.id }, select: { id: true } })
-    lineIds.push(row.id)
-  }
-  const totalCents = resolved.reduce((t, l) => t + l.amountCents, 0)
-  assertInt4Fits(totalCents, 'The spend')
-  await tx.cashVoucherSettlement.update({
-    where: { id: st.id },
-    data: { totalCents, submittedById: actorId, ...(note !== undefined && { note: note ?? null }) },
-  })
-  return { settlementId: st.id, lineIds, totalCents }
 }
 
 /** An expense line booked though it looks like equipment (finance / CEO override): raised in the request's company. */
@@ -225,7 +178,8 @@ async function markDocsChecked(
       throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', cur, 'finance checks a paid voucher')
     }
   })
-  const entryId = v.payJournalEntryId
+  // A converted hold (voucherHoldConversion.ts) was booked by its conversion entry (postedJournalEntryId).
+  const entryId = v.postedJournalEntryId ?? v.payJournalEntryId
     ?? (v.pettyCashMovementId
       ? (await prisma.pettyCashMovement.findUnique({ where: { id: v.pettyCashMovementId }, select: { journalEntryId: true } }))?.journalEntryId ?? null
       : null)
@@ -392,6 +346,10 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       notEquipmentReason: z.string().max(500).nullable().optional(),
     }).parse(req.body ?? {})
     const v = await loadVoucher(req, req.params.id)
+    // A voucher of the 2026-10-15 flow: its booked entry is never re-posted (it would touch 1357) — a manual journal moves it.
+    if (v.expenseOnVerify) {
+      throw new AppError('USE_JOURNAL', `Cash voucher ${v.number} is booked — move its expense with a manual journal (Finance → Journal)`, 409)
+    }
     const settlement = await prisma.cashVoucherSettlement.findFirst({ where: { id: req.params.sid, voucherId: v.id, tenantId: v.tenantId }, select: { id: true } })
     if (!settlement) throw new NotFoundError('CashVoucherSettlement', req.params.sid)
     const line = await prisma.pettyCashSpendLine.findFirst({ where: { id: req.params.lineId, settlementId: settlement.id, tenantId: v.tenantId } })
@@ -564,58 +522,28 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  // POST /:id/spend { lines, note? } — what was actually spent, recorded with
-  // the documents by the holder (kind request), finance, a keeper or the
-  // cashier, while the voucher is paid and not yet verified. Lines as a
-  // settlement's (expense / stock / capex; stock: keepers or the inventory
-  // module; an explicit account: keepers). Replaces any earlier lines. Books
-  // NOTHING — finance's verification does.
+  // POST /:id/spend — retired (owner, 2026-10-16: one entry, nothing on
+  // 1357): 409 EXPENSE_BOOKED_AT_PAY on every voucher of the documents flow.
   fastify.post<{ Params: { id: string } }>('/:id/spend', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const body = z.object({
-      lines: z.array(SETTLE_LINE).min(1).max(MAX_SPEND_LINES),
-      note: z.string().trim().max(500).nullable().optional(),
-    }).parse(req.body ?? {})
-    const { v, viewer } = await loadVisible(req, req.params.id)
-    if (v.bookedAtPay) {
-      throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} was booked in one entry when finance paid it — attach the documents; finance corrects any difference with a manual journal`, 409)
+    const { v } = await loadVisible(req, req.params.id)
+    // Nothing is recorded line by line any more (1357 retired, owner 2026-10-16): a voucher booked at pay, or one
+    // still held from the old flow (it is booked as one entry in its category when finance checks it).
+    if (v.bookedAtPay || v.expenseOnVerify) {
+      throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} is booked in one entry in its category — attach the documents; finance corrects any difference with a manual journal`, 409)
     }
-    if (v.status !== 'disbursed' || !v.expenseOnVerify) {
-      throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', v, 'what was spent is recorded once it is paid, until finance verifies it')
-    }
-    if (!isDocsParty(viewer, v)) throw new AppError('SPEND_NOT_ALLOWED', 'Only the person who holds this cash, the cashier, finance or a manager can record what was spent', 403)
-    const wantsStock = body.lines.some((l) => l.kind === 'stock')
-    const stockAllowed = wantsStock ? await mayBuyStock(viewer) : false
-    const done = await prisma.$transaction(async (tx) => {
-      await lockVoucherTx(tx, v.id)
-      const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true, number: true, postedAt: true } })
-      if (cur.status !== 'disbursed' || cur.postedAt) throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', cur, 'what was spent is recorded once it is paid, until finance verifies it')
-      const resolved = await resolveSpendLinesTx(tx, v.tenantId, body.lines, {
-        allowExplicit: viewer.keeper || viewer.financeApprover,
-        actor: { id: viewer.id, role: viewer.role },
-        stockAllowed,
-      })
-      const r = await replaceSpendLinesTx(tx, v, resolved, viewer.id, body.note)
-      return { ...r, overrides: resolved.filter((l) => l.equipmentOverride) }
-    })
-    await auditVoucher(req, 'spend', v, { settlementId: done.settlementId, spentCents: done.totalCents, lines: body.lines.length })
-    // An equipment override is decided here (the reason is not stored on the line), so it is flagged here.
-    if (done.overrides.length) await flagOverrides(v, viewer.id, done.overrides)
-    return detailOf(v.id, viewer)
+    throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', v, 'what was spent is recorded with receipts on a legacy cash request')
   })
 
-  // POST /:id/verify-docs { lines?, changeCents?, changeBoxId?, topUpBoxId?,
-  // note? } — finance verifies the supporting documents and the expense is
-  // booked. A finance approver, never on their own voucher (409
-  // SELF_APPROVE); a paid 2026-10-15 voucher (409 ALREADY_POSTED once
-  // verified; VOUCHER_NOT_AWAITING_DOCS otherwise); ≥ 1 supporting document
-  // (422 DOCS_REQUIRED). Lines: `lines` (replace), else the ones recorded,
-  // else one line = the voucher's account × its amount. spent < paid → the
-  // change (changeCents, if sent, must match: 422 CHANGE_MISMATCH) goes back
-  // into changeBoxId (default the paying box): Dr 1011 / Cr 1357. spent >
-  // paid → the difference is paid to the holder from topUpBoxId (default the
-  // paying box): Dr 1357 / Cr 1011 (INSUFFICIENT_FLOAT rolls back). ONE
-  // transaction, ONE entry 'cashvoucher.post:<id>' Dr each line / Cr 1357;
-  // 1357 ends at zero for the voucher; PERIOD_LOCKED rolls everything back.
+  // POST /:id/verify-docs { note? } — finance checks the supporting documents.
+  // A finance approver, never on their own voucher (409 SELF_APPROVE); a paid
+  // voucher of the documents flow (409 ALREADY_POSTED once checked;
+  // VOUCHER_NOT_AWAITING_DOCS otherwise); the cash receipt confirmed; ≥ 1
+  // supporting document (422 DOCS_REQUIRED). Books NOTHING (markDocsChecked):
+  // the pay was the one entry — or, for a voucher still held from the
+  // 2026-10-15 flow, its one conversion entry, posted here first (409
+  // VOUCHER_STILL_HELD if it cannot be). lines / changeCents / changeBoxId /
+  // topUpBoxId → 422 EXPENSE_BOOKED_AT_PAY (a manual journal corrects change
+  // or an overspend). Nothing ever posts to 1357 from here but that conversion.
   fastify.post<{ Params: { id: string } }>('/:id/verify-docs', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const body = z.object({
       lines: z.array(SETTLE_LINE).min(1).max(MAX_SPEND_LINES).optional(),
@@ -641,144 +569,31 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       throw new AppError('DOCS_REQUIRED', `Cash voucher ${v.number} has no supporting document yet — they are uploaded first`, 422)
     }
     if (v.bookedAtPay) return markDocsChecked(req, v, viewer, body)
-    const boxOf = async (id: string) => {
-      const b = await prisma.pettyCashBox.findFirst({ where: { id, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { id: true } })
-      if (!b) throw new AppError('BOX_NOT_IN_COMPANY', 'That cash box is not an open petty-cash box of this voucher\'s company', 422)
-      return b.id
+    // Still held on 1357 (paid under the 2026-10-15 hold flow): nothing is
+    // booked out of 1357 here any more (owner, 2026-10-16). The voucher is
+    // first made a one-entry voucher by THE conversion (voucherHoldConversion.ts,
+    // the same keyed entry the boot run posts: Dr its expense / Cr 1357), and
+    // its documents check then books nothing. If it cannot convert (no usable
+    // category, equipment, a refused posting …) the check is refused — finance
+    // fixes the cause or corrects it with a manual journal.
+    if (body.lines || (body.changeCents ?? 0) > 0 || body.changeBoxId || body.topUpBoxId) {
+      throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} is booked as one entry in its category — checking its documents books nothing else; correct any change or overspend with a manual journal`, 422)
     }
-    // Paid from cash on hand / a bank (2026-10-16): change and an overspend go back to / come from that SAME
-    // account (pettyCashPosting.ts postCashVoucherSourceTx) — never a box.
-    const direct = v.paySource !== 'box'
-    if (direct && (body.changeBoxId || body.topUpBoxId)) {
-      throw new AppError('PAY_SOURCE_NOT_BOX', `Cash voucher ${v.number} was paid from ${v.paySource === 'bank' ? 'a bank account' : 'cash on hand'} — its change goes back there and an overspend is paid from there, not from a cash box`, 422)
+    const conv = await convertHeldVoucher(v.id, { actorId: viewer.id })
+    if (conv.outcome === 'refused') {
+      throw new AppError(
+        'VOUCHER_STILL_HELD',
+        `Cash voucher ${v.number} was paid under the old hold flow and cannot be booked as one expense entry: ${conv.reason}. `
+          + 'Fix that (for example set its expense category) and check its documents again, or correct it with a manual journal (Finance → Journal).',
+        409,
+        { reason: conv.code },
+      )
     }
-    const changeBox = direct ? null : body.changeBoxId ? await boxOf(body.changeBoxId) : v.boxId
-    const topUpBox = direct ? null : body.topUpBoxId ? await boxOf(body.topUpBoxId) : v.boxId
-    const stored = await prisma.pettyCashSpendLine.findMany({ where: { tenantId: v.tenantId, settlement: { voucherId: v.id } }, select: { kind: true } })
-    const wantsStock = (body.lines ?? stored).some((l) => l.kind === 'stock')
-    // The FIFO cut-over runs in its own transaction — before ours (stockLedger.ts).
-    if (wantsStock) await ensureFifoReady(v.tenantId)
-    const me = viewer.id
-    const now = new Date()
-
-    const done = await prisma.$transaction(async (tx) => {
-      await lockVoucherTx(tx, v.id)
-      // The claim: exactly one verification ever posts.
-      const claimed = await tx.cashVoucher.updateMany({
-        where: { id: v.id, tenantId: v.tenantId, status: 'disbursed', expenseOnVerify: true, postedAt: null },
-        data: { status: 'posted', docsVerifiedById: me, docsVerifiedAt: now, postedAt: now, postedById: me },
-      })
-      if (claimed.count === 0) {
-        const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true, number: true } })
-        if (cur.status === 'posted') throw new AppError('ALREADY_POSTED', `Cash voucher ${v.number} is already verified and booked`, 409)
-        throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', cur, 'finance verifies a paid voucher')
-      }
-      const cur = await tx.cashVoucher.findUniqueOrThrow({
-        where: { id: v.id },
-        select: { amountCents: true, settledCents: true, returnedCents: true, convertedCents: true, number: true, purpose: true, category: true, conceptId: true },
-      })
-      if (cur.settledCents + cur.returnedCents + cur.convertedCents !== 0) {
-        throw new AppError('VOUCHER_CHANGED', `Cash voucher ${cur.number} already has money settled against it — reload it`, 409)
-      }
-      const docs = await tx.cashVoucherAttachment.count({ where: { voucherId: v.id, tenantId: v.tenantId, kind: 'supporting' } })
-      if (docs === 0) throw new AppError('DOCS_REQUIRED', `Cash voucher ${cur.number} has no supporting document yet`, 422)
-
-      // The lines: finance's, else the ones recorded, else the voucher's own account × its amount.
-      const actor = { id: me, role: viewer.role }
-      let settlementId: string
-      let lineIds: string[]
-      let resolvedLines: ResolvedSpendLine[] = []
-      const existing = await tx.pettyCashSpendLine.findMany({ where: { tenantId: v.tenantId, settlement: { voucherId: v.id } }, orderBy: { createdAt: 'asc' } })
-      if (body.lines || existing.length === 0) {
-        const inputs = body.lines ?? [{
-          kind: 'expense' as const, ...categoryRefOf(cur.category), amountCents: cur.amountCents, conceptId: cur.conceptId,
-          description: `${cur.number}: ${cur.purpose}`.slice(0, 200),
-        }]
-        resolvedLines = await resolveSpendLinesTx(tx, v.tenantId, inputs, { allowExplicit: true, actor, stockAllowed: true })
-        const r = await replaceSpendLinesTx(tx, v, resolvedLines, me, body.note)
-        settlementId = r.settlementId
-        lineIds = r.lineIds
-      } else {
-        settlementId = existing[0]!.settlementId!
-        lineIds = existing.map((l) => l.id)
-      }
-      const lines = await tx.pettyCashSpendLine.findMany({ where: { id: { in: lineIds } }, select: { amountCents: true } })
-      const spent = lines.reduce((t, l) => t + l.amountCents, 0)
-      assertInt4Fits(spent, 'The spend')
-      if (!(spent > 0)) throw new AppError('LINES_EMPTY', 'Say what the cash was spent on', 400)
-
-      let changeCents = 0
-      let topUpCents = 0
-      let changeMovementId: string | null = null
-      let topUpMovementId: string | null = null
-      let changeEntryId: string | null = null
-      let topUpEntryId: string | null = null
-      if (spent < cur.amountCents) {
-        changeCents = cur.amountCents - spent
-        if (body.changeCents !== undefined && body.changeCents !== changeCents) {
-          throw new AppError('CHANGE_MISMATCH', `The lines come to PKR ${(spent / 100).toFixed(2)} of PKR ${(cur.amountCents / 100).toFixed(2)} paid — the change handed back must be PKR ${(changeCents / 100).toFixed(2)}`, 422)
-        }
-        if (direct) {
-          // Back to where it came from: Dr 1010 | the bank / Cr 1357 ('cashvoucher.change:<id>').
-          changeEntryId = (await postCashVoucherSourceTx(tx, v.id, 'change', changeCents, me)).entryId
-        } else {
-          if (!changeBox) throw new AppError('BOX_REQUIRED', 'Pick the cash box the change goes into', 422)
-          // Back into a box: Dr 1011 / Cr 1357 (the account the voucher was paid to), under the pay's brand.
-          const topup = await recordPettyCashTopupTx(tx, {
-            box: { id: changeBox }, amountCents: changeCents, reason: `Change returned on cash voucher ${cur.number}`,
-            createdById: me, source: 'cash_request', cashVoucherId: v.id,
-          })
-          changeMovementId = topup.movement.id
-        }
-      } else if (spent > cur.amountCents) {
-        if ((body.changeCents ?? 0) > 0) {
-          throw new AppError('CHANGE_MISMATCH', `The lines come to more than the PKR ${(cur.amountCents / 100).toFixed(2)} paid — there is no change`, 422)
-        }
-        topUpCents = spent - cur.amountCents
-        if (direct) {
-          // The holder spent more: paid from the same account, held on 1357 like the pay ('cashvoucher.overspend:<id>').
-          topUpEntryId = (await postCashVoucherSourceTx(tx, v.id, 'overspend', topUpCents, me)).entryId
-        } else {
-          if (!topUpBox) throw new AppError('BOX_REQUIRED', 'Pick the cash box the difference is paid from', 422)
-          // The holder spent more: finance pays the difference now — THE one spend path, held on 1357 like the pay.
-          const extra = await recordPettyCashSpendTx(tx, {
-            box: { id: topUpBox }, amountCents: topUpCents, reason: `Cash voucher ${cur.number}: overspend paid at verification`,
-            vendorName: v.payeeName.slice(0, 120), createdById: me, nature: 'voucher_hold', cashVoucherId: v.id,
-            conceptId: await cashRequestBrandTx(tx, v.id), actor,
-          })
-          topUpMovementId = extra.movement.id
-        }
-      } else if ((body.changeCents ?? 0) > 0) {
-        throw new AppError('CHANGE_MISMATCH', `The lines come to exactly the PKR ${(cur.amountCents / 100).toFixed(2)} paid — there is no change`, 422)
-      }
-      // Stock lines → a settled goods receipt; capex lines → CapEx cash payments (bridged through 1011).
-      await bookCashLinesTx(tx, {
-        tenantId: v.tenantId, doc: { kind: 'cash_voucher_settlement', id: settlementId }, creditCode: ACCT.VOUCHERS_AWAITING_DOCS,
-        lineIds, occurredAt: now, actorId: me,
-      })
-      await tx.cashVoucher.update({
-        where: { id: v.id },
-        data: { settledCents: Math.min(spent, cur.amountCents), returnedCents: changeCents, settledAt: now },
-      })
-      const posted = await postCashVoucherVerifiedTx(tx, v.id, { postedBy: me })
-      if (!posted.entryId) throw new AppError('POSTING_MISSING', `Cash voucher ${cur.number} could not be booked`, 500)
-      return { settlementId, entryId: posted.entryId, spent, changeCents, topUpCents, changeMovementId, topUpMovementId, changeEntryId, topUpEntryId, overrides: resolvedLines.filter((l) => l.equipmentOverride) }
-    }, { timeout: 30_000, maxWait: 10_000 })
-
-    await auditVoucher(req, 'verify_docs', v, {
-      status: 'posted', entryId: done.entryId, spentCents: done.spent, changeCents: done.changeCents, topUpCents: done.topUpCents,
-      changeMovementId: done.changeMovementId, topUpMovementId: done.topUpMovementId,
-      ...(done.changeEntryId && { changeEntryId: done.changeEntryId }), ...(done.topUpEntryId && { topUpEntryId: done.topUpEntryId }), ...(body.note && { note: body.note }),
-    }, { status: v.status })
-    if (done.overrides.length) await flagOverrides(v, me, done.overrides)
-    // The bell (queued): the raiser and holder hear it is booked.
-    voucherTaskNotice('verified', v.id, me)
-    return {
-      entryId: done.entryId,
-      spentCents: done.spent,
-      changeCents: done.changeCents,
-      topUpCents: done.topUpCents,
-      voucher: await detailOf(v.id, viewer),
+    const converted = await loadVoucher(req, v.id)
+    if (!converted.bookedAtPay) throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', converted, 'finance checks a paid voucher')
+    if (conv.outcome === 'converted') {
+      await auditVoucher(req, 'hold_convert', v, { entryId: conv.entryId, accountCode: conv.accountCode, amountCents: conv.amountCents, bookedAtPay: true }, { bookedAtPay: false })
     }
+    return markDocsChecked(req, converted, viewer, body)
   })
 }

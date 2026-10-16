@@ -20,7 +20,7 @@ import {
 import { PrintPortal, VoucherSheet } from './VoucherPrint'
 import { VoucherForm } from './VoucherForm'
 import { SettlePanel, Thumbs } from './SettlePanel'
-import { DocumentsPanel, SpentPanel, VerifyPanel } from './DocsPanel'
+import { DocumentsPanel, VerifyPanel } from './DocsPanel'
 import { ErrorBanner, StatusBadge, dangerOutlineBtn, fieldCls, primaryBtn, secondaryBtn } from './ui'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
@@ -253,7 +253,6 @@ export function VoucherDetail({ id }: { id: string }) {
         {/* After payment */}
         {/* Supporting documents travel with the voucher: listed and downloadable for everyone who can open it. */}
         {(paid || (v.status === 'approved' && v.canUpload)) && (newFlow || (v.documents?.length ?? 0) > 0 || v.canUpload) && <DocumentsPanel v={v} isKeeper={isKeeper} />}
-        {v.status === 'disbursed' && newFlow && (v.canRecordSpend ?? v.canUpload) && !v.canVerify && <SpentPanel v={v} isKeeper={isKeeper} />}
         {v.status === 'disbursed' && newFlow && v.canVerify && <VerifyPanel v={v} isKeeper={isKeeper} />}
         {paid && !newFlow && <SettlePanel v={v} isKeeper={isKeeper} />}
         {v.status === 'posted' && (

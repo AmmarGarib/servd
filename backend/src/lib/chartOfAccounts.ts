@@ -78,7 +78,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1351', name: 'Rider Cash Receivable (COD)',        type: 'asset',     description: 'Delivered cash-on-delivery money an own-fleet rider has not handed in (H5); cleared when the rider pays it in at the till' },
   { code: '1355', name: 'Cash Advances to Settle',            type: 'asset',     description: 'Cash requests paid out, awaiting receipts or change (H3)' },
   { code: '1356', name: "Director's Current Account",         type: 'asset',     description: 'Unsettled cash advances held by a director (H4, Companies Act 2017 s.182); a credit balance is owed to the director' },
-  { code: '1357', name: 'Petty Cash Vouchers Awaiting Documents', type: 'asset', description: 'Expense vouchers paid from petty cash, waiting for finance to verify the supporting documents before the expense is booked (2026-10-15)' },
+  { code: '1357', name: 'Petty Cash Vouchers Awaiting Documents', type: 'asset', description: 'RETIRED 2026-10-16 — nothing posts here. History of the 2026-10-15 hold flow (vouchers paid before their documents were verified); vouchers still held were booked out as one expense entry each' },
   { code: '1360', name: 'Security Deposits (refundable)',     type: 'asset',     description: 'Refundable deposits paid, held until returned or forfeited (H25)' },
   // Fixed assets — the register's accounts (controlledBy 'fixed_asset').
   { code: '1500', name: 'Land',                               type: 'asset',     description: 'Never depreciated',                                    controlledBy: 'fixed_asset' },

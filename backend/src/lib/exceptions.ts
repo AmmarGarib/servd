@@ -117,6 +117,8 @@ export type ExceptionKind =
   | 'night_audit_reopened'       // the CEO reopened a night-audited sales day
   | 'night_audit_pending'        // yesterday had sales and its night audit has not run (after 06:00 PKT)
   | 'backdated_sale_change'      // the CEO voided / comped / cancelled / reversed / credit-noted a bill of an earlier sales day
+  // Cash vouchers (owner, 2026-10-16: 1357 retired). Plain String column — no migration.
+  | 'cash_voucher_hold_unconverted' // a voucher still held on 1357 could not be booked as one expense entry — finance fixes it
 
 /**
  * The kind a flag was filed under before it had its own. A query that looks

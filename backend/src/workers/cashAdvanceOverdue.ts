@@ -71,7 +71,7 @@ export async function runCashAdvanceOverdueOnce(now: Date = new Date()): Promise
               + (v.bookedAtPay
                 ? 'The expense was booked when finance paid it; the documents are needed for the file.'
                 : v.expenseOnVerify
-                ? 'The cash waits on 1357 (vouchers awaiting documents) — the expense is booked only once finance verifies the documents.'
+                ? 'It was paid under the old hold flow and is booked as one expense entry in its category when finance checks the documents.'
                 : 'The cash was booked to its category when paid; the receipts are needed for the file.'),
             entityType: 'CashVoucher',
             entityId: v.id,

@@ -19,11 +19,10 @@
 //                            (or unknown) and that the backfill dry run does not already list
 //   trial_balance    block   the company's trial balance does not balance — NEVER overridable
 //   bank_unmatched   warn    bank statement lines up to the lock still unmatched
-//   vouchers_awaiting_docs block  cash vouchers paid on or before the lock, still HELD on 1357 (paid
-//                            before the one-entry rule), whose documents finance has not verified —
-//                            the expense unbooked
-//   voucher_docs_unchecked warn   cash vouchers booked in one entry at pay (bookedAtPay) whose documents
-//                            finance has not checked yet — the expense IS booked, no money waits
+//   vouchers_awaiting_docs warn  cash vouchers paid on or before the lock whose supporting documents
+//                            finance has not checked yet — only the documents: the expense is booked
+//                            at pay (1357 retired, owner 2026-10-16; a voucher still held there is
+//                            converted at boot or flagged 'cash_voucher_hold_unconverted')
 //
 // A check that throws becomes a block keyed 'check_failed:<its key>' (the CEO
 // may override it, with a reason, like any other block) — a broken check never
@@ -421,17 +420,16 @@ const bankUnmatchedCheck: CloseCheck = {
   },
 }
 
+// Owner, 2026-10-16 ("It should pass only one entry when booked by finance, either docs are attached or not";
+// "Don't post any entry in 1357"): a paid voucher's expense is on the books from its pay, so documents finance has
+// not checked hold no money — only a warning. ONE check for every voucher of the documents flow.
 const vouchersAwaitingDocsCheck: CloseCheck = {
   key: 'vouchers_awaiting_docs',
-  severity: 'block',
-  overridable: true,
+  severity: 'warn',
+  overridable: false,
   async run(ctx) {
-    // 2026-10-15 flow: a voucher paid in or before the period whose supporting
-    // documents finance has not verified still holds its cash on 1357 — the
-    // period's expense is not booked yet.
-    // A voucher booked at pay holds nothing on 1357 — voucher_docs_unchecked warns about it instead.
     const r = await ctx.db.cashVoucher.aggregate({
-      where: { tenantId: ctx.tenantId, status: 'disbursed', expenseOnVerify: true, bookedAtPay: false, disbursedAt: { lte: ctx.newLock } },
+      where: { tenantId: ctx.tenantId, status: 'disbursed', expenseOnVerify: true, disbursedAt: { lte: ctx.newLock } },
       _count: { _all: true },
       _sum: { amountCents: true },
     })
@@ -440,39 +438,10 @@ const vouchersAwaitingDocsCheck: CloseCheck = {
     const cents = r._sum.amountCents ?? 0
     return {
       key: 'vouchers_awaiting_docs',
-      severity: 'block',
-      title: 'Cash vouchers awaiting documents',
-      detail: `${plural(count, 'cash voucher')} paid on or before ${fmtPktDate(ctx.newLock)} (${pkr(cents)}) ${count === 1 ? 'has' : 'have'} not had ${count === 1 ? 'its' : 'their'} supporting documents verified, `
-        + 'so the cash still sits on 1357 and the expense is not booked. Verify them on Finance → Cash vouchers, or close anyway.',
-      count,
-      cents,
-      link: '/finance/cash-vouchers?view=awaiting_verification',
-      overridable: true,
-    }
-  },
-}
-
-// Owner, 2026-10-16 ("It should pass only one entry when booked by finance, either docs are attached or not"):
-// a voucher booked at pay has its expense on the books — missing documents hold no money, so only a warning.
-const voucherDocsUncheckedCheck: CloseCheck = {
-  key: 'voucher_docs_unchecked',
-  severity: 'warn',
-  overridable: false,
-  async run(ctx) {
-    const r = await ctx.db.cashVoucher.aggregate({
-      where: { tenantId: ctx.tenantId, status: 'disbursed', bookedAtPay: true, disbursedAt: { lte: ctx.newLock } },
-      _count: { _all: true },
-      _sum: { amountCents: true },
-    })
-    const count = r._count._all
-    if (count === 0) return null
-    const cents = r._sum.amountCents ?? 0
-    return {
-      key: 'voucher_docs_unchecked',
       severity: 'warn',
       title: 'Cash voucher documents not checked',
-      detail: `${plural(count, 'cash voucher')} paid on or before ${fmtPktDate(ctx.newLock)} (${pkr(cents)}) ${count === 1 ? 'is' : 'are'} booked, but finance has not checked ${count === 1 ? 'its' : 'their'} supporting documents yet. `
-        + 'The expense is on the books — check the documents on Finance → Cash vouchers.',
+      detail: `${plural(count, 'cash voucher')} paid on or before ${fmtPktDate(ctx.newLock)} (${pkr(cents)}) ${count === 1 ? 'has' : 'have'} supporting documents finance has not checked yet. `
+        + 'Check them on Finance → Cash vouchers.',
       count,
       cents,
       link: '/finance/cash-vouchers?view=awaiting_verification',
@@ -483,7 +452,7 @@ const voucherDocsUncheckedCheck: CloseCheck = {
 
 export const CORE_CLOSE_CHECKS: CloseCheck[] = [
   raastCheck, openTillsCheck, unpostedShiftsCheck, unpostedOrdersCheck, postingFailedCheck, trialBalanceCheck, bankUnmatchedCheck,
-  vouchersAwaitingDocsCheck, voucherDocsUncheckedCheck,
+  vouchersAwaitingDocsCheck,
 ]
 
 /** EVERY period-close check, in the order the checklist shows them. */

@@ -917,26 +917,34 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `settledCents` = amount, posts NOTHING) and refuses lines / change / boxes
   (422 `EXPENSE_BOOKED_AT_PAY`): a change or an overspend is a manual journal
   (Post / Edit / Cancel on the journal page). Close check
-  `voucher_docs_unchecked` (warn) lists one-entry vouchers whose documents are
-  not checked; the tie-out's 1357 side counts only held vouchers.
-- **Vouchers HELD on 1357** (paid 2026-10-15 → 2026-10-16 under the hold flow:
-  `expenseOnVerify` true, `bookedAtPay` false) keep their rules until they
-  clear: the pay was Dr **1357** Petty Cash Vouchers Awaiting Documents /
-  Cr 1011 (nature `voucher_hold`) or `cashvoucher.pay:<id>` Dr 1357 / Cr 1010 |
-  bank; verification is ONE transaction: conditional claim (disbursed,
-  `postedAt` null → `posted`; again 409 `ALREADY_POSTED`), change back into a
-  box (Dr 1011 / Cr 1357) or an overspend paid from a box (a second hold
-  Dr 1357 / Cr 1011) — or back to / from the same cash-on-hand / bank account
-  (`cashvoucher.change|overspend:<id>`) — stock / capex lines onto their
-  registers, and ONE entry `cashvoucher.post:<id>`
-  (`pettyCashPosting.ts postCashVoucherVerifiedTx`) Dr each line / Cr 1357 —
-  1357 nets to zero per voucher; `postedJournalEntryId` stamped. `GET
-  /:id/pay-sources` is what the Pay picker lists. The "ready to pay" bell also
-  tells the company's finance payers when no box is named. The lines live on
-  the voucher's one settlement row; a settlement of such a voucher is booked by
-  the voucher's entry (`postCashVoucherSettlementTx` dispatches), never
-  `cashvoucher.settle`. Close check `vouchers_awaiting_docs` (overridable
-  block) counts only these held vouchers; the tie-out compares them with 1357.
+  `vouchers_awaiting_docs` is a WARN only (documents not checked; the expense
+  is already booked) — `voucher_docs_unchecked` was merged into it.
+- **1357 is RETIRED (owner, 2026-10-16: "Don't post any entry in 1357 …
+  only book one entry when confirmed by finance").** No code path debits or
+  credits 1357 for new activity: the `voucher_hold` spend nature is gone,
+  `postCashVoucherSourceTx` posts only the one-entry pay (change / overspend /
+  a hold pay → 409 `EXPENSE_BOOKED_AT_PAY`), `postCashVoucherVerifiedTx` only
+  READS a verified voucher's existing entry (never re-synced), a `cash_request`
+  top-up onto 1357 is 409 `USE_JOURNAL`, the settlement-line reclass of a
+  documents-flow voucher is 409 `USE_JOURNAL`, `/:id/spend` is retired.
+  Vouchers still HELD on 1357 (paid 2026-10-15 → 2026-10-16 under the hold
+  flow: `expenseOnVerify` true, `bookedAtPay` false, not posted) are converted
+  ONCE by `trustops/voucherHoldConversion.ts` (at every API boot for every
+  company, and by `/:id/verify-docs` for one still held): ONE entry
+  `cashvoucher.hold_convert:<voucherId>` Dr its expense account
+  (`resolveSpendAccount` of its category) / Cr 1357 for the held amount, under
+  the pay's brand, dated the day it runs, in the voucher's company; in the same
+  transaction `bookedAtPay` = true and `postedJournalEntryId` = that entry, so
+  the documents check then books nothing (no change / overspend — a manual
+  journal). Keyed per voucher + a conditional claim: never twice. No usable
+  category (none / a `cogs` key), equipment, stock/CapEx lines recorded, a
+  hold not on the books, or a refused posting (period lock, closed books) →
+  NOT converted, flag `cash_voucher_hold_unconverted` (high, CEO + finance
+  bell) in its company, left held; `/verify-docs` answers 409
+  `VOUCHER_STILL_HELD` until finance fixes the cause (e.g. sets the category)
+  or corrects it by manual journal. Ledger entries are never deleted: the old
+  `cashvoucher.post:<id>` / hold entries stay as history; the tie-out still
+  compares 1357 with Σ vouchers still held (0 once all converted).
 - **Legacy H3 rows** (`expenseOnVerify` false, paid before 2026-10-15) keep
   their rules: the pay was the expense (Dr 6xxx / Cr 1011,
   `cashRequestPayLine` / `cashRequestPaidAccountTx`), receipts book nothing,
@@ -978,6 +986,13 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `REGISTER_OVERRIDE_CEO_ONLY`) and anything dated in closed or reopened books
   (`closedBooks.ts`). Journal requests (`/journal-requests`) stay for the
   other preparers (owner, management).
+- **Trial balance presentation (owner, 2026-10-16):** ONE net balance per
+  account — debits − credits in the Debit column when positive, the Credit
+  column when negative, never both — and accounts at zero are not listed (a
+  cleared account such as 1357 drops off). `accounting/reports.ts
+  trialBalance` (API, CSV, admin page and the `trial_balance` close check);
+  the computed `3020*` retained-earnings b/f row is unchanged; totals still
+  balance.
 - **Chart of accounts (owner, 2026-10-16):** finance (with the `accounting`
   module) and the CEO add and rename accounts (`POST` / `PATCH
   /setup/chart-of-accounts`, `CHART_EDITORS`) and switch accounts off or

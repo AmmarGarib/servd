@@ -65,12 +65,13 @@ export const ALWAYS_NOTIFY: ReadonlySet<ExceptionKind> = new Set<ExceptionKind>(
   'self_approval', 'pii_export', 'manager_pin_failed', 'consecutive_voids',
   'high_value_void', 'backdated_sale_change', 'night_audit_override', 'night_audit_reopened',
   'night_audit_pending', 'period_reopened', 'period_close_override', 'manual_journal',
-  'wage_change', 'ghost_employee', 'delivery_code_rerouted',
+  'wage_change', 'ghost_employee', 'delivery_code_rerouted', 'cash_voucher_hold_unconverted',
 ])
 
 /** Who hears a flag kind. Default: the CEO(s) only. */
 export const FLAG_ROUTES: Partial<Record<ExceptionKind, ReadonlyArray<'ceo' | 'finance'>>> = {
   night_audit_pending: ['ceo', 'finance'],
+  cash_voucher_hold_unconverted: ['ceo', 'finance'],
 }
 
 type ClaimedFlag = {

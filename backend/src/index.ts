@@ -1154,6 +1154,19 @@ async function build() {
     fastify.log.warn(`[fifo] cut-over skipped: ${(err as Error).message}`)
   }
 
+  // Cash vouchers still held on 1357 (the 2026-10-15 hold flow) become ONE
+  // expense entry each, once (owner, 2026-10-16: 1357 retired). Keyed per
+  // voucher ('cashvoucher.hold_convert:<id>'), so every boot re-tries only
+  // what is still held; one that cannot convert is flagged for finance.
+  try {
+    const { convertHeldVouchers } = await import('./modules/trustops/voucherHoldConversion.js')
+    for (const r of await convertHeldVouchers()) {
+      fastify.log.info(`[cashVoucher] held vouchers of ${r.tenantId}: ${r.converted} booked as one entry, ${r.refused} flagged for finance`)
+    }
+  } catch (err) {
+    fastify.log.warn(`[cashVoucher] hold conversion skipped: ${(err as Error).message}`)
+  }
+
   if (workersEnabled) {
     startCartReleaseWorker()
     startLoyaltyTriggerWorker()

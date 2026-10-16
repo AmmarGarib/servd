@@ -234,7 +234,7 @@ export interface PettyCashSpendInput {
   supplierPaymentId?: string | null
 }
 
-export type SpendNature = 'expense' | 'bill' | 'voucher_hold'
+export type SpendNature = 'expense' | 'bill'
 
 export interface PettyCashSpendOptions {
   /**
@@ -245,11 +245,8 @@ export interface PettyCashSpendOptions {
    *               category (pettyCashPosting.ts cashRequestPayLine, H3).
    *   'bill'    — paid a supplier bill (`supplierPaymentId`; the payment
    *               booked Dr 2010 / Cr 1010, this books Dr 1010 / Cr 1011).
-   *   'voucher_hold' — a cash voucher paid under the 2026-10-15 flow
-   *               (cashVouchers.ts, `cashVoucherId` required, no lines): Dr
-   *               1357 Petty Cash Vouchers Awaiting Documents / Cr 1011. The
-   *               expense is booked only when finance verifies the documents
-   *               (pettyCashPosting.ts postCashVoucherVerifiedTx).
+   *   (The 2026-10-15 'voucher_hold' nature — Dr 1357 / Cr 1011 — is
+   *   retired, owner 2026-10-16: nothing posts to 1357 any more.)
    * Omitted: 'bill' when supplierPaymentId is set, else 'expense'.
    */
   nature?: SpendNature
@@ -312,14 +309,6 @@ export async function recordPettyCashSpendTx(
     }
     if (input.lines?.length) throw new AppError('LINES_ON_BILL', 'A spend that pays a supplier bill has no expense lines', 400)
     accountCode = ACCT.CASH_ON_HAND
-  } else if (nature === 'voucher_hold') {
-    if (!input.cashVoucherId) throw new AppError('CASH_VOUCHER_REQUIRED', 'A voucher hold must name its cash voucher', 400)
-    if (input.lines?.length || input.supplierPaymentId) {
-      throw new AppError('LINES_ON_VOUCHER_HOLD', 'A cash voucher paid before its documents are verified has no expense lines', 400)
-    }
-    const v = await tx.cashVoucher.findUnique({ where: { id: input.cashVoucherId }, select: { tenantId: true } })
-    if (!v || v.tenantId !== box.tenantId) throw new AppError('BOX_NOT_IN_COMPANY', 'A cash voucher is paid from a box of its own company', 422)
-    accountCode = ACCT.VOUCHERS_AWAITING_DOCS
   } else {
     throw new AppError('BAD_SPEND_NATURE', `Unknown spend nature "${String(nature)}"`, 400)
   }
@@ -406,6 +395,10 @@ export async function recordPettyCashTopupTx(
       // the pay was booked to — Dr 1011 / Cr paid both carry it, so the
       // brand's expense nets (cash-brand-mismatch), whatever box takes it.
       accountCode = await cashRequestPaidAccountTx(tx, input.cashVoucherId)
+      // 1357 is retired (owner, 2026-10-16): change on a voucher still held there is a manual journal, never a top-up.
+      if (accountCode === ACCT.VOUCHERS_AWAITING_DOCS) {
+        throw new AppError('USE_JOURNAL', 'This voucher is still held awaiting documents — finance corrects its change with a manual journal', 409)
+      }
       conceptId = await cashRequestBrandTx(tx, input.cashVoucherId)
     } else {
       const counter = await cashCounterAccountTx(tx, box.tenantId, input.source, input.bankAccountId)

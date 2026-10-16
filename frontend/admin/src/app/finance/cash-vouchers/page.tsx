@@ -5,8 +5,9 @@
 // CEO; after the CEO approves finance pays it — that ONE entry books the
 // expense (owner, 2026-10-16) — the holder uploads the supporting documents —
 // the voucher is CLOSED for them then (it leaves "My open vouchers") — and
-// finance checks the documents after, which books nothing more (a voucher held
-// on 1357 before that rule is booked at the check). Finance may send it back
+// finance checks the documents after, which books nothing more (a voucher paid
+// before that rule is booked as one entry at boot or at the check; nothing
+// posts to 1357 any more, owner 2026-10-16). Finance may send it back
 // with a note.
 // Finance can also raise a voucher for an outside payee (with a discount).
 //

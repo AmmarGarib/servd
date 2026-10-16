@@ -53,23 +53,19 @@
 // one expense line in the voucher's category (H3). Only a row already booked
 // as an advance (lineless, 1355) reads back 1355 as its paid account.
 //
-// Cash vouchers since 2026-10-15 (owner: "expense should be booked after docs
-// verification by finance"; CashVoucher.expenseOnVerify true): the pay is a
-// LINELESS spend on 1357 Petty Cash Vouchers Awaiting Documents —
-// Dr 1357 / Cr 1011 (pettyCash.ts nature 'voucher_hold'), so
-// cashRequestPaidAccountTx reads back 1357. Nothing is expensed until finance
-// verifies the supporting documents; then ONE entry
-// 'cashvoucher.post:<voucherId>' (postCashVoucherVerifiedTx) books the spend
-// lines out of the hold:
-//   an expense line   Dr <its 6xxx> / Cr 1357
-//   a stock line      Dr 12x0 / Cr 1357 (the settled receipt)
-//   a capex line      its own CapEx payment Dr 1340 / Cr 1011, bridged here
-//                     with Dr 1011 / Cr 1357 (capexCashCreditFor)
-// Change handed back at verification is a 'cash_request' top-up Dr 1011 /
-// Cr 1357; an overspend paid at verification is a second hold Dr 1357 /
-// Cr 1011 — so 1357 nets to zero per voucher once it is posted. The lines live
-// on the voucher's one settlement row (no entry of its own: a settlement of
-// such a voucher is booked by the voucher's entry, never 'cashvoucher.settle').
+// Cash vouchers of 2026-10-15 (HISTORY ONLY — 1357 retired, owner 2026-10-16:
+// "Don't post any entry in 1357 … only book one entry when confirmed by
+// finance"): the pay was a LINELESS spend on 1357 Petty Cash Vouchers Awaiting
+// Documents — Dr 1357 / Cr 1011 (or 'cashvoucher.pay:<id>' Dr 1357 / Cr 1010 |
+// bank) — and the verification booked 'cashvoucher.post:<voucherId>' Dr the
+// lines / Cr 1357. Nothing creates either any more: the 'voucher_hold' spend
+// nature is gone, postCashVoucherVerifiedTx only reads the entry a verified
+// voucher already has (never re-synced), postCashVoucherSourceTx posts only
+// the one-entry pay. A voucher still held is converted ONCE by
+// trustops/voucherHoldConversion.ts ('cashvoucher.hold_convert:<id>' Dr its
+// expense / Cr 1357, dated the day it runs, postedJournalEntryId), then is a
+// one-entry voucher; planEntry still describes an old hold movement so a
+// replay of it is a no-op.
 //
 // ONE entry at pay (owner, 2026-10-16: "It should pass only one entry when
 // booked by finance, either docs are attached or not"; CashVoucher.bookedAtPay
@@ -589,6 +585,17 @@ export async function postPettyCashMovementTx(
   if (!m) throw new NotFoundError('PettyCashMovement', movementId)
   const tenantId = m.box.tenantId
   if (!tenantId) throw new AppError('BOX_HAS_NO_COMPANY', `Petty-cash box "${m.box.name}" belongs to no company — it cannot be booked`, 422)
+  if (m.type === 'spend' && m.lines.length === 0 && m.accountCode === ACCT.VOUCHERS_AWAITING_DOCS) {
+    // 1357 is retired (owner, 2026-10-16: "Don't post any entry in 1357"): an old hold movement keeps the entry it
+    // already has — never re-synced, re-dated, reversed or reposted (a backfill date or a box's brand edit would
+    // otherwise repost 1357 lines). One with no live entry is never booked now: 409 HOLD_RETIRED (a manual journal).
+    const { live } = await liveRevision(tenantId, 'pettycash.spend', m.id, tx)
+    if (!live) {
+      throw new AppError('HOLD_RETIRED', `Petty-cash spend ${m.id.slice(0, 8)} is an old 1357 hold with no entry — nothing posts to 1357 any more; book it with a manual journal`, 409)
+    }
+    if (live.entryId !== m.journalEntryId) await tx.pettyCashMovement.update({ where: { id: m.id }, data: { journalEntryId: live.entryId } })
+    return { entryId: live.entryId, outcome: 'unchanged' }
+  }
   const plan = await planEntry(tx, m)
   if (!plan) {
     // A spend whose every line is equipment: its CapEx payments carry the
@@ -657,8 +664,19 @@ export function cashRequestPayLine(v: { number: string; purpose: string; categor
  * (book the petty-cash history first); 409 VOUCHER_NOT_PAID before it is paid.
  */
 export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId: string): Promise<string> {
-  const v = await tx.cashVoucher.findUnique({ where: { id: voucherId }, select: { number: true, pettyCashMovementId: true, payJournalEntryId: true, bookedAtPay: true } })
+  const v = await tx.cashVoucher.findUnique({
+    where: { id: voucherId },
+    select: { number: true, pettyCashMovementId: true, payJournalEntryId: true, bookedAtPay: true, expenseOnVerify: true, postedJournalEntryId: true },
+  })
   if (!v) throw new NotFoundError('CashVoucher', voucherId)
+  if (v.bookedAtPay && v.expenseOnVerify && v.postedJournalEntryId) {
+    // A hold converted to one entry (trustops/voucherHoldConversion.ts): the expense account its conversion debited.
+    const debit = await tx.journalLine.findFirst({
+      where: { journalEntryId: v.postedJournalEntryId, type: 'debit' },
+      select: { account: { select: { code: true } } },
+    })
+    if (debit) return debit.account.code
+  }
   if (!v.pettyCashMovementId && v.payJournalEntryId) {
     // Paid from cash on hand / a bank in ONE entry (bookedAtPay): the expense account its pay entry debited.
     if (v.bookedAtPay) {
@@ -669,7 +687,7 @@ export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId
       if (debit) return debit.account.code
       throw new AppError('PAYMENT_NOT_BOOKED', `The payment of cash voucher ${v.number} is not on the books`, 409)
     }
-    // Paid from cash on hand / a bank under the hold flow (2026-10-16 morning): the pay entry held it on 1357.
+    // Paid from cash on hand / a bank under the hold flow (2026-10-16 morning), not converted yet: the pay held it on 1357 (read only).
     return ACCT.VOUCHERS_AWAITING_DOCS
   }
   if (!v.pettyCashMovementId) throw new AppError('VOUCHER_NOT_PAID', `Cash request ${v.number} has not been paid`, 409)
@@ -790,79 +808,25 @@ export async function postCashVoucherSettlementTx(
 export const CASH_VOUCHER_POST_SOURCE = 'cashvoucher.post'
 
 /**
- * Book verified cash voucher `voucherId` inside `tx`, in the voucher's
- * company: ONE entry 'cashvoucher.post:<voucherId>' that moves what finance
- * verified out of 1357 (see the header): Dr each expense / stock line's
- * account (brand = the line's, else the brand the pay was booked under) and
- * Dr 1011 for capex lines (their CapEx payment credited 1011) / Cr 1357 for
- * the whole spend under the pay's brand. Nothing before the voucher is
- * 'posted' (entryId null). Idempotent; a reclassed line reverses the live
- * entry and reposts it on its own date. Stamps postedJournalEntryId.
- * 422 PERIOD_LOCKED rolls the caller's transaction back.
+ * The verification entry of cash voucher `voucherId` — READ ONLY since the
+ * owner retired 1357 (2026-10-16: "Don't post any entry in 1357"). A voucher
+ * verified under the 2026-10-15 hold flow keeps the entry it was booked with
+ * ('cashvoucher.post:<voucherId>', Dr its lines / Cr 1357; or, for a converted
+ * hold, 'cashvoucher.hold_convert:<voucherId>') — it is never re-synced,
+ * reversed or reposted, so nothing here can touch 1357 again. A later change
+ * to such a voucher is a manual journal. entryId null when it has none.
  */
 export async function postCashVoucherVerifiedTx(
   tx: Tx,
   voucherId: string,
-  opts: RepostOptions = {},
+  _opts: RepostOptions = {},
 ): Promise<{ entryId: string | null }> {
-  const v = await tx.cashVoucher.findUnique({
-    where: { id: voucherId },
-    select: {
-      id: true, tenantId: true, number: true, payeeName: true, purpose: true, status: true, expenseOnVerify: true, bookedAtPay: true,
-      postedAt: true, postedById: true, postedJournalEntryId: true,
-    },
-  })
+  const v = await tx.cashVoucher.findUnique({ where: { id: voucherId }, select: { number: true, expenseOnVerify: true, postedJournalEntryId: true } })
   if (!v) throw new NotFoundError('CashVoucher', voucherId)
-  if (!v.expenseOnVerify || v.bookedAtPay) {
+  if (!v.expenseOnVerify) {
     throw new AppError('NOT_A_VERIFIED_VOUCHER', `Cash voucher ${v.number} was expensed when it was paid — it has no verification entry`, 409)
   }
-  if (v.status !== 'posted' || !v.postedAt) return { entryId: null }
-  const settlements = await tx.cashVoucherSettlement.findMany({
-    where: { voucherId: v.id, tenantId: v.tenantId },
-    include: { lines: { orderBy: { createdAt: 'asc' } } },
-    orderBy: { seq: 'asc' },
-  })
-  const concept = await cashRequestBrandTx(tx, v.id)
-  const lines: JournalLineInput[] = []
-  let credit = 0
-  let bridge = 0
-  for (const st of settlements) {
-    for (const l of st.lines) {
-      credit += l.amountCents
-      if (l.kind === 'capex') { bridge += l.amountCents; continue }
-      lines.push({
-        accountCode: l.accountCode, type: 'debit', amountCents: l.amountCents,
-        memo: `${v.number}: ${l.description}`.slice(0, 250), conceptId: l.conceptId ?? concept,
-      })
-    }
-  }
-  if (bridge > 0) {
-    lines.push({ accountCode: ACCT.PETTY_CASH, type: 'debit', amountCents: bridge, memo: `${v.number}: equipment moved to CapEx`, conceptId: concept })
-  }
-  assertInt4Fits(credit, 'The verified spend')
-  let desired: { description: string; entryDate: Date; lines: JournalLineInput[] } | null = null
-  if (credit > 0) {
-    lines.push({
-      accountCode: ACCT.VOUCHERS_AWAITING_DOCS, type: 'credit', amountCents: credit,
-      memo: `${v.number} documents verified (${v.payeeName})`.slice(0, 250), conceptId: concept,
-    })
-    await assertTemplateAccounts(tx, v.tenantId, lines.map((l) => l.accountCode))
-    const noted = withLateNote(`Cash voucher ${v.number} — documents verified: ${v.purpose}`.slice(0, 250), lines, opts.memoNote)
-    desired = { description: noted.description, entryDate: opts.entryDate ?? v.postedAt, lines: noted.lines }
-  }
-  const r = await syncSourcePosting({
-    tenantId: v.tenantId,
-    sourceType: CASH_VOUCHER_POST_SOURCE,
-    id: v.id,
-    desired,
-    postedBy: opts.postedBy ?? v.postedById ?? 'system',
-    reason: `Cash voucher ${v.number} spend lines changed`,
-    tx,
-  }, { keepLiveDate: !opts.entryDate })
-  if (r.entryId !== v.postedJournalEntryId) {
-    await tx.cashVoucher.update({ where: { id: v.id }, data: { postedJournalEntryId: r.entryId } })
-  }
-  return { entryId: r.entryId }
+  return { entryId: v.postedJournalEntryId ?? null }
 }
 
 // ─── Cash vouchers paid from cash on hand or a bank (owner, 2026-10-16) ─────
@@ -923,20 +887,20 @@ export async function postCashVoucherSourceTx(
   if (v.paySource === 'box' || !v.payAccountCode) {
     throw new AppError('PAY_SOURCE_IS_BOX', `Cash voucher ${v.number} was paid from a petty-cash box — its money moves through the box`, 409)
   }
-  if (v.bookedAtPay && kind !== 'pay') {
-    throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} was booked in one entry when it was paid — finance corrects any change or overspend with a manual journal`, 409)
+  // 1357 is retired (owner, 2026-10-16): only the one-entry pay posts. A hold pay, its change and its overspend
+  // (Dr / Cr 1357) are never booked again — finance corrects change or an overspend with a manual journal.
+  if (!v.bookedAtPay || kind !== 'pay') {
+    throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} is booked in one entry when it is paid — finance corrects any change or overspend with a manual journal`, 409)
   }
   assertInt4Fits(amountCents, 'The amount')
   if (!(amountCents > 0)) throw new AppError('AMOUNT_REQUIRED', 'Nothing to book', 422)
   const source = v.payAccountCode
   // Booked at pay: the voucher's own expense account (its category, or the explicit 6xxx finance set).
-  const hold = v.bookedAtPay
-    ? (await resolveSpendAccount(tx, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })).code
-    : ACCT.VOUCHERS_AWAITING_DOCS
+  const hold = (await resolveSpendAccount(tx, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })).code
   const concept = await cashRequestBrandTx(tx, v.id)
   const from = v.paySource === 'cash_on_hand' ? 'cash on hand' : 'the bank'
   const spec = {
-    pay: { sourceType: CASH_VOUCHER_PAY_ENTRY, debit: hold, credit: source, what: v.bookedAtPay ? `paid from ${from} to ${v.payeeName}` : `paid from ${from} to ${v.payeeName} — documents awaited` },
+    pay: { sourceType: CASH_VOUCHER_PAY_ENTRY, debit: hold, credit: source, what: `paid from ${from} to ${v.payeeName}` },
     change: { sourceType: CASH_VOUCHER_CHANGE_ENTRY, debit: source, credit: hold, what: `change returned to ${from}` },
     overspend: { sourceType: CASH_VOUCHER_OVERSPEND_ENTRY, debit: hold, credit: source, what: `overspend paid from ${from} at verification` },
   }[kind]
@@ -965,7 +929,7 @@ export interface PettyCashTieOutRow {
   ledger1011Cents: number
   openAdvancesCents: number
   ledger1355Cents: number
-  /** Cash vouchers paid under the 2026-10-15 flow, documents not yet verified (Σ amount). */
+  /** Cash vouchers still held on 1357 (2026-10-15 flow, not yet converted to one entry — Σ amount); 0 once all converted. */
   heldVouchersCents: number
   ledger1357Cents: number
   unbookedMovements: number
@@ -1021,9 +985,9 @@ export async function pettyCashTieOut(tenantIds: string[]): Promise<PettyCashTie
     }
     const ledger1011Cents = ledger.get(ACCT.PETTY_CASH) ?? 0
     const ledger1355Cents = ledger.get(ACCT.CASH_ADVANCES) ?? 0
-    // 2026-10-15 flow: every paid voucher whose documents are not verified yet
-    // holds exactly its amount on 1357 (the verification books it out, change
-    // and an overspend included, in one transaction).
+    // 1357 is retired: only a voucher still HELD from the 2026-10-15 flow (its
+    // conversion refused — flagged for finance) may still sit there; a
+    // converted or verified one netted to zero. So 1357 must equal Σ held.
     const held = await prisma.cashVoucher.aggregate({
       where: {
         tenantId, status: 'disbursed', expenseOnVerify: true, bookedAtPay: false,

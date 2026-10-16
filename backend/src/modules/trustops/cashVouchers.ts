@@ -324,8 +324,8 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canPay: s === 'approved' && viewer.payer,
     canUpload: ((s === 'approved' || newPaid) && docsParty) || (s === 'posted' && viewer.keeper),
     canSendBack: newPaid && docState.closed && viewer.financeApprover && !own,
-    // Booked at pay: what was spent is not recorded here (finance corrects by manual journal).
-    canRecordSpend: newPaid && !v.bookedAtPay && docsParty,
+    // Never since 1357 was retired (owner, 2026-10-16): the expense is one entry; finance corrects by manual journal.
+    canRecordSpend: false,
     canVerify: newPaid && viewer.financeApprover && !own && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
     canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt
       && (s === 'disbursed' || s === 'posted' || s === 'settled' || s === 'converted'),
@@ -495,8 +495,11 @@ export async function detailOf(id: string, viewer: Viewer) {
     ...base,
     paidAccountCode,
     payMovement,
-    /** The ONE entry that booked a bookedAtPay voucher (the box spend's or 'cashvoucher.pay:<id>'). */
-    payEntryId: v.payJournalEntryId ?? payMovement?.journalEntryId ?? null,
+    /**
+     * The ONE entry that booked a bookedAtPay voucher (the box spend's or 'cashvoucher.pay:<id>'; a hold converted
+     * to one entry — voucherHoldConversion.ts — its 'cashvoucher.hold_convert:<id>', stamped as postedJournalEntryId).
+     */
+    payEntryId: (v.bookedAtPay ? v.postedJournalEntryId : null) ?? v.payJournalEntryId ?? payMovement?.journalEntryId ?? null,
     settlements: settlements.map((s) => ({ ...s, submittedByName: names.find((n) => n.id === s.submittedById)?.name ?? null })),
     spend: hold ? {
       lines: spendLines,
@@ -1053,6 +1056,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const categoryOrBox = sent.every((k) => k === 'categoryKey' || k === 'accountCode' || k === 'boxId')
     const financeFields = sent.every((k) => ['categoryKey', 'accountCode', 'boxId', 'discountCents', 'grossCents', 'conceptId', 'department'].includes(k))
     const wantsDiscount = body.discountCents !== undefined || body.grossCents !== undefined
+    const heldFix = v.status === 'disbursed' && v.expenseOnVerify && !v.bookedAtPay && !v.postedAt && sent.length > 0
+      && sent.every((k) => k === 'categoryKey' || k === 'accountCode')
 
     if (EDITABLE.includes(v.status)) {
       if (!raiser && !keeper && !viewer.financeApprover) throw new ForbiddenError('Only whoever raised this voucher, finance or a manager can edit it')
@@ -1065,6 +1070,12 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       }
     } else if (categoryOrBox && v.status === 'approved') {
       if (!keeper) throw new ForbiddenError('Only finance or a manager can change the category or the box once it is approved')
+    } else if (heldFix) {
+      // A voucher still held on 1357 (paid under the 2026-10-15 hold flow) whose conversion was refused for its
+      // category (voucherHoldConversion.ts): finance sets the expense account, then checks the documents — that
+      // books it as one entry. Books nothing itself. Never on finance's own voucher.
+      if (!viewer.financeApprover) throw new ForbiddenError('Only finance sets the expense account of a paid voucher still awaiting booking')
+      if (isOwn(viewer, v)) throw selfApprove()
     } else {
       throw wrongStatus('VOUCHER_NOT_DRAFT', v, 'only a voucher waiting for finance, or returned, can be edited (finance may change the account until it is paid)')
     }
@@ -1105,6 +1116,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       where: {
         id: v.id, status: v.status, amountCents: v.amountCents, discountCents: v.discountCents,
         ...(onlyHolder && !EDITABLE.includes(v.status) ? { payeeUserId: null } : {}),
+        // A held voucher's account only while it is still held (the conversion claims bookedAtPay under the row lock).
+        ...(heldFix ? { bookedAtPay: false, postedAt: null } : {}),
       },
       data,
     })
