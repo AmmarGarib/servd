@@ -27,6 +27,7 @@ import { HR_ADMIN } from '../../../hr/routes.js'
 import { ROTA_PLANNERS } from '../../../scheduling/routes.js'
 import { OFF_MARK } from '../../../hr/rota.js'
 import { restoreSnapshot, type Snapshot } from '../../snapshot.js'
+import { purgeRecordFilesTx } from '../../../../lib/recordFiles.js'
 import type { TrashProvider, Tx } from '../../types.js'
 
 export const TRASH_PEOPLE = {
@@ -85,6 +86,11 @@ const hrDocument: TrashProvider = {
     return { ...(await snapshotRestore(tx, entry)), link: '/hr/documents' }
   },
   erasable: () => true,
+  // Its uploaded files (record files, owner 'hr_document') stay with the
+  // trashed document so a restore brings them back; "Delete forever" erases them.
+  async purge(tx, entry) {
+    await purgeRecordFilesTx(tx, { ownerType: 'hr_document', ownerId: entry.entityId, tenantId: entry.tenantId })
+  },
 }
 
 // ── Payroll draft ────────────────────────────────────────────────────────────

@@ -155,6 +155,7 @@ import { componentRoutes } from './modules/components/routes.js'
 import { setupRoutes } from './modules/setup/routes.js'
 import { crosschecksRoutes } from './modules/crosschecks/routes.js'
 import { trustopsRoutes } from './modules/trustops/routes.js'
+import { recordFileRoutes } from './modules/recordFiles/routes.js'
 import { opexRoutes } from './modules/opex/routes.js'
 import { notificationRoutes } from './modules/notifications/routes.js'
 import { kdsRoutes } from './modules/kds/routes.js'
@@ -497,6 +498,8 @@ async function build() {
       await api.register(setupRoutes,             { prefix: '/setup' })
       await api.register(crosschecksRoutes,       { prefix: '/crosschecks' })
       await api.register(trustopsRoutes,          { prefix: '/trustops' })
+      // Record files (owner, 2026-10-16): the one private store for supporting documents on any record.
+      await api.register(recordFileRoutes,        { prefix: '/record-files' })
       await api.register(opexRoutes,              { prefix: '/opex' })
       await api.register(supplierChatRoutes,      { prefix: '/procurement' })
       await api.register(notificationRoutes,      { prefix: '/notifications' })

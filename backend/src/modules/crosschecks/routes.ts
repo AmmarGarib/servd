@@ -17,6 +17,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY, FINANCE_TEAM, PROCUREMENT_TEAM } from '../auth/middleware.js'
 import { flagException, acknowledgeException, resolveException, kindsMatching } from '../../lib/exceptions.js'
 import { receiveGoods } from '../procurement/receiving.js'
+import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { activeTenantId, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
@@ -131,12 +132,17 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.post('/receiving', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  // `photos` (owner, 2026-10-16): the dock-door photos as FILES (0–5, JPEG /
+  // PNG / WebP / PDF, checked before anything is written) — saved as record
+  // files of the receipt in its transaction, and they satisfy the company's
+  // photo threshold. The legacy `photoUrl` is still accepted.
+  fastify.post('/receiving', { preHandler: requireAuth(...MANAGERS), bodyLimit: RECORD_FILES_BODY_LIMIT }, async (req, reply) => {
     const body = z.object({
       poId:       z.string().uuid().nullable().optional(),
       supplierId: z.string().uuid().nullable().optional(),
       locationId: z.string().uuid().nullable().optional(),
       photoUrl:   z.string().url().nullable().optional(),
+      photos:     z.array(zRecordFile).max(RECORD_FILES_MAX_PER_UPLOAD, `At most ${RECORD_FILES_MAX_PER_UPLOAD} photos`).optional(),
       notes:      z.string().max(500).nullable().optional(),
       lines: z.array(z.object({
         poLineId:          z.string().uuid().nullable().optional(),
@@ -164,16 +170,18 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       }
     }
 
+    const photoFiles = decodeRecordFiles(body.photos ?? [], { allowOffice: false, stem: 'dock-photo' })
     const result = await receiveGoods({
       actor:      req.staffUser!,
       poId:       body.poId ?? null,
       supplierId,
       locationId: body.locationId ?? null,
       photoUrl:   body.photoUrl ?? null,
+      photoFiles,
       notes:      body.notes ?? null,
       lines:      body.lines,
     })
-    return reply.status(201).send({ ...result.receipt, poStatus: result.poStatus, flagged: result.flagged })
+    return reply.status(201).send({ ...result.receipt, poStatus: result.poStatus, flagged: result.flagged, files: result.files })
   })
 
   // ════════════════════════════════════════════════════════════════════════

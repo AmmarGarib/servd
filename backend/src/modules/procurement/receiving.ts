@@ -59,6 +59,8 @@ import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { costClassOf, type CostClass } from '../../lib/inventoryClass.js'
 import { addLotTx, ensureFifoReady, lockItemsTx, STOCK_SOURCE } from '../../lib/stockLedger.js'
 import { postGoodsReceiptTx } from '../accounting/inventoryPosting.js'
+import { writeRecordFilesTx, type DecodedRecordFile, type RecordFileMeta } from '../../lib/recordFiles.js'
+import { audit } from '../../lib/audit.js'
 
 /** Line variance above this (either way) raises an exception flag. */
 export const RECEIVING_VARIANCE_THRESHOLD = 0.05   // 5%
@@ -389,6 +391,9 @@ export interface ReceiveGoodsRequest {
   /** The outlet the goods arrived at — one of the supplier's company's locations. */
   locationId?: string | null
   photoUrl?:   string | null
+  /** Dock-door photos uploaded with the delivery (owner, 2026-10-16: files, not a URL) — already decoded
+   *  by lib/recordFiles.ts decodeRecordFiles; saved as record files of the receipt in its transaction. */
+  photoFiles?: DecodedRecordFile[]
   notes?:      string | null
   lines:       ReceiveGoodsLine[]
 }
@@ -397,6 +402,8 @@ export interface ReceiveGoodsResult {
   receipt:  Prisma.GoodsReceiptGetPayload<{ include: { lines: true } }>
   poStatus: string | null
   flagged:  number
+  /** The dock-door photos saved with it (metadata only). */
+  files:    RecordFileMeta[]
 }
 
 interface PreparedLine {
@@ -525,7 +532,8 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
   const ops = await getOperationsConfig(tenantId)
   const photoThreshold = ops?.photoRequiredAboveCents ?? 50_000
   const totalValue = prepared.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityReceived), 0)
-  if (totalValue >= photoThreshold && !input.photoUrl) {
+  // An uploaded photo satisfies the rule; a legacy photoUrl still does too.
+  if (totalValue >= photoThreshold && !input.photoUrl && !(input.photoFiles?.length)) {
     throw new AppError(
       'PHOTO_REQUIRED',
       `Deliveries above PKR ${(photoThreshold / 100).toFixed(0)} require a dock-door photo. Snap the goods before submitting.`,
@@ -540,7 +548,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
   await ensureFifoReady(tenantId)
 
   // ── One transaction: receipt, lots, GRNI, PO ───────────────────────────────
-  const { receipt, poStatus } = await prisma.$transaction(async (tx) => {
+  const { receipt, poStatus, photos } = await prisma.$transaction(async (tx) => {
     let poStatus: string | null = null
     if (po) {
       // Serialise receipts of the same PO (and bills billing it) and re-read
@@ -580,6 +588,13 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
       })),
     })
 
+    // The dock-door photos, stamped with the RECEIPT's company (record files,
+    // owner 'goods_receipt' — modules/recordFiles/providers.ts).
+    const photos = await writeRecordFilesTx(tx, {
+      ownerType: 'goods_receipt', ownerId: done.receiptId, tenantId, uploadedById: input.actor.id,
+      files: input.photoFiles ?? [], label: 'goods receipt',
+    })
+
     if (po) {
       for (const l of prepared) {
         if (!l.poLineId) continue
@@ -610,12 +625,12 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
           purchaseOrderId: po.id,
           userId:          input.actor.id,
           action:          allReceived ? 'received' : 'received_partial',
-          details:         { goodsReceiptId: done.receiptId, lineCount: prepared.length, photo: !!input.photoUrl },
+          details:         { goodsReceiptId: done.receiptId, lineCount: prepared.length, photo: !!input.photoUrl || photos.length > 0 },
         },
       })
     }
     const receipt = await tx.goodsReceipt.findUniqueOrThrow({ where: { id: done.receiptId }, include: { lines: true } })
-    return { receipt, poStatus }
+    return { receipt, poStatus, photos }
   }, { timeout: 30_000 })
 
   // ── Exception flags (after commit, so a failed flag never undoes a receipt) ─
@@ -635,7 +650,15 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
     })
   }
 
-  return { receipt, poStatus, flagged: flagged.length }
+  if (photos.length > 0) {
+    await audit({
+      category: 'identity', action: 'record_file.upload', entity: 'goods_receipt', entityId: receipt.id,
+      userId: input.actor.id, tenantId,
+      before: null, after: { files: photos.map((f) => ({ id: f.id, fileName: f.fileName, mime: f.mime, sizeBytes: f.sizeBytes })) },
+    })
+  }
+
+  return { receipt, poStatus, flagged: flagged.length, files: photos }
 }
 
 function assertReceivable(status: string) {

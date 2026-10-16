@@ -55,6 +55,7 @@ import {
   CREDIT_NOTE_REASONS, createCreditNote, creditableBill, applyCreditNote, unapplyCreditNote, voidCreditNote,
 } from './creditNotes.js'
 import { receiveGoods } from './receiving.js'
+import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
 import { syncSupplierOpeningBalance } from './openingBalance.js'
 import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
 import { audit } from '../../lib/audit.js'
@@ -63,7 +64,7 @@ import { FILER_STATUSES, WHT_SECTIONS } from '../../lib/withholding.js'
 import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { parsePktEndOfDay, fmtPktDate } from '../accounting/dates.js'
 
-const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
+export const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
 
 const PO_TYPE: ApprovalType = 'purchase_order'
 
@@ -632,11 +633,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // threshold and the raiser-can't-receive rule (CEO exempt).
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/receive',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...MANAGERS), bodyLimit: RECORD_FILES_BODY_LIMIT },
     async (req, reply) => {
       await guardPo(req, req.params.id)
       const body = z.object({
         photoUrl: z.string().url().nullable().optional(),
+        // The dock-door photos as files (owner, 2026-10-16) — record files of the receipt.
+        photos:   z.array(zRecordFile).max(RECORD_FILES_MAX_PER_UPLOAD, `At most ${RECORD_FILES_MAX_PER_UPLOAD} photos`).optional(),
         notes:    z.string().max(500).nullable().optional(),
         // The outlet the goods arrived at (one of the supplier's company's — else 422 LOCATION_NOT_IN_COMPANY).
         locationId: z.string().min(1).nullable().optional(),
@@ -649,11 +652,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           notes:              z.string().max(200).nullable().optional(),
         })).min(1),
       }).parse(req.body)
+      const photoFiles = decodeRecordFiles(body.photos ?? [], { allowOffice: false, stem: 'dock-photo' })
       const result = await receiveGoods({
         actor:    req.staffUser!,
         poId:     req.params.id,
         locationId: body.locationId ?? null,
         photoUrl: body.photoUrl ?? null,
+        photoFiles,
         notes:    body.notes ?? null,
         lines:    body.lines.map((l) => ({
           poLineId:          l.poLineId,
@@ -662,7 +667,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           notes:             l.notes ?? l.discrepancyNotes ?? null,
         })),
       })
-      return reply.status(201).send({ ok: true, status: result.poStatus, receipt: result.receipt, flagged: result.flagged })
+      return reply.status(201).send({ ok: true, status: result.poStatus, receipt: result.receipt, flagged: result.flagged, files: result.files })
     },
   )
 
