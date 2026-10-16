@@ -325,7 +325,7 @@ function WorkforcePageInner() {
                   ⏳ Review {pendingCount} pending
                 </button>
               )}
-              {canEdit && activeTab === 'people' && (
+              {(canEdit || me?.role === 'hr') && activeTab === 'people' && (
                 <button onClick={() => setAddOpen(true)}
                   className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90">
                   + Add staff
@@ -453,6 +453,7 @@ function WorkforcePageInner() {
 
       {addOpen && (
         <AddStaffModal
+          asHr={me?.role === 'hr'}
           tenants={tenants}
           viewAll={viewAll}
           onClose={() => setAddOpen(false)}
@@ -1108,8 +1109,11 @@ function InlineEditor({
 // ─── Add modal (minimal) ────────────────────────────────────────────────────
 
 function AddStaffModal({
-  tenants, viewAll, onClose, onCreated,
+  asHr = false, tenants, viewAll, onClose, onCreated,
 }: {
+  /** HR adds through POST /auth/staff/invite (owner, 2026-10-15/16): floor logins are active at once, every
+   *  other role waits for the CEO; never the CEO or a co-owner seat; HR's active company. */
+  asHr?: boolean
   tenants: TenantLite[]; viewAll: boolean
   onClose: () => void; onCreated: (created: StaffUser | null) => void
 }) {
@@ -1135,6 +1139,8 @@ function AddStaffModal({
     viewAll ? [] : (tenants[0] ? [tenants[0].id] : [])
   )
   const [err, setErr] = useState<string | null>(null)
+  /** HR: what happened to the login it just added. */
+  const [hrDone, setHrDone] = useState<string | null>(null)
 
   function toggleTenant(id: string) {
     setTenantIds((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id])
@@ -1149,6 +1155,26 @@ function AddStaffModal({
   const primaryRole = useMemo(() => {
     return primaryRoleOf(CATEGORIES.find((cc) => cc.key === category), assignable) ?? 'cashier'
   }, [category, assignable])
+
+  const invite = useMutation({
+    mutationFn: () => api.post<StaffUser & { status?: string; temporaryPassword?: string; passwordLink?: string }>('/auth/staff/invite', {
+      name: name.trim(),
+      ...(practice ? {} : { email: email.trim().toLowerCase() }),
+      ...(!practice && phone.trim() ? { phone: phone.trim() } : {}),
+      role: primaryRole,
+    }),
+    onSuccess: (r) => {
+      const who = r?.name ?? name.trim()
+      if (r?.temporaryPassword) {
+        setIssued({ name: who, email: r.email ?? email, password: r.temporaryPassword })
+      } else if (r?.status === 'active') {
+        setHrDone(`${who} can sign in now.${r.passwordLink === 'sent' ? ' A link to set their password was sent to their email / WhatsApp.' : needsPhone ? ' They sign in with a code sent to their phone.' : ''}`)
+      } else {
+        setHrDone(`${who} is added and waiting for the CEO's approval. They can sign in once the CEO approves.`)
+      }
+    },
+    onError: (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to add staff'),
+  })
 
   const create = useMutation({
     mutationFn: () => api.post<StaffUser & { temporaryPassword?: string }>('/auth/users', {
@@ -1176,8 +1202,19 @@ function AddStaffModal({
   })
 
   function submit() {
-    if (create.isPending) return
+    if (create.isPending || invite.isPending) return
     setErr(null)
+    if (asHr) {
+      if (!name.trim()) return setErr('Type their name.')
+      if (!practice) {
+        if (!email.trim()) return setErr('An email is required — it is how they sign in.')
+        if (!/@gsfoods\.pk$/i.test(email.trim())) return setErr('Staff sign in with an @gsfoods.pk address.')
+        if (needsPhone && phone.replace(/\D/g, '').length < 10) {
+          return setErr('Add their mobile number — till and kitchen staff sign in with a code sent to it.')
+        }
+      }
+      return invite.mutate()
+    }
     if (practice) {
       if (!name.trim()) return setErr('Type their name.')
     } else {
@@ -1195,8 +1232,14 @@ function AddStaffModal({
   const dirty = !issued && !!(name || email || phone || jobTitle)
   return (
     <Modal title={issued ? `${issued.name} is set up` : 'Add staff'} onClose={onClose}
-      dirty={dirty} dismissible={!issued && !create.isPending}>
-        {issued ? (
+      dirty={dirty && !hrDone} dismissible={!issued && !create.isPending && !invite.isPending}>
+        {hrDone ? (
+          <>
+            <p role="status" className="text-sm text-s-text mb-4">{hrDone}</p>
+            <button type="button" onClick={() => onCreated(null)}
+              className="w-full rounded-lg py-2 text-xs font-black bg-primary text-primary-on">Done</button>
+          </>
+        ) : issued ? (
           <>
             <p className="text-xs text-s-muted mb-4">
               Give them these two things. The password is shown <strong>once</strong> — we
@@ -1265,7 +1308,7 @@ function AddStaffModal({
           {/* Multi-tenant picker. Head-office staff (procurement, finance,
               HR, marketing) typically work for every company — pick more than
               one and the first becomes their primary. */}
-          {tenants.length > 1 && (
+          {!asHr && tenants.length > 1 && (
             <div>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
@@ -1300,7 +1343,7 @@ function AddStaffModal({
           )}
           <Field label={practice ? 'Role' : 'Category'}>
             <Select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-              {assignableCategories(assignable).map((c) => (
+              {assignableCategories(assignable).filter((c) => !asHr || c.key !== 'owners').map((c) => (
                 <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
               ))}
             </Select>
@@ -1311,12 +1354,12 @@ function AddStaffModal({
             <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="new-staff-phone" autoComplete="off"
               placeholder="03XX-XXXXXXX" className={inputCls} />
           </Field>
-          <Field label="Role / job title" hint="Free text — what you actually call this role.">
+          {!asHr && <Field label="Role / job title" hint="Free text — what you actually call this role.">
             <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} autoFocus name="new-staff-title" autoComplete="off"
               placeholder="e.g. Sous Chef — Bukhari, Floor Manager — Clifton, Procurement Officer"
               className={inputCls} />
-          </Field>
-          <Field label="Name (optional)" hint="Skip for now — fill in when you know who's joining.">
+          </Field>}
+          <Field label={asHr ? 'Name' : 'Name (optional)'} hint={asHr ? 'Required' : "Skip for now — fill in when you know who's joining."}>
             <input value={name} onChange={(e) => setName(e.target.value)} name="new-staff-name" autoComplete="off"
               placeholder="e.g. Ahmad Khan" className={inputCls} />
           </Field>
@@ -1337,7 +1380,7 @@ function AddStaffModal({
           </button>
           <button type="submit" disabled={create.isPending}
             className="rounded-lg px-3 py-2 text-xs font-black bg-primary text-primary-on hover:opacity-90 disabled:opacity-50">
-            {create.isPending ? 'Adding…' : 'Add staff →'}
+            {create.isPending || invite.isPending ? 'Adding…' : 'Add staff →'}
           </button>
         </div>
         </form>

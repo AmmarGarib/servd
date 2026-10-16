@@ -148,8 +148,12 @@ export const EMPLOYEE_MASTER_FIELDS: HrField[] = [
   f('personalEmail', 'Personal email', 'email', { group: 'Contact information', bind: 'employee.personalEmail' }),
   f('currentAddress', 'Current address', 'textarea', { group: 'Contact information' }),
   f('permanentAddress', 'Permanent address', 'textarea', { group: 'Contact information' }),
-  t('emergencyContact', 'Emergency contact', { group: 'Contact information' }),
+  // Emergency contact (owner, 2026-10-16: add name, CNIC and address).
+  t('emergencyName', 'Emergency contact name', { group: 'Contact information' }),
+  t('emergencyContact', 'Emergency contact number', { group: 'Contact information' }),
   t('emergencyRelationship', 'Emergency contact relationship', { group: 'Contact information' }),
+  t('emergencyCnic', 'Emergency contact CNIC', { group: 'Contact information' }),
+  f('emergencyAddress', 'Emergency contact address', 'textarea', { group: 'Contact information' }),
   // Employment
   f('joiningDate', 'Joining date', 'date', { group: 'Employment information', bind: 'employee.joiningDate' }),
   f('departmentId', 'Department', 'department', { group: 'Employment information', bind: 'employee.departmentId' }),
