@@ -7,8 +7,15 @@
 // amount, and a payment made against it sat as an unapplied credit for ever.
 //
 // Now the opening balance is posted to the supplier's company ledger:
-//     Dr 3020 Retained Earnings  /  Cr 2010 Accounts Payable
-// (opening AP carried over from before the books started). The posting is a
+//     Dr 3010 Owner's Capital  /  Cr 2010 Accounts Payable
+// (opening AP carried over from before the books started; the same equity
+// account as opening stock — H49, the CA, 2026-10-16. Until then the offset was
+// 3020 Retained Earnings; entries already posted to 3020 stay as they are — a
+// reclass is a manual journal. A REDUCTION unwinds what this supplier has on
+// 3010 first, then any legacy 3020, so a later edit or a company move never
+// leaves one equity account up and the other down.)
+// The CA expects none at go-live ("we have not made/record any purchases
+// yet"); the path stays for a supplier who is owed something from before. The posting is a
 // DELTA against whatever has already been posted for that supplier, so it is
 // safe to run repeatedly: editing the opening balance posts the difference,
 // moving the supplier to another company reverses it in the old company and
@@ -36,8 +43,10 @@ import { ACCT, flagPostingFailed, postJournalEntry, resolvePostingFailed, withLa
 import { toCents } from '../../lib/money.js'
 
 export const OPENING_SOURCE_TYPE = 'supplier.opening'
-/** Offset for opening AP: balances brought forward from before the books. */
-export const OPENING_OFFSET_CODE = '3020'   // Retained Earnings
+/** Offset for opening AP: balances brought forward from before the books (H49). */
+export const OPENING_OFFSET_CODE = '3010'   // Owner's Capital — same as opening stock
+/** The offset used before H49 (2026-10-16). Read only, to unwind a reduction. */
+export const LEGACY_OPENING_OFFSET_CODE = '3020'   // Retained Earnings
 
 type Db = Prisma.TransactionClient | typeof prisma
 
@@ -70,6 +79,26 @@ export async function postedOpeningBalances(
     const amt = toCents(l.amountCents)
     per.set(tenantId, (per.get(tenantId) ?? 0) + (l.type === 'credit' ? amt : -amt))
     out.set(supplierId, per)
+  }
+  return out
+}
+
+/**
+ * Net DEBIT this supplier's opening entries left on each equity offset in one
+ * company (3010 now, 3020 for entries posted before H49).
+ */
+async function postedOffsets(db: Db, supplierId: string, tenantId: string): Promise<Map<string, number>> {
+  const lines = await db.journalLine.findMany({
+    where: {
+      account: { code: { in: [OPENING_OFFSET_CODE, LEGACY_OPENING_OFFSET_CODE] } },
+      journalEntry: { tenantId, reference: { startsWith: `${OPENING_SOURCE_TYPE}:${supplierId}:` } },
+    },
+    select: { type: true, amountCents: true, account: { select: { code: true } } },
+  })
+  const out = new Map<string, number>()
+  for (const l of lines) {
+    const amt = toCents(l.amountCents)
+    out.set(l.account.code, (out.get(l.account.code) ?? 0) + (l.type === 'debit' ? amt : -amt))
   }
   return out
 }
@@ -112,15 +141,25 @@ export async function syncSupplierOpeningBalance(
       const delta = target - (posted.get(tenantId) ?? 0)
       if (delta === 0) continue
       const amount = Math.abs(delta)
-      const base: JournalLineInput[] = delta > 0
-        ? [
-            { accountCode: OPENING_OFFSET_CODE,  type: 'debit',  amountCents: amount, memo: 'Opening AP brought forward' },
-            { accountCode: ACCT.AP_SUPPLIERS,    type: 'credit', amountCents: amount, memo: `${supplier.name} opening balance` },
-          ]
-        : [
-            { accountCode: ACCT.AP_SUPPLIERS,    type: 'debit',  amountCents: amount, memo: `${supplier.name} opening balance adjustment` },
-            { accountCode: OPENING_OFFSET_CODE,  type: 'credit', amountCents: amount, memo: 'Opening AP brought forward' },
-          ]
+      let base: JournalLineInput[]
+      if (delta > 0) {
+        base = [
+          { accountCode: OPENING_OFFSET_CODE,  type: 'debit',  amountCents: amount, memo: 'Opening AP brought forward' },
+          { accountCode: ACCT.AP_SUPPLIERS,    type: 'credit', amountCents: amount, memo: `${supplier.name} opening balance` },
+        ]
+      } else {
+        // Unwind 3010 first, then a legacy 3020 debit; anything beyond both
+        // (should not happen) goes to 3010.
+        const offs = await postedOffsets(tx, supplierId, tenantId)
+        const fromNew = Math.min(amount, Math.max(0, offs.get(OPENING_OFFSET_CODE) ?? 0))
+        const fromLegacy = Math.min(amount - fromNew, Math.max(0, offs.get(LEGACY_OPENING_OFFSET_CODE) ?? 0))
+        const rest = amount - fromNew - fromLegacy
+        base = [
+          { accountCode: ACCT.AP_SUPPLIERS, type: 'debit', amountCents: amount, memo: `${supplier.name} opening balance adjustment` },
+          ...(fromNew + rest > 0 ? [{ accountCode: OPENING_OFFSET_CODE, type: 'credit' as const, amountCents: fromNew + rest, memo: 'Opening AP brought forward' }] : []),
+          ...(fromLegacy > 0 ? [{ accountCode: LEGACY_OPENING_OFFSET_CODE, type: 'credit' as const, amountCents: fromLegacy, memo: 'Opening AP brought forward (posted before H49)' }] : []),
+        ]
+      }
       const { description, lines } = withLateNote(
         delta > 0 ? `Opening balance owed to ${supplier.name}` : `Opening balance reduced for ${supplier.name}`,
         base, opts.memoNote,

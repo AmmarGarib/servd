@@ -1010,6 +1010,30 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `receiptUrl`, which is still accepted); `GET /deposit-drops/:id/files/:fileId`
   serves it; the list carries file metadata only, never bytes. Tests:
   `tests/depositDropFiles.test.ts`.
+- **Split bank bags (owner, 2026-10-16):** a deposit drop may be split across
+  several shifts (`DepositDropShift`, `tenantId`, RLS, merge repoint; shares
+  add up to the drop's amount): `POST /trustops/deposit-drops
+  {shifts:[{shiftId, amountCents}]}` or the single `shiftId` (422
+  `SPLIT_NOT_EQUAL_DEPOSIT` / `SHIFT_LISTED_TWICE` / `SHIFT_AND_SHIFTS` /
+  `SHIFT_NOT_IN_COMPANY`). `depositPosting.ts dropAllocations` is the one
+  reader (a drop naming a shift with no allocation rows = one full share).
+  Each share takes from its shift what earlier bags left — safe drops, then
+  drawer takings, the rest from 1010; new drops lock per shift and stamp
+  `droppedAt` inside the lock. The variance is against what is still to bank;
+  a bag for a shift that holds cash is flagged even when nothing is left (cash
+  over); a bag whose shifts all add up within tolerance raises no flag and
+  resolves the earlier variance flags. Night audit `cash_not_banked` compares
+  amounts per shift (nothing banked blocks; part banked blocks beyond the cash
+  tolerance).
+- **Cash voucher pay and confirmations (owner, 2026-10-16):** the pay goes
+  through only if nothing it read changed — category, brand, holder, amount,
+  purpose, payee name (409 `VOUCHER_CHANGED`). Finance or the CEO may record
+  cash received on the holder's behalf with a reason (`POST
+  /:id/confirm-received-on-behalf`, audit `confirm_received` via
+  `finance_on_behalf`), never the raiser / holder (409 `SELF_APPROVE`) and
+  never whoever paid it (409 `PAYER_CANNOT_CONFIRM`). Petty cash: only
+  uploaded receipts (`receiptIds`) satisfy the photo rule; `receiptUrl` is
+  metadata.
 - **Petty cash is on 1011** (H2): a top-up needs a source (Garibsons → 2210,
   H1; the safe 1010; a bank); a till top-up is a drawer payout keyed
   `pettycash.till_topup:<cashMovementId>`. **`recordPettyCashSpendTx`
@@ -1027,6 +1051,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   transaction: reverse the original + post the corrected entry in the
   original's company; audit / flags only after the commit) are open to the CEO
   and finance with `accounting` (`JOURNAL_POSTERS`). The ledger never deletes.
+  The edit's reversal is dated on the ORIGINAL's day (today only when that day
+  is in a closed month); `GET /accounting/period-close` returns
+  `reopenedThrough`, and the journal page warns about it, blocks non-CEO
+  posting into it and hides Edit / Cancel on closed-books entries for non-CEO
+  ("Closed books — CEO only"; Request reversal stays).
   Still the CEO's: a register-account override (403
   `REGISTER_OVERRIDE_CEO_ONLY`) and anything dated in closed or reopened books
   (`closedBooks.ts`). Journal requests (`/journal-requests`) stay for the
@@ -1036,14 +1065,16 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   column when negative, never both — and accounts at zero are not listed (a
   cleared account such as 1357 drops off). `accounting/reports.ts
   trialBalance` (API, CSV, admin page and the `trial_balance` close check);
-  the computed `3020*` retained-earnings b/f row is unchanged; totals still
-  balance.
+  the computed `3020*` retained-earnings b/f row is unchanged (but not listed
+  when its amount is zero); totals still balance.
 - **Chart of accounts (owner, 2026-10-16):** finance (with the `accounting`
   module) and the CEO add and rename accounts (`POST` / `PATCH
   /setup/chart-of-accounts`, `CHART_EDITORS`) and switch accounts off or
   back on (owner, 2026-10-16: "Give access to finance also"; the books'
   guards ACCOUNT_IN_USE / ACCOUNT_CONTROLLED still refuse). A duplicate code in the company is 409
-  `ACCOUNT_CODE_TAKEN`.
+  `ACCOUNT_CODE_TAKEN`. 1400–1599, 2012, 2100–2199, 6200–6249 and 6990–6999
+  are refused for everyone, the CEO included (422 `ACCOUNT_CODE_RESERVED`; the
+  leading four digits decide): only their own modules create them.
 - **Which money account:** `moneyAccountCode(db, tenantId, {method, bankAccountId})`
   in `lib/bankAccounts.ts` is THE answer for every non-till payment (supplier
   payments, receivable receipts/refunds, wallet top-ups, CapEx, OpEx, gift
@@ -1053,6 +1084,57 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `BANK_ACCOUNT_REQUIRED` if two or more; a wallet always names its account.
   `bankLedgerCode` is strict (422, never a silent 1020). Admin picker:
   `components/finance/BankAccountSelect.tsx`.
+- **Bank codes (owner, 2026-10-16):** a bank account's ledger code must be an
+  active 10xx asset in the company's chart, not in `NOT_BANK_CODES`
+  (`lib/bankAccounts.ts`: 1010, 1011, 1015, 1030, 1110, 1115, 1351, 1355,
+  1356, 1357), not register-controlled (422 `NOT_A_BANK_CODE` /
+  `ACCOUNT_CONTROLLED`) and not used by another live bank of that company (409
+  `BANK_CODE_IN_USE`) — Trash restore included. Re-pointing a bank whose old
+  code holds a balance or open statement lines is the CEO's only, with
+  `repointReason` ≥10 (else 409 `BANK_CODE_HAS_BALANCE`); audit
+  `bank_account.relink` / `bank_account.create`.
+- **Bank reconciliation (owner, 2026-10-16):** finance with `accounting`, the
+  CEO and co-owners match by hand (`GET /bank/lines/:id/candidates`, `POST
+  /bank/lines/:id/match`), book adjustments and unmatch (`BANK_BOOKERS` in
+  `reconciliation/routes.ts`); finance without `accounting` and managers get
+  403. A register-account override on an adjustment stays CEO-only. Ignore
+  needs a reason ≥10 and `/unignore` undoes it (same people); all audited
+  `reconciliation.line.*`. A payment that cleared late is a manual match,
+  never an adjustment (it would book twice). `bank_unmatched` counts lines
+  ignored in the period separately. A reversal is stored as
+  `<sourceType>.reversal|void:<sourceId>` ("Reversal of …", never
+  `reverses:`): neither the reversed original nor its reversal is a bank
+  movement — use `deadEntryIds` (`reconciliation/service.ts`) wherever bank
+  lines are paired or counted.
+- **Exceptions and backfill (owner, 2026-10-16):** acknowledge / resolve need
+  the `exceptions` module, an open or acknowledged flag (409 `FLAG_NOT_OPEN`)
+  and a note ≥10; dismiss stays CEO-only. Flags about the books
+  (`LEDGER_FLAG_KINDS`, `lib/exceptions.ts`: posting_failed, manual_journal,
+  fixed_asset_gl_mismatch, cash_voucher_hold_unconverted, depreciation_failed,
+  intercompany_mismatch) are resolved only by the CEO or finance with
+  `accounting` (403 `LEDGER_FLAG_FINANCE_ONLY`); for anyone but the CEO a
+  posting_failed flag resolves only once its `<sourceType>:<sourceId>` entry is
+  in that company's books (409 `POSTING_NOT_ON_BOOKS`) — re-post through
+  Backfill unposted, which closes the flag itself; nobody but the CEO resolves
+  a manual_journal / fixed_asset_gl_mismatch flag about their own action (403
+  `SELF_APPROVAL_BLOCKED`, `NO_SELF_RESOLVE_KINDS`). `POST
+  /reconciliation/backfill-unposted` is the CEO's and finance's (dry run by
+  default); while the CEO has a month reopened in a company in view a real run
+  is the CEO's (409 `REOPENED_BOOKS_CEO_ONLY`); audit carries `actorRole` and
+  `tenantIds`. The petty-cash history run stays CEO-only.
+- **Allocations:** a run covers whole Pakistan days (`YYYY-MM-DD`, 00:00 to
+  23:59:59.999 PKT; dated on the end day). Only untagged lines on the source
+  account are split; cost already booked to a brand stays (`brandTaggedCents`).
+  Rules and runs are CEO-only (`ADMIN_ONLY`; runs were not handed to finance),
+  audit `allocation.run`.
+- **Close checks:** a check that throws keeps its own rule
+  (`check_failed:<key>` is overridable only if the check itself is);
+  `trial_balance` is never overridable, even when it cannot run. The
+  period-close page offers a one-click fix only to the roles its route admits
+  (`FIX_ROLES` in `period-close/page.tsx`): depreciation, prepaid releases,
+  card payout re-match and booking approved settlements go to the CEO and
+  finance; every other fix, the fleet charge included, is CEO-only. A new fix
+  path is added there in the same change.
 - **Credit notes live in their document's own table:** supplier credit notes
   are `SupplierBill` kind `credit_note` (+ `SupplierCreditApplication`);
   receivable credit notes are `ReceivableInvoice` kind `credit_note`. Still
@@ -1070,10 +1152,16 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   invoice (H14) — resumed 2026-10-15 and BUILT on the defaults, awaiting
   owner/CA confirmation (see "Delivery money and customers" and "On-account
   clients"). Head-office HO-Q1 / HO-Q3 wait for the CA (see "Head office").
-  Everything
-  else (C*, G2–G13, F*, K*, H1–H31) is answered and built — see "Finance
-  wave B" below. Seams still marked `TODO(<id>)` in code — build only on the
-  owner's answer.
+  **Hasnain's answers of 2026-10-16:** H45 = the night audit's "still
+  awaiting settlement" warning fires after 2 working days; H46 confirms the
+  business day (05:00 PKT); H47 withholding is taken at the bill; H48 loyalty
+  points stay at today's value (no change); H49 supplier opening balances
+  offset 3010 (none expected at go-live); H50 card is removed from back-office
+  receipts; H51 keep the defaults — on-account clients and head-office
+  recharge stay OFF for the 25 Oct sign-off; H52 October payroll goes as is.
+  Everything else (C*, G2–G13, F*, K*, H1–H52) is answered; seams still
+  marked `TODO(<id>)` (H45, H49) are built next — see "Finance wave B" below.
+  Build a `TODO(<id>)` only on the owner's answer.
 
 ### Finance wave B (2026-10-14; Hasnain's answers H1–H31 + the owner's)
 
@@ -1155,11 +1243,82 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
 - **Withholding and statutory payables:** `lib/withholding.ts` is the one WHT
   resolver; `PUT /accounting/withholding/rates` the only writer of a
   company's rates (confirmed by the accountant, H32; withholding stays OFF per
-  company until finance switches it on). A supplier whose filer status is not
+  company until finance switches it on, H47: taken at the bill;
+  `PUT /accounting/withholding/enabled {enabled, reason ≥10}` is finance's
+  (with `accounting`) and the CEO's, active company only, audit
+  `withholding.switch`, unchanged value 409 `WHT_SWITCH_UNCHANGED`; the CEO
+  keeps the same switch on Configuration → Operations). A supplier whose filer status is not
   known pays the NON-filer rate until confirmed (H33). Salary tax 2042, EOBI 2043, SESSI / PESSI 2044
   (H7): challans go through the tax-payments register; `/accounting/statutory`
   is the one accrued-vs-paid view. OpEx posts the expense with input tax by
   authority and WHT to 2040; budgets compare the expense.
+- **Supplier bills, credit notes and payments (owner, 2026-10-16):** finance
+  does them. `procurement/routes.ts AP_WRITERS` = managers + finance;
+  `requireApWriterModule` holds finance to `accounting` and every other role
+  to `procurement`; GATED_PREFIXES admits either on `/procurement/bills`,
+  `/credit-notes` and `/payments`. POs, receiving and the supplier master stay
+  closed to finance. Every write is audited under the supplier's company; bill
+  files (`supplier_bill`) follow the same rule. Admin: `/procurement` shows
+  finance only Bills, Payments and Aging (`useApOnly`); sidebar Accounting →
+  "Supplier bills & payments". A payment or due date that is not a date is 422
+  `INVALID_DATE`.
+- **PO cancel:** a PO with a pending GRNI match (a bill booked before
+  delivery) cannot be cancelled (409 `PO_BILLED_AHEAD`; void the bill or raise
+  a "short" credit note first); billing ahead on a cancelled PO is 409
+  `PO_CANCELLED`. Both take the PO row lock. A pre-FIFO-cutover bill has no
+  match: void it by hand before cancelling.
+- **Supplier opening balances** are dated at `Supplier.openingBalanceDate`
+  (DATE; managers only), or `createdAt` when empty — never today. A refusal is
+  flagged posting_failed (`supplier.opening`, `metadata.documentDate`) and
+  re-posted by the REPOSTERS `supplier.opening` entry; use
+  `syncOpeningBalanceOrFlag`, never a bare sync in a route. Once anything is
+  posted, changing the date is 409 `OPENING_DATE_LOCKED` (set the balance to
+  0, then enter the date and amount again). The offset is **3010** (H49,
+  2026-10-16; none expected at go-live) — the code still posts 3020
+  (`TODO(H49)`). Suppliers with no company are for the CEO to place.
+- **AP aging** takes `?asOf=YYYY-MM-DD` (end of the Karachi day) and is
+  rebuilt as at that day (bills, credit notes, payments, applications, posted
+  opening balance), tying to 2010 as at that day; company-less suppliers are
+  listed to the CEO only. An unapplied payment shows as an unapplied credit in
+  the past (total still ties).
+- **Payroll and F&F paid (owner, 2026-10-16):** `PAYROLL_PAYERS` (admin,
+  owner, management, finance; finance needs `accounting`) marks a locked
+  payroll run or an approved full & final paid and runs
+  `/hr/final-settlement/post-unposted`; approve, lock and reopen stay with
+  `PAYROLL_APPROVERS`. Nobody, the CEO included, pays a run or settlement
+  carrying their own pay (403 `OWN_PAY_IN_RUN`). Finance's list is
+  `GET /hr/final-settlement/to-pay` on the `/hr/payroll` page; the three F&F
+  paths are gated `staff_hr | accounting` (a pattern rule before
+  `/hr/final-settlement`); run paid stays under `/hr/payroll`
+  (`staff_hr | payroll`). October payroll goes as is (H52).
+- **Tip payouts** take `{method, bankAccountId}` through `moneyAccountCode` of
+  the pool's company (`{}` = the only bank, 1020 if none, 422
+  `BANK_ACCOUNT_REQUIRED` if two or more); legacy `paidFromAccountCode` still
+  works with its checks.
+- **Tax and statutory payments:** several per (company, authority, period).
+  Every payment after the first is a top-up with its own CPR (422
+  `CPR_REQUIRED_FOR_TOP_UP`; the same CPR again 409 `TAX_PAYMENT_EXISTS`),
+  checked under a per-period advisory lock in both record and link. Unique key
+  `(tenantId, authority, periodFrom, cprNumber)` (migration
+  `20261017130000_tax_payroll_tax_payment_topups`); the company merge clashes
+  only on the same CPR for the same authority and month. **Rollback:** once a
+  period holds two payments an older image cannot rebuild the old unique
+  index — void the top-up first.
+- **Tax invoice register:** `GET /invoices` and `/invoices/register.csv`
+  (`type`, `q`) are open to managers and finance (with `accounting`), read
+  scope; admin Accounting → Tax invoices (`/accounting/tax-invoices`). Credit
+  notes are stored negative, so totals are plain sums.
+- **Wallet top-ups and gift cards (owner, 2026-10-16):** managers record both
+  wallet top-up kinds; finance (with `accounting`) records PAID ones only
+  (goodwill 403 `GOODWILL_MANAGERS_ONLY`) via Finance → Wallet top-ups
+  (`/finance/wallet-topups`, module `accounting`); customers are found with
+  `GET /wallet/customers?q=` (active company, needs `crm` or `accounting`),
+  finance also reads `GET /wallet/customers/:id`. Finance (with `accounting`)
+  settles value on VOIDED or EXPIRED gift cards through `POST
+  /gift-cards/:id/void` (refund or payment not received; booked in the card's
+  company; audit carries `actorRole`, `settle`); a LIVE card stays the
+  managers' (403 `VOID_NEEDS_MANAGER`, under the card lock), a card holding
+  nothing is 409 `NOTHING_TO_SETTLE`, forfeiting a sold card stays the CEO's.
 - **Combining companies (`POST /tenants/merge`):** everything with a
   `tenantId` moves or the merge is refused (422) — never stranded on the
   deleted company. A new company table is added to the merge
@@ -1188,7 +1347,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (receivable payments and write-off recoveries, gift-card sales, paid wallet
   top-ups, inter-company settlements, asset-sale proceeds, CapEx deposit
   returns) takes its method from `lib/bankAccounts.ts RECEIPT_METHODS` (cash,
-  card, bank transfer, **bank deposit**, cheque) and REQUIRES a payment
+  bank transfer, **bank deposit**, cheque — **no card**, owner 2026-10-16,
+  H50: card is the till's only; routes 400, services `assertReceiptMethod` →
+  422 `CARD_NOT_A_RECEIPT`; old card rows still read and refund as paid,
+  `moneyAccountCode` card → 1030) and REQUIRES a payment
   reference # on EVERY method, cash included (`assertPaymentReference`, 422
   `PAYMENT_REFERENCE_REQUIRED`; ≤100 chars, `zPaymentRef`). The admin uses
   `components/finance/PaymentReceivedFields.tsx`. A reference already used in
@@ -1284,7 +1446,7 @@ only, foreign rows 404). Contract: `backend/src/modules/headOffices/README.md`.
   month (`splits.ts`); `splitByBps` is the ONE rounding rule (leftover paisa
   to the largest share at exactly 100%; below 100% the rest stays with the
   head office).
-- **Recharge posting is OFF per head office** until the CA confirms the
+- **Recharge posting is OFF per head office** (H51, 2026-10-16: stays off for the 25 Oct sign-off) until the CA confirms the
   accounts (`HeadOfficeBooks.accountsConfirmedAt`) and the CEO sets
   `rechargeFromPeriod` (DB CHECK `head_office_books_enable_chk`). Any change
   to accounts, pool or links switches it back off. The worker (under
@@ -1358,6 +1520,11 @@ Briefs: `.handoff/parked/2026-10-14/`.
   of a picked-up delivery behave as before, and the COD flags, COD close check
   and COD tab stay quiet. Brief staff before switching a company on:
   deliveries already on the road lose Delivered.
+- **COD block links** go through `reconciliation/codCloseCheck.ts
+  codPendingLink` (night audit `cod_pending`, month close `cod_with_rider`):
+  Reconciliation → Cash on delivery while code-only delivery is ON, otherwise
+  the till's pay-in list (`/pos/shift`; needs `pos`, so finance sees the
+  no-access page — cosmetic).
 - **Emergency overrides** (`/emergency-overrides`, module `emergency_overrides`;
   defaults RGM, chef, `fnb_manager`, `management`, CEO; not the co-owner):
   send the code to the rider (new code, WhatsApp to the rider, ONCE per order,
@@ -1446,9 +1613,13 @@ till door `/pos/on-account/*`. Docs in the files' headers
   CEO-only, never delegable. **A statement write-off suspends the client**
   (`receivables/writeOffs.ts`). Close check `on_account_tieout` (warn,
   overridable, cut-over companies only). Statements, emails and reminders are
-  manual (one reminder a Karachi day). **Pending owner/CA confirmation:** G14
-  (on-account tender) and H14 (on-account tax invoice) — built on the defaults
-  above.
+  manual (one reminder a Karachi day). **A client in credit cannot be closed**
+  (`exposureOfTx().creditCents` = money owed back, never netted against
+  exposure; 409 `CLIENT_IN_CREDIT`; pay it back with `POST
+  /accounting/receivables/:id/refunds`; screens show "In credit").
+  **Pending owner/CA confirmation:** G14 (on-account tender) and H14
+  (on-account tax invoice) — built on the defaults above; per H51 (2026-10-16)
+  on-account stays OFF for the 25 Oct sign-off.
 
 ### Trash bin (owner, 2026-10-15)
 
@@ -1543,6 +1714,18 @@ bank transfers or any other payment mode is reconciled and closed" — and
   `CEO_ONLY_BACKDATED` to everyone else; the CEO gives `backdatedReason` (≥10;
   422 `BACKDATED_REASON_REQUIRED`, the admin asks for it). Reopening a day is
   CEO-only. Today's refund of an older bill posts today and is not gated.
+- **Business day (owner, 2026-10-16; H46 confirms):** a till closing before
+  05:00 PKT books to the business day it OPENED on. `lib/businessDay.ts` is
+  the one rule (`BUSINESS_DAY_CUTOFF_HOURS`, `shiftBusinessDay` /
+  `shiftBusinessDate` / `closedShiftsOfBusinessDays`): the `shift.close`
+  entry is dated 23:59:59.999 PKT of the opening day, so the P&L, sales-tax
+  return, month close and day lock follow; the night-audit shift checks, daily
+  report, activity days, `sales_bank_unmatched`, the close checklist's
+  unposted tills and a refused shift posting's document date use it too. A
+  new reader of "the shifts of a day" uses `closedShiftsOfBusinessDays`, never
+  `closedAt` in a calendar window. Orders and payments keep calendar dates.
+  If the day is already audited or locked the posting is refused, flagged and
+  re-posted late.
 - **Month close** has the check `night_audit_days`: every business day of the
   month with sales must be `closed` (CEO-overridable).
 
@@ -1572,7 +1755,8 @@ person and links there). Full list: `/me/notifications`. No phone push (owner:
   exception claim-poller (`workers/staffNotifications.ts`,
   `ExceptionFlag.notifiedAt`). Night audit: day audited / closed / not run →
   finance (with accounting) + the CEO. The "still awaiting settlement" warning
-  waits for the accountant (H45) — `TODO(H45)`.
+  fires after 2 working days (H45, Hasnain 2026-10-16) — `TODO(H45)` until
+  built.
 
 ### Closed books are the CEO's (owner, 2026-10-16)
 

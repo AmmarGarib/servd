@@ -1187,7 +1187,7 @@ export async function voidPayment(paymentId: string, userId: string, reason: str
 //             in full. Void payments and void credit notes are out.
 //   opening   the supplier's opening balance AS POSTED to the ledger
 //             (openingBalance.ts posts Supplier.openingBalanceCents once, as a
-//             delta, Dr 3020 / Cr 2010) — its own column and inside `total`
+//             delta, Dr 3010 / Cr 2010) — its own column and inside `total`
 //   total     Σ buckets + opening − credits   ← the supplier's AP balance in
 //             the ledger; a payment left unapplied against the opening
 //             balance nets it off here, as it does in AP 2010

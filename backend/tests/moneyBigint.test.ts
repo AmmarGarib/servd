@@ -540,12 +540,12 @@ describe('(3) a PKR 30m supplier bill and its payment', () => {
     expect(await imbalance(tenantA)).toBe(0)
   })
 
-  it('a PKR 25m supplier opening balance posts Dr 3020 / Cr 2010 exactly; above PKR 900bn is 422', async () => {
+  it('a PKR 25m supplier opening balance posts Dr 3010 / Cr 2010 exactly (H49); above PKR 900bn is 422', async () => {
     const ok = await call('mgrA', 'POST', '/procurement/suppliers', { name: `Old Vendor ${RUN}`, openingBalanceCents: 2_500_000_000 })
     expect(ok.statusCode, ok.body).toBe(201)
     expect(ok.json().openingBalanceCents).toBe(2_500_000_000)
     const refs = (await prisma.journalEntry.findMany({ where: { tenantId: tenantA, reference: { startsWith: `supplier.opening:${ok.json().id}` } }, select: { reference: true } })).map((e) => e.reference!)
-    expect(await netDebit(tenantA, '3020', refs)).toBe(2_500_000_000)
+    expect(await netDebit(tenantA, '3010', refs)).toBe(2_500_000_000)
     expect(await netDebit(tenantA, '2010', refs)).toBe(-2_500_000_000)
     const big = await call('mgrA', 'POST', '/procurement/suppliers', { name: `Huge ${RUN}`, openingBalanceCents: MAX_MONEY_CENTS + 1 })
     expect(big.statusCode).toBe(422)

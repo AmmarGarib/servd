@@ -310,7 +310,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     })
   })
 
-  // A supplier's opening balance posts to the ledger (Dr 3020 / Cr 2010) and a
+  // A supplier's opening balance posts to the ledger (Dr 3010 / Cr 2010) and a
   // company move carries its POs and bills with it — managers only. The buyer
   // can add and edit everything else (the edit form re-sends both unchanged,
   // so only a CHANGE is refused).
