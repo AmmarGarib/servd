@@ -28,6 +28,7 @@ import {
   assertBalanced, postManualJournal, reverseManualJournal,
 } from './manualJournal.js'
 import { journalRequestRoutes } from './journalRequestRoutes.js'
+import { requireModule } from '../notifications/requireModule.js'
 
 // Who records tax paid to the authorities, links entries and posts the
 // 2030 reclass: finance and the CEO (finance gap 6) — taxPayments.ts holds
@@ -135,9 +136,25 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // copy of the lock check, and could not carry a brand, so every manual
   // adjustment landed in the shared bucket of the brand P&L.
 
-  fastify.post('/journal', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+  // Who posts, edits and cancels manual entries directly (owner, 2026-10-16:
+  // "journal entries should not require CEO's approval to be booked …
+  // Finance should have access to pass new entry / edit / cancel"): the CEO
+  // and finance with the accounting module. The ledger never deletes — cancel
+  // is a reversing entry, edit is a reversal plus the corrected entry. What
+  // stays the CEO's: a register-account override, and anything dated in closed
+  // or reopened books (closedBooks.ts, checked by the posting engine).
+  const JOURNAL_POSTERS = ['admin', 'finance'] as UserRole[]
+  const journalGate = [requireAuth(...JOURNAL_POSTERS), requireModule('accounting')]
+  const assertNoRegisterOverride = (req: { staffUser?: { role: string } }, override: unknown) => {
+    if (override && req.staffUser?.role !== 'admin') {
+      throw new AppError('REGISTER_OVERRIDE_CEO_ONLY', 'Only the CEO can post to the fixed-asset register accounts by hand.', 403)
+    }
+  }
+
+  fastify.post('/journal', { preHandler: journalGate }, async (req, reply) => {
     const body = journalEntrySchema.parse(req.body)
     assertBalanced(body.lines)
+    assertNoRegisterOverride(req, body.registerOverride)
 
     // A manual entry is posted into the company the operator is working in,
     // against that company's chart and its own period close.
@@ -175,7 +192,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   //     serialised on the entry so two clicks cannot post two reversals.
   //   • Reason required; on the accounting trail and in the Exceptions inbox,
   //     like the manual entry itself.
-  fastify.post<{ Params: { id: string } }>('/journal/:id/reverse', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+  fastify.post<{ Params: { id: string } }>('/journal/:id/reverse', { preHandler: journalGate }, async (req, reply) => {
     const body = reverseSchema.parse(req.body ?? {})
 
     const found = await prisma.journalEntry.findFirst({
@@ -194,6 +211,46 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       actor: { email: req.staffUser!.email, ip: req.ip },
     })
     return reply.status(201).send({ ...reversal, reverses: { id: original.id, reference: original.reference } })
+  })
+
+  // ─── Edit a manual entry (CEO + finance) ────────────────────────────────
+  //
+  // A posted entry is never changed in place. Edit = ONE transaction that
+  // reverses the original (reason required, same rules as /reverse: manual
+  // entries only, once) and posts the corrected entry in the ORIGINAL entry's
+  // company. If either half is refused (closed books, unbalanced, …) neither
+  // is booked.
+  fastify.post<{ Params: { id: string } }>('/journal/:id/amend', { preHandler: journalGate }, async (req, reply) => {
+    const body = journalEntrySchema.extend({ reason: z.string().trim().min(5).max(500) }).parse(req.body)
+    assertBalanced(body.lines)
+    assertNoRegisterOverride(req, body.registerOverride)
+    const found = await prisma.journalEntry.findFirst({
+      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+      select: { id: true, tenantId: true },
+    })
+    if (!found || !found.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
+    const tenantId = found.tenantId
+    const result = await serviceClient.$transaction(async (tx) => {
+      const { reversal, original, sideEffects: reversedFx } = await reverseManualJournal(tx, {
+        tenantId, entryId: found.id, reason: `Edited: ${body.reason}`, actorId: req.staffUser!.id,
+        actor: { email: req.staffUser!.email, ip: req.ip },
+      })
+      const { entry, sideEffects: postedFx } = await postManualJournal(tx, {
+        tenantId,
+        description: body.description,
+        reference: body.reference,
+        entryDate: body.entryDate,
+        lines: body.lines,
+        postedBy: req.staffUser!.id,
+        registerOverride: body.registerOverride ?? null,
+        actor: { id: req.staffUser!.id, email: req.staffUser!.email, ip: req.ip },
+      })
+      return { reversal, original, entry, reversedFx, postedFx }
+    })
+    // Audit rows and Exceptions flags only after the commit (manualJournal.ts).
+    await result.reversedFx()
+    await result.postedFx()
+    return reply.status(201).send({ ...result.entry, replaces: { id: result.original.id, reversalId: result.reversal.id } })
   })
 
   // Journal requests: Finance prepares, the CEO approves (journalRequestRoutes.ts).

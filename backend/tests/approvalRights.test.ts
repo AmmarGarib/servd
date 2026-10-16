@@ -317,8 +317,7 @@ describe('the delegation path (checked live on every use)', () => {
       return { authorization: `Bearer ${s.accessToken}` }
     }
     const routes: Array<[string, 'POST' | 'PUT' | 'PATCH', string]> = [
-      ['fin', 'POST', '/accounting/journal'],
-      ['fin', 'POST', '/accounting/journal/x/reverse'],
+      // /accounting/journal and /reverse are finance's too since 2026-10-16 (owner) — no longer CEO-only.
       ['fin', 'POST', '/accounting/period-close'],
       ['fin', 'POST', '/accounting/period-close/reopen'],
       ['hrHod', 'PUT', '/permissions/role-modules'],

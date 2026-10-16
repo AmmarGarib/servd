@@ -225,6 +225,12 @@ module id must be placed in a workspace in the same change.
   HR leaver sweep (`hr/separations.ts`) uses too. HR's reinstate of a manager
   / office login goes back to `pending` for the CEO. UI: the HR employee
   Login tab (Create login, Offboard / Reinstate) and Workforce.
+- **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
+  also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
+  (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,
+  never their own — `REISSUE_SELF`, never a floor login — 400
+  `NOT_A_PASSWORD_LOGIN`); audit `user.password_reissue` records `actorRole`.
+  Button "New password" in `components/hr/OffboardButtons.tsx`.
 - **HR sends password reset links (owner, 2026-10-16).**
   `POST /auth/staff/:id/send-password-link` (HR with `staff_hr`, or the CEO;
   button "Send password reset link" in `components/hr/OffboardButtons.tsx`)
@@ -932,6 +938,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
 
 ### Finance gaps, wave A (2026-10-13; owner: "no known gaps in finance")
 
+- **Manual journals need no CEO approval (owner, 2026-10-16: "journal
+  entries should not require CEO's approval to be booked … Finance should have
+  access to pass new entry / edit / cancel").** `POST /accounting/journal`,
+  `/journal/:id/reverse` (cancel) and `/journal/:id/amend` (edit = ONE
+  transaction: reverse the original + post the corrected entry in the
+  original's company; audit / flags only after the commit) are open to the CEO
+  and finance with `accounting` (`JOURNAL_POSTERS`). The ledger never deletes.
+  Still the CEO's: a register-account override (403
+  `REGISTER_OVERRIDE_CEO_ONLY`) and anything dated in closed or reopened books
+  (`closedBooks.ts`). Journal requests (`/journal-requests`) stay for the
+  other preparers (owner, management).
 - **Chart of accounts (owner, 2026-10-16):** finance (with the `accounting`
   module) and the CEO add and rename accounts (`POST` / `PATCH
   /setup/chart-of-accounts`, `CHART_EDITORS`); switching an account off or

@@ -142,7 +142,7 @@ describe('inter-company accounts and other companies', () => {
     expect(res.json().error.code).toBe('INTERCOMPANY_ACCOUNT_CONTROLLED')
   })
 
-  it('another company\'s account is 422 ACCOUNT_NOT_IN_COMPANY; finance cannot post a manual journal', async () => {
+  it('another company\'s account is 422 ACCOUNT_NOT_IN_COMPANY; finance posts a manual journal (owner, 2026-10-16) but never a register override', async () => {
     const res = await journal('ceo', [
       { accountId: await acct(B, '1510'), type: 'debit', amountCents: 10_000 },
       { accountId: await acct(A, '1020'), type: 'credit', amountCents: 10_000 },
@@ -153,6 +153,72 @@ describe('inter-company accounts and other companies', () => {
       { accountId: await acct(A, '6010'), type: 'debit', amountCents: 10_000 },
       { accountId: await acct(A, '1020'), type: 'credit', amountCents: 10_000 },
     ])
-    expect(fin.statusCode).toBe(403)
+    expect(fin.statusCode, fin.body).toBe(201)
+    const reg = await journal('fin', [
+      { accountId: await acct(A, '1510'), type: 'debit', amountCents: 10_000 },
+      { accountId: await acct(A, '1020'), type: 'credit', amountCents: 10_000 },
+    ], { registerOverride: { reason: 'Finance trying the register' } })
+    expect(reg.statusCode).toBe(403)
+    expect(reg.json().error.code).toBe('REGISTER_OVERRIDE_CEO_ONLY')
+  })
+})
+
+// Owner, 2026-10-16: "journal entries should not require CEO's approval to be
+// booked … Finance should have access to pass new entry / edit / cancel".
+describe('finance posts, edits and cancels manual journals directly', () => {
+  const as = (who: string, method: 'POST', url: string, payload: unknown) =>
+    app.inject({ method, url, payload: payload as never, headers: { authorization: `Bearer ${users[who]!.token}`, 'x-servd-active-tenant': A } })
+  beforeAll(async () => {
+    await mkUser('finB', 'finance', B, [B])
+    await mkUser('mgmt', 'management', A, [A])
+    await mkUser('cash', 'cashier', A, [A])
+    await mkUser('finNoMod', 'finance', A, [A])
+    await prisma.user.update({ where: { id: users['finNoMod']!.id }, data: { moduleDeny: ['accounting'] } })
+  })
+  const two = async (cents: number) => [
+    { accountId: await acct(A, '6010'), type: 'debit' as const, amountCents: cents },
+    { accountId: await acct(A, '1020'), type: 'credit' as const, amountCents: cents },
+  ]
+
+  it('finance cancels (reverses) its entry once; company B finance gets 404', async () => {
+    const e = (await journal('fin', await two(20_000))).json()
+    expect((await as('finB', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Not ours' })).statusCode).toBe(404)
+    const r = await as('fin', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Posted twice by mistake' })
+    expect(r.statusCode, r.body).toBe(201)
+    expect((await as('fin', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Again please' })).statusCode).toBe(409)
+  })
+
+  it('finance edits an entry: the old one is reversed and the corrected one posted, in its company', async () => {
+    const e = (await journal('fin', await two(30_000))).json()
+    const r = await as('fin', 'POST', `/accounting/journal/${e.id}/amend`, {
+      reason: 'Wrong amount', description: 'Correction (fixed)', entryDate: '2026-09-15T07:00:00.000Z', lines: await two(35_000),
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().tenantId).toBe(A)
+    expect(r.json().replaces.id).toBe(e.id)
+    const reversal = await prisma.journalEntry.findUniqueOrThrow({ where: { id: r.json().replaces.reversalId }, include: { lines: true } })
+    expect(reversal.lines.reduce((t, l) => t + Number(l.amountCents), 0)).toBe(60_000)
+    expect(await prisma.auditLog.count({ where: { entityId: r.json().replaces.reversalId, action: 'journal.reverse' } })).toBe(1)
+    expect(await prisma.auditLog.count({ where: { entityId: r.json().id, action: 'journal.manual' } })).toBe(1)
+    expect((await as('finB', 'POST', `/accounting/journal/${r.json().id}/amend`, { reason: 'Not ours', description: 'x', lines: await two(1) })).statusCode).toBe(404)
+  })
+
+  it('an edit whose corrected lines are refused books nothing (the reversal rolls back too)', async () => {
+    const e = (await journal('fin', await two(40_000))).json()
+    const bad = await as('fin', 'POST', `/accounting/journal/${e.id}/amend`, {
+      reason: 'Move to the register', description: 'x', lines: [
+        { accountId: await acct(A, '1510'), type: 'debit', amountCents: 40_000 },
+        { accountId: await acct(A, '1020'), type: 'credit', amountCents: 40_000 },
+      ],
+    })
+    expect(bad.statusCode).toBe(422)
+    // The original can still be reversed: the failed edit left no reversal behind.
+    expect((await as('fin', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Cancel it now' })).statusCode).toBe(201)
+  })
+
+  it('management, cashier and finance without the accounting module are refused', async () => {
+    for (const who of ['mgmt', 'cash', 'finNoMod']) {
+      expect((await journal(who, await two(1_000))).statusCode, who).toBe(403)
+    }
   })
 })
