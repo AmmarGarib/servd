@@ -330,7 +330,10 @@ describe('PPL-R2-03 a tip payout comes from a cash or bank account of the pool\'
     expect(await payoutLines(p1.id)).toEqual(['c:1150:10000', 'd:2095:10000'])
     const p2 = await postedPool(flipd, new Date(t0.getTime() + 2 * H), new Date(t0.getTime() + 3 * H), 5_000)
     expect((await call('ceo', 'POST', `/tip-pools/${p2.id}/pay`, {})).statusCode).toBe(200)
-    expect(await payoutLines(p2.id)).toEqual(['c:1020:5000', 'd:2095:5000'])
+    // No code named → moneyAccountCode (finance fix wave, tip payouts, owner
+    // 2026-10-16; CLAUDE.md "Which money account"): the company's ONLY live
+    // bank — here HBL Payroll on 1150 — never a silent 1020.
+    expect(await payoutLines(p2.id)).toEqual(['c:1150:5000', 'd:2095:5000'])
   })
 })
 
@@ -395,6 +398,7 @@ describe('PPL-R2-04 a pool waits for the till holding its tips to close', () => 
     expect(review3.blockers.some((b) => b.includes('did not reach the books') || b.includes('close the till first'))).toBe(false)
     const pay2 = await call('ceo', 'POST', `/tip-pools/${posted.id}/pay`, {})
     expect(pay2.statusCode).toBe(200)
-    expect(await payoutLines(posted.id)).toEqual(['c:1020:50000', 'd:2095:50000'])
+    // Default = the company's only live bank (1150, set up in PPL-R2-03) via moneyAccountCode.
+    expect(await payoutLines(posted.id)).toEqual(['c:1150:50000', 'd:2095:50000'])
   })
 })
