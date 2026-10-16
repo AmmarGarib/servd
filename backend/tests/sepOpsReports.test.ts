@@ -14,11 +14,11 @@ let conceptB: string
 let app: FastifyInstance
 const tokens: Record<string, string> = {}
 
-async function mkUser(key: string, primary: string) {
+async function mkUser(key: string, primary: string, role = 'admin', moduleDeny: string[] = []) {
   const u = await prisma.user.create({
     data: {
       name: key, email: `${key}.sepops@gsfoods.pk`, password: await bcrypt.hash('x-Password-1', 4),
-      role: 'admin', isActive: true, accountStatus: 'active', tenantId: primary,
+      role: role as never, isActive: true, accountStatus: 'active', tenantId: primary, moduleDeny,
     },
   })
   await prisma.tenantMember.create({ data: { tenantId: primary, userId: u.id } as never }).catch(() => {})
@@ -34,6 +34,9 @@ beforeAll(async () => {
   conceptB = (await prisma.concept.create({ data: { name: 'Ops Cafe B', slug: 'sepops-cafe-b', type: 'restaurant', tenantId: tB } })).id
   await mkUser('a', tA)
   await mkUser('b', tB)
+  await mkUser('bohA', tA, 'boh')
+  await mkUser('bohNoStock', tA, 'boh', ['inventory', 'par_sheet'])
+  await mkUser('itA', tA, 'it')
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } })
@@ -60,5 +63,16 @@ describe('ops reports — company separation', () => {
     const r = await get('b', `/ops/anomalies?conceptId=${conceptA}`)
     expect([200, 404]).toContain(r.statusCode)
     if (r.statusCode === 200) expect(JSON.stringify(r.json())).not.toContain(conceptA)
+  })
+})
+
+describe('prep list — opened to the kitchen (owner 2026-10-16: Inventory links to the prep list)', () => {
+  it('BOH with the inventory module reads its own brand, never the other company', async () => {
+    expect((await get('bohA', `/ops/prep-list?conceptId=${conceptA}`)).statusCode).toBe(200)
+    expect((await get('bohA', `/ops/prep-list?conceptId=${conceptB}`)).statusCode).toBe(404)
+  })
+  it('a login without ops, inventory or par_sheet is refused', async () => {
+    expect((await get('itA', `/ops/prep-list?conceptId=${conceptA}`)).statusCode).toBe(403)
+    expect((await get('bohNoStock', `/ops/prep-list?conceptId=${conceptA}`)).statusCode).toBe(403)
   })
 })

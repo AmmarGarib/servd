@@ -96,7 +96,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Inventory', href: '/inventory', icon: '📦', hint: 'Includes the waste log' },
     { label: 'Stock count', href: '/inventory/count', sub: true },
     { label: 'Low stock', href: '/inventory/alerts', sub: true },
-    { label: 'Prep', href: '/inventory/prep', sub: true },
+    { label: 'Prep list', href: '/ops/prep-list', sub: true },
   ],
   // The par sheet's "Log a batch" / per-row "Log batch" open the prep batch
   // logger, so par_sheet holders (kitchen, expediter) open /inventory/prep too

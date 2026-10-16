@@ -11,7 +11,8 @@
 
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { getDemandForecast } from '../reports/demand-forecast.js'
 import { belowParWhere, explodeRecipe, loadRecipeGraph } from '../../lib/recipeCost.js'
 import { assertConceptOwned, conceptIdsInScope, scopeTenantWhere } from '../../lib/tenantScope.js'
@@ -22,9 +23,13 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
   // Tomorrow's prep checklist per station, derived from demand forecast +
   // recipe ingredients. Output groups required ingredient quantities by station
   // so each cook gets a focused list at end-of-shift.
+  // Owner 2026-10-16 ("In inventory, prep batch log is incorrect. Its needs to
+  // be prep list."): Inventory's "Prep list" link opens this page, so any
+  // login holding ops, inventory or par_sheet reads it (quantities only, no
+  // costs); the brand is still checked against the caller's companies.
   fastify.get<{ Querystring: { conceptId: string; days?: string } }>(
     '/prep-list',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: [requireAuth(...ALL_STAFF), requireModule('ops', 'inventory', 'par_sheet')] },
     async (req, reply) => {
       const { conceptId } = req.query
       const days = Math.min(parseInt(req.query.days ?? '1', 10), 7)

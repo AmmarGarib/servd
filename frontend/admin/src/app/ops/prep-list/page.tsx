@@ -34,8 +34,8 @@ export default function PrepListPage() {
   const globalBrand = useBrandFilter((st) => st.brandId)
   const [pick, setPick] = useState<string | null>(null)
   const { data: concepts = [], isLoading } = useQuery<Concept[]>({
-    queryKey: ['concepts'],
-    queryFn: () => api.get('/concepts'),
+    queryKey: ['concepts', 'picker'],
+    queryFn: () => api.get('/concepts?view=picker'),
   })
   // Every brand by default; the sidebar's brand filter or the picker here
   // narrows it to one.
