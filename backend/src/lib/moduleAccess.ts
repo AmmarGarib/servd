@@ -127,6 +127,22 @@ export function withoutCeoOnlyModules(modules: readonly string[]): string[] {
   return modules.filter((m) => !CEO_ONLY_SET.has(m))
 }
 
+// ── Role presets: what HR may and may not change (owner, 2026-10-16) ────────
+// "Give the presets thing to HR" — Role presets (PUT /permissions/role-modules,
+// module role_modules) are HR's, within safe limits. The CEO keeps full
+// control. This is the ONE definition; the admin reads it from
+// GET /permissions/role-modules → presetLimits.
+//   ceoOnlyRoles      — presets only the CEO edits: the CEO seat, the
+//                       co-owner, and HR's own role (no self-promotion).
+//   governanceModules — modules HR may neither grant nor remove on any
+//                       preset: logins, module access itself, companies and
+//                       the books' audit trail.
+// Per-person module access (/permissions/users/:id/modules) stays CEO only.
+export const PRESET_LIMITS = {
+  ceoOnlyRoles: ['admin', 'owner', 'hr'] as readonly UserRole[],
+  governanceModules: ['role_management', 'role_modules', 'tenants', 'accounting_audit'] as readonly string[],
+} as const
+
 const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m) && !CEO_ONLY_SET.has(m))
 // 'manager' mirrors 'management' for everything EXCEPT the accounting trail,
 // the API connectors, the Finance pre-bill register (none of whose routes
@@ -214,8 +230,11 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   ],
   // 'payroll' = tip pools (HR runs the people side of the split); HR payroll
   // itself is staff_hr.
+  // 'role_modules' = Role presets (owner, 2026-10-16: "Give the presets thing
+  // to HR"), within PRESET_LIMITS — the CEO-only roles and the governance
+  // modules stay the CEO's (PUT /permissions/role-modules enforces them).
   hr: [
-    'staff_directory', 'staff_hr', 'payroll', 'scheduling',
+    'staff_directory', 'staff_hr', 'payroll', 'scheduling', 'role_modules',
   ],
   // IT / developer — owns the Dev workspace (decision 47, lib/workspaces.ts).
   // The API section (WhatsApp + POS connector) is theirs with the CEO.
@@ -260,7 +279,18 @@ export const MODULE_GRANTS: readonly string[] = [
   // The Trash bin (2026-10-15): owner / management / legacy manager defaults
   // ("every module except …") now hold it.
   'trash',
+  // Role presets moved to HR (owner, 2026-10-16). Scoped to hr in
+  // MODULE_GRANT_ROLES: management / legacy manager defaults already hold it,
+  // and a saved row of theirs is left exactly as the CEO saved it.
+  'role_modules',
 ]
+/**
+ * Grants that reach only SOME of the roles whose defaults hold the module
+ * (default: every such role — rolesGrantedByDefault). Read by applyModuleGrants.
+ */
+export const MODULE_GRANT_ROLES: Readonly<Partial<Record<string, readonly UserRole[]>>> = {
+  role_modules: ['hr'],
+}
 export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 
 // ── Modules TAKEN AWAY from saved rows (once) ───────────────────────────────
@@ -305,7 +335,9 @@ export async function applyModuleGrants(): Promise<{ applied: string[]; roles: U
 
   const touched = new Set<UserRole>()
   for (const moduleId of pending) {
-    for (const role of rolesGrantedByDefault(moduleId)) {
+    const scoped = MODULE_GRANT_ROLES[moduleId]
+    const roles = scoped ? rolesGrantedByDefault(moduleId).filter((r) => scoped.includes(r)) : rolesGrantedByDefault(moduleId)
+    for (const role of roles) {
       const r = await prisma.roleModuleAccess.updateMany({
         where: { role, NOT: { modules: { has: moduleId } } },
         data: { modules: { push: moduleId } },

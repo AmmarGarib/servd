@@ -101,7 +101,9 @@ describe('PPL-08 a role reaches a module\'s pages exactly when its defaults hold
         expect(DEFAULT_MODULE_ACCESS[role], `${role}: ${m}`).not.toContain(m)
       }
     }
-    for (const m of ['approvals', 'tenants', 'role_modules', 'configuration']) expect(WORKSPACE_OF_MODULE.get(m), m).toBe('ceo')
+    for (const m of ['approvals', 'tenants', 'role_management', 'configuration']) expect(WORKSPACE_OF_MODULE.get(m), m).toBe('ceo')
+    // Role presets moved to HR (owner, 2026-10-16).
+    expect(WORKSPACE_OF_MODULE.get('role_modules')).toBe('hr')
     expect(WORKSPACE_OF_MODULE.get('menu')).toBe('operations')
   })
 

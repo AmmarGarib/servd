@@ -11,8 +11,10 @@
 //     every session. HR's reinstate of an office login waits for the CEO.
 //   - Per-person modules: the CEO only, stored as the difference from the role
 //     preset; null resets; the CEO's own row and any admin row are refused.
-//   - Only the CEO changes module access: role presets, PATCH moduleAllow /
-//     moduleDeny, and the per-person route are all admin-only.
+//   - Only the CEO changes a PERSON's module access: PATCH moduleAllow /
+//     moduleDeny and the per-person route are admin-only. Role presets are
+//     HR's too since 2026-10-16 (owner), within PRESET_LIMITS — see
+//     tests/rolePresetsHr.test.ts.
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
@@ -297,11 +299,15 @@ describe('per-person module access', () => {
     expect((await getMods('ceoA', U['ceoA']!.id)).json().locked).toBe(true)
   })
 
-  it('every other module-access writer is CEO only', async () => {
+  it('every other per-person module-access writer is CEO only; role presets admit HR too (owner, 2026-10-16)', async () => {
     const id = U['cashier']!.id
     for (const k of ['hrA', 'ownerA', 'mgmtA']) {
-      const role = await app.inject({ method: 'PUT', url: '/api/v1/permissions/role-modules', headers: auth(k), payload: { role: 'cashier', modules: ['pos'] } })
-      expect(role.statusCode, k).toBe(403)
+      // Role presets: HR is now a writer (within PRESET_LIMITS — the full
+      // rules are in rolePresetsHr.test.ts); the co-owner and management are not.
+      if (k !== 'hrA') {
+        const role = await app.inject({ method: 'PUT', url: '/api/v1/permissions/role-modules', headers: auth(k), payload: { role: 'cashier', modules: ['pos'] } })
+        expect(role.statusCode, k).toBe(403)
+      }
       const patch = await app.inject({ method: 'PATCH', url: `/api/v1/auth/users/${id}`, headers: auth(k), payload: { moduleAllow: ['accounting'] } })
       expect(patch.statusCode, k).toBe(403)
     }

@@ -181,8 +181,9 @@ rewritten, trust these corrections:
 ## Workspaces — servd is organised by owner (2026-10-04, owner decision 47)
 
 Six workspaces replace the old 18-module catalogue: **CEO** (role `admin`
-only — the approvals inbox, companies, logins & module access, company-wide
-rules; owner decision D2, 2026-10-11), **Operations** (owned by
+only — the approvals inbox, companies, logins and per-person module access,
+company-wide rules; owner decision D2, 2026-10-11; Role presets moved to HR
+→ "Role presets" on 2026-10-16), **Operations** (owned by
 `fnb_manager` — all BOH and FOH, menu, stock, buying, the till; the CEO still
 holds every module), **Finance**, **Marketing**, **HR**, **Dev** (IT role
 `it` — integrations, backups, webhooks, the user audit log, the API
@@ -224,15 +225,26 @@ module id must be placed in a workspace in the same change.
   HR leaver sweep (`hr/separations.ts`) uses too. HR's reinstate of a manager
   / office login goes back to `pending` for the CEO. UI: the HR employee
   Login tab (Create login, Offboard / Reinstate) and Workforce.
-- **Module access is per person; only the CEO changes it (owner,
+- **Module access is per person; only the CEO changes a PERSON's (owner,
   2026-10-15).** Role presets (`PUT /permissions/role-modules`, page
-  "Role presets") are the base case; the CEO ticks a person's modules on
+  "Role presets", module `role_modules`) are the base case. **Presets are
+  HR's (owner, 2026-10-16: "Give the presets thing to HR"), within safe
+  limits** (`PRESET_LIMITS` in `lib/moduleAccess.ts`, served as
+  `presetLimits` on `GET /permissions/role-modules`): any HR login holding
+  `role_modules` in its effective modules may save or reset a preset, but
+  never the `admin` / `owner` / `hr` presets (403 `PRESET_CEO_ONLY`) and never
+  add or remove `role_management`, `role_modules`, `tenants` or
+  `accounting_audit` on any preset (403 `PRESET_GOVERNANCE_CEO_ONLY`; checked
+  against the saved row read live under a per-role advisory lock, never the
+  module-access cache); a head-office login with reach is refused. Presets stay ONE servd-wide set
+  (`RoleModuleAccess` has no `tenantId`, deliberately). The CEO keeps full
+  control. The CEO ticks a person's modules on
   Workforce ("What they can open") through `GET/PUT
   /permissions/users/:id/modules` (`modules: null` = back to the preset),
   stored as `moduleAllow = chosen − preset`, `moduleDeny = preset − chosen`,
   audit `staff.modules`. Admin rows are locked (every module). Every writer of
-  module access is ADMIN_ONLY; an invite never carries it (tested in
-  `tests/staffOnboarding.test.ts`).
+  a PERSON's module access is ADMIN_ONLY; an invite never carries it (tested
+  in `tests/staffOnboarding.test.ts`; presets in `tests/rolePresetsHr.test.ts`).
 - **One approvals inbox** (`/ceo/approvals`, `GET /approvals` +
   `/approvals/counts`, `backend/src/modules/approvals/`; owner decision D3).
   It READS each module's own queue as the caller (new logins, website

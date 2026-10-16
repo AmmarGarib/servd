@@ -144,7 +144,7 @@ describe('writing a line off — finance asks, the CEO approves', () => {
     const list = (await call('finA', 'GET', '/procurement/grni')).json()
     expect((list.lines as Array<{ receiptLineId: string }>).map((l) => l.receiptLineId)).toEqual([lineCeo])
     expect((await call('ceoA', 'POST', `/procurement/grni/${lineAsked}/write-off/approve`, {})).json().error.code).toBe('NOTHING_OPEN')
-    const audits = await prisma.auditLog.findMany({ where: { entity: 'GoodsReceiptLine', entityId: lineAsked }, select: { action: true, tenantId: true } })
+    const audits = await prisma.auditLog.findMany({ where: { entity: 'GoodsReceiptLine', entityId: lineAsked, action: { not: 'approval.decide' } }, select: { action: true, tenantId: true } })
     expect(audits.map((a) => a.action).sort()).toEqual(['procurement.grni_writeoff.approve', 'procurement.grni_writeoff.request'])
     expect(audits.every((a) => a.tenantId === tenantA)).toBe(true)
   })

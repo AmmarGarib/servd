@@ -134,7 +134,8 @@ describe('module defaults after the CEO section (D2) and the approvals inbox (D3
     marketing: ['marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'analytics', 'storefront'],
     brand_manager: ['brand_dashboard', 'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'analytics', 'storefront'],
     finance: ['dashboard', 'orders', 'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'reports', 'voided_prebills', 'food_cost'],
-    hr: ['staff_directory', 'staff_hr', 'payroll', 'scheduling'],
+    // + role_modules: Role presets moved to HR (owner, 2026-10-16).
+    hr: ['staff_directory', 'staff_hr', 'payroll', 'scheduling', 'role_modules'],
     it: ['api_whatsapp', 'api_pos', 'integrations', 'audit_log', 'notifications', 'help'],
   }
 

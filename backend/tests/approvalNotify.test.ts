@@ -264,6 +264,21 @@ describe('approval.decided', () => {
     expect(N.decisionOutcome('lock')).toBeNull()
     expect(N.decisionOutcome('reopen')).toBeNull()
   })
+
+  it('a decision that clears its requester column names who waited (waitingUserIds replaces the submitters)', async () => {
+    // e.g. an on-account limit increase / Raast void / GRNI write-off reject: the route reads the
+    // requester before the write and passes it through auditApproval's metadata.
+    const po = await mkPo('sent')
+    await R.auditApproval(reqAs('ceoA'), {
+      type: 'purchase_order', id: po.id, tenantId: T.A, decision: 'reject', grant: { via: 'role' }, entity: 'PurchaseOrder',
+      metadata: { reason: 'No budget', waitingUserIds: [id('staff')] },
+    })
+    await flushNotifications()
+    const [n] = await notes(id('staff'), po.id)
+    expect(n).toMatchObject({ kind: 'approval.decided', severity: 'warning' })
+    expect(n!.body).toContain('No budget')
+    expect(await notes(id('buyer'), po.id)).toHaveLength(0)
+  })
 })
 
 describe('static: no notify hook inside a $transaction body', () => {

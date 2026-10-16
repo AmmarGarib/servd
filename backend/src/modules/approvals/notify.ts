@@ -74,6 +74,9 @@ export interface ApprovalDecidedEvent {
   final?: boolean
   /** storefront_publish: an approval with a publish time is "scheduled", not "published". */
   publishAt?: string | null
+  /** Who was waiting, read by the route BEFORE a decision that clears its requester column
+   *  (on-account limit increase). When given, it replaces approvalSubject's submitters. */
+  waitingUserIds?: string[]
 }
 
 // ─── Wording ────────────────────────────────────────────────────────────────
@@ -385,7 +388,8 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
   const title = `${f.ref} ${verb}${f.companyName ? ` (${f.companyName})` : ''}`
 
   const extra = spec.extraRecipients ? await spec.extraRecipients(e.id, { ...e, final }).catch(() => []) : []
-  const recipients = [...new Set([...s.submitterIds, ...extra])].filter((u) => u && u !== e.actorId)
+  const waiting = Array.isArray(e.waitingUserIds) && e.waitingUserIds.length > 0 ? e.waitingUserIds : s.submitterIds
+  const recipients = [...new Set([...waiting, ...extra])].filter((u) => u && u !== e.actorId)
   if (recipients.length === 0) return 0
   const tenantId = e.tenantId ?? s.ownerTenantId ?? s.companyIds[0] ?? null
   const rows: NotifyInput[] = recipients.map((userId) => ({

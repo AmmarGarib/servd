@@ -310,7 +310,7 @@ describe('the custodian pays — no photo — and the money waits on 1357 for it
     expect(again.json().error.code).toBe('ALREADY_PAID')
     expect(await floatOf(boxId)).toBe(start - 25_000)
 
-    const steps = await prisma.auditLog.findMany({ where: { entity: 'CashVoucher', entityId: v.id }, select: { action: true, tenantId: true } })
+    const steps = await prisma.auditLog.findMany({ where: { entity: 'CashVoucher', entityId: v.id, action: { not: 'approval.decide' } }, select: { action: true, tenantId: true } })
     expect(steps.map((s) => s.action).sort()).toEqual(['cash_voucher.approve', 'cash_voucher.create', 'cash_voucher.finance_approve', 'cash_voucher.pay'])
     expect(steps.every((s) => s.tenantId === T.A)).toBe(true)
   })

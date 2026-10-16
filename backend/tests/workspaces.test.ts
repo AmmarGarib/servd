@@ -166,7 +166,12 @@ describe('D2: the CEO section and Operations for the F&B manager (2026-10-11)', 
     const of = (key: string) => ceo.sections.find((s) => s.key === key)!.modules
     expect(of('approvals')).toEqual(['approvals'])
     expect(of('companies')).toEqual(['tenants', 'business_info', 'onboarding'])
-    expect(of('access')).toEqual(['role_management', 'role_modules'])
+    // Role presets moved to HR (owner, 2026-10-16); logins stay the CEO's.
+    expect(of('access')).toEqual(['role_management'])
+    const hr = ws('hr')
+    expect(hr.sections.find((s) => s.key === 'access')!.modules).toEqual(['role_modules'])
+    expect(DEFAULT_MODULE_ACCESS.hr).toContain('role_modules')
+    expect(MODULE_GRANTS).toContain('role_modules')
     expect(of('rules')).toEqual(['configuration', 'settings'])
   })
 

@@ -863,7 +863,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>('/:id/history', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const { v } = await loadVisible(req, req.params.id)
     const rows = await prisma.auditLog.findMany({
-      where: { entity: 'CashVoucher', entityId: v.id, tenantId: v.tenantId },
+      where: { entity: 'CashVoucher', entityId: v.id, tenantId: v.tenantId, action: { startsWith: 'cash_voucher.' } },
       select: { id: true, action: true, userId: true, userEmail: true, before: true, after: true, createdAt: true },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       take: 500,
@@ -1251,7 +1251,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     if (res.count === 0) throw new AppError('VOUCHER_NOT_CANCELLABLE', `Cash request ${v.number} was paid or changed by someone else — reload it`, 409)
     await auditVoucher(req, 'cancel', v, { status: 'cancelled', note }, { status: v.status })
-    await voucherDecided(req, queueTypeOf(v.status), v, 'cancel', now, note)
+    // A raiser withdrawing their own voucher is not an approval decision: only a keeper's cancel is.
+    if (v.preparedById !== viewer.id) await voucherDecided(req, queueTypeOf(v.status), v, 'cancel', now, note)
     return detailOf(v.id, viewer)
   })
 

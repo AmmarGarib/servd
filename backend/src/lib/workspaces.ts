@@ -55,7 +55,9 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       { key: 'trash',     title: 'Trash',                       modules: ['trash'] },
       { key: 'companies', title: 'Companies & head offices',    modules: ['tenants', 'business_info', 'onboarding'] },
       { key: 'brands',    title: 'Brands',                      modules: ['brands'] },
-      { key: 'access',    title: 'Logins & access',             modules: ['role_management', 'role_modules'] },
+      // Role presets (role_modules) moved to HR (owner, 2026-10-16); logins
+      // and the per-person ticks on Workforce stay here, the CEO's.
+      { key: 'access',    title: 'Logins & access',             modules: ['role_management'] },
       { key: 'rules',     title: 'Company rules',               modules: ['configuration', 'settings'] },
     ],
   },
@@ -122,6 +124,9 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     sections: [
       { key: 'people', title: 'People', modules: ['staff_hr', 'staff_directory'] },
       { key: 'time',   title: 'Time',   modules: ['scheduling'] },
+      // Role presets — the base case per role (owner, 2026-10-16: "Give the
+      // presets thing to HR"), within lib/moduleAccess.ts PRESET_LIMITS.
+      { key: 'access', title: 'Role presets', modules: ['role_modules'] },
     ],
   },
   {

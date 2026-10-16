@@ -50,7 +50,6 @@ import { audit } from '../../lib/audit.js'
 import { toCents } from '../../lib/money.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { auditApproval } from '../../lib/approvalRights.js'
-import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { normalizeBankRef, refInText } from '../../connectors/raast/reference.js'
 import { reportDateRange } from '../reports/service.js'
@@ -488,26 +487,15 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       after: { voidRequestedAt: null },
       metadata: { orderId: r.orderId, note: body.note, actorTenantId: req.staffUser!.tenantId ?? null },
     })
-    // approval.decide (audit row) + the requester's notice. The rejection CLEARS voidRequestedById, so the
-    // funnel can no longer find the requester: tell them directly from the id read before the reject.
-    const decidedAt = new Date().toISOString()
+    // approval.decide (audit row) + the requester's notice. The rejection CLEARS voidRequestedById, so
+    // the requester (read before the write) is named for the funnel.
     try {
       await auditApproval(req, {
         type: 'raast_void', id: r.id, tenantId: r.tenantId, decision: 'reject', grant: { via: 'role' }, entity: 'RaastReceipt',
-        metadata: { decidedAt, reason: body.note },
+        metadata: { decidedAt: new Date().toISOString(), reason: body.note, ...(res.before.voidRequestedById ? { waitingUserIds: [res.before.voidRequestedById] } : {}) },
       })
     } catch (err) {
       console.warn(`[raast] approval.decide not recorded: ${(err as Error).message}`)
-    }
-    const requesterId = res.before.voidRequestedById
-    if (requesterId && requesterId !== req.staffUser!.id) {
-      const actorId = req.staffUser!.id
-      queueStaffNotify(() => notifyStaffMany([{
-        userId: requesterId, tenantId: r.tenantId, kind: 'approval.decided', severity: 'warning',
-        title: `Raast void request for order ${orderRefOf(r.orderId)} rejected`, body: `Reason: ${body.note}`.slice(0, 500),
-        link: '/reconciliation?tab=raast', entityType: 'raast_void', entityId: r.id, actorId,
-        dedupeKey: `approval.decided:raast_void:${r.id}:reject:${decidedAt}`,
-      }]))
     }
     return viewOne(req, r.id)
   })

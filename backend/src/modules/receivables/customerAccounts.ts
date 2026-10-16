@@ -648,11 +648,12 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
 
   // approval.decide + the "decided" notice (the bell). The guard is a plain role list (CEO), so the grant is 'role'.
   // After the commit; never fails the decision.
-  async function decidedNotice(req: FastifyRequest, a: { id: string; tenantId: string }, decision: 'approve' | 'reject', note?: string | null) {
+  // A limit increase CLEARS limitRequestedById on decision: pass who asked (read before the write).
+  async function decidedNotice(req: FastifyRequest, a: { id: string; tenantId: string }, decision: 'approve' | 'reject', note?: string | null, requestedById?: string | null) {
     try {
       await auditApproval(req, {
         type: 'on_account_client', id: a.id, tenantId: a.tenantId, decision, grant: { via: 'role' }, entity: 'CustomerAccount',
-        metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}) },
+        metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}), ...(requestedById ? { waitingUserIds: [requestedById] } : {}) },
       })
     } catch (err) {
       console.warn(`[on-account] approval.decide not recorded: ${(err as Error).message}`)
@@ -697,7 +698,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
       after: { status: after.status, creditLimitCents: toCents(after.creditLimitCents) },
       metadata: { kind, note: body.note || null, requestedById: kind === 'new_client' ? before.createdById : before.limitRequestedById },
     })
-    await decidedNotice(req, after, 'approve')
+    await decidedNotice(req, after, 'approve', null, kind === 'limit_increase' ? before.limitRequestedById : null)
     return reload(after.id, req)
   })
 
@@ -731,7 +732,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
       after: { status: after.status },
       metadata: { kind, note },
     })
-    await decidedNotice(req, after, 'reject', note)
+    await decidedNotice(req, after, 'reject', note, kind === 'limit_increase' ? before.limitRequestedById : null)
     return reload(after.id, req)
   })
 

@@ -800,6 +800,11 @@ export async function auditApproval(
         note: str(m['reason']) ?? str(m['note']), decidedAt,
         ...(typeof m['final'] === 'boolean' && { final: m['final'] as boolean }),
         ...(str(m['publishAt']) && { publishAt: str(m['publishAt']) }),
+        // A decision that CLEARS the requester column (e.g. an on-account limit increase)
+        // names who was waiting, read before the write: they replace approvalSubject's submitters.
+        ...(Array.isArray(m['waitingUserIds']) && {
+          waitingUserIds: (m['waitingUserIds'] as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0),
+        }),
       })
     }
   } catch (err) {

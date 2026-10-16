@@ -28,7 +28,6 @@ import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { auditApproval } from '../../lib/approvalRights.js'
-import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { sumCents } from '../../lib/money.js'
 import { postGrniWriteOffTx } from '../accounting/inventoryPosting.js'
@@ -128,11 +127,12 @@ async function writeAudit(req: FastifyRequest, action: string, line: { id: strin
 
 /** approval.decide for a write-off decision (grant 'role': ADMIN_ONLY guard); the approve notice reaches the
  *  requester through the funnel. After the commit; never fails the decision. */
-async function decidedAudit(req: FastifyRequest, line: { id: string; tenantId: string }, decision: 'approve' | 'reject', note: string | null) {
+async function decidedAudit(req: FastifyRequest, line: { id: string; tenantId: string }, decision: 'approve' | 'reject', note: string | null, requestedById?: string | null) {
   try {
     await auditApproval(req, {
       type: 'grni_writeoff', id: line.id, tenantId: line.tenantId, decision, grant: { via: 'role' }, entity: 'GoodsReceiptLine',
-      metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}) },
+      // A reject CLEARS writeOffRequestedById: name the requester (read before the write) for the notice.
+      metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}), ...(requestedById ? { waitingUserIds: [requestedById] } : {}) },
     })
   } catch (err) {
     console.warn(`[grni] approval.decide not recorded: ${(err as Error).message}`)
@@ -330,20 +330,7 @@ export async function grniRoutes(fastify: FastifyInstance) {
       })
       if (cleared.count === 0) throw new AppError('NO_WRITE_OFF_REQUEST', 'Nobody has asked to write this line off', 409)
       await writeAudit(req, 'procurement.grni_writeoff.reject', line, { note, requestedById: line.writeOffRequestedById, reason: line.writeOffReason })
-      await decidedAudit(req, line, 'reject', note)
-      // The rejection CLEARS writeOffRequestedById, so the funnel cannot find the requester any more:
-      // tell them directly from the id read before the reject.
-      const requesterId = line.writeOffRequestedById
-      if (requesterId && requesterId !== req.staffUser!.id) {
-        const actorId = req.staffUser!.id
-        const decidedAt = new Date().toISOString()
-        queueStaffNotify(() => notifyStaffMany([{
-          userId: requesterId, tenantId: line.tenantId, kind: 'approval.decided', severity: 'warning',
-          title: `Write-off of "${line.description}" rejected`.slice(0, 140), body: `Reason: ${note}`.slice(0, 500),
-          link: '/procurement/grni', entityType: 'grni_writeoff', entityId: line.id, actorId,
-          dedupeKey: `approval.decided:grni_writeoff:${line.id}:reject:${decidedAt}`,
-        }]))
-      }
+      await decidedAudit(req, line, 'reject', note, line.writeOffRequestedById)
       return { receiptLineId: line.id, status: 'rejected' }
     },
   )

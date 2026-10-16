@@ -14,6 +14,7 @@ import {
   invalidateModuleAccessCache,
   effectiveModulesForUser,
   rolePresetModules,
+  PRESET_LIMITS,
 } from '../../lib/moduleAccess.js'
 import { ALL_ROLES, ASSIGNABLE_ROLES, LEGACY_ROLES, OVERRIDE_APPROVERS } from '../../lib/roles.js'
 import { audit } from '../../lib/audit.js'
@@ -97,6 +98,12 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       // Modules no role but the CEO may hold (Brands): the Module Access
       // matrix shows them locked; a save that lists them drops them.
       ceoOnlyModules: CEO_ONLY_MODULES,
+      // Role presets are HR's within these limits (owner, 2026-10-16): the
+      // admin locks these roles' columns and these modules' rows for HR.
+      presetLimits: {
+        ceoOnlyRoles:      [...PRESET_LIMITS.ceoOnlyRoles],
+        governanceModules: [...PRESET_LIMITS.governanceModules],
+      },
       modules:   MODULE_IDS,
       roles: {
         all:        ALL_ROLES,
@@ -116,16 +123,49 @@ export async function permissionRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // PUT /permissions/role-modules — CEO saves one role's full allow-list.
+  // PUT /permissions/role-modules — save one role's full allow-list (a role
+  // PRESET: the base case for every login of that role).
   // `modules: null` resets the role back to defaults (deletes the row).
   // Any role except admin — including 'owner', which the old hand-kept role
   // list left out, so the owner column never actually saved.
-  fastify.put('/role-modules', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+  //
+  // Who (owner, 2026-10-16: "Give the presets thing to HR"):
+  //   • the CEO — every role but the CEO seat, every module, as before;
+  //   • HR — only while HR's own effective modules hold 'role_modules' (so the
+  //     CEO's per-person untick on Workforce really closes it), and within
+  //     PRESET_LIMITS (lib/moduleAccess.ts): never the admin / owner / hr
+  //     presets (403 PRESET_CEO_ONLY), and the governance modules on a preset
+  //     stay exactly as they are (403 PRESET_GOVERNANCE_CEO_ONLY — a save or
+  //     reset that would add or remove one is refused, not trimmed).
+  //   • A head-office login that reaches companies it is not a member of is
+  //     refused: presets apply in every company, and reach is submit-only
+  //     (spec §6.2), so it would be writing into companies it only reaches.
+  // Presets are deliberately SERVD-WIDE (owner, 2026-10-16): RoleModuleAccess
+  // has no tenantId — one set of role presets for every company. A
+  // per-company preset is a new owner decision, not a fix.
+  // Per-person module access (below) stays CEO only.
+  fastify.put('/role-modules', { preHandler: requireAuth('admin', 'hr') }, async (req, reply) => {
+    const caller = req.staffUser!
+    const isCeo = caller.role === 'admin'
+    if (!isCeo) {
+      if (reachTenantIds(req).length > 0) {
+        return reply.status(403).send({ error: { code: 'PRESET_CEO_ONLY', message: 'Role presets apply in every servd company — a head-office login cannot change them. Ask the CEO or HR in the company.' } })
+      }
+      const me = await prisma.user.findUnique({ where: { id: caller.id }, select: { role: true, moduleAllow: true, moduleDeny: true } })
+      const mine = await effectiveModulesForUser({ role: me?.role ?? caller.role, moduleAllow: me?.moduleAllow ?? [], moduleDeny: me?.moduleDeny ?? [] })
+      if (!mine.has('role_modules')) {
+        return reply.status(403).send({ error: { code: 'MODULE_NOT_ALLOWED', message: 'Your account does not have access to Role presets. Ask the CEO to enable it on Workforce.' } })
+      }
+    }
+
     const body = z.object({
       role:    z.string().refine((v) => (ALL_ROLES as readonly string[]).includes(v), 'Unknown role'),
       modules: z.array(z.string()).nullable(),
     }).parse(req.body)
 
+    if (!isCeo && PRESET_LIMITS.ceoOnlyRoles.includes(body.role as UserRole)) {
+      return reply.status(403).send({ error: { code: 'PRESET_CEO_ONLY', message: 'Only the CEO changes this role\'s preset.' } })
+    }
     if (body.role === 'admin') {
       return reply.status(400).send({ error: { code: 'ADMIN_IMMUTABLE', message: 'The CEO role always has every module — it cannot be edited.' } })
     }
@@ -144,22 +184,43 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       modules = Array.from(new Set(withoutCeoOnlyModules(knownModulesOnly(body.modules))))
     }
 
-    // Read the outgoing allow-list first — "what changed" is the whole value of
-    // this entry, and after the upsert it is gone.
-    const previous = await prisma.roleModuleAccess.findUnique({
-      where: { role: body.role as UserRole },
-      select: { modules: true },
-    })
+    // One writer per role at a time, and HR's governance check reads the saved
+    // row LIVE inside the same transaction as the write (never the 30 s
+    // per-process cache): a CEO change made a moment ago, or on another API
+    // process, can never be undone by an HR save built on a stale read.
+    const role = body.role as UserRole
+    const outcome = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'role_module_access:' + role}::text))`
+      // Read the outgoing allow-list first — "what changed" is the whole value
+      // of the audit entry, and after the upsert it is gone.
+      const previous = await tx.roleModuleAccess.findUnique({ where: { role }, select: { modules: true } })
 
-    if (modules === null) {
-      await prisma.roleModuleAccess.deleteMany({ where: { role: body.role as UserRole } })
-    } else {
-      await prisma.roleModuleAccess.upsert({
-        where:  { role: body.role as UserRole },
-        create: { role: body.role as UserRole, modules },
-        update: { modules },
-      })
+      // HR: the governance modules on this preset stay as they are today (the
+      // saved row, else the defaults) — whether HR saves a list or resets.
+      if (!isCeo) {
+        const gov = (list: readonly string[]) => PRESET_LIMITS.governanceModules.filter((m) => list.includes(m)).sort().join(',')
+        const preset = (list: readonly string[]) => withoutCeoOnlyModules(knownModulesOnly([...list]))
+        const defaults = preset(DEFAULT_MODULE_ACCESS[role] ?? [])
+        const current = gov(previous ? preset(previous.modules) : defaults)
+        const next = gov(modules ?? defaults)
+        if (current !== next) return { refused: true as const, previous }
+      }
+
+      if (modules === null) {
+        await tx.roleModuleAccess.deleteMany({ where: { role } })
+      } else {
+        await tx.roleModuleAccess.upsert({
+          where:  { role },
+          create: { role, modules },
+          update: { modules },
+        })
+      }
+      return { refused: false as const, previous }
+    })
+    if (outcome.refused) {
+      return reply.status(403).send({ error: { code: 'PRESET_GOVERNANCE_CEO_ONLY', message: 'Only the CEO gives or takes away logins, module access, companies or the books\' audit trail.' } })
     }
+    const previous = outcome.previous
     invalidateModuleAccessCache()
     // Changing what a ROLE can reach changes what every holder of that role can
     // reach, without touching a single user record — so it is invisible on the
@@ -173,7 +234,7 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       userEmail: req.staffUser?.email ?? null,
       tenantId: req.staffUser?.tenantId ?? null,
       before: { modules: previous?.modules ?? null },
-      after: { role: body.role, modules },
+      after: { role: body.role, modules, by: caller.role },
     })
     return { ok: true, role: body.role, modules }
   })
