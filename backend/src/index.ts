@@ -88,6 +88,7 @@ import { startCodCustodyWorker } from './workers/codCustody.js'
 import { startNightAuditSettleWorker } from './workers/nightAuditSettle.js'
 import { startTillClearingSweepWorker } from './workers/tillClearingSweep.js'
 import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
+import { startStaffNotificationsWorker } from './workers/staffNotifications.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
@@ -1224,6 +1225,7 @@ async function build() {
     startNightAuditSettleWorker()
     startTillClearingSweepWorker()
     startOnAccountDailyWorker()
+    startStaffNotificationsWorker()   // the bell: exception claim-poller + retention
     startOrderAutoCancelWorker()
     startPaymentRetryWorker()
     startRiderDispatchWorker()

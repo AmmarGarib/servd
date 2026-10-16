@@ -79,6 +79,26 @@ const PORTFOLIO_STASH_KEY = 'servd_view_all_stash'
 // column per choice (Companies | Brands | View as) and opens upwards.
 export type SwitcherPlacement = 'sidebar' | 'collapsed' | 'floating'
 
+/**
+ * Switch the active company (POST /tenants/switch/:id). One hook for the
+ * switcher and the notification bell. Clears the lens and the portfolio view,
+ * re-reads everything, then calls `after`.
+ */
+export function useSwitchCompany(after?: () => void) {
+  const qc = useQueryClient()
+  const router = useRouter()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/tenants/switch/${id}`, {}),
+    onSuccess: () => {
+      writeLens(null)
+      writeViewAll(false)
+      qc.invalidateQueries()
+      after?.()
+      router.refresh()
+    },
+  })
+}
+
 export function TenantSwitcher({ placement, hidden = false }: { placement: SwitcherPlacement; /** The phone pill hides while the drawer is open. */ hidden?: boolean }) {
   const qc = useQueryClient()
   const router = useRouter()
@@ -147,16 +167,9 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
     staleTime: 30_000,
   })
 
-  const switchTo = useMutation({
-    mutationFn: (id: string) => api.post(`/tenants/switch/${id}`, {}),
-    onSuccess: () => {
-      writeLens(null)
-      writeViewAll(false)
-      setViewAll(false)
-      qc.invalidateQueries()
-      setOpen(false)
-      router.refresh()
-    },
+  const switchTo = useSwitchCompany(() => {
+    setViewAll(false)
+    setOpen(false)
   })
 
   function activateViewAll() {

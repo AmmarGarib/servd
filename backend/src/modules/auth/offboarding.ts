@@ -18,6 +18,7 @@ import type { FastifyRequest } from 'fastify'
 import type { UserRole } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { revokeAllForSubject } from '../../lib/tokenRevocation.js'
+import { disconnectUser } from '../../lib/ws.js'
 import { suspendData } from './accountStatus.js'
 import { usesOtpLogin } from './middleware.js'
 import { requestPasswordReset, deliveryConfigured } from './passwordReset.js'
@@ -79,5 +80,7 @@ export async function switchOffLogin(userId: string): Promise<boolean> {
     data: suspendData(),
   })
   await revokeAllForSubject(userId)
+  // The bell's per-user socket room: an offboarded login's open tab stops receiving pings.
+  disconnectUser(userId)
   return n.count > 0
 }

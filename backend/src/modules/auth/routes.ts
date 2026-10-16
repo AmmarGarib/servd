@@ -34,6 +34,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { childRolesFor } from '../../lib/workspaces.js'
 import { approvalInputOf, approvalQueueTenantIds, auditApproval, canApprove } from '../../lib/approvalRights.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
 import { withoutCeoOnlyModules, effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { activeAtOnce, activationSideEffects, switchOffLogin, OFFBOARDERS } from './offboarding.js'
@@ -1154,6 +1155,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       const { linkedEmployeeId, passwordLink } = await activationSideEffects(req, user, body.employeeId)
       return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined, linkedEmployeeId, passwordLink })
     }
+    // The bell: a pending login waits for the CEO (queued, after the commit).
+    approvalWaiting('staff_login', user.id, { round: `invite:${user.createdAt.toISOString()}`, actorId: req.staffUser!.id })
     return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined })
   })
 
@@ -1357,7 +1360,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           data,
         })
         if (claimed.count === 0) throw new AppError('NOT_SUSPENDED', 'This login is not switched off.', 409)
-        return tx.user.findUniqueOrThrow({ where: { id: target.id }, select: { id: true, name: true, accountStatus: true, isActive: true } })
+        return tx.user.findUniqueOrThrow({ where: { id: target.id }, select: { id: true, name: true, accountStatus: true, isActive: true, updatedAt: true } })
       })
       await audit({
         category: 'identity',
@@ -1371,6 +1374,8 @@ export async function authRoutes(fastify: FastifyInstance) {
         after: { accountStatus: updated.accountStatus, targetEmail: target.email, role: target.role },
         metadata: { actorTenantId: req.staffUser!.tenantId ?? null, actorRole: req.staffUser!.role, waitsForCeo: !immediate },
       })
+      // The bell: HR's reinstate of a manager / office login waits for the CEO again.
+      if (!immediate) approvalWaiting('staff_login', updated.id, { round: `reinstate:${updated.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
       return { id: updated.id, name: updated.name, status: accountStateOf(updated), waitsForCeo: !immediate }
     },
   )

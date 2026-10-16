@@ -307,6 +307,9 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
     if (stationId) void joinIfOwned(socket, tenantIds, 'station', stationId)
     if (conceptId) void joinIfOwned(socket, tenantIds, 'concept', conceptId)
     for (const t of tenantIds) void socket.join(`tenant:${t}`)
+    // The bell (2026-10-16): a personal room per verified, live-checked login.
+    // Only id-only pings go here (`notification:new`); the client refetches.
+    if (principal?.id) void socket.join(userRoom(principal.id))
     if (role === 'expediter' || MANAGER_TIER.includes(role ?? '')) {
       for (const t of tenantIds) void socket.join(`tenant:${t}:orders`)
     }
@@ -363,6 +366,38 @@ export function getIO(): SocketIOServer {
 // cases) — never let a missing socket take down an order.
 export function getIOSafe(): SocketIOServer | null {
   return io
+}
+
+// ─── The bell: per-user room (2026-10-16, lib/staffNotify.ts) ─────────────────
+//
+// `user:<id>` is joined at connect by the verified principal only. Payloads
+// carry ids only — never a title, body or amount; the client refetches over
+// HTTP (where the inbox scope applies). Fire-and-forget: never awaited, never
+// throws, a no-op before initWebSocket().
+
+export function userRoom(userId: string): string {
+  return `user:${userId}`
+}
+
+export function emitToUser(userId: string, event: 'notification:new', payload: { id: string; kind: string }): void {
+  const ws = getIOSafe()
+  if (!ws || !userId) return
+  try {
+    ws.to(userRoom(userId)).emit(event, { id: payload.id, kind: payload.kind })
+  } catch (err) {
+    console.warn(`[ws] emitToUser failed: ${(err as Error).message}`)
+  }
+}
+
+/** Drop every open socket of a login (offboarding / switch-off). Best-effort. */
+export function disconnectUser(userId: string): void {
+  const ws = getIOSafe()
+  if (!ws || !userId) return
+  try {
+    ws.in(userRoom(userId)).disconnectSockets(true)
+  } catch (err) {
+    console.warn(`[ws] disconnectUser failed: ${(err as Error).message}`)
+  }
 }
 
 // ─── Event emitters (called from order/menu modules) ──────────────────────────

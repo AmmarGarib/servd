@@ -29,6 +29,11 @@ export async function runNightAuditSettleOnce(now: Date = new Date()): Promise<{
       // At most 62 days a tick, least recently checked first — a company with a
       // longer backlog is worked through over the following ticks.
       closed += (await refreshAuditedDays(id, { limit: 62 })).closed
+      // TODO(H45): the "audited but still awaiting settlement" warning (night_audit.awaiting,
+      // to CEO + finance, once per company/day) waits for the accountant's answer on when
+      // card payouts are expected. Not built (owner, 2026-10-16). The notices that ARE built:
+      // report on run and "closed" on settle (modules/nightAudit/service.ts), and
+      // night_audit_pending, which the exception notifier sends to CEO + finance.
       if (await flagPendingYesterday(id, now)) flagged++
     } catch (err) {
       console.error(`[night-audit-worker] company ${id}:`, (err as Error).message)

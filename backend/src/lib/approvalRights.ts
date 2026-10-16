@@ -35,6 +35,8 @@ import { effectiveModulesForUser } from './moduleAccess.js'
 import { headOfficeReach, reachTenantIds, widenRls } from './headOffice.js'
 import { assertNotAmongSubmitters } from './separation-of-duties.js'
 import { resolveTenantScope } from './tenantScope.js'
+import { runWithRlsContext } from './rlsContext.js'
+import { approvalDecided } from '../modules/approvals/notify.js'
 import { ADMIN_ONLY, APPROVERS, MANAGERS, usesOtpLogin } from '../modules/auth/middleware.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
@@ -783,6 +785,26 @@ export async function auditApproval(
       ...(e.metadata ?? {}),
     },
   })
+  // The bell (owner, 2026-10-16): tell the people waiting on this decision.
+  // Every caller runs after its business transaction has committed; the
+  // notice is queued (never awaited) and can never fail the decision.
+  try {
+    const actorId = req.staffUser?.id
+    if (actorId && isApprovalType(e.type)) {
+      const m = e.metadata ?? {}
+      const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+      const at = m['decidedAt']
+      const decidedAt = at instanceof Date ? at.toISOString() : (str(at) ?? new Date().toISOString())
+      approvalDecided({
+        type: e.type, id: e.id, tenantId: e.tenantId, decision: e.decision, actorId,
+        note: str(m['reason']) ?? str(m['note']), decidedAt,
+        ...(typeof m['final'] === 'boolean' && { final: m['final'] as boolean }),
+        ...(str(m['publishAt']) && { publishAt: str(m['publishAt']) }),
+      })
+    }
+  } catch (err) {
+    console.warn(`[staff-notify] approval.decided not queued: ${(err as Error)?.message ?? String(err)}`)
+  }
 }
 
 // ─── A5: an item's facts, on serviceClient, BEFORE assertCanApprove ─────────
@@ -1033,4 +1055,236 @@ export async function hoWideDelegationsOf(hoId: string, db: Db = serviceClient):
     orderBy: { createdAt: 'asc' },
   })
   return rows.map((d) => ({ ...d, section: d.section as DelegableSection }))
+}
+
+// ─── The bell (owner, 2026-10-16): who is told an item is waiting ───────────
+//
+// "Whoever must act next" (owner decision): exactly the people the approve
+// route would admit (decideApproval / hr decideRight) and whose inbox would
+// list the item (they hold the type's queue module). The CEO is told only
+// about items waiting at the CEO's end — a CEO-only type or item, an item that
+// came through a head office (A3), an item handed over to a head-office
+// delegate (owner: "Delegate and CEO"), or a type with no other active
+// approver — never about every recipe or stock transfer a manager decides.
+// Read on serviceClient, never cached. Runs inside queueStaffNotify's fresh
+// RLS context (lib/staffNotify.ts); it also opens its own, so a synthetic
+// request's widenRls can never touch a caller's context.
+
+/** The statuses in which the module's queue lists an item of the type. */
+const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
+  staff_login: ['pending'],
+  storefront_publish: ['pending'],
+  purchase_order: ['pending_approval'],
+  recipe: ['pending_approval'],
+  hr_request: ['submitted'],
+  payroll_run: ['draft'],
+  stock_transfer: ['requested'],
+  cash_request_finance: ['submitted', 'draft'],
+  cash_voucher: ['finance_approved', 'hod_signed'],
+  fixed_asset_request: ['pending'],
+  intercompany_transfer: ['submitted'],
+  bad_debt: ['requested'],
+  grni_writeoff: ['requested'],
+  journal_request: ['submitted'],
+  ho_recharge: ['submitted'],
+  connector_change: ['submitted'],
+}
+
+/**
+ * Is the item still in its queue now? A notice queued after a submit re-checks
+ * this when it runs: an item decided (or rolled back) in the meantime is not
+ * announced. Event-less types (tip_pool, stock_difference) answer true; the
+ * retired cash_request_hod never waits.
+ */
+export async function approvalStillWaiting(type: ApprovalType, id: string, s: ApprovalSubject): Promise<boolean> {
+  switch (type) {
+    case 'cash_request_hod': return false
+    case 'tip_pool':
+    case 'stock_difference': return true
+    case 'raast_void': return !!s.submittedAt && s.status === 'provisional'
+    case 'on_account_client': {
+      if (s.status === 'pending') return true
+      const c = await serviceClient.customerAccount.findUnique({ where: { id }, select: { requestedCreditLimitCents: true, limitRequestedAt: true } })
+      return !!c && c.requestedCreditLimitCents != null && c.limitRequestedAt != null
+    }
+    default: return (WAITING_STATUS[type] ?? []).includes(s.status)
+  }
+}
+
+interface NotifyCandidate { id: string; role: string; email: string | null; memberTenantIds: string[]; reachTenantIds: string[] }
+
+/** A stand-in request for a candidate: its REAL memberships and head-office reach (no lens, no view). */
+function syntheticReq(c: NotifyCandidate): FastifyRequest {
+  return {
+    staffUser: { id: c.id, role: c.role, email: c.email, tenantId: c.memberTenantIds[0] ?? null, memberTenantIds: c.memberTenantIds, reachTenantIds: c.reachTenantIds, tenantIds: c.memberTenantIds },
+    headers: {},
+  } as unknown as FastifyRequest
+}
+
+/** Load active logins by id, with their member companies and head-office reach (as the auth middleware computes them). */
+async function loadCandidates(ids: readonly string[]): Promise<NotifyCandidate[]> {
+  const want = uniq(ids.filter(Boolean))
+  if (want.length === 0) return []
+  const users = await serviceClient.user.findMany({
+    where: { id: { in: want }, isActive: true, accountStatus: 'active', deletedAt: null },
+    select: { id: true, role: true, email: true, tenantId: true, tenantMemberships: { select: { tenantId: true } } },
+    orderBy: { id: 'asc' },
+  })
+  const membersOf = new Map(users.map((u) => [u.id, clean([u.tenantId, ...u.tenantMemberships.map((m) => m.tenantId)])]))
+  const reach = await headOfficeReach(uniq([...membersOf.values()].flat()))
+  return users.map((u) => {
+    const members = membersOf.get(u.id) ?? []
+    const mine = new Set(members)
+    const reached: string[] = []
+    for (const [company, hos] of reach) if (!mine.has(company) && hos.some((h) => mine.has(h))) reached.push(company)
+    return { id: u.id, role: u.role, email: u.email, memberTenantIds: members, reachTenantIds: reached }
+  })
+}
+
+/** Active logins of these companies (primary or member), optionally only these roles. */
+async function staffOfCompanies(companyIds: readonly string[], roles?: readonly string[]): Promise<string[]> {
+  if (companyIds.length === 0) return []
+  const rows = await serviceClient.user.findMany({
+    where: {
+      isActive: true, accountStatus: 'active', deletedAt: null,
+      ...(roles ? { role: { in: [...roles] as never[] } } : {}),
+      OR: [{ tenantId: { in: [...companyIds] } }, { tenantMemberships: { some: { tenantId: { in: [...companyIds] } } } }],
+    },
+    select: { id: true },
+  })
+  return rows.map((r) => r.id)
+}
+
+/** Active members of the head offices with a LIVE link to any of these companies. */
+async function headOfficeStaffServing(companyIds: readonly string[], roles?: readonly string[]): Promise<string[]> {
+  if (companyIds.length === 0) return []
+  const links = await serviceClient.headOfficeLink.findMany({ where: { companyTenantId: { in: [...companyIds] }, endedAt: null }, select: { tenantId: true } })
+  if (links.length === 0) return []
+  const reach = await headOfficeReach(uniq(links.map((l) => l.tenantId)))
+  const hos = uniq(companyIds.flatMap((c) => reach.get(c) ?? []))
+  return staffOfCompanies(hos, roles)
+}
+
+/** Keep the ids whose effective modules include `module` (admin always). */
+async function holdingModule(ids: readonly string[], module: string): Promise<Set<string>> {
+  const out = new Set<string>()
+  if (ids.length === 0) return out
+  const users = await serviceClient.user.findMany({ where: { id: { in: uniq(ids) } }, select: { id: true, role: true, moduleAllow: true, moduleDeny: true } })
+  for (const u of users) {
+    if (u.role === 'admin') { out.add(u.id); continue }
+    if ((await effectiveModulesForUser({ role: u.role, moduleAllow: u.moduleAllow, moduleDeny: u.moduleDeny })).has(module)) out.add(u.id)
+  }
+  return out
+}
+
+/** Live delegates whose hand-overs name this type (eligibility re-checked by decideApproval / decideRight). */
+async function delegatesNaming(type: ApprovalType): Promise<string[]> {
+  if (!delegationEnabled(type)) return []
+  return uniq((await allLiveDelegations()).filter((d) => d.types.includes(type)).map((d) => d.delegateUserId))
+}
+
+/**
+ * Every active login who may decide this item NOW and whose inbox would list
+ * it — the bell's "approval.waiting" recipients. Null when the item is gone
+ * or no longer waiting (nothing is sent). Never throws for a plain "nobody".
+ */
+export async function approverIdsFor(type: ApprovalType, id: string): Promise<{ subject: ApprovalSubject; userIds: string[] } | null> {
+  return runWithRlsContext({ tenantIds: [], customerId: null, staffUserId: null }, async () => {
+    if (!isApprovalType(type)) return null
+    const s = await approvalSubject(type, id)
+    if (!s || !(await approvalStillWaiting(type, id, s))) return null
+    if (type === 'hr_request') return { subject: s, userIds: await hrStepApprovers(id) }
+    const r = APPROVAL_RIGHTS[type]
+    if (r.perItem) return { subject: s, userIds: [] }
+    const input = approvalInputOf(type, id, s)
+    const section = sectionOf(type, { role: input.role, tenantId: input.tenantId, kind: input.kind })
+    const ids = uniq([
+      ...(await staffOfCompanies(s.companyIds, uniq([...r.roles, 'admin']))),
+      ...(s.companyIds.length === 0 ? (await serviceClient.user.findMany({ where: { role: 'admin', isActive: true, accountStatus: 'active', deletedAt: null }, select: { id: true } })).map((u) => u.id) : []),
+      ...(await delegatesNaming(type)),
+    ])
+    const admins: string[] = []
+    const byRole: string[] = []
+    const byDelegation: string[] = []
+    // Only people whose inbox would list the type (they hold its queue module) count —
+    // also for the CEO rule below: an approver who cannot see the queue is no approver.
+    const cands = await loadCandidates(ids)
+    const listing = await holdingModule(cands.map((c) => c.id), r.queueModule)
+    for (const c of cands) {
+      if (!listing.has(c.id)) continue
+      const d = await decideApproval(syntheticReq(c), input)
+      if (!d.ok) continue
+      if (c.role === 'admin') admins.push(c.id)
+      else if (d.grant.via === 'delegation') byDelegation.push(c.id)
+      else byRole.push(c.id)
+    }
+    const through = input.tenantId && !r.exemptThroughHeadOffice
+      ? await throughHeadOfficeIds({ tenantId: input.tenantId, submittedByIds: input.submittedByIds, submittedAt: input.submittedAt, viaHeadOfficeId: input.viaHeadOfficeId })
+      : []
+    const ceoEnd = section === 'ceo' || !!input.ceoOnly || input.tenantId === null || through.length > 0
+    const keepCeo = ceoEnd || byRole.length === 0 || byDelegation.length > 0
+    return { subject: s, userIds: uniq([...(keepCeo ? admins : []), ...byRole, ...byDelegation]) }
+  })
+}
+
+/**
+ * hr_request: the people who may decide the CURRENT step without an override
+ * (hr decideRight, the decide route's own check). The CEO's override on every
+ * step is not counted (it would send the CEO every leave request at the HOD
+ * step) — the CEO is told when the step is theirs without override and no one
+ * else's, on the final step of a record that came through a head office (A3),
+ * with a live HR hand-over (owner: "Delegate and CEO"), or when nobody else
+ * can decide the step at all. HR's own work needs the staff_hr module, the
+ * same rule /hr/approvals applies (PPL-R2-01).
+ */
+async function hrStepApprovers(id: string): Promise<string[]> {
+  const rec = await serviceClient.hrRecord.findUnique({ where: { id } })
+  if (!rec || rec.status !== 'submitted') return []
+  // The record's company only: getFormat / the HR helpers read through it.
+  return runWithRlsContext({ tenantIds: [rec.tenantId], customerId: null, staffUserId: null }, async () => {
+    const { getFormat, managerUserIdOfEmployee } = await import('../modules/hr/service.js')
+    const { decideRight } = await import('../modules/hr/logic.js')
+    const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
+    const step = fmt.workflow[rec.currentStep]
+    if (!step) return []
+    const isLast = rec.currentStep >= fmt.workflow.length - 1
+    const [emp, managerUserId] = rec.employeeId
+      ? await Promise.all([
+        serviceClient.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { userId: true } }),
+        managerUserIdOfEmployee(rec.tenantId, rec.employeeId, serviceClient),
+      ])
+      : [null, null]
+    const prior = Array.isArray(rec.approvals) ? (rec.approvals as Array<{ byUserId?: string }>).map((a) => a?.byUserId).filter((x): x is string => typeof x === 'string') : []
+    const subject = { employeeUserId: emp?.userId ?? null, managerUserId: managerUserId ?? null, createdById: rec.createdById, priorApproverIds: prior }
+    const ids = uniq([
+      ...(await staffOfCompanies([rec.tenantId], HR_STEP_ROLES)),
+      ...(managerUserId ? [managerUserId] : []),
+      ...(await headOfficeStaffServing([rec.tenantId], HR_STEP_ROLES)),
+      ...(await delegatesNaming('hr_request')),
+    ])
+    const through = await throughHeadOfficeIds({ tenantId: rec.tenantId, submittedByIds: [rec.createdById], submittedAt: rec.createdAt, viaHeadOfficeId: rec.viaHeadOfficeId })
+    const cands = await loadCandidates(ids)
+    const staffHr = await holdingModule(cands.map((c) => c.id), 'staff_hr')
+    const admins: string[] = []
+    const overrideAdmins: string[] = []
+    const others: string[] = []
+    const delegates: string[] = []
+    for (const c of cands) {
+      const right = await decideRight(syntheticReq(c), rec, step, isLast, { subject, decision: null, through })
+      if (!right.ok) continue
+      // HR back-office work (an 'hr' step, or HR standing in for a missing HOD) needs staff_hr.
+      const hrWork = c.role !== 'admin' && (step.role === 'hr' || (step.role === 'hod' && !(managerUserId && managerUserId === c.id)))
+      if (hrWork && !staffHr.has(c.id)) continue
+      if (c.role === 'admin') (right.override ? overrideAdmins : admins).push(c.id)
+      else if (right.via === 'delegation') delegates.push(c.id)
+      else if (!right.override) others.push(c.id)
+    }
+    // The CEO: the step's own approver when nobody else is; every CEO on a
+    // handed-over item or the final step of one that came through a head office.
+    const ceoEnd = isLast && through.length > 0
+    const ceo = others.length === 0 && delegates.length === 0
+      ? (admins.length > 0 ? admins : overrideAdmins)
+      : (ceoEnd || delegates.length > 0 ? [...admins, ...overrideAdmins] : [])
+    return uniq([...ceo, ...others, ...delegates])
+  })
 }

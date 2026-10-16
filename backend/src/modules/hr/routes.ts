@@ -56,6 +56,7 @@ import {
   approvalSubject as approvalSubjectOf, approvalInputOf, assertCanApprove, auditApproval, delegatedTenantsByType,
   throughHeadOfficeBatch, type ApprovalGrant,
 } from '../../lib/approvalRights.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { headOfficeSetupApplied } from '../headOffices/books.js'
 import { workLocationRoutes, syncPrimaryWorkLocation } from './workLocations.js'
 import { attendanceTrackingRoutes } from './attendanceTracking.js'
@@ -827,6 +828,9 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
     ...(opts.viaHeadOfficeId && { metadata: { viaHeadOfficeId: opts.viaHeadOfficeId } }),
   })
   void sec
+  // The bell (queued, after the commit): a submitted record waits on its first step
+  // (covers /records/:section and self-service /me/records/:section).
+  if (rec.status === 'submitted') approvalWaiting('hr_request', rec.id, { round: `step:${rec.currentStep}:${rec.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
   return rec
 }
 
@@ -1575,6 +1579,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (approveNow) await applyDueEffects(rec.tenantId)
     const after = await prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
     await auditShiftsRemoved(req, after)
+    // The bell (queued, after the commit): the first approval step has an item to decide.
+    if (after.status === 'submitted') approvalWaiting('hr_request', after.id, { round: `step:${after.currentStep}:${after.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
     return after
   })
 
@@ -1673,9 +1679,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
       const grant: ApprovalGrant = right.via === 'delegation' && right.delegationId ? { via: 'delegation', delegationId: right.delegationId } : { via: 'role' }
       await auditApproval(req, {
         type: 'hr_request', id: rec.id, tenantId: rec.tenantId, decision: body.decision === 'approved' ? 'approve' : 'reject', grant, entity: 'HrRecord',
-        metadata: { section: rec.section, step: step.key, path: right.via, ...(rec.viaHeadOfficeId && { viaHeadOfficeId: rec.viaHeadOfficeId }) },
+        metadata: { section: rec.section, step: step.key, path: right.via, final: nextStatus === 'approved', decidedAt: entry.at, ...(body.note && { note: body.note }), ...(rec.viaHeadOfficeId && { viaHeadOfficeId: rec.viaHeadOfficeId }) },
       })
     }
+    // The bell: an approved step that has a next step is now waiting on its approver(s).
+    if (updated.status === 'submitted') approvalWaiting('hr_request', updated.id, { round: `step:${updated.currentStep}:${updated.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
     return updated
   })
 
@@ -2004,7 +2012,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (via) {
       await audit({ category: 'identity', action: 'hr.payroll.create', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { period }, metadata: { viaHeadOfficeId: via } })
     }
-    return reply.status(201).send(await prisma.hrPayrollRun.findUnique({ where: { id: run.id } }))
+    const created = await prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+    // The bell (queued, after the commit): a draft payroll is in the approval queue.
+    approvalWaiting('payroll_run', run.id, { round: `create:${(created?.updatedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
+    return reply.status(201).send(created)
   })
 
   fastify.get<{ Params: { id: string } }>('/payroll/runs/:id', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req) => {
@@ -2068,7 +2079,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'approved' }, data: { status: 'draft', approvedById: null, approvedAt: null } })
     if (n.count === 0) throw new AppError('NOT_APPROVED', 'Only an approved (not locked) payroll can be reopened', 409)
     await auditPayrollDecision(req, run, grant, 'reopen')
-    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+    const reopened = await prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+    // The bell: a reopened payroll is a draft in the queue again (a new round).
+    approvalWaiting('payroll_run', run.id, { round: `reopen:${(reopened?.updatedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
+    return reopened
   })
 
   // Lock: final. Loans show as recovered from here (payroll already treats an

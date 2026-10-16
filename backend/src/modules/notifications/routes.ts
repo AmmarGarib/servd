@@ -14,6 +14,7 @@ import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { staffInCompaniesWhere } from '../auth/staffAccounts.js'
 import { requireModule } from './requireModule.js'
 import { sandboxBlocks } from '../../lib/sandbox.js'
+import { notificationInboxRoutes } from './inboxRoutes.js'
 
 // Who runs staff push (broadcast + the device list): the managers, plus IT —
 // Notifications is a Dev workspace page (module `notifications`) and IT owns
@@ -37,6 +38,9 @@ const registerSchema = z.object({
 })
 
 export async function notificationRoutes(fastify: FastifyInstance) {
+  // The bell's personal inbox (2026-10-16): /inbox, /unread-count, /:id/read, /read-all.
+  await fastify.register(notificationInboxRoutes)
+
   // POST /notifications/register — upsert this device's push token.
   fastify.post('/register', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = registerSchema.parse(req.body)

@@ -20,6 +20,7 @@ import { useApprovalCounts } from '../../app/ceo/approvalsData'
 import { TestCompanyBanner } from './TestCompanyBanner'
 import { LensBanner } from './LensBanner'
 import { SandboxBanner } from '../SandboxBanner'
+import { NotificationBell } from './NotificationBell'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -844,6 +845,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
           <ServdLogo size={30} />
           <span className="flex-1" />
+          <NotificationBell variant="mobile" />
           <button onClick={() => setMobileOpen(false)} aria-label="Close menu" aria-expanded={mobileOpen} aria-controls="mobile-drawer"
             className="flex h-11 w-11 items-center justify-center text-white/50 hover:text-white/80 transition-colors rounded">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -883,6 +885,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           {!collapsed && (
             <>
               <span className="flex-1" />
+              <NotificationBell variant="sidebar" />
               <button onClick={() => setCollapsedPersisted(true)} aria-label="Collapse sidebar" aria-expanded={true}
                 className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/70 transition-colors rounded"
                 style={{ marginRight: '-12px' }}>
@@ -894,6 +897,9 @@ function Shell({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
+        {collapsed && (
+          <div className="relative z-10 flex justify-center py-1"><NotificationBell variant="collapsed" /></div>
+        )}
         {collapsed && (
           <button onClick={() => setCollapsedPersisted(false)} aria-label="Expand sidebar" aria-expanded={false}
             className="relative z-10 flex items-center justify-center min-h-[44px] transition-colors"
@@ -923,6 +929,8 @@ function Shell({ children }: { children: React.ReactNode }) {
             </svg>
           </button>
           <ServdLogo size={26} />
+          <span className="flex-1" />
+          <NotificationBell variant="mobile" />
         </header>
 
         <PortfolioBanner />

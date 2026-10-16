@@ -52,3 +52,13 @@ export function disconnectSocket() {
   socket?.disconnect()
   socket = null
 }
+
+/**
+ * The bell's live ping (server: emitToUser -> 'notification:new', id + kind only).
+ * Returns the unsubscribe. The caller refetches; the payload carries no text.
+ */
+export function onNotificationNew(cb: (e: { id?: string; kind?: string }) => void): () => void {
+  const s = getSocket()
+  s.on('notification:new', cb)
+  return () => { s.off('notification:new', cb) }
+}

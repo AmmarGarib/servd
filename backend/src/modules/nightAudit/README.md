@@ -118,6 +118,20 @@ PUT  /settings                admin { startDay: 'YYYY-MM-DD' | null, reason } â†
 Shapes: `frontend/admin/src/app/finance/night-audit/types.ts` (MonthState,
 DayDetail, DailyReport). 422 `NO_ACTIVE_COMPANY` without an active company.
 
+## The bell (owner, 2026-10-16)
+
+The night run tells the right people through the staff bell (`lib/staffNotify.ts`,
+the one writer). Audience = the CEO(s) and the finance logins holding
+`accounting` of THAT company (`nightAuditAudience`), minus whoever did it.
+Built: "Sales day X audited" (net sales, orders, closed or awaiting settlement;
+link `/finance/night-audit?day=`; dedupe per company/day/`reopenCount`, so a
+reopen + rerun reports again) after a run, and "Sales day X closed" when a day
+settles later (auto, manual or CEO override). `night_audit_pending` and the
+override / reopen flags reach the bell through the exception notifier, not
+from here. NOT built: "audited but still awaiting settlement" (`TODO(H45)` in
+`workers/nightAuditSettle.ts`) â€” it waits for the accountant's answer on when
+card payouts land. Notices are queued after the commit and never fail a run.
+
 ## Company merge
 
 `mergeNightAuditDaysTx` (tenants/routes.ts, before the brands move): the

@@ -11,6 +11,8 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { flagException } from '../../lib/exceptions.js'
+import { notifyStaffMany, queueStaffNotify, type NotifyInput } from '../../lib/staffNotify.js'
+import { nightAuditAudience } from '../../lib/staffNotifyRecipients.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import { toCents } from '../../lib/money.js'
 import { isNightOverridableKey, nightChecklist, type NightChecklist } from './checks.js'
@@ -97,6 +99,53 @@ async function earlierOpenDays(db: Tx | typeof prisma, tenantId: string, startDa
   return days.filter((d) => !done.has(d))
 }
 
+// ─── The bell (owner, 2026-10-16) ────────────────────────────────────────────
+// Night-run notices go to the CEO(s) and the finance logins (with the accounting
+// module) of THAT company — never another company's — minus the person who did
+// it (notifyStaffMany drops the actor). Advisory only: the NightAuditDay row
+// stays the record, and a failed notice never fails the run / settle (queued
+// after the commit, errors swallowed). Never call these inside a transaction.
+
+const pkr = (cents: number) => `PKR ${Math.round(cents / 100).toLocaleString('en-US')}`
+const dayLabel = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+const nightLink = (day: string) => `/finance/night-audit?day=${day}`
+
+async function sendToAudience(tenantId: string, make: (userId: string) => NotifyInput): Promise<void> {
+  const ids = await nightAuditAudience(tenantId)
+  if (ids.length > 0) await notifyStaffMany(ids.map(make))
+}
+
+/** "Sales day X audited": the report notice. Reads the stored day, so it says whether it already closed. */
+export async function notifyNightReport(tenantId: string, day: string, actorId: string | null): Promise<void> {
+  const row = await prisma.nightAuditDay.findUnique({ where: { tenantId_businessDate: { tenantId, businessDate: day } } })
+  if (!row || row.status === 'open') return
+  const report = (row.report ?? null) as DailyReport | null
+  const blocks = ((row.lastCheck ?? null) as LastCheck | null)?.blocks ?? []
+  const figures = report?.sales ? ` — net sales ${pkr(report.sales.netSalesCents)}, ${report.sales.orders} order${report.sales.orders === 1 ? '' : 's'}` : ''
+  const body = row.status === 'closed'
+    ? 'Closed: card and bank money matched.'
+    : `Awaiting settlement${blocks.length ? `: ${blocks.map((b) => b.title).join('; ')}` : ''}`
+  await sendToAudience(tenantId, (userId) => ({
+    userId, tenantId, kind: 'night_audit.report', severity: 'info',
+    title: `Sales day ${dayLabel(day)} audited${figures}`, body,
+    link: nightLink(day), entityType: 'NightAuditDay', entityId: `${tenantId}:${day}`, actorId,
+    dedupeKey: `night_audit.report:${tenantId}:${day}:${row.reopenCount}`,
+  }))
+}
+
+/** "Sales day X closed": its card payout and bank side matched (auto, manual or CEO override). */
+export async function notifyDayClosed(tenantId: string, day: string, actorId: string | null): Promise<void> {
+  const row = await prisma.nightAuditDay.findUnique({ where: { tenantId_businessDate: { tenantId, businessDate: day } }, select: { status: true, reopenCount: true, closedVia: true } })
+  if (!row || row.status !== 'closed') return
+  await sendToAudience(tenantId, (userId) => ({
+    userId, tenantId, kind: 'night_audit.report', severity: 'success',
+    title: `Sales day ${dayLabel(day)} closed`,
+    body: row.closedVia === 'override' ? 'Closed by the CEO over settlement blocks.' : 'Its card and bank money are matched.',
+    link: nightLink(day), entityType: 'NightAuditDay', entityId: `${tenantId}:${day}`, actorId,
+    dedupeKey: `night_audit.closed:${tenantId}:${day}:${row.reopenCount}`,
+  }))
+}
+
 // ─── Run (open → audited) ────────────────────────────────────────────────────
 
 export async function runNightAudit(input: { tenantId: string; day: string; actor: Actor; acknowledge?: Acknowledge }): Promise<void> {
@@ -175,9 +224,11 @@ export async function runNightAudit(input: { tenantId: string; day: string; acto
     })
   }
   // Try to close it straight away (a day with no card / bank money settles at once).
-  await settleDay({ tenantId, day, actor: null, auto: true }).catch((err) => {
+  await settleDay({ tenantId, day, actor: null, auto: true, notifyClosed: false }).catch((err) => {
     console.error(`[night-audit] auto settle of ${tenantId} ${day} failed:`, (err as Error).message)
   })
+  // The report notice (after the commit and the auto settle, so it says whether the day already closed).
+  queueStaffNotify(() => notifyNightReport(tenantId, day, actor.id))
 }
 
 // ─── Settle (audited → closed) ───────────────────────────────────────────────
@@ -203,7 +254,7 @@ async function closingOf(tx: Tx, tenantId: string, day: string, bankUnmatched: n
  * throws for a day that is not ready / not audited — it stores lastCheck.
  * Manual (finance / CEO): 409 NOT_AUDITED, 409 SETTLEMENT_NOT_READY.
  */
-export async function settleDay(input: { tenantId: string; day: string; actor: Actor | null; auto?: boolean; acknowledge?: Acknowledge }): Promise<'closed' | 'audited' | 'skipped'> {
+export async function settleDay(input: { tenantId: string; day: string; actor: Actor | null; auto?: boolean; acknowledge?: Acknowledge; /** false = the caller sends its own report notice (the run) */ notifyClosed?: boolean }): Promise<'closed' | 'audited' | 'skipped'> {
   const { tenantId, actor } = input
   const day = assertDay(input.day)
   const ack = checkAcknowledge(input.acknowledge, actor)
@@ -270,6 +321,7 @@ export async function settleDay(input: { tenantId: string; day: string; actor: A
       userId: actor?.id ?? null, userEmail: actor?.email ?? null, tenantId, metadata: { day },
     })
   }
+  if (input.notifyClosed !== false) queueStaffNotify(() => notifyDayClosed(tenantId, day, actor?.id ?? null))
   return 'closed'
 }
 

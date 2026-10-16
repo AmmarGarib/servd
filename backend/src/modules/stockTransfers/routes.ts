@@ -41,6 +41,8 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
+import { approvalSubject, auditApproval } from '../../lib/approvalRights.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { assertInt4Fits } from '../../lib/money.js'
@@ -154,12 +156,17 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       userEmail: req.staffUser?.email ?? null,
       after: { quantity: transfer.quantity, item: transfer.inventoryItem.name, from: transfer.fromLocation.name, to: transfer.toLocation.name },
     })
+    // The bell (queued, after the write): the managers who may approve it.
+    approvalWaiting('stock_transfer', transfer.id, { round: `request:${transfer.requestedAt.toISOString()}`, actorId: req.staffUser!.id })
     return reply.status(201).send(transfer)
   })
 
   // PATCH /stock-transfers/:id/approve
   fastify.patch<{ Params: { id: string } }>('/:id/approve', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return transition(req.params.id, 'requested', 'approved', { approvedById: req.staffUser!.id, approvedAt: new Date() }, req)
+    const approvedAt = new Date()
+    const moved = await transition(req.params.id, 'requested', 'approved', { approvedById: req.staffUser!.id, approvedAt }, req)
+    await decidedNotice(req, req.params.id, 'approve', approvedAt)
+    return moved
   })
 
   // PATCH /stock-transfers/:id/ship — sender confirms driver picked up
@@ -291,9 +298,25 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
         userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         before: { status: t.status }, after: { status: 'cancelled' }, metadata: { reason: body.reason },
       })
+      await decidedNotice(req, t.id, 'cancel', updated.cancelledAt ?? new Date(), body.reason)
       return updated
     },
   )
+}
+
+/** The one approval.decide funnel (lib/approvalRights.ts auditApproval): writes the audit
+ *  row and tells the requester (the bell). The route's own guard is a plain role list, so
+ *  the grant is 'role'. Runs after the status move committed; it can never fail the action. */
+async function decidedNotice(req: FastifyRequest, id: string, decision: 'approve' | 'cancel', at: Date, reason?: string | null) {
+  try {
+    const s = await approvalSubject('stock_transfer', id)
+    await auditApproval(req, {
+      type: 'stock_transfer', id, tenantId: s?.ownerTenantId ?? null, decision, grant: { via: 'role' }, entity: 'StockTransfer',
+      metadata: { decidedAt: at.toISOString(), ...(reason ? { reason } : {}) },
+    })
+  } catch (err) {
+    console.warn(`[stock-transfers] approval.decide not recorded: ${(err as Error).message}`)
+  }
 }
 
 // Internal: enforce a status transition. Throws 409 if the row is in the

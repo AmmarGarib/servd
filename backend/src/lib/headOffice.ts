@@ -185,6 +185,9 @@ export const HO_PASSTHROUGH: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'POST',   path: '/hr/me/swaps/:id/respond' },
   { method: 'POST',   path: '/notifications/register' },
   { method: 'DELETE', path: '/notifications/register' },
+  // The bell (2026-10-16): marking your own notifications read (userId wall in the route).
+  { method: 'POST',   path: '/notifications/:id/read' },
+  { method: 'POST',   path: '/notifications/read-all' },
   { method: 'POST',   path: '/time-clock/punch-in' },
   { method: 'POST',   path: '/time-clock/punch-out' },
   { method: 'POST',   path: '/time-clock/clock-in' },

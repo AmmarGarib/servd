@@ -938,6 +938,7 @@ model User {
   customerConversations  CustomerConversation[] @relation("CustomerConversationStaff")
   cashMovementsRecorded  CashMovement[]         @relation("CashMovementRecordedBy")
   expoPushTokens         ExpoPushToken[]
+  staffNotifications     StaffNotification[]    @relation("StaffNotificationRecipient")
   tenant                 Tenant?                @relation(fields: [tenantId], references: [id])
   // Multi-tenant memberships — a user can own/manage multiple tenants. The
   // `tenantId` above acts as the *active* tenant; this list is the set of
@@ -1035,6 +1036,41 @@ model ExpoPushToken {
   @@index([userId])
   @@index([device, locationId])
   @@map("expo_push_tokens")
+}
+
+// The bell (owner, 2026-10-16). One row per (recipient, event). Advisory only:
+// the module's own row (approval item, flag, night-audit day) stays the record.
+// The ONE writer is lib/staffNotify.ts. Migration 20261016140000_notifications.
+model StaffNotification {
+  id         String    @id @default(uuid())
+  // The company of the EVENT (approval item's owner, flag's company, the
+  // audited company) — never the actor's active company. NULL only for a
+  // company-less approval item (shared servd:* page, company-less login /
+  // recipe), which is CEO-only by rule: lib/staffNotify.ts keeps a NULL row
+  // only for role 'admin' recipients — deliberate.
+  tenantId   String?
+  userId     String // recipient: a staff login (never a rider / customer)
+  kind       String // NotificationKind (lib/staffNotify.ts) — plain string, no enum migration per kind
+  severity   String    @default("info") // info | success | warning | critical (CHECK)
+  title      String // ≤ 140 chars (CHECK), no secrets, no customer PII
+  body       String? // ≤ 500 chars (CHECK)
+  link       String? // admin path, must start with one '/' (CHECK)
+  entityType String?
+  entityId   String?
+  actorId    String? // who caused it (never also a recipient)
+  dedupeKey  String // same event never notifies the same person twice
+  createdAt  DateTime  @default(now())
+  readAt     DateTime?
+
+  user   User    @relation("StaffNotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation("TenantStaffNotifications", fields: [tenantId], references: [id])
+
+  // No tenantId in the unique key: dedupe keys embed globally unique ids, so
+  // a company merge can repoint tenantId without clashes.
+  @@unique([userId, dedupeKey], map: "staff_notifications_user_dedupe_key")
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([tenantId, createdAt])
+  @@map("staff_notifications")
 }
 
 // ─── ClockLog ─────────────────────────────────────────────────────────────────
@@ -3721,24 +3757,24 @@ model WalletTransaction {
 // ─── PromoCode ────────────────────────────────────────────────────────────────
 
 model PromoCode {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   tenantId         String?
   conceptId        String?
   code             String
   description      String?
-  discountType     String   @default("percentage") // percentage | fixed
+  discountType     String    @default("percentage") // percentage | fixed
   discountValue    Float
   minOrderCents    Int?
   maxDiscountCents Int?
   maxUsageCount    Int?
-  perCustomerLimit Int      @default(1)
-  usedCount        Int      @default(0)
-  channel          String   @default("both") // app | web | both
+  perCustomerLimit Int       @default(1)
+  usedCount        Int       @default(0)
+  channel          String    @default("both") // app | web | both
   startAt          DateTime
   endAt            DateTime
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
   // Trash bin (2026-10-15): orders and usages point at a code, so a deleted
   // code is soft-deleted. EVERY redemption read (lib/promoEval.ts) filters
   // deletedAt: null — a trashed code is never redeemable.
@@ -5043,20 +5079,20 @@ model ProFormaMonth {
 //   payback (months) = capitalAsk / max(1, steadyStateMonthlyProfit)
 
 model Projection {
-  id        String                 @id @default(cuid())
-  tenantId  String?
-  name      String                 @default("Default scenario")
-  isActive  Boolean                @default(true)
+  id          String                 @id @default(cuid())
+  tenantId    String?
+  name        String                 @default("Default scenario")
+  isActive    Boolean                @default(true)
   // 12-month ramp curve (multipliers on steady-state daily covers, applied
   // from each brand's launch month onward). Default = PDF spec.
-  rampCurve Float[]                @default([0.30, 0.45, 0.60, 0.75, 0.90, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00])
+  rampCurve   Float[]                @default([0.30, 0.45, 0.60, 0.75, 0.90, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00])
   // Calendar month the scenario's Month 1 is (YYYY-MM). Trading days are
   // counted on the real calendar from here (owner, 2026-10-16). Null = the
   // month after today (Karachi) at read time.
   startPeriod String?
-  brands    ProjectionBrandInput[]
-  createdAt DateTime               @default(now())
-  updatedAt DateTime               @updatedAt
+  brands      ProjectionBrandInput[]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
 
   @@map("projections")
 }
@@ -5196,7 +5232,8 @@ model Tenant {
   nightAuditStartDay String?
 
   concepts               Concept[]
-  nightAuditDays         NightAuditDay[]      @relation("TenantNightAuditDays")
+  nightAuditDays         NightAuditDay[]         @relation("TenantNightAuditDays")
+  staffNotifications     StaffNotification[]     @relation("TenantStaffNotifications")
   users                  User[]
   members                TenantMember[]
   riders                 Rider[]
@@ -5817,6 +5854,10 @@ model ExceptionFlag {
   resolvedById     String?
   resolvedAt       DateTime?
   resolution       String?
+
+  // The bell's claim (workers/staffNotifications.ts): NULL = not yet
+  // announced. Migration 20261016140000 stamps existing rows (no flood).
+  notifiedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

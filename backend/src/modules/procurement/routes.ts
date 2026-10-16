@@ -13,6 +13,7 @@ import {
 } from '../../lib/approvalRights.js'
 import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './scope.js'
 import type { UserRole } from '@prisma/client'
+import { approvalWaiting } from '../approvals/notify.js'
 
 // Company scope: every procurement row belongs to its supplier's company, so
 // every route below scopes through the supplier (./scope.ts). Reads use
@@ -516,16 +517,24 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     async (req) => {
       const po = await guardPo(req, req.params.id)
       const tenantId = po.supplier.tenantId
-      if (!tenantId) return submitPo(req.params.id, req.staffUser!.id)
+      // The bell: a PO that entered the approval queue (queued, after the submit committed).
+      // Round = the PO's updatedAt stamped by this submit, so a reject + resubmit notifies again.
+      const announce = async (r: { status: string }) => {
+        if (r.status !== 'pending_approval') return
+        const row = await prisma.purchaseOrder.findUnique({ where: { id: req.params.id }, select: { updatedAt: true } })
+        approvalWaiting(PO_TYPE, req.params.id, { round: `submit:${(row?.updatedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
+      }
+      if (!tenantId) { const r = await submitPo(req.params.id, req.staffUser!.id); await announce(r).catch(() => {}); return r }
       await assertHoMayPropose(req, tenantId, po.createdBy === req.staffUser!.id, "submitting someone else's purchase order")
       const via = await viaHeadOfficeForSubmit(req, tenantId)
-      if (!via) return submitPo(req.params.id, req.staffUser!.id)
+      if (!via) { const r = await submitPo(req.params.id, req.staffUser!.id); await announce(r).catch(() => {}); return r }
       const result = await submitPo(req.params.id, req.staffUser!.id, { forceApproval: true, viaHeadOfficeId: via })
       await audit({
         category: 'accounting', action: 'po.submit', entity: 'PurchaseOrder', entityId: req.params.id,
         userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId,
         metadata: { status: result.status, viaHeadOfficeId: via },
       })
+      await announce(result).catch(() => {})
       return result
     },
   )

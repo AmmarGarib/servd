@@ -283,6 +283,8 @@ export const PERSONAL_PAGES: ModulePage[] = [
   // The one approvals inbox (decision D3) — the same page the CEO section
   // links; the API lists only what this login can act on.
   { label: 'Approvals', href: '/ceo/approvals', hint: 'Everything waiting on you' },
+  // The bell's full list (owner, 2026-10-16): personal, every login.
+  { label: 'Notifications', href: '/me/notifications', hint: 'Approvals, night audit and warnings sent to you' },
   // The Trash: openable by every login without the `trash` module because
   // GET /trash scopes it per type (module + role) and per company.
   { label: 'Trash', href: '/trash', hint: 'Restore deleted items, recover voided ones' },

@@ -29,6 +29,7 @@ import jwt from 'jsonwebtoken'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
 import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, delegatedTenantsByType, type ApprovalGrant } from '../../lib/approvalRights.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { viaHeadOfficeForSubmit, widenRls } from '../../lib/headOffice.js'
 import { audit } from '../../lib/audit.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
@@ -576,6 +577,8 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       action: 'site_layout.submit', entity: 'SiteLayout', entityId: row.id, after: { slug },
       ...(viaHeadOfficeId ? { metadata: { viaHeadOfficeId } } : {}),
     })
+    // The bell: the CEO has a page to approve (queued, after the write).
+    approvalWaiting('storefront_publish', row.id, { round: `submit:${(saved.submittedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
     return editShape(saved)
   })
 
@@ -640,7 +643,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       action: 'site_layout.reject', entity: 'SiteLayout', entityId: row.id,
       before: { draftStatus: row.draftStatus }, after: { slug, note: body.note },
     })
-    await auditApproval(req, { type: 'storefront_publish', id: row.id, tenantId: row.tenantId, decision: 'reject', grant, entity: 'SiteLayout', metadata: { slug } })
+    await auditApproval(req, { type: 'storefront_publish', id: row.id, tenantId: row.tenantId, decision: 'reject', grant, entity: 'SiteLayout', metadata: { slug, reason: body.note } })
     return editShape(saved)
   })
 

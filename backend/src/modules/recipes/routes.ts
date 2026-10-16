@@ -16,6 +16,7 @@ import { serviceClient } from '../../lib/prisma.js'
 import { ForbiddenError } from '../../lib/errors.js'
 import { assertHoMayPropose, isReachOnly, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
 import { assertNotAmongSubmitters } from '../../lib/separation-of-duties.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import {
   APPROVAL_RIGHTS, approvalInputOf, approvalQueueTenantIds, approvalSubject, assertCanApprove, auditApproval, canApprove, decideApproval,
   delegatedTenantsByType, throughHeadOfficeBatch, type ApprovalGrant, type ApprovalSubject, type ApprovalType,
@@ -2022,6 +2023,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           metadata: { viaHeadOfficeId: via, companies },
         })
       }
+      // The bell (queued, after the commit): round = this submit's own stamp.
+      approvalWaiting(RECIPE_TYPE, req.params.id, { round: `submit:${(updated.submittedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
       return { ...updated, warnings: saveWarnings([], owned.kind, owned.serviceVessel, owned.lines) }
     },
   )

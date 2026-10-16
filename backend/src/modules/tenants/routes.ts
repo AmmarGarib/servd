@@ -404,6 +404,8 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
     tx.pettyCashBox, tx.cashVoucher, tx.cashVoucherAttachment, tx.cashVoucherSettlement, tx.pettyCashSpendLine, tx.pettyCashMovement,
     // The Trash bin (2026-10-15): entries and copy log follow their company.
     tx.trashEntry, tx.trashCopy,
+    // The bell (2026-10-16): a plain repoint — the (userId, dedupeKey) unique key carries no company.
+    tx.staffNotification,
   ]
   for (const model of repoint) {
     await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })

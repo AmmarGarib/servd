@@ -66,6 +66,10 @@ import { CashVoucherStatus, type Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
 import { audit } from '../../lib/audit.js'
+import { serviceClient } from '../../lib/prisma.js'
+import { auditApproval } from '../../lib/approvalRights.js'
+import { queueStaffNotify, notifyStaffMany, type NotifyInput } from '../../lib/staffNotify.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
 import { assertInt4Fits, zInt4Cents } from '../../lib/money.js'
@@ -615,6 +619,85 @@ export function auditVoucher(req: FastifyRequest, step: string, v: { id: string;
   })
 }
 
+// ─── The bell (owner, 2026-10-16) ───────────────────────────────────────────
+// Hooks run in the ROUTES after the commit and after auditVoucher (a plain audit
+// helper also used for update / cancel / pay) — never inside a transaction.
+
+/** approval.decide + the "decided" notice to whoever is waiting on the voucher (queued; never fails the route). */
+async function voucherDecided(
+  req: FastifyRequest, type: 'cash_request_finance' | 'cash_voucher', v: { id: string; tenantId: string },
+  decision: 'approve' | 'return' | 'reject' | 'cancel', at: Date, note?: string | null,
+) {
+  try {
+    await auditApproval(req, {
+      type, id: v.id, tenantId: v.tenantId, decision, grant: { via: 'role' }, entity: 'CashVoucher',
+      metadata: { decidedAt: at.toISOString(), ...(note ? { reason: note } : {}) },
+    })
+  } catch (err) {
+    console.warn(`[cash-vouchers] approval.decide not recorded: ${(err as Error).message}`)
+  }
+}
+
+/** The queue a voucher waits in: finance's, or the CEO's. */
+const queueTypeOf = (status: CashVoucherStatus): 'cash_request_finance' | 'cash_voucher' =>
+  status === 'finance_approved' || status === 'hod_signed' || status === 'approved' ? 'cash_voucher' : 'cash_request_finance'
+
+export type VoucherStep = 'approved' | 'paid' | 'sent_back' | 'verified'
+
+/**
+ * "Your step is next" for the people who are not approvers (kind task.next): the
+ * box's custodian pays after the CEO's approval, the holder uploads documents
+ * after the pay (and again after finance sends it back), the raiser and holder
+ * hear it is booked. Queued; re-reads the voucher; never throws. Call after the
+ * step has committed and been audited.
+ */
+export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId: string | null): void {
+  queueStaffNotify(async () => {
+    const v = await serviceClient.cashVoucher.findUnique({
+      where: { id: voucherId },
+      select: { id: true, tenantId: true, number: true, status: true, kind: true, preparedById: true, payeeUserId: true, boxId: true, returnCount: true, amountCents: true },
+    })
+    if (!v) return 0
+    const wantStatus: Record<VoucherStep, CashVoucherStatus> = { approved: 'approved', paid: 'disbursed', sent_back: 'disbursed', verified: 'posted' }
+    if (v.status !== wantStatus[step]) return 0
+    const holder = v.payeeUserId ?? v.preparedById
+    let userIds: string[] = []
+    let title = ''
+    let body: string | null = null
+    let severity: NotifyInput['severity'] = 'info'
+    if (step === 'approved') {
+      if (v.boxId) {
+        const box = await serviceClient.pettyCashBox.findFirst({ where: { id: v.boxId, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { custodianId: true } })
+        userIds = box ? [box.custodianId] : []
+      } else {
+        const boxes = await serviceClient.pettyCashBox.findMany({ where: { tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { custodianId: true } })
+        userIds = [...new Set(boxes.map((b) => b.custodianId))]
+      }
+      title = `Cash request ${v.number} is approved — ready to pay`
+      body = 'The CEO approved it. Hand over the cash from your box.'
+    } else if (step === 'paid') {
+      userIds = v.kind === 'request' && v.payeeUserId ? [v.payeeUserId] : []
+      title = `Cash request ${v.number} paid — upload the supporting documents`
+      body = 'Confirm you received the cash, then attach the receipts and record what was spent.'
+    } else if (step === 'sent_back') {
+      userIds = holder ? [holder] : []
+      title = `Cash request ${v.number} sent back by finance`
+      body = 'Attach the missing supporting document and send it again.'
+      severity = 'warning'
+    } else {
+      userIds = [...new Set([v.preparedById, v.payeeUserId].filter((u): u is string => !!u))]
+      title = `Cash request ${v.number} verified and booked`
+      severity = 'success'
+    }
+    const rows: NotifyInput[] = userIds.filter((u) => u !== actorId).map((userId) => ({
+      userId, tenantId: v.tenantId, kind: 'task.next', severity, title, body,
+      link: `/finance/cash-vouchers?id=${encodeURIComponent(v.id)}`, entityType: 'cash_voucher', entityId: v.id, actorId,
+      dedupeKey: `task.next:cash_voucher:${v.id}:${step}:r${v.returnCount}`,
+    }))
+    return notifyStaffMany(rows)
+  })
+}
+
 const selfApprove = () => new AppError('SELF_APPROVE', 'You raised or hold this voucher — someone else must decide it', 409)
 
 /** NULL-safe "this column is not me" (Prisma's `not` leaves NULL rows out). */
@@ -892,6 +975,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     await auditVoucher(req, 'create', created, {
       kind: body.kind, status: created.status, ...money, holderUserId: holder?.id ?? null, payeeName, purpose: body.purpose, category, boxId: body.boxId ?? null,
     })
+    // The bell (queued): finance's queue, or straight to the CEO for a finance-raised payee voucher.
+    approvalWaiting(queueTypeOf(created.status), created.id, { round: 'r0', actorId: me })
     return reply.status(201).send(await detailOf(created.id, viewer))
   })
 
@@ -1026,6 +1111,9 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const before = Object.fromEntries(Object.keys(data).map((k) => [k, v[k as keyof VoucherRow]]))
     await auditVoucher(req, 'finance_approve', v, { status: 'finance_approved', financeApprovedAt: now.toISOString(), ...data, ...(body.note && { note: body.note }) },
       { status: v.status, ...before })
+    await voucherDecided(req, 'cash_request_finance', v, 'approve', now, body.note)
+    // The bell: now waiting at the CEO's end.
+    approvalWaiting('cash_voucher', v.id, { round: `r${v.returnCount}`, actorId: viewer.id })
     return detailOf(v.id, viewer)
   })
 
@@ -1054,6 +1142,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     if (res.count === 0) throw new AppError('VOUCHER_NOT_FINANCE_APPROVED', `Cash request ${v.number} was changed by someone else — reload it`, 409)
     await auditVoucher(req, 'approve', v, { status: 'approved', directorSignedAt: now.toISOString() }, { status: v.status })
+    await voucherDecided(req, 'cash_voucher', v, 'approve', now)
+    voucherTaskNotice('approved', v.id, me)
     return detailOf(v.id, await viewerOf(req))
   })
 
@@ -1080,6 +1170,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     if (res.count === 0) throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed by someone else — reload it`, 409)
     await auditVoucher(req, 'return', v, { status: 'returned', note }, { status: v.status })
+    await voucherDecided(req, queueTypeOf(v.status), v, 'return', now, note)
     return detailOf(v.id, viewer)
   })
 
@@ -1104,6 +1195,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     if (res.count === 0) throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed by someone else — reload it`, 409)
     await auditVoucher(req, 'resubmit', v, { status: toCeo ? 'finance_approved' : 'submitted' }, { status: v.status })
+    // The bell (queued): back to the CEO (finance-raised payee voucher) or to finance. New round per return.
+    approvalWaiting(toCeo ? 'cash_voucher' : 'cash_request_finance', v.id, { round: `r${v.returnCount}`, actorId: viewer.id })
     return detailOf(v.id, viewer)
   })
 
@@ -1137,6 +1230,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     if (res.count === 0) throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed by someone else — reload it`, 409)
     await auditVoucher(req, 'reject', v, { status: 'rejected', note }, { status: v.status })
+    await voucherDecided(req, queueTypeOf(v.status), v, 'reject', now, note)
     return detailOf(v.id, viewer)
   })
 
@@ -1157,6 +1251,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     if (res.count === 0) throw new AppError('VOUCHER_NOT_CANCELLABLE', `Cash request ${v.number} was paid or changed by someone else — reload it`, 409)
     await auditVoucher(req, 'cancel', v, { status: 'cancelled', note }, { status: v.status })
+    await voucherDecided(req, queueTypeOf(v.status), v, 'cancel', now, note)
     return detailOf(v.id, viewer)
   })
 
@@ -1200,6 +1295,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       })
     })
     await auditVoucher(req, 'send_back', v, { note, returnedAt: now.toISOString() }, { returnedAt: v.returnedAt?.toISOString() ?? null, returnNote: v.returnNote })
+    voucherTaskNotice('sent_back', v.id, viewer.id)
     return detailOf(v.id, viewer)
   })
 
@@ -1322,6 +1418,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       dueBy: dueBy.toISOString(),
       heldOn: '1357',
     }, { status: v.status, boxId: v.boxId })
+    voucherTaskNotice('paid', v.id, me)
 
     return {
       voucher: await detailOf(v.id, viewer),
