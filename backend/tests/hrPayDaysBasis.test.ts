@@ -231,3 +231,56 @@ describe('two companies', () => {
     expect(JSON.parse(row!.value).workingDaysPerMonth).toBeUndefined()
   })
 })
+
+// Gate (2026-10-16): the arithmetic edges, on the pure engine.
+import { computePayslip, mergeSettings, EMPTY_INPUTS, finalSettlement } from '../src/modules/hr/logic.js'
+
+describe('pay basis edges (pure)', () => {
+  const s = mergeSettings({ latesPerDeductionDay: 3 })
+  const emp = (gross: number, joiningDate: Date | null = null, lastWorkingDay: Date | null = null, tax = 0) => ({ grossSalaryCents: gross, monthlyTaxCents: tax, joiningDate, lastWorkingDay })
+
+  it('a leap February divides by 29; a half day takes half a day, rounded once', () => {
+    expect(computePayslip(emp(RS(29000)), '2028-02', EMPTY_INPUTS, s).basis).toMatchObject({ daysInMonth: 29, paidDays: 29, dailyRateCents: RS(1000) })
+    const r = computePayslip(emp(1234567), '2026-10', { ...EMPTY_INPUTS, absentDays: 0.5 }, s)
+    expect(r.grossCents).toBe(Math.round(1234567 * 30.5 / 31))
+  })
+
+  it('a joiner who leaves the same month is paid only those days, docked at most what they were employed', () => {
+    const r = computePayslip(emp(RS(31000), D('2026-10-10'), D('2026-10-20')), '2026-10', { ...EMPTY_INPUTS, absentDays: 2, unpaidLeaveDays: 3 }, s)
+    expect(r.basis).toMatchObject({ employedDays: 11, absentDays: 2, unpaidLeaveDays: 3, paidDays: 6 })
+    expect(r.grossCents).toBe(RS(6000))
+    const over = computePayslip(emp(RS(31000), D('2026-10-10'), D('2026-10-20')), '2026-10', { ...EMPTY_INPUTS, absentDays: 2, unpaidLeaveDays: 20 }, s)
+    expect(over.basis.paidDays).toBe(0)
+    expect(over.grossCents).toBe(0)
+  })
+
+  it('joining and leaving on the same day counts that day even when the stored times are out of order', () => {
+    const r = computePayslip(emp(RS(31000), new Date('2026-10-16T10:00:00Z'), new Date('2026-10-16T00:00:00Z')), '2026-10', EMPTY_INPUTS, s)
+    expect(r.basis.employedDays).toBe(1)
+    expect(r.grossCents).toBe(RS(1000))
+  })
+
+  it('lates are docked at the same daily rate, never below the salary earned; OT and allowances stay', () => {
+    const r = computePayslip(emp(RS(30000)), '2026-09', { ...EMPTY_INPUTS, absentDays: 29, lateCount: 9, otHours: 1, otCents: 5000, earningAdjustmentsCents: 7000 }, s)
+    const by = Object.fromEntries(r.lines.map((l) => [l.code, l.amountCents]))
+    expect(by).toMatchObject({ salary: RS(1000), late: RS(1000), overtime: 5000, adjustments: 7000 })
+    expect(r.netCents).toBe(12000)
+  })
+
+  it('EOBI and SESSI on gross stay on the days employed, not lowered by absences', () => {
+    const g = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null }, sessi: { employerPct: 6, wageCeilingCents: null } })
+    const r = computePayslip(emp(RS(30000), D('2026-09-16')), '2026-09', { ...EMPTY_INPUTS, absentDays: 5 }, g)
+    expect(r.grossCents).toBe(RS(10000))
+    expect(r.eobiEmployeeCents).toBe(RS(150))
+    expect(r.lines.find((l) => l.code === 'sessi_employer')!.amountCents).toBe(RS(900))
+  })
+
+  it('full & final pays each month on its own calendar days and encashes leave at the leaving month\'s rate', () => {
+    const f = finalSettlement({ grossSalaryCents: RS(30000), joiningDate: D('2026-10-10'), monthlyTaxCents: 0 }, D('2026-11-15'), {
+      salaryFrom: D('2026-10-01'), otPayableCents: 0, leaveBalanceDays: 2.5, loanOutstandingCents: 0, deductionsCents: 0, otherAdjustmentsCents: 0,
+      salaryByPeriod: { '2026-10': RS(31000), '2026-11': RS(30000) },
+    }, s)
+    expect(f.months.map((m) => m.salaryCents)).toEqual([RS(22000), RS(15000)])
+    expect(f.leaveEncashment).toBe(RS(2500))
+  })
+})
