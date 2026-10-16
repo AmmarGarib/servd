@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrRecord, type HrLogin } from '../../../../lib/hr'
+import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, type HrRecord, type HrLogin } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
@@ -98,7 +98,7 @@ function EmployeeProfile() {
   }
   return (
     <HrShell title={e ? e.fullName : 'Employee'} subtitle={e ? `${e.employeeCode} · ${p?.labels.designation ?? 'No designation'} · ${p?.labels.department ?? 'No department'} · ${p?.labels.branch ?? 'No branch'}` : undefined}
-      actions={e && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[e.status] }}>{human(e.status)}</span>}>
+      actions={e && <span className={`${STATUS_BADGE[e.status] ?? 's-badge-muted'} self-center`}>{human(e.status)}</span>}>
       {error && <p className="text-sm text-s-red" role="alert">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading employee…</p>}
       {p && (
@@ -277,9 +277,9 @@ function LeaveTab({ p }: { p: Profile }) {
     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
       {p.leaveBalances.map((b) => (
         <div key={b.leaveTypeId} className="rounded-2xl p-4" style={card}>
-          <p className="text-sm font-black text-white/85">{b.name} <span className="text-[10px] font-bold text-white/35">{b.paid ? 'PAID' : 'UNPAID'}</span></p>
+          <p className="text-sm font-black text-white/85">{b.name} <span className="text-xs font-bold text-white/55">{b.paid ? 'PAID' : 'UNPAID'}</span></p>
           <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>{b.balance}</p>
-          <p className="text-[11px] text-white/45 mt-1">{b.entitlement} entitled {b.carriedForward ? `+${b.carriedForward} carried ` : ''}{b.adjustments ? `${b.adjustments > 0 ? '+' : ''}${b.adjustments} adjusted ` : ''}· {b.taken} taken{b.pending ? ` · ${b.pending} pending` : ''}</p>
+          <p className="text-xs text-white/60 mt-1">{b.entitlement} entitled {b.carriedForward ? `+${b.carriedForward} carried ` : ''}{b.adjustments ? `${b.adjustments > 0 ? '+' : ''}${b.adjustments} adjusted ` : ''}· {b.taken} taken{b.pending ? ` · ${b.pending} pending` : ''}</p>
         </div>
       ))}
     </div>

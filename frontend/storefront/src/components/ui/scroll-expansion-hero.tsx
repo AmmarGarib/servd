@@ -57,6 +57,11 @@ interface ScrollExpandMediaProps {
   children?: ReactNode;
   /** false = nothing visible after the expansion (only an sr-only heading): no padded reveal band. */
   revealPadded?: boolean;
+  /** servd logo mark centred above the media box (fades out as it opens). Empty = none. */
+  logoSrc?: string;
+  logoAlt?: string;
+  /** Small animated chevron at the foot of the first screen, until the visitor scrolls. */
+  scrollCue?: boolean;
 }
 
 export interface BgSlide { src: string; alt: string }
@@ -180,6 +185,9 @@ const ScrollExpandMedia = ({
   textBlend,
   children,
   revealPadded = true,
+  logoSrc,
+  logoAlt = '',
+  scrollCue = true,
 }: ScrollExpandMediaProps) => {
   const [scrollProgress, setScrollProgress] = useState<number>(0);
   // The slideshow, or the single background photo as a one-photo slideshow.
@@ -226,6 +234,14 @@ const ScrollExpandMedia = ({
   // it stays open: scrolling back to the top never replays it. While it is
   // still closed the document does not scroll (overflow hidden, below), so
   // the gesture cannot move the page under the animation.
+  useEffect(() => {
+    const reduce = prefersReducedMotion();
+    setReducedMotion(reduce);
+    if (reduce) expandNow();
+    setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const rafRef = useRef(0);
   const startedRef = useRef(false);
   const expandedRef = useRef(false);
@@ -441,6 +457,28 @@ const ScrollExpandMedia = ({
 
           <div className='container mx-auto flex flex-col items-center justify-start relative z-10'>
             <div className='flex flex-col items-center justify-center w-full h-[100dvh] relative'>
+              {logoSrc && (
+                <div
+                  className={`absolute z-10 left-1/2 -translate-x-1/2 pointer-events-none${
+                    boxSized ? '' : ' bottom-[calc(50%+100px+1rem)] md:bottom-[calc(50%+200px+1rem)]'
+                  }`}
+                  style={{
+                    ...(boxSized && { bottom: `calc(50% + ${Math.min(mediaHeight, typeof window === 'undefined' ? mediaHeight : window.innerHeight * 0.85) / 2}px + 1rem)` }),
+                    opacity: Math.max(0, 1 - scrollProgress * 3),
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={logoSrc}
+                    alt={logoAlt}
+                    {...(!logoAlt && { 'aria-hidden': true })}
+                    width={192}
+                    height={192}
+                    decoding='async'
+                    className='h-14 w-14 md:h-16 md:w-16 rounded-2xl bg-white p-1.5 shadow-lg'
+                  />
+                </div>
+              )}
               <div
                 className={`absolute z-0 top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 transition-none rounded-2xl${
                   boxSized ? '' : ' w-[300px] h-[200px] md:h-[400px]'
@@ -609,6 +647,17 @@ const ScrollExpandMedia = ({
                   </span>
                 </Heading>
               )}
+            {scrollCue && !started && !reducedMotion && (
+              <div
+                aria-hidden='true'
+                className='absolute z-10 left-1/2 -translate-x-1/2 bottom-6 text-white/90 animate-bounce motion-reduce:animate-none'
+                style={{ opacity: hydrated ? 1 : 0, transition: 'opacity 400ms ease-in-out' }}
+              >
+                <svg width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2.4' strokeLinecap='round' strokeLinejoin='round' className='drop-shadow-lg'>
+                  <path d='M6 9l6 6 6-6' />
+                </svg>
+              </div>
+            )}
             </div>
 
             <section

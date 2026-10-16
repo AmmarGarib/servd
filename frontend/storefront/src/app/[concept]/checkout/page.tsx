@@ -512,7 +512,7 @@ export default function CheckoutPage() {
         <div className="flex gap-2 flex-wrap justify-center">
           {['stackd', 'simmer', 'flipd'].filter((s) => s !== slug).map((s) => (
             <Link key={s} href={`/${s}`}
-              className="rounded-full px-4 py-2 text-xs font-bold transition-colors"
+              className="rounded-xl px-4 py-2 text-xs font-bold transition-colors"
               style={{
                 background: 'var(--servd-surface)',
                 color: 'var(--servd-ink)',
@@ -1064,7 +1064,7 @@ export default function CheckoutPage() {
                   type="button"
                   onClick={() => setTipMode(m)}
                   aria-pressed={tipMode === m}
-                  className="px-3 py-1.5 rounded-full text-xs font-bold border"
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold border"
                   style={{
                     minHeight: 44, minWidth: 44,
                     background: tipMode === m ? '#0a0a0a' : 'white',
@@ -1242,7 +1242,7 @@ export default function CheckoutPage() {
                   disabled={promoStatus === 'checking' || (promoStatus !== 'valid' && !promoCode.trim())}
                   aria-label={promoStatus === 'valid' ? 'Remove promo code' : 'Apply promo code'}
                   className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
-                  style={{ background: 'var(--servd-green-dark)', color: '#fff' }}
+                  style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}
                 >
                   {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? 'Remove' : 'Apply'}
                 </button>

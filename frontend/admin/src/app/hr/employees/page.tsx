@@ -6,7 +6,7 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { api } from '../../../lib/api'
-import { card, btn, btnGhost, rs, day, human, STATUS_COLOR, type HrField } from '../../../lib/hr'
+import { card, btn, btnGhost, rs, day, human, STATUS_BADGE, type HrField } from '../../../lib/hr'
 import { HrShell, Modal, useHrForm, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
 
@@ -18,6 +18,11 @@ interface Row {
 export default function EmployeesPage() {
   // useSearchParams needs a Suspense boundary in a statically built page.
   return <Suspense fallback={null}><Employees /></Suspense>
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1]![0]! : '')).toUpperCase() || '?'
 }
 
 const STATUS_CHIPS: Array<[string, string]> = [['current', 'Current'], ['all', 'Everyone'], ['resigned', 'Resigned'], ['terminated', 'Terminated'], ['separated', 'Separated']]
@@ -86,21 +91,31 @@ function Employees() {
       {csvErr && <p className="text-sm text-s-red mb-3">Export failed: {csvErr}</p>}
       <div className="rounded-2xl overflow-x-auto" style={card}>
         <table className="w-full text-sm">
-          <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+          <thead><tr className="text-left text-xs uppercase tracking-wider text-white/55">
             {['ID', 'Name', 'Designation', 'Department', 'Branch', 'Type', 'Joined', 'Gross', 'Status'].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
           </tr></thead>
           <tbody>
             {rows.map((e) => (
               <tr key={e.id} className="border-t border-white/[0.05] hover:bg-white/[0.03]">
                 <td className="px-4 py-3 text-white/50 font-mono text-xs">{e.employeeCode}</td>
-                <td className="px-4 py-3"><Link href={`/hr/employees/${e.id}`} className="font-bold text-white/90 hover:underline py-2 inline-block">{e.fullName}</Link>{e.userId && <span className="ml-1 text-[10px] text-primary-ink" title="Has a servd login">●</span>}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-black"
+                      style={{ background: 'rgb(var(--erp-primary-dim-rgb))', color: 'var(--erp-primary-ink)' }}>{initials(e.fullName)}</span>
+                    <div className="min-w-0">
+                      <Link href={`/hr/employees/${e.id}`} className="text-[15px] font-black text-white/90 hover:underline inline-block">{e.fullName}</Link>
+                      {e.userId && <span className="ml-1 text-[10px] text-primary-ink" title="Has a servd login">●</span>}
+                      <p className="text-xs text-white/55">{e.designation ?? 'No designation'}</p>
+                    </div>
+                  </div>
+                </td>
                 <td className="px-4 py-3 text-white/65">{e.designation ?? '—'}</td>
                 <td className="px-4 py-3 text-white/65">{e.department ?? '—'}</td>
                 <td className="px-4 py-3 text-white/65">{e.branch ?? '—'}</td>
                 <td className="px-4 py-3 text-white/65">{human(e.employmentType)}</td>
                 <td className="px-4 py-3 text-white/65">{day(e.joiningDate)}</td>
                 <td className="px-4 py-3 text-white/80">{rs(e.grossSalaryCents)}</td>
-                <td className="px-4 py-3"><span className="text-xs font-bold" style={{ color: STATUS_COLOR[e.status] }}>{human(e.status)}</span></td>
+                <td className="px-4 py-3"><span className={STATUS_BADGE[e.status] ?? 's-badge-muted'}>{human(e.status)}</span></td>
               </tr>
             ))}
             {isLoading && <tr><td colSpan={9} className="px-4 py-10 text-center text-white/40">Loading employees…</td></tr>}

@@ -46,6 +46,8 @@ export function ScrollHero({ fields }: SectionProps) {
       {...(date && { date })}
       scrollToExpand={str(fields.scrollToExpand)}
       textBlend={fields.textBlend === true}
+      {...(fields.showLogo !== false && safeSrc(fields.logoSrc) && { logoSrc: safeSrc(fields.logoSrc), logoAlt: str(fields.logoAlt).trim() })}
+      scrollCue={fields.scrollCue !== false}
       revealPadded={Boolean(overview || conclusion || primary.text || secondary.text)}
     >
       {!showTitle && title && <Heading className="sr-only">{title}</Heading>}

@@ -2,6 +2,8 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
+import { ArrowLeft, ArrowRight, ChefHat, Check, ChevronDown, Maximize2, TriangleAlert } from 'lucide-react'
+import { FulfilmentIcon } from '../../components/kds/FulfilmentIcon'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../lib/api'
 import { useLineActions, LineStateBadge, HoldButton, RecallStrip } from '../../components/kds/LineActions'
@@ -87,8 +89,8 @@ export default function KdsKitchenDashboard() {
     <div className="erp-kitchen-dark h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-6 py-4 shrink-0">
         <div>
-          <Link href="/w" className="text-sm text-gray-500 hover:text-gray-300 inline-flex items-center gap-1 mb-1 transition-colors">
-            ← Back to workspace
+          <Link href="/w" className="min-h-11 text-sm text-kds-subtext hover:text-kds-text inline-flex items-center gap-1.5 mb-1 transition-colors">
+            <ArrowLeft size={16} aria-hidden="true" /> Back to workspace
           </Link>
           <h1 className="text-2xl font-black text-kds-text">Kitchen view</h1>
           <p className="text-sm text-kds-subtext">
@@ -112,7 +114,7 @@ export default function KdsKitchenDashboard() {
           // create some.
           restricted ? (
             <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-12 text-center">
-              <p className="text-3xl mb-2">🍳</p>
+              <ChefHat size={32} aria-hidden="true" className="mx-auto mb-2 text-kds-subtext" />
               <p className="text-base font-bold text-kds-text">Your stations are switched off</p>
               <p className="text-sm text-kds-subtext mt-1">
                 The stations on your roster aren&apos;t active. Ask your manager to update them in <Link href="/workforce" className="text-kds-green underline">Workforce</Link>.
@@ -120,7 +122,7 @@ export default function KdsKitchenDashboard() {
             </div>
           ) : (
             <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-12 text-center">
-              <p className="text-3xl mb-2">🍳</p>
+              <ChefHat size={32} aria-hidden="true" className="mx-auto mb-2 text-kds-subtext" />
               <p className="text-base font-bold text-kds-text">No active stations yet</p>
               <p className="text-sm text-kds-subtext mt-1">
                 Open <Link href="/kds/config" className="text-kds-green underline">KDS Config</Link> to add stations,
@@ -137,10 +139,10 @@ export default function KdsKitchenDashboard() {
                 <div key={group.id} className="rounded-xl border border-kds-border bg-kds-card overflow-hidden">
                   <button
                     onClick={() => toggleGroup(group.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kds-bg/40 transition-colors">
+                    className="w-full min-h-11 flex items-center gap-3 px-4 py-3 hover:bg-kds-bg/40 transition-colors">
                     <span className="text-kds-subtext text-xs"
                       style={{ display: 'inline-block', transition: 'transform 120ms', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>
-                      ▼
+                      <ChevronDown size={16} aria-hidden="true" />
                     </span>
                     <span className="font-bold text-kds-text">{group.name}</span>
                     <span className="text-xs text-kds-subtext">
@@ -162,11 +164,11 @@ export default function KdsKitchenDashboard() {
                             <button
                               type="button"
                               onClick={() => setOpenStationId(isOpen ? null : s.id)}
-                              className="w-full text-left px-4 py-3 hover:bg-kds-bg/20 transition-colors">
+                              className="w-full min-h-11 text-left px-4 py-3 hover:bg-kds-bg/20 transition-colors">
                               <div className="flex items-center gap-3 flex-wrap">
                                 <span className="text-kds-subtext text-xs"
                                   style={{ display: 'inline-block', transition: 'transform 120ms', transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }}>
-                                  ▼
+                                  <ChevronDown size={16} aria-hidden="true" />
                                 </span>
                                 <span className="font-medium text-kds-text">{s.name}</span>
                                 <span className={`inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-[10px] font-bold px-1.5 ${
@@ -181,8 +183,8 @@ export default function KdsKitchenDashboard() {
                                 <Link
                                   href={`/kds/${s.id}`}
                                   onClick={(e) => e.stopPropagation()}
-                                  className="ml-auto rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors inline-flex items-center gap-1">
-                                  ⤢ Full screen
+                                  className="ml-auto min-h-11 rounded-lg border border-kds-border px-3 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors inline-flex items-center gap-1.5">
+                                  <Maximize2 size={14} aria-hidden="true" /> Full screen
                                 </Link>
                               </div>
                             </button>
@@ -217,11 +219,11 @@ export default function KdsKitchenDashboard() {
 // fighting the outer scroll container. The bumping logic is small enough
 // that a focused, embed-friendly version is the cleaner answer.
 
-interface FulfilmentMeta { emoji: string; short: string; accent: string; bg: string }
+interface FulfilmentMeta { short: string; accent: string; bg: string }
 const FULFILMENT_META: Record<string, FulfilmentMeta> = {
-  dine_in:  { emoji: '🍽',  short: 'PLATE',    accent: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
-  takeout:  { emoji: '🥡', short: 'PACK',     accent: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-  delivery: { emoji: '🛵', short: 'PACK+LBL', accent: '#ec4899', bg: 'rgba(236,72,153,0.12)' },
+  dine_in:  { short: 'PLATE',    accent: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
+  takeout:  { short: 'PACK',     accent: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  delivery: { short: 'PACK+LBL', accent: '#ec4899', bg: 'rgba(236,72,153,0.12)' },
 }
 // Strict fallback so TS doesn't widen the lookup to `FulfilmentMeta | undefined`
 // — every fulfilment value we get from the API maps to one of the three above,
@@ -304,7 +306,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
     return (
       <div className="border-t border-kds-border bg-black/20 px-4 py-6 text-center space-y-3">
         <div>
-          <p className="text-2xl mb-1">✓</p>
+          <Check size={28} aria-hidden="true" className="mx-auto mb-1 text-kds-green" />
           <p className="text-sm font-bold text-kds-text">All clear</p>
           <p className="text-[11px] text-kds-subtext mt-0.5">New tickets appear here when expo fires them.</p>
         </div>
@@ -341,7 +343,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                 <div className="p-3">
                   <div className="absolute -top-2 left-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider"
                     style={{ background: fm.bg, color: fm.accent, border: `1px solid ${fm.accent}50` }}>
-                    {fm.emoji} {fm.short}
+                    <FulfilmentIcon type={t.order.fulfilmentType} size={11} /> {fm.short}
                     {t.order.tableLabel && <span className="ml-1 opacity-80">· {t.order.tableLabel}</span>}
                   </div>
                   <div className="flex items-center justify-between mt-1 mb-1.5 text-[9px] uppercase tracking-wider font-bold">
@@ -354,13 +356,13 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                     {t.itemName}
                   </p>
                   {instruction && (
-                    <p className="text-[12px] font-semibold mt-1 leading-snug" style={{ color: '#5EEAD4' }}>
-                      → {instruction}
+                    <p className="text-[12px] font-semibold mt-1 leading-snug" style={{ color: '#86EFAC' }}>
+                      <ArrowRight size={12} aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />{instruction}
                     </p>
                   )}
                   {t.itemNotes && (
                     <p className="text-[11px] italic mt-1" style={{ color: '#FCD34D' }}>
-                      ⚠ {t.itemNotes}
+                      <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{t.itemNotes}
                     </p>
                   )}
                   <p className="text-[10px] text-kds-subtext mt-1">
@@ -370,9 +372,8 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                     <button
                       onClick={onBump}
                       disabled={pending}
-                      className="mt-2 w-full rounded-lg py-1.5 text-xs font-black transition-all disabled:opacity-40"
-                      style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
-                      {pending ? 'Bumping…' : (isRemake ? 'Bump remake ✓' : 'Bump ✓')}
+                      className="mt-2 w-full min-h-11 rounded-xl py-2 text-sm font-black transition-all disabled:opacity-40 bg-kds-green text-primary-on inline-flex items-center justify-center gap-1.5">
+                      {pending ? 'Bumping…' : (<><Check size={16} aria-hidden="true" />{isRemake ? 'Bump remake' : 'Bump'}</>)}
                     </button>
                   )}
                   {isLegacy && (
@@ -405,7 +406,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                   {t.qty > 1 && <span className="text-kds-subtext mr-1">{t.qty}×</span>}
                   {t.itemName}
                 </p>
-                <p className="text-[9px] text-kds-subtext italic mt-0.5">→ {t.instruction}</p>
+                <p className="text-[9px] text-kds-subtext italic mt-0.5">{t.instruction}</p>
               </div>
             ))}
           </div>
@@ -481,7 +482,7 @@ function UnroutedPanel() {
               type="button"
               onClick={() => bump.mutate(it)}
               disabled={bump.isPending && bump.variables?.itemId === it.itemId}
-              className="shrink-0 rounded-lg border border-kds-green/60 px-3 py-1.5 text-xs font-black text-kds-green hover:bg-kds-green/10 disabled:opacity-40">
+              className="shrink-0 min-h-11 rounded-lg border border-kds-green/60 px-3 py-1.5 text-xs font-black text-kds-green hover:bg-kds-green/10 disabled:opacity-40">
               Bump
             </button>
           </div>
@@ -538,7 +539,7 @@ function BackInStockPanel() {
               type="button"
               onClick={() => backOn.mutate(it.menuItemId)}
               disabled={backOn.isPending && backOn.variables === it.menuItemId}
-              className="shrink-0 rounded-lg border border-kds-green/60 px-3 py-1.5 text-xs font-black text-kds-green hover:bg-kds-green/10 disabled:opacity-40">
+              className="shrink-0 min-h-11 rounded-lg border border-kds-green/60 px-3 py-1.5 text-xs font-black text-kds-green hover:bg-kds-green/10 disabled:opacity-40">
               Back on
             </button>
           </div>

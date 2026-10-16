@@ -487,7 +487,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
 
   return (
     <div key="screen" className={brandSkinClass}
-      style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
+      style={{ background: 'var(--servd-order-bg)', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
       <style>{`
         .sv-oc-chip, .sv-oc-link { display: inline-flex; align-items: center; }
         /* Stackd forces cream headings (!important) for its dark page; the
@@ -553,7 +553,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
               <div key={i} style={{
                 display: 'grid', gridTemplateColumns: '1fr 5rem', gap: '0.75rem',
                 padding: '0.85rem', borderRadius: '0.85rem',
-                background: '#fff', border: '1px solid var(--servd-line)',
+                background: 'var(--servd-order-card)', border: '1px solid var(--servd-line)',
               }}>
                 <div style={{ display: 'grid', gap: '0.4rem', alignContent: 'start' }}>
                   <Skeleton height="0.95rem" width="60%" radius="4px" />
@@ -639,7 +639,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
                 position: 'sticky',
                 top: '60px',
                 zIndex: 30,
-                background: 'rgba(255,255,255,0.95)',
+                background: 'var(--servd-order-nav-bg)',
                 backdropFilter: 'blur(14px)',
                 WebkitBackdropFilter: 'blur(14px)',
                 borderBottom: '1px solid var(--servd-line)',
@@ -683,10 +683,10 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
                         padding: '0.45rem 0.95rem',
                         fontWeight: active ? 800 : 500,
                         fontSize: '0.875rem',
-                        color: active ? '#0a0a0a' : 'var(--servd-mute)',
+                        color: active ? 'var(--servd-order-chip-ink)' : 'var(--servd-mute)',
                         textDecoration: 'none',
-                        borderRadius: '999px',
-                        background: active ? 'var(--servd-green-soft)' : 'transparent',
+                        borderRadius: 'var(--servd-btn-radius)',
+                        background: active ? 'var(--servd-order-chip-bg)' : 'transparent',
                       }}
                     >
                       {c.name}
@@ -815,7 +815,7 @@ const OUTLINE_BTN: React.CSSProperties = {
   flex: 1,
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   minHeight: '2.75rem', padding: '0.7rem 1.25rem',
-  borderRadius: '999px', border: '1.5px solid currentColor',
+  borderRadius: 'var(--servd-btn-radius)', border: '1.5px solid currentColor',
   background: 'transparent', color: 'inherit',
   fontWeight: 700, fontSize: '0.95rem', textDecoration: 'none', cursor: 'pointer',
 }
@@ -873,7 +873,7 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
   const disabled = !item.isAvailable
   const frame: React.CSSProperties = {
     textAlign: 'left',
-    background: '#fff',
+    background: 'var(--servd-order-card)',
     border: '1px solid var(--servd-line)',
     borderRadius: '0.85rem',
     padding: 0,
@@ -915,7 +915,7 @@ function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () 
           ) : (
             <span aria-hidden="true" className="sv-oc-add" style={{
               display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
-              padding: '0.3rem 0.85rem', borderRadius: '999px',
+              padding: '0.3rem 0.85rem', borderRadius: 'var(--servd-btn-radius)',
               border: '1.5px solid currentColor', color: 'var(--servd-green-dark)',
               fontSize: '0.85rem', fontWeight: 800,
             }}>+ Add</span>
@@ -1154,11 +1154,11 @@ function ItemDetailModal({
   const closeBtn = (photo: boolean): React.CSSProperties => photo
     ? {
         position: 'absolute', top: '0.6rem', right: '0.6rem',
-        background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '999px', color: '#261038',
+        background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: 'var(--servd-btn-radius)', color: '#261038',
         width: '2.75rem', height: '2.75rem', fontSize: '1.3rem', cursor: 'pointer',
       }
     : {
-        background: 'transparent', border: 'none', borderRadius: '999px', color: 'var(--servd-mute)',
+        background: 'transparent', border: 'none', borderRadius: 'var(--servd-btn-radius)', color: 'var(--servd-mute)',
         width: '2.75rem', height: '2.75rem', fontSize: '1.4rem', cursor: 'pointer',
       }
 
@@ -1308,7 +1308,7 @@ function ItemDetailModal({
 
         <div style={{ padding: '1rem 1.5rem 1.25rem', borderTop: '1px solid var(--servd-line)', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.15rem' }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.1rem' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', border: '1px solid var(--servd-line)', borderRadius: 'var(--servd-btn-radius)', padding: '0.1rem' }}>
               <button type="button" onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease quantity"
                 style={QTY_BTN}>−</button>
               <span aria-live="polite" style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700 }}>{qty}</span>
@@ -1338,7 +1338,7 @@ function ItemDetailModal({
 // Quantity steppers (item modal + basket): 44px tap targets; the visible
 // pill around them stays slim.
 const QTY_BTN: React.CSSProperties = {
-  width: '2.75rem', height: '2.75rem', borderRadius: '999px', border: 'none',
+  width: '2.75rem', height: '2.75rem', borderRadius: 'var(--servd-btn-radius)', border: 'none',
   background: 'transparent', color: 'inherit', fontSize: '1.1rem', cursor: 'pointer',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
 }
@@ -1405,7 +1405,7 @@ function CartDrawer({
         style={{
           position: 'fixed', bottom: 'calc(1.25rem + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)', zIndex: 40,
           background: 'var(--servd-green)', color: 'var(--servd-on-green)', border: 'none',
-          borderRadius: '999px', padding: '0.85rem 1.5rem',
+          borderRadius: 'var(--servd-btn-radius)', padding: '0.85rem 1.5rem',
           display: 'flex', alignItems: 'center', gap: '0.85rem',
           boxShadow: '0 12px 40px rgba(0,0,0,0.25)', cursor: 'pointer',
           fontWeight: 800, whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 2rem)',
@@ -1413,7 +1413,7 @@ function CartDrawer({
       >
         <span style={{
           background: 'var(--servd-on-green)', color: 'var(--servd-green)',
-          minWidth: '1.6rem', height: '1.6rem', borderRadius: '999px', padding: '0 0.4rem',
+          minWidth: '1.6rem', height: '1.6rem', borderRadius: 'var(--servd-btn-radius)', padding: '0 0.4rem',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           fontWeight: 900, fontSize: '0.85rem',
         }}>
@@ -1437,7 +1437,7 @@ function CartDrawer({
             )}
           </div>
           <button type="button" onClick={onClose} aria-label="Close basket"
-            style={{ background: 'transparent', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--servd-mute)', width: '2.75rem', height: '2.75rem', borderRadius: '999px', flex: 'none' }}>×</button>
+            style={{ background: 'transparent', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--servd-mute)', width: '2.75rem', height: '2.75rem', borderRadius: 'var(--servd-btn-radius)', flex: 'none' }}>×</button>
         </header>
 
         <div style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1 }}>
@@ -1459,7 +1459,7 @@ function CartDrawer({
                   </p>
                 )}
                 <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>{fmt(line.priceCents)}</p>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', marginTop: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.1rem' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem', marginTop: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: 'var(--servd-btn-radius)', padding: '0.1rem' }}>
                   <button type="button"
                     onClick={() => (line.quantity <= 1 ? removeLine(line) : cart.updateQty(line.lineId, line.quantity - 1))}
                     aria-label={line.quantity <= 1 ? `Remove ${line.name}` : `Decrease ${line.name}`}

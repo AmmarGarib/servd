@@ -54,6 +54,10 @@ export const specs: SectionSpec[] = [
       { key: 'headingLevel', label: 'Title tag', kind: 'select', hint: 'H1 = the page’s main title (one per page). Use H2 on a page that already has an H1.', options: [
         { value: 'h1', label: 'H1 (page title)' }, { value: 'h2', label: 'H2 (section heading)' },
       ] },
+      { key: 'showLogo', label: 'Show the servd logo above the video', kind: 'toggle', hint: 'On = the logo mark sits centred above the video box and fades out as it opens. No words over the media.' },
+      { key: 'logoSrc', label: 'Logo image', kind: 'image', hint: 'Default: the servd logo. Empty = no logo.' },
+      { key: 'logoAlt', label: 'Logo description (alt text)', kind: 'text', hint: 'Empty = decorative' },
+      { key: 'scrollCue', label: 'Scroll cue', kind: 'toggle', hint: 'A small bouncing arrow at the foot of the first screen until the visitor scrolls or swipes.' },
       { key: 'date', label: 'Eyebrow', kind: 'text', hint: 'Small line on the media. Empty = none.' },
       { key: 'scrollToExpand', label: 'Scroll hint', kind: 'text', hint: 'Empty = none.' },
       { key: 'textBlend', label: 'Blend title with the media', kind: 'toggle', hint: 'Difference blend. Off reads better over a busy video.' },
@@ -82,6 +86,11 @@ export const specs: SectionSpec[] = [
       title: 'Every kitchen, one place to order.',
       // No words over the media (owner, 2026-10-12: "kill all this text").
       showTitle: false,
+      // The servd logo mark above the video box (owner, 2026-10-16) and a small scroll cue.
+      showLogo: true,
+      logoSrc: '/brand/servd-logo.png',
+      logoAlt: 'servd',
+      scrollCue: true,
       headingLevel: 'h1',
       date: '',
       scrollToExpand: '',

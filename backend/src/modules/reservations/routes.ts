@@ -40,14 +40,29 @@ import { pktDayStart, pktDayOfWeek, reservableWindows, sittingInHours } from './
 
 const DEFAULT_DURATION_MIN = 90
 
-// Public-booking caps, keyed on the guest's phone number. See the block in the
-// POST /public handler for why these are per phone and not per IP.
-//
-// Six upcoming bookings is far past what any real guest holds at once and still
-// leaves room for a family booking several occasions. Three an hour is more
-// than enough to correct a mistake and retry.
-const MAX_UPCOMING_PER_PHONE = 6
-const MAX_BOOKINGS_PER_PHONE_PER_HOUR = 3
+// Customer bookings are for signed-in servd members only (owner, 2026-10-16:
+// "only servd members have access to reservations.. and can reserve as far
+// ahead as they want, but accounts are limited to 5 total bookings at one
+// time"). The cap is per ACCOUNT and servd-wide — every brand of every company
+// counts, like a customer's strikes (lib/strikes.ts): it is the account's
+// standing, not one company's book. Staff bookings (POST /) are not capped.
+export const MAX_ACTIVE_BOOKINGS_PER_ACCOUNT = 5
+
+/**
+ * What counts toward the cap: the account's bookings that are still live and
+ * not yet over — booked / confirmed / seated with the sitting not yet ended.
+ * Cancelled, no-show and completed bookings, waiting-list entries, and
+ * sittings that have ended do not. Read across ALL companies (no tenant
+ * filter, deliberately: the cap is the account's, servd-wide).
+ */
+export function activeBookingsWhere(customerId: string, now = new Date()): Prisma.ReservationWhereInput {
+  return {
+    customerId,
+    waitlist: false,
+    status: { in: ['booked', 'confirmed', 'seated'] },
+    endTime: { gt: now },
+  }
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -1129,6 +1144,14 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/public',
     { config: { rateLimit: { max: 5, timeWindow: '5 minutes' } } },
     async (req, reply) => {
+      // ─── servd members only (UX-5, owner 2026-10-16) ──────────────────────
+      // A customer booking needs a signed-in servd account (401 AUTH_REQUIRED
+      // otherwise). The session is read here rather than through
+      // requireCustomerAuth so the request does not run under the customer's
+      // RLS context (the capacity check reads every overlapping booking at the
+      // brand, not only theirs).
+      const self = await signedInCustomer(req)
+
       const body = z.object({
         conceptSlug: z.string().min(1),
         partySize:   z.number().int().min(1).max(20),
@@ -1139,9 +1162,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         // booking hold a table all evening, and a client value longer than
         // the policy made POST refuse a slot availability had shown free.
         durationMin: z.number().int().min(30).max(240).optional(),
-        guestName:   z.string().min(1).max(120),
-        guestPhone:  z.string().min(7).max(20),
-        guestEmail:  z.string().email().nullable().optional(),
+        // The name on the booking may differ from the account's (booking for
+        // a partner); it defaults to the account's name. The phone and email
+        // are ALWAYS the account's own (UX-5): the typed ones are accepted
+        // from older clients and ignored.
+        guestName:   z.string().trim().min(1).max(120).optional(),
+        guestPhone:  z.string().max(40).nullable().optional(),
+        guestEmail:  z.string().max(200).nullable().optional(),
         notes:       z.string().max(500).nullable().optional(),
       }).parse(req.body)
 
@@ -1163,8 +1190,9 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // A ban applies servd-wide, whichever company raised it (owner, 2026-10-15).
       const { assertNotBannedAtCompany } = await import('../../lib/strikes.js')
       await assertNotBannedAtCompany({
-        email: body.guestEmail ?? null,
-        phone: body.guestPhone,
+        customerId: self.id,
+        email: self.email,
+        phone: self.phone,
         tenantId: concept.tenantId,
         ip:    req.ip ?? null,
         intent: 'reservation',
@@ -1193,9 +1221,11 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         )
       }
 
+      // No "how far ahead" limit for a member's booking (UX-5): the policy's
+      // maxAdvanceDays is not applied here. The minimum notice and "not in
+      // the past" still are.
       const hoursAhead = (startTime.getTime() - Date.now()) / 3_600_000
       const minAdvanceHours = bookPolicy?.minAdvanceHours ?? 2
-      const maxAdvanceDays  = bookPolicy?.maxAdvanceDays ?? 60
       if (hoursAhead < minAdvanceHours) {
         throw new AppError(
           'TOO_SOON',
@@ -1205,62 +1235,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           400,
         )
       }
-      if (hoursAhead / 24 > maxAdvanceDays) {
-        throw new AppError('TOO_FAR', `Reservations cannot be made more than ${maxAdvanceDays} days ahead.`, 400)
-      }
 
-      // ─── Per-phone limits ─────────────────────────────────────────────────
-      //
-      // The route's rate limit is per IP, which bounds nothing that matters
-      // here. Two things it does not stop:
-      //
-      //   Slot squatting. One phone number can hold every table on the book;
-      //   no confirmation is required for the reservation to occupy a slot.
-      //
-      //   SMS bombing. Every booking fires an SMS to a phone number the caller
-      //   chose, on the operator's Twilio account. Without a per-number cap
-      //   this endpoint is a free SMS relay pointed at any number in Pakistan,
-      //   billed to GS Foods — and the target need never have heard of us.
-      //
-      // Both are bounded per phone rather than per IP, because the phone is the
-      // thing being protected and the thing being spent.
-      // One phone key (auth/otp normalisePhone). The cap matches the number as
-      // typed OR any stored spelling ending in the same ten digits, so 0300…,
-      // +92300… and 92300… share one allowance.
-      const phoneKey = normalisePhone(body.guestPhone)
-      const samePhone: Prisma.ReservationWhereInput = phoneKey.length >= 10
-        ? { OR: [{ guestPhone: body.guestPhone }, { guestPhone: { endsWith: phoneKey.slice(-10) } }] }
-        : { guestPhone: body.guestPhone }
-      const [upcomingForPhone, recentForPhone] = await Promise.all([
-        prisma.reservation.count({
-          where: {
-            ...samePhone,
-            startTime: { gte: new Date() },
-            status: { in: ['booked', 'confirmed'] },
-          },
-        }),
-        prisma.reservation.count({
-          where: {
-            ...samePhone,
-            createdAt: { gte: new Date(Date.now() - 3_600_000) },
-          },
-        }),
-      ])
-      if (upcomingForPhone >= MAX_UPCOMING_PER_PHONE) {
-        throw new AppError(
-          'TOO_MANY_BOOKINGS',
-          `This number already has ${upcomingForPhone} upcoming reservations. Cancel one before booking another, or call us.`,
-          429,
-        )
-      }
-      if (recentForPhone >= MAX_BOOKINGS_PER_PHONE_PER_HOUR) {
-        req.log.warn({ phoneTail: phoneKey.slice(-4) }, 'public booking: per-phone hourly cap hit')
-        throw new AppError(
-          'TOO_MANY_BOOKINGS',
-          'Too many booking attempts for this number. Please try again later or call us.',
-          429,
-        )
-      }
+      // The per-typed-phone caps that stood here (slot squatting, SMS
+      // bombing) are replaced by the account cap below: a booking now needs an
+      // account, and only that account's own verified contacts are messaged.
 
       // Refuse bookings into closures
       const closure = await prisma.conceptBlockout.findFirst({
@@ -1285,70 +1263,27 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         throw new AppError('CLOSED', `${formatBrandName(concept.name)} isn't taking bookings at that time. Please pick another time.`, 409)
       }
 
-      // Link to a customer account ONLY when the caller has proved they are
-      // that customer.
-      //
-      // This route is unauthenticated, and it used to attach the booking to
-      // whichever account matched the typed phone or email — neither of which
-      // anybody had verified. So knowing a regular's mobile number was enough
-      // to book in their name, not turn up, and have the no-show recorded
-      // against their real account: recomputeCustomerRollups bumps noShowCount,
-      // which is what the naughty list and blacklisting read. You could strike
-      // a customer out of their own restaurant from a phone box. It also hung a
-      // stranger's booking, with its notes, off their visit history.
-      //
-      // A booking with no linked account still works perfectly — guestName,
-      // guestPhone and guestEmail are stored on the row and are what the host
-      // stand actually reads.
-      //
-      // ── Who may be MESSAGED (ONL-09) ────────────────────────────────────
-      // This route is unauthenticated, and it used to WhatsApp and email
-      // whatever number and address it was handed — then remind them again
-      // before the booking. Anyone could make servd message any number in
-      // Pakistan, on GS Foods' account, without limit worth the name (the caps
-      // above are per typed phone, which the caller chooses). CLAUDE.md:
-      // contact details for messages come from the session.
-      //
-      // So a booking is still RECORDED for anyone (the host stand reads the
-      // typed name and phone, and the guest gets the confirm / cancel link in
-      // this response), but servd only messages a phone or email the signed-in
-      // customer has VERIFIED on their own account and typed into this
-      // booking. Nothing else is ever messaged — not now, not as a reminder.
-      let customerId: string | null = null
-      let notifyPhone = false
-      let notifyEmail = false
-      const typedEmail = body.guestEmail?.trim().toLowerCase() || null
-      const bearer = req.headers.authorization
-      if (bearer?.startsWith('Bearer ')) {
-        try {
-          const payload = verifyCustomerToken(bearer.slice(7))
-          const self = await prisma.customer.findFirst({
-            where: { id: payload.sub, deletedAt: null },
-            select: { id: true, phone: true, email: true, phoneVerifiedAt: true, emailVerifiedAt: true },
-          })
-          // Same number however it is spelled (0300…, +92300…, 92300…).
-          const phoneMatches = !!self?.phone && (
-            self.phone === body.guestPhone
-            || (phoneKey.length >= 10 && normalisePhone(self.phone).slice(-10) === phoneKey.slice(-10))
-          )
-          const emailMatches = !!typedEmail && self?.email?.toLowerCase() === typedEmail
-          // Only link to the signed-in account, and only if the booking is
-          // actually in that person's own contact details.
-          if (self && (phoneMatches || emailMatches)) customerId = self.id
-          notifyPhone = phoneMatches && !!self?.phoneVerifiedAt
-          notifyEmail = emailMatches && !!self?.emailVerifiedAt
-        } catch {
-          // Not a valid customer token — book as a guest.
-        }
-      }
+      // ── Who is on the booking, and who may be MESSAGED (ONL-09, UX-5) ──
+      // The booking is the signed-in account's. Its phone and email are the
+      // account's own — never typed ones (CLAUDE.md: contact details come from
+      // the session), so nobody can book in a regular's name or make servd
+      // message a stranger. A contact is messaged only once the account has
+      // VERIFIED it.
+      const customerId = self.id
+      const guestName = body.guestName ?? self.name
+      const guestPhone = self.phone
+      const guestEmail = self.email
+      const notifyPhone = !!guestPhone && !!self.phoneVerifiedAt
+      const notifyEmail = !!guestEmail && !!self.emailVerifiedAt
       // Reminders (workers/reservationReminders.ts) go to every contact on the
       // row and skip a row whose reminder24hSentAt is set. A booking carrying
       // any contact that is not verified gets that flag at creation, so the
       // worker never messages it. (A dedicated "contact verified" column
       // read by the worker would be cleaner; this needs neither.)
-      const remindable = notifyPhone && (!typedEmail || notifyEmail)
-      // Someone the restaurant can hold to account: a signed-in customer who
-      // booked with their own verified phone or email. Everyone else is held
+      const remindable = (notifyPhone || notifyEmail)
+        && (!guestPhone || notifyPhone) && (!guestEmail || notifyEmail)
+      // Someone the restaurant can hold to account: a member with a verified
+      // phone or email. Everyone else is held
       // to the unverified share of the tables (capacity.ts, ONLINE-R2).
       const trusted = notifyPhone || notifyEmail
 
@@ -1369,6 +1304,20 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       try {
         r = await withTableOverlapGuard(() =>
           prisma.$transaction(async (tx) => {
+            // The account cap first, under the ACCOUNT's lock, so two
+            // bookings at once (same brand or not, same company or not) are
+            // counted one after the other and never make six. Lock order:
+            // account, then brand — nothing takes them the other way round.
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reservations:customer:${self.id}`}::text))`
+            const active = await tx.reservation.count({ where: activeBookingsWhere(self.id) })
+            if (active >= MAX_ACTIVE_BOOKINGS_PER_ACCOUNT) {
+              throw new AppError(
+                'BOOKING_LIMIT_REACHED',
+                `Your servd account already has ${active} upcoming bookings, the most one account can hold at a time. Cancel one to book another.`,
+                409,
+                { limit: MAX_ACTIVE_BOOKINGS_PER_ACCOUNT, active },
+              )
+            }
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reservations:${concept.id}`}::text))`
             const [tables, overlapping] = await Promise.all([
               tx.table.findMany({ where: { conceptId: concept.id, deletedAt: null }, select: { id: true, capacity: true } }),
@@ -1392,7 +1341,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
             if (!trusted && overlapping.filter(isUnverifiedOnline).length >= unverifiedCap(tables.length)) {
               throw new AppError(
                 'SLOT_FULL',
-                'Online bookings without an account are full at that time. Sign in with a verified phone to book it, pick another time, or call us.',
+                'Online bookings from accounts without a verified phone or email are full at that time. Verify your phone to book it, pick another time, or call us.',
                 409,
                 { signInToBook: true },
               )
@@ -1404,9 +1353,9 @@ export async function reservationRoutes(fastify: FastifyInstance) {
                 customerId,
                 partySize:  body.partySize,
                 startTime, endTime,
-                guestName:  body.guestName,
-                guestPhone: body.guestPhone,
-                guestEmail: body.guestEmail ?? null,
+                guestName,
+                guestPhone,
+                guestEmail,
                 notes:      body.notes ?? null,
                 source:     'website',
                 status:     'booked',

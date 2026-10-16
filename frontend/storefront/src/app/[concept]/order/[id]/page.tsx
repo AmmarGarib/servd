@@ -405,7 +405,7 @@ export default function OrderStatusPage() {
                   </p>
                 </div>
                 <a href={riderTel(order.rider.phone)}
-                  className="px-3 py-1.5 rounded-full text-xs font-bold"
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold"
                   style={{ background: 'var(--servd-ink)', color: '#fff' }}>
                   Call
                 </a>

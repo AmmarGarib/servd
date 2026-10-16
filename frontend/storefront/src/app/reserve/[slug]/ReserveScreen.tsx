@@ -5,6 +5,13 @@
 // (`intro`, server-rendered) so both are in the first HTML. Mounted under
 // each brand microsite as /reserve/[slug] — but reachable directly too.
 //
+// Booking is for servd members only (owner, 2026-10-16): a signed-out visitor
+// can look at times but is asked to sign in / create a servd account to book,
+// and comes back to the same booking (party, date and time ride the ?next=
+// link). There is no limit on how far ahead a date can be; an account may hold
+// 5 upcoming bookings at once (API: 409 BOOKING_LIMIT_REACHED; 401
+// AUTH_REQUIRED if the session lapsed). Times are shown as 7:30 pm.
+//
 // Flow:
 //   1. Pick party size + date → fetch availability
 //   2. Pick a time slot
@@ -32,6 +39,8 @@ import { track } from '../../../lib/analytics'
 import { PARTY_SIZES } from './partySizes'
 import { isPkMobile, normalisePhone } from '../../../lib/phone'
 import { smoothScrollTo } from '../../../lib/scroll'
+import { Field } from '@/components/ui/Field'
+import { withReturnPath } from '@/components/auth/authFlow'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -79,9 +88,13 @@ function pktHour(iso: string): number {
   return new Date(new Date(iso).getTime() + 5 * 3600_000).getUTCHours()
 }
 
+/** "7:30 pm" — Karachi time, 12-hour. */
 function fmtSlot(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', hour12: false })
+  return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Karachi', hour: 'numeric', minute: '2-digit', hour12: true })
 }
+
+/** A slot that is full for everyone (not merely held for signed-in guests). */
+function isFull(s: Slot): boolean { return !s.available && s.reason !== 'sign_in' }
 
 export default function ReserveScreen({ brandName = null, intro = null }: {
   /** The brand's display name as the server resolved it (null = unknown
@@ -108,7 +121,8 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<BookingResponse | null>(null)
-  const [signInToBook, setSignInToBook] = useState(false)
+  const [needsSignIn, setNeedsSignIn] = useState(false)
+  const [limitReached, setLimitReached] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [loadError, setLoadError] = useState(false)
   const [phoneError, setPhoneError] = useState('')
@@ -130,6 +144,17 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
   // "disabled at the brand", not a transient error — the user shouldn't see
   // a retry CTA, just a polite "we're not taking bookings right now."
   const [disabled, setDisabled] = useState(false)
+
+  // Back from sign-in: put the same booking (party, date, time) back.
+  const restoreTime = useRef<string | null>(null)
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const p = parseInt(sp.get('party') ?? '', 10)
+    const d = sp.get('date') ?? ''
+    if (p >= 1 && p <= 99) setPartySize(p)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) setDate(d)
+    restoreTime.current = sp.get('time')
+  }, [])
 
   // Pre-fill the guest's details from their account (only empty fields).
   useEffect(() => {
@@ -154,6 +179,8 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
   useEffect(() => {
     setSelected(null)
     setDisabled(false)
+    setNeedsSignIn(false)
+    setLimitReached(false)
     setLoadError(false)
     // No request for an empty or past date; say what to do instead.
     if (!dateUsable) { setData(null); setLoading(false); return }
@@ -175,7 +202,13 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
         }
         throw new Error(`availability ${r.status}`)
       })
-      .then((d) => { if (!ctl.signal.aborted) setData(d) })
+      .then((d) => {
+        if (ctl.signal.aborted) return
+        setData(d)
+        const want = restoreTime.current
+        if (want && d?.slots.some((x) => x.time === want && (x.available || x.reason === 'sign_in'))) setSelected(want)
+        restoreTime.current = null
+      })
       .catch(() => { if (!ctl.signal.aborted) { setData(null); setLoadError(true) } })
       .finally(() => { if (!ctl.signal.aborted) setLoading(false) })
     return () => ctl.abort()
@@ -203,6 +236,7 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
     const dayparts = data.dayparts && data.dayparts.length > 0 ? data.dayparts : DEFAULT_DAYPARTS
     const groups: Array<[string, Slot[]]> = dayparts.map((d) => [d.label, [] as Slot[]])
     for (const s of data.slots) {
+      if (isFull(s)) continue            // full times are hidden, not struck through
       const h = pktHour(s.time)
       // Find the first daypart whose [startHour, endHour) contains this hour.
       const idx = dayparts.findIndex((d) => h >= d.startHour && h < d.endHour)
@@ -211,10 +245,15 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
     }
     return groups.filter(([, slots]) => slots.length > 0)
   }, [data])
+  const anyBookable = groupedSlots.length > 0
+
+  // Where sign-in / sign-up sends the guest back to: this same booking.
+  const bookingNext = `/reserve/${slug}?party=${partySize}&date=${date}${selected ? `&time=${encodeURIComponent(selected)}` : ''}`
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selected || !name.trim() || !phone.trim()) return
+    if (!token) { setNeedsSignIn(true); return }
     if (!isPkMobile(normalisePhone(phone))) {
       setPhoneError('Use a Pakistani mobile like 0300 1234567')
       document.getElementById('reserve-phone')?.focus()
@@ -222,7 +261,8 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
     }
     setSubmitting(true)
     setError(null)
-    setSignInToBook(false)
+    setNeedsSignIn(false)
+    setLimitReached(false)
     try {
       // The sitting length is the restaurant's (the API ignores a client
       // value), so none is sent.
@@ -244,8 +284,15 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
         // The time was taken (or the share for guests without an account is
         // full) between loading the slots and pressing the button: say so and
         // show the times as they are now.
+        if (res.status === 401 || body.error?.code === 'AUTH_REQUIRED') {
+          setNeedsSignIn(true)
+          throw new Error('Please sign in to your servd account to book a table.')
+        }
+        if (res.status === 409 && body.error?.code === 'BOOKING_LIMIT_REACHED') {
+          setLimitReached(true)
+          throw new Error('Your servd account already has 5 upcoming bookings, which is the most one account can hold at a time. Cancel one or wait until one has passed, then book again.')
+        }
         if (res.status === 409 && (body.error?.code === 'SLOT_FULL' || body.error?.code === 'CLOSED')) {
-          setSignInToBook(!!body.error?.details?.signInToBook && !token)
           setReloadKey((k) => k + 1)
         }
         throw new Error(body?.error?.message ?? `Booking failed (${res.status})`)
@@ -293,11 +340,10 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
             <MagneticLink href={manageHref} className="servd-btn-primary">Confirm or cancel your booking</MagneticLink>
             {!sentWhatsapp && (
               <p style={{ fontSize: '0.8rem', color: 'var(--servd-dim)', maxWidth: '26rem' }}>
-                {token
-                  ? 'WhatsApp confirmations and reminders go to the verified phone on your account. Verify your number in your account to get them next time.'
-                  : <>Sign in with a verified phone to get WhatsApp confirmations and reminders next time. <Link href={`/login?next=/reserve/${slug}`} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link></>}
+                WhatsApp confirmations and reminders go to the verified phone on your account. Verify your number in your account to get them next time.
               </p>
             )}
+            <Link href="/account" style={{ color: 'var(--servd-green-ink)', fontWeight: 700, fontSize: '0.9rem' }}>See my bookings</Link>
             <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>Back to {brand}</Link>
           </div>
         </div>

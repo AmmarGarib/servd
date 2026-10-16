@@ -21,6 +21,8 @@ import { TestCompanyBanner } from './TestCompanyBanner'
 import { LensBanner } from './LensBanner'
 import { SandboxBanner } from '../SandboxBanner'
 import { NotificationBell } from './NotificationBell'
+import { NavIcon } from './NavIcon'
+import { QuickJump } from './QuickJump'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -68,7 +70,7 @@ function itemsForModules(modules: readonly string[], seen: Set<string>, lead = f
         parent.children = [...(parent.children ?? []), { href: p.href, label: p.label, module: m as ModuleId }]
         continue
       }
-      parent = { href: p.href, label: p.label, icon: p.icon ?? '·', module: m as ModuleId }
+      parent = { href: p.href, label: p.label, icon: p.icon ?? '', module: m as ModuleId }
       items.push(parent)
     }
   }
@@ -86,6 +88,11 @@ const UNGUARDED_PREFIXES = ['/login', '/kds/login', '/supplier', '/reset-passwor
 /** A workspace's home page: the CEO section has its own (/ceo, decision D2). */
 function wsHome(id: string): string {
   return id === 'ceo' ? '/ceo' : `/w/${id}`
+}
+
+const PERSONAL_ICONS: Record<string, string> = {
+  '/team': 'users', '/ceo/approvals': 'check', '/me/notifications': 'bell',
+  '/trash': 'trash', '/hr/me': 'idcard', '/finance/cash-vouchers': 'cash',
 }
 
 function isActive(pathname: string, href: string): boolean {
@@ -222,32 +229,28 @@ function NavLinks({
       '/trash': !allowedModules.has('trash'),
     }
     return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
-      href: p.href, label: p.label, icon: '·',
+      href: p.href, label: p.label, icon: PERSONAL_ICONS[p.href],
       ...(p.href === '/ceo/approvals' && approvalsWaiting > 0 && { badge: String(approvalsWaiting) }),
     }))
   }, [team, me?.role, me?.childRoles, allowedModules, approvalsWaiting, isDelegate])
 
-  // Workspace open/closed — entries "id:1" / "id:0" once the user has chosen;
-  // until then the first (own) workspace and any they own start open, and the
-  // one holding the current page opens itself.
-  const [wsState, setWsState] = usePersistedSet('servd_nav_workspaces_v1', new Set())
-  function explicitOpen(id: string): boolean | undefined {
-    if (wsState.has(`${id}:1`)) return true
-    if (wsState.has(`${id}:0`)) return false
-    return undefined
-  }
+  // Workspace accordion (ERP-16, owner 2026-10-16): ONE workspace section is
+  // open at a time. Until the user picks one, the section holding the current
+  // page is open (else the first); moving to a page inside a section opens it.
+  const [picked, setPicked] = useState<string | null>(null)
   function groupHasActive(g: NavGroup): boolean {
     return g.sections.some((s) => s.items.some((i) => isActive(pathname, i.href) || i.children?.some((c) => isActive(pathname, c.href))))
   }
-  function isOpen(g: NavGroup, index: number): boolean {
-    const e = explicitOpen(g.id)
-    if (e !== undefined) return e
-    return index === 0 || g.owner || groupHasActive(g)
+  const activeGroupId = groups.find(groupHasActive)?.id
+  const openId = picked && groups.some((g) => g.id === picked) ? picked : (activeGroupId ?? groups[0]?.id)
+  useEffect(() => { if (activeGroupId) setPicked(null) }, [pathname, activeGroupId])
+  function isOpen(g: NavGroup, _index: number): boolean {
+    return g.id === openId
   }
-  function toggleGroup(g: NavGroup, index: number) {
-    const next = new Set(Array.from(wsState).filter((k) => !k.startsWith(`${g.id}:`)))
-    next.add(`${g.id}:${isOpen(g, index) ? 0 : 1}`)
-    setWsState(next)
+  function toggleGroup(g: NavGroup, _index: number) {
+    // Clicking the open section keeps it open (an accordion always has one);
+    // clicking another one switches.
+    setPicked(g.id)
   }
 
   // Expanded parents (child reveal) — also persisted
@@ -293,7 +296,7 @@ function NavLinks({
       for (const s of g.sections) {
         for (const i of s.items) {
           map.set(i.href, i)
-          for (const c of i.children ?? []) map.set(c.href, { href: c.href, label: c.label, icon: '·' })
+          for (const c of i.children ?? []) map.set(c.href, { href: c.href, label: c.label, icon: '' })
         }
       }
     }
@@ -395,7 +398,7 @@ function NavLinks({
               <div className="flex items-center gap-1 px-2.5 pb-1">
                 <button onClick={() => toggleGroup(g, index)}
                   className="flex items-center gap-1.5 flex-1 min-w-0 rounded-md px-1.5 py-1 text-left hover:bg-white/[0.03]"
-                  title={open ? `Collapse ${g.title}` : `Expand ${g.title}`}>
+                  title={open ? `${g.title} is open` : `Open ${g.title}`} aria-expanded={open}>
                   <span className="transition-transform duration-150"
                     style={{ color: 'rgb(var(--fg-rgb) / 0.3)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
                   <span className="text-[10.5px] font-black uppercase tracking-[0.2em] truncate"
@@ -511,7 +514,7 @@ function NavLinkRow({
         onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.06)'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.95)' } }}
         onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.72)' } }}
       >
-        <span className="text-[15px] shrink-0">{item.icon}</span>
+        <span className="flex w-[18px] shrink-0 justify-center"><NavIcon name={item.icon} size={17} /></span>
         {!collapsed && (
           <span className="text-[12.5px] font-semibold leading-none truncate flex-1">{item.label}</span>
         )}

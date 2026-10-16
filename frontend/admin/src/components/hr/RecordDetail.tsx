@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import {
-  displayValue, human, day, rs, btn, btnGhost, inp, STATUS_COLOR, ROLE_LABEL, withLeaveDays, leaveFields,
+  displayValue, human, day, rs, btn, btnGhost, btnDanger, inp, STATUS_COLOR, ROLE_LABEL, withLeaveDays, leaveFields,
   type HrFormat, type HrRecord, type Lookups, type OrgData,
 } from '../../lib/hr'
 import { FormRenderer, BANK_ACCOUNT_REF } from './FormRenderer'

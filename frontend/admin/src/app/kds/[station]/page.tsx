@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, TriangleAlert } from 'lucide-react'
+import { FulfilmentIcon } from '../../../components/kds/FulfilmentIcon'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../../lib/api'
 import { useKdsSocket } from '../../../hooks/useKdsSocket'
@@ -54,10 +56,10 @@ interface RecipeData {
 type FulfilmentType = 'dine_in' | 'takeout' | 'delivery'
 
 // Loud per-card badge so the line cook sees plate-vs-package at a glance.
-const FULFILMENT_META: Record<FulfilmentType, { emoji: string; label: string; short: string; accent: string; bg: string }> = {
-  dine_in:  { emoji: '🍽',  label: 'Dine-in',  short: 'PLATE',    accent: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
-  takeout:  { emoji: '🥡', label: 'Takeout',  short: 'PACK',     accent: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-  delivery: { emoji: '🛵', label: 'Delivery', short: 'PACK+LBL', accent: '#ec4899', bg: 'rgba(236,72,153,0.12)' },
+const FULFILMENT_META: Record<FulfilmentType, { label: string; short: string; accent: string; bg: string }> = {
+  dine_in:  { label: 'Dine-in',  short: 'PLATE',    accent: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
+  takeout:  { label: 'Takeout',  short: 'PACK',     accent: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  delivery: { label: 'Delivery', short: 'PACK+LBL', accent: '#ec4899', bg: 'rgba(236,72,153,0.12)' },
 }
 
 interface StepTicket {
@@ -190,13 +192,13 @@ export default function StationKdsPage() {
     <div className="erp-kitchen-dark flex h-screen flex-col bg-kds-bg">
       <NewOrderFlash />
       <div className="shrink-0 px-4 pt-3 pb-1 flex items-center justify-between gap-3 flex-wrap">
-        <Link href="/expo" className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1 transition-colors">
-          ← Expo
+        <Link href="/expo" className="min-h-11 text-sm text-kds-subtext hover:text-kds-text flex items-center gap-1.5 transition-colors">
+          <ArrowLeft size={16} aria-hidden="true" /> Expo
         </Link>
         <div className="flex items-center gap-2">
           {waitingCount > 0 && (
             <span className="text-xs font-bold rounded-full px-2.5 py-1"
-              style={{ background: 'rgba(99,102,241,0.12)', color: '#A5B4FC' }}>
+              style={{ background: 'rgba(59,130,246,0.12)', color: '#93C5FD' }}>
               {waitingCount} on deck
             </span>
           )}
@@ -216,7 +218,7 @@ export default function StationKdsPage() {
           {!isLoading && cooking.length === 0 && (
             <div className="rounded-2xl p-12 text-center"
               style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <p className="text-4xl mb-2">✓</p>
+              <Check size={36} aria-hidden="true" className="mx-auto mb-2 text-kds-green" />
               <p className="text-base font-bold text-kds-text">All clear</p>
               <p className="text-xs text-kds-subtext mt-1">New tickets will appear here when expo fires.</p>
             </div>
@@ -260,7 +262,7 @@ export default function StationKdsPage() {
                     {/* Loud fulfilment badge — first thing the cook sees */}
                     <div className="absolute -top-2 left-3 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-[0.15em]"
                       style={{ background: fm.bg, color: fm.accent, border: `1px solid ${fm.accent}50` }}>
-                      {fm.emoji} {fm.short}
+                      <FulfilmentIcon type={t.order.fulfilmentType} size={12} /> {fm.short}
                       {t.order.tableLabel && <span className="ml-1 opacity-80">· {t.order.tableLabel}</span>}
                     </div>
                     <div className="flex items-center justify-between mb-2 mt-1 text-[10px] uppercase tracking-wider font-bold">
@@ -273,13 +275,13 @@ export default function StationKdsPage() {
                       {t.itemName}
                     </p>
                     {stepInstruction && (
-                      <p className="text-sm font-semibold mt-2 leading-snug" style={{ color: '#5EEAD4' }}>
-                        → {stepInstruction}
+                      <p className="text-sm font-semibold mt-2 leading-snug" style={{ color: '#86EFAC' }}>
+                        <ArrowRight size={14} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" />{stepInstruction}
                       </p>
                     )}
                     {t.itemNotes && (
                       <p className="text-xs italic mt-1.5" style={{ color: '#FCD34D' }}>
-                        ⚠ {t.itemNotes}
+                        <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{t.itemNotes}
                       </p>
                     )}
                     <p className="text-[11px] text-kds-subtext mt-2">
@@ -291,7 +293,8 @@ export default function StationKdsPage() {
                       </p>
                     )}
                     <p className="text-[10px] text-kds-subtext/60 mt-2 italic">
-                      {expanded ? (isUrdu ? '▲ بند کریں' : '▲ Hide instructions') : (isUrdu ? '▼ ہدایات' : '▼ Tap for full instructions')}
+                      {expanded ? <ChevronUp size={12} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" /> : <ChevronDown size={12} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" />}
+                      {expanded ? (isUrdu ? 'بند کریں' : 'Hide instructions') : (isUrdu ? 'ہدایات' : 'Tap for full instructions')}
                     </p>
                   </button>
 
@@ -313,9 +316,8 @@ export default function StationKdsPage() {
                     {/* A held line resumes before it can be bumped. */}
                     {!isHeld && (
                       <button onClick={onBump} disabled={pending}
-                        className="w-full rounded-xl py-3 text-base font-black transition-all disabled:opacity-40"
-                        style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
-                        {pending ? (isUrdu ? 'مکمل ہو رہا ہے…' : 'Bumping…') : (isUrdu ? 'مکمل ✓' : (isRemake ? 'Bump remake ✓' : 'Bump ✓'))}
+                        className="w-full min-h-11 rounded-xl py-3 text-base font-black transition-all disabled:opacity-40 bg-kds-green text-primary-on inline-flex items-center justify-center gap-2">
+                        {pending ? (isUrdu ? 'مکمل ہو رہا ہے…' : 'Bumping…') : (<><Check size={18} aria-hidden="true" />{isUrdu ? 'مکمل' : (isRemake ? 'Bump remake' : 'Bump')}</>)}
                       </button>
                     )}
                     {isLegacy && <HoldButton itemId={t.itemId} status={lineStatus} actions={lineActions} />}
@@ -349,14 +351,14 @@ export default function StationKdsPage() {
                     style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
                     <p className="text-[10px] uppercase tracking-wider font-bold mb-2"
                       style={{ color: fm.accent }}>
-                      {fm.emoji} {fm.short} · {t.order.concept.name} · waiting
+                      <FulfilmentIcon type={t.order.fulfilmentType} size={11} /> {fm.short} · {t.order.concept.name} · waiting
                     </p>
                     <p className="text-base font-bold text-kds-text/70 leading-tight">
                       {t.qty > 1 && <span className="text-kds-subtext mr-1">{t.qty}×</span>}
                       {t.itemName}
                     </p>
                     <p className="text-sm font-semibold mt-2 text-kds-subtext italic">
-                      → {t.instruction}
+                      {t.instruction}
                     </p>
                   </div>
                 )
@@ -504,7 +506,7 @@ function StationInstructionPanel({
 
       {data.notes && (
         <p className="text-[11px] italic text-kds-amber/80 border-t border-white/[0.04] pt-2">
-          ⚠ {data.notes}
+          <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{data.notes}
         </p>
       )}
     </div>

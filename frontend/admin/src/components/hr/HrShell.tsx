@@ -71,8 +71,8 @@ export function HrShell({ title, subtitle, actions, children }: { title: string;
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">HR</p>
-            <h1 className="text-2xl font-black text-white/90">{title}</h1>
-            {subtitle && <p className="text-sm text-white/40 mt-1 max-w-3xl">{subtitle}</p>}
+            <h1 className="text-2xl sm:text-3xl font-black text-white/90">{title}</h1>
+            {subtitle && <p className="text-sm text-white/60 mt-1 max-w-3xl">{subtitle}</p>}
           </div>
           {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
         </div>
