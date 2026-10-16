@@ -97,7 +97,6 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Stock count', href: '/inventory/count', sub: true },
     { label: 'Low stock', href: '/inventory/alerts', sub: true },
     { label: 'Prep', href: '/inventory/prep', sub: true },
-    { label: 'Sourcing sheet', href: '/sourcing', icon: '🧾' },
   ],
   // The par sheet's "Log a batch" / per-row "Log batch" open the prep batch
   // logger, so par_sheet holders (kitchen, expediter) open /inventory/prep too
@@ -111,6 +110,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   procurement:    [
     { label: 'Procurement', href: '/procurement', icon: '🏭', hint: 'Purchase orders, bills, payments' },
     { label: 'Receiving', href: '/procurement/receiving', sub: true },
+    // Owner 2026-10-16: "Move sourcing sheet inside procurement section".
+    { label: 'Sourcing sheet', href: '/sourcing', sub: true, hint: 'Ingredient catalogue and supplier prices' },
     // Also an Accounting page: the API gate on /procurement/grni admits
     // procurement and accounting (finance asks for a write-off, the CEO approves).
     { label: 'Received, not billed', href: '/procurement/grni', sub: true },
