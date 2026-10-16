@@ -6,7 +6,9 @@
 //   - Two companies: HR of B gets 404 on A's login; HR of A sends to A's login.
 //   - HR never for the CEO's or a co-owner's login (403); the CEO may.
 //   - Cashier / finance / management cannot use it (403).
-//   - No email 422, not active 409, more than 3 an hour 429, no channel 503.
+//   - No email 422, not active 409, more than 3 an hour 429 (parallel too, and
+//     counting the person's own Forgot-password links), no channel 503.
+//   - A login shared with another company 403; a floor login 400; practice copy 503.
 //   - The link is never returned to the caller; an audit row is written.
 //
 // Real route handlers through Fastify inject; needs the disposable test DB.
@@ -21,8 +23,12 @@ vi.mock('../src/lib/mailer.js', async (orig) => {
   return {
     ...real,
     emailConfigured: vi.fn(async () => true),
-    sendEmail: vi.fn(async (to: string, _subject: string, html: string) => { sent.push({ to, body: html }) }),
   }
+})
+// The reset sender emails through lib/notify.js.
+vi.mock('../src/lib/notify.js', async (orig) => {
+  const real = await orig<typeof import('../src/lib/notify.js')>()
+  return { ...real, sendEmail: vi.fn(async (to: string, _subject: string, html: string) => { sent.push({ to, body: html }) }) }
 })
 vi.mock('../src/lib/whatsapp.js', async (orig) => {
   const real = await orig<typeof import('../src/lib/whatsapp.js')>()
@@ -81,6 +87,9 @@ beforeAll(async () => {
   await mkUser('offA', 'marketing', [T.A], { accountStatus: 'suspended', isActive: false })
   await mkUser('noMailA', 'marketing', [T.A], { email: null })
   await mkUser('hrNoModule', 'hr', [T.A], { moduleDeny: ['staff_hr'] })
+  await mkUser('staffA3', 'marketing', [T.A])
+  await mkUser('staffA4', 'marketing', [T.A])
+  await mkUser('sharedAB', 'marketing', [T.A, T.B])
 
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
@@ -157,6 +166,56 @@ describe('HR sends a password reset link', () => {
     expect(r.statusCode).toBe(429)
     expect(r.json().error.code).toBe('TOO_MANY_LINKS')
     expect(await prisma.staffPasswordReset.count({ where: { userId: id, consumedAt: null } })).toBe(1)
+  })
+
+  it('parallel clicks cannot get past the cap (atomic bucket)', async () => {
+    const id = U['staffA3']!.id
+    const rs = await Promise.all(Array.from({ length: 6 }, () => send('hrA', id)))
+    const ok = rs.filter((r) => r.statusCode === 200).length
+    expect(ok).toBeGreaterThan(0)
+    expect(ok).toBeLessThanOrEqual(3)
+    expect(rs.filter((r) => r.statusCode !== 200).every((r) => r.statusCode === 429)).toBe(true)
+    expect(await links(id)).toBeLessThanOrEqual(3)
+  })
+
+  it("the person's own Forgot-password links count towards the cap", async () => {
+    const id = U['staffA4']!.id
+    for (let i = 0; i < 3; i++) {
+      await prisma.staffPasswordReset.create({ data: { userId: id, tokenHash: `${P}-self-${i}`, expiresAt: new Date(Date.now() + 60_000) } })
+    }
+    const r = await send('hrA', id)
+    expect(r.statusCode).toBe(429)
+    expect(r.json().error.code).toBe('TOO_MANY_LINKS')
+  })
+
+  it('a login shared with a company the sender is not in is refused (403), nothing sent', async () => {
+    sent.length = 0
+    const r = await send('hrA', U['sharedAB']!.id)
+    expect(r.statusCode).toBe(403)
+    expect(r.json().error.code).toBe('LOGIN_IN_OTHER_COMPANY')
+    expect(sent).toHaveLength(0)
+    expect(await links(U['sharedAB']!.id)).toBe(0)
+  })
+
+  it('floor logins sign in with a code: no reset link (400)', async () => {
+    const r = await send('hrA', U['cashA']!.id)
+    expect(r.statusCode).toBe(400)
+    expect(r.json().error.code).toBe('NOT_A_PASSWORD_LOGIN')
+    expect(await links(U['cashA']!.id)).toBe(0)
+  })
+
+  it('the practice copy sends no links (503), nothing issued', async () => {
+    const prev = process.env['SERVD_SANDBOX']
+    process.env['SERVD_SANDBOX'] = '1'
+    try {
+      const r = await send('ceoA', U['finA']!.id)
+      expect(r.statusCode).toBe(503)
+      expect(r.json().error.code).toBe('PRACTICE_NO_LINKS')
+    } finally {
+      if (prev === undefined) delete process.env['SERVD_SANDBOX']
+      else process.env['SERVD_SANDBOX'] = prev
+    }
+    expect(await links(U['finA']!.id)).toBe(0)
   })
 
   it('503 when neither email nor WhatsApp is set up', async () => {

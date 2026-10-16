@@ -107,6 +107,11 @@ const PIN_CHANGE_USER_LIMIT = { scope: 'pin-change-user', max: 5, lockoutSec: 15
 const PIN_CHANGE_ATTEMPT_LIMIT = { scope: 'pin-change-attempt', max: 6, lockoutSec: 60 * 60 }
 // HR / CEO "send reset link": at most this many links per login per hour.
 const RESET_LINKS_PER_HOUR = 3
+// The same cap as an atomic bucket (claim = INCR before the send), so parallel
+// clicks cannot all pass the DB count; and a per-SENDER cap so one HR login
+// cannot mail the whole staff list over and over.
+const RESET_LINK_TARGET_LIMIT = { scope: 'staff-reset-link', max: RESET_LINKS_PER_HOUR, lockoutSec: 60 * 60 }
+const RESET_LINK_SENDER_LIMIT = { scope: 'staff-reset-link-sender', max: 20, lockoutSec: 60 * 60 }
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -1341,8 +1346,14 @@ export async function authRoutes(fastify: FastifyInstance) {
   // lasts 30 minutes and kills any older link. Nobody but the person sees it —
   // unlike /users/:id/reissue-password, which shows the CEO a password.
   // Same scope as offboard (findManagedStaff: other company 404 / 403); HR never
-  // for the CEO's or a co-owner's login (403 RESET_LINK_CEO_ONLY). At most
-  // RESET_LINKS_PER_HOUR per login an hour (429), so it cannot be used to spam.
+  // for the CEO's or a co-owner's login (403 RESET_LINK_CEO_ONLY); never a floor
+  // login (400 NOT_A_PASSWORD_LOGIN — they sign in with a code). At most
+  // RESET_LINKS_PER_HOUR per login an hour, the person's own Forgot-password
+  // links included, and 20 per sender an hour (429), so it cannot be used to
+  // spam or to keep killing someone's link. HR cannot change a login's email or
+  // phone (PATCH /users/:id is ADMIN_ONLY), so it cannot redirect the link.
+  // A head-office login with reach gets 404 (findManagedStaff is members only)
+  // or 403 HEAD_OFFICE_SUBMIT_ONLY through the lens (not on the allow-list).
   fastify.post<{ Params: { id: string } }>(
     '/staff/:id/send-password-link',
     { preHandler: requireAuth(...OFFBOARDERS) },
@@ -1352,6 +1363,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true })
       if (!isCeo && (target.role === 'admin' || target.role === 'owner')) {
         throw new AppError('RESET_LINK_CEO_ONLY', "Only the CEO can send a reset link to the CEO's or a co-owner's login.", 403)
+      }
+      // Floor logins sign in with a WhatsApp code; a password would never be
+      // accepted for them on live (USE_CODE_LOGIN), so a link is pointless.
+      if (usesOtpLogin(target.role)) {
+        throw new AppError('NOT_A_PASSWORD_LOGIN', 'This person signs in with a code sent to WhatsApp, so there is no password to reset.', 400)
       }
       if (!target.email) throw new AppError('EMAIL_REQUIRED', 'This login has no email address. Add one first.', 422)
       if (accountStateOf(target) !== 'active') {
@@ -1366,8 +1382,17 @@ export async function authRoutes(fastify: FastifyInstance) {
       const recent = await prisma.staffPasswordReset.count({
         where: { userId: target.id, createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
       })
-      if (recent >= RESET_LINKS_PER_HOUR) {
-        throw new AppError('TOO_MANY_LINKS', `${RESET_LINKS_PER_HOUR} links were already sent to this person in the last hour. Try again later.`, 429)
+      const tooMany = () => new AppError('TOO_MANY_LINKS', `${RESET_LINKS_PER_HOUR} links were already sent to this person in the last hour. Try again later.`, 429)
+      // The DB count also counts links the person asked for themselves (Forgot
+      // password), so HR cannot keep killing a link they are about to use.
+      if (recent >= RESET_LINKS_PER_HOUR) throw tooMany()
+      const is429 = (e: unknown) => e instanceof AppError && e.statusCode === 429
+      try { await claimRateLimit(RESET_LINK_TARGET_LIMIT, target.id) } catch (e) { throw is429(e) ? tooMany() : e }
+      try {
+        await claimRateLimit(RESET_LINK_SENDER_LIMIT, req.staffUser!.id)
+      } catch (e) {
+        await releaseRateLimit(RESET_LINK_TARGET_LIMIT, target.id)
+        throw is429(e) ? new AppError('TOO_MANY_LINKS_SENT', 'You have sent a lot of reset links in the last hour. Try again later.', 429) : e
       }
       const outcome = await requestPasswordReset(target.email, req.ip ?? null)
       if (outcome.errors.length) req.log.error({ target: target.id, outcome }, 'staff reset link: delivery problem')
