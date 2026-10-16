@@ -1163,6 +1163,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   marked `TODO(<id>)` (H45, H49) are built next — see "Finance wave B" below.
   Build a `TODO(<id>)` only on the owner's answer.
 
+- **Cost allocations are finance's too (owner, 2026-10-16: "Hasnain runs the
+  monthly allocation and edits the rules; every run is recorded and can be
+  reversed").** Saving rules, running them and `POST /allocations/runs/:id/reverse
+  {reason ≥10}` are open to the CEO and finance with `accounting`; deleting a
+  rule stays the CEO's. A reversal flips the run's entry
+  (`allocation.run.reversal:<runId>`, brand tags kept) on the run's own day
+  (today if that month is closed), once (409 `RUN_ALREADY_REVERSED`); a reversed
+  run no longer blocks its period and the cost reader skips run and reversal
+  entries. Closed books stay the CEO's through the ledger. Audited with
+  `actorRole`. Tests: `tests/allocationsFinance.test.ts`.
+
 ### Finance wave B (2026-10-14; Hasnain's answers H1–H31 + the owner's)
 
 - **Stock is FIFO lots, costed at the price paid.** `lib/stockLedger.ts` is
@@ -1321,6 +1332,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   company; audit carries `actorRole`, `settle`); a LIVE card stays the
   managers' (403 `VOID_NEEDS_MANAGER`, under the card lock), a card holding
   nothing is 409 `NOTHING_TO_SETTLE`, forfeiting a sold card stays the CEO's.
+- **Company-less suppliers → GS Foods, once (owner, 2026-10-16: "All to GS
+  Foods").** `procurement/companylessSuppliers.ts` at boot (before the
+  opening-balance sync), marker Setting
+  `procurement.companylessSuppliersAssignedAt`. Target = the ONE `kind:
+  'company'` named exactly `GS Foods`, else nothing changes and no marker
+  (`/health` `supplierCompanies`, counts only). Deleted suppliers move too. A
+  supplier with any record in ANOTHER company (or a system supplier GS Foods
+  already has) is skipped and flagged `supplier_company_unassigned` for the CEO;
+  the supplier editor resolves it. Ledger entries never move; company-less goods
+  receipts are stamped; the opening balance posts in GS Foods. Audit
+  `supplier.company_assigned`. Tests: `tests/companylessSuppliers.test.ts`.
 - **Combining companies (`POST /tenants/merge`):** everything with a
   `tenantId` moves or the merge is refused (422) — never stranded on the
   deleted company. A new company table is added to the merge

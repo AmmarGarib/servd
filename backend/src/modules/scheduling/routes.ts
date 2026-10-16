@@ -5,8 +5,8 @@
 // (hr/rota.ts) — managers store only the EXCEPTIONS here: a different time on
 // a day, an extra shift, or a day off. An approved HR shift_swap moves a day
 // on its own; there is no swap request here any more (HR's shift_swap is the
-// only one). The week is costed from HR salaries (gross ÷ working days ÷
-// hours per day), never from User.hourlyRateCents.
+// only one). The week is costed from HR salaries (gross ÷ the calendar days
+// of the month ÷ hours per day, owner HR-1), never from User.hourlyRateCents.
 //
 // People on the grid are the company's current HR employees whose branch
 // serves this brand (or who have no branch). Everything is company-scoped:

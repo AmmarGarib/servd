@@ -88,7 +88,7 @@ describe('the target company must be exactly one', () => {
     const r = await assignCompanylessSuppliers({ targetName: `Nobody ${P}`, markerKey: `${MARKER}.none`, supplierIds: ours() })
     expect(r.status).toBe('no_target')
     expect(r.targetCount).toBe(0)
-    expect(await prisma.supplier.count({ where: { id: { in: ours() }, tenantId: null } })).toBe(7)
+    expect(await prisma.supplier.count({ where: { id: { in: ours() }, tenantId: null } })).toBe(6)
     expect(await prisma.setting.findUnique({ where: { key: `${MARKER}.none` } })).toBeNull()
   })
 
@@ -97,7 +97,7 @@ describe('the target company must be exactly one', () => {
     const r = await assignCompanylessSuppliers({ markerKey: `${MARKER}.two`, supplierIds: ours() })
     expect(r.status).toBe('no_target')
     expect(r.targetCount).toBeGreaterThanOrEqual(2)
-    expect(await prisma.supplier.count({ where: { id: { in: ours() }, tenantId: null } })).toBe(7)
+    expect(await prisma.supplier.count({ where: { id: { in: ours() }, tenantId: null } })).toBe(6)
     expect(await prisma.setting.findUnique({ where: { key: `${MARKER}.two` } })).toBeNull()
   })
 

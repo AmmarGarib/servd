@@ -109,7 +109,7 @@ export function mergeSettings(stored: Partial<HrSettings> | null | undefined): H
 /** The days a month's salary is divided by: the actual calendar days of
  *  `period` (YYYY-MM; default this month) — 28, 29, 30 or 31 (owner HR-1). */
 export function payDaysFor(_s: HrSettings, period?: string | null): number {
-  return daysInPeriod(period ?? periodOf(new Date()))
+  return daysInPeriod(period ?? periodOf(pktToday()))
 }
 
 /** One day's pay (unrounded paisa): gross ÷ the month's calendar days. */
@@ -209,7 +209,8 @@ export function employedFraction(period: string, joiningDate: Date | null, lastW
   const end = periodEnd(period)
   const from = joiningDate && joiningDate > start ? joiningDate : start
   const to = lastWorkingDay && lastWorkingDay < end ? lastWorkingDay : end
-  if (to < from) return 0
+  // Calendar days, never instants: a joiner whose last working day is the same
+  // day (stored with an earlier time) was still employed that day.
   return inclusiveDays(from, to) / daysInPeriod(period)
 }
 

@@ -619,7 +619,7 @@ export async function prefillInputs(tenantId: string, emp: HrEmployee, period: s
   // them, so an absence or unpaid leave outside them would be charged twice.
   const wFrom = emp.joiningDate && emp.joiningDate > from ? emp.joiningDate : from
   const wTo = emp.lastWorkingDay && emp.lastWorkingDay < to ? emp.lastWorkingDay : to
-  if (wFrom <= wTo) {
+  if (Date.UTC(wFrom.getUTCFullYear(), wFrom.getUTCMonth(), wFrom.getUTCDate()) <= wTo.getTime()) {
     Object.assign(inputs, attendanceInputs(
       wFrom, wTo,
       attendance.filter((a) => a.startDate).map((a) => ({ date: a.startDate!, status: a.category, lateMinutes: a.quantity, createdAt: a.createdAt })),
