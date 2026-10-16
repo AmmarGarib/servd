@@ -1146,8 +1146,8 @@ async function build() {
   try {
     const { assignCompanylessSuppliers } = await import('./modules/procurement/companylessSuppliers.js')
     const r = await assignCompanylessSuppliers()
-    if (r.status === 'done' && (r.assigned.length || r.skipped.length)) {
-      fastify.log.info(`[suppliers] company-less suppliers: ${r.assigned.length} assigned, ${r.skipped.length} left for the CEO (flagged)`)
+    if (r.status === 'done' && (r.assigned.length || r.skipped.length || r.failed)) {
+      fastify.log.info(`[suppliers] company-less suppliers: ${r.assigned.length} assigned, ${r.skipped.length} left for the CEO (flagged)${r.failed ? `, ${r.failed} failed (retried next boot)` : ''}`)
     } else if (r.status === 'no_target') {
       fastify.log.warn(`[suppliers] company-less supplier assignment waiting: ${r.targetCount} target companies (expected exactly 1)`)
     }
