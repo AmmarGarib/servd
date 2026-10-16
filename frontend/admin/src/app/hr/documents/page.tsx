@@ -51,8 +51,8 @@ export default function HrDocumentsPage() {
   return (
     <HrShell title="Documents" subtitle="CNICs, contracts, certificates and everything else on file — with expiry and verification."
       actions={<button className={btn} onClick={() => setAdding(true)}>Add document</button>}>
-      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
-      {actErr && <p className="text-sm text-red-700 mb-4" role="alert">{actErr}</p>}
+      {error && <p className="text-sm text-s-red mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
+      {actErr && <p className="text-sm text-s-red mb-4" role="alert">{actErr}</p>}
       <div className="flex flex-wrap gap-3 mb-4">
         <Select className={`${inp} max-w-[200px]`} value={win} onChange={(e) => setWin(e.target.value)}>
           {WINDOWS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
@@ -83,7 +83,7 @@ export default function HrDocumentsPage() {
             <tbody>
               {shown.map((d) => {
                 const exp = d.expiryDate ? new Date(d.expiryDate).getTime() : null
-                const tone = exp == null ? 'rgb(var(--fg-rgb) / 0.6)' : exp < now ? 'var(--erp-danger)' : exp < now + 30 * 86_400_000 ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.6)'
+                const tone = exp == null ? 'rgb(var(--fg-rgb) / 0.6)' : exp < now ? 'var(--erp-danger)' : exp < now + 30 * 86_400_000 ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.6)'
                 return (
                   <tr key={d.id} className="border-t border-white/[0.05]">
                     <td className="px-4 py-2"><Link href={`/hr/employees/${d.employeeId}`} className="font-bold text-white/85 hover:underline">{d.employee.fullName}</Link> <span className="text-white/35 text-xs">{d.employee.employeeCode}</span></td>
@@ -95,7 +95,7 @@ export default function HrDocumentsPage() {
                     <td className="px-4 py-2 text-white/60">{day(d.issueDate)}</td>
                     <td className="px-4 py-2" style={{ color: tone }}>{day(d.expiryDate)}</td>
                     <td className="px-4 py-2 text-white/60">{d.verifiedAt ? day(d.verifiedAt) : <button className="text-xs font-bold text-primary-ink px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Verify</button>}</td>
-                    <td className="px-4 py-2 text-right"><button className="text-xs text-white/50 hover:text-red-700 px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
+                    <td className="px-4 py-2 text-right"><button className="text-xs text-white/50 hover:text-s-red px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
                       const ok = await confirm({ title: 'Delete this document?', body: `${d.title || human(d.docType)} for ${d.employee.fullName} will be removed.`, confirmLabel: 'Delete', danger: true })
                       if (ok) del.mutate(d.id)
                     }}>Delete</button></td>
@@ -165,7 +165,7 @@ function AddDocument({ types, employees, defaultEmployee, onClose, onSaved }: {
           <L label="Issued"><input type="date" className={inp} value={f.issueDate} onChange={(e) => setF({ ...f, issueDate: e.target.value })} /></L>
           <L label="Expires"><input type="date" className={inp} value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} /></L>
         </div>
-        {(formErr || save.error || uploadErr) && <p className="text-xs text-red-700" role="alert">{formErr || (save.error as Error)?.message || uploadErr}</p>}
+        {(formErr || save.error || uploadErr) && <p className="text-xs text-s-red" role="alert">{formErr || (save.error as Error)?.message || uploadErr}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" className={btnGhost} onClick={uploadErr ? onSaved : onClose}>{uploadErr ? 'Close' : 'Cancel'}</button>
           <button type="submit" className={btn} disabled={save.isPending || !!uploadErr}>{save.isPending ? 'Saving…' : 'Save'}</button>

@@ -168,7 +168,7 @@ export function PosCart({ conceptId, onCheckout, onClose }: PosCartProps) {
         <button
           onClick={onCheckout}
           disabled={cart.length === 0 || !conceptId}
-          className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
+          className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95"
         >
           {cash ? `Charge ${fmtPkrWhole(cash.totalCents)}` : 'Charge'}
         </button>

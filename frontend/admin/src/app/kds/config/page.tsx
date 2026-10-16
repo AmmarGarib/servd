@@ -225,7 +225,7 @@ function StationsTab() {
                                 <button
                                   onClick={() => saveEdit(s.id)}
                                   disabled={patchStation.isPending || !draftName.trim()}
-                                  className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black hover:opacity-90 disabled:opacity-50">
+                                  className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
                                   Save
                                 </button>
                                 <button
@@ -310,7 +310,7 @@ function StationsTab() {
                         <button
                           type="submit"
                           disabled={!draft.trim() || isCreating}
-                          className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black hover:opacity-90 disabled:opacity-50">
+                          className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
                           {isCreating ? 'Adding…' : 'Add station'}
                         </button>
                       </form>

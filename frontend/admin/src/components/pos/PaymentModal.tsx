@@ -485,7 +485,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           No connection. The order is queued and will reach the kitchen when the till is back online.
           Take payment from <strong className="text-kds-text">Open tickets</strong> once it appears there.
         </p>
-        <button onClick={onClose} className="w-full rounded-xl bg-kds-green py-3 font-bold text-white">Done</button>
+        <button onClick={onClose} className="w-full rounded-xl bg-kds-green py-3 font-bold text-primary-on">Done</button>
       </Shell>
     )
   }
@@ -530,7 +530,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           type="button"
           onClick={() => ring.mutate()}
           disabled={ring.isPending || cart.length === 0 || !brand}
-          className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
+          className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95"
         >
           {ring.isPending ? 'Ringing up…' : 'Ring up and send to kitchen'}
         </button>
@@ -857,7 +857,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
               type="submit"
               form="till-pay-form"
               disabled={confirmBlocked}
-              className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
+              className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95"
             >
               {pay.isPending
                 ? 'Processing…'
@@ -968,7 +968,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
               {printCount === 0 ? (done.onAccount ? 'Print bill to sign' : 'Print final bill') : filedSincePrint ? 'Reprint with fiscal QR' : 'Reprint (duplicate)'}
             </button>
             <button onClick={onClose}
-              className="rounded-xl bg-kds-green py-3 text-sm font-bold text-white">
+              className="rounded-xl bg-kds-green py-3 text-sm font-bold text-primary-on">
               Done
             </button>
           </div>
@@ -1015,7 +1015,7 @@ function NoShiftDialog({ onClose }: { onClose: () => void }) {
           <button type="button" onClick={onClose} className="min-h-11 flex-1 rounded-xl border border-kds-border py-3 text-kds-subtext">
             Cancel
           </button>
-          <a href="/pos/shift" className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-kds-green py-3 text-center font-bold text-white">
+          <a href="/pos/shift" className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-kds-green py-3 text-center font-bold text-primary-on">
             Open Shift
           </a>
         </div>

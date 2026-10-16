@@ -138,7 +138,7 @@ export function PhotoBumpModal({ itemId, itemName, isUrdu, onClose }: Props) {
           {!snapped && !error && (
             <button
               onClick={snap}
-              className="rounded-lg bg-kds-green text-black px-4 py-1.5 text-xs font-black"
+              className="rounded-lg bg-kds-green text-primary-on px-4 py-1.5 text-xs font-black"
             >
               {isUrdu ? 'تصویر لیں' : '📸 Capture'}
             </button>
@@ -147,7 +147,7 @@ export function PhotoBumpModal({ itemId, itemName, isUrdu, onClose }: Props) {
             <button
               onClick={upload}
               disabled={uploading}
-              className="rounded-lg bg-kds-green text-black px-4 py-1.5 text-xs font-black disabled:opacity-50"
+              className="rounded-lg bg-kds-green text-primary-on px-4 py-1.5 text-xs font-black disabled:opacity-50"
             >
               {uploading ? (isUrdu ? 'اپلوڈ…' : 'Uploading…') : (isUrdu ? 'محفوظ' : 'Save')}
             </button>

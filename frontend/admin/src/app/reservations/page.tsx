@@ -11,6 +11,7 @@
 //   • mark complete on departure → table goes "cleaning"
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
@@ -195,11 +196,7 @@ export default function ReservationsPage() {
             <div className="s-card p-8 text-center text-s-muted text-sm">Loading…</div>
           )}
           {reservations.data && reservations.data.length === 0 && (
-            <div className="s-card p-12 text-center">
-              <h3 className="text-lg font-semibold mb-2">Nothing on the books for {fmtDay(date)}</h3>
-              <p className="text-s-muted text-sm mb-4">Quiet day, or it&rsquo;s time to push some marketing.</p>
-              <button onClick={() => setShowNew(true)} className="s-btn-primary text-sm">+ Add booking</button>
-            </div>
+            <CompactEmptyState message={`No bookings for ${fmtDay(date)}.`} action={{ label: 'Add booking', onClick: () => setShowNew(true) }} />
           )}
           {visibleHours.map((h) => (
             <div key={h} className="s-card overflow-hidden">

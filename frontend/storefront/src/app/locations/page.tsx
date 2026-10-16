@@ -68,7 +68,7 @@ export default async function LocationsHubPage() {
           {locations.map((loc) => {
             const phone = filled(loc.phone)
             return (
-              <li key={loc.slug} style={{ border: '1px solid var(--servd-line, rgba(0,0,0,0.12))', borderRadius: '1rem', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <li key={loc.slug} className="sv-hard-card" style={{ background: '#fff', borderRadius: '1rem', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>
                   <Link href={`/locations/${loc.locationSlug}`} style={{ color: 'inherit', textDecoration: 'none' }}>
                     {formatBrandName(loc.name)}

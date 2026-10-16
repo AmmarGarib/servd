@@ -13,7 +13,7 @@ import { formatBrandName } from '../../lib/concept'
 import { isServdCompanyBrand } from '../../lib/liveConcepts'
 import type { SectionProps } from '../types'
 import { str } from '../safe'
-import { hoursSummary, priceWords } from './brandFacts'
+import { hoursSummary } from './brandFacts'
 
 function listNames(names: string[]): string {
   if (names.length <= 1) return names.join('')
@@ -22,6 +22,18 @@ function listNames(names: string[]): string {
 
 const th: CSSProperties = { textAlign: 'left', padding: '0.75rem 1rem', fontSize: '0.8rem', fontWeight: 700, color: 'var(--servd-mute)', borderBottom: '1px solid var(--servd-line, rgba(38,16,56,0.12))', whiteSpace: 'nowrap' }
 const td: CSSProperties = { padding: '0.85rem 1rem', fontSize: '0.95rem', verticalAlign: 'top', borderBottom: '1px solid var(--servd-line, rgba(38,16,56,0.08))' }
+
+// Phones: each kitchen is a stacked block (no sideways scroll); the column
+// names come from data-label, so the editable headings still apply.
+const ABOUT_TABLE_CSS = `
+@media (max-width: 640px) {
+  .sv-about-table, .sv-about-table tbody, .sv-about-table tr, .sv-about-table th, .sv-about-table td { display: block; width: 100%; }
+  .sv-about-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .sv-about-table tr { padding: 0.5rem 0; border-bottom: 1px solid var(--servd-line, rgba(38,16,56,0.12)); }
+  .sv-about-table tr:last-child { border-bottom: 0; }
+  .sv-about-table th, .sv-about-table td { border-bottom: 0 !important; padding: 0.3rem 1rem !important; }
+  .sv-about-table td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; font-weight: 700; color: var(--servd-mute); }
+}`
 
 export function AboutIntro({ fields, ctx }: SectionProps) {
   const rows = ctx.concepts
@@ -33,7 +45,6 @@ export function AboutIntro({ fields, ctx }: SectionProps) {
         name: formatBrandName(c.name),
         cuisine: filled(loc.cuisine),
         area: [filled(loc.area), filled(loc.city)].filter(Boolean).join(', '),
-        price: filled(loc.priceRange) ? priceWords(loc.priceRange) : '',
         hours: hoursSummary(c.serviceHours),
       }
     })
@@ -61,13 +72,13 @@ export function AboutIntro({ fields, ctx }: SectionProps) {
           <div>
             {str(fields.tableHeading) && <h2 className="display" style={{ fontSize: 'clamp(1.5rem, 3vw, 2rem)', margin: '0 0 1rem' }}>{str(fields.tableHeading)}</h2>}
             <div className="servd-card sv-hard-card" style={{ padding: 0, overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '44rem' }}>
+              <style>{ABOUT_TABLE_CSS}</style>
+              <table className="sv-about-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
                     <th scope="col" style={th}>{str(fields.colKitchen) || 'Kitchen'}</th>
                     <th scope="col" style={th}>{str(fields.colCuisine) || 'Cuisine'}</th>
                     <th scope="col" style={th}>{str(fields.colArea) || 'Area'}</th>
-                    <th scope="col" style={th}>{str(fields.colPrice) || 'Price range'}</th>
                     <th scope="col" style={th}>{str(fields.colHours) || 'Hours'}</th>
                     <th scope="col" style={th}>{str(fields.colOrder) || 'Order'}</th>
                   </tr>
@@ -78,10 +89,9 @@ export function AboutIntro({ fields, ctx }: SectionProps) {
                       <th scope="row" style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
                         <a href={brandCanonical(r.slug)} style={{ color: 'inherit' }}>{r.name}</a>
                       </th>
-                      <td style={td}>{r.cuisine || dash}</td>
-                      <td style={td}>{r.area || dash}</td>
-                      <td style={td}>{r.price || dash}</td>
-                      <td style={td}>{r.hours || dash}</td>
+                      <td style={td} data-label={str(fields.colCuisine) || 'Cuisine'}>{r.cuisine || dash}</td>
+                      <td style={td} data-label={str(fields.colArea) || 'Area'}>{r.area || dash}</td>
+                      <td style={td} data-label={str(fields.colHours) || 'Hours'}>{r.hours || dash}</td>
                       <td style={td}>
                         <Link href={`/${r.slug}`} style={{ color: 'var(--servd-purple)', fontWeight: 600 }}>
                           {str(fields.orderText) || 'Order'} <span className="sr-only">{r.name}</span>

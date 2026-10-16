@@ -100,9 +100,9 @@ export function Kitchens({ fields, ctx }: SectionProps) {
   const tiles = list<TileFields>(fields.tiles).filter((t) => t.hidden !== true && str(t.brand).trim())
   const brands = brandsInOrder(tiles.map((t) => str(t.brand).trim()), ctx.concepts)
 
-  const eyebrow = opt(fields.eyebrow, 'The kitchens')
-  const lead = opt(fields.lead, 'Three kitchens, each with its own menu and its own basket. Open one, see what’s cooking, and order.')
-  const note = opt(fields.note, 'flip a card to meet the kitchen')
+  const eyebrow = opt(fields.eyebrow, '')
+  const lead = opt(fields.lead, '')
+  const note = opt(fields.note, '')
   const backLabel = opt(fields.backLabel, 'kitchen stats')
   const hoursLabel = opt(fields.hoursLabel, 'hours')
   const backFoot = opt(fields.backFoot, 'collect all three')
@@ -116,6 +116,7 @@ export function Kitchens({ fields, ctx }: SectionProps) {
     <section ref={ref} id="kitchens" className={d.section} style={{ scrollMarginTop: 52 }} aria-labelledby={headLines.length ? titleId : undefined}>
       <svg aria-hidden className={d.bgStar} viewBox="0 0 40 40"><path d="M20 2 L24 16 L38 20 L24 24 L20 38 L16 24 L2 20 L16 16 Z" /></svg>
       <div className={d.wrap}>
+        {(eyebrow || headLines.length > 0 || lead || note) && (
         <header className={`${d.head} reveal-on-scroll`}>
           <div>
             {eyebrow && <p className={d.eyebrow}>{eyebrow}</p>}
@@ -134,6 +135,7 @@ export function Kitchens({ fields, ctx }: SectionProps) {
             </p>
           )}
         </header>
+        )}
 
         <div className={d.grid}>
           {tiles.map((t, i) => {

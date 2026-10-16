@@ -46,7 +46,7 @@ export default function HrReportsPage() {
 
   return (
     <HrShell title="HR reports" subtitle="The four HR formats. Attendance comes from the time clock; payroll is read from the month's payroll run.">
-      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red mb-4" role="alert">{(error as Error).message}</p>}
       <div className="flex flex-wrap gap-1 mb-5">
         {reports.map((r) => (
           <button key={r.key} type="button" aria-pressed={def?.key === r.key} onClick={() => setKey(r.key)}
@@ -87,10 +87,10 @@ export default function HrReportsPage() {
               }}>Download Excel</button>
               <button className={btnGhost} onClick={() => void preview.refetch()}>Refresh</button>
             </div>
-            {dlErr && <p className="text-xs text-red-700 mt-2">{dlErr}</p>}
+            {dlErr && <p className="text-xs text-s-red mt-2">{dlErr}</p>}
           </div>
 
-          {preview.error && <p className="text-sm text-red-700" role="alert">{(preview.error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void preview.refetch()}>Retry</button></p>}
+          {preview.error && <p className="text-sm text-s-red" role="alert">{(preview.error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void preview.refetch()}>Retry</button></p>}
           {preview.isLoading && <p className="text-sm text-white/40" role="status">Loading…</p>}
           {preview.data && <ReportView t={preview.data} />}
         </div>
@@ -112,7 +112,7 @@ function ReportView({ t }: { t: ReportTable }) {
         <p className="text-sm font-black text-white/85">{t.sheetTitle ?? t.title}</p>
         <p className="text-xs text-white/40">{t.total} row{t.total === 1 ? '' : 's'}{t.total > t.rows.length ? ` · showing ${t.rows.length}, download for all` : ''}</p>
       </div>
-      {t.note && <p className="px-4 py-2 text-xs text-amber-700/90 border-b border-white/[0.06]">{t.note}</p>}
+      {t.note && <p className="px-4 py-2 text-xs text-s-amber border-b border-white/[0.06]">{t.note}</p>}
       {t.rows.length === 0
         ? <p className="p-8 text-center text-sm text-white/40">Nothing to show.</p>
         : (

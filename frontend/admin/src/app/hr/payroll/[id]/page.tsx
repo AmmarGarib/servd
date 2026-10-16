@@ -7,7 +7,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, human, day, localDate, STATUS_COLOR } from '../../../../lib/hr'
+import { card, btn, btnGhost, btnDanger, inp, rs, human, day, localDate, STATUS_COLOR } from '../../../../lib/hr'
 import { HrShell, Modal, Stat, useHrAccess } from '../../../../components/hr/HrShell'
 import { BankAccountSelect } from '../../../../components/finance/BankAccountSelect'
 import { NumberField } from '@/components/ui/NumberField'
@@ -79,9 +79,9 @@ export default function PayrollRunPage() {
 
   return (
     <HrShell title={run ? `Payroll ${run.period}` : 'Payroll'}
-      actions={run && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[run.status] ?? '#a15c00' }}>{human(run.status)}</span>}>
+      actions={run && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[run.status] ?? 'var(--erp-warning)' }}>{human(run.status)}</span>}>
       {isLoading && <p className="text-sm text-white/40" role="status">Loading payroll…</p>}
-      {loadErr && <p className="text-sm text-red-700" role="alert">{(loadErr as Error).message}</p>}
+      {loadErr && <p className="text-sm text-s-red" role="alert">{(loadErr as Error).message}</p>}
       {run && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -93,15 +93,15 @@ export default function PayrollRunPage() {
             <Stat label="EOBI employer" value={rs(t['eobiEmployerCents'])} />
           </div>
           {warnings.length > 0 && (
-            <div className="rounded-xl p-3 text-sm" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)' }}>
-              {warnings.map((w) => <p key={w} className="text-amber-700">⚠ {w}</p>)}
+            <div className="rounded-xl p-3 text-sm" style={{ background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
+              {warnings.map((w) => <p key={w} className="text-s-amber">⚠ {w}</p>)}
             </div>
           )}
           <div className="flex flex-wrap gap-2">
             {run.status === 'draft' && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('recalculate')}>Recalculate from records</button>
               {canApprove && <button className={btn} disabled={act.isPending} onClick={() => void ask('approve')}>Approve</button>}
-              <button className="text-xs text-white/50 hover:text-red-700 ml-2 px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={act.isPending} onClick={() => void ask('delete')}>Delete draft</button>
+              <button className={`${btnDanger} ml-2 !text-xs [@media(pointer:coarse)]:min-h-[44px]`} disabled={act.isPending} onClick={() => void ask("delete")}>Delete draft</button>
             </>}
             {run.status === 'approved' && isPayrollApprover && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
@@ -122,7 +122,7 @@ export default function PayrollRunPage() {
               <button className={btnGhost} onClick={() => dl('deductions')}>Deduction report</button>
             </span>
           </div>
-          {err && <p className="text-xs text-red-700" role="alert">{err}</p>}
+          {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
           {run.status === 'draft' && <p className="text-[11px] text-white/40">Approval must come from someone other than whoever created, recalculated or edited it (the CEO excepted){isPayrollApprover ? '' : ', and from the CEO, a co-owner or management'}.</p>}
 
           <div className="rounded-2xl overflow-x-auto" style={card}>
@@ -140,7 +140,7 @@ export default function PayrollRunPage() {
                       <td className="px-4 py-3 text-white/70">{rs(s.earningsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
-                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-amber-700" title={w.join('\n')}>⚠</span>}</td>
+                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-s-amber" title={w.join('\n')}>⚠</span>}</td>
                       <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditing(s)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
                     </tr>
                   )
@@ -193,7 +193,7 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
           <input type="date" className={inp} value={paidOn} max={localDate()} onChange={(e) => setPaidOn(e.target.value)} />
         </label>
         <p className="text-[11px] text-white/40">Clears Wages Payable for this month, dated the day the money left. A closed month is refused.</p>
-        {err && <p className="text-xs text-red-700">{err}</p>}
+        {err && <p className="text-xs text-s-red">{err}</p>}
         <div className="flex flex-wrap gap-2">
           <button className={btn} disabled={pay.isPending || !paidOn} onClick={() => pay.mutate()}>{pay.isPending ? 'Saving…' : 'Confirm payment'}</button>
           <button className={btnGhost} onClick={onClose}>Cancel</button>
@@ -262,7 +262,7 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
               </label>
             ))}
           </div>
-          {err && <p className="text-xs text-red-700 mt-2" role="alert">{err}</p>}
+          {err && <p className="text-xs text-s-red mt-2" role="alert">{err}</p>}
           {draft && <button type="submit" className={`${btn} mt-3`} disabled={save.isPending || changed.length === 0}>{save.isPending ? 'Recalculating…' : 'Recalculate this payslip'}</button>}
           <p className="text-xs text-white/55 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, overtime, adjustments and loans. “Recalculate from records” on the run replaces any edits.</p>
         </div>

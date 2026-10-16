@@ -131,11 +131,13 @@ export default function CheckoutPage() {
   // unauthenticated visitors to /login with a return URL so their cart still
   // makes it back here after they sign in.
   useEffect(() => {
-    if (!token) {
+    // A ?cart= hand-off is loaded into the basket first (the effect below),
+    // which then sends a signed-out visitor on to sign in.
+    if (!token && !searchParams?.get('cart')) {
       const next = encodeURIComponent(`/${slug}/checkout`)
       router.replace(`/login?next=${next}`)
     }
-  }, [token, slug, router])
+  }, [token, slug, router, searchParams])
 
   // The basket belongs to one kitchen (the ordering screen can keep another
   // kitchen's basket when the customer chooses to). Checking it out under a
@@ -162,8 +164,12 @@ export default function CheckoutPage() {
     if (payload && payload.items.length > 0) {
       hydrateFromReorder(payload.conceptSlug ?? slug, payload.items)
     }
-    router.replace(`/${slug}/checkout`, { scroll: false })
-  }, [searchParams, slug, router, hydrateFromReorder])
+    // The basket is kept; a signed-out visitor signs in and returns here.
+    router.replace(
+      token ? `/${slug}/checkout` : `/login?next=${encodeURIComponent(`/${slug}/checkout`)}`,
+      { scroll: false },
+    )
+  }, [searchParams, slug, router, hydrateFromReorder, token])
 
   const [name,  setName]  = useState('')
   const [phone, setPhone] = useState('')

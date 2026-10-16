@@ -87,7 +87,7 @@ function MoneyPanel({ record, onChanged }: { record: HrRecord; onChanged: () => 
           })}
         </ul>
       ) : data && approved ? (
-        <p className="text-xs text-amber-700">
+        <p className="text-xs text-s-amber">
           {settlement
             ? 'Not on the books yet (approved before approval booked it). "Mark paid" books it first, or use "Post approved settlements" on the list.'
             : 'Nothing was posted for this record.'}
@@ -136,7 +136,7 @@ export function MarkSettlementPaid({ record, onChanged }: { record: HrRecord; on
         </label>
       </div>
       <p className="text-xs text-white/55">Clears {rs(record.amountCents)} from Wages Payable, dated the day it was paid.</p>
-      {err && <p className="text-xs text-red-700">{err}</p>}
+      {err && <p className="text-xs text-s-red">{err}</p>}
       <div className="flex gap-2">
         <button className={btn} disabled={pay.isPending || !paidOn} onClick={() => pay.mutate()}>{pay.isPending ? 'Saving…' : 'Confirm payment'}</button>
         <button className={btnGhost} onClick={() => { setOpen(false); setErr('') }}>Cancel</button>

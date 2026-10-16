@@ -76,8 +76,8 @@ export default function HrSectionPage() {
           <Link href={moved.path} className={`${btn} inline-block mt-3`}>Open {moved.label}</Link>
         </div>
       )}
-      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
-      {csvErr && <p className="text-sm text-red-700 mb-4">Export failed: {csvErr}</p>}
+      {error && <p className="text-sm text-s-red mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
+      {csvErr && <p className="text-sm text-s-red mb-4">Export failed: {csvErr}</p>}
       {backfillMsg && <p className="text-sm text-white/70 mb-4">{backfillMsg}</p>}
       <div className="flex flex-wrap gap-2 mb-4">
         {['', 'draft', 'submitted', 'approved', 'rejected', 'cancelled'].map((s) => (
@@ -153,7 +153,7 @@ function OpenRecord({ record, listFormat, listTenantId, readOnly, onChanged }: {
   const { data: lookups } = useHrLookups(record.tenantId)
   const { data: org } = useHrOrg(record.tenantId)
   const format = same ? listFormat : own?.format
-  if (error) return <p className="text-sm text-red-700">{(error as Error).message}</p>
+  if (error) return <p className="text-sm text-s-red">{(error as Error).message}</p>
   if (!format) return <p className="text-sm text-white/40">Loading its format…</p>
   return (
     <>
@@ -198,7 +198,7 @@ function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: s
           {hasWorkflow && <button type="button" className={btnGhost} disabled={save.isPending} onClick={() => run(false)}>Save as draft</button>}
           <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
         </div>
-        {err && <p className="text-xs text-red-700 mt-3" role="alert">{err}</p>}
+        {err && <p className="text-xs text-s-red mt-3" role="alert">{err}</p>}
         {hasWorkflow && <p className="text-xs text-white/50 mt-3">Approval: {format.workflow.map((w) => w.label).join(' → ')}</p>}
       </form>
     </Modal>

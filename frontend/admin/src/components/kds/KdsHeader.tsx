@@ -79,13 +79,13 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
         <div className="flex rounded-lg border border-kds-border overflow-hidden text-xs font-bold">
           <button
             onClick={() => setLang('en')} aria-pressed={lang === 'en'} aria-label="English"
-            className={`min-h-11 min-w-11 px-3 transition-colors ${lang === 'en' ? 'bg-kds-green text-black' : 'text-kds-subtext hover:text-kds-text'}`}
+            className={`min-h-11 min-w-11 px-3 transition-colors ${lang === 'en' ? 'bg-kds-green text-primary-on' : 'text-kds-subtext hover:text-kds-text'}`}
           >
             EN
           </button>
           <button
             onClick={() => setLang('ur')} aria-pressed={lang === 'ur'} aria-label="Urdu"
-            className={`min-h-11 min-w-11 px-3 transition-colors border-l border-kds-border ${lang === 'ur' ? 'bg-kds-green text-black' : 'text-kds-subtext hover:text-kds-text'}`}
+            className={`min-h-11 min-w-11 px-3 transition-colors border-l border-kds-border ${lang === 'ur' ? 'bg-kds-green text-primary-on' : 'text-kds-subtext hover:text-kds-text'}`}
             style={{ fontFamily: 'sans-serif' }}
           >
             اردو
@@ -99,7 +99,7 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
           aria-label="Show item images" aria-pressed={showImages}
           className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
             showImages
-              ? 'border-kds-green bg-kds-green text-black'
+              ? 'border-kds-green bg-kds-green text-primary-on'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
           }`}
         >
@@ -113,7 +113,7 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
           aria-label="New-order chime" aria-pressed={soundEnabled}
           className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
             soundEnabled
-              ? 'border-kds-green bg-kds-green text-black'
+              ? 'border-kds-green bg-kds-green text-primary-on'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
           }`}
         >

@@ -96,10 +96,10 @@ export default function HrSettingsPage() {
   return (
     <HrShell title="HR settings" subtitle="The rules payroll, overtime, attendance and leave are calculated with — for the active company."
       actions={s && <button className={btn} disabled={save.isPending || !dirty} onClick={doSave}>{save.isPending ? 'Saving…' : 'Save settings'}</button>}>
-      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red mb-4" role="alert">{(error as Error).message}</p>}
       {!s && !error && <p className="text-sm text-white/40" role="status">Loading settings…</p>}
-      {save.error && <p className="text-sm text-red-700 mb-4" role="alert">{(save.error as Error).message}</p>}
-      {formErr && <p className="text-sm text-red-700 mb-4" role="alert">{formErr}</p>}
+      {save.error && <p className="text-sm text-s-red mb-4" role="alert">{(save.error as Error).message}</p>}
+      {formErr && <p className="text-sm text-s-red mb-4" role="alert">{formErr}</p>}
       <p className="text-sm text-success mb-4" role="status" aria-live="polite">{showSaved && !dirty ? 'Settings saved. The next payroll calculation uses these.' : ''}</p>
       {s && (
         <EmptyCtx.Provider value={mark}>
@@ -237,7 +237,7 @@ function Money({ label, help, v, warn, onSet }: { label: string; help?: string; 
       <label htmlFor={id} className="block text-[11px] font-bold text-white/55 mb-1">{label}</label>
       <NumberField id={id} className={inp} value={v == null ? null : v / 100} decimals={2} min={0} aria-describedby={help ? `${id}-h` : undefined}
         onValueChange={(n) => onSet(n == null ? null : Math.round(n * 100))} />
-      {help && <span id={`${id}-h`} className={`block text-xs mt-1 ${warn ? 'text-amber-700' : 'text-white/55'}`}>{help}</span>}
+      {help && <span id={`${id}-h`} className={`block text-xs mt-1 ${warn ? 'text-s-amber' : 'text-white/55'}`}>{help}</span>}
     </div>
   )
 }

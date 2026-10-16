@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError } from '../../lib/api'
 import { todayPktIso } from '../../lib/money'
-import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { useKitchenView, useStockActions } from './kitchenView'
@@ -720,18 +720,9 @@ export default function InventoryPage() {
                   <p className="font-semibold text-s-text">No stock tracked yet</p>
                   <p className="text-sm mt-1">Your manager adds the ingredients; they appear here once they have a par level or stock on hand.</p>
                 </div>
-              ) : <EmptyStateGuide
-                icon=""
-                title="Track what you cook with"
-                description="Inventory drives recipe costing, auto-86, demand forecasting, and reorder alerts. Add raw ingredients first — finished menu items get linked via Recipe Costing."
-                whyItMatters="When inventory hits zero, the platform auto-disables menu items across POS and storefront. No more 'sorry, we ran out' calls to disappointed customers."
-                samples={[
-                  { emoji: '', title: 'Chicken (boneless)', hint: 'unit: kg · par: 10 kg · supplier: Mubarak Meat' },
-                  { emoji: '', title: 'Red chili powder', hint: 'unit: kg · par: 2 kg · supplier: Karachi Spice Co' },
-                  { emoji: '', title: 'Cooking oil',       hint: 'unit: L · par: 20 L · supplier: City Distributors' },
-                ]}
-                primaryAction={{ label: 'Add your first ingredient', onClick: () => setShowAdd(true) }}
-                secondaryAction={{ label: 'Set up suppliers first', href: '/procurement/chat' }}
+              ) : <CompactEmptyState
+                message="No stock tracked yet. Add the ingredients you cook with."
+                action={{ label: 'Add your first ingredient', onClick: () => setShowAdd(true) }}
               />
             ) : (
               <>

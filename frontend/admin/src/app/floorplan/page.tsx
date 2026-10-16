@@ -11,6 +11,7 @@
 // (in the live panel).
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../lib/api'
@@ -222,11 +223,7 @@ export default function FloorplanPage() {
         {/* Empty state */}
         {floors.isLoading && <p className="text-s-muted text-sm">Loading floors…</p>}
         {floors.data && floors.data.length === 0 && (
-          <div className="s-card p-12 text-center">
-            <h3 className="text-lg font-semibold mb-2">No floors yet</h3>
-            <p className="text-s-muted text-sm mb-4">Create your first floor — Main, Patio, Bar, whatever you call it.</p>
-            <button onClick={() => setShowNewFloor(true)} className="s-btn-primary text-sm">+ Create floor</button>
-          </div>
+          <CompactEmptyState message="No floors yet. Create one, such as Main, Patio or Bar." action={{ label: 'Create floor', onClick: () => setShowNewFloor(true) }} />
         )}
 
         {/* Tables with no floor — place them on the selected floor. */}

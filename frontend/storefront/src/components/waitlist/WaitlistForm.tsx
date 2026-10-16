@@ -328,7 +328,7 @@ const cardStyle: CSSProperties = {
   width: '100%', maxWidth: '28rem', margin: '0 auto', textAlign: 'left',
   background: 'var(--servd-purple)', color: 'var(--servd-on-purple)',
   borderRadius: '1.5rem', padding: 'clamp(1.25rem, 5vw, 2rem)',
-  boxShadow: '0 20px 50px rgba(61,31,59,0.25)',
+  border: 'var(--servd-hard-border)', boxShadow: 'var(--servd-hard-card)',
 }
 const headingStyle: CSSProperties = {
   fontFamily: 'var(--sv-heading-font, var(--font-display))', fontWeight: 900,

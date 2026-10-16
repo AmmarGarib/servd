@@ -99,7 +99,7 @@ function EmployeeProfile() {
   return (
     <HrShell title={e ? e.fullName : 'Employee'} subtitle={e ? `${e.employeeCode} · ${p?.labels.designation ?? 'No designation'} · ${p?.labels.department ?? 'No department'} · ${p?.labels.branch ?? 'No branch'}` : undefined}
       actions={e && <span className="text-xs font-black uppercase tracking-wider self-center" style={{ color: STATUS_COLOR[e.status] }}>{human(e.status)}</span>}>
-      {error && <p className="text-sm text-red-700" role="alert">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red" role="alert">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading employee…</p>}
       {p && (
         <>
@@ -176,7 +176,7 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
         {value && <button type="button" className={btnGhost} onClick={() => { setValue(null); setErrors({}); setErr('') }}>Discard</button>}
         {value && <span className="text-xs text-white/50">Unsaved changes</span>}
       </div>
-      {err && <p className="text-xs text-red-700 mt-3" role="alert">{err}</p>}
+      {err && <p className="text-xs text-s-red mt-3" role="alert">{err}</p>}
       <p className="text-xs text-primary-ink mt-3" role="status" aria-live="polite">{ok ? 'Saved.' : ''}</p>
       <p className="text-xs text-white/50 mt-3">Promotions, transfers and salary revisions should go through their own sections so they are approved and appear in the history. Editing salary here is recorded in the audit trail.</p>
     </form>
@@ -232,7 +232,7 @@ function DocumentsTab({ p }: { p: Profile }) {
           <input type="date" className={inp} value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} /></label>
         <button type="submit" className={`${btn} sm:col-span-2 md:col-span-6 md:justify-self-start`} disabled={add.isPending}>{add.isPending ? 'Adding…' : 'Add document'}</button>
       </form>
-      {err && <p className="text-xs text-red-700" role="alert">{err}</p>}
+      {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
         {p.documents.length === 0 && <p className="p-6 text-sm text-white/40 text-center">No documents yet.</p>}
         {p.documents.map((d) => (
@@ -240,10 +240,10 @@ function DocumentsTab({ p }: { p: Profile }) {
             <span className="font-bold text-white/85 sm:w-48 shrink-0">{d.title || human(d.docType)}</span>
             {d.fileUrl ? <a href={d.fileUrl} target="_blank" rel="noreferrer" className="text-primary-ink text-xs hover:underline">Open</a> : null}
             <RecordFiles ownerType="hr_document" ownerId={d.id} tenantId={p.employee.tenantId} canUpload compact lazy />
-            <span className="text-xs" style={{ color: soon(d.expiryDate) ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.45)' }}>{d.expiryDate ? `Expires ${day(d.expiryDate)}` : ''}</span>
+            <span className="text-xs" style={{ color: soon(d.expiryDate) ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.45)' }}>{d.expiryDate ? `Expires ${day(d.expiryDate)}` : ''}</span>
             <span className="ml-auto flex gap-1">
               {d.verifiedAt ? <span className="text-xs text-primary-ink">Verified</span> : <button type="button" className="text-xs text-white/50 hover:text-white px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Mark verified</button>}
-              <button type="button" className="text-xs text-white/50 hover:text-red-700 px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
+              <button type="button" className="text-xs text-white/50 hover:text-s-red px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
                 const ok = await confirm({ title: 'Delete this document?', body: `${d.title || human(d.docType)} will be removed from ${p.employee.fullName}'s file.`, confirmLabel: 'Delete', danger: true })
                 if (ok) del.mutate(d.id)
               }}>Delete</button>
@@ -278,7 +278,7 @@ function LeaveTab({ p }: { p: Profile }) {
       {p.leaveBalances.map((b) => (
         <div key={b.leaveTypeId} className="rounded-2xl p-4" style={card}>
           <p className="text-sm font-black text-white/85">{b.name} <span className="text-[10px] font-bold text-white/35">{b.paid ? 'PAID' : 'UNPAID'}</span></p>
-          <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? 'var(--erp-danger)' : '#3f7d20' }}>{b.balance}</p>
+          <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>{b.balance}</p>
           <p className="text-[11px] text-white/45 mt-1">{b.entitlement} entitled {b.carriedForward ? `+${b.carriedForward} carried ` : ''}{b.adjustments ? `${b.adjustments > 0 ? '+' : ''}${b.adjustments} adjusted ` : ''}· {b.taken} taken{b.pending ? ` · ${b.pending} pending` : ''}</p>
         </div>
       ))}
@@ -306,7 +306,7 @@ function PayTab({ p }: { p: Profile }) {
         {p.salaryHistory.map((s, i) => (
           <div key={i} className="flex justify-between text-sm py-1.5 border-t border-white/[0.05] first:border-t-0">
             <span className="text-white/70">{human(s.section)} · {day(s.effectiveDate)}</span>
-            <span className="text-white/85">{rs(s.grossCents)}{!s.applied && <span className="text-[10px] text-amber-700"> scheduled</span>}</span>
+            <span className="text-white/85">{rs(s.grossCents)}{!s.applied && <span className="text-[10px] text-s-amber"> scheduled</span>}</span>
           </div>
         ))}
       </div>
@@ -327,7 +327,7 @@ function LettersTab({ p }: { p: Profile }) {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
         {letters.map((l) => <button key={l.key} className="rounded-xl p-3 text-left text-sm font-bold text-white/80 hover:bg-white/[0.05]" style={card} onClick={() => render.mutate(l.key)}>{l.title}</button>)}
       </div>
-      {msg && <p className="text-xs text-amber-700 mt-3">{msg}</p>}
+      {msg && <p className="text-xs text-s-amber mt-3">{msg}</p>}
     </div>
   )
 }
@@ -364,7 +364,7 @@ function LoginTab({ p }: { p: Profile }) {
             <OffboardButtons login={p.user} onDone={() => void qc.invalidateQueries()} />
           </div>
         ) : error ? (
-          <p className="text-xs text-amber-700">{(error as Error).message}</p>
+          <p className="text-xs text-s-amber">{(error as Error).message}</p>
         ) : (
           <div className="flex gap-2">
             <Select className={inp} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Login to link">
@@ -374,7 +374,7 @@ function LoginTab({ p }: { p: Profile }) {
             <button className={btn} disabled={!pick || link.isPending} onClick={() => link.mutate(pick)}>Link</button>
           </div>
         )}
-        {err && <p className="text-xs text-red-700 mt-2">{err}</p>}
+        {err && <p className="text-xs text-s-red mt-2">{err}</p>}
         {!p.user && <CreateLoginForm p={p} />}
       </div>
       <KioskPinCard p={p} />
@@ -442,7 +442,7 @@ function CreateLoginForm({ p }: { p: Profile }) {
             ? 'Active at once — they sign in with a code sent to this mobile.'
             : 'Waits for the CEO to approve it.'}
       </p>
-      {err && <p className="text-xs text-red-700">{err}</p>}
+      {err && <p className="text-xs text-s-red">{err}</p>}
       <div className="flex gap-2">
         <button type="submit" className={btn} disabled={!role || !name.trim() || !email.trim() || create.isPending}>{create.isPending ? 'Creating…' : 'Create login'}</button>
         <button type="button" className={btnGhost} onClick={() => setOpen(false)}>Cancel</button>
@@ -496,7 +496,7 @@ function WorkLocationsCard({ p }: { p: Profile }) {
             <input className={`${inp} max-w-[150px]`} inputMode="numeric" placeholder="Radius (m)" aria-label={`Radius in metres for ${nameOf(c.locationId)}`}
               value={c.radiusMetres ?? ''} onChange={(e) => { const n = e.target.value.replace(/\D/g, ''); edit(cur.map((x) => x.locationId === c.locationId ? { ...x, radiusMetres: n ? Number(n) : null } : x)) }} />
             {!pinOf(c.locationId) && <span className="text-[11px]" style={{ color: 'var(--erp-danger)' }}>No map pin — punches here cannot be measured. Set the pin under Configuration → Locations.</span>}
-            <button className="ml-auto text-xs text-white/40 hover:text-red-700" onClick={() => {
+            <button className="ml-auto text-xs text-white/40 hover:text-s-red" onClick={() => {
               const rest = cur.filter((x) => x.locationId !== c.locationId)
               edit(rest.length && !rest.some((x) => x.isPrimary) ? rest.map((x, i) => ({ ...x, isPrimary: i === 0 })) : rest)
             }}>Remove</button>
@@ -511,7 +511,7 @@ function WorkLocationsCard({ p }: { p: Profile }) {
         <button className={btnGhost} disabled={!add || cur.length >= 10} onClick={() => { edit([...cur, { locationId: add, radiusMetres: null, isPrimary: cur.length === 0 }]); setAdd('') }}>Add</button>
       </div>
       <p className="text-[11px] text-white/35 mt-2">Radius is optional — blank uses the location&rsquo;s own radius, then the company&rsquo;s. The primary location is shown as the Branch Location.</p>
-      {msg && <p className="text-xs text-red-700 mt-2">{msg}</p>}
+      {msg && <p className="text-xs text-s-red mt-2">{msg}</p>}
       {ok && <p className="text-xs text-primary-ink mt-2">Saved.</p>}
       <div className="flex gap-2 mt-3">
         <button className={btn} disabled={!items || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save work locations'}</button>
@@ -555,7 +555,7 @@ function KioskPinCard({ p }: { p: Profile }) {
         <p className="text-xs text-white/45">This person has a login, so they clock in with it — no kiosk PIN needed.</p>
       ) : (
         <form onSubmit={submit}>
-          <p className="text-xs mb-2" style={{ color: p.kioskPinSet ? '#3f7d20' : 'rgb(var(--fg-rgb) / 0.45)' }}>{p.kioskPinSet ? 'A PIN is set.' : 'No PIN yet.'}</p>
+          <p className="text-xs mb-2" style={{ color: p.kioskPinSet ? 'var(--erp-success)' : 'rgb(var(--fg-rgb) / 0.45)' }}>{p.kioskPinSet ? 'A PIN is set.' : 'No PIN yet.'}</p>
           <div className="flex flex-wrap gap-2">
             <PasswordInput numeric className={inp} wrapperClassName="flex-1 min-w-[160px]" maxLength={6} autoComplete="new-password" placeholder="4–6 digits"
               value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} aria-label="New kiosk PIN" aria-invalid={bad && pin.length < 4 ? true : undefined} />
@@ -564,7 +564,7 @@ function KioskPinCard({ p }: { p: Profile }) {
           </div>
         </form>
       )}
-      {msg && <p className={`text-xs mt-2 ${bad ? 'text-red-700' : 'text-white/60'}`} role={bad ? 'alert' : 'status'}>{msg}</p>}
+      {msg && <p className={`text-xs mt-2 ${bad ? 'text-s-red' : 'text-white/60'}`} role={bad ? 'alert' : 'status'}>{msg}</p>}
     </div>
   )
 }

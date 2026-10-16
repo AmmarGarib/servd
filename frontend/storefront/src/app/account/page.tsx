@@ -453,16 +453,14 @@ export default function AccountPage() {
                 {editingAddrId ? 'Edit address' : 'New address'}
               </p>
               <div>
-                <label htmlFor="addr-label" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Label (e.g. Home, Work, Gym)</label>
+                <label htmlFor="addr-label" className="sv-field-label">Label (e.g. Home, Work, Gym)</label>
                 <input id="addr-label" name="label" autoComplete="off" value={addrForm.label} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
-                  placeholder="Home" className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
-                  style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
+                  placeholder="Home" className="sv-field-input servd-field" />
               </div>
               <div>
-                <label htmlFor="addr-address" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Full address</label>
+                <label htmlFor="addr-address" className="sv-field-label">Full address</label>
                 <input id="addr-address" name="address" autoComplete="street-address" value={addrForm.address} onChange={(e) => setAddrForm({ ...addrForm, address: e.target.value })}
-                  placeholder="House #5, Street 12, DHA Phase 2…" className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
-                  style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
+                  placeholder="House #5, Street 12, DHA Phase 2…" className="sv-field-input servd-field" />
               </div>
               {/* The drop point — required, so this address works for delivery
                   (the kitchen prices delivery by zone and the rider drives
@@ -1284,10 +1282,9 @@ function SupportSection({ orders }: { orders: Order[] }) {
           )}
 
           <div>
-            <label htmlFor="support-order" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Related order (optional)</label>
+            <label htmlFor="support-order" className="sv-field-label">Related order (optional)</label>
             <select id="support-order" value={orderId} onChange={(e) => setOrderId(e.target.value)}
-              className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
-              style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }}>
+              className="sv-field-input servd-field">
               <option value="">— No specific order —</option>
               {orders.map((o) => (
                 <option key={o.id} value={o.id}>
@@ -1298,7 +1295,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
           </div>
 
           <div>
-            <p id="support-category-label" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Category</p>
+            <p id="support-category-label" className="sv-field-label">Category</p>
             <div className="mt-1 grid grid-cols-3 gap-1.5" role="group" aria-labelledby="support-category-label">
               {([
                 { key: 'wrong_item',    label: 'Wrong item'    },
@@ -1320,21 +1317,19 @@ function SupportSection({ orders }: { orders: Order[] }) {
           </div>
 
           <div>
-            <label htmlFor="support-title" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Title *</label>
+            <label htmlFor="support-title" className="sv-field-label">Title *</label>
             <input id="support-title" name="title" autoComplete="off" value={title} onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Karahi was cold on arrival"
               maxLength={200}
-              className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm"
-              style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
+              className="sv-field-input servd-field" />
           </div>
 
           <div>
-            <label htmlFor="support-desc" className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>What happened? *</label>
+            <label htmlFor="support-desc" className="sv-field-label">What happened? *</label>
             <textarea id="support-desc" name="description" autoComplete="off" value={description} onChange={(e) => setDescription(e.target.value)}
               rows={4}
               placeholder="More detail helps us fix it for everyone…"
-              className="servd-field mt-1 w-full rounded-xl px-3 py-2 text-base sm:text-sm resize-none"
-              style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)' }} />
+              className="sv-field-input servd-field resize-none" />
           </div>
 
           {error && (
@@ -1417,7 +1412,7 @@ function VerifyContactBanner({ token, profile, onVerified }: {
           <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
             inputMode="numeric" autoComplete="one-time-code" placeholder={`Code from ${active === 'phone' ? 'WhatsApp' : 'email'}`}
             aria-label="Verification code"
-            className="servd-field flex-1 min-w-0 px-3 py-2 rounded-xl text-base sm:text-sm" style={{ border: '1px solid rgba(0,0,0,0.15)' }} />
+            className="sv-field-input servd-field flex-1 min-w-0" style={{ width: 'auto' }} />
           <button type="submit" disabled={busy || code.length < 6}
             className="text-xs font-bold px-3 min-h-[44px] rounded-xl disabled:opacity-50"
             style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>

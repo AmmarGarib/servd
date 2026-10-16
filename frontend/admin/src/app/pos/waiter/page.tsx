@@ -170,7 +170,7 @@ export default function WaiterPage() {
             submission.current = null
             setCart([]); setStep('table'); setSelectedTable(null); setOrderNote(''); setSubmittedOrderId(null); setQueuedOffline(false)
             setPreBillNote(null)
-          }} className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-white text-sm">
+          }} className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-primary-on text-sm">
             New Order
           </button>
           <Link href="/orders" className="flex-1 rounded-xl border border-kds-border py-3 font-bold text-kds-subtext text-sm text-center">
@@ -197,7 +197,7 @@ export default function WaiterPage() {
         </span>
         {cart.length > 0 && step === 'menu' && (
           <button onClick={() => setStep('confirm')}
-            className="rounded-xl bg-kds-green px-3 py-1.5 text-xs font-bold text-white">
+            className="rounded-xl bg-kds-green px-3 py-1.5 text-xs font-bold text-primary-on">
             Order ({cart.reduce((s, c) => s + c.qty, 0)}) →
           </button>
         )}
@@ -225,7 +225,7 @@ export default function WaiterPage() {
                   usePosStore.getState().setConceptId(c.id)
                 }}
                   className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                    c.id === conceptId ? 'bg-kds-green text-white' : 'border border-kds-border text-kds-subtext'
+                    c.id === conceptId ? 'bg-kds-green text-primary-on' : 'border border-kds-border text-kds-subtext'
                   }`}>
                   {c.name}
                 </button>
@@ -261,7 +261,7 @@ export default function WaiterPage() {
               <button key={cat.id} onClick={() => setSelectedCategory(cat.id)}
                 className={`shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                   cat.id === (selectedCategory ?? categories[0]?.id)
-                    ? 'bg-kds-green text-white'
+                    ? 'bg-kds-green text-primary-on'
                     : 'text-kds-subtext hover:bg-kds-border'
                 }`}>
                 {cat.name}
@@ -287,7 +287,7 @@ export default function WaiterPage() {
                   <div className="text-kds-green font-bold text-sm mt-1">PKR {(item.priceCents / 100).toFixed(0)}</div>
                   {/* Cart badge */}
                   {cart.some(c => c.item.id === item.id) && (
-                    <div className="absolute top-2 right-2 h-5 w-5 rounded-full bg-kds-green text-white text-[10px] font-black flex items-center justify-center">
+                    <div className="absolute top-2 right-2 h-5 w-5 rounded-full bg-kds-green text-primary-on text-[10px] font-black flex items-center justify-center">
                       {cart.filter(c => c.item.id === item.id).reduce((s, c) => s + c.qty, 0)}
                     </div>
                   )}
@@ -356,7 +356,7 @@ export default function WaiterPage() {
           </div>
           <button onClick={() => submitMutation.mutate()}
             disabled={submitMutation.isPending || cart.length === 0}
-            className="w-full rounded-xl bg-kds-green py-4 font-bold text-white text-base disabled:opacity-30 active:scale-95">
+            className="w-full rounded-xl bg-kds-green py-4 font-bold text-primary-on text-base disabled:opacity-30 active:scale-95">
             {submitMutation.isPending ? 'Sending…' : 'Send to Kitchen 🍽'}
           </button>
         </div>
@@ -398,7 +398,7 @@ function WaiterModifierModal({ item, onConfirm, onClose }: { item: MenuItem; onC
         ))}
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 rounded-xl border border-kds-border py-3 text-kds-subtext">Cancel</button>
-          <button onClick={confirm} className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-white">Add to Order</button>
+          <button onClick={confirm} className="flex-1 rounded-xl bg-kds-green py-3 font-bold text-primary-on">Add to Order</button>
         </div>
       </div>
     </div>

@@ -19,7 +19,7 @@ export default function HrOrgPage() {
   const { data: org, error, isLoading } = useHrOrg()
   return (
     <HrShell title="Organization setup" subtitle="The lists every HR form picks from. Deactivating an entry hides it from new forms; past records keep it.">
-      {error && <p className="text-sm text-red-700 mb-4" role="alert">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red mb-4" role="alert">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40" role="status">Loading…</p>}
       {org && (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -66,7 +66,7 @@ function DepartmentsPanel({ departments, archived }: { departments: OrgData['dep
         ))}
       </ul>
       <AddRow value={name} onChange={setName} onAdd={() => add.mutate()} busy={add.isPending} placeholder="New department" />
-      {(add.error || patch.error) && <p className="text-xs text-red-700 mt-1">{((add.error || patch.error) as Error).message}</p>}
+      {(add.error || patch.error) && <p className="text-xs text-s-red mt-1">{((add.error || patch.error) as Error).message}</p>}
       {archived.length > 0 && (
         <div className="mt-4">
           <p className="text-[11px] font-bold uppercase tracking-wider text-white/35 mb-1">Archived</p>
@@ -108,7 +108,7 @@ function DepartmentRow({ d, onRename, onHeadOffice, onArchive, setupApplied = fa
         </>
       ) : (
         <>
-          <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && !setupApplied && <span className="text-[10px] font-bold text-amber-700 ml-2">HEAD OFFICE</span>}</span>
+          <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && !setupApplied && <span className="text-[10px] font-bold text-s-amber ml-2">HEAD OFFICE</span>}</span>
           <button className={SMALL_BTN} onClick={() => { setName(d.name); setEditing(true) }}>Rename</button>
           {!setupApplied && <button className={SMALL_BTN} onClick={onHeadOffice}>{d.isHeadOffice ? 'Not head office' : 'Head office'}</button>}
           <button className={SMALL_BTN} onClick={() => void archive()}>Archive</button>
@@ -151,7 +151,7 @@ function UnitsPanel({ kind, units }: { kind: string; units: Unit[] }) {
         <input className={`${inp} max-w-[90px]`} placeholder="Code" value={code} onChange={(e) => setCode(e.target.value)} />
         <button className={btn} disabled={!name.trim() || add.isPending} onClick={() => add.mutate()}>Add</button>
       </div>
-      {(add.error || patch.error) && <p className="text-xs text-red-700 mt-1">{((add.error || patch.error) as Error).message}</p>}
+      {(add.error || patch.error) && <p className="text-xs text-s-red mt-1">{((add.error || patch.error) as Error).message}</p>}
     </div>
   )
 }

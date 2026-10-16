@@ -118,10 +118,10 @@ export function Modal({ title, wide, onClose, children, dirty }: { title: string
 }
 
 export function Stat({ label, value, tone }: { label: string; value: React.ReactNode; tone?: 'warn' | 'bad' | 'good' }) {
-  const color = tone === 'warn' ? '#a15c00' : tone === 'bad' ? 'var(--erp-danger)' : tone === 'good' ? '#3f7d20' : 'rgb(var(--fg-rgb) / 0.9)'
+  const color = tone === 'warn' ? 'var(--erp-warning)' : tone === 'bad' ? 'var(--erp-danger)' : tone === 'good' ? 'var(--erp-success)' : 'rgb(var(--fg-rgb) / 0.9)'
   return (
     <div className="rounded-2xl p-4" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
-      <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
+      <p className="text-xs uppercase tracking-wider text-white/65 font-bold">{label}</p>
       <p className="text-xl font-black mt-1" style={{ color }}>{value}</p>
     </div>
   )

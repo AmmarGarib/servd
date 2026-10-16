@@ -80,10 +80,10 @@ function Employees() {
         <span className="text-xs text-white/40" role="status" aria-live="polite">{isFetching && !isLoading ? 'Updating…' : ''}</span>
       </div>
       {error && (
-        <p className="text-sm text-red-700 mb-3" role="alert">{(error as Error).message}{' '}
+        <p className="text-sm text-s-red mb-3" role="alert">{(error as Error).message}{' '}
           <button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>
       )}
-      {csvErr && <p className="text-sm text-red-700 mb-3">Export failed: {csvErr}</p>}
+      {csvErr && <p className="text-sm text-s-red mb-3">Export failed: {csvErr}</p>}
       <div className="rounded-2xl overflow-x-auto" style={card}>
         <table className="w-full text-sm">
           <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
@@ -160,7 +160,7 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
           <button type="submit" className={btn} disabled={save.isPending || !form}>{save.isPending ? 'Saving…' : 'Add employee'}</button>
           <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
         </div>
-        {err && <p className="text-xs text-red-700 mt-3" role="alert">{err}</p>}
+        {err && <p className="text-xs text-s-red mt-3" role="alert">{err}</p>}
       </form>
     </Modal>
   )

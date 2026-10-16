@@ -288,7 +288,7 @@ export default function PosPage() {
                 }}
                 className={`min-h-11 shrink-0 rounded px-3 py-1 text-sm font-semibold ${
                   c.id === conceptId
-                    ? 'bg-kds-green text-white'
+                    ? 'bg-kds-green text-primary-on'
                     : 'text-kds-subtext hover:text-kds-text'
                 }`}
               >
@@ -331,7 +331,7 @@ export default function PosPage() {
               onClick={() => setSelectedCategory(cat.id)}
               className={`min-h-11 shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                 cat.id === (selectedCategory ?? categories[0]?.id)
-                  ? 'bg-kds-green text-white'
+                  ? 'bg-kds-green text-primary-on'
                   : 'text-kds-subtext hover:bg-kds-border hover:text-kds-text'
               }`}
             >

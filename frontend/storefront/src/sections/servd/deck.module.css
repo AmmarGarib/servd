@@ -685,8 +685,35 @@
 }
 
 @media (max-width: 640px) {
-  .grid { grid-template-columns: minmax(0, 1fr); row-gap: 3.5rem; perspective: none; }
-  .slot:nth-child(3) { max-width: none; }
+  /* Phone: a sideways swipe deck, one card at a time (owner, 2026-10-16).
+     Native scroll-snap; the next card peeks; no tilt, so nothing pokes past
+     the edge. Top/bottom padding keeps stickers and the hard shadow unclipped. */
+  .grid {
+    display: flex;
+    gap: 1rem;
+    perspective: none;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 1rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    margin-inline: calc(-1 * clamp(1rem, 4vw, 2.5rem));
+    padding: 2.75rem clamp(1rem, 4vw, 2.5rem) 1.5rem;
+  }
+  .grid::-webkit-scrollbar { display: none; }
+  .slot, .slot:nth-child(2), .slot:nth-child(3) {
+    flex: 0 0 82%;
+    max-width: none;
+    margin-top: 0;
+    width: auto;
+    scroll-snap-align: center;
+    --tilt: 0deg;
+  }
+  .section .slot, .section .slot:global(.is-revealed), .section .elegant:global(.is-revealed) {
+    opacity: 1;
+    animation: none;
+  }
   .note { display: none; }
   .face { box-shadow: 7px 7px 0 var(--servd-hard-ink, #261038); }
   .back { box-shadow: -7px 7px 0 var(--servd-hard-ink, #261038); }

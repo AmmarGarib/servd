@@ -354,7 +354,7 @@ function AttachLine({ label, sub, dueCents, matches, confirming, busy, onAttach,
       {confirming ? (
         <div className="flex shrink-0 gap-1">
           <button type="button" onClick={onConfirm} disabled={busy}
-            className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-white disabled:opacity-30">
+            className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-primary-on disabled:opacity-30">
             {busy ? 'Attaching…' : 'Confirm'}
           </button>
           <button type="button" onClick={onCancel} disabled={busy} className="rounded-lg border border-kds-border px-2 py-1 text-xs text-kds-subtext">

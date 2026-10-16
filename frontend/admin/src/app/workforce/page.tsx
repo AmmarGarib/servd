@@ -373,7 +373,7 @@ function WorkforcePageInner() {
             active={activeCategory === 'all'}
             onClick={() => { setActiveCategory('all'); router.replace('/workforce') }}
           />
-          {CATEGORIES.map((c) => (
+          {CATEGORIES.filter((c) => (countsByCategory.get(c.key) ?? 0) > 0 || activeCategory === c.key).map((c) => (
             <CategoryChip
               key={c.key} label={c.label} emoji={c.emoji}
               count={countsByCategory.get(c.key) ?? 0}
@@ -571,9 +571,9 @@ function StaffRow({
               style={{ background: statusM.bg, color: statusM.color }}>
               {statusM.label}
             </span>
-            {!user.hasPin && status === 'active' && (
+            {!user.hasPin && status === 'active' && user.usesCodeLogin && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}>
+                style={{ background: 'rgb(var(--fg-rgb) / 0.06)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
                 No PIN
               </span>
             )}

@@ -230,9 +230,9 @@ export function GroupOrderEntryClient({ brands }: Props) {
             </div>
           )}
 
-          <label className="block mb-3">
-            <span className="block text-xs font-bold mb-1" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>Your name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="servd-input servd-field" placeholder="e.g. Sara K."
+          <label className="sv-field mb-3">
+            <span className="sv-field-label">Your name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} className="sv-field-input servd-field" placeholder="e.g. Sara K."
               name="name" autoComplete="given-name" maxLength={120} enterKeyHint="go" />
           </label>
           {err && <p role="alert" className="text-sm" style={{ color: 'var(--servd-danger)' }}>{err}</p>}
@@ -245,18 +245,18 @@ export function GroupOrderEntryClient({ brands }: Props) {
       {mode === 'join' && (
         <form className="servd-card" style={{ padding: '1.5rem' }} noValidate
           onSubmit={(e) => { e.preventDefault(); void join() }}>
-          <label className="block mb-3">
-            <span className="block text-xs font-bold mb-1" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>Group code</span>
+          <label className="sv-field mb-3">
+            <span className="sv-field-label">Group code</span>
             <input value={code}
               onChange={(e) => { setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')); setJoinErr(null) }}
               placeholder="6 characters" name="code" id="group-code"
               autoComplete="off" autoCapitalize="characters" spellCheck={false} enterKeyHint="next"
               aria-invalid={joinErr ? true : undefined} aria-describedby={joinErr ? 'group-code-err' : undefined}
-              className="servd-input servd-field font-mono uppercase tracking-widest" maxLength={6} />
+              className="sv-field-input servd-field font-mono uppercase tracking-widest" maxLength={6} />
           </label>
-          <label className="block mb-3">
-            <span className="block text-xs font-bold mb-1" style={{ color: 'var(--servd-mute)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>Your name</span>
-            <input value={joinName} onChange={(e) => setJoinName(e.target.value)} className="servd-input servd-field" placeholder="e.g. Imran R."
+          <label className="sv-field mb-3">
+            <span className="sv-field-label">Your name</span>
+            <input value={joinName} onChange={(e) => setJoinName(e.target.value)} className="sv-field-input servd-field" placeholder="e.g. Imran R."
               name="name" autoComplete="given-name" maxLength={120} enterKeyHint="go" />
           </label>
           {joinErr && <p id="group-code-err" role="alert" className="text-sm" style={{ color: 'var(--servd-danger)' }}>{joinErr}</p>}

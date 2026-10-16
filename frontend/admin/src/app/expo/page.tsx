@@ -8,6 +8,7 @@ import { fmtPkrWhole } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
 import { FIRE_ALL_EXTRA_ROLES, useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 
 /**
  * Expo — the pass-station's screen. Three columns:
@@ -37,7 +38,7 @@ const FULFILMENT_META = {
     label: 'Dine-in', short: 'PLATE',
     chip: 'bg-kds-green/10 text-kds-green', text: 'text-kds-green', bar: 'bg-kds-green',
     border: 'border border-kds-green/25', ready: 'bg-kds-green/10 border-2 border-kds-green',
-    button: 'bg-kds-green text-kds-bg',
+    button: 'bg-kds-green text-primary-on',
   },
   takeout:  {
     label: 'Takeout', short: 'PACK',
@@ -311,7 +312,7 @@ export default function ExpoPage() {
   }, {})
 
   return (
-    <div className="erp-kitchen-dark min-h-full bg-kds-bg">
+    <div className="erp-kitchen-dark h-screen h-dvh overflow-y-auto bg-kds-bg">
       {/* Unrouted-items toast — fires when the order was confirmed but some
           items have no station, so the line will never see them. */}
       {unroutedToast.length > 0 && (
@@ -329,7 +330,7 @@ export default function ExpoPage() {
             )}
           </ul>
           <button onClick={() => setUnroutedToast([])} aria-label="Dismiss"
-            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
+            className="absolute top-0 right-0 flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
       {heldNotice && (
@@ -342,7 +343,7 @@ export default function ExpoPage() {
             <Link href={`/orders/${heldNotice.orderId}/courses`} className="underline text-kds-blue">Courses</Link> page.
           </p>
           <button onClick={() => setHeldNotice(null)} aria-label="Dismiss"
-            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
+            className="absolute top-0 right-0 flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
       {actionError && (
@@ -350,7 +351,7 @@ export default function ExpoPage() {
           <p className="text-sm font-black text-kds-red">Not done</p>
           <p className="text-[11px] text-kds-subtext mt-1">{actionError}</p>
           <button onClick={() => setActionError(null)} aria-label="Dismiss"
-            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
+            className="absolute top-0 right-0 flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
       {pacedNotice && (
@@ -363,17 +364,20 @@ export default function ExpoPage() {
           </ul>
           {canFireAll && (
             <button onClick={() => fireAll.mutate(pacedNotice.orderId)} disabled={fireAll.isPending}
-              className="mt-2 rounded-lg px-3 py-1.5 text-xs font-black border border-kds-blue text-kds-blue disabled:opacity-40">
+              className="mt-2 min-h-11 rounded-lg px-3 py-1.5 text-xs font-black border border-kds-blue text-kds-blue disabled:opacity-40">
               Fire all now
             </button>
           )}
           <button onClick={() => setPacedNotice(null)} aria-label="Dismiss"
-            className="absolute top-2 right-2 text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
+            className="absolute top-0 right-0 flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
       <header className="px-6 py-4 border-b border-white/5">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
+            <Link href="/w" className="mb-1 inline-flex min-h-11 items-center gap-1.5 text-xs font-bold text-kds-subtext hover:text-kds-text">
+              <ArrowLeft size={16} aria-hidden="true" /> Workspace
+            </Link>
             <h1 className="text-2xl font-black text-white/95">Expo Station</h1>
             <p className="text-xs text-white/45 mt-0.5">
               Confirm incoming → watch progress → hand off ready.
@@ -495,7 +499,7 @@ export default function ExpoPage() {
                       </button>
                     )}
                     <button onClick={() => fire.mutate(order.id)} disabled={fire.isPending}
-                      className="flex-1 min-h-11 rounded-xl text-sm font-black transition-all disabled:opacity-40 bg-kds-green text-kds-bg">
+                      className="flex-1 min-h-11 rounded-xl text-sm font-black transition-all disabled:opacity-40 bg-kds-green text-primary-on">
                       {fire.isPending && fire.variables === order.id ? 'Firing…' : 'Fire'}
                     </button>
                   </div>
@@ -514,7 +518,7 @@ export default function ExpoPage() {
                           key={preset}
                           type="button"
                           onClick={() => setRejectReason(preset)}
-                          className={`text-[11px] font-bold rounded-full px-2.5 min-h-9 transition-colors border ${rejectReason === preset
+                          className={`text-[11px] font-bold rounded-full px-3 min-h-11 transition-colors border ${rejectReason === preset
                             ? 'bg-kds-red/20 text-kds-red border-kds-red/50'
                             : 'bg-white/[0.04] text-white/60 border-white/10'}`}>
                           {preset}
@@ -525,7 +529,7 @@ export default function ExpoPage() {
                       autoFocus aria-label="Reject reason" autoComplete="off" enterKeyHint="send"
                       onKeyDown={(e) => { if (e.key === 'Escape') { setRejecting(null); setRejectReason('') } }}
                       placeholder="…or type a custom reason"
-                      className="w-full rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none bg-black/40 border border-kds-red/20 text-white/90" />
+                      className="w-full min-h-11 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none bg-black/40 border border-kds-red/20 text-white/90" />
                     <div className="flex gap-2">
                       <button type="button" onClick={() => { setRejecting(null); setRejectReason('') }}
                         className="min-h-11 rounded-lg px-4 text-xs font-bold transition-colors bg-white/[0.04] text-white/60">
@@ -602,7 +606,7 @@ export default function ExpoPage() {
                     ))}
                     {canFireAll && (
                       <button onClick={() => fireAll.mutate(order.id)} disabled={fireAll.isPending}
-                        className="w-full rounded-lg py-1.5 text-[11px] font-black border border-white/15 text-white/80 disabled:opacity-40">
+                        className="w-full min-h-11 rounded-lg py-1.5 text-[11px] font-black border border-white/15 text-white/80 disabled:opacity-40">
                         Fire all now
                       </button>
                     )}
@@ -642,10 +646,10 @@ export default function ExpoPage() {
                 <div className="text-[11px] text-white/55 mb-3 space-y-0.5">
                   <p>{order.concept.name} · {order.items.length} item{order.items.length === 1 ? '' : 's'}</p>
                   {order.fulfilmentType === 'dine_in' && order.table && (
-                    <p className="text-kds-green">→ Table {order.table.label}</p>
+                    <p className="flex items-center gap-1 text-kds-green"><ArrowRight size={12} aria-hidden="true" /> Table {order.table.label}</p>
                   )}
                   {order.fulfilmentType === 'delivery' && order.rider && (
-                    <p className="text-kds-blue">→ {order.rider.name} ({order.rider.phone ?? 'no phone'})</p>
+                    <p className="flex items-center gap-1 text-kds-blue"><ArrowRight size={12} aria-hidden="true" /> {order.rider.name} ({order.rider.phone ?? 'no phone'})</p>
                   )}
                   {order.fulfilmentType === 'delivery' && !order.rider && (
                     <p className="text-kds-red"><WarnIcon />No rider assigned yet</p>
@@ -653,7 +657,7 @@ export default function ExpoPage() {
                 </div>
 
                 <button onClick={() => handoff.mutate(order.id)} disabled={handoff.isPending}
-                  className={`w-full rounded-xl py-3 text-sm font-black transition-all disabled:opacity-40 ${fm.button}`}>
+                  className={`w-full min-h-11 rounded-xl py-3 text-sm font-black transition-all disabled:opacity-40 ${fm.button}`}>
                   {handoff.isPending && handoff.variables === order.id ? 'Handing off…' : HANDOFF_LABEL[order.fulfilmentType]}
                 </button>
               </article>
@@ -674,7 +678,7 @@ export default function ExpoPage() {
                   const busy = s.activeItems > 0
                   return (
                     <Link key={s.id} href={`/kds/${s.id}`}
-                      className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors border ${busy
+                      className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 transition-colors border ${busy
                         ? 'bg-kds-amber/5 border-kds-amber/20' : 'bg-white/[0.02] border-white/5'}`}>
                       <span className={`text-xs font-bold flex-1 ${busy ? 'text-kds-amber' : 'text-white/75'}`}>
                         {s.name}

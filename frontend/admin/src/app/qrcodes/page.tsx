@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../lib/api'
 import Link from 'next/link'
@@ -162,11 +163,7 @@ export default function QrCodesPage() {
         {isLoading ? (
           <p className="text-s-muted text-sm">Loading…</p>
         ) : qrCodes.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-4xl mb-3">📱</p>
-            <p className="font-semibold text-s-text">No QR codes yet</p>
-            <p className="text-sm text-s-muted mt-1">Generate QR codes for tables to enable scan-to-order</p>
-          </div>
+          <CompactEmptyState message="No QR codes yet. Generate one per table for scan-to-order." />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {qrCodes.map((qr) => (

@@ -132,8 +132,8 @@ const HERO_LOADER_CELLS = [
   'var(--servd-green-soft)', 'var(--servd-on-purple)', 'var(--servd-on-purple)',
 ];
 
-/** Progress per pixel of scrollbar movement: about half a screen of dragging expands the hero. */
-const SCROLLBAR_FACTOR = 0.0025
+/** How long the one-off expansion takes — the same on every device. */
+const EXPAND_MS = 1100;
 
 /** Keys that scroll the page down — they expand the hero instead. */
 const EXPAND_KEYS = new Set(['PageDown', ' ', 'Spacebar', 'ArrowDown', 'End']);
@@ -186,13 +186,9 @@ const ScrollExpandMedia = ({
   const slides: BgSlide[] = bgSlides?.length ? bgSlides : bgImageSrc ? [{ src: bgImageSrc, alt: '' }] : [];
   const [showContent, setShowContent] = useState<boolean>(false);
   const [mediaFullyExpanded, setMediaFullyExpanded] = useState<boolean>(false);
-  // Where the current touch started (a ref: the touchmove listener is attached
-  // once and must never miss a move waiting for a re-render).
-  const touchStartRef = useRef<number>(0);
   const [isMobileState, setIsMobileState] = useState<boolean>(false);
-  // The document is at (or within 5px of) the top — where scrolling up on an
-  // expanded hero collapses it again.
-  const [atTop, setAtTop] = useState<boolean>(true);
+  // The visitor has made their one scroll / swipe: the expansion is playing.
+  const [started, setStarted] = useState<boolean>(false);
   const [reducedMotion, setReducedMotion] = useState<boolean>(false);
   // After hydration: lets the media overlays run the fade they always ran.
   const [hydrated, setHydrated] = useState<boolean>(false);
@@ -213,201 +209,101 @@ const ScrollExpandMedia = ({
   // /home#kitchens) means the visitor wants the content, not the animation:
   // finish the expansion and stay there. So does reduced motion.
   const expandNow = (): void => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    startedRef.current = true;
+    expandedRef.current = true;
+    setStarted(true);
     setScrollProgress(1);
     setMediaFullyExpanded(true);
     setShowContent(true);
   };
 
-  useEffect(() => {
-    const reduce = prefersReducedMotion();
-    setReducedMotion(reduce);
-    if (reduce) {
-      expandNow();
-      return;
-    }
-    setScrollProgress(0);
-    setShowContent(false);
-    setMediaFullyExpanded(false);
-  }, [mediaType]);
-
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-
-  // Scroll: while the hero is collapsed, a scroll the wheel / touch / keys did
-  // not cancel (dragging the scrollbar, a middle-click autoscroll) drives the
-  // expansion like the wheel does: the distance moved becomes progress and the
-  // page is put back at the top, so the hero plays instead of being skipped.
-  // A big jump (an anchor link far down) finishes it. Also tracks "at the top"
-  // for the listeners below. A scroll listener never blocks scrolling, so it
-  // stays for the life of the hero.
-  const progressRef = useRef(0);
-  progressRef.current = scrollProgress;
+  // UX-1 (owner, 2026-10-16): the page scrolls natively — no wheel / touch
+  // hijacking. The first scroll, swipe or key press (seen by PASSIVE
+  // listeners) plays the expansion ONCE, over a fixed time with one easing,
+  // so it feels the same on a mouse wheel, a trackpad and a phone. Once open
+  // it stays open: scrolling back to the top never replays it. While it is
+  // still closed the document does not scroll (overflow hidden, below), so
+  // the gesture cannot move the page under the animation.
+  const rafRef = useRef(0);
+  const startedRef = useRef(false);
   const expandedRef = useRef(false);
-  expandedRef.current = mediaFullyExpanded;
 
-  // Smooth anchor scrolling (globals.css) fights the hero while it is still
-  // collapsed: the scroll handler below resets the page to the top, and a
-  // jump to #kitchens has to land at once so it can finish the expansion.
-  // Collapsed = instant; once expanded the page's smooth scrolling is back.
-  useEffect(() => {
-    const root = document.documentElement;
-    if (!mediaFullyExpanded) root.style.scrollBehavior = 'auto';
-    else root.style.removeProperty('scroll-behavior');
-    return () => { root.style.removeProperty('scroll-behavior'); };
-  }, [mediaFullyExpanded]);
-  useEffect(() => {
-    const handleScroll = (): void => {
-      setAtTop(window.scrollY <= 5);
-      if (mediaFullyExpanded) return;
-      const moved = window.scrollY;
-      if (moved > window.innerHeight * 0.5) { expandNow(); return; }
-      if (moved <= 0) return;
-      window.scrollTo(0, 0);
-      const next = Math.min(progressRef.current + moved * SCROLLBAR_FACTOR, 1);
-      progressRef.current = next;
-      setScrollProgress(next);
-      if (next >= 1) {
+  const play = (): void => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    setStarted(true);
+    const t0 = performance.now();
+    const step = (now: number): void => {
+      const t = Math.min((now - t0) / EXPAND_MS, 1);
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      setScrollProgress(eased);
+      if (eased >= 0.75) setShowContent(true);
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      } else {
+        rafRef.current = 0;
+        expandedRef.current = true;
         setMediaFullyExpanded(true);
         setShowContent(true);
-      } else if (next < 0.75) {
-        setShowContent(false);
       }
     };
-    if (!mediaFullyExpanded && window.scrollY > window.innerHeight * 0.5) expandNow();
-    setAtTop(window.scrollY <= 5);
+    rafRef.current = requestAnimationFrame(step);
+  };
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [mediaFullyExpanded]);
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
 
-  // Where a touch started. Passive: these never cancel anything.
-  useEffect(() => {
-    const handleTouchStart = (e: TouchEvent) => {
-      const t = e.touches[0];
-      if (t) touchStartRef.current = t.clientY;
-    };
-    const handleTouchEnd = (): void => {
-      touchStartRef.current = 0;
-    };
-    window.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchend', handleTouchEnd, { passive: true });
-    return () => {
-      window.removeEventListener('touchstart', handleTouchStart);
-      window.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, []);
-
-  // Wheel / touchmove drive the expansion and must cancel the native scroll,
-  // so they cannot be passive. They are attached only while the hero is in
-  // play: collapsed, or expanded with the page at the top (scrolling up there
-  // collapses it). Reading the page below, nothing blocks scrolling.
-  const heroInPlay = !reducedMotion && (!mediaFullyExpanded || atTop);
-  useEffect(() => {
-    if (!heroInPlay) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      const mediaFullyExpanded = expandedRef.current;
-      if (mediaFullyExpanded && e.deltaY < 0 && window.scrollY <= 5) {
-        setMediaFullyExpanded(false);
-        expandedRef.current = false;
-        e.preventDefault();
-      } else if (!mediaFullyExpanded) {
-        e.preventDefault();
-        const scrollDelta = e.deltaY * 0.0009;
-        const newProgress = Math.min(
-          Math.max(progressRef.current + scrollDelta, 0),
-          1
-        );
-        progressRef.current = newProgress;
-        setScrollProgress(newProgress);
-
-        if (newProgress >= 1) {
-          expandedRef.current = true;
-          setMediaFullyExpanded(true);
-          setShowContent(true);
-        } else if (newProgress < 0.75) {
-          setShowContent(false);
-        }
-      }
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      const touchStartY = touchStartRef.current;
-      const mediaFullyExpanded = expandedRef.current;
-      const scrollProgress = progressRef.current;
-      if (!touchStartY) return;
-
-      const t = e.touches[0];
-      if (!t) return;
-      const touchY = t.clientY;
-      const deltaY = touchStartY - touchY;
-
-      // Pull-to-refresh escape hatch. deltaY < 0 means the finger is moving
-      // DOWN — the browser's refresh gesture. When the hero is collapsed at
-      // progress 0 and the document is at the top, there is no animation left
-      // to reverse (newProgress is clamped at 0 below), so calling
-      // preventDefault() here would swallow the gesture for no benefit and the
-      // page could never be pull-to-refreshed on mobile. Bail out and let the
-      // browser have it.
-      if (deltaY < 0 && !mediaFullyExpanded && scrollProgress <= 0 && window.scrollY <= 0) {
-        return;
-      }
-
-      if (mediaFullyExpanded && deltaY < -20 && window.scrollY <= 5) {
-        setMediaFullyExpanded(false);
-        expandedRef.current = false;
-        e.preventDefault();
-      } else if (!mediaFullyExpanded) {
-        e.preventDefault();
-        // Increase sensitivity for mobile, especially when scrolling back
-        const scrollFactor = deltaY < 0 ? 0.008 : 0.005; // Higher sensitivity for scrolling back
-        const scrollDelta = deltaY * scrollFactor;
-        const newProgress = Math.min(
-          Math.max(scrollProgress + scrollDelta, 0),
-          1
-        );
-        progressRef.current = newProgress;
-        setScrollProgress(newProgress);
-
-        if (newProgress >= 1) {
-          expandedRef.current = true;
-          setMediaFullyExpanded(true);
-          setShowContent(true);
-        } else if (newProgress < 0.75) {
-          setShowContent(false);
-        }
-
-        touchStartRef.current = touchY;
-      }
-    };
-
-    window.addEventListener('wheel', handleWheel, { passive: false });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    return () => {
-      window.removeEventListener('wheel', handleWheel);
-      window.removeEventListener('touchmove', handleTouchMove);
-    };
-  }, [heroInPlay]);
-
-  // Keyboard: the keys that scroll down expand the hero (the snap-back above
-  // used to leave keyboard users stuck at scrollY 0). End also lets the
-  // browser jump to the end, which the scroll handler then keeps expanded.
-  // Keys inside the search sheet or a pop-up (or with a modal open) are left
-  // alone: they scroll the dialog, not the page behind it.
+  // While closed the page is held at the top with CSS, not with event
+  // cancelling. Smooth anchor scrolling (globals.css) is off meanwhile so a
+  // jump to #kitchens lands at once and can finish the expansion.
   useEffect(() => {
     if (reducedMotion || mediaFullyExpanded) return;
-    const handleKey = (e: KeyboardEvent) => {
+    const root = document.documentElement;
+    root.style.overflow = 'hidden';
+    root.style.scrollBehavior = 'auto';
+    return () => {
+      root.style.removeProperty('overflow');
+      root.style.removeProperty('scroll-behavior');
+    };
+  }, [reducedMotion, mediaFullyExpanded]);
+
+  useEffect(() => {
+    if (reducedMotion || mediaFullyExpanded) return;
+    const onScroll = (): void => {
+      if (window.scrollY > window.innerHeight * 0.5) { expandNow(); return; }
+      if (window.scrollY > 0) { window.scrollTo(0, 0); play(); }
+    };
+    const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
       if (!EXPAND_KEYS.has(e.key)) return;
       if ((e.key === ' ' || e.key === 'Spacebar') && e.shiftKey) return;
       if (isTypingTarget(e.target, e.key)) return;
       if (isDialogKey(e.target)) return;
-      if (e.key !== 'End') e.preventDefault();
-      expandNow();
+      if (e.key === 'End') expandNow(); else play();
     };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    const onWheel = (e: WheelEvent): void => { if (e.deltaY > 0) play(); };
+    let touchY = 0;
+    const onTouchStart = (e: TouchEvent): void => { touchY = e.touches[0]?.clientY ?? 0; };
+    const onTouchMove = (e: TouchEvent): void => {
+      const y = e.touches[0]?.clientY ?? 0;
+      if (touchY - y > 8) play(); // finger moving up = scrolling down
+    };
+    if (window.scrollY > window.innerHeight * 0.5) expandNow();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('wheel', onWheel, { passive: true });
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: true });
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('keydown', onKey);
+    };
+    // play / expandNow only touch refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reducedMotion, mediaFullyExpanded]);
 
   useEffect(() => {

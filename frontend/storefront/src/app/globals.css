@@ -2456,3 +2456,19 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   .sv-faq-q { display: block; min-height: 44px; padding: 10px 0; }
   .sv-tap-link { min-height: 44px; display: inline-flex; align-items: center; }
 }
+
+/* ── Shared field (SF-7, 2026-10-16) — account, booking, group order ─────
+   Label above, 16px text (no iOS zoom), 48px tall. Use <Field> from
+   components/ui/Field.tsx or these classes: .sv-field (label wrapper),
+   .sv-field-label, .sv-field-input (+ .servd-field for the focus ring). */
+.sv-field { display: block; }
+.sv-field-label { display: block; margin-bottom: 0.4rem; font-size: 0.875rem; font-weight: 600; color: var(--servd-ink); }
+.sv-field-input {
+  display: block; width: 100%; min-height: 48px; padding: 0.75rem 1rem;
+  font: inherit; font-size: 16px; line-height: 1.4;
+  color: var(--servd-ink); background: #fff;
+  border: 1px solid var(--servd-line); border-radius: 0.75rem;
+}
+.sv-field-input::placeholder { color: var(--servd-dim); }
+textarea.sv-field-input { min-height: 0; }
+.sv-field-error { display: block; margin-top: 0.3rem; font-size: 0.8rem; color: var(--servd-danger); }

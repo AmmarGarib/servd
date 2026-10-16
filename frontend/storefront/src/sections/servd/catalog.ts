@@ -127,10 +127,12 @@ export const specs: SectionSpec[] = [
     // instead of the old tiles). Each kitchen keeps its own basket, so there is
     // no "one bag" promise in the copy.
     defaults: {
-      eyebrow: 'The kitchens',
-      heading: 'Pick one. Pick two.\nPick all of them.',
-      lead: 'Three kitchens, each with its own menu and its own basket. Open one, see what’s cooking, and order.',
-      note: 'flip a card to meet the kitchen',
+      // No words above the cards (owner, 2026-10-16: "remove the wording above
+      // the cards too"). The four fields stay editable in Admin -> Storefront.
+      eyebrow: '',
+      heading: '',
+      lead: '',
+      note: '',
       backLabel: 'kitchen stats',
       hoursLabel: 'hours',
       backFoot: 'collect all three',
@@ -512,12 +514,11 @@ export const specs: SectionSpec[] = [
       { key: 'eyebrow', label: 'Eyebrow', kind: 'text', hint: 'Empty = none.' },
       { key: 'heading', label: 'Heading (the page’s H1)', kind: 'text' },
       { key: 'intro', label: 'Answer', kind: 'textarea', rows: 5, hint: 'Two or three plain, factual sentences, answer first. {brands} = the live kitchen names (“Simmer, Stackd and Flipd”), {count} = how many.' },
-      { key: 'showTable', label: 'Show the kitchens table', kind: 'toggle', hint: 'Cuisine, area, price range and hours come from Admin → Marketing → Brands. A missing value shows the dash below, never a guess.' },
+      { key: 'showTable', label: 'Show the kitchens table', kind: 'toggle', hint: 'Cuisine, area and hours come from Admin → Marketing → Brands. A missing value shows the dash below, never a guess.' },
       { key: 'tableHeading', label: 'Table heading', kind: 'text', hint: 'Empty = none.' },
       { key: 'colKitchen', label: 'Column: kitchen', kind: 'text' },
       { key: 'colCuisine', label: 'Column: cuisine', kind: 'text' },
       { key: 'colArea', label: 'Column: area', kind: 'text' },
-      { key: 'colPrice', label: 'Column: price range', kind: 'text' },
       { key: 'colHours', label: 'Column: hours', kind: 'text' },
       { key: 'colOrder', label: 'Column: order', kind: 'text' },
       { key: 'orderText', label: 'Order link text', kind: 'text' },
@@ -533,7 +534,6 @@ export const specs: SectionSpec[] = [
       colKitchen: 'Kitchen',
       colCuisine: 'Cuisine',
       colArea: 'Area',
-      colPrice: 'Price range',
       colHours: 'Hours',
       colOrder: 'Order',
       orderText: 'Order',

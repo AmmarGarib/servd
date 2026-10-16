@@ -260,7 +260,7 @@ export function TerminalCharge({
             type="button"
             onClick={() => void start()}
             disabled={starting || dueCents <= 0 || !terminalId}
-            className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
+            className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95"
           >
             {starting ? 'Sending to the card machine…' : `Charge ${fmtPkrWhole(dueCents + tipCents)} on ${label}`}
           </button>
@@ -322,7 +322,7 @@ export function TerminalCharge({
                   className="rounded-lg border border-kds-border py-2 text-sm text-kds-subtext">Back</button>
                 <button type="button" disabled={acting || slipRef.trim().length < 3}
                   onClick={() => void act(() => resolveTerminalCharge(charge.id, { outcome: 'approved_manual', gatewayRef: slipRef.trim() }))}
-                  className="rounded-lg bg-kds-green py-2 text-sm font-bold text-white disabled:opacity-30">
+                  className="rounded-lg bg-kds-green py-2 text-sm font-bold text-primary-on disabled:opacity-30">
                   {acting ? 'Recording…' : 'Record payment'}
                 </button>
               </div>

@@ -77,7 +77,7 @@ export default function KitchenReservationTracker() {
                 onClick={() => setHorizon(h)}
                 className={`px-3 py-1 text-xs font-bold ${
                   h === horizon
-                    ? 'bg-kds-green text-black'
+                    ? 'bg-kds-green text-primary-on'
                     : 'bg-kds-bg text-kds-subtext hover:text-kds-text'
                 }`}>
                 {h}h

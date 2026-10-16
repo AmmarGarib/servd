@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { menuApi, api, deleteWithUndo, type Category, type MenuItem } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
 import Link from 'next/link'
-import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { fmtPkrWhole } from '../../lib/money'
@@ -305,9 +305,10 @@ export default function MenuPage() {
                     <button
                       type="button"
                       onClick={() => setEditItem(item)}
-                      className="[@media(pointer:coarse)]:min-h-11 rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text"
+                      aria-label={`Edit ${item.name}`}
+                      className="[@media(pointer:coarse)]:min-h-11 rounded-lg border border-primary/50 px-4 py-2 text-xs font-bold text-primary-ink hover:bg-primary/10"
                     >
-                      Edit
+                      ✎ Edit
                     </button>
                     <button
                       type="button"
@@ -342,18 +343,9 @@ export default function MenuPage() {
         ))}
 
         {!isLoading && categories.length === 0 && conceptId && (
-          <EmptyStateGuide
-            icon="📝"
-            title="Build your menu"
-            description="Group items into categories first — Starters, Mains, Drinks. Then add items with prices, photos, and Urdu names for the KDS."
-            whyItMatters="A clean category structure speeds up POS taps and makes the storefront scannable. Aim for 4–6 categories with 5–10 items each."
-            samples={[
-              { emoji: '🥗', title: 'Starters', hint: 'Soups, salads, small bites' },
-              { emoji: '🍛', title: 'Mains',    hint: 'Biryani, karahi, grills' },
-              { emoji: '🥤', title: 'Drinks',   hint: 'Soft drinks, lassi, chai' },
-            ]}
-            primaryAction={{ label: 'Add your first category', onClick: () => setAddingCategory(true) }}
-            secondaryAction={{ label: 'Browse the library for photos', href: '/storefront?tab=library' }}
+          <CompactEmptyState
+            message="No menu yet. Start with a category such as Starters, Mains or Drinks."
+            action={{ label: 'Add your first category', onClick: () => setAddingCategory(true) }}
           />
         )}
       </div>

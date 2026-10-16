@@ -124,7 +124,7 @@ export default function ShiftPage() {
             <button
               type="submit"
               disabled={openMutation.isPending}
-              className="w-full rounded-xl bg-kds-green py-4 font-bold text-white disabled:opacity-50"
+              className="w-full rounded-xl bg-kds-green py-4 font-bold text-primary-on disabled:opacity-50"
             >
               {openMutation.isPending ? 'Opening…' : 'Open Shift'}
             </button>
@@ -262,7 +262,7 @@ function ZReportView({ report, onClose }: { report: ClosedZReport; onClose: () =
 
         <button
           onClick={onClose}
-          className="w-full rounded-xl bg-kds-green py-4 font-bold text-white"
+          className="w-full rounded-xl bg-kds-green py-4 font-bold text-primary-on"
         >
           Done
         </button>
@@ -388,7 +388,7 @@ function CancelledCardRefundRow({ orderId, shiftId }: { orderId: string; shiftId
               type="button"
               onClick={() => refund.mutate({ paymentId: data.paymentId, amountCents })}
               disabled={!amountOk || !reasonOk || refund.isPending}
-              className="flex-1 rounded-lg bg-kds-green py-2 font-bold text-white disabled:opacity-50"
+              className="flex-1 rounded-lg bg-kds-green py-2 font-bold text-primary-on disabled:opacity-50"
             >
               {refund.isPending ? 'On the card machine…' : 'Refund to card'}
             </button>

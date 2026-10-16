@@ -353,7 +353,7 @@ export function Feedback({ fields }: SectionProps) {
               maxHeight: '100dvh', overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none',
               background: '#fff', width: '100%', maxWidth: '32rem',
               borderRadius: '1.5rem 1.5rem 0 0', padding: '1.5rem 1.5rem 2rem',
-              boxShadow: '0 -8px 32px rgba(0,0,0,0.18)',
+              border: 'var(--servd-hard-border)', borderBottom: 'none', boxShadow: '6px -6px 0 var(--servd-hard-ink)',
             }}>
             {/* Drag handle */}
             <div style={{

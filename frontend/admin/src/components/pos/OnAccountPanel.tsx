@@ -414,7 +414,7 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
 
           {!found.blocked && !needsRescan && (
             <button type="button" onClick={() => charge.mutate({ lookup: found })} disabled={!canCharge}
-              className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95">
+              className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95">
               {charge.isPending ? 'Charging…' : `Charge ${fmtPkrWhole(due)} to ${found.account.legalName}`}
             </button>
           )}

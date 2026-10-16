@@ -65,9 +65,9 @@ export default function PayrollRunsPage() {
         ) : (
           <button className={btn} disabled={create.isPending || isLoading} onClick={() => { setErr(''); create.mutate() }}>{create.isPending ? 'Calculating…' : 'Calculate'}</button>
         )}
-        {err && <p className="text-xs text-red-700" role="alert">{err}</p>}
+        {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
       </div>
-      {error && <p className="text-sm text-red-700 mb-3" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
+      {error && <p className="text-sm text-s-red mb-3" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
         {isLoading && <p className="p-8 text-center text-sm text-white/40" role="status">Loading payroll runs…</p>}
         {!isLoading && !error && runs.length === 0 && <p className="p-8 text-center text-sm text-white/40">No payroll yet. Pick a month above and press Calculate.</p>}
@@ -76,8 +76,8 @@ export default function PayrollRunsPage() {
             <span className="font-black text-white/90 w-24">{r.period}</span>
             <span className="text-white/60">{r.totals.employees ?? 0} employees</span>
             <span className="text-white/80">Net {rs(r.totals.netCents ?? 0)}</span>
-            {(r.totals.warnings?.length ?? 0) > 0 && <span className="text-xs text-amber-700">{r.totals.warnings!.length} warning(s)</span>}
-            <span className="ml-auto text-xs font-bold" style={{ color: STATUS_COLOR[r.status] ?? '#a15c00' }}>{human(r.status)}</span>
+            {(r.totals.warnings?.length ?? 0) > 0 && <span className="text-xs text-s-amber">{r.totals.warnings!.length} warning(s)</span>}
+            <span className="ml-auto text-xs font-bold" style={{ color: STATUS_COLOR[r.status] ?? 'var(--erp-warning)' }}>{human(r.status)}</span>
           </Link>
         ))}
       </div>
@@ -119,7 +119,7 @@ function SettlementsToPay() {
         </button>
       </div>
       {msg && <p className="text-xs text-white/60" role="status">{msg}</p>}
-      {error && <p className="text-xs text-red-700" role="alert">{(error as Error).message}</p>}
+      {error && <p className="text-xs text-s-red" role="alert">{(error as Error).message}</p>}
       {!error && data.length === 0 && <p className="text-xs text-white/40">Nothing waiting — every approved settlement is paid.</p>}
       {data.map((r) => (
         <div key={r.id} className="border-t border-white/[0.05] pt-3 space-y-2">

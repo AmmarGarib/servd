@@ -67,7 +67,7 @@ export default function MyHrPage() {
               {me.leaveBalances.map((b) => (
                 <div key={b.leaveTypeId} className="flex justify-between text-sm py-1.5 border-t border-white/[0.05] first:border-t-0">
                   <span className="text-white/75">{b.name}</span>
-                  <span className="font-bold text-white/90">{b.paid ? `${b.balance} left` : `${b.taken} taken`}{b.pending ? <span className="text-[11px] text-amber-700"> ({b.pending} pending)</span> : null}</span>
+                  <span className="font-bold text-white/90">{b.paid ? `${b.balance} left` : `${b.taken} taken`}{b.pending ? <span className="text-[11px] text-s-amber"> ({b.pending} pending)</span> : null}</span>
                 </div>
               ))}
             </div>
@@ -139,7 +139,7 @@ function RequestForm({ section, tenantId, onClose }: { section: string; tenantId
           <button type="submit" className={btn} disabled={save.isPending || !fmt}>{save.isPending ? 'Sending…' : 'Submit'}</button>
           <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
         </div>
-        {err && <p className="text-xs text-red-700 mt-3" role="alert">{err}</p>}
+        {err && <p className="text-xs text-s-red mt-3" role="alert">{err}</p>}
         {fmt && fmt.workflow.length > 0 && <p className="text-xs text-white/50 mt-3">Goes to: {fmt.workflow.map((w) => w.label).join(' → ')}</p>}
       </form>
     </Modal>
@@ -155,7 +155,7 @@ function MySlip({ id, onClose }: { id: string; onClose: () => void }) {
       <div id="hr-my-slip">
         {s && <p className="hidden print:block text-lg font-black mb-3">Payslip {s.run.period}</p>}
         {isLoading && <p className="text-sm text-white/40">Loading payslip…</p>}
-        {error && <p className="text-sm text-red-700" role="alert">{(error as Error).message}</p>}
+        {error && <p className="text-sm text-s-red" role="alert">{(error as Error).message}</p>}
         {s?.lines.filter((l) => l.kind !== 'employer').map((l) => (
           <div key={l.label} className="flex justify-between text-sm py-1 border-b border-white/[0.04]">
             <span style={{ color: l.kind === 'deduction' ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}</span>

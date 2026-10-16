@@ -324,7 +324,7 @@ export function RaastPanel({
       <button
         type="submit"
         disabled={confirm.isPending || !seen || !ref.trim() || !!refProblem || transferCents <= 0}
-        className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
+        className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95"
       >
         {confirm.isPending ? 'Recording…' : `Confirm Raast — ${fmtPkr(intent?.amountCents ?? transferCents)}`}
       </button>
@@ -364,7 +364,7 @@ export function RaastPanel({
               type="button"
               onClick={() => { if (ended) { setIntentId(null); intentKey.current = null } start.mutate() }}
               disabled={start.isPending || transferCents <= 0}
-              className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
+              className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95"
             >
               {start.isPending ? 'Starting…' : 'Customer is paying — wait for the bank SMS'}
             </button>

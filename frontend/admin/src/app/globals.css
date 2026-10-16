@@ -273,7 +273,7 @@
   .ticket-card.age-hot   { border-color: #EF4444; background-color: rgba(127,29,29,0.3); animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
 
   .kds-btn         { @apply flex items-center justify-center rounded-lg font-semibold transition-all; min-width: 48px; min-height: 48px; }
-  .kds-btn-primary { @apply kds-btn active:scale-95; background-color: #22C55E; color: #fff; }
+  .kds-btn-primary { @apply kds-btn active:scale-95; background-color: #22C55E; color: var(--erp-on-primary, #3b0764); }
   .kds-btn-danger  { @apply kds-btn active:scale-95; background-color: #EF4444; color: #fff; }
   .kds-btn-warning { @apply kds-btn active:scale-95; background-color: #F59E0B; color: #000; }
   .kds-btn-ghost   { @apply kds-btn active:scale-95; border: 1px solid #333333; color: #999999; }

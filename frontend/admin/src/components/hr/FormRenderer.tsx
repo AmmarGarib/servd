@@ -138,7 +138,7 @@ function FieldRow({ f, v, onSet, ctx, error }: { f: HrField; v: unknown; onSet: 
 function FieldLabel({ f, id }: { f: HrField; id: string }) {
   return (
     <label htmlFor={id} className="block text-[11px] font-bold text-white/55 mb-1">
-      {f.label}{f.required && <span className="text-red-700" aria-hidden="true"> *</span>}
+      {f.label}{f.required && <span className="text-s-red" aria-hidden="true"> *</span>}
     </label>
   )
 }
@@ -284,7 +284,7 @@ function TableInput({ f, rows, onSet, ctx }: { f: HrField; rows: Values[]; onSet
                     <FieldInput f={c} v={r[c.key]} onSet={(v) => update(i, c.key, v)} ctx={ctx} />
                   </td>
                 ))}
-                <td className="px-2"><button type="button" onClick={() => onSet(rows.filter((_, j) => j !== i))} className="text-white/35 hover:text-red-700" aria-label="Remove row">✕</button></td>
+                <td className="px-2"><button type="button" onClick={() => onSet(rows.filter((_, j) => j !== i))} className="text-white/35 hover:text-s-red" aria-label="Remove row">✕</button></td>
               </tr>
             ))}
           </tbody>

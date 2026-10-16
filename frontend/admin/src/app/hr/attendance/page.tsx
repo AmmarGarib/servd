@@ -19,7 +19,7 @@ import { HrShell } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
 
 const STATUS_TONE: Record<string, string> = {
-  present: '#3f7d20', late: '#a15c00', missing_punch: 'var(--erp-danger)', absent: 'var(--erp-danger)', half_day: '#a15c00',
+  present: 'var(--erp-success)', late: 'var(--erp-warning)', missing_punch: 'var(--erp-danger)', absent: 'var(--erp-danger)', half_day: 'var(--erp-warning)',
 }
 
 // Every time and day here is Karachi's, whatever the viewer's device says.
@@ -76,7 +76,7 @@ function DayTab() {
           <Link href="/hr/s/roster" className="text-primary-ink hover:underline">Roster</Link>
         </span>
       </div>
-      {error && <p className="text-sm text-red-700 mb-3">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red mb-3">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
         {!isLoading && rows.length === 0 && <p className="p-6 text-sm text-white/40 text-center">No punches or attendance on this day.</p>}
@@ -90,11 +90,11 @@ function DayTab() {
               {r.punches.length === 0 && <span className="text-xs text-white/35">No punches</span>}
               {r.punches.map((p, i) => (
                 <span key={i} className="rounded-full px-2 py-0.5 text-[11px] font-bold inline-flex items-center gap-1"
-                  style={{ background: p.type === 'in' ? 'rgba(52,211,153,0.12)' : 'rgb(var(--fg-rgb) / 0.06)', color: p.type === 'in' ? '#3f7d20' : 'rgb(var(--fg-rgb) / 0.7)' }}
+                  style={{ background: p.type === 'in' ? 'rgb(var(--erp-accent-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.06)', color: p.type === 'in' ? 'var(--erp-success)' : 'rgb(var(--fg-rgb) / 0.7)' }}
                   title={p.geofenceDistanceM != null ? `${p.geofenceDistanceM} m from the nearest work location` : undefined}>
                   {p.type.toUpperCase()} {time(p.at)}
                   <span className="font-normal text-white/40">{p.source === 'kiosk' ? 'kiosk' : 'clock'}</span>
-                  {(p.outOfArea || p.geofenceMatched === false) && <span className="text-amber-700">out of area</span>}
+                  {(p.outOfArea || p.geofenceMatched === false) && <span className="text-s-amber">out of area</span>}
                   {p.selfieUrl && <a href={p.selfieUrl} target="_blank" rel="noreferrer" className="underline font-normal">selfie</a>}
                 </span>
               ))}
@@ -189,7 +189,7 @@ function TodayTab() {
           </button>
         ))}
       </div>
-      {error && <p className="text-sm text-red-700 mb-3">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red mb-3">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
         {!isLoading && rows.length === 0 && <p className="p-6 text-sm text-white/40 text-center">Nobody matches.</p>}
@@ -254,7 +254,7 @@ function PunchLogTab() {
         </span>
       </div>
       <p className="text-[11px] text-white/40 mb-3">A punch outside the person&rsquo;s work locations is never refused — it is recorded here and flagged for HR.</p>
-      {error && <p className="text-sm text-red-700 mb-3">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red mb-3">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       <div className="rounded-2xl overflow-x-auto" style={card}>
         {!isLoading && (data?.rows.length ?? 0) === 0 ? <p className="p-6 text-sm text-white/40 text-center">No punches in this range.</p> : (

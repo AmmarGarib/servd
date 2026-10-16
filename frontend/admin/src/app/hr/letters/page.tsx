@@ -28,7 +28,7 @@ export default function HrLettersPage() {
 
   return (
     <HrShell title="Letters" subtitle="Paste your own wording over any default. Placeholders like {{employee.fullName}} are filled in when a letter is printed.">
-      {error && <p className="text-sm text-red-700 mb-4">{(error as Error).message}</p>}
+      {error && <p className="text-sm text-s-red mb-4">{(error as Error).message}</p>}
       <div className="grid lg:grid-cols-[260px_1fr] gap-5">
         <div className="space-y-1">
           {letters.map((l) => (
@@ -102,7 +102,7 @@ function Editor({ letter }: { letter: Letter }) {
           {!letter.isDefault && <button className={btnGhost} disabled={reset.isPending} onClick={() => { if (confirm('Discard your wording and go back to the built-in default?')) reset.mutate() }}>Reset to default</button>}
         </div>
         <p className="text-[11px] text-white/40">{letter.isDefault ? 'Using the built-in default.' : `Your version ${letter.version}.`} Write in HTML — &lt;p&gt; for paragraphs, &lt;strong&gt; for bold, &lt;table&gt; for tables. Or paste from Word into the box and tidy up.</p>
-        {(save.error || reset.error || print.error) && <p className="text-xs text-red-700">{((save.error || reset.error || print.error) as Error).message}</p>}
+        {(save.error || reset.error || print.error) && <p className="text-xs text-s-red">{((save.error || reset.error || print.error) as Error).message}</p>}
         {msg && <p className="text-xs text-white/60">{msg}</p>}
       </div>
 

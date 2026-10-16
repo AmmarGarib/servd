@@ -31,7 +31,7 @@ export interface ModulePage {
   href: string
   /** Shown under the page on workspace homes. */
   hint?: string
-  /** Existing sidebar glyph, if the page had one. */
+  /** Sidebar line-icon name (components/ui/NavIcon.tsx) — never an emoji. */
   icon?: string
   /** Rendered as a child of the module's first page in the sidebar. */
   sub?: boolean
@@ -43,15 +43,15 @@ export interface ModulePage {
 export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // ── CEO (decision D2): approvals, companies, logins & access, company rules
   approvals:      [
-    { label: 'Approvals', href: '/ceo/approvals', icon: '✓', hint: 'Everything waiting on you, from every module' },
+    { label: 'Approvals', href: '/ceo/approvals', icon: 'check', hint: 'Everything waiting on you, from every module' },
     { label: 'Hand-over', href: '/ceo/approvals/hand-over', sub: true, hint: 'Who approves what on your behalf' },
   ],
   // The Trash (owner, 2026-10-15). The module only puts the CEO-section link
   // in the sidebar; the page itself is also a personal page (below), and the
   // API lists per type from the caller's own modules and role.
-  trash:          [{ label: 'Trash', href: '/trash', icon: '▤', hint: 'Restore deleted items, recover voided and cancelled ones' }],
+  trash:          [{ label: 'Trash', href: '/trash', icon: 'trash', hint: 'Restore deleted items, recover voided and cancelled ones' }],
   business_info:  [
-    { label: 'Locations', href: '/configuration/locations', icon: '📍', hint: 'Kitchen address and map pin' },
+    { label: 'Locations', href: '/configuration/locations', icon: 'pin', hint: 'Kitchen address and map pin' },
     { label: 'Delivery zones', href: '/configuration/delivery-zones', sub: true, hint: 'Beyond the last zone, delivery is refused' },
   ],
   tenants:        [
@@ -60,40 +60,40 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Head offices', href: '/ceo/head-offices', sub: true, hint: 'Shared staff and costs recharged to the companies' },
   ],
   // CEO home: a top-down view of every department, first in the Dashboards section.
-  ceo_overview:   [{ label: 'Home', href: '/home', icon: '⌂', lead: true }],
+  ceo_overview:   [{ label: 'Home', href: '/home', icon: 'home', lead: true }],
   role_management: [{ label: 'Pending logins', href: '/workforce?status=pending', hint: 'The CEO approves every login' }],
-  role_modules:   [{ label: 'Role presets', href: '/configuration/role-modules', icon: '🗂' }],
+  role_modules:   [{ label: 'Role presets', href: '/configuration/role-modules', icon: 'folders' }],
   configuration:  [
-    { label: 'Company rules', href: '/configuration/operations', icon: '⚙️', hint: 'Clock-in selfie and geofence, tip split, service charge — CEO only' },
+    { label: 'Company rules', href: '/configuration/operations', icon: 'cog', hint: 'Clock-in selfie and geofence, tip split, service charge — CEO only' },
     { label: 'Configuration hub', href: '/configuration', sub: true },
   ],
   onboarding:     [{ label: 'Setup wizard', href: '/onboarding' }],
 
   // ── Dashboards (one per workspace, blank until the owner picks the numbers)
-  dashboard:      [{ label: 'Operations dashboard', href: '/dashboard/operations', icon: '⬡', lead: true }],
+  dashboard:      [{ label: 'Operations dashboard', href: '/dashboard/operations', icon: 'dashboard', lead: true }],
   ops:            [{ label: 'Prep list', href: '/ops/prep-list', hint: 'Per station, from the demand forecast' }],
 
   // ── Kitchen
-  kds_dashboard:  [{ label: 'Kitchen view', href: '/kds', icon: '🍳' }],
-  expo_station:   [{ label: 'Expo station', href: '/expo', icon: '🪧' }],
+  kds_dashboard:  [{ label: 'Kitchen view', href: '/kds', icon: 'flame' }],
+  expo_station:   [{ label: 'Expo station', href: '/expo', icon: 'sign' }],
   kds_all:        [{ label: 'Kitchen tracker', href: '/kds/reservations', hint: 'Upcoming reservations for the line' }],
-  kds_config:     [{ label: 'KDS config', href: '/kds/config', icon: '⚙️', hint: 'Stations, not staff' }],
+  kds_config:     [{ label: 'KDS config', href: '/kds/config', icon: 'cog', hint: 'Stations, not staff' }],
 
   // ── Menu & recipes
   menu:           [
-    { label: 'Menu', href: '/menu', icon: '📝' },
+    { label: 'Menu', href: '/menu', icon: 'edit' },
     { label: 'Modifiers', href: '/configuration/modifiers', sub: true },
     { label: 'Dietary tags', href: '/configuration/dietary-tags', sub: true },
   ],
   recipes:        [
-    { label: 'Recipes', href: '/accounting/recipes', icon: '📐' },
-    { label: 'Menu engineering', href: '/menu-engineering', icon: '💹', hint: 'Plate cost to selling price and margin' },
+    { label: 'Recipes', href: '/accounting/recipes', icon: 'ruler' },
+    { label: 'Menu engineering', href: '/menu-engineering', icon: 'trend', hint: 'Plate cost to selling price and margin' },
     { label: 'Recipe approvals', href: '/accounting/recipes/approvals', sub: true },
   ],
 
   // ── Stock & buying
   inventory:      [
-    { label: 'Inventory', href: '/inventory', icon: '📦', hint: 'Includes the waste log' },
+    { label: 'Inventory', href: '/inventory', icon: 'box', hint: 'Includes the waste log' },
     { label: 'Stock count', href: '/inventory/count', sub: true },
     { label: 'Low stock', href: '/inventory/alerts', sub: true },
     { label: 'Prep list', href: '/ops/prep-list', sub: true },
@@ -104,11 +104,11 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // POST are ALL_STAFF, and the par sheet's "Made" column is filled only by
   // these batches.
   par_sheet:      [
-    { label: 'Par sheet', href: '/par-sheet', icon: '📋' },
+    { label: 'Par sheet', href: '/par-sheet', icon: 'clipboard' },
     { label: 'Log a prep batch', href: '/inventory/prep', sub: true },
   ],
   procurement:    [
-    { label: 'Procurement', href: '/procurement', icon: '🏭', hint: 'Purchase orders, bills, payments' },
+    { label: 'Procurement', href: '/procurement', icon: 'factory', hint: 'Purchase orders, bills, payments' },
     { label: 'Receiving', href: '/procurement/receiving', sub: true },
     // Owner 2026-10-16: "Move sourcing sheet inside procurement section".
     { label: 'Sourcing sheet', href: '/sourcing', sub: true, hint: 'Ingredient catalogue and supplier prices' },
@@ -120,19 +120,19 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ],
 
   // ── Food safety
-  food_safety:    [{ label: 'Temperatures & cleaning', href: '/food-safety', icon: '🌡' }],
+  food_safety:    [{ label: 'Temperatures & cleaning', href: '/food-safety', icon: 'thermo' }],
 
   // ── Front of house
   pos:            [
-    { label: 'Point of sale', href: '/pos', icon: '💳' },
+    { label: 'Point of sale', href: '/pos', icon: 'card' },
     { label: 'Waiter mode', href: '/pos/waiter', sub: true },
     { label: 'Shift / till', href: '/pos/shift', sub: true, hint: 'Drops, vendor pay-outs and rider cash-on-delivery' },
   ],
-  orders:         [{ label: 'Orders', href: '/orders', icon: '📋' }],
+  orders:         [{ label: 'Orders', href: '/orders', icon: 'clipboard' }],
   refunds:        [{ label: 'Refunds', href: '/refunds' }],
-  curbside:       [{ label: 'Curbside', href: '/orders/curbside', icon: '🚗' }],
+  curbside:       [{ label: 'Curbside', href: '/orders/curbside', icon: 'car' }],
   reservations:   [
-    { label: 'Reservations', href: '/reservations', icon: '🍽' },
+    { label: 'Reservations', href: '/reservations', icon: 'utensils' },
     { label: 'Week view', href: '/reservations/week', sub: true },
   ],
   reservations_admin: [
@@ -141,18 +141,18 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Reservation policy', href: '/configuration/reservation-policy', sub: true },
     { label: 'Reservation analytics', href: '/reservations/analytics', sub: true },
   ],
-  tables:         [{ label: 'Floor plan', href: '/floorplan', icon: '🪑' }],
-  dispatch:       [{ label: 'Dispatch', href: '/dispatch', icon: '🛵' }],
+  tables:         [{ label: 'Floor plan', href: '/floorplan', icon: 'seat' }],
+  dispatch:       [{ label: 'Dispatch', href: '/dispatch', icon: 'bike' }],
   riders:         [{ label: 'Riders', href: '/riders' }],
   emergency_overrides: [{ label: 'Emergency overrides', href: '/emergency-overrides', hint: 'Send the hand-over code to the rider; log food a rider brought back' }],
 
   // ── Finance
   finance_pl:     [
-    { label: 'Finance dashboard', href: '/dashboard/finance', icon: '⬡', lead: true },
-    { label: 'P&L', href: '/accounting/pl-ledger', icon: '💰', hint: 'From the ledger — Statement and By brand' },
+    { label: 'Finance dashboard', href: '/dashboard/finance', icon: 'dashboard', lead: true },
+    { label: 'P&L', href: '/accounting/pl-ledger', icon: 'wallet', hint: 'From the ledger — Statement and By brand' },
   ],
   accounting:     [
-    { label: 'Accounting', href: '/accounting', icon: '📊' },
+    { label: 'Accounting', href: '/accounting', icon: 'chart' },
     { label: 'Ledger', href: '/accounting/ledger', sub: true },
     { label: 'Journal entry', href: '/accounting/journal', sub: true },
     { label: 'Journal requests', href: '/accounting/journal?tab=requests', sub: true },
@@ -197,18 +197,18 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Bank accounts', href: '/configuration/bank-accounts', sub: true },
   ],
   accounting_audit: [{ label: 'Accounting audit', href: '/accounting/audit-log', hint: 'Who moved the books — CEO and management only' }],
-  gift_cards:     [{ label: 'Gift cards', href: '/gift-cards', icon: '🎁' }],
-  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: '⚖️', hint: 'Shift closes, bank statements, card payouts and Raast QR receipts (provisional until the statement matches)' }],
+  gift_cards:     [{ label: 'Gift cards', href: '/gift-cards', icon: 'gift' }],
+  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: 'scale', hint: 'Shift closes, bank statements, card payouts and Raast QR receipts (provisional until the statement matches)' }],
   voided_prebills: [{ label: 'Voided pre bills', href: '/finance/voided-pre-bills', hint: 'Every pre-bill printed — flagged when it never became a full & final bill or the final bill came out lower' }],
-  exceptions:     [{ label: 'Exceptions', href: '/exceptions', icon: '🚨' }],
+  exceptions:     [{ label: 'Exceptions', href: '/exceptions', icon: 'alert' }],
   capital:        [
-    { label: 'Project tracker', href: '/finance/capex', icon: '🏗', hint: 'CapEx and OpEx' },
+    { label: 'Project tracker', href: '/finance/capex', icon: 'hammer', hint: 'CapEx and OpEx' },
     { label: 'OpEx', href: '/finance/opex', sub: true },
     { label: 'Investment', href: '/finance/capital-ledger', sub: true },
   ],
   projections:    [{ label: 'Projections', href: '/finance/projections' }],
   reports:        [
-    { label: 'Reports', href: '/reports', icon: '📈' },
+    { label: 'Reports', href: '/reports', icon: 'trend' },
     { label: 'Demand forecast', href: '/analytics/forecast', sub: true },
   ],
   // Its own module, so the CEO can grant it without the rest of Reports. The
@@ -218,38 +218,38 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // 'payroll' is the Finance workspace's view of pay: tip pools and the
   // payroll register (GET /hr/payroll/runs — finance reads it, HR prepares it).
   payroll:        [
-    { label: 'Tip pools', href: '/tip-pools', icon: '🧾' },
-    { label: 'Payroll register', href: '/hr/payroll', icon: '💵', hint: 'Payroll runs, payslips and the bank file' },
+    { label: 'Tip pools', href: '/tip-pools', icon: 'receipt' },
+    { label: 'Payroll register', href: '/hr/payroll', icon: 'cash', hint: 'Payroll runs, payslips and the bank file' },
   ],
 
   // ── Marketing
-  marketing_workspace: [{ label: 'Activity log', href: '/marketing/activity', icon: '🚀' }],
-  brand_dashboard: [{ label: 'Marketing dashboard', href: '/dashboard/marketing', icon: '⬡', lead: true }],
+  marketing_workspace: [{ label: 'Activity log', href: '/marketing/activity', icon: 'rocket' }],
+  brand_dashboard: [{ label: 'Marketing dashboard', href: '/dashboard/marketing', icon: 'dashboard', lead: true }],
   crm:            [
-    { label: 'CRM', href: '/crm', icon: '👥' },
+    { label: 'CRM', href: '/crm', icon: 'users' },
     { label: 'Conversations', href: '/crm/conversations', sub: true },
     { label: 'Segments', href: '/crm/segments', sub: true },
     { label: 'Naughty list', href: '/crm/naughty-list', sub: true },
     { label: 'Waitlist', href: '/crm/waitlist', sub: true },
     { label: 'Loyalty', href: '/configuration/loyalty', sub: true },
   ],
-  campaigns:      [{ label: 'Campaigns', href: '/crm/campaigns', icon: '✉️' }],
-  complaints:     [{ label: 'Complaints', href: '/complaints', icon: '🎫' }],
-  reviews:        [{ label: 'Reviews', href: '/reviews', icon: '⭐' }],
-  calendar:       [{ label: 'Calendar', href: '/calendar', icon: '📅' }],
+  campaigns:      [{ label: 'Campaigns', href: '/crm/campaigns', icon: 'mail' }],
+  complaints:     [{ label: 'Complaints', href: '/complaints', icon: 'ticket' }],
+  reviews:        [{ label: 'Reviews', href: '/reviews', icon: 'star' }],
+  calendar:       [{ label: 'Calendar', href: '/calendar', icon: 'calendar' }],
   promos:         [
-    { label: 'Promotions', href: '/promos', icon: '🎟' },
+    { label: 'Promotions', href: '/promos', icon: 'percent' },
     { label: 'Discounts', href: '/discounts', sub: true },
     { label: 'QR codes', href: '/qrcodes', sub: true },
   ],
-  brands:         [{ label: 'Brands', href: '/ceo/brands', icon: '🏷', hint: 'The one brand editor — CEO only' }],
-  analytics:      [{ label: 'Analytics', href: '/analytics', icon: '📊' }],
-  storefront:     [{ label: 'Storefront', href: '/storefront', icon: '◩', hint: 'Pages, pop-ups, library, approvals' }],
+  brands:         [{ label: 'Brands', href: '/ceo/brands', icon: 'tag', hint: 'The one brand editor — CEO only' }],
+  analytics:      [{ label: 'Analytics', href: '/analytics', icon: 'chart' }],
+  storefront:     [{ label: 'Storefront', href: '/storefront', icon: 'layout', hint: 'Pages, pop-ups, library, approvals' }],
 
   // ── HR
   staff_hr:       [
-    { label: 'HR dashboard', href: '/dashboard/hr', icon: '⬡', lead: true },
-    { label: 'Employees', href: '/hr/employees', icon: '🪪' },
+    { label: 'HR dashboard', href: '/dashboard/hr', icon: 'dashboard', lead: true },
+    { label: 'Employees', href: '/hr/employees', icon: 'idcard' },
     { label: 'Attendance', href: '/hr/attendance', sub: true },
     { label: 'All sections', href: '/hr/sections', sub: true },
     { label: 'HR payroll', href: '/hr/payroll', sub: true },
@@ -261,12 +261,12 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'HR settings', href: '/hr/settings', sub: true },
   ],
   staff_directory: [
-    { label: 'Workforce', href: '/workforce', icon: '👥', hint: 'Logins, companies, pending approvals' },
+    { label: 'Workforce', href: '/workforce', icon: 'users', hint: 'Logins, companies, pending approvals' },
     { label: 'Positions (budget)', href: '/workforce/positions', sub: true },
     { label: 'Time clock', href: '/time-clock', sub: true },
     { label: 'Staff meals', href: '/staff-meals', sub: true },
   ],
-  scheduling:     [{ label: 'Rota', href: '/scheduling', icon: '📅', hint: 'Generated from the HR roster' }],
+  scheduling:     [{ label: 'Rota', href: '/scheduling', icon: 'calendar', hint: 'Generated from the HR roster' }],
 
   // ── Dev
   // API section (spec §10, D13): exactly two connectors.
@@ -280,12 +280,12 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ],
   api_pos:        [{ label: 'POS connector', href: '/connectors/pos', hint: 'Fiscal POS (FBR / SRB), card machine and Raast QR bank alerts' }],
   integrations:   [
-    { label: 'Integrations', href: '/settings/integrations', icon: '🔌', hint: 'Meta, webhooks, supplier portal' },
+    { label: 'Integrations', href: '/settings/integrations', icon: 'plug', hint: 'Meta, webhooks, supplier portal' },
     { label: 'Webhooks', href: '/configuration/webhooks', sub: true },
   ],
   audit_log:      [{ label: 'User audit log', href: '/configuration/audit-log', hint: 'Sign-ins and what each user did' }],
-  notifications:  [{ label: 'Notifications', href: '/notifications', icon: '🔔' }],
-  help:           [{ label: 'Help & support', href: '/help', icon: '❓' }],
+  notifications:  [{ label: 'Notifications', href: '/notifications', icon: 'bell' }],
+  help:           [{ label: 'Help & support', href: '/help', icon: 'help' }],
 }
 
 /** Pages open to every login, whatever their modules (the API scopes them). */

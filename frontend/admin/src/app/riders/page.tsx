@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError, deleteWithUndo } from '../../lib/api'
@@ -696,14 +697,7 @@ export default function RidersPage() {
         <div className="space-y-3">
           {ridersLoading && <p className="text-s-muted text-sm">Loading riders…</p>}
           {riders.length === 0 && !ridersLoading && (
-            <div className="rounded-xl border border-dashed border-s-border p-12 text-center">
-              <p className="font-semibold text-s-text">No riders yet</p>
-              <p className="text-sm text-s-muted mt-1">Add your first rider to start dispatching deliveries</p>
-              <button onClick={() => setShowAdd(true)}
-                className="mt-4 rounded-xl bg-primary text-primary-on font-bold px-6 py-2.5 hover:opacity-90">
-                Add Rider
-              </button>
-            </div>
+            <CompactEmptyState message="No riders yet. Add one to start dispatching deliveries." action={{ label: 'Add rider', onClick: () => setShowAdd(true) }} />
           )}
           {riders.map((rider) => {
             const company = companyOf(rider)
