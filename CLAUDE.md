@@ -997,6 +997,19 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   and `cash_voucher` (CEO), each with Approve / Return / Reject
   (`ApprovalAction.kind` includes `'return'`); `cash_request_hod` is retired
   (the id still parses, no provider).
+- **Deposit slips are files, not a URL (owner, 2026-10-16: "it should ask
+  for attachment instead of URL for supporting docs").** A deposit drop's
+  slips live in the ONE evidence store — `CashVoucherAttachment` kind
+  `deposit_slip`, `depositDropId` (migration `20261016200000`; the owner CHECK
+  takes it), stamped with the DROP's company; never a second attachment table.
+  `POST /trustops/deposit-drops` takes `files` (0–5, JPEG / PNG / WebP / PDF
+  through `lib/evidenceFile.ts`, all checked before anything is written, saved
+  with the drop in one transaction); `POST /deposit-drops/:id/files` adds them
+  later (≤5 per drop, 409 `TOO_MANY_FILES`) and resolves that drop's "without a
+  deposit slip" flag (raised only at ≥ PKR 1,000 with no file and no legacy
+  `receiptUrl`, which is still accepted); `GET /deposit-drops/:id/files/:fileId`
+  serves it; the list carries file metadata only, never bytes. Tests:
+  `tests/depositDropFiles.test.ts`.
 - **Petty cash is on 1011** (H2): a top-up needs a source (Garibsons → 2210,
   H1; the safe 1010; a bank); a till top-up is a drawer payout keyed
   `pettycash.till_topup:<cashMovementId>`. **`recordPettyCashSpendTx`
