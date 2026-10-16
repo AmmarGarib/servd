@@ -60,7 +60,9 @@ export function validate(fields: HrField[], values: Values): Record<string, stri
     if (typeof v !== 'string') continue
     const text = v.trim()
     if (f.type === 'email' && !EMAIL_RE.test(text)) errors[f.key] = 'Enter a valid email address'
-    else if (keyIs(f, /cnic/i)) {
+    // Only the CNIC NUMBER boxes (plain text). The CNIC issue / expiry DATES
+    // also have "cnic" in their keys and must never be checked as a number.
+    else if ((f.type === 'text' || f.type == null) && keyIs(f, /cnic/i)) {
       if (!CNIC_RE.test(text)) errors[f.key] = 'CNIC looks like 42101-1234567-1 (13 digits)'
     } else if (f.type === 'phone' || keyIs(f, /(^|_)(phone|mobile|cell)(_|$)/i)) {
       if (!PK_PHONE_RE.test(text.replace(/[\s()-]/g, ''))) errors[f.key] = 'Phone looks like 0300 1234567 or +92 300 1234567'
