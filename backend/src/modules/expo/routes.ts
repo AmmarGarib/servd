@@ -759,7 +759,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/orders/:id/reject',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const body = z.object({ reason: z.string().trim().min(1).max(280) }).parse(req.body)
+      const { zBackdatedReason } = await import('../nightAudit/backdate.js')
+      // backdatedReason: the CEO's reason when the order is from an earlier,
+      // night-audited sales day (403 CEO_ONLY_BACKDATED otherwise).
+      const body = z.object({ reason: z.string().trim().min(1).max(280), backdatedReason: zBackdatedReason }).parse(req.body)
       // Company scope through the shared helper: tenantFilter is null for a
       // staff user with no company, and `tenantId: null` would match every
       // company-less brand instead of nothing.
@@ -785,6 +788,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
         reason: body.reason,
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
         action: 'expo.reject',
+        backdatedReason: body.backdatedReason,
       })
       return reply.status(200).send({ ok: true })
     },

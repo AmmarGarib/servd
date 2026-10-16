@@ -4,6 +4,7 @@
 // drawer, charge and payment is resolved through the operator's companies
 // first (foreign → 404, another company's drawer → 422).
 
+import { zBackdatedReason } from '../nightAudit/backdate.js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { UserRole } from '@prisma/client'
@@ -81,7 +82,8 @@ export async function connectorPosRoutes(fastify: FastifyInstance) {
   // POST /pos/terminal/charges/:id/reverse — managers, from needs_attention.
   fastify.post('/terminal/charges/:id/reverse', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const { id } = idParam.parse(req.params)
-    const body = z.object({ markRefundedOnMachine: z.boolean().optional(), note: z.string().max(300).optional() }).parse(req.body ?? {})
+    // backdatedReason: the CEO's reason for a charge of an earlier sales day (night audit; 403 CEO_ONLY_BACKDATED otherwise).
+    const body = z.object({ markRefundedOnMachine: z.boolean().optional(), note: z.string().max(300).optional(), backdatedReason: zBackdatedReason }).parse(req.body ?? {})
     return manualReverseCharge(req, id, body)
   })
 

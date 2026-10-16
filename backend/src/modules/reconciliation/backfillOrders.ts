@@ -45,6 +45,7 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { fmtPktDate, parsePktStartOfDay } from '../accounting/dates.js'
+import { dayLockOf, isSalesSource, salesDayLateNote } from '../nightAudit/lock.js'
 import { flagPostingFailed, resolvePostingFailed, type RepostOptions } from '../accounting/journal.js'
 import { postOrderCompletion, postOrderRefund, isShiftReceipt, giftCardAppliedOf } from '../accounting/orderPosting.js'
 import { postLoyaltyEarn, postLoyaltyRedeem } from '../accounting/loyaltyPosting.js'
@@ -139,6 +140,14 @@ export async function backfillUnpostedOrders(opts: {
       ? `dated ${fmtPktDate(at)}, but books are closed through ${fmtPktDate(lock)} — reopen the period to post it into its own day`
       : null
   }
+  // Night audit (sales only, owner 2026-10-16): a completion or a loyalty
+  // posting whose sales day the night audit locked posts TODAY with a note
+  // naming its own date — the dry run never promises a post the ledger would
+  // refuse (DAY_AUDITED). Undefined = its own date.
+  const salesDayLate = async (tenantId: string, at: Date): Promise<{ entryDate: Date; memoNote: string; postedBy?: string } | undefined> => {
+    const day = await dayLockOf(prisma, tenantId, at)
+    return day ? { entryDate: new Date(), memoNote: salesDayLateNote(day.day), postedBy: opts.postedBy } : undefined
+  }
 
   // ── 1. Order completions ───────────────────────────────────────────────────
   const completions = await prisma.$queryRaw<Array<{ id: string; tenantId: string }>>`
@@ -179,13 +188,19 @@ export async function backfillUnpostedOrders(opts: {
     const base = { kind: 'order.complete' as const, id: order.id, orderId: order.id, tenantId: c.tenantId, date: at.toISOString() }
     const locked = await lockedRow(c.tenantId, at)
     if (locked) { rows.push({ ...base, outcome: 'locked', detail: locked }); continue }
-    if (opts.dryRun) { rows.push({ ...base, outcome: 'would_post', detail: `PKR ${(order.totalCents / 100).toFixed(2)}` }); continue }
+    const lateC = await salesDayLate(c.tenantId, at)
+    if (opts.dryRun) {
+      rows.push(lateC
+        ? { ...base, outcome: 'would_post_into_current_month', detail: `PKR ${(order.totalCents / 100).toFixed(2)} — ${lateC.memoNote}` }
+        : { ...base, outcome: 'would_post', detail: `PKR ${(order.totalCents / 100).toFixed(2)}` })
+      continue
+    }
     try {
-      const r = await postOrderCompletion(order.id)
+      const r = await postOrderCompletion(order.id, lateC ?? {})
       if (r.posted || (!r.reason && r.entryId)) {
         await resolvePostingFailed('Order', order.id, 'order.complete', 'Posted by Reconciliation → Backfill unposted.')
       }
-      rows.push({ ...base, outcome: r.posted ? 'posted' : (r.reason ?? 'already_posted'), detail: r.entryId ?? '' })
+      rows.push({ ...base, outcome: r.posted ? (lateC ? 'posted_into_current_month' : 'posted') : (r.reason ?? 'already_posted'), detail: r.entryId ?? '' })
     } catch (err) {
       rows.push({ ...base, outcome: 'error', detail: (err as Error).message })
     }
@@ -210,13 +225,17 @@ export async function backfillUnpostedOrders(opts: {
     const base = { kind, id: t.id, orderId: t.orderId, tenantId: t.tenantId, date: t.createdAt.toISOString() }
     const locked = await lockedRow(t.tenantId, t.createdAt)
     if (locked) { rows.push({ ...base, outcome: 'locked', detail: locked }); continue }
-    if (opts.dryRun) { rows.push({ ...base, outcome: 'would_post', detail: `${t.points} pts = PKR ${(valueCents / 100).toFixed(2)}` }); continue }
+    const lateL = await salesDayLate(t.tenantId, t.createdAt)
+    if (opts.dryRun) {
+      rows.push({ ...base, outcome: lateL ? 'would_post_into_current_month' : 'would_post', detail: `${t.points} pts = PKR ${(valueCents / 100).toFixed(2)}${lateL ? ` — ${lateL.memoNote}` : ''}` })
+      continue
+    }
     try {
-      const r = kind === 'loyalty.earn' ? await postLoyaltyEarn(t.id) : await postLoyaltyRedeem(t.id)
+      const r = kind === 'loyalty.earn' ? await postLoyaltyEarn(t.id, lateL ?? {}) : await postLoyaltyRedeem(t.id, lateL ?? {})
       if (r.posted) {
         await resolvePostingFailed(t.orderId ? 'Order' : 'LoyaltyTransaction', t.orderId ?? t.id, kind, 'Posted by Reconciliation → Backfill unposted.')
       }
-      rows.push({ ...base, outcome: r.posted ? 'posted' : (r.reason ?? 'already_posted'), detail: r.entryId ?? '' })
+      rows.push({ ...base, outcome: r.posted ? (lateL ? 'posted_into_current_month' : 'posted') : (r.reason ?? 'already_posted'), detail: r.entryId ?? '' })
     } catch (err) {
       rows.push({ ...base, outcome: 'error', detail: (err as Error).message })
     }
@@ -910,7 +929,7 @@ async function backfillRefusedPostings(opts: {
       rows.push({ ...base, date, outcome: 'flagged', detail })
       continue
     }
-    const row = await placeAndPost(doc!, doc!.tenantId, r, opts)
+    const row = await placeAndPost(doc!, doc!.tenantId, r, { ...opts, sourceType: kind })
     if (row.resolve) await close(kind, sourceId, row.resolve, flag.entityType)
     rows.push({ ...base, date: row.date, outcome: row.outcome, detail: row.detail })
   }
@@ -954,15 +973,28 @@ export async function placeAndPost(
   doc: RefusedDoc,
   tenantId: string,
   r: Reposter,
-  opts: { dryRun: boolean; postedBy?: string; lockedThrough: (tenantId: string) => Promise<Date | null> },
+  opts: {
+    dryRun: boolean; postedBy?: string; lockedThrough: (tenantId: string) => Promise<Date | null>
+    /**
+     * The posting's source type. A SALES source (nightAudit/lock.ts) whose day
+     * the night audit locked is moved to today with the night-audit note, like
+     * a closed month; any other source (or none) is unaffected.
+     */
+    sourceType?: string
+  },
 ): Promise<{ date: string; outcome: string; detail: string; resolve?: string }> {
   const now = new Date()
   const lock = await opts.lockedThrough(tenantId)
   if (lock && now <= lock) {
     return { date: (doc.date ?? now).toISOString(), outcome: 'locked', detail: `${doc.what} — the books are closed through ${fmtPktDate(lock)}, today included; nothing can post until today is open.` }
   }
-  const late = !!doc.date && !!lock && doc.date <= lock
-  const note = late ? `dated ${fmtPktDate(doc.date!)}, posted late into the open month (books closed through ${fmtPktDate(lock!)})` : undefined
+  const periodLate = !!doc.date && !!lock && doc.date <= lock
+  const dayLock = !periodLate && doc.date && opts.sourceType && isSalesSource(opts.sourceType)
+    ? await dayLockOf(prisma, tenantId, doc.date) : null
+  const late = periodLate || !!dayLock
+  const note = periodLate ? `dated ${fmtPktDate(doc.date!)}, posted late into the open month (books closed through ${fmtPktDate(lock!)})`
+    : dayLock ? salesDayLateNote(dayLock.day)
+    : undefined
   const date = (late || !doc.date ? now : doc.date).toISOString()
   if (opts.dryRun) {
     return { date, outcome: late ? 'would_post_into_current_month' : 'would_post', detail: late ? `${doc.what} — ${note}` : doc.what }

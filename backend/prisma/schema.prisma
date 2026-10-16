@@ -5191,7 +5191,7 @@ model Tenant {
   /// "All companies" totals, it never messages customers or outside parties, and its brands are never advertised.
   /// Its own books work normally. ONE predicate: lib/testCompany.ts (isTestTenant / testTenantIds).
   isTest             Boolean   @default(false)
-  /// Night audit (owner, 2026-10-16): 'YYYY-MM-DD' PKT — the first business day the month close requires to be
+  /// Night audit (owner, 2026-10-16; sales only): 'YYYY-MM-DD' PKT — the first sales day the month close requires to be
   /// night-audited and closed; null = not started (the first run sets it). CHECK tenants_night_audit_start_chk (SQL only).
   nightAuditStartDay String?
 
@@ -8242,17 +8242,18 @@ model TrashCopy {
   @@map("trash_copies")
 }
 
-// ─── Night audit (owner, 2026-10-16) ──────────────────────────────────────────
-// Lock each business day, then close it when its money settles. Contract:
+// ─── Night audit (owner, 2026-10-16) — SALES module only ──────────────────────
+// Lock each sales day, then close it when its sales money settles. Contract:
 // backend/src/modules/nightAudit/README.md. Migration 20261016120000_night_audit.
 
 enum NightAuditStatus {
-  open // not run, or reopened by the CEO — postings into the day allowed
-  audited // night run done ("awaiting settlement") — day LOCKED
-  closed // settlement matched (or CEO override) — day LOCKED
+  open // not run, or reopened by the CEO — sales postings into the day allowed
+  audited // night run done ("awaiting settlement") — day LOCKED for sales postings
+  closed // sales settlement matched (or CEO override) — day LOCKED for sales postings
 }
 
-/// One row per company per Karachi business date. No row = open.
+/// One row per company per Karachi business date — the SALES day (night audit,
+/// owner 2026-10-16: sales module only). No row = open.
 /// CHECKs night_audit_days_* (SQL only, migration 20261016120000_night_audit).
 model NightAuditDay {
   id                       String           @id @default(uuid())

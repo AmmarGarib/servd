@@ -1390,6 +1390,12 @@ export interface CancelOrderInput {
    * Recorded in the audit and on the order's pre-bills.
    */
   approverId?: string | null
+  /**
+   * The CEO's reason when the bill is from an earlier sales day (night audit,
+   * nightAudit/backdate.ts): without the CEO (signed in or as the PIN
+   * approver) 403 CEO_ONLY_BACKDATED; the CEO without ≥10 characters 422.
+   */
+  backdatedReason?: string | null
   metadata?: Record<string, unknown>
   /**
    * Food the kitchen had already fired: wasted 'cancelled_after_fire' (it
@@ -1447,11 +1453,28 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
 
   const before = await prisma.order.findFirst({
     where: { id, deletedAt: null },
-    select: { status: true, totalCents: true, concept: { select: { tenantId: true } } },
+    select: {
+      id: true, status: true, totalCents: true, conceptId: true, completedAt: true, scheduledFor: true, placedAt: true,
+      concept: { select: { tenantId: true } },
+    },
   })
   if (!before) throw new NotFoundError('Order', id)
 
   const approverId = input.approverId === undefined ? (input.actor?.id ?? null) : input.approverId
+  // Night audit (owner, 2026-10-16 (c)): cancelling / rejecting a bill of an
+  // earlier sales day (a locked day's ticket) is the CEO's, with a reason —
+  // for EVERY caller (a system or customer caller on one gets 403). Before
+  // anything changes.
+  const { assertBackdatedSalesUndoAllowed, auditBackdatedSalesUndo } = await import('../nightAudit/backdate.js')
+  const backdatedAction = status === 'rejected' ? 'reject' as const : 'cancel' as const
+  // Food a rider brought back (Emergency overrides, `returned`) is not gated:
+  // it logs what happened on the road and posts today (spec §4.5).
+  const backdated = input.returned
+    ? { backdated: false as const }
+    : await assertBackdatedSalesUndoAllowed(prisma, {
+      tenantId: before.concept.tenantId, order: before, action: backdatedAction,
+      actor: input.actor ? { id: input.actor.id } : null, approverId, reason: input.backdatedReason,
+    })
   const returned = input.returned ?? null
   // Read under the order lock, inside the cancel transaction, so the guard
   // and the returned-food stamps act on the state the claim was made on.
@@ -1576,6 +1599,10 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
       before: { status: before.status, totalCents: before.totalCents },
       after: { status },
       metadata: { reason, approverId, ...(returned ? { returnCause: returned.cause } : {}), ...(input.metadata ?? {}) },
+    })
+    await auditBackdatedSalesUndo({
+      tenantId: before.concept.tenantId, orderId: id, conceptId: before.conceptId, action: backdatedAction, gate: backdated,
+      actorId: input.actor?.id ?? null, actorEmail: input.actor?.email ?? null, amountCents: before.totalCents,
     })
   }
   return order

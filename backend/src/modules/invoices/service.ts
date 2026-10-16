@@ -264,7 +264,39 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
 
 // Credit note for a refunded order — references the original invoice and
 // belongs to the original's company, in that company's credit-note series.
-export async function issueCreditNoteForOrder(orderId: string, reason: string) {
+/**
+ * `gate` (the staff route only): a credit note on a bill of an earlier sales
+ * day is the CEO's, with a reason (night audit, nightAudit/backdate.ts —
+ * 403 CEO_ONLY_BACKDATED / 422 BACKDATED_REASON_REQUIRED). The automatic
+ * credit note of a cancel or refund (orders/service.ts) passes none: the
+ * cancel is gated itself, a refund is not (owner question Q5).
+ */
+export async function issueCreditNoteForOrder(orderId: string, reason: string, gate?: { actor: { id: string; role: string; email?: string | null }; backdatedReason?: string | null }) {
+  let backdated: import('../nightAudit/backdate.js').BackdatedGateResult = { backdated: false }
+  let gateTenantId: string | null = null
+  if (gate) {
+    const { assertBackdatedSalesUndoAllowed, SALES_DAY_ORDER_SELECT } = await import('../nightAudit/backdate.js')
+    const order = await prisma.order.findUnique({ where: { id: orderId }, select: { ...SALES_DAY_ORDER_SELECT, concept: { select: { tenantId: true } } } })
+    if (order) {
+      gateTenantId = order.concept.tenantId
+      // Only a NEW credit note is gated — a replay returns the one already issued.
+      const already = await prisma.taxInvoice.findFirst({ where: { orderId, type: 'credit_note' }, select: { id: true } })
+      if (!already) {
+        backdated = await assertBackdatedSalesUndoAllowed(prisma, {
+          tenantId: gateTenantId, order, action: 'credit_note', actor: gate.actor, reason: gate.backdatedReason,
+        })
+      }
+    }
+  }
+  const cn = await issueCreditNoteTx(orderId, reason)
+  if (gate && backdated.backdated) {
+    const { auditBackdatedSalesUndo } = await import('../nightAudit/backdate.js')
+    await auditBackdatedSalesUndo({ tenantId: gateTenantId, orderId, action: 'credit_note', gate: backdated, actorId: gate.actor.id, actorEmail: gate.actor.email ?? null, amountCents: Math.abs(cn.totalCents) })
+  }
+  return cn
+}
+
+async function issueCreditNoteTx(orderId: string, reason: string) {
   return prisma.$transaction(async (tx) => {
     const original = await tx.taxInvoice.findFirst({
       where: { orderId, type: 'invoice' },

@@ -47,6 +47,7 @@ import { stockDifferenceCloseCheck } from '../stockDifferences/service.js'
 import { headOfficeCloseChecks } from '../headOffices/closeChecks.js'
 import { codCloseCheck } from '../reconciliation/codCloseCheck.js'
 import { onAccountCloseChecks } from './onAccountCloseChecks.js'
+import { nightAuditCloseCheck } from '../nightAudit/closeCheck.js'
 
 /** A close never looks further back than this many months (the oldest are dropped). */
 export const MAX_CLOSE_MONTHS = 24
@@ -99,31 +100,74 @@ export function monthsInRange(prevLock: Date | null, newLock: Date, firstEntryDa
   return out.slice(-MAX_CLOSE_MONTHS)
 }
 
-// ─── The backfill dry run, once per checklist run ────────────────────────────
-// unposted_orders and posting_failed both read it; one run of the checklist
-// computes it once.
+// ─── The backfill dry runs, once per checklist run ───────────────────────────
+// unposted_orders and posting_failed both read the orders dry run; one run of
+// a checklist (the month's, or the night audit's — nightAudit/checks.ts)
+// computes it once, through the run's `cache`.
+
+export type CheckCache = Map<string, Promise<unknown>>
 
 type OrderDryRunRow = { kind: string; id: string; tenantId: string; date: string | null; outcome: string; detail: string }
-const ordersDryRunCache = new WeakMap<CloseCheckContext, Promise<OrderDryRunRow[]>>()
+type ShiftDryRunRow = { shiftId: string; closedAt: string | null; tenantId: string | null; outcome: string; detail: string }
 
-function ordersDryRun(ctx: CloseCheckContext): Promise<OrderDryRunRow[]> {
-  let p = ordersDryRunCache.get(ctx)
+function memo<T>(cache: CheckCache | undefined, key: string, fn: () => Promise<T>): Promise<T> {
+  if (!cache) return fn()
+  let p = cache.get(key) as Promise<T> | undefined
   if (!p) {
-    p = (async () => {
-      const { backfillUnpostedOrders } = await import('../reconciliation/backfillOrders.js')
-      const r = await backfillUnpostedOrders({ tenantIds: [ctx.tenantId], dryRun: true })
-      return r.rows.filter((row) => row.tenantId === ctx.tenantId)
-    })()
-    ordersDryRunCache.set(ctx, p)
+    p = fn()
+    cache.set(key, p)
   }
   return p
+}
+
+function ordersDryRun(tenantId: string, cache: CheckCache | undefined): Promise<OrderDryRunRow[]> {
+  return memo(cache, `orders-dry-run:${tenantId}`, async () => {
+    const { backfillUnpostedOrders } = await import('../reconciliation/backfillOrders.js')
+    const r = await backfillUnpostedOrders({ tenantIds: [tenantId], dryRun: true })
+    return r.rows.filter((row) => row.tenantId === tenantId)
+  })
+}
+
+function shiftsDryRun(tenantId: string, cache: CheckCache | undefined): Promise<ShiftDryRunRow[]> {
+  return memo(cache, `shifts-dry-run:${tenantId}`, async () => {
+    const { backfillUnpostedShifts } = await import('./shiftPosting.js')
+    const r = await backfillUnpostedShifts({ tenantIds: [tenantId], dryRun: true })
+    return r.rows.filter((row) => row.tenantId === tenantId)
+  })
 }
 
 /** Dry-run outcomes that mean "this document still owes the books an entry". */
 const ORDER_UNPOSTED = new Set(['would_post', 'would_post_into_current_month', 'unflagged', 'error'])
 const SHIFT_UNPOSTED = new Set(['would_post', 'would_post_into_current_month', 'unbalanced', 'error'])
 
-const onOrBefore = (iso: string | null, lock: Date) => !iso || new Date(iso).getTime() <= lock.getTime()
+/** In (from, to] by an ISO date; a null date counts only when `from` is null (an open-ended range). */
+const inWindow = (iso: string | null, from: Date | null, to: Date): boolean => {
+  if (!iso) return from === null
+  const t = new Date(iso).getTime()
+  return t <= to.getTime() && (from === null || t >= from.getTime())
+}
+
+/**
+ * Tills of the company opened on or before `through` and still open (oldest
+ * first). The month's open_tills and the night audit's share it.
+ */
+export async function openTillsThrough(db: CloseCheckDb, tenantId: string, through: Date): Promise<Array<{ id: string; openedAt: Date }>> {
+  return db.shift.findMany({
+    where: { status: 'open', openedAt: { lte: through }, ...shiftOfCompany({ tenantId: { in: [tenantId] } }) },
+    select: { id: true, openedAt: true },
+    orderBy: { openedAt: 'asc' },
+  })
+}
+
+/** Closed tills (closedAt in [from, to], from null = no lower bound; no closedAt counts only then) that never reached the books. */
+export async function unpostedShiftRows(_db: CloseCheckDb, tenantId: string, from: Date | null, to: Date, cache?: CheckCache): Promise<ShiftDryRunRow[]> {
+  return (await shiftsDryRun(tenantId, cache)).filter((row) => SHIFT_UNPOSTED.has(row.outcome) && inWindow(row.closedAt, from, to))
+}
+
+/** Documents (dated in [from, to]; undated only when from is null) that still owe the books an entry — Backfill unposted's own dry run. */
+export async function unpostedOrderRows(_db: CloseCheckDb, tenantId: string, from: Date | null, to: Date, cache?: CheckCache): Promise<OrderDryRunRow[]> {
+  return (await ordersDryRun(tenantId, cache)).filter((row) => ORDER_UNPOSTED.has(row.outcome) && inWindow(row.date, from, to))
+}
 
 function metaOf(v: Prisma.JsonValue | null): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {}
@@ -141,7 +185,7 @@ function parseDate(v: unknown): Date | null {
  * the close date for a document dated before it still belongs to the closed
  * months). Null when it cannot be told: the flag then counts.
  */
-async function documentDateOf(db: CloseCheckDb, f: { entityType: string | null; entityId: string | null; metadata: Prisma.JsonValue | null }): Promise<Date | null> {
+export async function documentDateOf(db: CloseCheckDb, f: { entityType: string | null; entityId: string | null; metadata: Prisma.JsonValue | null }): Promise<Date | null> {
   const m = metaOf(f.metadata)
   for (const k of ['documentDate', 'date', 'entryDate', 'occurredAt']) {
     const d = parseDate(m[k])
@@ -176,6 +220,43 @@ async function documentDateOf(db: CloseCheckDb, f: { entityType: string | null; 
   }
 }
 
+/**
+ * Open / acknowledged posting_failed flags of the company whose DOCUMENT date
+ * is in [from, to] (from null = no lower bound; then an undated flag counts
+ * too), minus documents the orders dry run already lists (unposted_orders
+ * reports those). `salesOnly` (the night audit): only flags whose
+ * metadata.sourceType is a sales source (nightAudit/lock.ts isSalesSource) —
+ * a supplier bill's or petty cash's refusal never counts on a sales day.
+ */
+export async function postingFailedBetween(
+  db: CloseCheckDb, tenantId: string, from: Date | null, to: Date, cache?: CheckCache, opts: { salesOnly?: boolean } = {},
+): Promise<{ count: number; cents: number }> {
+  const flags = await db.exceptionFlag.findMany({
+    where: { tenantId, kind: 'posting_failed', status: { in: ['open', 'acknowledged'] } },
+    select: { id: true, entityType: true, entityId: true, metadata: true, amountCents: true },
+  })
+  if (flags.length === 0) return { count: 0, cents: 0 }
+  const { isSalesSource } = opts.salesOnly ? await import('../nightAudit/lock.js') : { isSalesSource: () => true }
+  // A document the backfill dry run lists is unposted_orders' to report (or
+  // has nothing owed / sits in an older closed month) — never counted twice.
+  const listed = new Set((await ordersDryRun(tenantId, cache)).map((row) => `${row.kind}:${row.id}`))
+  let count = 0
+  let cents = 0
+  for (const f of flags) {
+    const m = metaOf(f.metadata)
+    const sourceType = typeof m['sourceType'] === 'string' ? m['sourceType'] : null
+    if (opts.salesOnly && !isSalesSource(sourceType)) continue
+    const sourceId = typeof m['sourceId'] === 'string' ? m['sourceId'] : f.entityId
+    if (sourceType && sourceId && listed.has(`${sourceType}:${sourceId}`)) continue
+    const at = await documentDateOf(db, f)
+    if (at && at.getTime() > to.getTime()) continue
+    if (from && (!at || at.getTime() < from.getTime())) continue
+    count += 1
+    cents += Math.abs(sumCents(f.amountCents))
+  }
+  return { count, cents }
+}
+
 // ─── The core checks ─────────────────────────────────────────────────────────
 
 const raastCheck: CloseCheck = {
@@ -208,11 +289,7 @@ const openTillsCheck: CloseCheck = {
   severity: 'block',
   overridable: true,
   async run(ctx) {
-    const open = await ctx.db.shift.findMany({
-      where: { status: 'open', openedAt: { lte: ctx.newLock }, ...shiftOfCompany({ tenantId: { in: [ctx.tenantId] } }) },
-      select: { id: true, openedAt: true },
-      orderBy: { openedAt: 'asc' },
-    })
+    const open = await openTillsThrough(ctx.db, ctx.tenantId, ctx.newLock)
     if (open.length === 0) return null
     return {
       key: 'open_tills',
@@ -232,9 +309,7 @@ const unpostedShiftsCheck: CloseCheck = {
   severity: 'block',
   overridable: true,
   async run(ctx) {
-    const { backfillUnpostedShifts } = await import('./shiftPosting.js')
-    const r = await backfillUnpostedShifts({ tenantIds: [ctx.tenantId], dryRun: true })
-    const rows = r.rows.filter((row) => row.tenantId === ctx.tenantId && SHIFT_UNPOSTED.has(row.outcome) && onOrBefore(row.closedAt, ctx.newLock))
+    const rows = await unpostedShiftRows(ctx.db, ctx.tenantId, null, ctx.newLock, ctx.cache)
     if (rows.length === 0) return null
     const refused = rows.filter((row) => row.outcome === 'unbalanced' || row.outcome === 'error').length
     return {
@@ -256,7 +331,7 @@ const unpostedOrdersCheck: CloseCheck = {
   severity: 'block',
   overridable: true,
   async run(ctx) {
-    const rows = (await ordersDryRun(ctx)).filter((row) => ORDER_UNPOSTED.has(row.outcome) && onOrBefore(row.date, ctx.newLock))
+    const rows = await unpostedOrderRows(ctx.db, ctx.tenantId, null, ctx.newLock, ctx.cache)
     if (rows.length === 0) return null
     const kinds = Array.from(new Set(rows.map((row) => row.kind))).sort()
     return {
@@ -277,26 +352,7 @@ const postingFailedCheck: CloseCheck = {
   severity: 'block',
   overridable: true,
   async run(ctx) {
-    const flags = await ctx.db.exceptionFlag.findMany({
-      where: { tenantId: ctx.tenantId, kind: 'posting_failed', status: { in: ['open', 'acknowledged'] } },
-      select: { id: true, entityType: true, entityId: true, metadata: true, amountCents: true },
-    })
-    if (flags.length === 0) return null
-    // A document the backfill dry run lists is unposted_orders' to report (or
-    // has nothing owed / sits in an older closed month) — never counted twice.
-    const listed = new Set((await ordersDryRun(ctx)).map((row) => `${row.kind}:${row.id}`))
-    let count = 0
-    let cents = 0
-    for (const f of flags) {
-      const m = metaOf(f.metadata)
-      const sourceType = typeof m['sourceType'] === 'string' ? m['sourceType'] : null
-      const sourceId = typeof m['sourceId'] === 'string' ? m['sourceId'] : f.entityId
-      if (sourceType && sourceId && listed.has(`${sourceType}:${sourceId}`)) continue
-      const at = await documentDateOf(ctx.db, f)
-      if (at && at.getTime() > ctx.newLock.getTime()) continue
-      count += 1
-      cents += Math.abs(sumCents(f.amountCents))
-    }
+    const { count, cents } = await postingFailedBetween(ctx.db, ctx.tenantId, null, ctx.newLock, ctx.cache)
     if (count === 0) return null
     return {
       key: 'posting_failed',
@@ -414,6 +470,9 @@ export const CLOSE_CHECKS: CloseCheck[] = [
   ...headOfficeCloseChecks,
   codCloseCheck,
   ...onAccountCloseChecks,
+  // Night audit (owner, 2026-10-16; sales module only): every active SALES day
+  // of the range closed (audited + settled), or the CEO closes over it.
+  nightAuditCloseCheck,
 ]
 
 /** The key of the block a throwing check becomes. */
@@ -431,6 +490,51 @@ export function isOverridableKey(key: string): boolean {
 
 function isTransaction(db: CloseCheckDb): db is Prisma.TransactionClient {
   return typeof (db as { $transaction?: unknown }).$transaction !== 'function'
+}
+
+/**
+ * Run `checks` in order against `ctx` and collect their problems — the ONE
+ * runner of the month checklist (closeChecklist) and the night audit's
+ * (nightAudit/checks.ts nightChecklist). A check that throws becomes a block
+ * keyed 'check_failed:<its key>' (overridable). Inside a transaction each check
+ * runs behind its own savepoint, so one failing statement cannot abort it.
+ */
+export async function runChecks<C extends { tenantId: string }>(
+  db: CloseCheckDb,
+  checks: ReadonlyArray<{ key: string; run(ctx: C): Promise<CloseProblem | null> }>,
+  ctx: C,
+  opts: { tag: string; savepoint: string; failLink: string },
+): Promise<CloseProblem[]> {
+  const problems: CloseProblem[] = []
+  const inTx = isTransaction(db)
+  for (let i = 0; i < checks.length; i++) {
+    const check = checks[i]!
+    let result: { ok: true; value: CloseProblem | null } | { ok: false; error: Error }
+    if (inTx) {
+      result = await withSavepoint(db, `${opts.savepoint}_${i}`, () => check.run(ctx))
+    } else {
+      try {
+        result = { ok: true, value: await check.run(ctx) }
+      } catch (err) {
+        result = { ok: false, error: err as Error }
+      }
+    }
+    if (result.ok) {
+      if (result.value) problems.push(result.value)
+      continue
+    }
+    console.error(`[${opts.tag}] check ${check.key} failed for ${ctx.tenantId}:`, result.error.message)
+    problems.push({
+      key: `${CHECK_FAILED_PREFIX}${check.key}`,
+      severity: 'block',
+      title: `Check could not run: ${check.key.replace(/_/g, ' ')}`,
+      detail: `The '${check.key}' check failed (${result.error.message.slice(0, 200)}), so servd cannot tell whether it is clear. Try again; going past it needs the CEO's reason.`,
+      count: 1,
+      link: opts.failLink,
+      overridable: true,
+    })
+  }
+  return problems
 }
 
 export interface CloseChecklist {
@@ -456,37 +560,8 @@ export async function closeChecklist(db: CloseCheckDb, tenantId: string, newLock
   const start = rangeStart(prevLock, newLock, firstEntryDate)
   const isYearEnd = newLock.getTime() > (prevLock?.getTime() ?? -Infinity)
     && isFiscalYearEndInRange(endMonth, prevLock ?? new Date(start.getTime() - 1), newLock)
-  const ctx: CloseCheckContext = { db, tenantId, prevLock, newLock, months, isYearEnd }
-
-  const problems: CloseProblem[] = []
-  const inTx = isTransaction(db)
-  for (let i = 0; i < CLOSE_CHECKS.length; i++) {
-    const check = CLOSE_CHECKS[i]!
-    let result: { ok: true; value: CloseProblem | null } | { ok: false; error: Error }
-    if (inTx) {
-      result = await withSavepoint(db, `close_check_${i}`, () => check.run(ctx))
-    } else {
-      try {
-        result = { ok: true, value: await check.run(ctx) }
-      } catch (err) {
-        result = { ok: false, error: err as Error }
-      }
-    }
-    if (result.ok) {
-      if (result.value) problems.push(result.value)
-      continue
-    }
-    console.error(`[period-close] check ${check.key} failed for ${tenantId}:`, result.error.message)
-    problems.push({
-      key: `${CHECK_FAILED_PREFIX}${check.key}`,
-      severity: 'block',
-      title: `Check could not run: ${check.key.replace(/_/g, ' ')}`,
-      detail: `The '${check.key}' check failed (${result.error.message.slice(0, 200)}), so servd cannot tell whether it is clear. Try again; closing over it needs the CEO's reason.`,
-      count: 1,
-      link: '/accounting/period-close',
-      overridable: true,
-    })
-  }
+  const ctx: CloseCheckContext = { db, tenantId, prevLock, newLock, months, isYearEnd, cache: new Map() }
+  const problems = await runChecks(db, CLOSE_CHECKS, ctx, { tag: 'period-close', savepoint: 'close_check', failLink: '/accounting/period-close' })
   return {
     problems,
     blocks: problems.filter((p) => p.severity === 'block'),

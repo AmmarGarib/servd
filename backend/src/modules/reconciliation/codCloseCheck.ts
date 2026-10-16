@@ -19,7 +19,7 @@
 // The orchestrator adds codCloseCheck to CLOSE_CHECKS (accounting/closeChecks.ts).
 
 import type { Prisma } from '@prisma/client'
-import type { CloseCheck } from '../accounting/closeCheckTypes.js'
+import type { CloseCheck, CloseCheckDb } from '../accounting/closeCheckTypes.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import { codDueWhere, codStatusOf, type CodStatus } from '../../lib/cod.js'
 import { toCents } from '../../lib/money.js'
@@ -34,28 +34,39 @@ const STATUS_WORDS: Record<CodStatus, string> = {
   at_counter: 'pickup cash not at the counter',
 }
 
+/**
+ * COD payments of the company (codDueWhere) on orders completed — else placed
+ * — in [from, to] (from null = no lower bound) that are not paid into a drawer
+ * yet. The month check (to = the lock) and the night audit's cod_pending (one
+ * sales day) share it.
+ */
+export async function codPendingRows(db: CloseCheckDb, tenantId: string, from: Date | null, to: Date) {
+  const base = codDueWhere({ tenantId })
+  const at = { ...(from ? { gte: from } : {}), lte: to }
+  return db.payment.findMany({
+    where: {
+      ...base,
+      order: {
+        ...(base.order as Prisma.OrderWhereInput),
+        OR: [
+          { completedAt: at },
+          { completedAt: null, placedAt: at },
+        ],
+      },
+    },
+    select: {
+      amountCents: true, createdAt: true, codRiderDebtAt: true,
+      order: { select: { fulfilmentType: true, riderId: true, deliveredAt: true, completedAt: true } },
+    },
+  })
+}
+
 export const codCloseCheck: CloseCheck = {
   key: 'cod_with_rider',
   severity: 'block',
   overridable: true,
   async run(ctx) {
-    const base = codDueWhere({ tenantId: ctx.tenantId })
-    const rows = await ctx.db.payment.findMany({
-      where: {
-        ...base,
-        order: {
-          ...(base.order as Prisma.OrderWhereInput),
-          OR: [
-            { completedAt: { lte: ctx.newLock } },
-            { completedAt: null, placedAt: { lte: ctx.newLock } },
-          ],
-        },
-      },
-      select: {
-        amountCents: true, createdAt: true, codRiderDebtAt: true,
-        order: { select: { fulfilmentType: true, riderId: true, deliveredAt: true, completedAt: true } },
-      },
-    })
+    const rows = await codPendingRows(ctx.db, ctx.tenantId, null, ctx.newLock)
     if (rows.length === 0) return null
     // Status at the period end (overdue = past the pay-in time by then).
     const by = new Map<CodStatus, { n: number; cents: number }>()

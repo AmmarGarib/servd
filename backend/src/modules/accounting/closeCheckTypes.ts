@@ -31,6 +31,12 @@ export interface CloseCheckContext {
   months: string[]
   /** True when the range crosses the company's fiscal year end (fiscalYear.ts isFiscalYearEndInRange). */
   isYearEnd: boolean
+  /**
+   * Per-run memo shared by the checks of ONE checklist run (e.g. the backfill
+   * dry run that unposted_orders and posting_failed both read). closeChecklist
+   * always sets it; a check must still work without it.
+   */
+  cache?: Map<string, Promise<unknown>>
 }
 
 export interface CloseProblem {

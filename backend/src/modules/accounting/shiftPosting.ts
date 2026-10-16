@@ -782,8 +782,16 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
       continue
     }
     const lock = await lockedThrough(entry.tenantId)
-    const locked = !!lock && entry.entryDate <= lock
-    const note = `closed ${fmtPktDate(entry.entryDate)}, posted late into the open month (books closed through ${lock ? fmtPktDate(lock) : '—'})`
+    const periodLocked = !!lock && entry.entryDate <= lock
+    // Night audit (sales only, owner 2026-10-16): a close whose day the night
+    // audit locked posts today with the note — the dry run never promises a
+    // post on its own date that the ledger (DAY_AUDITED) would refuse.
+    const { dayLockOf, salesDayLateNote } = await import('../nightAudit/lock.js')
+    const dayLock = periodLocked ? null : await dayLockOf(prisma, entry.tenantId, entry.entryDate)
+    const locked = periodLocked || !!dayLock
+    const note = dayLock
+      ? `closed ${salesDayLateNote(dayLock.day).slice('dated '.length)}`
+      : `closed ${fmtPktDate(entry.entryDate)}, posted late into the open month (books closed through ${lock ? fmtPktDate(lock) : '—'})`
     if (opts.dryRun) {
       rows.push({ shiftId: s.id, closedAt, tenantId: entry.tenantId, outcome: locked ? 'would_post_into_current_month' : 'would_post', detail: locked ? note : entry.diagnostics })
       continue

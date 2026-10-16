@@ -148,3 +148,35 @@ describe('a merge with shared-fleet rates is still refused', () => {
     expect((await prisma.fleetAgreement.findUniqueOrThrow({ where: { id: ag.id } })).providerTenantId).toBe(S.id)
   })
 })
+
+// Night audit (2026-10-16, sales days): the target's locked days that gain the
+// source's sales reopen; a source row on a date the target also has folds into
+// the target's history; the rest move (and open); the start day is the earlier.
+describe('night-audit days move with the company', () => {
+  it('reopen / fold / move, and the earlier start day', async () => {
+    const S = await company('NA source')
+    const D = await company('NA target')
+    const dayShared = '2026-09-02'
+    const dayTargetOnly = '2026-09-03'
+    const daySourceOnly = '2026-09-04'
+    // The source sold on the shared day.
+    await prisma.order.create({ data: { conceptId: S.conceptId, source: 'pos', fulfilmentType: 'takeout', status: 'completed', totalCents: 0, placedAt: new Date(`${dayShared}T12:00:00+05:00`), completedAt: new Date(`${dayShared}T12:05:00+05:00`) } })
+    const audited = { status: 'audited' as const, auditedAt: new Date(), auditedById: ceo.id }
+    await prisma.nightAuditDay.create({ data: { tenantId: D.id, businessDate: dayShared, ...audited } })
+    await prisma.nightAuditDay.create({ data: { tenantId: D.id, businessDate: dayTargetOnly, ...audited } })
+    await prisma.nightAuditDay.create({ data: { tenantId: S.id, businessDate: dayShared, ...audited } })
+    await prisma.nightAuditDay.create({ data: { tenantId: S.id, businessDate: daySourceOnly, ...audited } })
+    await prisma.tenant.update({ where: { id: S.id }, data: { nightAuditStartDay: '2026-09-01' } })
+    await prisma.tenant.update({ where: { id: D.id }, data: { nightAuditStartDay: '2026-09-02' } })
+
+    const r = await merge(S.id, D.id)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().nightAuditDays).toEqual({ reopened: 1, folded: 1, moved: 1 })
+    expect(await prisma.nightAuditDay.count({ where: { tenantId: S.id } })).toBe(0)
+    const rows = await prisma.nightAuditDay.findMany({ where: { tenantId: D.id }, orderBy: { businessDate: 'asc' } })
+    expect(rows.map((x) => [x.businessDate, x.status])).toEqual([[dayShared, 'open'], [dayTargetOnly, 'audited'], [daySourceOnly, 'open']])
+    const shared = (rows[0]!.history as Array<{ action: string }>).map((h) => h.action)
+    expect(shared).toEqual(['merge_reopen', 'merge_fold'])
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: D.id } })).nightAuditStartDay).toBe('2026-09-01')
+  })
+})

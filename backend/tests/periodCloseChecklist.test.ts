@@ -26,6 +26,7 @@ const users: Record<string, { id: string; token: string }> = {}
 
 const BASE_LOCK = '2026-07-31'
 const CLOSE = '2026-08-31'
+const NIGHT_AUDIT_LATER = '2026-09-15'
 
 async function mkUser(key: string, role: string, primary: string, members: string[]) {
   const u = await prisma.user.create({
@@ -87,6 +88,9 @@ beforeAll(async () => {
   await mkUser('ceo', 'admin', A, [A, B])
   await mkUser('adminB', 'admin', B, [B])
   await mkUser('fin', 'finance', A, [A])
+  // The night audit (2026-10-16) starts after these closes, so its month
+  // check stays quiet here; its own cases below set an earlier start day.
+  await prisma.tenant.updateMany({ where: { id: { in: [A, B] } }, data: { nightAuditStartDay: NIGHT_AUDIT_LATER } })
   // First entries: mid-May, so a first close through July crosses 30 June.
   for (const t of [A, B]) {
     await postJournalEntry({ tenantId: t, sourceType: 'test.opening', sourceId: t, description: 'Opening capital', entryDate: new Date('2026-05-15T07:00:00Z'), lines: [
@@ -375,5 +379,60 @@ describe('year end', () => {
     expect(list.months).toEqual(['2026-08'])
     expect(list.isYearEnd).toBe(false)
     expect(list.blocks).toEqual([])
+  })
+})
+
+describe('night_audit_days (the night audit, sales days only)', () => {
+  it('blocks while an active sales day is open or awaiting settlement; passes when every one is closed; the CEO can close over it', async () => {
+    const concept = await prisma.concept.create({ data: { name: 'Night brand', slug: 'pcc-night', type: 'restaurant', tenantId: A } })
+    await prisma.tenant.update({ where: { id: A }, data: { nightAuditStartDay: '2026-08-10' } })
+    const day = '2026-08-12'
+    const o = await prisma.order.create({ data: {
+      conceptId: concept.id, source: 'pos', fulfilmentType: 'takeout', status: 'completed', totalCents: 0, taxCents: 0,
+      placedAt: new Date(`${day}T12:00:00+05:00`), completedAt: new Date(`${day}T12:10:00+05:00`),
+    } })
+    // A supplier bill alone on another day never makes that day a sales day.
+    await postJournalEntry({ tenantId: A, sourceType: 'supplier.bill', sourceId: 'pcc-night-bill', description: 'not sales', entryDate: new Date('2026-08-14T07:00:00Z'), lines: [
+      { accountCode: '5010', type: 'debit', amountCents: 1_000 }, { accountCode: '2010', type: 'credit', amountCents: 1_000 },
+    ] })
+    try {
+      const open = await close('ceo', A)
+      expect(open.statusCode).toBe(409)
+      const p = (open.json().error.details.problems as Array<Problem & { detail: string }>).find((x) => x.key === 'night_audit_days')!
+      expect(p).toMatchObject({ severity: 'block', count: 1, overridable: true })
+      expect(p.detail).toContain(`not night-audited (${day})`)
+      expect(p.detail).not.toContain('2026-08-14')
+
+      await prisma.nightAuditDay.create({ data: { tenantId: A, businessDate: day, status: 'audited', auditedAt: new Date(), auditedById: users.ceo!.id } })
+      const awaiting = await close('ceo', A)
+      expect(((awaiting.json().error.details.problems as Array<Problem & { detail: string }>).find((x) => x.key === 'night_audit_days'))?.detail).toContain('awaiting settlement')
+      // B's close never sees A's days.
+      const viewB = await call('adminB', 'GET', `/accounting/period-close?lockedThrough=${CLOSE}`, undefined, B)
+      expect((viewB.json().checks as Problem[]).map((x) => x.key)).not.toContain('night_audit_days')
+      // The CEO closes over it with a reason.
+      const over = await close('ceo', A, { acknowledge: { keys: ['night_audit_days'], reason: 'Card payouts for that day arrive late' } })
+      expect(over.statusCode, over.body).toBe(201)
+      await resetLocks()
+
+      await prisma.nightAuditDay.update({ where: { tenantId_businessDate: { tenantId: A, businessDate: day } }, data: { status: 'closed', closedAt: new Date(), closedVia: 'manual' } })
+      const ok = await close('ceo', A)
+      expect(ok.statusCode, ok.body).toBe(201)
+    } finally {
+      await prisma.nightAuditDay.deleteMany({ where: { tenantId: A } })
+      await prisma.order.delete({ where: { id: o.id } })
+      await prisma.tenant.update({ where: { id: A }, data: { nightAuditStartDay: NIGHT_AUDIT_LATER } })
+    }
+  })
+
+  it('a warning (never a block) while the company\'s night audit has not started', async () => {
+    await prisma.tenant.update({ where: { id: B }, data: { nightAuditStartDay: null } })
+    try {
+      const view = await call('adminB', 'GET', `/accounting/period-close?lockedThrough=${CLOSE}`, undefined, B)
+      const p = (view.json().checks as Problem[]).find((x) => x.key === 'night_audit_days')
+      expect(p).toMatchObject({ severity: 'warn', overridable: false })
+      expect((await close('adminB', B)).statusCode).toBe(201)
+    } finally {
+      await prisma.tenant.update({ where: { id: B }, data: { nightAuditStartDay: NIGHT_AUDIT_LATER } })
+    }
   })
 })

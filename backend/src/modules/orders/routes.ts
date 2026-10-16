@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { zBackdatedReason } from '../nightAudit/backdate.js'
 import { z } from 'zod'
 import { OrderStatus } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -49,6 +50,9 @@ const cancelOrderSchema = z.object({
   reason: z.string().trim().min(3, 'Reason is required').max(500),
   // §17.4: a non-manager (cashier / server) cancels only with a manager PIN.
   managerOverridePin: z.string().min(4).max(8).optional(),
+  // The CEO's reason when the bill is from an earlier sales day (night audit;
+  // 403 CEO_ONLY_BACKDATED otherwise — nightAudit/backdate.ts).
+  backdatedReason: zBackdatedReason,
 })
 
 // Kitchen moves only. Voiding a line is POST /pos/orders/:orderId/void — it
@@ -285,7 +289,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
     '/:id/cancel',
     { preHandler: requireAuth(...CASHIERS) },
     async (req, reply) => {
-      const { reason, managerOverridePin } = cancelOrderSchema.parse(req.body)
+      const { reason, managerOverridePin, backdatedReason } = cancelOrderSchema.parse(req.body)
       // Company-scoped lookup first — a foreign order 404s before anything
       // is read, cancelled or audited (and before any PIN is tried).
       const order = await prisma.order.findFirst({
@@ -306,6 +310,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
         reason,
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
         approverId,
+        backdatedReason,
         metadata: { ip: req.ip, approvedByPin: viaPin },
       })
       return reply.send({ ok: true, order: redactDeliveryOtp(updated, req.staffUser!.role) })

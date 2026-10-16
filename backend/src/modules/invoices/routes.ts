@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { zBackdatedReason } from '../nightAudit/backdate.js'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
@@ -73,9 +74,12 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     '/orders/:orderId/credit-note',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
+      // backdatedReason: the CEO's reason for a bill of an earlier sales day (night audit; 403 CEO_ONLY_BACKDATED otherwise).
+      const { reason, backdatedReason } = z.object({ reason: z.string().min(1), backdatedReason: zBackdatedReason }).parse(req.body)
       await orderInScope(req, req.params.orderId)
-      const cn = await issueCreditNoteForOrder(req.params.orderId, reason)
+      const cn = await issueCreditNoteForOrder(req.params.orderId, reason, {
+        actor: { id: req.staffUser!.id, role: req.staffUser!.role, email: req.staffUser!.email }, backdatedReason,
+      })
       return reply.status(201).send(cn)
     },
   )

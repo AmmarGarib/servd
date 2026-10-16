@@ -1001,6 +1001,13 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // Night audit (2026-10-16): BEFORE the brands move (the source's sales
+      // days are read from its own orders) — the target's locked days that
+      // gain the source's sales reopen, the source's rows fold in or move
+      // (nightAudit/service.ts mergeNightAuditDaysTx).
+      const { mergeNightAuditDaysTx } = await import('../nightAudit/service.js')
+      const nightAudit = await mergeNightAuditDaysTx(tx, src, dst)
+
       const conceptsMoved = await tx.concept.updateMany({
         where: { tenantId: src }, data: { tenantId: dst },
       })
@@ -1186,7 +1193,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         where: { id: src },
         data: { deletedAt: new Date(), isActive: false },
       })
-      return { conceptsMoved: conceptsMoved.count, usersMoved: usersMoved.count, systemSuppliersAbsorbed, ...finance, ...money, ...delivery, ...requests }
+      return { conceptsMoved: conceptsMoved.count, usersMoved: usersMoved.count, systemSuppliersAbsorbed, ...finance, ...money, ...delivery, ...requests, nightAuditDays: nightAudit }
     }, {
       // Many sequential statements — the default 5s interactive-transaction
       // budget is too tight for a company with real history.

@@ -151,6 +151,8 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       importedById: req.staffUser!.id,
       csv: body.csv,
     })
+    // Night audit (sales days): an audited day whose bank side is now matched closes.
+    import('../nightAudit/service.js').then((m) => m.nudgeNightAudit(tenantId)).catch(() => undefined)
     return reply.status(201).send(result)
   })
 

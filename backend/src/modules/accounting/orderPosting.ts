@@ -21,7 +21,7 @@
 
 import type { Order, Payment, Concept, Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { ACCT, ON_ACCOUNT_MEMO, TILL_CLEARING_CODES, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { ACCT, ON_ACCOUNT_MEMO, TILL_CLEARING_CODES, postJournalEntry, revenueCodeForConcept, withLateNote, type JournalLineInput, type RepostOptions } from './journal.js'
 import { tillClearingCodeTx } from './tillClearingCode.js'
 import { cogsLinesForOrders } from './cogs.js'
 import { postLoyaltyReversal } from './loyaltyPosting.js'
@@ -521,7 +521,12 @@ export interface PostOrderResult {
   reason?: string
 }
 
-export async function postOrderCompletion(orderId: string): Promise<PostOrderResult> {
+/**
+ * `opts` is for the backfill only (reconciliation/backfillOrders.ts): a
+ * completion whose sales day the night audit locked is posted today with a
+ * note naming its own date (nightAudit/lock.ts). Same key either way.
+ */
+export async function postOrderCompletion(orderId: string, opts: RepostOptions = {}): Promise<PostOrderResult> {
   const order = await loadOrderForPosting(orderId)
   if (!order) return { posted: false, entryId: null, reason: 'order_not_found' }
 
@@ -547,16 +552,16 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
 
   const sa = computeSaleAccounting(withTenderTips({ ...order, giftCardAppliedCents }, order.payments))
   const cogsLines = await cogsLinesForOrders(tenantId, [order.id], { conceptId: order.conceptId, memo: saleMemoOf(order) })
-  const lines = buildSaleLines(order, sa, cogsLines)
+  const late = withLateNote(`Order ${orderRefOf(order.id)} completed (${order.concept.slug} / ${order.source})`, buildSaleLines(order, sa, cogsLines), opts.memoNote)
 
   const result = await postJournalEntry({
     tenantId,
     sourceType: 'order.complete',
     sourceId: order.id,
-    description: `Order ${orderRefOf(order.id)} completed (${order.concept.slug} / ${order.source})`,
-    entryDate: order.completedAt ?? new Date(),
-    postedBy: 'system',
-    lines,
+    description: late.description,
+    entryDate: opts.entryDate ?? order.completedAt ?? new Date(),
+    postedBy: opts.postedBy ?? 'system',
+    lines: late.lines,
   })
 
   return { posted: result.posted, entryId: result.entryId }

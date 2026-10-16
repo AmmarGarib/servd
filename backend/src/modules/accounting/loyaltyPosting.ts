@@ -25,7 +25,7 @@
 import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { prisma } from '../../lib/prisma.js'
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { ACCT, postJournalEntry, reverseJournalEntry } from './journal.js'
+import { ACCT, postJournalEntry, reverseJournalEntry, withLateNote, type RepostOptions } from './journal.js'
 import { primaryTenantId } from '../../lib/setup-config.js'
 
 // The company whose books carry a loyalty transaction: the company of the
@@ -61,7 +61,7 @@ const ACCOUNT_SELECT = { loyaltyAccount: { select: { customerId: true, tenantId:
 
 const LOYALTY_MARKETING_ACCOUNT = '6060'  // Marketing & Promo
 
-export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
+export async function postLoyaltyEarn(loyaltyTxId: string, opts: RepostOptions = {}): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const tx = await prisma.loyaltyTransaction.findUnique({
     where: { id: loyaltyTxId },
     include: ACCOUNT_SELECT,
@@ -77,17 +77,19 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
 
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
 
+  // `opts`: the backfill moving it out of a sales day the night audit locked (note names the date).
+  const late = withLateNote(`Loyalty points earned (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`, [
+    { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'debit',  amountCents: valueCents, memo: `${tx.pointsDelta} pts issued` },
+    { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'credit', amountCents: valueCents, memo: 'Liability accrued' },
+  ], opts.memoNote)
   return postUnlessReversed(loyaltyTxId, (db) => postJournalEntry({
     tenantId,
     sourceType: 'loyalty.earn',
     sourceId: tx.id,
-    description: `Loyalty points earned (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`,
-    entryDate: tx.createdAt,
-    postedBy: 'system',
-    lines: [
-      { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'debit',  amountCents: valueCents, memo: `${tx.pointsDelta} pts issued` },
-      { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'credit', amountCents: valueCents, memo: 'Liability accrued' },
-    ],
+    description: late.description,
+    entryDate: opts.entryDate ?? tx.createdAt,
+    postedBy: opts.postedBy ?? 'system',
+    lines: late.lines,
   }, { tx: db }))
 }
 
@@ -119,7 +121,7 @@ async function postUnlessReversed(
   })
 }
 
-export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
+export async function postLoyaltyRedeem(loyaltyTxId: string, opts: RepostOptions = {}): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const tx = await prisma.loyaltyTransaction.findUnique({
     where: { id: loyaltyTxId },
     include: ACCOUNT_SELECT,
@@ -136,17 +138,18 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
   const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
+  const late = withLateNote(`Loyalty points redeemed (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`, [
+    { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'debit',  amountCents: valueCents, memo: `${Math.abs(tx.pointsDelta)} pts burned` },
+    { accountCode: ACCT.LOYALTY_REDEMPTIONS,  type: 'credit', amountCents: valueCents, memo: 'Discount applied' },
+  ], opts.memoNote)
   return postUnlessReversed(loyaltyTxId, (db) => postJournalEntry({
     tenantId,
     sourceType: 'loyalty.redeem',
     sourceId: tx.id,
-    description: `Loyalty points redeemed (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`,
-    entryDate: tx.createdAt,
-    postedBy: 'system',
-    lines: [
-      { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'debit',  amountCents: valueCents, memo: `${Math.abs(tx.pointsDelta)} pts burned` },
-      { accountCode: ACCT.LOYALTY_REDEMPTIONS,  type: 'credit', amountCents: valueCents, memo: 'Discount applied' },
-    ],
+    description: late.description,
+    entryDate: opts.entryDate ?? tx.createdAt,
+    postedBy: opts.postedBy ?? 'system',
+    lines: late.lines,
   }, { tx: db }))
 }
 

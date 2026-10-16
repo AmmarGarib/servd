@@ -45,6 +45,7 @@ import {
   type RefundTender,
 } from '../../lib/tenders.js'
 import { lockRaastTx } from '../../connectors/raast/lock.js'
+import { assertBackdatedSalesUndoAllowed, auditBackdatedSalesUndo } from '../nightAudit/backdate.js'
 import {
   recordRaastReceiptTx, assertRaastIntentUsableTx, chooseRaastRefundSourceTx, cleanRaastRef, raastRefRule,
   raastRefRequired, raastNotVerified, raastRefConflict, raastTenderView, flagRaastSettledOtherwiseTx, releaseRaastTargetsTx,
@@ -1809,6 +1810,8 @@ interface VoidInput {
   actorId: string
   actorRole: string
   managerOverridePin?: string
+  /** The CEO's reason for voiding a line of a bill from an earlier sales day (nightAudit/backdate.ts). */
+  backdatedReason?: string
   /**
    * TILL-R3 on a bill paid by Raast QR: the line's value goes back by Raast,
    * which a manager sends from the bank FIRST — this is that outgoing
@@ -2044,7 +2047,7 @@ export async function voidOrderItem(input: VoidInput) {
     where: { id: input.orderItemId },
     include: {
       modifiers: { select: { priceDeltaCents: true } },
-      order: { select: { status: true, conceptId: true, concept: { select: { tenantId: true } } } },
+      order: { select: { id: true, status: true, conceptId: true, completedAt: true, scheduledFor: true, placedAt: true, concept: { select: { tenantId: true } } } },
     },
   })
   if (!item || item.orderId !== input.orderId) throw new NotFoundError('OrderItem', input.orderItemId)
@@ -2075,6 +2078,12 @@ export async function voidOrderItem(input: VoidInput) {
       ? new AppError('OVER_MANAGER_CAP', `Amount ${lineCents} exceeds the manager cap of ${policy.managerVoidLimitCents}`, 403)
       : new AppError('OVER_CAP', `Amount ${lineCents} exceeds the ${policy.managerVoidLimitCents} cap for void`, 403)
   }
+  // Night audit (owner, 2026-10-16 (c)): a line of a bill from an earlier
+  // sales day is voided by the CEO only, with a reason — before any money moves.
+  const backdated = await assertBackdatedSalesUndoAllowed(prisma, {
+    tenantId, order: item.order, action: 'item_void',
+    actor: { id: input.actorId, role: input.actorRole }, approverId, reason: input.backdatedReason,
+  })
   // A bill Raast money was taken on may give the line's value back by Raast:
   // then the company's Raast lock is taken first (lock order: Raast, then the
   // order — M2), and the outgoing reference is checked against its rule.
@@ -2280,6 +2289,7 @@ export async function voidOrderItem(input: VoidInput) {
     tenantId,
     metadata: { orderId: input.orderId, lineCents, reason: input.reason, approverId, removedCents: bill.removedCents, newTotalCents: bill.totalCents, stockRestored: stock.restored, stockSkipped: stock.skipped, stockWasted: waste?.wasted ?? {}, wasteCostCents: waste?.costCents ?? 0, wasteLogIds: waste?.wasteLogIds ?? [], wasteEntryId: waste?.entryId ?? null, refundPaymentId: refund?.payment.id ?? null },
   })
+  await auditBackdatedSalesUndo({ tenantId, orderId: input.orderId, conceptId: item.order.conceptId, action: 'item_void', gate: backdated, actorId: input.actorId, amountCents: lineCents })
   if (refund) {
     await audit({ category: 'identity',
       action: 'order_refund',
@@ -2359,6 +2369,8 @@ export interface CompInput extends CompRefundInput {
    * these comps.
    */
   staffMeal?: { staffId: string }
+  /** The CEO's reason for comping a bill of an earlier sales day (nightAudit/backdate.ts). */
+  backdatedReason?: string
 }
 
 async function isMemberOf(userId: string, tenantId: string): Promise<boolean> {
@@ -2429,6 +2441,12 @@ export async function compOrder(input: CompInput) {
       approverId = approver.id
     }
   }
+  // Night audit (owner, 2026-10-16 (c)): comping a bill of an earlier sales
+  // day is the CEO's, with a reason — before any money moves.
+  const backdated = await assertBackdatedSalesUndoAllowed(prisma, {
+    tenantId, order, action: 'comp',
+    actor: { id: input.actorId, role: input.actorRole }, approverId, reason: input.backdatedReason,
+  })
 
   const result = await prisma.$transaction(async (tx) => {
     // What is still due, read under the order lock the payment takes too
@@ -2511,6 +2529,7 @@ export async function compOrder(input: CompInput) {
     tenantId,
     metadata: { amountCents: input.amountCents, reason, photoUrl: input.photoUrl, approverId, paymentId: result.payment.id, shiftId: input.shiftId, staffMealId },
   })
+  await auditBackdatedSalesUndo({ tenantId, orderId: input.orderId, conceptId: order.conceptId, action: 'comp', gate: backdated, actorId: input.actorId, amountCents: input.amountCents })
   await notifyOwnerIfThreshold(input.amountCents, policy, 'comp', input.orderId, reason, input.actorId, tenantId)
 
   const fiscal = result.coverage.completedNow ? await afterTillSale(order.id, order.customerId, order.source) : null

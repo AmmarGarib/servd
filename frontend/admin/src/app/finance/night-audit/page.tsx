@@ -1,7 +1,7 @@
 'use client'
 // Night audit — lock each business day, close it when its money settles.
 // Contract: backend/src/modules/nightAudit/README.md. Finance runs it, the CEO
-// pushes through a block with a reason. Month close needs every active day closed.
+// pushes through a block with a reason. Month close needs every sales day closed.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Suspense, useState } from 'react'
 import Link from 'next/link'
@@ -67,6 +67,7 @@ function NightAudit() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 na-noprint">
         <p className="text-xs font-medium text-success">Books</p>
         <h1 className="text-xl font-bold text-s-text">Night audit</h1>
+        <p className="text-xs text-s-muted mt-0.5">Covers sales only: customer bills, payments and tenders, till shifts and cash drops. Other modules keep their own rules.</p>
       </header>
 
       <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4">
@@ -81,7 +82,7 @@ function NightAudit() {
             <button type="button" className="s-btn-secondary text-sm" disabled={!shownMonth} onClick={() => go(shiftMonth(shownMonth, 1))} aria-label="Next month">›</button>
           </div>
           <p className="text-xs text-s-muted">
-            Month close needs every active day closed. <Link href="/accounting/period-close" className="text-primary-ink underline">Period close</Link>
+            Month close needs every sales day closed. <Link href="/accounting/period-close" className="text-primary-ink underline">Period close</Link>
           </p>
         </div>
 
@@ -103,7 +104,7 @@ function NightAudit() {
 
         {data && (
           <p className="text-xs text-s-muted na-noprint">
-            {data.startDay ? `Month close requires night audits from ${data.startDay}.` : 'Night audit has not started for this company. The first run sets the start day, and month close does not require it until then.'}
+            {data.startDay ? `Month close requires sales night audits from ${data.startDay}.` : 'Night audit has not started for this company. The first run sets the start day, and month close does not require it until then.'}
             {data.periodLockedThrough ? ` Books closed through ${data.periodLockedThrough}.` : ''}
           </p>
         )}

@@ -213,6 +213,8 @@ export default async function cardPayoutRoutes(fastify: FastifyInstance): Promis
       after: { lineId: line.id, unit: st.unit, dayFrom: st.dayFrom, dayTo: st.dayTo, grossCents: toCents(st.grossCents), feeCents: toCents(st.feeCents), netCents: toCents(st.netCents), entryId: res.entryId },
       metadata: { days: body.days, actorTenantId: req.staffUser!.tenantId ?? null },
     })
+    // Night audit (sales days): a day whose card payout is now matched may close.
+    import('../nightAudit/service.js').then((m) => m.nudgeNightAudit(tenantId)).catch(() => undefined)
     return reply.status(201).send({
       id: st.id, tenantId, unit: st.unit, status: st.status, dayFrom: st.dayFrom, dayTo: st.dayTo,
       grossCents: toCents(st.grossCents), feeCents: toCents(st.feeCents), netCents: toCents(st.netCents), journalEntryId: res.entryId,
@@ -251,6 +253,7 @@ export default async function cardPayoutRoutes(fastify: FastifyInstance): Promis
       after: { matched: res.matched, candidates: res.candidates, refused: res.refused.length },
       metadata: { refused: res.refused },
     })
+    if (res.matched > 0) import('../nightAudit/service.js').then((m) => m.nudgeNightAudit(tenantId)).catch(() => undefined)
     return res
   })
 }

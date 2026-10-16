@@ -21,6 +21,7 @@ import { prisma as defaultPrisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { fmtPktDate } from './dates.js'
 import { amountTooLarge, assertMoneyFits, toCents } from '../../lib/money.js'
+import { assertSalesDayOpenTx, dayLockOf, isSalesSource, salesDayLateNote } from '../nightAudit/lock.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -370,6 +371,11 @@ export async function postJournalEntry(
         422,
       )
     }
+    // Night audit day lock (owner, 2026-10-16) — SALES postings only
+    // (nightAudit/lock.ts isSalesSource): a sale, refund, void, till close or
+    // deposit of till cash dated into a day the night audit locked is refused
+    // (422 DAY_AUDITED). Every other module never reads the table.
+    if (isSalesSource(input.sourceType)) await assertSalesDayOpenTx(tx, input.tenantId, entryDate, input.sourceType)
 
     const accountMap = await resolveAccountIds(tx, input.tenantId, lines.map((l) => l.accountCode))
     assertControlledAccounts(input, accountMap)
@@ -593,18 +599,30 @@ export function withLateNote(description: string, lines: JournalLineInput[], not
  *     nothing can post (the caller flags it for the backfill). Defensive
  *     only — the period close refuses a lock on or after today.
  * Reads the lock through `tx`, so a caller inside its own transaction sees it.
+ *
+ * `sourceType` (optional): a SALES posting (nightAudit/lock.ts isSalesSource)
+ * whose natural day the night audit locked (audited / closed) is moved to
+ * today too, with the night-audit note. Without it — every non-sales caller —
+ * nothing changes. Today is never locked (the night run refuses today).
  */
 export async function lateDatingFor(
   tx: Tx,
   tenantId: string,
   natural: Date,
+  sourceType?: string,
 ): Promise<{ entryDate: Date; memoNote?: string } | { lockedThroughToday: true }> {
   const lock = await tx.periodLock.findFirst({
     where: { tenantId },
     orderBy: { lockedThrough: 'desc' },
     select: { lockedThrough: true },
   })
-  if (!lock || natural > lock.lockedThrough) return { entryDate: natural }
+  if (!lock || natural > lock.lockedThrough) {
+    if (sourceType && isSalesSource(sourceType)) {
+      const day = await dayLockOf(tx, tenantId, natural)
+      if (day) return { entryDate: new Date(), memoNote: salesDayLateNote(day.day) }
+    }
+    return { entryDate: natural }
+  }
   const now = new Date()
   if (now <= lock.lockedThrough) return { lockedThroughToday: true }
   return {

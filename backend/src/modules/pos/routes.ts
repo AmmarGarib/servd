@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { zBackdatedReason } from '../nightAudit/backdate.js'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS, FINANCE_TEAM } from '../auth/middleware.js'
@@ -467,6 +468,8 @@ export async function posRoutes(fastify: FastifyInstance) {
         reason: z.string().min(1).max(200),
         managerOverridePin: z.string().optional(),     // required unless the signed-in user is a manager
         refundReference: z.string().trim().max(120).optional(),
+        // The CEO's reason when the bill is from an earlier sales day (night audit; 403 CEO_ONLY_BACKDATED otherwise).
+        backdatedReason: zBackdatedReason,
       }).parse(req.body)
       // Company scope through the shared helper — a null tenantFilter would
       // otherwise match every company-less brand.
@@ -485,6 +488,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
         refundReference: body.refundReference,
+        backdatedReason: body.backdatedReason,
       })
       return reply.status(200).send(result)
     },
@@ -508,6 +512,8 @@ export async function posRoutes(fastify: FastifyInstance) {
         // full with a manager PIN and appears in the staff-meal log.
         // Either a login id or the HR employee code — the till only knows the code.
         staffMealFor: z.string().min(1).max(64).optional(),
+        // The CEO's reason when the bill is from an earlier sales day (night audit).
+        backdatedReason: zBackdatedReason,
       }).parse(req.body)
       const order = await prisma.order.findFirst({
         where: {
@@ -546,6 +552,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         actorId: req.staffUser!.id,
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
+        backdatedReason: body.backdatedReason,
         ...(staffMealUserId && { staffMeal: { staffId: staffMealUserId } }),
       })
       return reply.status(200).send(result)

@@ -695,3 +695,57 @@ export async function unmatchStatementLine(lineId: string): Promise<{ before: { 
     return { before: { matchStatus: line.matchStatus, matchedJournalLineId: line.matchedJournalLineId, notes: line.notes } }
   })
 }
+
+// ─── Night audit: the bank side of a sales day (owner, 2026-10-16) ──────────
+//
+// sales_bank_unmatched (nightAudit/checks.ts, settlement step). Lines on the
+// company's BANK codes (its bank_accounts' ledger codes, plus 1020 — never
+// cash, petty cash, the drawer, card receivable or till clearing:
+// NON_BANK_MONEY_CODES) that no statement line points at
+// (bank_statement_lines.matchedJournalLineId), where either
+//   (i) the entry is dated in [from, to] and its reference is a SALES source
+//       (nightAudit/lock.ts salesReferenceSqlPatterns) — Raast lines
+//       (RAAST_RECEIPTS_MEMO) excluded, Raast reconciles receipt by receipt;
+//  (ii) or it is the 'deposit.drop:<id>' of a drop of a till closed in
+//       [from, to], whatever day it was dropped — the day's till cash must
+//       reach the bank statement.
+// Supplier, petty-cash, payroll, OpEx, CapEx, receivable and inter-company
+// bank lines are never read.
+
+export async function salesBankUnmatchedBetween(
+  db: Prisma.TransactionClient | typeof prisma, tenantId: string, from: Date, to: Date,
+): Promise<{ count: number; cents: number }> {
+  const { salesReferenceSqlPatterns } = await import('../nightAudit/lock.js')
+  const { NON_BANK_MONEY_CODES } = await import('../../connectors/raast/accounts.js')
+  const { shiftOfCompany } = await import('../../lib/tenantScope.js')
+  const banks = await db.bankAccount.findMany({ where: { tenantId, accountCode: { not: null } }, select: { accountCode: true } })
+  const excluded = new Set<string>([ACCT.CASH_ON_HAND, ACCT.PETTY_CASH, ACCT.CASH_DRAWER, ACCT.CARD_RECEIVABLE, ...NON_BANK_MONEY_CODES])
+  const codes = [...new Set([ACCT.BANK as string, ...banks.map((b) => b.accountCode!)])].filter((c) => !excluded.has(c))
+  if (codes.length === 0) return { count: 0, cents: 0 }
+  const shifts = await db.shift.findMany({
+    where: { status: 'closed', closedAt: { gte: from, lte: to }, ...shiftOfCompany({ tenantId: { in: [tenantId] } }) },
+    select: { id: true },
+  })
+  const drops = shifts.length === 0 ? [] : await db.depositDrop.findMany({
+    where: { tenantId, shiftId: { in: shifts.map((s) => s.id) } },
+    select: { id: true },
+  })
+  const dropRefs = drops.map((d) => `deposit.drop:${d.id}`)
+  const patterns = salesReferenceSqlPatterns()
+  const rows = await db.$queryRaw<Array<{ n: number; cents: bigint | number | null }>>`
+    SELECT count(*)::int AS n, COALESCE(sum(l."amountCents"), 0)::bigint AS cents
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l."journalEntryId"
+      JOIN accounts a ON a.id = l."accountId"
+     WHERE e."tenantId" = ${tenantId}
+       AND a."tenantId" = ${tenantId}
+       AND a.code = ANY(${codes}::text[])
+       AND NOT EXISTS (SELECT 1 FROM bank_statement_lines s WHERE s."matchedJournalLineId" = l.id)
+       AND (
+             (e."entryDate" >= ${from} AND e."entryDate" <= ${to}
+              AND e.reference LIKE ANY(${patterns}::text[])
+              AND COALESCE(l.memo, '') NOT LIKE ${`${RAAST_RECEIPTS_MEMO}%`})
+          OR e.reference = ANY(${dropRefs}::text[])
+       )`
+  return { count: rows[0]?.n ?? 0, cents: toCents(rows[0]?.cents ?? 0) }
+}

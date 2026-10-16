@@ -901,7 +901,7 @@ export async function resolveTerminalCharge(req: FastifyRequest, id: string, inp
 }
 
 /** Managers: retry the reversal of a needs_attention charge, or mark it refunded on the machine. */
-export async function manualReverseCharge(req: FastifyRequest, id: string, input: { markRefundedOnMachine?: boolean; note?: string }): Promise<TerminalChargeView> {
+export async function manualReverseCharge(req: FastifyRequest, id: string, input: { markRefundedOnMachine?: boolean; note?: string; backdatedReason?: string }): Promise<TerminalChargeView> {
   const a = actorOf(req)
   const c = await chargeInScope(req, id, 'write')
   if (c.status !== 'needs_attention') throw new AppError('NOT_REVERSIBLE', `This charge is ${c.status} — only a charge that needs attention can be reversed here`, 409)
@@ -909,6 +909,19 @@ export async function manualReverseCharge(req: FastifyRequest, id: string, input
     // A card refund is never reversed (W1-R5): that would refund the card twice or undo the refund.
     throw new AppError('NOT_REVERSIBLE', 'A card refund cannot be reversed — check the machine and record the refund on the order by hand', 409)
   }
+  // Night audit (owner, 2026-10-16 (c)): reversing the card payment of a bill
+  // from an earlier sales day — or an approved charge taken on an earlier
+  // day — is the CEO's, with a reason. Before the machine is asked.
+  const { assertBackdatedSalesUndoAllowed, auditBackdatedSalesUndo, SALES_DAY_ORDER_SELECT } = await import('../../modules/nightAudit/backdate.js')
+  const { fmtPktDate } = await import('../../modules/accounting/dates.js')
+  const gateOrder = await prisma.order.findUnique({ where: { id: c.orderId }, select: SALES_DAY_ORDER_SELECT })
+  const backdated = gateOrder
+    ? await assertBackdatedSalesUndoAllowed(prisma, {
+      tenantId: c.tenantId, order: gateOrder, action: 'card_reverse',
+      actor: { id: a.id, role: a.role }, reason: input.backdatedReason,
+      moneyDay: c.approvalRef || c.paymentId ? fmtPktDate(c.createdAt) : null,
+    })
+    : { backdated: false as const }
   if (input.markRefundedOnMachine) {
     await prisma.terminalCharge.updateMany({ where: { id: c.id, status: 'needs_attention' }, data: { status: 'voided', resolvedAt: connectorNow(), message: input.note ? scrubMessage(`Refunded on the machine: ${input.note}`, 300) : 'Refunded on the machine (manager)' } })
   } else {
@@ -919,6 +932,7 @@ export async function manualReverseCharge(req: FastifyRequest, id: string, input
     category: 'identity', action: 'terminal.reverse', entity: 'TerminalCharge', entityId: c.id, userId: a.id, userEmail: a.email, tenantId: c.tenantId,
     metadata: { manual: !!input.markRefundedOnMachine, note: input.note ?? null, orderId: c.orderId, amountCents: c.amountCents },
   })
+  await auditBackdatedSalesUndo({ tenantId: c.tenantId, orderId: c.orderId, action: 'card_reverse', gate: backdated, actorId: a.id, actorEmail: a.email, amountCents: c.amountCents })
   return chargeView(await prisma.terminalCharge.findUniqueOrThrow({ where: { id: c.id } }), { staff: true })
 }
 

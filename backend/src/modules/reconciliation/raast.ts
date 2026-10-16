@@ -928,11 +928,50 @@ export async function flagUnmatchedReceipts(tenantId: string, opts: { db?: typeo
 
 /** The open-to-finance Raast figure for a period close (S6): provisional / needs attention through `through`. */
 export async function raastOpenThrough(db: Db, tenantId: string, through: Date): Promise<{ count: number; cents: number }> {
+  return raastOpenBetween(db, tenantId, null, through)
+}
+
+/** COALESCE(confirmedAt, createdAt) in [from, to] (from null = no lower bound). */
+function raastDayWhere(from: Date | null, to: Date): Prisma.RaastReceiptWhereInput {
+  const at = { ...(from ? { gte: from } : {}), lte: to }
+  return { OR: [{ confirmedAt: at }, { confirmedAt: null, createdAt: at }] }
+}
+
+/**
+ * Raast receipts still open to finance (provisional / needs attention — not on
+ * a bank statement yet), dated by their confirmation, else their creation, in
+ * [from, to]. The month close (raastOpenThrough) and the night audit's
+ * settlement step (raast_unmatched_day) share it.
+ */
+export async function raastOpenBetween(db: Db, tenantId: string, from: Date | null, to: Date): Promise<{ count: number; cents: number }> {
+  const agg = await db.raastReceipt.aggregate({
+    where: { tenantId, status: { in: OPEN_FINANCE_STATUSES }, ...raastDayWhere(from, to) },
+    _count: true,
+    _sum: { amountCents: true },
+  })
+  return { count: agg._count, cents: agg._sum.amountCents ?? 0 }
+}
+
+/**
+ * The night audit's same-night Raast check (raast_open_night; owner question
+ * Q1): receipts of the day still 'awaiting' (an intent the customer never
+ * finished) or 'needs_attention'. With bank-SMS matching ON (`smsOn`), a
+ * 'provisional' receipt no SMS confirmed and no statement matched counts too.
+ * The statement match itself is the settlement step's (raastOpenBetween).
+ */
+export async function raastNightOpenBetween(db: Db, tenantId: string, from: Date, to: Date, smsOn: boolean): Promise<{ count: number; cents: number }> {
   const agg = await db.raastReceipt.aggregate({
     where: {
-      tenantId, status: { in: OPEN_FINANCE_STATUSES },
-      // COALESCE(confirmedAt, createdAt) <= through
-      OR: [{ confirmedAt: { lte: through } }, { confirmedAt: null, createdAt: { lte: through } }],
+      tenantId,
+      AND: [
+        raastDayWhere(from, to),
+        {
+          OR: [
+            { status: { in: ['awaiting', 'needs_attention'] } },
+            ...(smsOn ? [{ status: 'provisional' as const, smsConfirmedAt: null, smsAlertId: null, statementLineId: null }] : []),
+          ],
+        },
+      ],
     },
     _count: true,
     _sum: { amountCents: true },

@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { api, ApiError } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { useAuthStore } from '../../../store/auth'
 import { DailyReportView } from './DailyReportView'
 import { PushThrough } from './PushThrough'
 import {
@@ -16,6 +17,10 @@ import {
 
 type Tab = 'checks' | 'report' | 'history'
 const BASE = '/accounting/night-audit'
+
+function todayKarachi(): string {
+  return new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)
+}
 
 function statusChip(d: DayDetail): { cls: string; label: string } {
   if (d.status === 'closed') return { cls: 's-badge-green', label: 'Closed' }
@@ -59,6 +64,8 @@ export function DayPanel({ day, onClose, notify }: {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>('checks')
+  // Settling an audited day: finance or the CEO (the day detail's canRun is for the night step only).
+  const canSettle = useAuthStore((st) => st.isRole('admin', 'finance'))
 
   const key = ['night-audit', 'day', day]
   const { data: d, isLoading, error } = useQuery({
@@ -90,7 +97,7 @@ export function DayPanel({ day, onClose, notify }: {
           },
         })
       } else refresh()
-    } else if (err instanceof ApiError && err.code === 'EARLIER_DAYS_OPEN') refresh()
+    } else if (err instanceof ApiError && ['EARLIER_DAYS_OPEN', 'ALREADY_AUDITED', 'NOT_AUDITED', 'DAY_IN_CLOSED_PERIOD', 'DAY_NOT_OVER'].includes(err.code ?? '')) refresh()
     notify({ ok: false, msg: err.message || 'That did not go through' })
   }
 
@@ -119,7 +126,7 @@ export function DayPanel({ day, onClose, notify }: {
   const doReopen = async () => {
     const r = await confirm({
       title: `Reopen ${day}?`,
-      body: 'The day unlocks for back-dated postings. It is audited and raised in Exceptions. Later days stay locked, and you run this day again afterwards.',
+      body: 'The sales day unlocks so back-dated sales entries can be made (CEO only). It is audited and raised in Exceptions. Later days stay locked, and you run this day again afterwards.',
       confirmLabel: 'Reopen day',
       danger: true,
       reason: { label: 'Reason', minLength: MIN_REASON },
@@ -138,6 +145,7 @@ export function DayPanel({ day, onClose, notify }: {
         </div>
         <button type="button" onClick={onClose} className="s-btn-secondary text-xs">Close</button>
       </div>
+      <p className="text-[11px] text-s-muted na-noprint">Sales only: bills, payments and tenders, voids, refunds, till shifts and cash drops. Purchases, payroll, petty cash and other modules are not part of the night audit.</p>
 
       {isLoading && <p className="text-xs text-s-muted">Loading…</p>}
       {error && <p role="alert" className="text-xs text-s-red">{(error as Error).message}</p>}
@@ -149,8 +157,8 @@ export function DayPanel({ day, onClose, notify }: {
             {d.closedAt && <p className="text-xs text-s-muted">Closed {fmtWhen(d.closedAt)}{d.closedBy ? ` by ${d.closedBy.name}` : ''}{d.closedVia === 'auto' ? ' (automatically, settlement matched)' : d.closedVia === 'override' ? ' (pushed through by the CEO)' : ''}.</p>}
             <Overrides title="Night run pushed through over" list={d.nightOverrides} reason={d.nightOverrideReason} />
             <Overrides title="Settlement pushed through over" list={d.settlementOverrides} reason={d.settlementOverrideReason} />
-            {d.inClosedPeriod && <p className="text-xs text-s-muted">This day is inside a closed period. Reopen the period first to change it.</p>}
-            {!d.active && d.status === 'open' && <p className="text-xs text-s-muted">No trading on this day. It can still be run; there is nothing to reconcile.</p>}
+            {d.inClosedPeriod && <p className="text-xs text-s-muted">This day is inside a closed period. Reopen the period first to change it (month-end close).</p>}
+            {!d.active && d.status === 'open' && <p className="text-xs text-s-muted">No sales on this day. It can still be run; there is nothing to reconcile.</p>}
           </div>
 
           <div role="tablist" className="flex gap-4 border-b border-s-border na-noprint">
@@ -176,7 +184,7 @@ export function DayPanel({ day, onClose, notify }: {
               {d.checks ? (
                 <>
                   <p className="text-xs font-semibold text-s-text">
-                    {d.checks.phase === 'night' ? 'Night run — needed tonight' : 'Settlement — card payout, bank transfers, deposits'}
+                    {d.checks.phase === 'night' ? 'Night run — sales tills, cash, Raast, COD and tenders' : 'Settlement — card payout, cash banked, bank side of sales'}
                   </p>
                   {d.checks.blocks.length === 0 && d.checks.problems.length === 0 && (
                     <div className="flex items-center gap-2 text-xs"><span className="s-badge-green text-[11px]">Clear</span><span className="text-s-text">Nothing blocks this step.</span></div>
@@ -186,7 +194,7 @@ export function DayPanel({ day, onClose, notify }: {
                   ))}
                 </>
               ) : (
-                d.status === 'open' && <p className="text-xs text-s-muted">Today is still trading. The night run opens at midnight, Pakistan time.</p>
+                d.status === 'open' && <p className="text-xs text-s-muted">This day has not started yet.</p>
               )}
 
               {d.status === 'open' && d.checks && d.canRun && (
@@ -202,9 +210,14 @@ export function DayPanel({ day, onClose, notify }: {
                   {d.checks.blocks.length > 0 && !d.canOverride && <p className="text-[11px] text-s-muted">Only the CEO can push the day through a block, with a written reason.</p>}
                 </div>
               )}
-              {d.status === 'open' && !d.canRun && <p className="text-xs text-s-muted">Finance or the CEO runs the night audit.</p>}
+              {d.status === 'open' && !d.canRun && d.checks && !d.inClosedPeriod && (
+                <p className="text-xs text-s-muted">{d.day >= todayKarachi() ? 'The night audit can be run once this day has ended (Pakistan time).' : 'Finance or the CEO runs the night audit.'}</p>
+              )}
+              {d.status !== 'open' && d.locked && (
+                <p className="text-[11px] text-s-muted">This sales day is locked. A sale, payment, void, cancel or refund dated into it is refused (DAY_AUDITED); only the CEO can reopen the day and make back-dated sales changes, with a written reason.</p>
+              )}
 
-              {d.status === 'audited' && d.canRun && (
+              {d.status === 'audited' && canSettle && !d.inClosedPeriod && (
                 <div className="space-y-2">
                   <button type="button" className="s-btn-primary text-sm w-full" disabled={settle.isPending} onClick={() => settle.mutate(undefined)}>
                     {settle.isPending ? 'Checking…' : 'Check settlement now'}

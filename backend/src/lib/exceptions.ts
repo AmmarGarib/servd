@@ -112,6 +112,11 @@ export type ExceptionKind =
   | 'gift_card_breakage_held'    // a sold gift card expired but its breakage could not be booked yet
   // Attendance by work location (owner, 2026-10-15). Plain String column — no migration.
   | 'attendance_out_of_area'     // a punch outside the employee's work locations (or with no location) — allowed, flagged once a day
+  // Night audit (owner, 2026-10-16; SALES module only — modules/nightAudit). Plain String column — no migration.
+  | 'night_audit_override'       // the CEO ran / settled a sales day over its blocks, with a reason
+  | 'night_audit_reopened'       // the CEO reopened a night-audited sales day
+  | 'night_audit_pending'        // yesterday had sales and its night audit has not run (after 06:00 PKT)
+  | 'backdated_sale_change'      // the CEO voided / comped / cancelled / reversed / credit-noted a bill of an earlier sales day
 
 /**
  * The kind a flag was filed under before it had its own. A query that looks

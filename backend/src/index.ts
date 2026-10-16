@@ -85,6 +85,7 @@ import posOnAccountRoutes from './modules/pos/onAccountRoutes.js'
 import { tillClearingRoutes } from './modules/accounting/tillClearingRoutes.js'
 import { startHeadOfficeRechargeWorker } from './workers/headOfficeRecharge.js'
 import { startCodCustodyWorker } from './workers/codCustody.js'
+import { startNightAuditSettleWorker } from './workers/nightAuditSettle.js'
 import { startTillClearingSweepWorker } from './workers/tillClearingSweep.js'
 import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
@@ -96,6 +97,7 @@ import { trackingRoutes } from './modules/tracking/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
 import { withholdingRoutes } from './modules/accounting/withholdingRoutes.js'
 import { statutoryRoutes } from './modules/accounting/statutoryRoutes.js'
+import { nightAuditRoutes } from './modules/nightAudit/routes.js'
 import { intercompanyRoutes } from './modules/intercompany/routes.js'
 import { stockDifferenceRoutes } from './modules/stockDifferences/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
@@ -419,6 +421,8 @@ async function build() {
       // one-time reclass), inter-company pairs and the shared-fleet recharge.
       await api.register(withholdingRoutes, { prefix: '/accounting/withholding' })
       await api.register(statutoryRoutes, { prefix: '/accounting/statutory' })
+      // Night audit (owner, 2026-10-16; SALES module only): lock each sales day, close it when its money settles.
+      await api.register(nightAuditRoutes, { prefix: '/accounting/night-audit' })
       await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
       // Head office (D1/D3): /head-offices (CEO) + the recharge runs.
       await registerHeadOfficePlugins(api)
@@ -1216,6 +1220,8 @@ async function build() {
     // flags, the till-clearing sweep (companies cut over only) and on-account overdue / unbilled flags.
     startHeadOfficeRechargeWorker()
     startCodCustodyWorker()
+    // Night audit (2026-10-16): settle audited sales days hourly; flag yesterday's unrun audit after 06:00 PKT.
+    startNightAuditSettleWorker()
     startTillClearingSweepWorker()
     startOnAccountDailyWorker()
     startOrderAutoCancelWorker()
