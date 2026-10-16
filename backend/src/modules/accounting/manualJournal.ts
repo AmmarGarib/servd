@@ -288,6 +288,19 @@ type OriginalEntry = Prisma.JournalEntryGetPayload<{
 }>
 
 /**
+ * A manual entry that resolves a cash voucher held on 1357 ("Resolved by
+ * journal entry", trustops/voucherHoldResolve.ts) is that voucher's booking:
+ * reversing or editing it would reopen 1357 under a voucher marked done. 409
+ * ENTRY_RESOLVES_VOUCHER — a later correction is another manual entry.
+ */
+async function assertNotResolvingVoucher(db: Db, entryId: string): Promise<void> {
+  const v = await db.cashVoucher.findFirst({ where: { postedJournalEntryId: entryId }, select: { number: true } })
+  if (v) {
+    throw new AppError('ENTRY_RESOLVES_VOUCHER', `This entry resolves cash voucher ${v.number} (held on 1357) — it cannot be reversed or edited; post a further manual entry to correct it.`, 409)
+  }
+}
+
+/**
  * The reversal checks that need no lock, on the entry of THIS company
  * (404 when it is not one): a `manual:` entry (422 NOT_A_MANUAL_ENTRY), every
  * account active (422 ACCOUNT_INACTIVE), not linked as a tax payment
@@ -329,6 +342,7 @@ export async function assertReversible(
   if (linkedPayment) {
     throw new AppError('TAX_PAYMENT_LINKED', 'This entry is linked to the sales-tax return as a tax payment — unlink it there first, then reverse it.', 409)
   }
+  await assertNotResolvingVoucher(db, original.id)
   const sourceId = original.reference.slice(MANUAL_PREFIX.length)
   const reversalRef = `${MANUAL_REVERSAL_PREFIX}${sourceId}`
   if (opts.checkAlready) {
@@ -382,6 +396,8 @@ export async function reverseManualJournal(db: Db, input: ReverseManualJournalIn
     if (already) {
       throw new AppError('ALREADY_REVERSED', `This entry was already reversed on ${fmtPktDate(already.entryDate)} (entry ${already.id.slice(0, 8)}).`, 409)
     }
+    // Re-checked under the lock a resolve takes too (trustops/voucherHoldResolve.ts).
+    await assertNotResolvingVoucher(tx, original.id)
     return reverseJournalEntry(tenantId, 'manual', sourceId, reason, {
       tx,
       postedBy: input.actorId,

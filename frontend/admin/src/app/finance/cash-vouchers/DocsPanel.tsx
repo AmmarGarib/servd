@@ -8,11 +8,14 @@
 //     CSV, TXT). Photos are compressed like the receipts (photoPrep); every
 //     other file goes up as it is (≤ 5 MB, ≤ 20 per voucher).
 //   • VerifyPanel — finance marks the documents checked (no lines, no change).
+//   • ResolveByJournalPanel — a voucher still held on 1357 that cannot be booked
+//     here: finance posts a manual journal (Dr the right account / Cr 1357) and
+//     marks the voucher "Resolved by journal entry" (owner, 2026-10-16). Books nothing.
 // Every button follows the server's capability flags on the voucher.
 
 import Link from 'next/link'
 import { useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../../../lib/api'
 import { formatPkr } from './amountInWords'
@@ -314,6 +317,100 @@ function HoldVerifyPanel({ v }: { v: CashVoucher }) {
         }}>
         {verify.isPending ? 'Booking…' : 'Check documents & book'}
       </button>
+    </div>
+  )
+}
+
+interface ResolveCandidate { id: string; entryDate: string; description: string; creditCents: number; matches: boolean }
+
+/**
+ * "Resolved by journal entry" (owner, 2026-10-16: "add the resolved button, and make it block the close"): a voucher
+ * still held on 1357 that the documents check cannot book (equipment, stock lines, a hold of another amount, a refused
+ * posting) is corrected with a manual journal — Dr the right account / Cr 1357 for the held amount — and marked done
+ * here. It posts nothing; the month close is blocked while any voucher is still held.
+ */
+export function ResolveByJournalPanel({ v }: { v: CashVoucher }) {
+  const qc = useQueryClient()
+  const confirm = useConfirm()
+  const [open, setOpen] = useState(false)
+  const [entryId, setEntryId] = useState('')
+  const [note, setNote] = useState('')
+  const cands = useQuery<{ heldCents: number; holdDate: string; items: ResolveCandidate[] }>({
+    queryKey: [CV_ROOT, 'resolve-candidates', v.id],
+    queryFn: () => api.get(`${CV_BASE}/${v.id}/resolve-candidates`),
+    enabled: open,
+    retry: false,
+  })
+  const resolve = useMutation({
+    mutationFn: () => api.post(`${CV_BASE}/${v.id}/resolve-by-journal`, { journalEntryId: entryId.trim(), note: note.trim() }, { tenantId: v.tenantId }),
+    meta: { inlineErrors: true },
+    onSuccess: () => {
+      toast.success(`${v.number} marked resolved by the journal entry.`)
+      void qc.invalidateQueries({ queryKey: [CV_ROOT] })
+    },
+  })
+  const held = cands.data?.heldCents ?? v.amountCents
+  const items = cands.data?.items ?? []
+  const ready = entryId.trim().length > 0 && note.trim().length >= 10
+  return (
+    <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid color-mix(in srgb, var(--erp-warning) 45%, transparent)' }}>
+      <p className="text-sm font-black text-white/90">Still held on 1357 — resolve by journal entry</p>
+      <p className="text-xs text-white/55">
+        This voucher was paid under the old hold flow and its expense is not booked. If it cannot be booked by checking
+        its documents (equipment, stock, a different amount), post a manual journal on{' '}
+        <Link href="/accounting/journal" className="underline font-bold">Finance → Journal</Link> — debit the right account,
+        credit 1357 for PKR {formatPkr(held)} under the same brand — then mark the voucher resolved by that entry here.
+        This posts nothing. The month cannot be closed while a voucher is still held.
+      </p>
+      {!open ? (
+        <button className={secondaryBtn} onClick={() => setOpen(true)}>Resolved by journal entry…</button>
+      ) : (
+        <div className="space-y-3">
+          {cands.error && <ErrorBanner message={errorWords(cands.error)} />}
+          {cands.isLoading && <p className="text-xs text-white/50">Loading manual entries…</p>}
+          {cands.data && (items.length === 0 ? (
+            <p className="text-xs text-white/55">No unused manual entry crediting 1357 since this voucher was paid. Post it on Finance → Journal first, or paste its id below.</p>
+          ) : (
+            <div className="space-y-1.5" role="radiogroup" aria-label="Manual journal entries that credit 1357">
+              {items.map((e) => (
+                <label key={e.id} className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs cursor-pointer"
+                  style={{ border: `1px solid ${entryId === e.id ? 'var(--erp-primary)' : 'var(--border)'}` }}>
+                  <input type="radio" name={`resolve-${v.id}`} checked={entryId === e.id} onChange={() => setEntryId(e.id)} className="mt-0.5" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-bold text-white/85 truncate">{e.description}</span>
+                    <span className="block text-white/50">{fmtDateTime(e.entryDate)} · credits 1357 PKR {formatPkr(e.creditCents)}</span>
+                  </span>
+                  {e.matches
+                    ? <span className="text-success font-bold">Clears it</span>
+                    : <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>Different amount / brand</span>}
+                </label>
+              ))}
+            </div>
+          ))}
+          <div>
+            <label htmlFor={`resolve-entry-${v.id}`} className="text-xs text-white/55">Journal entry id</label>
+            <input id={`resolve-entry-${v.id}`} value={entryId} onChange={(e) => setEntryId(e.target.value)} className={`${fieldCls} mt-1 font-mono`} placeholder="Pick above or paste the entry id" />
+          </div>
+          <div>
+            <label htmlFor={`resolve-note-${v.id}`} className="text-xs text-white/55">Note (what the entry corrected, at least 10 characters)</label>
+            <textarea id={`resolve-note-${v.id}`} value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} className={`${fieldCls} mt-1`} />
+          </div>
+          {resolve.error && <ErrorBanner message={errorWords(resolve.error)} />}
+          <div className="flex flex-wrap gap-2">
+            <button disabled={!ready || resolve.isPending} className={primaryBtn}
+              onClick={async () => {
+                if (await confirm({
+                  title: `Mark ${v.number} resolved by this journal entry?`,
+                  body: `The entry must credit 1357 by PKR ${formatPkr(held)}. This posts nothing, and the entry can no longer be reversed or edited afterwards.`,
+                  confirmLabel: 'Mark resolved',
+                })) { resolve.reset(); resolve.mutate() }
+              }}>
+              {resolve.isPending ? 'Saving…' : 'Mark resolved'}
+            </button>
+            <button className={secondaryBtn} onClick={() => { setOpen(false); setEntryId(''); setNote('') }}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

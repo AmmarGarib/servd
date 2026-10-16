@@ -74,6 +74,8 @@ import {
   type Viewer, type VoucherRow,
 } from './cashVouchers.js'
 import { convertHeldVoucher } from './voucherHoldConversion.js'
+import { closeHoldFlag, resolveCandidates, resolveHeldByJournal } from './voucherHoldResolve.js'
+import { audit } from '../../lib/audit.js'
 
 /** Receipts one request may carry. */
 export const MAX_RECEIPTS_PER_REQUEST = 20
@@ -584,7 +586,7 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       throw new AppError(
         'VOUCHER_STILL_HELD',
         `Cash voucher ${v.number} was paid under the old hold flow and cannot be booked as one expense entry: ${conv.reason}. `
-          + 'Fix that (for example set its expense category) and check its documents again, or correct it with a manual journal (Finance → Journal).',
+          + 'Fix that (for example set its expense category) and check its documents again, or correct it with a manual journal (Finance → Journal: Dr the right account / Cr 1357) and press "Resolved by journal entry" on the voucher.',
         409,
         { reason: conv.code },
       )
@@ -595,5 +597,47 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       await auditVoucher(req, 'hold_convert', v, { entryId: conv.entryId, accountCode: conv.accountCode, amountCents: conv.amountCents, bookedAtPay: true }, { bookedAtPay: false })
     }
     return markDocsChecked(req, converted, viewer, body)
+  })
+  // "Resolved by journal entry" (owner, 2026-10-16: "add the resolved button,
+  // and make it block the close") — voucherHoldResolve.ts. A voucher still held
+  // on 1357 that finance cleared with a manual journal (Dr the right account /
+  // Cr 1357) is marked done. A finance approver, never on their own voucher;
+  // the voucher's company only (another company's voucher or entry is 404).
+  // POSTS NOTHING.
+  fastify.get<{ Params: { id: string } }>('/:id/resolve-candidates', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (!viewer.financeApprover) throw new AppError('NOT_FINANCE', 'Only finance resolves a held cash voucher', 403)
+    return resolveCandidates(v.id)
+  })
+
+  fastify.post<{ Params: { id: string } }>('/:id/resolve-by-journal', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const body = z.object({
+      journalEntryId: z.string().trim().min(1).max(64),
+      note: z.string().trim().min(10, 'Say how the journal entry clears it (at least 10 characters)').max(500),
+    }).parse(req.body ?? {})
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (!viewer.financeApprover) throw new AppError('NOT_FINANCE', 'Only finance resolves a held cash voucher', 403)
+    if (v.preparedById === viewer.id || v.payeeUserId === viewer.id) {
+      throw new AppError('SELF_APPROVE', 'You raised or hold this voucher — another finance person resolves it', 409)
+    }
+    const r = await resolveHeldByJournal({ voucherId: v.id, entryId: body.journalEntryId })
+    await auditVoucher(req, 'resolve_by_journal', v, {
+      journalEntryId: r.entryId, amountCents: r.amountCents, bookedAtPay: true, postsNothing: true, note: body.note,
+    }, { bookedAtPay: false })
+    await audit({
+      category: 'accounting',
+      action: 'cash_voucher.hold_resolved_by_journal',
+      entity: 'JournalEntry',
+      entityId: r.entryId,
+      userId: viewer.id,
+      userEmail: req.staffUser!.email,
+      tenantId: v.tenantId,
+      after: { voucherId: v.id, number: v.number, amountCents: r.amountCents },
+      metadata: { ip: req.ip, note: body.note },
+    })
+    await closeHoldFlag(v.id, r.entryId, body.note, viewer.id)
+    return { entryId: r.entryId, amountCents: r.amountCents, voucher: await detailOf(v.id, viewer) }
   })
 }

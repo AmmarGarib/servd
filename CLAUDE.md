@@ -954,6 +954,29 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   backfill date) and refuses one with no entry (409 `HOLD_RETIRED`). Ledger entries are never deleted: the old
   `cashvoucher.post:<id>` / hold entries stay as history; the tie-out still
   compares 1357 with Σ vouchers still held (0 once all converted).
+  **"Resolved by journal entry" (owner, 2026-10-16: "add the resolved button,
+  and make it block the close"):** a held voucher finance corrected with a
+  manual journal (Dr the right account / Cr 1357) is marked done with
+  `POST /trustops/cash-vouchers/:id/resolve-by-journal {journalEntryId, note ≥10}`
+  (`trustops/voucherHoldResolve.ts`; picker `GET /:id/resolve-candidates`;
+  admin panel on the voucher). Finance with `accounting` or the CEO, never
+  the raiser / holder (409 `SELF_APPROVE`); another company's voucher or
+  entry 404. The entry must be a live `manual:` entry of the VOUCHER's
+  company, dated on/after the hold's PKT day, crediting 1357 by exactly the
+  live hold, per brand (422 `NOT_A_MANUAL_ENTRY` / `ENTRY_REVERSED` /
+  `ENTRY_BEFORE_HOLD` / `ENTRY_AMOUNT_MISMATCH` / `ENTRY_BRAND_MISMATCH`);
+  one entry resolves one voucher (`postedJournalEntryId` @unique, 409
+  `JOURNAL_ALREADY_USED`); conditional claim (twice → 409 `VOUCHER_NOT_HELD`).
+  POSTS NOTHING: `bookedAtPay` = true, `postedJournalEntryId` = the entry (a
+  converted voucher's state, so the documents check books nothing), the
+  `cash_voucher_hold_unconverted` flag resolves, audit
+  `cash_voucher.resolve_by_journal` (+ `cash_voucher.hold_resolved_by_journal`
+  on the entry). A resolving entry cannot be reversed or edited (409
+  `ENTRY_RESOLVES_VOUCHER`, manualJournal.ts) — correct it with another
+  manual entry. **Close check `vouchers_held_on_1357` BLOCKS** (per company,
+  paid on/before the lock — or with no pay date — and still held, or cleared
+  only by a conversion / resolving entry dated AFTER the lock; CEO-overridable
+  with `acknowledge`), separate from the warn-only `vouchers_awaiting_docs`.
 - **Legacy H3 rows** (`expenseOnVerify` false, paid before 2026-10-15) keep
   their rules: the pay was the expense (Dr 6xxx / Cr 1011,
   `cashRequestPayLine` / `cashRequestPaidAccountTx`), receipts book nothing,

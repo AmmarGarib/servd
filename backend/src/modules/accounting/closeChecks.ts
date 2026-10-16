@@ -23,6 +23,8 @@
 //                            finance has not checked yet — only the documents: the expense is booked
 //                            at pay (1357 retired, owner 2026-10-16; a voucher still held there is
 //                            converted at boot or flagged 'cash_voucher_hold_unconverted')
+//   vouchers_held_on_1357 block  cash vouchers paid on or before the lock still HELD on 1357 (not converted,
+//                            not "Resolved by journal entry") — overridable by the CEO with a reason
 //
 // A check that throws becomes a block keyed 'check_failed:<its key>' (the CEO
 // may override it, with a reason, like any other block) — a broken check never
@@ -450,9 +452,64 @@ const vouchersAwaitingDocsCheck: CloseCheck = {
   },
 }
 
+// Owner, 2026-10-16 ("add the resolved button, and make it block the close"): a voucher paid under the 2026-10-15
+// hold flow and still HELD on 1357 (the boot conversion could not book it, and finance has not marked it "Resolved by
+// journal entry") means its expense is not on the books — the close BLOCKS (the CEO may close over it with a reason).
+// Same predicate as trustops/voucherHoldConversion.ts heldVoucherWhere, kept inline (no trustops import here).
+const vouchersHeldOn1357Check: CloseCheck = {
+  key: 'vouchers_held_on_1357',
+  severity: 'block',
+  overridable: true,
+  async run(ctx) {
+    // Paid on or before the lock (a held row with no pay date counts too — never a silent pass).
+    const paidByLock: Prisma.CashVoucherWhereInput = { OR: [{ disbursedAt: { lte: ctx.newLock } }, { disbursedAt: null }] }
+    const held = await ctx.db.cashVoucher.findMany({
+      where: {
+        tenantId: ctx.tenantId, status: 'disbursed', expenseOnVerify: true, bookedAtPay: false, postedAt: null,
+        AND: [paidByLock, { OR: [{ pettyCashMovementId: { not: null } }, { payJournalEntryId: { not: null } }] }],
+      },
+      select: { id: true, number: true, amountCents: true, seq: true },
+      orderBy: { seq: 'asc' },
+      take: 500,
+    })
+    // Cleared only AFTER the lock (converted, or "Resolved by journal entry" with an entry dated after it): at the lock
+    // the hold still sat on 1357 and the expense was not in the period — the same block (date the clearing entry
+    // inside the period, or the CEO closes over it).
+    const cleared = await ctx.db.cashVoucher.findMany({
+      where: {
+        tenantId: ctx.tenantId, expenseOnVerify: true, bookedAtPay: true, postedJournalEntryId: { not: null },
+        disbursedAt: { lte: ctx.newLock },
+      },
+      select: { id: true, number: true, amountCents: true, seq: true, postedJournalEntryId: true },
+      take: 500,
+    })
+    const lateIds = cleared.length === 0 ? new Set<string>() : new Set((await ctx.db.journalEntry.findMany({
+      where: { tenantId: ctx.tenantId, id: { in: cleared.map((c) => c.postedJournalEntryId!) }, entryDate: { gt: ctx.newLock } },
+      select: { id: true },
+    })).map((e) => e.id))
+    const late = cleared.filter((c) => lateIds.has(c.postedJournalEntryId!))
+    const rows = [...held, ...late].sort((a, b) => a.seq - b.seq)
+    if (rows.length === 0) return null
+    const cents = rows.reduce((t, r) => t + r.amountCents, 0)
+    const shown = rows.slice(0, 5).map((r) => r.number).join(', ') + (rows.length > 5 ? ` and ${rows.length - 5} more` : '')
+    return {
+      key: 'vouchers_held_on_1357',
+      severity: 'block',
+      title: 'Cash vouchers still held on 1357',
+      detail: `${plural(rows.length, 'cash voucher')} paid on or before ${fmtPktDate(ctx.newLock)} (${pkr(cents)}: ${shown}) ${rows.length === 1 ? 'is' : 'are'} still held on 1357 at that date — the expense is not booked in the period. `
+        + 'Fix the cause and check the documents (which books it), or post a manual journal (Dr the expense / Cr 1357) dated in the period and press "Resolved by journal entry" on the voucher in Finance → Cash vouchers.'
+        + (late.length ? ` ${plural(late.length, 'voucher')} ${late.length === 1 ? 'was' : 'were'} cleared only by an entry dated after ${fmtPktDate(ctx.newLock)}.` : ''),
+      count: rows.length,
+      cents,
+      link: rows.length === 1 ? `/finance/cash-vouchers/${rows[0]!.id}` : '/finance/cash-vouchers?view=awaiting_verification',
+      overridable: true,
+    }
+  },
+}
+
 export const CORE_CLOSE_CHECKS: CloseCheck[] = [
   raastCheck, openTillsCheck, unpostedShiftsCheck, unpostedOrdersCheck, postingFailedCheck, trialBalanceCheck, bankUnmatchedCheck,
-  vouchersAwaitingDocsCheck,
+  vouchersAwaitingDocsCheck, vouchersHeldOn1357Check,
 ]
 
 /** EVERY period-close check, in the order the checklist shows them. */

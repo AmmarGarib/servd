@@ -238,7 +238,8 @@ async function flagUnconverted(
     title: `Cash voucher ${v.number} is still held on 1357 — its expense is not booked`.slice(0, 200),
     description: `${v.number} (PKR ${(v.amountCents / 100).toFixed(2)}) was paid under the old hold flow and could not be booked as one expense entry: ${reason}. `
       + 'Fix the cause (for example pick its expense account in "Check the documents & book" on Finance → Cash vouchers, which books it) '
-      + 'or correct it with a manual journal (Finance → Journal).',
+      + 'or correct it with a manual journal (Finance → Journal: Dr the right account / Cr 1357) and press "Resolved by journal entry" on the voucher. '
+      + 'The month close is blocked while it is held.',
     entityType: 'CashVoucher',
     entityId: v.id,
     actorId,
