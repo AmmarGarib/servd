@@ -7,8 +7,11 @@
 //   - Finance approves (403 NOT_FINANCE for anyone else; never its own: 409
 //     SELF_APPROVE); the HOD step is retired (410 HOD_STEP_RETIRED).
 //   - The final approval is the CEO's (ADMIN_ONLY), never the finance approver.
-//   - POST /:id/pay (no photo) by the box's custodian is the ONLY step that
-//     moves cash: Dr 1357 / Cr 1011 (held until the documents are verified),
+//   - POST /:id/pay (no photo) is FINANCE's only (owner, 2026-10-16: "Paying
+//     a voucher should remain at Finance end" — role finance with the
+//     accounting module; a box's cashier, a manager and the CEO get 403
+//     PAY_FINANCE_ONLY). Finance may pay from any open box of the voucher's
+//     company. It is the ONLY step that moves cash: Dr 1357 / Cr 1011 (held until the documents are verified),
 //     dueBy set, float lowered — once, rolled back whole on
 //     INSUFFICIENT_FLOAT. The old /disburse and /photo are gone.
 //   - Two companies: B gets 404 on every route of A's request.
@@ -271,23 +274,32 @@ describe('the final approval is the CEO\'s, never the finance approver\'s', () =
 
 // ─── Pay ──────────────────────────────────────────────────────────────────────
 
-describe('the custodian pays — no photo — and the money waits on 1357 for its documents', () => {
+describe('finance pays — no photo — and the money waits on 1357 for its documents', () => {
   it('pay posts Dr 1357 / Cr 1011, sets dueBy and lowers the float; only this moves cash', async () => {
     const boxId = box['A']!
     const start = await floatOf(boxId)
     const v = await approved({ amountCents: 25_000, purpose: 'Diesel for the generator', categoryKey: 'transport', conceptId: C.A })
     expect(await floatOf(boxId)).toBe(start)
-    const seen = (await call('cashA', 'GET', `${V}/${v.id}`)).json() as Req
-    expect(seen.canPay).toBe(true)
-    // cashA holds two open boxes: he must say which.
-    const which = await call('cashA', 'POST', `${V}/${v.id}/pay`, {})
+    // Only finance pays: the box's own cashier, a manager and the CEO cannot.
+    expect(((await call('cashA', 'GET', `${V}/${v.id}`)).json() as Req).canPay).toBe(false)
+    expect(((await call('ceoA', 'GET', `${V}/${v.id}`)).json() as Req).canPay).toBe(false)
+    expect(((await call('finA', 'GET', `${V}/${v.id}`)).json() as Req).canPay).toBe(true)
+    for (const who of ['cashA', 'mgrA', 'ceoA']) {
+      const r = await call(who, 'POST', `${V}/${v.id}/pay`, { boxId })
+      expect(r.statusCode, who).toBe(403)
+      expect(r.json().error.code, who).toBe('PAY_FINANCE_ONLY')
+    }
+    expect(await floatOf(boxId)).toBe(start)
+    // finA holds no box and the company has several: finance must say which.
+    const which = await call('finA', 'POST', `${V}/${v.id}/pay`, {})
     expect(which.statusCode).toBe(422)
     expect(which.json().error.code).toBe('BOX_REQUIRED')
 
-    const paid = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId })
+    const paid = await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId })
     expect(paid.statusCode, paid.body).toBe(200)
     const body = paid.json() as { voucher: Req; movement: { id: string; amountCents: number; journalEntryId: string | null }; newFloatCents: number }
-    expect(body.voucher).toMatchObject({ status: 'disbursed', stage: 'awaiting_docs', boxId, disbursedById: U['cashA']!.id, cashierName: `${P} cashA`, remainingCents: 25_000 })
+    // The cash comes out of cashA's box: he is the cashier on record; finance is who paid.
+    expect(body.voucher).toMatchObject({ status: 'disbursed', stage: 'awaiting_docs', boxId, disbursedById: U['finA']!.id, cashierName: `${P} cashA`, remainingCents: 25_000 })
     expect(body.voucher.pettyCashMovementId).toBe(body.movement.id)
     const due = new Date(body.voucher.dueBy!).getTime() - Date.now()
     expect(due).toBeGreaterThan(29 * 86_400_000)
@@ -299,13 +311,13 @@ describe('the custodian pays — no photo — and the money waits on 1357 for it
     // Held: Dr 1357 / Cr 1011 — no expense until finance verifies the documents, never 1355.
     expect(await linesOf(`pettycash.spend:${body.movement.id}`, T.A)).toEqual([['1011', 'credit', 25_000], ['1357', 'debit', 25_000]])
     const m = await prisma.pettyCashMovement.findUniqueOrThrow({ where: { id: body.movement.id }, include: { lines: true } })
-    expect(m).toMatchObject({ type: 'spend', amountCents: -25_000, cashVoucherId: v.id, conceptId: C.A, createdById: U['cashA']!.id, approvedById: U['ceoA']!.id, accountCode: '1357' })
+    expect(m).toMatchObject({ type: 'spend', amountCents: -25_000, cashVoucherId: v.id, conceptId: C.A, createdById: U['finA']!.id, approvedById: U['ceoA']!.id, accountCode: '1357' })
     expect(m.lines).toHaveLength(0)
     expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).expenseOnVerify).toBe(true)
     expect(await prisma.journalEntry.count({ where: { tenantId: T.A, lines: { some: { account: { code: '1355' } } } } })).toBe(0)
 
     // Paying twice is refused, and nothing moves.
-    const again = await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId })
+    const again = await call('finA2', 'POST', `${V}/${v.id}/pay`, { boxId })
     expect(again.statusCode).toBe(409)
     expect(again.json().error.code).toBe('ALREADY_PAID')
     expect(await floatOf(boxId)).toBe(start - 25_000)
@@ -315,9 +327,18 @@ describe('the custodian pays — no photo — and the money waits on 1357 for it
     expect(steps.every((s) => s.tenantId === T.A)).toBe(true)
   })
 
-  it("a custodian with ONE open box pays from it by default; a keeper's explicit category code is kept for verification", async () => {
+  it("finance holding ONE open box pays from it by default; any other open box of the company when named; a keeper's explicit category code is kept", async () => {
+    await mkUser('finBoxA', 'finance', [T.A])
+    box['A_fin'] = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Finance box', custodianId: U['finBoxA']!.id, floatCents: 50_000 } })).id
+    const own = await approved({ amountCents: 2_000 })
+    const d = await call('finBoxA', 'POST', `${V}/${own.id}/pay`, {})
+    expect(d.statusCode, d.body).toBe(200)
+    expect(d.json().voucher.boxId).toBe(box['A_fin'])
+    expect(await floatOf(box['A_fin']!)).toBe(48_000)
+    // The custodian of A_one (a cashier) cannot pay even from his own box; finance pays from it.
     const v = await approved({ amountCents: 3_000, categoryKey: null, accountCode: '6170' })
-    const r = await call('cashA3', 'POST', `${V}/${v.id}/pay`, {})
+    expect((await call('cashA3', 'POST', `${V}/${v.id}/pay`, {})).json().error.code).toBe('PAY_FINANCE_ONLY')
+    const r = await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A_one'] })
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().voucher.boxId).toBe(box['A_one'])
     expect(r.json().voucher.category).toBe('6170')
@@ -330,8 +351,8 @@ describe('the custodian pays — no photo — and the money waits on 1357 for it
     const float = await floatOf(boxId)
     const moves = await movementsOf(boxId)
     const [r1, r2] = await Promise.all([
-      call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId }),
       call('finA', 'POST', `${V}/${v.id}/pay`, { boxId }),
+      call('finBoxA', 'POST', `${V}/${v.id}/pay`, { boxId }),
     ])
     expect([r1.statusCode, r2.statusCode].sort()).toEqual([200, 409])
     expect([r1, r2].find((r) => r.statusCode === 409)!.json().error.code).toBe('ALREADY_PAID')
@@ -343,7 +364,7 @@ describe('the custodian pays — no photo — and the money waits on 1357 for it
     const boxId = box['A_small']!
     const v = await approved({ amountCents: 5_000 })
     const entries = await prisma.journalEntry.count({ where: { tenantId: T.A } })
-    const r = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId })
+    const r = await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId })
     expect(r.statusCode).toBe(400)
     expect(r.json().error.code).toBe('INSUFFICIENT_FLOAT')
     const after = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })
@@ -353,23 +374,29 @@ describe('the custodian pays — no photo — and the money waits on 1357 for it
     expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entries)
   })
 
-  it('a non-custodian non-keeper → 403; a closed or foreign box is refused; not approved → 409', async () => {
+  it('anyone but finance (with the books) → 403; a closed or foreign box is refused; not approved → 409', async () => {
     const v = await approved({ amountCents: 1_000 })
     const other = await call('cashA2', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(other.statusCode).toBe(403)
-    expect(other.json().error.code).toBe('NOT_CUSTODIAN')
-    expect((await call('cashA2', 'POST', `${V}/${v.id}/pay`, {})).json().error.code).toBe('NOT_CUSTODIAN')
+    expect(other.json().error.code).toBe('PAY_FINANCE_ONLY')
+    expect((await call('cashA2', 'POST', `${V}/${v.id}/pay`, {})).json().error.code).toBe('PAY_FINANCE_ONLY')
+    expect((await call('cookA', 'POST', `${V}/${v.id}/pay`, {})).json().error.code).toBe('PAY_FINANCE_ONLY')
+    const noBooks = await call('finNoBooks', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    expect(noBooks.statusCode).toBe(403)
+    expect(noBooks.json().error.code).toBe('PAY_FINANCE_ONLY')
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('approved')
     expect((await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['B'] })).json().error.code).toBe('BOX_NOT_IN_COMPANY')
     expect((await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A_closed'] })).json().error.code).toBe('BOX_UNAVAILABLE')
     const d = await raise('cookA')
-    const early = await call('cashA', 'POST', `${V}/${d.id}/pay`, { boxId: box['A'] })
+    const early = await call('finA', 'POST', `${V}/${d.id}/pay`, { boxId: box['A'] })
     expect(early.statusCode).toBe(409)
     expect(early.json().error.code).toBe('VOUCHER_NOT_APPROVED')
-    // A box named on the request: only a keeper changes it.
+    // A box named on the request: its cashier still cannot pay; finance (a keeper) may change it.
     const named = await approved({ amountCents: 1_000, boxId: box['A_one'] })
-    const swap = await call('cashA', 'POST', `${V}/${named.id}/pay`, { boxId: box['A'] })
-    expect(swap.statusCode).toBe(403)
-    expect(swap.json().error.code).toBe('BOX_PICK_KEEPERS_ONLY')
+    expect((await call('cashA3', 'POST', `${V}/${named.id}/pay`, {})).json().error.code).toBe('PAY_FINANCE_ONLY')
+    const swap = await call('finA', 'POST', `${V}/${named.id}/pay`, { boxId: box['A'] })
+    expect(swap.statusCode, swap.body).toBe(200)
+    expect(swap.json().voucher.boxId).toBe(box['A'])
   })
 
   it('the old photo flow is gone: /disburse and /photo → 404', async () => {
@@ -391,7 +418,7 @@ describe('finance may change the category until the request is paid', () => {
     const ok = await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'office' })
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().category).toBe('office')
-    const paid = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    const paid = await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(paid.json().voucher.category).toBe('office')
     expect(await linesOf(`pettycash.spend:${paid.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 2_000], ['1357', 'debit', 2_000]])
     expect((await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'transport' })).statusCode).toBe(409)
@@ -405,12 +432,12 @@ describe('finance may change the category until the request is paid', () => {
         hodSignedById: U['mgrA']!.id, hodSignedAt: new Date(), directorSignedById: U['ceoA']!.id, directorSignedAt: new Date(),
       },
     })
-    const r = await call('cashA', 'POST', `${V}/${legacy.id}/pay`, { boxId: box['A'] })
+    const r = await call('finA', 'POST', `${V}/${legacy.id}/pay`, { boxId: box['A'] })
     expect(r.statusCode).toBe(400)
     expect(r.json().error.code).toBe('SPEND_CATEGORY_UNKNOWN')
     expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: legacy.id } })).status).toBe('approved')
     expect((await call('finA', 'PATCH', `${V}/${legacy.id}`, { categoryKey: 'transport' })).statusCode).toBe(200)
-    expect((await call('cashA', 'POST', `${V}/${legacy.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `${V}/${legacy.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
   })
 })
 
@@ -420,7 +447,7 @@ describe("company B never reaches company A's request", () => {
   it('404 on every route of an A request; the list is per company', async () => {
     const a = await approved({ amountCents: 1_000 })
     const p = await approved({ amountCents: 1_000 })
-    expect((await call('cashA', 'POST', `${V}/${p.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `${V}/${p.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
     const all = ['finB', 'ceoB', 'cashB']
     // [method, url, body, the B logins its role guard lets through to the lookup]
     const routes: Array<['GET' | 'POST' | 'PATCH' | 'DELETE', string, unknown, string[]]> = [
@@ -509,10 +536,10 @@ describe('cancel', () => {
     const a = await approved({ amountCents: 1_000 })
     expect((await call('cookA', 'POST', `${V}/${a.id}/cancel`, { note: 'I changed my mind' })).statusCode).toBe(403)
     expect((await call('mgrA', 'POST', `${V}/${a.id}/cancel`, { note: 'Trip called off' })).json().status).toBe('cancelled')
-    expect((await call('cashA', 'POST', `${V}/${a.id}/pay`, { boxId: box['A'] })).statusCode).toBe(409)
+    expect((await call('finA', 'POST', `${V}/${a.id}/pay`, { boxId: box['A'] })).statusCode).toBe(409)
 
     const p = await approved({ amountCents: 1_000 })
-    expect((await call('cashA', 'POST', `${V}/${p.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `${V}/${p.id}/pay`, { boxId: box['A'] })).statusCode).toBe(200)
     const c3 = await call('finA', 'POST', `${V}/${p.id}/cancel`, { note: 'Too late now' })
     expect(c3.statusCode).toBe(409)
     expect(c3.json().error.code).toBe('VOUCHER_NOT_CANCELLABLE')

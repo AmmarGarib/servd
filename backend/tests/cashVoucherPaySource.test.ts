@@ -1,14 +1,17 @@
 // Cash vouchers paid from cash on hand or a bank account (owner, 2026-10-16:
 // "Give the option box to pay from petty cash/Cash on hand and bank accounts").
 //
+//   - Only finance pays (owner, 2026-10-16: "Paying a voucher should remain at
+//     Finance end"): role finance with the accounting module. A box's
+//     cashier, a manager and the CEO get 403 PAY_FINANCE_ONLY on /pay and
+//     /pay-sources, from every source.
 //   - GET /:id/pay-sources: finance sees every open box of the voucher's
-//     company, cash on hand and its live linked banks; a cashier only their
-//     own boxes; company B gets 404.
+//     company, cash on hand and its live linked banks; company B gets 404.
 //   - Pay from cash on hand: ONE entry 'cashvoucher.pay:<id>' Dr 1357 /
 //     Cr 1010 in the VOUCHER's company, no box movement, no float change.
 //   - Pay from a bank: Cr that bank's code; two banks and none named → 422
 //     BANK_ACCOUNT_REQUIRED; company B's bank → 422; a non-finance login →
-//     403 PAY_SOURCE_FINANCE_ONLY; company B's finance → 404.
+//     403 PAY_FINANCE_ONLY; company B's finance → 404.
 //   - Box path unchanged (Dr 1357 / Cr 1011, paySource 'box'); paying twice →
 //     409 ALREADY_PAID; a closed period rolls the whole pay back.
 //   - Verify: change goes back to the same account (Dr source / Cr 1357), an
@@ -106,6 +109,7 @@ beforeAll(async () => {
   invalidateSetupCache()
   await mkUser('ceoA', 'admin', [T.A])
   await mkUser('finA', 'finance', [T.A])
+  await mkUser('finA2', 'finance', [T.A])
   await mkUser('finB', 'finance', [T.B])
   await mkUser('mgrA', 'management', [T.A])
   await mkUser('cashA', 'cashier', [T.A])
@@ -150,12 +154,16 @@ describe('pay sources', () => {
     expect(fin.boxes.map((b) => b.id).sort()).toEqual([box['A'], box['A2']].sort())
     expect(fin.cashOnHand).toBe(true)
     expect(fin.banks.map((b) => b.id).sort()).toEqual([bank['A1'], bank['A2']].sort())
-    const cash = (await call('cashA', 'GET', `${V}/${v.id}/pay-sources`)).json() as typeof fin
-    expect(cash.boxes.map((b) => b.id)).toEqual([box['A']])
-    expect(cash.cashOnHand).toBe(false)
-    expect(cash.banks).toEqual([])
+    // Nobody but finance gets the pay sources — not the box's cashier, a manager or the CEO.
+    for (const who of ['cashA', 'mgrA', 'ceoA']) {
+      const r = await call(who, 'GET', `${V}/${v.id}/pay-sources`)
+      expect(r.statusCode, who).toBe(403)
+      expect(r.json().error.code, who).toBe('PAY_FINANCE_ONLY')
+    }
     expect((await call('finB', 'GET', `${V}/${v.id}/pay-sources`)).statusCode).toBe(404)
     expect((await call('cookA', 'GET', `${V}/${v.id}`)).json().canPay).toBe(false)
+    expect((await call('cashA', 'GET', `${V}/${v.id}`)).json().canPay).toBe(false)
+    expect((await call('ceoA', 'GET', `${V}/${v.id}`)).json().canPay).toBe(false)
     expect((await call('finA', 'GET', `${V}/${v.id}`)).json().canPay).toBe(true)
   })
 })
@@ -164,12 +172,13 @@ describe('pay from cash on hand / a bank', () => {
   it('cash on hand: Dr 1357 / Cr 1010 in the voucher\'s company, no box, once', async () => {
     const v = await approved(12_000)
     const floats = [await floatOf(box['A']!), await floatOf(box['A2']!)]
-    // Not finance / not the CEO: refused, nothing moves.
-    for (const who of ['cashA', 'mgrA', 'cookA']) {
+    // Not finance (the CEO included): refused, nothing moves.
+    for (const who of ['cashA', 'mgrA', 'cookA', 'ceoA']) {
       const r = await pay(who, v.id, { source: 'cash_on_hand' })
       expect(r.statusCode, `${who} ${r.body}`).toBe(403)
-      expect(r.json().error.code).toBe('PAY_SOURCE_FINANCE_ONLY')
+      expect(r.json().error.code).toBe('PAY_FINANCE_ONLY')
     }
+    expect(await entry(`cashvoucher.pay:${v.id}`)).toBeNull()
     expect((await pay('finB', v.id, { source: 'cash_on_hand' })).statusCode).toBe(404)
     expect((await pay('finA', v.id, { source: 'cash_on_hand', boxId: box['A'] })).json().error.code).toBe('BOX_NOT_FOR_SOURCE')
     expect((await pay('finA', v.id, { source: 'cash_on_hand', bankAccountId: bank['A1'] })).json().error.code).toBe('BANK_ACCOUNT_ON_CASH')
@@ -209,18 +218,26 @@ describe('pay from cash on hand / a bank', () => {
     expect((await call('finA', 'GET', `${V}/${v.id}`)).json().status).toBe('approved')
     expect(await entry(`cashvoucher.pay:${v.id}`)).toBeNull()
 
-    // The CEO may pay from a bank too.
-    const r = await pay('ceoA', v.id, { source: 'bank', bankAccountId: bank['A2'] })
+    // The CEO may not pay from a bank (only finance pays); finance pays from the named bank.
+    const ceo = await pay('ceoA', v.id, { source: 'bank', bankAccountId: bank['A2'] })
+    expect(ceo.statusCode).toBe(403)
+    expect(ceo.json().error.code).toBe('PAY_FINANCE_ONLY')
+    expect(await entry(`cashvoucher.pay:${v.id}`)).toBeNull()
+    const r = await pay('finA', v.id, { source: 'bank', bankAccountId: bank['A2'] })
     expect(r.statusCode, r.body).toBe(200)
     expect((r.json() as { voucher: Row }).voucher).toMatchObject({ paySource: 'bank', payAccountCode: '1022', payBankAccountId: bank['A2'], paidFrom: 'Meezan Payroll' })
     expect(await entry(`cashvoucher.pay:${v.id}`)).toEqual([['1022', 'credit', 9_000], ['1357', 'debit', 9_000]])
   })
 
-  it('box path unchanged: Dr 1357 / Cr 1011 through the box; a keeper may pick any open box', async () => {
+  it('box path unchanged: Dr 1357 / Cr 1011 through the box; finance may pick any open box of the company', async () => {
     const v = await approved(5_000)
-    expect((await pay('cashA', v.id, { source: 'box', bankAccountId: bank['A1'] })).json().error.code).toBe('BANK_NOT_FOR_SOURCE')
-    // The cashier cannot pay from the finance box; finance may pay from the cashier's box.
-    expect((await pay('cashA', v.id, { boxId: box['A2'] })).statusCode).toBe(403)
+    expect((await pay('finA', v.id, { source: 'box', bankAccountId: bank['A1'] })).json().error.code).toBe('BANK_NOT_FOR_SOURCE')
+    // The cashier cannot pay, not even from his own box; finance pays from the cashier's box.
+    for (const boxId of [box['A'], box['A2']]) {
+      const c = await pay('cashA', v.id, { boxId })
+      expect(c.statusCode).toBe(403)
+      expect(c.json().error.code).toBe('PAY_FINANCE_ONLY')
+    }
     const start = await floatOf(box['A']!)
     const r = await pay('finA', v.id, { boxId: box['A'] })
     expect(r.statusCode, r.body).toBe(200)
@@ -311,7 +328,7 @@ describe('gate: races, rollbacks and the ready-to-pay notice', () => {
     const [a, b, c] = await Promise.all([
       pay('finA', v.id, { source: 'box', boxId: box['A'] }),
       pay('finA', v.id, { source: 'bank', bankAccountId: bank['A1'] }),
-      pay('ceoA', v.id, { source: 'cash_on_hand' }),
+      pay('finA2', v.id, { source: 'cash_on_hand' }),
     ])
     const codes = [a, b, c].map((r) => r.statusCode).sort()
     expect(codes, [a, b, c].map((r) => r.body).join('\n')).toEqual([200, 409, 409])
@@ -352,8 +369,10 @@ describe('gate: races, rollbacks and the ready-to-pay notice', () => {
     await flushNotifications()
     const told = await prisma.staffNotification.findMany({ where: { entityId: v.id, dedupeKey: { startsWith: `task.next:cash_voucher:${v.id}:approved` } }, select: { userId: true, tenantId: true } })
     const ids = told.map((n) => n.userId)
+    // Only finance pays (owner, 2026-10-16): finance is told, the box's cashier is not.
     expect(ids).toContain(U['finA']!.id)
-    expect(ids).toContain(U['cashA']!.id)
+    expect(ids).toContain(U['finA2']!.id)
+    expect(ids).not.toContain(U['cashA']!.id)
     expect(ids).not.toContain(U['finB']!.id)
     expect(ids).not.toContain(U['ceoA']!.id)
     expect(told.every((n) => n.tenantId === T.A)).toBe(true)

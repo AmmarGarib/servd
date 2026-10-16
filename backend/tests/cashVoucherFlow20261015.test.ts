@@ -6,7 +6,8 @@
 //     correction, the raiser edits and resubmits; finance approves (never its
 //     own: SELF_APPROVE); the CEO gives the final approval (never the finance
 //     approver: SAME_SIGNER).
-//   - Pay: Dr 1357 / Cr 1011 through recordPettyCashSpendTx, no 6xxx.
+//   - Pay (finance only — owner, 2026-10-16; anyone else 403 PAY_FINANCE_ONLY):
+//     Dr 1357 / Cr 1011 through recordPettyCashSpendTx, no 6xxx.
 //   - Documents: PDF / XLSX / DOCX / CSV take; HTML, SVG, an EXE named .pdf
 //     are refused; verify without documents → 422 DOCS_REQUIRED.
 //   - Verify: Dr each line / Cr 1357 in ONE entry, change back in the box,
@@ -95,7 +96,7 @@ async function approved(body: Record<string, unknown> = {}): Promise<Row> {
 }
 async function paid(body: Record<string, unknown> = {}, boxKey = 'A'): Promise<Row> {
   const v = await approved(body)
-  const r = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box[boxKey] })
+  const r = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box[boxKey] })
   expect(r.statusCode, r.body).toBe(200)
   // The holder confirms "Cash received" (digital receipt, owner 2026-10-15).
   return ok('cookA', 'POST', `${V}/${v.id}/confirm-received`)
@@ -135,6 +136,8 @@ beforeAll(async () => {
   await mkUser('finA', 'finance', [T.A])
   await mkUser('finA2', 'finance', [T.A])
   await mkUser('finB', 'finance', [T.B])
+  // Pays approved vouchers (owner, 2026-10-16: only finance pays), from cashA's boxes.
+  await mkUser('payA', 'finance', [T.A])
   await mkUser('mgrA', 'management', [T.A])
   await mkUser('cashA', 'cashier', [T.A])
   await mkUser('cashB', 'cashier', [T.B])
@@ -215,8 +218,15 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     expect(ap).toMatchObject({ status: 'approved', directorSignedById: U['ceoA']!.id, directorSignedByName: `${P} ceoA` })
     expect(await floatOf(box['A']!)).toBe(startFloat)
 
+    // Pay is finance's only: the box's cashier and the CEO are refused, nothing moves.
+    for (const who of ['cashA', 'ceoA']) {
+      const r = await call(who, 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+      expect(r.statusCode, who).toBe(403)
+      expect(r.json().error.code, who).toBe('PAY_FINANCE_ONLY')
+    }
+    expect(await floatOf(box['A']!)).toBe(startFloat)
     // Pay: Dr 1357 / Cr 1011 — no expense yet.
-    const pay = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    const pay = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(pay.statusCode, pay.body).toBe(200)
     const pb = pay.json() as { voucher: Row; movement: { id: string; amountCents: number } }
     expect(pb.voucher).toMatchObject({ status: 'disbursed', stage: 'awaiting_docs', expenseOnVerify: true })
@@ -227,7 +237,7 @@ describe('request → finance → CEO → pay → documents → verify', () => {
 
     // Digital receipt: the voucher shows the payer; Received by is the holder until they confirm, and finance
     // cannot verify before the holder confirms. Only the holder confirms, once.
-    expect(pb.voucher).toMatchObject({ paidByName: `${P} cashA`, receiverName: `${P} cookA`, cashReceivedAt: null, canConfirmReceived: false })
+    expect(pb.voucher).toMatchObject({ paidByName: `${P} payA`, receiverName: `${P} cookA`, cashReceivedAt: null, canConfirmReceived: false })
     const unconfirmed = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
     expect(unconfirmed.json().error.code).toBe('CASH_RECEIPT_NOT_CONFIRMED')
     expect((await call('finA', 'POST', `${V}/${v.id}/confirm-received`)).json().error.code).toBe('NOT_HOLDER')
@@ -398,10 +408,10 @@ describe('finance raises a voucher for an outside payee, with a discount', () =>
     const back = await ok('finA', 'POST', `${V}/${v.id}/resubmit`)
     expect(back).toMatchObject({ status: 'finance_approved', financeApprovedById: U['finA']!.id })
     await ok('ceoA', 'POST', `${V}/${v.id}/approve`)
-    const pay = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    const pay = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(pay.statusCode, pay.body).toBe(200)
     // An outside payee has no login: the pay records the hand-over; Received by is the payee.
-    expect(pay.json().voucher).toMatchObject({ receiverName: 'Ali Electric', paidByName: `${P} cashA`, cashReceivedById: U['cashA']!.id, canConfirmReceived: false })
+    expect(pay.json().voucher).toMatchObject({ receiverName: 'Ali Electric', paidByName: `${P} payA`, cashReceivedById: U['payA']!.id, canConfirmReceived: false })
     await upload('cashA', v.id, doc('quote.pdf', PDF, 'application/pdf'))
     // The preparer may not verify their own voucher; another finance person does.
     expect((await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})).json().error.code).toBe('SELF_APPROVE')
@@ -636,7 +646,7 @@ describe('closed when the supporting documents are attached; finance checks afte
     // cookA asks for cash that waiterA takes.
     const v = await approved({ amountCents: 3_000, holderUserId: U['waiterA']!.id, purpose: 'Gas cylinder refill' })
     expect(v).toMatchObject({ status: 'approved' })
-    const pay = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    const pay = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(pay.statusCode, pay.body).toBe(200)
 
     const before = await get('cookA', v.id)
