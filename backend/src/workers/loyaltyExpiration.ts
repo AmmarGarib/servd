@@ -6,11 +6,17 @@
 // "expire" loyalty transaction is recorded and the breakage liability is
 // derecognised back to Marketing. Runs once daily.
 //
-// Algorithm (per loyalty account):
-//   1. Sum lifetime earned and lifetime burned points from transactions older
-//      than the cutoff.
-//   2. Compute "stale" pool = max(0, oldEarn − oldRedeem − alreadyExpired).
-//   3. Cap by current balance (we never expire more than the customer holds).
+// Algorithm (per loyalty account), first in, first out — points spent come out
+// of the OLDEST points (finance sim MI-3, 2026-10-16: redemptions after the
+// cutoff were ignored, so a customer who earned in September and redeemed in
+// October lost those October points too when September's expired):
+//   1. oldEarn = points earned before the cutoff and not clawed back (an earn
+//      a refund reversed carries reversedAt and was never available).
+//   2. consumed = every redemption still standing (a redemption given back on
+//      a cancel / refund carries reversedAt) plus everything already expired —
+//      at ANY date: under FIFO each of them used the oldest points first.
+//   3. stale = max(0, oldEarn − consumed), capped by the current balance (we
+//      never expire more than the customer holds).
 //   4. If stale > 0, decrement balance, post an "expire" tx, and post the JE.
 
 import { Queue, Worker } from 'bullmq'
@@ -62,21 +68,24 @@ export async function runExpirationSweep(): Promise<void> {
       const cutoff = new Date()
       cutoff.setMonth(cutoff.getMonth() - months)
 
-      // Sum stale earn / redeem / already-expired
-      const grouped = await prisma.loyaltyTransaction.groupBy({
-        by: ['type'],
-        _sum: { pointsDelta: true },
-        where: { loyaltyAccountId: account.id, createdAt: { lt: cutoff } },
-      })
-      let oldEarn = 0, oldRedeem = 0, oldExpired = 0
-      for (const g of grouped) {
-        const sum = g._sum.pointsDelta ?? 0
-        if (g.type === 'earn')         oldEarn    += sum
-        else if (g.type === 'redeem')  oldRedeem  += sum   // already negative
-        else if (g.type === 'expire')  oldExpired += sum   // already negative
-      }
-      // oldRedeem and oldExpired are non-positive; convert to positive consumption
-      const consumed = -oldRedeem + -oldExpired
+      // FIFO: earns before the cutoff (not clawed back) vs everything spent or
+      // expired so far, whenever it happened.
+      const [earned, spent] = await Promise.all([
+        prisma.loyaltyTransaction.aggregate({
+          _sum: { pointsDelta: true },
+          where: { loyaltyAccountId: account.id, type: 'earn', reversedAt: null, createdAt: { lt: cutoff } },
+        }),
+        prisma.loyaltyTransaction.aggregate({
+          _sum: { pointsDelta: true },
+          where: {
+            loyaltyAccountId: account.id,
+            OR: [{ type: 'redeem', reversedAt: null }, { type: 'expire' }],
+          },
+        }),
+      ])
+      const oldEarn = earned._sum.pointsDelta ?? 0
+      // Redemptions and expiries are stored negative.
+      const consumed = -(spent._sum.pointsDelta ?? 0)
       const stalePool = Math.max(0, oldEarn - consumed)
       const toExpire = Math.min(stalePool, account.pointsBalance)
       if (toExpire <= 0) continue

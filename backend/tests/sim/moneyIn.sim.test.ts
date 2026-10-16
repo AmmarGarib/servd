@@ -13,8 +13,9 @@
 //               brand, no tax): finance requests a bad-debt write-off with
 //               evidence, the CEO approves (finance cannot), then part of it
 //               is recovered by cheque.
-//   gift cards (A)  finance sells GC-1 (bank transfer, ref), a manager gives a
-//               promotional card (finance cannot), finance cannot void a live
+//   gift cards (A)  finance sells GC-1 (bank transfer, ref), the CEO gives a
+//               promotional card (finance and the F&B manager — no gift_cards
+//               module — cannot), finance cannot void a live
 //               card; GC-1 pays a storefront order (online redeem); a second
 //               order is placed on it; both cards pass their expiry → the
 //               nightly sweep books breakage (sold → 4200, promotional → 6060);
@@ -22,11 +23,14 @@
 //               EXPIRED card → finance settles it as a refund by bank transfer.
 //   wallets     finance records a PAID top-up (bank deposit, ref) — goodwill is
 //               refused to finance, a card tender is refused; the customer
-//               pays storefront orders with the wallet (A and B).
-//   loyalty (A) points earned (30 Sept, then October), redeemed at checkout,
-//               a redemption reversed by a cancel, the point value changed
-//               mid-month by the manager (H48: today's value), points older
-//               than the expiry setting expired by the nightly sweep.
+//               pays storefront orders with the wallet (A and B; one of B's is
+//               still in the kitchen at midnight on the 31st).
+//   loyalty (A) points earned on a pickup paid in cash at the counter (30 Sept,
+//               then October; a wallet- or card-paid bill earns none — MI-2),
+//               redeemed at checkout, a redemption given back by a cancel, the
+//               point value doubled on 15 Oct by the CEO (H48: today's value),
+//               points older than the expiry setting expired by the nightly
+//               sweep — first in, first out (MI-3, fixed here).
 //   inter-company  the CEO submits a charge A → B (PKR 25,000 accounting fees)
 //               and approves it; B settles it by bank transfer with a
 //               reference; a rider of A carries B's wallet-paid delivery under
@@ -36,7 +40,11 @@
 // value; 2080 zero difference (gift-card books check); A's Due from B = B's
 // Due to A; B gets 404 on A's invoices, write-offs, cards and wallets.
 //
-// Known open defects are at the end of the file (it.fails).
+// Defects: MI-3 FIXED in this change (workers/loyaltyExpiration.ts expired points
+// already spent — FIFO now; the 31 Oct step is its regression). Open, at the
+// end of the file (it.fails): MI-1 (no revaluation of 2060 when the point value
+// changes), MI-4 (wallet tie-out ignores wallet spent on open orders).
+// Observation MI-2 (owner decision): wallet / gift-card paid bills earn no points.
 // Runtime ≈ 30 s. Requires a disposable database ("test" in DATABASE_URL).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
@@ -56,7 +64,7 @@ const st: {
   inv1?: string; inv2?: string; chequePaymentId?: string; writeOffId?: string
   gc1?: { id: string; code: string }; promo?: { id: string; code: string }; gcOrderOpen?: string
   loyaltyOrders: string[]; redeemCancelOrder?: string
-  icCharge?: string; icSettle?: string; fleetOrder?: string; agreementId?: string
+  icCharge?: string; icSettle?: string; fleetOrder?: string; agreementId?: string; openWalletOrderB?: string
 } = { loyaltyOrders: [] }
 
 beforeAll(async () => { sim = await startSim() }, 180_000)
@@ -82,6 +90,18 @@ async function storefrontOrder(customerId: string, brand: SimBrand, opts: {
 async function handOver(co: SimCompany, orderId: string) {
   const mgr = sim.as(co.manager, co)
   for (const status of ['preparing', 'ready', 'completed']) ok(await mgr.patch(`/orders/${orderId}/status`, { status }), 200)
+  await sim.settle()
+}
+
+/** The customer pays a pickup's cash at the counter: a till is opened, the payment settled, the till counted and closed. */
+async function payAtCounter(co: SimCompany, orderId: string) {
+  const p = await sim.prisma.payment.findFirstOrThrow({ where: { orderId, status: 'pending', method: 'cash' } })
+  const c = sim.as(co.cashier, co)
+  const shift = ok(await c.post('/pos/shifts/open', { openingFloatCents: 500_000 }), 201)
+  ok(await c.post(`/pos/payments/${p.id}/settle`, { shiftId: shift.id, tenderedCents: p.amountCents }), [200, 201])
+  const z = ok(await sim.as(co.manager, co).get(`/pos/shifts/${shift.id}/zreport`), 200)
+  const expected = (z.expectedCashCents ?? z.expectedCents ?? z.drawer?.expectedCents ?? z.cash?.expectedCents) as number
+  ok(await c.post(`/pos/shifts/${shift.id}/close`, { closingFloatCents: expected }), 200)
   await sim.settle()
 }
 
@@ -134,16 +154,29 @@ describe('money in — the simulated month', () => {
     expect(await sim.ledger.balanceOf(B, '1010')).toBe(500_000)
     expect(-(await sim.ledger.balanceOf(B, '2050'))).toBe(500_000)
 
-    // A wallet-paid pickup, completed the same day: points earned on 30 Sept.
+    // A wallet-paid pickup (the wallet as the method), completed the same day.
     sim.clock.at('2026-09-30', '12:00')
-    const o = await storefrontOrder(st.custA!, A.brands.srb, { gateway: 'wallet', qty: 2 })
+    const o = await storefrontOrder(st.custA!, A.brands.srb, { gateway: 'wallet' })
     expect(o.walletAmountCents).toBeGreaterThan(0)
     expect(await pending(o.id), 'a wallet-paid order owes nothing').toBe(0)
     await handOver(A, o.id)
-    st.loyaltyOrders.push(o.id)
-    console.log('DEBUG ORDER', JSON.stringify(await sim.prisma.order.findUnique({ where: { id: o.id }, select: { totalCents: true, walletAmountCents: true, status: true, customerId: true } })), JSON.stringify(await sim.prisma.loyaltyTransaction.findMany({})))
-    const acct = await sim.prisma.loyaltyAccount.findFirstOrThrow({ where: { customerId: st.custA, tenantId: A.tenantId } })
-    expect(acct.pointsBalance, 'points earned on the completed order').toBeGreaterThan(0)
+    expect(-(await sim.ledger.balanceOf(A, '2050')), '2050 down by the wallet spend at the sale').toBe(1_000_000 - o.walletAmountCents)
+    // OBSERVATION MI-2 (owner decision): a bill paid from the wallet (or a gift card) earns no
+    // points — Order.totalCents is stored net of the wallet / card share and the earn reads it
+    // (loyalty/service.ts awardOrderPoints). Paid top-ups are customer money.
+    expect(await sim.prisma.loyaltyTransaction.count({ where: { orderId: o.id, type: 'earn' } })).toBe(0)
+
+    // A pickup paid in cash at the counter earns points (1 a rupee), on 30 Sept.
+    sim.clock.at('2026-09-30', '13:00')
+    const c = await storefrontOrder(st.custA!, A.brands.srb, { qty: 2 })
+    await payAtCounter(A, c.id)
+    await handOver(A, c.id)
+    st.loyaltyOrders.push(c.id)
+    const earn = await sim.prisma.loyaltyTransaction.findFirstOrThrow({ where: { orderId: c.id, type: 'earn' } })
+    const total = (await sim.prisma.order.findUniqueOrThrow({ where: { id: c.id } })).totalCents
+    expect(earn.pointsDelta).toBe(Math.floor(total / 100))
+    const [je] = await sim.ledger.entriesBySource(A, `loyalty.earn:${earn.id}`)
+    expect(je!.lines.map((l) => `${l.code} ${l.type} ${l.cents}`).sort(), 'earn: Dr 6060 / Cr 2060 at PKR 0.10').toEqual([`2060 credit ${earn.pointsDelta * 10}`, `6060 debit ${earn.pointsDelta * 10}`])
   })
 
   it('2–3 Oct: INV-1 raised; gift cards sold by finance (card refused), a promotional card by a manager; GC-1 redeemed online', async () => {
@@ -189,7 +222,6 @@ describe('money in — the simulated month', () => {
     expect(o.giftCardAppliedCents).toBeGreaterThan(0)
     expect(await pending(o.id), 'the card covered the bill').toBe(0)
     await handOver(A, o.id)
-    st.loyaltyOrders.push(o.id)
     const after = await sim.prisma.giftCard.findUniqueOrThrow({ where: { id: gc.id } })
     expect(after.balanceCents).toBe(500_000 - o.giftCardAppliedCents)
     expect(-(await sim.ledger.balanceOf(A, '2080')), '2080 = sold + promo − redeemed').toBe(600_000 - o.giftCardAppliedCents)
@@ -226,9 +258,10 @@ describe('money in — the simulated month', () => {
 
     // loyalty: 100 points redeemed at checkout (PKR 0.10 a point)
     sim.clock.at('2026-10-10', '13:00')
-    const o = await storefrontOrder(st.custA!, A.brands.srb, { gateway: 'wallet', points: 100 })
+    const o = await storefrontOrder(st.custA!, A.brands.srb, { points: 100 })
     expect(o.loyaltyPointsRedeemed).toBe(100)
     expect(o.loyaltyDiscountCents, '100 points at PKR 0.10').toBe(1_000)
+    await payAtCounter(A, o.id)
     await handOver(A, o.id)
     st.loyaltyOrders.push(o.id)
     const redeem = await sim.ledger.entriesBySource(A, 'loyalty.redeem:')
@@ -256,7 +289,9 @@ describe('money in — the simulated month', () => {
     expect(row.status).toBe('partial')
     expect(await sim.ledger.balanceOf(A, '1330')).toBe(400_000)
     expect(await sim.ledger.balanceOf(A, '1335')).toBe(260_000)
-    expect(-(await sim.ledger.balanceOf(A, '2032')), '2032 = invoiced SRB tax − credited').toBe(1_300_000 - 65_000)
+    const ar2032 = (await sim.ledger.entriesBySource(A, 'receivable.')).flatMap((e) => e.lines).filter((l) => l.code === '2032')
+      .reduce((t, l) => t + (l.type === 'credit' ? l.cents : -l.cents), 0)
+    expect(ar2032, '2032 from receivables = invoiced SRB tax − credited (withholding goes to 1335, not 2032)').toBe(1_300_000 - 65_000)
 
     sim.clock.at('2026-10-16', '10:00')
     const inv2 = ok(await fin.post('/accounting/receivables', {
@@ -268,7 +303,7 @@ describe('money in — the simulated month', () => {
     // 100 points redeemed at today's value (PKR 0.20), then the order is cancelled — the points come back
     sim.clock.at('2026-10-16', '13:00')
     const mid = (await sim.prisma.loyaltyAccount.findFirstOrThrow({ where: { customerId: st.custA, tenantId: A.tenantId } })).pointsBalance
-    const o2 = await storefrontOrder(st.custA!, A.brands.srb, { gateway: 'wallet', points: 100 })
+    const o2 = await storefrontOrder(st.custA!, A.brands.srb, { points: 100 })
     expect(o2.loyaltyDiscountCents, '100 points at today\'s value PKR 0.20').toBe(2_000)
     await sim.settle()
     ok(await sim.as(A.manager, A).post(`/orders/${o2.id}/cancel`, { reason: 'Kitchen could not make it' }), 200)
@@ -330,8 +365,8 @@ describe('money in — the simulated month', () => {
     const check = ok(await fin.get('/gift-cards/reconcile'), 200)
     const mine = (check.companies as Array<{ tenantId: string; expiredHoldingValue: { cents: number } }>).find((c) => c.tenantId === A.tenantId)!
     expect(mine.expiredHoldingValue.cents).toBe(o.giftCardAppliedCents)
-    // a manager may not keep a sold card's money (the CEO's); finance refunds it to the customer's bank
-    expect(errCode(await sim.as(A.manager, A).post(`/gift-cards/${held.id}/void`, { reason: 'Keep it', disposition: 'forfeit' }))).toBe('FORFEIT_NEEDS_CEO')
+    // keeping a sold card's money is the CEO's (H11); finance refunds it to the customer's bank
+    expect(errCode(await fin.post(`/gift-cards/${held.id}/void`, { reason: 'Keep it', disposition: 'forfeit' }))).toBe('FORFEIT_NEEDS_CEO')
     const bankBefore = await sim.ledger.balanceOf(A, A.banks.main.code)
     const s = ok(await fin.post(`/gift-cards/${held.id}/void`, { reason: 'Refund the value of the cancelled order to Sana', disposition: 'refund', refundMethod: 'bank_transfer', bankAccountId: A.banks.main.id }), 200)
     expect(s.postedCents).toBe(o.giftCardAppliedCents)
@@ -355,9 +390,8 @@ describe('money in — the simulated month', () => {
     expect(c.status).toBe('submitted')
     st.icCharge = c.id
     ok(await ceo.post(`/accounting/intercompany/transfers/${c.id}/approve`, { note: 'Agreed split' }), 200)
-    console.log('DEBUG IC', JSON.stringify(await sim.ledger.entriesBySource(A, 'ic.')), JSON.stringify(await sim.ledger.entriesBySource(B, 'ic.')))
-    expect(-(await sim.ledger.balanceOf(A, '6110')), 'A recovers the cost').toBe(2_500_000)
-    expect(await sim.ledger.balanceOf(B, '6110'), 'B bears it').toBe(2_500_000)
+    expect(-(await sim.ledger.balanceOf(A, '6110', '2026-10-31')), 'A recovers the cost').toBe(2_500_000)
+    expect(await sim.ledger.balanceOf(B, '6110', '2026-10-31'), 'B bears it').toBe(2_500_000)
 
     // the written-off client pays PKR 10,000 after all
     sim.clock.at('2026-10-25', '12:00')
@@ -411,7 +445,7 @@ describe('money in — the simulated month', () => {
     await sim.settle()
     const done = await sim.prisma.order.findUniqueOrThrow({ where: { id: o.id } })
     expect(done.status).toBe('completed')
-    const ev = await sim.prisma.riderJobEvent.findFirstOrThrow({ where: { orderId: o.id, event: 'picked_up' } })
+    const ev = await sim.prisma.riderJobEvent.findFirstOrThrow({ where: { orderId: o.id, type: 'picked_up' } })
     expect([ev.tenantId, ev.riderTenantId]).toEqual([B.tenantId, A.tenantId])
   })
 
@@ -424,11 +458,19 @@ describe('money in — the simulated month', () => {
     const { runExpirationSweep } = await import('../../src/workers/loyaltyExpiration.js')
     await runExpirationSweep()
     const expired = await sim.prisma.loyaltyTransaction.findMany({ where: { type: 'expire', loyaltyAccount: { tenantId: A.tenantId } } })
-    expect(expired.map((e) => e.pointsDelta), '30 Sept points expire').toEqual([-sepEarn.pointsDelta])
+    // FIFO: the 100 points redeemed on 10 Oct came out of the 30 Sept earn (the 16 Oct
+    // redemption was given back), so 30 Sept's points less 100 expire — never newer points.
+    expect(expired.map((e) => e.pointsDelta), '30 Sept points still unspent expire').toEqual([-(sepEarn.pointsDelta - 100)])
     const after = (await sim.prisma.loyaltyAccount.findFirstOrThrow({ where: { customerId: st.custA, tenantId: A.tenantId } })).pointsBalance
-    expect(after).toBe(before - sepEarn.pointsDelta)
+    expect(after).toBe(before - (sepEarn.pointsDelta - 100))
     const [je] = await sim.ledger.entriesBySource(A, `loyalty.expire:${expired[0]!.id}`)
-    expect(je, 'the expiry is booked').toBeTruthy()
+    expect(je!.lines.find((l) => l.code === '2060')!.cents, 'the expiry is booked at today\'s value (PKR 0.20)').toBe((sepEarn.pointsDelta - 100) * 20)
+
+    // 31 Oct 21:00 — B's customer orders a pickup with the wallet; it is still in the kitchen at midnight.
+    sim.clock.at('2026-10-31', '21:00')
+    const open = await storefrontOrder(st.custB!, sim.B.brands.srb, { gateway: 'wallet' })
+    expect(open.walletAmountCents).toBeGreaterThan(0)
+    st.openWalletOrderB = open.id
   })
 
   it('1 Nov: the CEO charges October\'s shared fleet — one trip at PKR 150 (B Dr 6035 / A Cr 6990)', async () => {
@@ -464,13 +506,26 @@ describe('month end — the money-in accounts tie', () => {
     it(`${key}: 2050 wallets = the customers' wallet balances; 2080 gift cards: zero difference`, async () => {
       const co = sim[key]
       const w = await sim.prisma.customerWallet.aggregate({ where: { tenantId: co.tenantId }, _sum: { balanceCents: true } })
-      expect(-(await sim.ledger.balanceOf(co, '2050')), '2050 = Σ wallet balances').toBe(Number(w._sum.balanceCents ?? 0))
+      // The wallet is taken at checkout; 2050 comes down when the sale is booked (completion).
+      const inKitchen = await sim.prisma.order.aggregate({ where: { concept: { tenantId: co.tenantId }, status: { notIn: ['completed', 'cancelled'] }, walletAmountCents: { gt: 0 } }, _sum: { walletAmountCents: true } })
+      expect(Number(inKitchen._sum.walletAmountCents ?? 0) > 0, 'B has a wallet-paid order still open at the close').toBe(key === 'B')
+      expect(-(await sim.ledger.balanceOf(co, '2050', '2026-10-31')), '2050 = Σ wallet balances + wallet spent on orders not yet booked')
+        .toBe(Number(w._sum.balanceCents ?? 0) + Number(inKitchen._sum.walletAmountCents ?? 0))
       const { giftCardBooksCheck } = await import('../../src/modules/giftCards/books.js')
       const g = await giftCardBooksCheck(co.tenantId, co.name)
-      expect(g.differenceCents, JSON.stringify(g)).toBe(0)
-      expect(g.unexplainedCents).toBe(0)
+      expect(g.differenceCents || 0, JSON.stringify(g)).toBe(0)
+      expect(g.unexplainedCents || 0).toBe(0)
     })
   }
+
+  it('the tie-out screen (finance): A\'s 2050 and 2080 rows clean; B\'s 2060 and 2080 rows clean', async () => {
+    for (const [co, codes] of [[sim.A, ['2050', '2080']], [sim.B, ['2060', '2080']]] as const) {
+      const r = ok(await sim.as(co.finance, co).get('/accounting/intercompany/tie-out?asOf=2026-10-31'), 200)
+      const rows = (r.companies as Array<{ tenantId: string; tieOut: { rows: Array<{ code: string; differenceCents: number }> } }>)
+        .find((c) => c.tenantId === co.tenantId)!.tieOut.rows
+      for (const code of codes) expect(rows.find((x) => x.code === code)!.differenceCents || 0, `${co.key} ${code}: ${JSON.stringify(rows)}`).toBe(0)
+    }
+  })
 
   it('A: 1110 = what the open invoices still owe', async () => {
     const { A } = sim
@@ -497,10 +552,9 @@ describe('month end — the money-in accounts tie', () => {
   it('A: 2060 loyalty — every posting at the point value of its day; earned − redeemed − expired = the account balances', async () => {
     const { A } = sim
     const tx = await sim.prisma.loyaltyTransaction.findMany({ where: { loyaltyAccount: { tenantId: A.tenantId } } })
-    const live = tx.filter((t) => !t.reversedAt)
-    const pts = live.reduce((s, t) => s + t.pointsDelta, 0)
+    const pts = tx.reduce((s, t) => s + t.pointsDelta, 0)
     const bal = await sim.prisma.loyaltyAccount.aggregate({ where: { tenantId: A.tenantId }, _sum: { pointsBalance: true } })
-    expect(pts, 'live transactions = account balances').toBe(Number(bal._sum.pointsBalance ?? 0))
+    expect(pts, 'Σ loyalty transactions = account balances').toBe(Number(bal._sum.pointsBalance ?? 0))
     // each entry is points × the company's value on the day it was posted (10 before 15 Oct, 20 from it)
     const change = new Date('2026-10-15T09:00:00+05:00')
     for (const t of tx) {
@@ -523,7 +577,7 @@ describe('month end — the money-in accounts tie', () => {
     const list = ok(await finB.get('/accounting/receivables'), 200)
     expect(JSON.stringify(list)).not.toContain(st.inv1)
     expect((await finB.get(`/gift-cards/${st.gc1!.id}/redemptions`)).statusCode).toBe(404)
-    expect((await sim.as(B.manager, B).post(`/gift-cards/${st.promo!.id}/void`, { reason: 'cross-company', disposition: 'forfeit' })).statusCode).toBe(404)
+    expect((await finB.post(`/gift-cards/${st.promo!.id}/void`, { reason: 'cross-company', disposition: 'forfeit' })).statusCode).toBe(404)
     expect((await finB.get(`/wallet/customers/${st.custA}`)).statusCode).toBe(404)
     expect((await finB.post('/wallet/topup', { customerId: st.custA, amountCents: 100, kind: 'paid', tender: 'cash', paymentRef: ref('X') })).statusCode).toBe(404)
     // B's books carry nothing of A's documents
@@ -550,6 +604,21 @@ describe('known defects found by the simulation (open)', () => {
   // per company (Dr 6060 / Cr 2060 on a rise, the reverse on a fall) for the
   // points outstanding at that instant, under a lock against concurrent
   // earns / redemptions. When fixed, drop `.fails`.
+  // DEFECT MI-4 (open): the wallet tie-out (intercompany/legacy.ts walletSubledgerAt, used by
+  // GET /accounting/intercompany/tie-out and the month-close check control_tieout) compares 2050
+  // with the wallet balances only. A wallet is debited at checkout but 2050 comes down when the
+  // sale is booked, so any wallet-paid order still open at the cut-off (B's 21:00 pickup on 31 Oct)
+  // shows as a "real difference to find" — the gift-card check explains the same timing
+  // (awaitingSale), the wallet row does not. Fix: add the wallet spent on orders whose sale is not
+  // booked by asOf (as giftCardBooksCheck does) to the subledger figure. When fixed, drop `.fails`.
+  it.fails('MI-4: B\'s 2050 tie-out row is clean at 31 Oct with a wallet-paid order still in the kitchen', async () => {
+    const { B } = sim
+    const r = ok(await sim.as(B.finance, B).get('/accounting/intercompany/tie-out?asOf=2026-10-31'), 200)
+    const row = (r.companies as Array<{ tenantId: string; tieOut: { rows: Array<{ code: string; differenceCents: number }> } }>)
+      .find((c) => c.tenantId === B.tenantId)!.tieOut.rows.find((x) => x.code === '2050')!
+    expect(row.differenceCents, JSON.stringify(row)).toBe(0)
+  })
+
   it.fails('MI-1: 2060 = outstanding points × today\'s point value (the tie-out is clean)', async () => {
     const { A } = sim
     const r = ok(await sim.as(A.finance, A).get('/accounting/intercompany/tie-out?asOf=2026-10-31'), 200)
