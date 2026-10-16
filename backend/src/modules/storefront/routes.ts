@@ -1,5 +1,6 @@
 // Public storefront API — no auth for menu/concept reads; customer auth for orders
 import type { FastifyInstance } from 'fastify'
+import { geoRoutes } from './geoRoutes.js'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../../lib/prisma.js'
@@ -217,6 +218,8 @@ const quoteQuerySchema = z.object({
 })
 
 export async function storefrontRoutes(fastify: FastifyInstance) {
+  await fastify.register(geoRoutes)
+
   // GET /storefront/search?q=... — cross-brand search across concepts AND
   // menu items. Powers the Browse page's search box.
   fastify.get<{ Querystring: { q?: string } }>(

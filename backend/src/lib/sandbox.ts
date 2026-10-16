@@ -71,6 +71,7 @@ export type SandboxKind =
   | 'whatsapp_probe'
   | 'password_reset'
   | 'worker'
+  | 'geocode'
 
 /** Is this server a practice copy? Read on every call (cheap; tests flip it). */
 export function isSandbox(): boolean {

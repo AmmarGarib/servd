@@ -53,21 +53,18 @@ interface Quote {
   paymentMethods?: string[]
 }
 
-// Pin -> address line. OpenStreetMap Nominatim (the same service the admin
-// location picker uses; the map tiles are OSM too). Best effort: on any
-// failure the text stays empty and editable.
-async function reverseGeocode(p: LatLng): Promise<string | null> {
+// Pin -> address line, looked up by servd's own server (owner, 2026-10-16:
+// "Keep address in our own server") — the browser never calls a map service
+// for this. Best effort: on any failure the text stays empty and editable.
+async function reverseGeocode(p: LatLng, token: string | null): Promise<string | null> {
+  if (!token) return null
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=${p.lat.toFixed(6)}&lon=${p.lng.toFixed(6)}`
-    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } })
+    const res = await fetch(`${API_URL}/api/v1/storefront/geo/reverse?lat=${p.lat.toFixed(6)}&lng=${p.lng.toFixed(6)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     if (!res.ok) return null
-    const d = await res.json() as { display_name?: string; address?: Record<string, string> }
-    const a = d.address ?? {}
-    const street = [a['house_number'], a['road'] ?? a['pedestrian'] ?? a['footway']].filter(Boolean).join(' ')
-    const area = a['neighbourhood'] ?? a['suburb'] ?? a['quarter'] ?? a['residential']
-    const city = a['city'] ?? a['town'] ?? a['village'] ?? a['state_district']
-    const line = [street, area, city].filter(Boolean).join(', ') || d.display_name || ''
-    return line.slice(0, 200) || null
+    const d = await res.json() as { line?: string | null }
+    return d.line ?? null
   } catch { return null }
 }
 
@@ -358,7 +355,7 @@ export default function CheckoutPage() {
     if (pinKey === 'new' && !(addressEditedRef.current && deliveryAddress.trim())) {
       const seq = ++geocodeSeq.current
       setAddressFilling(true)
-      void reverseGeocode(v).then((line) => {
+      void reverseGeocode(v, token).then((line) => {
         if (seq !== geocodeSeq.current) return
         setAddressFilling(false)
         if (line && !(addressEditedRef.current && deliveryAddress.trim())) {
