@@ -14,6 +14,7 @@ import { useApprovalCounts } from '../../app/ceo/approvalsData'
 import { usePermissions } from '../../hooks/useCan'
 import { useHeadOfficeMe } from '../../hooks/useWorkspaces'
 import { useLens } from '../../hooks/useLens'
+import { useAuthStore } from '../../store/auth'
 import { useSwitchCompany } from './TenantSwitcher'
 import {
   relativeTime, severityColor, useInbox, useMarkAllRead, useMarkRead, useNotificationSocket, useUnreadCount,
@@ -28,10 +29,13 @@ export function useOpenNotification(after?: () => void) {
   const markRead = useMarkRead()
   const { reach } = useHeadOfficeMe()
   const { setLens } = useLens()
+  // Never ask without a session: a 401 here sends the visitor to /login.
+  const signedIn = Boolean(useAuthStore((s) => s.user))
   const { data: tenants = [] } = useQuery<MyTenant[]>({
     queryKey: ['my-tenants'],
     queryFn: () => api.get<MyTenant[]>('/tenants/mine'),
     staleTime: 30_000,
+    enabled: signedIn,
   })
   const go = useCallback((link: string | null) => {
     after?.()
@@ -108,6 +112,7 @@ export function NotificationBell({ variant = 'sidebar' }: { variant?: 'sidebar' 
     queryKey: ['my-tenants'],
     queryFn: () => api.get<MyTenant[]>('/tenants/mine'),
     staleTime: 30_000,
+    enabled,
   })
   const items = (inbox.data?.pages[0]?.items ?? []).slice(0, 10)
   const multi = tenants.length > 1

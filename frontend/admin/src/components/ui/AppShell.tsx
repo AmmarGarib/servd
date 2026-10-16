@@ -75,7 +75,10 @@ function itemsForModules(modules: readonly string[], seen: Set<string>, lead = f
   return items
 }
 
-const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier']
+// /reset-password: a signed-out person opens their reset link here. Inside
+// the full shell, the sidebar / bell / company switcher call the API with no
+// session, get 401, and api.ts sends them to /login before they can reset.
+const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier', '/reset-password']
 // Full-screen pages with no signed-in staff user behind them: the page guard
 // below never runs there (it would ask GET /permissions/me without a session).
 const UNGUARDED_PREFIXES = ['/login', '/kds/login', '/supplier', '/reset-password']
