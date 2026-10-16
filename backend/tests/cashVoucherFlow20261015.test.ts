@@ -1,18 +1,24 @@
 // Cash vouchers — the 2026-10-15 flow (owner): request → finance approval →
-// CEO final approval → pay (held on 1357) → supporting documents → finance
-// verifies → the expense is booked (Dr expense / Cr 1357), exactly once.
+// CEO final approval → pay → supporting documents → finance checks them.
+// Since 2026-10-16 (owner: "It should pass only one entry when booked by
+// finance, either docs are attached or not") the PAY is the one entry —
+// Dr the voucher's 6xxx / Cr 1011 — and documents + finance's check book
+// nothing (bookedAtPay). A voucher already HELD on 1357 (paid before that,
+// built here by holdPaid) still clears 1357 at verification.
 //
 //   - Anyone raises (status submitted at once); finance returns for
 //     correction, the raiser edits and resubmits; finance approves (never its
 //     own: SELF_APPROVE); the CEO gives the final approval (never the finance
 //     approver: SAME_SIGNER).
 //   - Pay (finance only — owner, 2026-10-16; anyone else 403 PAY_FINANCE_ONLY):
-//     Dr 1357 / Cr 1011 through recordPettyCashSpendTx, no 6xxx.
+//     Dr 6xxx / Cr 1011 through recordPettyCashSpendTx, nothing on 1357.
 //   - Documents: PDF / XLSX / DOCX / CSV take; HTML, SVG, an EXE named .pdf
 //     are refused; verify without documents → 422 DOCS_REQUIRED.
-//   - Verify: Dr each line / Cr 1357 in ONE entry, change back in the box,
-//     1357 zero for the voucher; again → 409 ALREADY_POSTED. Overspend: a
-//     second hold pays the holder the difference.
+//   - Check (booked at pay): posted, nothing booked; lines / change → 422
+//     EXPENSE_BOOKED_AT_PAY; again → 409 ALREADY_POSTED.
+//   - Verify (held on 1357): Dr each line / Cr 1357 in ONE entry, change back
+//     in the box, 1357 zero for the voucher. Overspend: a second hold pays the
+//     holder the difference.
 //   - Finance raises a payee voucher with a discount (CHECK holds).
 //   - Legacy hod_signed / draft rows keep working; a legacy H3 paid row keeps
 //     its settlement rules.
@@ -101,6 +107,29 @@ async function paid(body: Record<string, unknown> = {}, boxKey = 'A'): Promise<R
   // The holder confirms "Cash received" (digital receipt, owner 2026-10-15).
   return ok('cookA', 'POST', `${V}/${v.id}/confirm-received`)
 }
+/**
+ * A voucher paid under the HOLD flow (before 2026-10-16's one-entry rule):
+ * Dr 1357 / Cr 1011 through the box (nature 'voucher_hold'), bookedAtPay
+ * false — as such rows sit in the books today. Then the holder confirms.
+ */
+async function holdPaid(body: Record<string, unknown> = {}, boxKey = 'A'): Promise<Row> {
+  const v = await approved(body)
+  const row = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })
+  await prisma.$transaction(async (tx) => {
+    const s = await recordPettyCashSpendTx(tx, {
+      box: { id: box[boxKey]! }, amountCents: row.amountCents, reason: `Cash voucher ${row.number}: ${row.purpose}`,
+      vendorName: row.payeeName, createdById: U['payA']!.id, nature: 'voucher_hold', cashVoucherId: row.id, conceptId: row.conceptId,
+    })
+    await tx.cashVoucher.update({
+      where: { id: row.id },
+      data: {
+        status: 'disbursed', boxId: box[boxKey]!, disbursedAt: new Date(), disbursedById: U['payA']!.id, dueBy: new Date(Date.now() + 30 * 86_400_000),
+        expenseOnVerify: true, bookedAtPay: false, paySource: 'box', pettyCashMovementId: s.movement.id,
+      },
+    })
+  })
+  return ok('cookA', 'POST', `${V}/${v.id}/confirm-received`)
+}
 async function upload(key: string, id: string, file = doc('bill.pdf', PDF, 'application/pdf')): Promise<string> {
   const r = await call(key, 'POST', `${V}/${id}/documents`, file)
   expect(r.statusCode, r.body).toBe(201)
@@ -176,7 +205,7 @@ afterAll(async () => {
 // ─── The whole flow ───────────────────────────────────────────────────────────
 
 describe('request → finance → CEO → pay → documents → verify', () => {
-  it('runs end to end, books 1357 at pay and the expense at verification, once', async () => {
+  it('runs end to end: ONE entry at pay (Dr expense / Cr 1011), documents and the check book nothing, 1357 untouched', async () => {
     const start1357 = await balanceOf('1357')
     const startFloat = await floatOf(box['A']!)
 
@@ -225,14 +254,18 @@ describe('request → finance → CEO → pay → documents → verify', () => {
       expect(r.json().error.code, who).toBe('PAY_FINANCE_ONLY')
     }
     expect(await floatOf(box['A']!)).toBe(startFloat)
-    // Pay: Dr 1357 / Cr 1011 — no expense yet.
+    // Pay: THE one entry — Dr 6140 (transport) / Cr 1011, under the voucher's brand; nothing on 1357.
     const pay = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(pay.statusCode, pay.body).toBe(200)
-    const pb = pay.json() as { voucher: Row; movement: { id: string; amountCents: number } }
-    expect(pb.voucher).toMatchObject({ status: 'disbursed', stage: 'awaiting_docs', expenseOnVerify: true })
-    expect(await entry(`pettycash.spend:${pb.movement.id}`)).toEqual([['1011', 'credit', 12_000], ['1357', 'debit', 12_000]])
+    const pb = pay.json() as { voucher: Row & { bookedAtPay: boolean }; movement: { id: string; amountCents: number; journalEntryId: string }; journalEntryId: string }
+    expect(pb.voucher).toMatchObject({ status: 'disbursed', stage: 'awaiting_docs', expenseOnVerify: true, bookedAtPay: true })
+    expect(await entry(`pettycash.spend:${pb.movement.id}`)).toEqual([['1011', 'credit', 12_000], ['6140', 'debit', 12_000]])
+    const payJe = await prisma.journalEntry.findUniqueOrThrow({ where: { id: pb.journalEntryId }, include: { lines: true } })
+    expect(payJe.tenantId).toBe(T.A)
+    expect(payJe.lines.every((l) => l.conceptId === C.A)).toBe(true)
     expect(await floatOf(box['A']!)).toBe(startFloat - 12_000)
-    expect(await balanceOf('1357')).toBe(start1357 + 12_000)
+    expect(await balanceOf('1357')).toBe(start1357)
+    const entriesAfterPay = await prisma.journalEntry.count({ where: { tenantId: T.A } })
     expect((await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })).json().error.code).toBe('ALREADY_PAID')
 
     // Digital receipt: the voucher shows the payer; Received by is the holder until they confirm, and finance
@@ -277,35 +310,32 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     expect(xlsxGet.headers['content-disposition']).toMatch(/^attachment; filename=".*\.xlsx"/)
     expect(xlsxGet.headers['cache-control']).toBe('private, no-store')
 
-    // The holder records what was spent: 110 of 120 — 10 comes back. Books nothing.
-    const entriesBefore = await prisma.journalEntry.count({ where: { tenantId: T.A } })
-    const sp = await ok('cookA', 'POST', `${V}/${v.id}/spend`, {
-      lines: [
-        { categoryKey: 'transport', amountCents: 9_000, description: 'Taxi to the head office' },
-        { categoryKey: 'office', amountCents: 2_000, description: 'Copy paper' },
-      ],
-    })
-    expect(sp.spend).toMatchObject({ spentCents: 11_000, changeDueCents: 1_000, topUpDueCents: 0 })
-    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entriesBefore)
-    expect(sp.stage).toBe('awaiting_verification')
+    // The documents are stored under the voucher and book nothing.
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entriesAfterPay)
+    const st = await call('finA', 'GET', `${V}/${v.id}`)
+    expect(st.json()).toMatchObject({ stage: 'awaiting_verification', closed: true, booksState: 'booked', canRecordSpend: false, spend: null, payEntryId: pb.journalEntryId, paidAccountCode: '6140' })
+    // Nothing to record as spent: the pay booked it.
+    const sp = await call('cookA', 'POST', `${V}/${v.id}/spend`, { lines: [{ categoryKey: 'transport', amountCents: 9_000, description: 'Taxi' }] })
+    expect(sp.statusCode).toBe(409)
+    expect(sp.json().error.code).toBe('EXPENSE_BOOKED_AT_PAY')
 
-    // Verify: not the holder, not a non-finance login; finance books it once.
+    // Check: not the holder, not a non-finance login; no lines, no change, no box — a manual journal corrects money.
     expect((await call('cookA', 'POST', `${V}/${v.id}/verify-docs`, {})).json().error.code).toBe('NOT_FINANCE')
-    expect((await call('finA', 'POST', `${V}/${v.id}/verify-docs`, { changeCents: 500 })).json().error.code).toBe('CHANGE_MISMATCH')
-    const ver = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, { changeCents: 1_000 })
+    for (const bad of [{ changeCents: 1_000 }, { lines: [{ categoryKey: 'office', amountCents: 12_000, description: 'x' }] }, { changeBoxId: box['A'] }, { topUpBoxId: box['A'] }]) {
+      const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, bad)
+      expect(r.statusCode, JSON.stringify(bad)).toBe(422)
+      expect(r.json().error.code).toBe('EXPENSE_BOOKED_AT_PAY')
+    }
+    const ver = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
     expect(ver.statusCode, ver.body).toBe(200)
-    const vb = ver.json() as { entryId: string; spentCents: number; changeCents: number; voucher: Row }
-    expect(vb).toMatchObject({ spentCents: 11_000, changeCents: 1_000 })
-    expect(vb.voucher).toMatchObject({ status: 'posted', stage: 'posted', postedJournalEntryId: vb.entryId, settledCents: 11_000, returnedCents: 1_000 })
-    expect(await entry(`cashvoucher.post:${v.id}`)).toEqual([['1357', 'credit', 11_000], ['6140', 'debit', 9_000], ['6170', 'debit', 2_000]])
-    const je = await prisma.journalEntry.findUniqueOrThrow({ where: { id: vb.entryId }, include: { lines: true } })
-    expect(je.tenantId).toBe(T.A)
-    expect(je.lines.every((l) => l.conceptId === C.A)).toBe(true)
-    // The change went back into the box: Dr 1011 / Cr 1357.
-    const change = await prisma.pettyCashMovement.findFirstOrThrow({ where: { cashVoucherId: v.id, type: 'topup' } })
-    expect(await entry(`pettycash.topup:${change.id}`)).toEqual([['1011', 'debit', 1_000], ['1357', 'credit', 1_000]])
-    expect(await floatOf(box['A']!)).toBe(startFloat - 11_000)
-    // 1357 is back where it was: zero for this voucher.
+    const vb = ver.json() as { entryId: string; spentCents: number; changeCents: number; topUpCents: number; voucher: Row }
+    expect(vb).toMatchObject({ entryId: pb.journalEntryId, spentCents: 12_000, changeCents: 0, topUpCents: 0 })
+    expect(vb.voucher).toMatchObject({ status: 'posted', stage: 'posted', postedJournalEntryId: null, settledCents: 12_000, returnedCents: 0 })
+    // The check posted NOTHING: no verification entry, no change, the same float, 1357 untouched.
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entriesAfterPay)
+    expect(await entry(`cashvoucher.post:${v.id}`)).toBeNull()
+    expect(await prisma.pettyCashMovement.count({ where: { cashVoucherId: v.id } })).toBe(1)
+    expect(await floatOf(box['A']!)).toBe(startFloat - 12_000)
     expect(await balanceOf('1357')).toBe(start1357)
 
     // Again → 409, nothing more is booked; documents stay, removing one is refused.
@@ -322,7 +352,8 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     const hist = (await call('cookA', 'GET', `${V}/${v.id}/history`)).json() as { items: Array<{ action: string; userName: string | null }> }
     const actions = hist.items.map((h) => h.action)
     expect(actions.slice(0, 7)).toEqual(['create', 'return', 'update', 'resubmit', 'finance_approve', 'approve', 'pay'])
-    expect(actions).toEqual(expect.arrayContaining(['document_add', 'spend', 'verify_docs']))
+    expect(actions).toEqual(expect.arrayContaining(['document_add', 'verify_docs']))
+    expect(actions).not.toContain('spend')
     expect(hist.items[0]!.userName).toBe(`${P} cookA`)
 
     // Exports work after approval.
@@ -332,10 +363,11 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     expect(tie, JSON.stringify(tie)).toMatchObject({ ok: true, unbookedMovements: 0 })
   })
 
-  it('spent more than paid: finance pays the difference from a box at verification; 1357 nets to zero', async () => {
+  it('held on 1357 (paid before the one-entry rule), spent more than paid: finance pays the difference from a box at verification; 1357 nets to zero', async () => {
     const start1357 = await balanceOf('1357')
     const float = await floatOf(box['A2']!)
-    const v = await paid({ amountCents: 5_000, categoryKey: 'transport' }, 'A2')
+    const v = await holdPaid({ amountCents: 5_000, categoryKey: 'transport' }, 'A2')
+    expect(await balanceOf('1357')).toBe(start1357 + 5_000)
     await upload('cookA', v.id)
     const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {
       lines: [{ categoryKey: 'transport', amountCents: 6_500, description: 'Two taxis' }],
@@ -352,15 +384,32 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     const row = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })
     expect(row).toMatchObject({ status: 'posted', settledCents: 5_000, returnedCents: 0 })
     // No line sent and none recorded: one line, the voucher's own account × its amount.
-    const d = await paid({ amountCents: 2_500, categoryKey: 'office' })
+    const d = await holdPaid({ amountCents: 2_500, categoryKey: 'office' })
     await upload('cashA', d.id)
     expect((await call('finA', 'POST', `${V}/${d.id}/verify-docs`, {})).statusCode).toBe(200)
     expect(await entry(`cashvoucher.post:${d.id}`)).toEqual([['1357', 'credit', 2_500], ['6170', 'debit', 2_500]])
     expect((await pettyCashTieOut([T.A]))[0]).toMatchObject({ ok: true })
   })
 
-  it('verification into a locked period rolls everything back', async () => {
-    const v = await paid({ amountCents: 3_000 })
+  it('a pay into a locked period rolls everything back: still approved, no movement, no entry, the float unchanged', async () => {
+    const v = await approved({ amountCents: 3_000 })
+    const float = await floatOf(box['A']!)
+    const entries = await prisma.journalEntry.count({ where: { tenantId: T.A } })
+    const lock = await prisma.periodLock.create({ data: { tenantId: T.A, lockedThrough: new Date(Date.now() + 86_400_000), lockedBy: 'test' } })
+    try {
+      const r = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+      expect(r.statusCode).toBe(422)
+      expect(r.json().error.code).toBe('PERIOD_LOCKED')
+    } finally {
+      await prisma.periodLock.delete({ where: { id: lock.id } })
+    }
+    expect(await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).toMatchObject({ status: 'approved', bookedAtPay: false, pettyCashMovementId: null })
+    expect(await floatOf(box['A']!)).toBe(float)
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entries)
+  })
+
+  it('verification of a held voucher into a locked period rolls everything back', async () => {
+    const v = await holdPaid({ amountCents: 3_000 })
     await upload('cookA', v.id)
     const float = await floatOf(box['A']!)
     const entries = await prisma.journalEntry.count({ where: { tenantId: T.A } })
@@ -415,8 +464,10 @@ describe('finance raises a voucher for an outside payee, with a discount', () =>
     await upload('cashA', v.id, doc('quote.pdf', PDF, 'application/pdf'))
     // The preparer may not verify their own voucher; another finance person does.
     expect((await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})).json().error.code).toBe('SELF_APPROVE')
+    // The pay was the one entry: Dr 6050 (repairs) / Cr 1011 for the total after discount; the check books nothing.
+    expect(await entry(`pettycash.spend:${pay.json().movement.id}`)).toEqual([['1011', 'credit', 40_000], ['6050', 'debit', 40_000]])
     expect((await call('finA2', 'POST', `${V}/${v.id}/verify-docs`, {})).statusCode).toBe(200)
-    expect(await entry(`cashvoucher.post:${v.id}`)).toEqual([['1357', 'credit', 40_000], ['6050', 'debit', 40_000]])
+    expect(await entry(`cashvoucher.post:${v.id}`)).toBeNull()
   })
 })
 
@@ -528,19 +579,27 @@ describe("company B never reaches company A's voucher", () => {
     expect(missing.items.every((x) => x.supportingCount === 0)).toBe(true)
   })
 
-  it('the close check blocks while a paid voucher waits for its documents (overridable), only in its company', async () => {
-    const v = await paid({ amountCents: 1_500 })
+  it('the close check blocks only while a voucher HOLDS cash on 1357 (overridable); a one-entry voucher with unchecked documents only warns; only in its company', async () => {
+    const held = await holdPaid({ amountCents: 1_500 })
+    const one = await paid({ amountCents: 1_700 })
     const check = CLOSE_CHECKS.find((c) => c.key === 'vouchers_awaiting_docs')!
     expect(check).toMatchObject({ severity: 'block', overridable: true })
+    const warn = CLOSE_CHECKS.find((c) => c.key === 'voucher_docs_unchecked')!
+    expect(warn).toMatchObject({ severity: 'warn' })
     const ctx = (tenantId: string) => ({ db: prisma, tenantId, prevLock: null, newLock: new Date(Date.now() + 86_400_000), months: [], isYearEnd: false })
     const a = await check.run(ctx(T.A))
     expect(a).toMatchObject({ key: 'vouchers_awaiting_docs', severity: 'block', overridable: true })
-    expect(a!.count).toBe(await prisma.cashVoucher.count({ where: { tenantId: T.A, status: 'disbursed', expenseOnVerify: true } }))
+    expect(a!.count).toBe(await prisma.cashVoucher.count({ where: { tenantId: T.A, status: 'disbursed', expenseOnVerify: true, bookedAtPay: false } }))
+    const w = await warn.run(ctx(T.A))
+    expect(w).toMatchObject({ key: 'voucher_docs_unchecked', severity: 'warn' })
+    expect(w!.count).toBe(await prisma.cashVoucher.count({ where: { tenantId: T.A, status: 'disbursed', bookedAtPay: true } }))
     expect(await check.run(ctx(T.B))).toBeNull()
-    // Before the voucher was paid it does not count.
-    const old = await check.run({ ...ctx(T.A), newLock: new Date(Date.now() - 30 * 86_400_000) })
-    expect(old).toBeNull()
-    expect(v.status).toBe('disbursed')
+    expect(await warn.run(ctx(T.B))).toBeNull()
+    // Before the vouchers were paid they do not count.
+    const before = { ...ctx(T.A), newLock: new Date(Date.now() - 30 * 86_400_000) }
+    expect(await check.run(before)).toBeNull()
+    expect(await warn.run(before)).toBeNull()
+    expect([held.status, one.status]).toEqual(['disbursed', 'disbursed'])
   })
 
   it('approvals inbox: finance sees the finance step (approve / return / reject), the CEO the final step', async () => {
@@ -581,13 +640,13 @@ describe("company B never reaches company A's voucher", () => {
 // ─── Review gate (2026-10-15): stock / capex at verification, own money, exact change ───
 
 describe('review gate', () => {
-  it('stock and capex lines at verification: Dr 12x0 + CapEx 1340, 1357 and 1011 net to zero, tie-out holds', async () => {
+  it('held voucher — stock and capex lines at verification: Dr 12x0 + CapEx 1340, 1357 and 1011 net to zero, tie-out holds', async () => {
     const tomato = (await prisma.inventoryItem.create({ data: { name: `${P} Tomato`, unit: 'kg', tenantId: T.A, currentStock: 0, category: 'produce' } })).id
     const proj = (await prisma.capexProject.create({ data: { tenantId: T.A, name: `${P} fit-out` } })).id
     const cl = (await prisma.capexLine.create({ data: { projectId: proj, scope: 'Equipment', item: 'Blender', unitCostCents: 500_000 } })).id
     const start1357 = await balanceOf('1357')
     const start1011 = await balanceOf('1011')
-    const v = await paid({ amountCents: 9_000 })
+    const v = await holdPaid({ amountCents: 9_000 })
     await upload('cookA', v.id)
     const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {
       lines: [
@@ -616,7 +675,7 @@ describe('review gate', () => {
     // Another finance person still may set a discount.
     expect((await call('finA', 'PATCH', `${V}/${own.id}`, { discountCents: 500 })).statusCode).toBe(200)
 
-    const v = await paid({ amountCents: 2_000 })
+    const v = await holdPaid({ amountCents: 2_000 })
     await upload('cookA', v.id)
     const r = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {
       lines: [{ categoryKey: 'transport', amountCents: 2_000, description: 'Taxi' }], changeCents: 300,
@@ -642,7 +701,7 @@ describe('closed when the supporting documents are attached; finance checks afte
   }
   const ids = async (key: string, view: string) => ((await call(key, 'GET', `${V}?view=${view}`)).json() as { items: Row[] }).items.map((x) => x.id)
 
-  it('requester (not the holder) attaches after pay → receipt confirmed, CLOSED (books pending); send back reopens; a new upload closes; verify → booked', async () => {
+  it('requester (not the holder) attaches after pay → receipt confirmed, CLOSED (booked at pay); send back reopens; a new upload closes; the check books nothing', async () => {
     // cookA asks for cash that waiterA takes.
     const v = await approved({ amountCents: 3_000, holderUserId: U['waiterA']!.id, purpose: 'Gas cylinder refill' })
     expect(v).toMatchObject({ status: 'approved' })
@@ -650,7 +709,7 @@ describe('closed when the supporting documents are attached; finance checks afte
     expect(pay.statusCode, pay.body).toBe(200)
 
     const before = await get('cookA', v.id)
-    expect(before).toMatchObject({ payeeUserId: U['waiterA']!.id, canUpload: true, closed: false, booksState: null, stage: 'awaiting_docs', cashReceivedAt: null })
+    expect(before).toMatchObject({ payeeUserId: U['waiterA']!.id, canUpload: true, closed: false, booksState: 'booked', stage: 'awaiting_docs', cashReceivedAt: null })
     expect(await ids('cookA', 'open')).toContain(v.id)
     expect(await ids('cookA', 'closed')).not.toContain(v.id)
 
@@ -658,7 +717,7 @@ describe('closed when the supporting documents are attached; finance checks afte
     const docId = await upload('cookA', v.id)
     const closed = await get('cookA', v.id)
     expect(closed).toMatchObject({
-      status: 'disbursed', closed: true, booksState: 'pending', sentBack: false, stage: 'awaiting_verification',
+      status: 'disbursed', closed: true, booksState: 'booked', sentBack: false, stage: 'awaiting_verification',
       cashReceivedById: U['cookA']!.id, canUpload: true, canSendBack: false,
     })
     expect(closed.documents.map((d) => d.id)).toContain(docId)
@@ -683,7 +742,7 @@ describe('closed when the supporting documents are attached; finance checks afte
     }
     expect((await call('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'x' })).statusCode).toBe(400)
     const sb = await ok('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'Bill is unreadable' })
-    expect(sb).toMatchObject({ status: 'disbursed', closed: false, booksState: null, sentBack: true, sentBackNote: 'Bill is unreadable', stage: 'sent_back' })
+    expect(sb).toMatchObject({ status: 'disbursed', closed: false, booksState: 'booked', sentBack: true, sentBackNote: 'Bill is unreadable', stage: 'sent_back' })
     expect((await call('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'Again please' })).json().error.code).toBe('VOUCHER_NOT_CLOSED')
     expect(await ids('cookA', 'open')).toContain(v.id)
     expect(await ids('finA', 'sent_back')).toContain(v.id)
@@ -694,14 +753,17 @@ describe('closed when the supporting documents are attached; finance checks afte
 
     // A new document closes it again.
     await upload('cookA', v.id, doc('bill-clear.pdf', PDF, 'application/pdf'))
-    expect(await get('cookA', v.id)).toMatchObject({ closed: true, booksState: 'pending', sentBack: false, stage: 'awaiting_verification' })
+    expect(await get('cookA', v.id)).toMatchObject({ closed: true, booksState: 'booked', sentBack: false, stage: 'awaiting_verification' })
     expect(await ids('cookA', 'open')).not.toContain(v.id)
 
-    // Finance verifies exactly as before: the expense is booked → closed, booked.
+    // Finance checks the documents: posted, and nothing more is booked — the pay was the one entry.
+    const entries = await prisma.journalEntry.count({ where: { tenantId: T.A } })
     const ver = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
     expect(ver.statusCode, ver.body).toBe(200)
     expect((ver.json() as { voucher: Detail }).voucher).toMatchObject({ status: 'posted', closed: true, booksState: 'booked', canSendBack: false })
-    expect(await entry(`cashvoucher.post:${v.id}`)).toEqual([['1357', 'credit', 3_000], ['6140', 'debit', 3_000]])
+    expect(await entry(`cashvoucher.post:${v.id}`)).toBeNull()
+    expect(await entry(`pettycash.spend:${pay.json().movement.id}`)).toEqual([['1011', 'credit', 3_000], ['6140', 'debit', 3_000]])
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entries)
 
     // A booked voucher is never sent back.
     const late = await call('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'Too late now' })

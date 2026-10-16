@@ -11,9 +11,10 @@
 //     a voucher should remain at Finance end" — role finance with the
 //     accounting module; a box's cashier, a manager and the CEO get 403
 //     PAY_FINANCE_ONLY). Finance may pay from any open box of the voucher's
-//     company. It is the ONLY step that moves cash: Dr 1357 / Cr 1011 (held until the documents are verified),
-//     dueBy set, float lowered — once, rolled back whole on
-//     INSUFFICIENT_FLOAT. The old /disburse and /photo are gone.
+//     company. It is the ONLY step that moves cash and ONE entry books the
+//     expense (owner, 2026-10-16: "It should pass only one entry when booked by
+//     finance"): Dr the voucher's 6xxx / Cr 1011, nothing on 1357, dueBy set,
+//     float lowered — once, rolled back whole on INSUFFICIENT_FLOAT. The old /disburse and /photo are gone.
 //   - Two companies: B gets 404 on every route of A's request.
 //   - Legacy rows with no holder are 'needs review': keepers only, until
 //     finance names the holder.
@@ -274,8 +275,8 @@ describe('the final approval is the CEO\'s, never the finance approver\'s', () =
 
 // ─── Pay ──────────────────────────────────────────────────────────────────────
 
-describe('finance pays — no photo — and the money waits on 1357 for its documents', () => {
-  it('pay posts Dr 1357 / Cr 1011, sets dueBy and lowers the float; only this moves cash', async () => {
+describe('finance pays — no photo — ONE entry books the expense', () => {
+  it('pay posts Dr <expense> / Cr 1011, sets dueBy and lowers the float; only this moves cash; 1357 untouched', async () => {
     const boxId = box['A']!
     const start = await floatOf(boxId)
     const v = await approved({ amountCents: 25_000, purpose: 'Diesel for the generator', categoryKey: 'transport', conceptId: C.A })
@@ -308,13 +309,17 @@ describe('finance pays — no photo — and the money waits on 1357 for its docu
     expect(body.movement.journalEntryId).toBeTruthy()
     expect(body.newFloatCents).toBe(start - 25_000)
     expect(await floatOf(boxId)).toBe(start - 25_000)
-    // Held: Dr 1357 / Cr 1011 — no expense until finance verifies the documents, never 1355.
-    expect(await linesOf(`pettycash.spend:${body.movement.id}`, T.A)).toEqual([['1011', 'credit', 25_000], ['1357', 'debit', 25_000]])
+    // ONE entry: Dr 6140 (transport) / Cr 1011, under the voucher's brand — never 1357, never 1355.
+    expect(await linesOf(`pettycash.spend:${body.movement.id}`, T.A)).toEqual([['1011', 'credit', 25_000], ['6140', 'debit', 25_000]])
+    const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: T.A, reference: `pettycash.spend:${body.movement.id}` }, include: { lines: true } })
+    expect(je.lines.every((l) => l.conceptId === C.A)).toBe(true)
     const m = await prisma.pettyCashMovement.findUniqueOrThrow({ where: { id: body.movement.id }, include: { lines: true } })
-    expect(m).toMatchObject({ type: 'spend', amountCents: -25_000, cashVoucherId: v.id, conceptId: C.A, createdById: U['finA']!.id, approvedById: U['ceoA']!.id, accountCode: '1357' })
-    expect(m.lines).toHaveLength(0)
-    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).expenseOnVerify).toBe(true)
-    expect(await prisma.journalEntry.count({ where: { tenantId: T.A, lines: { some: { account: { code: '1355' } } } } })).toBe(0)
+    expect(m).toMatchObject({ type: 'spend', amountCents: -25_000, cashVoucherId: v.id, conceptId: C.A, createdById: U['finA']!.id, approvedById: U['ceoA']!.id })
+    expect(m.lines).toHaveLength(1)
+    expect(m.lines[0]).toMatchObject({ kind: 'expense', accountCode: '6140', amountCents: 25_000 })
+    expect(await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).toMatchObject({ expenseOnVerify: true, bookedAtPay: true })
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A, lines: { some: { account: { code: { in: ['1355', '1357'] } } } } } })).toBe(0)
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A, OR: [{ reference: { contains: v.id } }, { reference: `pettycash.spend:${body.movement.id}` }] } })).toBe(1)
 
     // Paying twice is refused, and nothing moves.
     const again = await call('finA2', 'POST', `${V}/${v.id}/pay`, { boxId })
@@ -342,7 +347,7 @@ describe('finance pays — no photo — and the money waits on 1357 for its docu
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().voucher.boxId).toBe(box['A_one'])
     expect(r.json().voucher.category).toBe('6170')
-    expect(await linesOf(`pettycash.spend:${r.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 3_000], ['1357', 'debit', 3_000]])
+    expect(await linesOf(`pettycash.spend:${r.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 3_000], ['6170', 'debit', 3_000]])
   })
 
   it('two pays at the same moment pay once', async () => {
@@ -420,7 +425,7 @@ describe('finance may change the category until the request is paid', () => {
     expect(ok.json().category).toBe('office')
     const paid = await call('finA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
     expect(paid.json().voucher.category).toBe('office')
-    expect(await linesOf(`pettycash.spend:${paid.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 2_000], ['1357', 'debit', 2_000]])
+    expect(await linesOf(`pettycash.spend:${paid.json().movement.id}`, T.A)).toEqual([['1011', 'credit', 2_000], ['6170', 'debit', 2_000]])
     expect((await call('finA', 'PATCH', `${V}/${v.id}`, { categoryKey: 'transport' })).statusCode).toBe(409)
   })
 

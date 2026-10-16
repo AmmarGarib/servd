@@ -2,10 +2,12 @@
 // Cash vouchers — anyone asks for cash (owner, 2026-10-15).
 //
 // A request is a voucher the moment it is sent: it goes to finance, then to the
-// CEO; after the CEO approves the cashier pays it, the holder uploads the
-// supporting documents — the voucher is CLOSED for them then (it leaves "My
-// open vouchers") — and finance checks the documents after, which books the
-// expense (books: pending → booked). Finance may send it back with a note.
+// CEO; after the CEO approves finance pays it — that ONE entry books the
+// expense (owner, 2026-10-16) — the holder uploads the supporting documents —
+// the voucher is CLOSED for them then (it leaves "My open vouchers") — and
+// finance checks the documents after, which books nothing more (a voucher held
+// on 1357 before that rule is booked at the check). Finance may send it back
+// with a note.
 // Finance can also raise a voucher for an outside payee (with a discount).
 //
 // Dashboard tiles filter the list (server views). API: /trustops/cash-vouchers.
@@ -85,7 +87,7 @@ function CashVouchers() {
             <h1 className="text-2xl font-black text-white/90">Cash vouchers</h1>
             <p className="text-sm text-white/45 mt-1 max-w-2xl">
               Request cash here — a voucher is created and goes to finance at once, then to the CEO. After approval the cashier pays you;
-              attach the supporting documents and the voucher is closed for you. Finance checks them afterwards and books the expense.
+              attach the supporting documents and the voucher is closed for you. Finance books the expense when it pays, and checks the documents afterwards.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

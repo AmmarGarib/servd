@@ -153,9 +153,13 @@ export function VoucherDetail({ id }: { id: string }) {
               Closed — books {v.booksState === 'booked' ? 'booked' : 'pending'}
             </p>
             <p className="text-xs text-white/60 mt-1">
-              {v.booksState === 'booked'
-                ? 'The supporting documents are attached and finance has checked them; the expense is booked.'
-                : 'The supporting documents are attached — nothing more is needed from the requester. Finance checks them and books the expense; if something is missing it is sent back.'}
+              {v.bookedAtPay
+                ? (v.status === 'posted'
+                  ? 'The supporting documents are attached under this voucher and finance has checked them. The expense was booked in one entry when finance paid it.'
+                  : 'The supporting documents are attached under this voucher — nothing more is needed from the requester. The expense was booked in one entry when finance paid it; finance checks the documents, which books nothing more. If something is missing it is sent back.')
+                : v.booksState === 'booked'
+                  ? 'The supporting documents are attached and finance has checked them; the expense is booked.'
+                  : 'The supporting documents are attached — nothing more is needed from the requester. Finance checks them and books the expense; if something is missing it is sent back.'}
             </p>
           </div>
         )}
@@ -255,9 +259,10 @@ export function VoucherDetail({ id }: { id: string }) {
         {v.status === 'posted' && (
           <div className="rounded-2xl p-4 border" style={{ background: 'color-mix(in srgb, var(--erp-success) 10%, transparent)', borderColor: 'var(--erp-success)' }}>
             <p className="text-sm font-black text-success">
-              Documents verified &amp; expense booked{v.docsVerifiedByName ?? v.postedByName ? ` by ${v.docsVerifiedByName ?? v.postedByName}` : ''}
+              {v.bookedAtPay ? 'Documents checked' : 'Documents verified & expense booked'}{v.docsVerifiedByName ?? v.postedByName ? ` by ${v.docsVerifiedByName ?? v.postedByName}` : ''}
               {v.postedAt ?? v.docsVerifiedAt ? ` · ${fmtDateTime(v.postedAt ?? v.docsVerifiedAt)}` : ''}
             </p>
+            {v.bookedAtPay && <p className="text-xs text-white/60 mt-1">The expense was booked in one entry when finance paid it; the check booked nothing more.</p>}
           </div>
         )}
 
@@ -354,7 +359,7 @@ function Steps({ v }: { v: CashVoucher }) {
     rejectedBeforeCeo && financeAt
       ? { title: 'CEO', who: v.rejectedByName ?? null, when: v.rejectedAt ?? null, state: 'bad' }
       : { title: 'CEO', who: v.directorSignedByName ?? null, when: v.directorSignedAt, state: v.directorSignedAt ? 'done' : 'todo' },
-    { title: 'Paid', who: v.paidByName ?? null, when: v.disbursedAt ?? null, state: paid ? 'done' : 'todo' },
+    { title: v.bookedAtPay ? 'Paid & booked' : 'Paid', who: v.paidByName ?? null, when: v.disbursedAt ?? null, state: paid ? 'done' : 'todo' },
     { title: 'Cash received', who: v.cashReceivedAt ? (v.cashReceivedByName ?? v.receiverName ?? null) : null, when: v.cashReceivedAt ?? null, state: v.cashReceivedAt ? 'done' : 'todo' },
     {
       title: v.closed ? 'Documents — closed' : 'Documents',
@@ -363,7 +368,7 @@ function Steps({ v }: { v: CashVoucher }) {
       state: v.sentBack || v.overdue ? 'bad' : docs > 0 ? 'done' : 'todo',
     },
     {
-      title: legacy ? (v.status === 'converted' ? 'Converted' : 'Settled') : 'Checked & booked',
+      title: legacy ? (v.status === 'converted' ? 'Converted' : 'Settled') : v.bookedAtPay ? 'Documents checked' : 'Checked & booked',
       who: v.docsVerifiedByName ?? v.postedByName ?? null,
       when: verifiedAt ?? v.settledAt ?? null,
       state: v.status === 'posted' || v.status === 'settled' || v.status === 'converted' ? 'done' : 'todo',
@@ -498,7 +503,7 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
       box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : { source: 'cash_on_hand' },
       { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
-    onSuccess: () => { toast.success(`${v.number} is paid — now waiting for the supporting documents.`); onDone() },
+    onSuccess: () => { toast.success(`${v.number} is paid and booked — now waiting for the supporting documents.`); onDone() },
   })
   const short = !!box && box.floatCents < v.amountCents
   const nothing = !isLoading && options.length === 0
@@ -506,8 +511,9 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Pay {holder}</p>
       <p className="text-xs text-white/55">
-        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. The cash is held against this voucher until
-        {` ${holder}`} uploads the supporting documents; finance books the expense once they are verified.
+        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. Paying books the expense now, in one entry
+        (the voucher&rsquo;s expense account against where the cash comes from). The supporting documents are attached
+        under this voucher afterwards and book nothing; any change or overspend is corrected with a manual journal.
       </p>
       <Select value={chosen} onChange={(e) => setPick(e.target.value)} className={fieldCls} aria-label="Pay from" disabled={isLoading || nothing}>
         {options.length !== 1 && <option value="">{isLoading ? 'Loading…' : '— pay from —'}</option>}
@@ -541,7 +547,7 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
       {short && <p className="text-xs text-s-red font-bold">{box!.name} holds PKR {formatPkr(box!.floatCents)} — less than this voucher. Top it up first, or pay from another source.</p>}
       {pay.error && <ErrorBanner message={errorWords(pay.error)} />}
       <button disabled={pay.isPending || !chosen} className={primaryBtn}
-        onClick={async () => { if (await confirm({ title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} is paid from ${fromWords}.`, confirmLabel: 'Cash handed over' })) { pay.reset(); pay.mutate() } }}>
+        onClick={async () => { if (await confirm({ title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} is paid from ${fromWords} and booked as expense now.`, confirmLabel: 'Cash handed over' })) { pay.reset(); pay.mutate() } }}>
         {pay.isPending ? 'Paying…' : `Cash handed to ${holder}`}
       </button>
     </div>

@@ -10,6 +10,7 @@
 //   • VerifyPanel — finance confirms the lines and the change, then books it.
 // Every button follows the server's capability flags on the voucher.
 
+import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -141,7 +142,7 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
           <p className="text-sm font-black text-white/90">{v.sentBack ? 'Finance needs more documents' : 'Attach your supporting documents'}</p>
           <p className="text-xs text-white/60">
             {v.sentBack && v.sentBackNote ? `Finance: “${v.sentBackNote}”. ` : ''}
-            Attach the bills, receipts or invoices for this cash. Once they are attached the voucher is closed for you — finance checks them afterwards and books the expense.
+            Attach the bills, receipts or invoices for this cash. Once they are attached the voucher is closed for you — finance checks them afterwards{v.bookedAtPay ? '' : ' and books the expense'}.
           </p>
           <button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={primaryBtn}>
             {busy ? 'Uploading…' : docs.length ? '+ Attach more documents' : '+ Attach documents'}
@@ -152,7 +153,8 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
         <div>
           <p className="text-sm font-black text-white/90">Supporting documents</p>
           <p className="text-xs text-white/50">
-            Bills, receipts, invoices — PDF, photos, Excel, Word and similar. Attached documents close the voucher; finance books the expense once it has checked them.
+            Bills, receipts, invoices — PDF, photos, Excel, Word and similar. Attached documents close the voucher;
+            {v.bookedAtPay ? ' the expense was booked when finance paid it, so they are kept under the voucher and book nothing.' : ' finance books the expense once it has checked them.'}
             {v.dueBy && v.status === 'disbursed' ? ` Due by ${fmtDateTime(v.dueBy).split(',')[0]}.` : ''}
           </p>
         </div>
@@ -270,8 +272,52 @@ export function SpentPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean 
   )
 }
 
-/** Finance: confirm the lines, then verify the documents and book the expense. Change / difference move through the box — or, for a voucher paid from cash on hand / a bank, that same account. */
+/**
+ * Finance's check of a voucher booked at pay (owner, 2026-10-16: "It should pass only one entry when booked by
+ * finance"): the expense is already on the books, so this only marks the documents checked — no lines, no change,
+ * no money. A difference is corrected with a manual journal.
+ */
+function CheckDocsPanel({ v }: { v: CashVoucher }) {
+  const qc = useQueryClient()
+  const confirm = useConfirm()
+  const check = useMutation({
+    mutationFn: () => api.post(`${CV_BASE}/${v.id}/verify-docs`, {}, { tenantId: v.tenantId }),
+    meta: { inlineErrors: true },
+    onSuccess: () => {
+      toast.success('Documents checked.')
+      void qc.invalidateQueries({ queryKey: [CV_ROOT] })
+    },
+  })
+  const noDocs = (v.supportingCount ?? v.documents?.length ?? 0) === 0
+  return (
+    <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
+      <p className="text-sm font-black text-white/90">Check the documents</p>
+      <p className="text-xs text-white/55">
+        PKR {formatPkr(v.amountCents)} was booked as expense in one entry when it was paid{v.paidFrom ? ` from ${v.paidFrom}` : ''}.
+        Check the documents above against it and mark them checked — this books nothing.
+        If less or more was spent, correct it with a manual journal on{' '}
+        <Link href="/accounting/journal" className="underline font-bold">Finance → Journal</Link>, or send the voucher back for documents.
+      </p>
+      {noDocs && <p className="text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>Upload at least one supporting document first.</p>}
+      {check.error && <ErrorBanner message={errorWords(check.error)} />}
+      <button disabled={noDocs || check.isPending} className={primaryBtn}
+        onClick={async () => {
+          if (await confirm({ title: `Mark the documents of ${v.number} checked?`, body: 'The expense is already booked; this posts nothing.', confirmLabel: 'Mark documents checked' })) { check.reset(); check.mutate() }
+        }}>
+        {check.isPending ? 'Saving…' : 'Mark documents checked'}
+      </button>
+    </div>
+  )
+}
+
+/** Finance: confirm the lines, then verify the documents and book the expense. Change / difference move through the box — or, for a voucher paid from cash on hand / a bank, that same account. A voucher booked at pay gets CheckDocsPanel instead. */
 export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean }) {
+  if (v.bookedAtPay) return <CheckDocsPanel v={v} />
+  return <HoldVerifyPanel v={v} isKeeper={isKeeper} />
+}
+
+/** A voucher held on 1357 (paid before the one-entry rule): the lines, change / overspend and the verification entry. */
+function HoldVerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean }) {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const { data: boxes = [] } = usePettyBoxes()

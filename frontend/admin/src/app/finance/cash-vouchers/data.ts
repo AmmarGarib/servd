@@ -41,7 +41,7 @@ export const STAGE_META: Record<RequestStage, { label: string; badge: string }> 
   approved:         { label: 'Approved — to pay',       badge: 's-badge-purple' },
   missing_docs:     { label: 'Paid — documents missing', badge: 's-badge-red' },
   // Closed (owner, 2026-10-16): documents attached — the requester is done; finance checks and books after.
-  awaiting_verification: { label: 'Closed — books pending', badge: 's-badge-teal' },
+  awaiting_verification: { label: 'Closed — finance to check', badge: 's-badge-teal' },
   posted:           { label: 'Closed — booked',         badge: 's-badge-green' },
   // Legacy rows (before the 2026-10-15 flow)
   draft:        { label: 'Waiting for finance',  badge: 's-badge-amber' },
@@ -136,6 +136,10 @@ export interface CashVoucher {
   status: VoucherStatus
   stage: RequestStage
   expenseOnVerify?: boolean
+  /** Booked in ONE entry when finance paid it (owner, 2026-10-16): documents and finance's check book nothing. */
+  bookedAtPay?: boolean
+  /** The entry that booked a bookedAtPay voucher (the box spend's, or the cash-on-hand / bank pay). */
+  payEntryId?: string | null
   supportingCount?: number
   documents?: SupportingDoc[]
   /** Documents attached → closed for the requester; finance still checks them (booksState). */
@@ -414,6 +418,7 @@ const ERROR_WORDS: Record<string, string> = {
   NOT_APPROVED: 'Print, PDF and Excel are available once the CEO has approved.',
   DOCS_REQUIRED: 'Upload at least one supporting document before verifying.',
   ALREADY_POSTED: 'This voucher is already verified and booked.',
+  EXPENSE_BOOKED_AT_PAY: 'The expense was booked in one entry when finance paid this voucher — checking the documents books nothing. Correct any change or overspend with a manual journal.',
   NOT_FINANCE: 'Only finance can do that.',
   VOUCHER_NOT_RETURNED: 'Only a returned voucher can be resubmitted.',
   VOUCHER_NOT_SUBMITTED: 'This voucher has moved on — reload to see where it is.',

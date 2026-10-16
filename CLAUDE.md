@@ -884,9 +884,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (`/:id/finance-approve`: role `finance` with the accounting module, or the
   CEO; never its own — 409 `SELF_APPROVE`) → the **CEO** gives the final
   approval (`/:id/approve`; never the raiser/holder, never the finance
-  approver — 409 `SAME_SIGNER`) → the box's custodian pays → the holder
-  uploads supporting documents and records what was spent → **finance verifies
-  the documents and the expense is booked** (`/:id/verify-docs`) → `posted`.
+  approver — 409 `SAME_SIGNER`) → **finance pays and that books the expense**
+  (only role `finance` with `accounting`: 403 `PAY_FINANCE_ONLY`) → the holder
+  uploads supporting documents → **finance checks the documents**
+  (`/:id/verify-docs`, books nothing) → `posted`.
   Finance or the CEO may **return for correction** (`/:id/return`, note;
   `returnCount`) — the raiser edits and `/:id/resubmit`s — or reject. The HOD
   step is retired (`/sign-hod` → 410); legacy `draft` = waiting for finance,
@@ -894,28 +895,43 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `expense` for an outside payee (`payeeName`, `grossCents` − `discountCents`
   = `amountCents`, CHECK `cash_vouchers_discount_chk`) — straight to the CEO.
   A discount is finance's only.
-- **Money:** the PAY is a hold, not the expense: `recordPettyCashSpendTx`
-  nature `voucher_hold` books Dr **1357** Petty Cash Vouchers Awaiting
-  Documents / Cr 1011 and sets `expenseOnVerify`. Verification (≥1
-  `supporting` document, else 422 `DOCS_REQUIRED`) is ONE transaction:
-  conditional claim (disbursed, `postedAt` null → `posted`; again 409
-  `ALREADY_POSTED`), change back into a box (Dr 1011 / Cr 1357) or an
-  overspend paid from a box (a second hold Dr 1357 / Cr 1011), stock / capex
-  lines onto their registers, and ONE entry `cashvoucher.post:<id>`
+- **Money — ONE entry at pay (owner, 2026-10-16: "It should pass only one
+  entry when booked by finance, either docs are attached or not, if docs are
+  attached with voucher after transaction is booked by Finance, it should only
+  save the doc and attached it below the system generated voucher").** Finance's
+  pay (`CashVoucher.bookedAtPay` true, `expenseOnVerify` stays true for the
+  documents flow) books the EXPENSE at once and nothing touches 1357: from a box,
+  `recordPettyCashSpendTx` nature `expense` with ONE line `cashRequestPayLine`
+  (Dr the voucher's 6xxx / Cr 1011, `pettycash.spend:<movementId>`, the float
+  drops); from cash on hand or a bank (`paySource`, account =
+  `moneyAccountCode` of the VOUCHER's company), `cashvoucher.pay:<id>` Dr the 6xxx /
+  Cr 1010 | bank (`postCashVoucherSourceTx`). Brand = the voucher's. Supporting
+  documents are stored under the voucher and book nothing; `/:id/spend` is 409
+  `EXPENSE_BOOKED_AT_PAY`; finance's `/:id/verify-docs` only marks the documents
+  checked (≥1 `supporting` document, else 422 `DOCS_REQUIRED`; → `posted`,
+  `settledCents` = amount, posts NOTHING) and refuses lines / change / boxes
+  (422 `EXPENSE_BOOKED_AT_PAY`): a change or an overspend is a manual journal
+  (Post / Edit / Cancel on the journal page). Close check
+  `voucher_docs_unchecked` (warn) lists one-entry vouchers whose documents are
+  not checked; the tie-out's 1357 side counts only held vouchers.
+- **Vouchers HELD on 1357** (paid 2026-10-15 → 2026-10-16 under the hold flow:
+  `expenseOnVerify` true, `bookedAtPay` false) keep their rules until they
+  clear: the pay was Dr **1357** Petty Cash Vouchers Awaiting Documents /
+  Cr 1011 (nature `voucher_hold`) or `cashvoucher.pay:<id>` Dr 1357 / Cr 1010 |
+  bank; verification is ONE transaction: conditional claim (disbursed,
+  `postedAt` null → `posted`; again 409 `ALREADY_POSTED`), change back into a
+  box (Dr 1011 / Cr 1357) or an overspend paid from a box (a second hold
+  Dr 1357 / Cr 1011) — or back to / from the same cash-on-hand / bank account
+  (`cashvoucher.change|overspend:<id>`) — stock / capex lines onto their
+  registers, and ONE entry `cashvoucher.post:<id>`
   (`pettyCashPosting.ts postCashVoucherVerifiedTx`) Dr each line / Cr 1357 —
-  1357 nets to zero per voucher; `postedJournalEntryId` stamped. **Pay
-  source (owner, 2026-10-16):** finance (with `accounting`) or the CEO may pay
-  from cash on hand or a bank instead (`paySource` `cash_on_hand` | `bank`,
-  account = `moneyAccountCode` of the VOUCHER's company; 403
-  `PAY_SOURCE_FINANCE_ONLY`): `cashvoucher.pay:<id>` Dr 1357 / Cr 1010 | bank,
-  no box; change / overspend at verification go back to / come from that same
-  account (`cashvoucher.change|overspend:<id>`, `postCashVoucherSourceTx`);
-  `GET /:id/pay-sources` is what the Pay picker lists. The "ready to pay"
-  bell also tells the company's finance payers when no box is named. The lines
-  live on the voucher's one settlement row; a settlement of such a voucher is
-  booked by the voucher's entry (`postCashVoucherSettlementTx` dispatches),
-  never `cashvoucher.settle`. Close check `vouchers_awaiting_docs`
-  (overridable block); tie-out compares paid-unverified vouchers with 1357.
+  1357 nets to zero per voucher; `postedJournalEntryId` stamped. `GET
+  /:id/pay-sources` is what the Pay picker lists. The "ready to pay" bell also
+  tells the company's finance payers when no box is named. The lines live on
+  the voucher's one settlement row; a settlement of such a voucher is booked by
+  the voucher's entry (`postCashVoucherSettlementTx` dispatches), never
+  `cashvoucher.settle`. Close check `vouchers_awaiting_docs` (overridable
+  block) counts only these held vouchers; the tie-out compares them with 1357.
 - **Legacy H3 rows** (`expenseOnVerify` false, paid before 2026-10-15) keep
   their rules: the pay was the expense (Dr 6xxx / Cr 1011,
   `cashRequestPayLine` / `cashRequestPaidAccountTx`), receipts book nothing,
