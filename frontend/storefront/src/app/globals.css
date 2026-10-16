@@ -316,7 +316,7 @@ summary:focus-visible {
 }
 /* Bottom fixed CTA bar — dark blueprint wash */
 .stackd-ordering .fixed.bottom-0 {
-  background: rgba(10,24,87,0.95) !important;
+  background: rgb(var(--stackd-plum-dark-rgb) / 0.96) !important;
   border-top-color: rgba(255,255,255,0.14) !important;
 }
 /* The Place Order pill hardcodes `color: '#fff'` inline; on a cream
@@ -346,12 +346,12 @@ summary:focus-visible {
   color: var(--stackd-cream) !important;
 }
 .stackd-ordering [style*="rgba(255,255,255,0.95)"] {
-  background: rgba(10,24,87,0.95) !important;
+  background: rgb(var(--stackd-plum-dark-rgb) / 0.96) !important;
   border-color: rgba(255,255,255,0.14) !important;
   backdrop-filter: blur(16px);
 }
 .stackd-ordering [style*="rgba(255,255,255,0.9)"] {
-  background: rgba(10,24,87,0.92) !important;
+  background: rgb(var(--stackd-plum-dark-rgb) / 0.94) !important;
 }
 /* Menu item cards — keep the dark surface treatment + mono spec touches */
 .stackd-ordering h3,
@@ -2434,6 +2434,42 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 .stackd-ordering {
   --servd-sheet-bg: var(--stackd-cream);
   --servd-sheet-ink: var(--stackd-plum-dark);
+}
+
+/* Ordering surfaces (menu page, category bar, item cards, sheets): one token
+   set, repainted per brand so the brand colour runs all the way down (owner,
+   2026-10-16, SF-5). Buttons in ordering and checkout are rounded rectangles
+   (--servd-btn-radius), never pills (SF-4). Stackd's bar is plum, never navy. */
+:root {
+  --servd-btn-radius: 0.75rem;
+  --servd-order-bg: #ffffff;
+  --servd-order-nav-bg: rgba(255,255,255,0.95);
+  --servd-order-card: #ffffff;
+  --servd-order-chip-ink: #0a0a0a;
+  --servd-order-chip-bg: var(--servd-green-soft);
+}
+.simmer-ordering {
+  --servd-order-bg: var(--simmer-bone);
+  --servd-order-nav-bg: rgb(var(--simmer-bone-rgb) / 0.96);
+  --servd-order-card: #f9f3df;
+  --servd-order-chip-ink: var(--simmer-green);
+  --servd-order-chip-bg: rgb(var(--simmer-green-rgb) / 0.1);
+  --servd-sheet-bg: #f9f3df;
+}
+.stackd-ordering {
+  --servd-order-bg: var(--stackd-plum);
+  --servd-order-nav-bg: rgb(var(--stackd-plum-dark-rgb) / 0.96);
+  --servd-order-card: var(--stackd-cement);
+  --servd-order-chip-ink: var(--stackd-plum-dark);
+  --servd-order-chip-bg: var(--stackd-cream);
+}
+.flipd-ordering {
+  --servd-order-bg: var(--flipd-bone);
+  --servd-order-nav-bg: rgb(var(--flipd-bone-rgb) / 0.96);
+  --servd-order-card: #ffffff;
+  --servd-order-chip-ink: var(--flipd-blue);
+  --servd-order-chip-bg: rgb(var(--flipd-blue-rgb) / 0.12);
+  --servd-sheet-bg: var(--flipd-bone);
 }
 
 /* A visible ring on every storefront text field a keyboard user lands on. */

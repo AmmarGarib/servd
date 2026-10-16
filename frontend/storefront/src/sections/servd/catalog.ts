@@ -643,7 +643,7 @@ export const specs: SectionSpec[] = [
     defaults: {
       introAddress: 'The address is {address}.',
       introPhone: 'Phone {phone}.',
-      introBooking: 'Book a table online for 1 to {max} people: choose a date and party size, then a time. You get a link to confirm or cancel your booking straight after.',
+      introBooking: 'Book a table online for 1 to {max} people, from a free servd account: choose a date and party size, then a time. You get a link to confirm or cancel your booking straight after.',
       cardCta: 'Book at {brand} →',
       pillFallback: 'Dine-in',
       emptyText: 'No brands are accepting reservations right now.',

@@ -85,7 +85,7 @@ export function HoldButton({
       type="button"
       onClick={() => m.mutate(itemId)}
       disabled={busy}
-      className={`w-full rounded-xl border font-bold transition-colors disabled:opacity-40 ${
+      className={`w-full min-h-11 rounded-xl border font-bold transition-colors disabled:opacity-40 ${
         small ? 'py-1.5 text-xs' : 'py-2.5 text-sm'
       } ${held
         ? 'border-kds-green/60 text-kds-green hover:bg-kds-green/10'
@@ -138,7 +138,7 @@ export function RecallStrip({ stationId, actions }: { stationId: string; actions
                 type="button"
                 onClick={() => actions.recall.mutate(it.itemId)}
                 disabled={busy}
-                className="shrink-0 rounded-md border border-kds-red/60 px-2 py-1 text-[11px] font-black text-kds-red hover:bg-kds-red/10 disabled:opacity-40">
+                className="shrink-0 min-h-11 rounded-lg border border-kds-red/60 px-3 py-1 text-[11px] font-black text-kds-red hover:bg-kds-red/10 disabled:opacity-40">
                 {busy ? 'Recalling…' : 'Recall'}
               </button>
             </div>

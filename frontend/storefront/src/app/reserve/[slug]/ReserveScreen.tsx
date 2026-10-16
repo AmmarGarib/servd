@@ -207,7 +207,6 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
         setData(d)
         const want = restoreTime.current
         if (want && d?.slots.some((x) => x.time === want && (x.available || x.reason === 'sign_in'))) setSelected(want)
-        restoreTime.current = null
       })
       .catch(() => { if (!ctl.signal.aborted) { setData(null); setLoadError(true) } })
       .finally(() => { if (!ctl.signal.aborted) setLoading(false) })
@@ -398,30 +397,26 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
           <div className="servd-card" style={{ padding: '1.5rem' }}>
             <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>1. When and how many?</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem' }}>
-              <label style={{ display: 'block' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Party size</span>
+              <Field label="Party size">
                 <select
                   value={partySize}
-                  onChange={(e) => setPartySize(parseInt(e.target.value, 10))}
-                  className="servd-input"
-                  style={{ marginTop: '0.4rem' }}
+                  onChange={(e) => { restoreTime.current = null; setPartySize(parseInt(e.target.value, 10)) }}
+                  className="sv-field-input servd-field"
                 >
                   {PARTY_SIZES.map((n) => (
                     <option key={n} value={n}>{n} {n === 1 ? 'person' : 'people'}</option>
                   ))}
                 </select>
-              </label>
-              <label style={{ display: 'block' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Date</span>
+              </Field>
+              <Field label="Date">
                 <input
                   type="date"
                   value={date}
                   min={todayPktIso()}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="servd-input"
-                  style={{ marginTop: '0.4rem' }}
+                  onChange={(e) => { restoreTime.current = null; setDate(e.target.value) }}
+                  className="sv-field-input servd-field"
                 />
-              </label>
+              </Field>
             </div>
           </div>
 
@@ -441,16 +436,15 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
                   <button type="button" onClick={() => setReloadKey((k) => k + 1)} style={{ color: 'var(--servd-green-ink)', fontWeight: 700, textDecoration: 'underline', minHeight: '44px', padding: '0 0.5rem' }}>Try again</button>
                 </p>
               )}
-              {!loading && data && data.slots.length === 0 && (
+              {!loading && data && dateUsable && !anyBookable && (
                 <p style={{ color: 'var(--servd-mute)', textAlign: 'center', padding: '1.5rem' }}>
                   No tables for {partySize} on this day. Try another day.
                 </p>
               )}
             </div>
-            {!loading && data && dateUsable && !token && data.slots.some((s) => s.reason === 'sign_in') && (
+            {!loading && data && dateUsable && !token && anyBookable && (
               <p style={{ fontSize: '0.85rem', color: 'var(--servd-mute)', marginBottom: '1rem' }}>
-                Some times are held for guests with an account.{' '}
-                <Link href={`/login?next=/reserve/${slug}`} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link> to see them.
+                Booking is for servd members. Pick a time, then sign in or create your free servd account to book it.
               </p>
             )}
             {data && dateUsable && groupedSlots.map(([groupName, slots]) => (
@@ -458,34 +452,32 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
                 <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--servd-mute)', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.6rem' }}>
                   {groupName}
                 </p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.6rem' }}>
                   {slots.map((s) => {
                     const sel = selected === s.time
                     return (
                       <button
                         key={s.time}
-                        onClick={() => s.available && setSelected(s.time)}
-                        disabled={!s.available}
+                        type="button"
+                        onClick={() => { restoreTime.current = null; setSelected(s.time) }}
                         aria-pressed={sel}
-                        aria-label={`${new Date(s.time).toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', weekday: 'long', day: 'numeric', month: 'long' })}, ${fmtSlot(s.time)}${s.available ? '' : s.reason === 'sign_in' ? ', sign in to book' : ', full'}`}
+                        aria-label={`${new Date(s.time).toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', weekday: 'long', day: 'numeric', month: 'long' })}, ${fmtSlot(s.time)}`}
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          minHeight: '44px',
-                          padding: '0.55rem 0.95rem',
-                          borderRadius: '999px',
-                          border: `1px solid ${sel ? 'var(--servd-green-dark)' : 'var(--servd-line)'}`,
-                          background: sel ? 'var(--servd-green)' : (s.available ? 'var(--servd-surface)' : 'var(--servd-line)'),
-                          color: sel ? 'var(--servd-on-green)' : (s.available ? 'var(--servd-ink)' : 'var(--servd-dim)'),
-                          fontWeight: sel ? 800 : 500,
-                          fontSize: '0.875rem',
-                          cursor: s.available ? 'pointer' : 'not-allowed',
-                          textDecoration: s.available ? 'none' : 'line-through',
+                          minHeight: '56px',
+                          padding: '0.6rem 0.5rem',
+                          borderRadius: '0.75rem',
+                          border: `1.5px solid ${sel ? 'var(--servd-green-dark)' : 'var(--servd-line)'}`,
+                          background: sel ? 'var(--servd-green)' : 'var(--servd-surface)',
+                          color: sel ? 'var(--servd-on-green)' : 'var(--servd-ink)',
+                          fontWeight: sel ? 800 : 600,
+                          fontSize: '1rem',
+                          cursor: 'pointer',
                         }}
                       >
                         {fmtSlot(s.time)}
-                        {!s.available && <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', textDecoration: 'none', display: 'inline-block' }}>{s.reason === 'sign_in' ? 'Sign in' : 'Full'}</span>}
                       </button>
                     )
                   })}
@@ -494,33 +486,42 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
             ))}
           </div>
 
-          {/* Step 3: guest details */}
-          {selected && (
+          {/* Step 3: sign in (visitors) or guest details (members) */}
+          {selected && !token && (
+            <div className="servd-card" style={{ padding: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>3. Sign in to book</h2>
+              <p style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', marginBottom: '1rem' }}>
+                Tables are booked from a servd account. You&rsquo;ll come straight back to
+                {' '}<strong>{partySize}</strong> at <strong>{fmtSlot(selected)} on {date}</strong>.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <MagneticLink href={withReturnPath('/login', bookingNext)} className="servd-btn-primary">Sign in</MagneticLink>
+                <MagneticLink href={withReturnPath('/signup', bookingNext)} className="servd-btn-dark">Create a servd account</MagneticLink>
+              </div>
+            </div>
+          )}
+
+          {selected && token && (
             <form ref={formRef} className="servd-card" style={{ padding: '1.5rem' }} onSubmit={onSubmit}>
               <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>3. Your details</h2>
               <div style={{ display: 'grid', gap: '0.75rem' }}>
-                <label>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Full name *</span>
-                  <input ref={nameRef} required name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="servd-input servd-field" style={{ marginTop: '0.4rem' }} />
-                </label>
+                <Field label="Full name *">
+                  <input ref={nameRef} required name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="sv-field-input servd-field" />
+                </Field>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-                  <label>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Phone *</span>
+                  <Field label="Phone *" error={phoneError} errorId="reserve-phone-err">
                     <input id="reserve-phone" required name="tel" autoComplete="tel" type="tel" inputMode="tel" placeholder="0300 1234567" value={phone}
                       onChange={(e) => { setPhone(e.target.value); if (phoneError && isPkMobile(normalisePhone(e.target.value))) setPhoneError('') }}
                       aria-invalid={!!phoneError} aria-describedby={phoneError ? 'reserve-phone-err' : undefined}
-                      className="servd-input servd-field" style={{ marginTop: '0.4rem' }} />
-                    {phoneError && <span id="reserve-phone-err" role="alert" style={{ display: 'block', marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--servd-danger)' }}>{phoneError}</span>}
-                  </label>
-                  <label>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Email</span>
-                    <input type="email" name="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} className="servd-input servd-field" style={{ marginTop: '0.4rem' }} />
-                  </label>
+                      className="sv-field-input servd-field" />
+                  </Field>
+                  <Field label="Email">
+                    <input type="email" name="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} className="sv-field-input servd-field" />
+                  </Field>
                 </div>
-                <label>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--servd-mute)', fontWeight: 600 }}>Allergies, occasion, special requests</span>
-                  <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} className="servd-input" style={{ marginTop: '0.4rem' }} />
-                </label>
+                <Field label="Allergies, occasion, special requests">
+                  <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} className="sv-field-input servd-field" />
+                </Field>
               </div>
 
               <div style={{ marginTop: '1.25rem', padding: '0.75rem 1rem', background: 'var(--servd-green-soft)', borderRadius: '0.6rem', fontSize: '0.85rem', color: 'var(--servd-green-ink)' }}>
@@ -530,19 +531,22 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
               {error && (
                 <p role="alert" style={{ marginTop: '0.75rem', color: 'var(--servd-danger)', fontSize: '0.85rem' }}>
                   {error}
-                  {signInToBook && (
-                    <> <Link href={`/login?next=/reserve/${slug}`} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link></>
+                  {needsSignIn && (
+                    <> <Link href={withReturnPath('/login', bookingNext)} style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>Sign in</Link></>
+                  )}
+                  {limitReached && (
+                    <> <Link href="/account" style={{ color: 'var(--servd-green-ink)', fontWeight: 700 }}>See my bookings</Link></>
                   )}
                 </p>
               )}
 
-              <MagneticButton type="submit" disabled={submitting || !name.trim() || !phone.trim()} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>
+              <MagneticButton type="submit" disabled={submitting || !name.trim() || !phone.trim() || limitReached} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>
                 {submitting ? 'Booking…' : 'Confirm booking'}
               </MagneticButton>
               <p style={{ fontSize: '0.7rem', color: 'var(--servd-dim)', textAlign: 'center', marginTop: '0.75rem' }}>
-                {token && profile?.phoneVerifiedAt
+                {profile?.phoneVerifiedAt
                   ? 'You’ll get a WhatsApp confirmation on your verified number, and a reminder before your booking.'
-                  : 'You’ll get a link to confirm or cancel on the next screen. Sign in with a verified phone for WhatsApp confirmations and reminders.'}
+                  : 'You’ll get a link to confirm or cancel on the next screen. Verify your phone in your account for WhatsApp confirmations and reminders.'}
               </p>
             </form>
           )}

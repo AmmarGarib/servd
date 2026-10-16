@@ -989,7 +989,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
 
   const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-GB', {
     timeZone: 'Asia/Karachi', weekday: 'short', day: 'numeric', month: 'short',
-    hour: '2-digit', minute: '2-digit', hour12: false,
+    hour: 'numeric', minute: '2-digit', hour12: true,
   })
 
   return (

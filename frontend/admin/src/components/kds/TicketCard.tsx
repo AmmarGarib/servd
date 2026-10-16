@@ -7,6 +7,7 @@ import { useKdsActions } from '../../hooks/useKdsSocket'
 import { useKdsStore } from '../../store/kds'
 import { useAuthStore } from '../../store/auth'
 import { PhotoBumpModal } from './PhotoBumpModal'
+import { Check, Pause, Timer, Utensils, X } from 'lucide-react'
 import { fmtPkrWhole } from '../../lib/money'
 
 // Aggregator sources (ubereats / doordash / deliveroo) are gone. GS Foods
@@ -127,7 +128,7 @@ function InstructionModal({ item, isUrdu, onClose }: InstructionModalProps) {
           <img src={imageUrl} alt={displayName} className="w-full h-48 object-cover" />
         )}
         {!imageUrl && (
-          <div className="w-full h-24 bg-kds-border/30 flex items-center justify-center text-4xl">🍽</div>
+          <div className="w-full h-24 bg-kds-border/30 flex items-center justify-center text-kds-subtext"><Utensils size={36} aria-hidden="true" /></div>
         )}
 
         {/* Content */}
@@ -181,10 +182,10 @@ function InstructionModal({ item, isUrdu, onClose }: InstructionModalProps) {
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-3 right-3 rounded-full bg-black/40 w-10 h-10 flex items-center justify-center text-white text-xl hover:bg-black/60 transition-colors"
+          className="absolute top-3 right-3 rounded-full bg-black/40 w-11 h-11 flex items-center justify-center text-white hover:bg-black/60 transition-colors"
           aria-label="Close"
         >
-          ✕
+          <X size={20} aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -359,10 +360,10 @@ function TicketItem({ item, compact, isUrdu, showImages, onBump, onHold, onRecal
         )}
         {showImages && !imageUrl && (
           <div
-            className="h-14 w-14 shrink-0 rounded-lg border border-kds-border bg-kds-border/30 flex items-center justify-center text-2xl cursor-pointer"
+            className="h-14 w-14 shrink-0 rounded-lg border border-kds-border bg-kds-border/30 flex items-center justify-center text-kds-subtext cursor-pointer"
             onClick={() => setShowInstructions(true)}
           >
-            🍽
+            <Utensils size={24} aria-hidden="true" />
           </div>
         )}
 
@@ -384,7 +385,7 @@ function TicketItem({ item, compact, isUrdu, showImages, onBump, onHold, onRecal
             )}
             {fireCountdown && (
               <span className="text-xs font-mono font-bold text-kds-blue rounded bg-kds-blue/10 px-1.5 py-0.5">
-                ⏱ {isUrdu ? 'فائر' : 'fires in'} {fireCountdown}
+                <Timer size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{isUrdu ? 'فائر' : 'fires in'} {fireCountdown}
               </span>
             )}
           </div>
@@ -424,14 +425,14 @@ function TicketItem({ item, compact, isUrdu, showImages, onBump, onHold, onRecal
                   className="kds-btn-warning h-12 w-12"
                   aria-label="Hold item"
                 >
-                  {UR.hold}
+                  <Pause size={20} aria-hidden="true" />
                 </button>
                 <button
                   onClick={handleBump}
                   className="kds-btn-primary h-12 w-12"
                   aria-label="Bump item"
                 >
-                  {UR.bump}
+                  <Check size={22} aria-hidden="true" />
                 </button>
               </>
             )}

@@ -262,28 +262,22 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
     )
   }
 
-  // Phone — a pill pinned to the bottom-left of the screen.
+  // Floating (every screen size, owner 2026-10-16): a small round badge pinned
+  // bottom-left of the content area. The name and brand live in the panel and
+  // the aria-label. `--sw` (set by the shell) is the sidebar width on desktop.
   if (placement === 'floating') {
     if (hidden) return null
     return (
-      <div ref={triggerRef} className="erp-on-secondary fixed left-3 z-[35] md:hidden rounded-full"
-        style={{ bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))', background: 'var(--erp-secondary)', boxShadow: '0 8px 24px rgb(var(--ink-rgb) / 0.3)' }}>
-        <button onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={`Switch company, brand${isSuper ? ' or role' : ''}: ${summary}`}
-          className="flex items-center gap-2 pl-1.5 pr-3 py-1.5 max-w-[78vw] text-left">
+      <div ref={triggerRef} className="erp-on-secondary fixed left-3 md:left-[var(--sw,12px)] z-[35] rounded-full"
+        style={{ bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))', background: 'var(--erp-secondary)', boxShadow: '0 6px 18px rgb(var(--ink-rgb) / 0.3)' }}>
+        <button onClick={() => setOpen((o) => !o)} aria-expanded={open} title={summary}
+          aria-label={`Switch company, brand${isSuper ? ' or role' : ''}: ${summary}`}
+          className="relative flex h-11 w-11 items-center justify-center rounded-full">
           {badge}
-          <span className="min-w-0 flex flex-col">
-            <span className="flex items-center gap-1.5 min-w-0">
-              <span className="text-[11px] font-bold truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>{companyLabel}</span>
-              {activeIsTest && <TestChip />}
-            </span>
-            {(brandText || viewAsText) && (
-              <span className="text-[10px] font-bold truncate" style={{ color: 'var(--erp-accent)' }}>
-                {[brandText, viewAsText ? `as ${viewAsText}` : null].filter(Boolean).join(' · ')}
-              </span>
-            )}
-            {brand.notHere && <span className="text-[10px] font-bold truncate" style={{ color: 'var(--erp-warning)' }}>Brand not filtered here</span>}
-          </span>
-          {chevron}
+          {(activeIsTest || brand.notHere || viewAsText) && (
+            <span className="absolute right-0.5 top-0.5 h-2.5 w-2.5 rounded-full" aria-hidden="true"
+              style={{ background: 'var(--erp-warning)', border: '1.5px solid var(--erp-secondary)' }} />
+          )}
         </button>
         {panel}
       </div>

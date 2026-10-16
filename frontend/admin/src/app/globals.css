@@ -515,3 +515,21 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Floating shell buttons (UX-6, owner 2026-10-16) ───────────────────────
+   Menu, search and bell float as small round buttons; there is no top header. */
+.fab {
+  display: flex; align-items: center; justify-content: center;
+  height: 44px; width: 44px; border-radius: 9999px;
+  background: var(--surface); color: var(--muted);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgb(var(--ink-rgb) / 0.14);
+}
+.fab:hover { color: var(--erp-primary-ink); }
+
+/* ── Small hint / label text on white cards (ERP-10, owner 2026-10-16) ─────
+   Page content only (#main): 10-11px helper text becomes 12px, and the faint
+   ink tints (text-white/25..45 = ink at 25-45%) become the standard muted
+   colour. Not applied inside kitchen / sidebar dark areas. */
+#main :is(.text-\[10px\], .text-\[11px\]):not(:where(.erp-kitchen-dark, .erp-on-secondary) *) { font-size: 12px; line-height: 1.35; }
+#main :is(.text-white\/20, .text-white\/25, .text-white\/30, .text-white\/35, .text-white\/40, .text-white\/45, .text-s-dim):not(:where(.erp-kitchen-dark, .erp-on-secondary) *) { color: var(--muted); }

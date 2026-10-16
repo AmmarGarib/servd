@@ -10,6 +10,7 @@
 // Read-only. Status changes happen on /reservations (the host's day view).
 
 import { useState } from 'react'
+import { Flag, RefreshCw, Star } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { useReservationSocket } from '../../../hooks/useReservationSocket'
@@ -75,7 +76,7 @@ export default function KitchenReservationTracker() {
               <button
                 key={h}
                 onClick={() => setHorizon(h)}
-                className={`px-3 py-1 text-xs font-bold ${
+                className={`min-h-11 min-w-11 px-3 text-sm font-bold ${
                   h === horizon
                     ? 'bg-kds-green text-primary-on'
                     : 'bg-kds-bg text-kds-subtext hover:text-kds-text'
@@ -86,8 +87,8 @@ export default function KitchenReservationTracker() {
           </div>
           <button
             onClick={() => refetch()}
-            className="rounded border border-kds-border px-2 py-1 text-xs text-kds-subtext hover:text-kds-text">
-            ↻ refresh
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-kds-border px-3 text-sm text-kds-subtext hover:text-kds-text">
+            <RefreshCw size=16 aria-hidden="true" /> Refresh
           </button>
           {dataUpdatedAt > 0 && (
             <span className="text-[10px] text-kds-subtext">
@@ -102,7 +103,7 @@ export default function KitchenReservationTracker() {
         {isLoading && <Empty msg="Loading…" />}
         {isError && <Empty msg="Couldn't load tracker. Check API." err />}
         {data && data.buckets.length === 0 && (
-          <Empty msg={`No reservations in the next ${horizon} hours. 🌿`} />
+          <Empty msg={`No reservations in the next ${horizon} hours.`} />
         )}
         <div className="flex flex-col gap-4">
           {data?.buckets.map((b) => <SlotCard key={b.slot} bucket={b} />)}
@@ -140,12 +141,12 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
         <div className="flex items-center gap-2">
           {bucket.vip > 0 && (
             <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">
-              ★ {bucket.vip} VIP
+              <Star size=11 aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />{bucket.vip} VIP
             </span>
           )}
           {bucket.hasNotes && (
             <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">
-              ⚑ notes
+              <Flag size=11 aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />notes
             </span>
           )}
         </div>
@@ -160,7 +161,7 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
                 <span className="text-kds-subtext">·</span>
                 <span className="font-bold text-kds-green">×{r.partySize}</span>
                 {r.isVip && (
-                  <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-700">★</span>
+                  <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-700"><Star size=10  aria-hidden="true" /></span>
                 )}
                 <span className={`rounded-full px-1.5 text-[10px] font-bold uppercase ${
                   r.status === 'confirmed' ? 'bg-teal-500/20 text-teal-700' :
@@ -171,7 +172,7 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
                 </span>
               </div>
               {r.notes && (
-                <div className="mt-0.5 text-xs italic text-rose-700">⚑ {r.notes}</div>
+                <div className="mt-0.5 text-xs italic text-rose-700"><Flag size=11 aria-hidden="true" className="inline-block align-[-1px] mr-1" />{r.notes}</div>
               )}
               <div className="mt-0.5 text-[11px] text-kds-subtext">
                 {r.concept.name}

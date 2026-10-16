@@ -217,20 +217,20 @@ export function SignupForm({
 
   // ── Glass styling shared with the field helpers ──
   const inp = (extra = '') =>
-    `servd-field w-full rounded-2xl px-4 py-3.5 text-base sm:text-sm font-semibold text-white placeholder:text-white/35 focus:outline-none transition-all ${extra}`
-  const inpStyle: React.CSSProperties = { background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.20)', color: 'white' }
+    `servd-field w-full rounded-xl px-4 py-3.5 text-base sm:text-sm font-semibold text-[color:var(--servd-ink)] placeholder:text-[color:var(--servd-mute)]/70 focus:outline-none transition-all ${extra}`
+  const inpStyle: React.CSSProperties = { background: '#fff', border: '1px solid var(--servd-line)', color: 'var(--servd-ink)' }
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.6)'
-    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(255,255,255,0.12)'
+    e.currentTarget.style.borderColor = 'var(--servd-purple)'
+    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(106,13,173,0.15)'
   }
   const onBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.20)'
+    e.currentTarget.style.borderColor = 'var(--servd-line)'
     e.currentTarget.style.boxShadow   = 'none'
   }
   const primaryBtnStyle = (busy: boolean): React.CSSProperties => ({
-    background: busy ? 'rgba(255,255,255,0.12)' : 'var(--servd-green)',
-    color: busy ? 'rgba(255,255,255,0.6)' : 'var(--servd-on-green)',
-    boxShadow: busy ? 'none' : '0 8px 24px rgba(0,0,0,0.25)',
+    background: busy ? 'var(--servd-surface)' : 'var(--servd-green)',
+    color: busy ? 'var(--servd-mute)' : 'var(--servd-on-green)',
+    boxShadow: busy ? 'none' : '0 4px 14px rgba(106,13,173,0.18)',
   })
 
   // Fill in the 6th digit and it goes — once per attempt.
@@ -266,13 +266,13 @@ export function SignupForm({
     <>
       {step === 'details' ? (
         <>
-          <H className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>{title}</H>
-          <p className="text-sm mb-6 text-white/60">{subtitle}</p>
+          <H className="font-black tracking-tight text-[color:var(--servd-ink)] mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>{title}</H>
+          <p className="text-sm mb-6 text-[color:var(--servd-mute)]">{subtitle}</p>
 
           {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
           {emailTaken && (
-            <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.25)' }}>
-              <Link href={loginHref} className="text-sm font-black text-white">→ Sign in to your existing account</Link>
+            <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)' }}>
+              <Link href={loginHref} className="text-sm font-black text-[color:var(--servd-ink)]">→ Sign in to your existing account</Link>
             </div>
           )}
 
@@ -311,11 +311,11 @@ export function SignupForm({
               show={showPassword} onToggle={() => setShowPassword(v => !v)}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
-            <p className="text-[11px] leading-snug pt-1 text-white/55">
+            <p className="text-[11px] leading-snug pt-1 text-[color:var(--servd-mute)]">
               We&rsquo;ll send a 6-digit code to your WhatsApp and your email.
             </p>
             <MagneticButton type="submit" disabled={loading}
-              className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
+              className="w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
               style={primaryBtnStyle(loading)}>
               {loading ? 'Sending code…' : 'Continue →'}
             </MagneticButton>
@@ -323,8 +323,8 @@ export function SignupForm({
         </>
       ) : (
         <>
-          <H className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Verify it&rsquo;s you</H>
-          <p className="text-sm mb-6 text-white/60">
+          <H className="font-black tracking-tight text-[color:var(--servd-ink)] mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Verify it&rsquo;s you</H>
+          <p className="text-sm mb-6 text-[color:var(--servd-mute)]">
             {phoneLive && emailLive
               ? 'We sent one code to your WhatsApp and your email. Enter it below.'
               : 'Enter the code we sent you.'}
@@ -340,30 +340,30 @@ export function SignupForm({
               error={codeError} note={resendNote}
               autoFocus inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
             {channels?.phone === 'failed' && (
-              <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <p className="text-[11px] leading-snug text-[color:var(--servd-mute)] rounded-2xl px-3 py-2" style={{ background: 'var(--servd-surface)' }}>
                 WhatsApp isn&rsquo;t reachable right now, so the code went to your email only. You can verify your number later from your account.
               </p>
             )}
             {channels?.email === 'failed' && (
-              <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <p className="text-[11px] leading-snug text-[color:var(--servd-mute)] rounded-2xl px-3 py-2" style={{ background: 'var(--servd-surface)' }}>
                 The code only reached your WhatsApp just now. You can verify your email later from your account.
               </p>
             )}
 
             <MagneticButton type="submit" disabled={loading || otp.length < 6}
-              className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
+              className="w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
               style={primaryBtnStyle(loading)}>
               {loading ? 'Verifying…' : 'Verify & create account'}
             </MagneticButton>
 
             <div className="flex items-center justify-between text-xs -mx-2">
               <button type="button" onClick={() => { setStep('details'); setCodes(Array(6).fill('')); setError(''); setResendNote('') }}
-                className="inline-flex items-center min-h-[44px] px-2 font-bold text-white/55 hover:text-white transition-colors">
+                className="inline-flex items-center min-h-[44px] px-2 font-bold text-[color:var(--servd-mute)] hover:text-[color:var(--servd-ink)] transition-colors">
                 ← Change details
               </button>
               <button type="button" disabled={resendCooldown > 0 || loading || resending}
                 onClick={() => { void resend() }}
-                className="inline-flex items-center min-h-[44px] px-2 font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
+                className="inline-flex items-center min-h-[44px] px-2 font-bold text-[color:var(--servd-ink)] hover:text-[color:var(--servd-ink)] disabled:opacity-40 transition-colors">
                 {resending ? 'Sending…' : resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
               </button>
             </div>
@@ -380,17 +380,19 @@ export function SignupForm({
               { icon: <GiftIcon />,  label: 'Member perks' },
             ].map((b) => (
               <div key={b.label} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl"
-                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.18)' }}>
-                <span style={{ color: 'rgba(255,255,255,0.85)', display: 'inline-flex' }}>{b.icon}</span>
-                <span className="text-[10px] font-bold text-white/60">{b.label}</span>
+                style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)' }}>
+                <span style={{ color: 'var(--servd-purple)', display: 'inline-flex' }}>{b.icon}</span>
+                <span className="text-[10px] font-bold text-[color:var(--servd-mute)]">{b.label}</span>
               </div>
             ))}
           </div>
 
-          <p className="text-center text-sm mt-5 text-white/60">
-            Already have an account?{' '}
-            <Link href={loginHref} className="font-black text-white hover:text-white/80 transition-colors">Sign in →</Link>
-          </p>
+          <p className="text-center text-sm mt-5 mb-3 text-[color:var(--servd-mute)]">Already have an account?</p>
+          <Link href={loginHref}
+            className="flex items-center justify-center w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-colors"
+            style={{ background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', textDecoration: 'none' }}>
+            Sign in
+          </Link>
         </>
       )}
     </>
@@ -425,8 +427,8 @@ function CodeBoxes(p: {
   const clear = (i: number) => { const next = [...p.value]; next[i] = ''; p.onChange(next) }
   return (
     <div>
-      <label id="signup-code-label" className="block text-[10px] font-black uppercase tracking-[0.22em] mb-0.5 text-white/55">{p.label}</label>
-      <p className="text-[11px] mb-1.5 text-white/45 truncate">{p.sublabel}</p>
+      <label id="signup-code-label" className="block text-xs font-bold mb-0.5 text-[color:var(--servd-ink)]">{p.label}</label>
+      <p className="text-[11px] mb-1.5 text-[color:var(--servd-mute)] truncate">{p.sublabel}</p>
       <div className="flex gap-1.5 sm:gap-2" role="group" aria-labelledby="signup-code-label">
         {Array.from({ length: 6 }).map((_, i) => (
           <input
@@ -462,15 +464,15 @@ function CodeBoxes(p: {
             autoFocus={p.autoFocus && i === 0}
             aria-label={`${p.label}, digit ${i + 1} of 6`}
             aria-invalid={!!p.error}
-            className="servd-field flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
-            style={p.error ? { ...p.inpStyle, border: '1px solid #ffb4ab' } : p.inpStyle}
+            className="servd-field flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-[color:var(--servd-ink)]"
+            style={p.error ? { ...p.inpStyle, border: '1px solid var(--servd-danger)' } : p.inpStyle}
             onFocus={(e) => { e.currentTarget.select(); p.onFocus(e) }}
             onBlur={p.onBlur}
           />
         ))}
       </div>
-      {p.error && <p role="alert" className="mt-1.5 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>}
-      <p aria-live="polite" className="mt-1.5 text-[11px] font-semibold text-white/70 empty:hidden">{p.note}</p>
+      {p.error && <p role="alert" className="mt-1.5 text-[11px] font-semibold" style={{ color: 'var(--servd-danger)' }}>{p.error}</p>}
+      <p aria-live="polite" className="mt-1.5 text-[11px] font-semibold text-[color:var(--servd-mute)] empty:hidden">{p.note}</p>
     </div>
   )
 }
@@ -478,10 +480,10 @@ function CodeBoxes(p: {
 /** Password rules, each turning green as it is met. */
 function PasswordHint({ value }: { value: string }) {
   const part = (ok: boolean, text: string) => (
-    <span style={{ color: ok ? 'var(--servd-green)' : undefined }} className={ok ? 'font-bold' : ''}>{text}</span>
+    <span style={{ color: ok ? 'var(--servd-green-dark)' : undefined }} className={ok ? 'font-bold' : ''}>{text}</span>
   )
   return (
-    <p className="mt-1 text-[11px] text-white/55">
+    <p className="mt-1 text-[11px] text-[color:var(--servd-mute)]">
       {part(value.length >= 8, '8+ characters')} with {part(/[a-zA-Z]/.test(value), 'a letter')} and {part(/[0-9]/.test(value), 'a number')}
     </p>
   )
@@ -508,7 +510,7 @@ interface FieldProps {
 function Field(p: FieldProps) {
   return (
     <div>
-      <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">{p.label}</label>
+      <label htmlFor={p.id} className="block text-xs font-bold mb-1.5 text-[color:var(--servd-ink)]">{p.label}</label>
       <input id={p.id} type={p.type} autoComplete={p.autoComplete}
         inputMode={p.inputMode}
         value={p.value} onChange={(e) => p.onChange(e.target.value)}
@@ -518,7 +520,7 @@ function Field(p: FieldProps) {
         onFocus={p.onFocus}
         onBlur={(e) => { p.onBlur(e); p.onValidate() }} />
       {p.error && (
-        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>
+        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: 'var(--servd-danger)' }}>{p.error}</p>
       )}
     </div>
   )
@@ -532,7 +534,7 @@ interface PasswordFieldProps extends Omit<FieldProps, 'type' | 'inputMode'> {
 function PasswordField(p: PasswordFieldProps) {
   return (
     <div>
-      <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">{p.label}</label>
+      <label htmlFor={p.id} className="block text-xs font-bold mb-1.5 text-[color:var(--servd-ink)]">{p.label}</label>
       <div className="relative">
         <input id={p.id} type={p.show ? 'text' : 'password'} autoComplete={p.autoComplete}
           value={p.value} onChange={(e) => p.onChange(e.target.value)}
@@ -544,13 +546,13 @@ function PasswordField(p: PasswordFieldProps) {
         <button type="button" onClick={p.onToggle}
           aria-label={p.show ? 'Hide password' : 'Show password'}
           aria-pressed={p.show}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg text-white/50 hover:text-white/80 transition-colors">
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg text-[color:var(--servd-mute)] hover:text-[color:var(--servd-ink)] transition-colors">
           {p.show ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
       </div>
       {p.hint}
       {p.error && (
-        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>
+        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: 'var(--servd-danger)' }}>{p.error}</p>
       )}
     </div>
   )

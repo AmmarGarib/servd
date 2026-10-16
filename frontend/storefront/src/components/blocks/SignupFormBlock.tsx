@@ -25,27 +25,27 @@ export function SignupFormBlock({ block, onDone }: { block: SignupFormBlockT; on
     <div className="container" style={{ display: 'flex', justifyContent: 'center' }}>
       <div
         className="w-full rounded-3xl px-7 py-8 shadow-2xl"
-        style={{ maxWidth: '26rem', background: 'var(--servd-purple)', color: 'white', textAlign: 'left' }}
+        style={{ maxWidth: '26rem', background: '#ffffff', border: '1px solid var(--servd-line)', color: 'var(--servd-ink)', textAlign: 'left' }}
       >
         {(mounted && token) || justDone ? (
           <div>
-            <h2 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.5rem, 5vw, 1.9rem)', letterSpacing: '-0.03em' }}>
+            <h2 className="font-black tracking-tight mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.5rem, 5vw, 1.9rem)', letterSpacing: '-0.03em' }}>
               You&rsquo;re signed in.
             </h2>
-            <p className="text-sm text-white/60">
-              <Link href="/account" className="font-black text-white hover:text-white/80">Go to your account →</Link>
+            <p className="text-sm text-[color:var(--servd-mute)]">
+              <Link href="/account" className="font-black text-[color:var(--servd-purple)] hover:underline">Go to your account →</Link>
             </p>
           </div>
         ) : block.mode === 'login' ? (
           <>
-            <h2 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.5rem, 5vw, 1.9rem)', letterSpacing: '-0.03em' }}>
+            <h2 className="font-black tracking-tight mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.5rem, 5vw, 1.9rem)', letterSpacing: '-0.03em' }}>
               {block.title?.trim() || 'Sign in'}
             </h2>
-            <p className="text-sm mb-6 text-white/60">{block.subtitle?.trim() || 'Welcome back.'}</p>
+            <p className="text-sm mb-6 text-[color:var(--servd-mute)]">{block.subtitle?.trim() || 'Welcome back.'}</p>
             <LoginForm onSuccess={done} autoFocus={false} idPrefix={idPrefix} />
-            <p className="text-center text-sm mt-6 text-white/60">
+            <p className="text-center text-sm mt-6 text-[color:var(--servd-mute)]">
               Don&apos;t have an account?{' '}
-              <Link href="/signup" className="font-black text-white hover:text-white/80 transition-colors">Create one →</Link>
+              <Link href="/signup" className="font-black text-[color:var(--servd-purple)] hover:underline transition-colors">Create one →</Link>
             </p>
           </>
         ) : (

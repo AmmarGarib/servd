@@ -1,4 +1,5 @@
 'use client'
+import { ArrowLeft, Bell, BellOff, Image as ImageIcon, Mic } from 'lucide-react'
 import { useKdsStore } from '../../store/kds'
 import { useKdsVoice } from '../../hooks/useKdsVoice'
 import { enableKdsSound, useKdsAudioState } from '../../hooks/useKdsSocket'
@@ -66,7 +67,7 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
         </div>
         {voiceEnabled && voice.lastCommand && (
           <span className="rounded-md border border-kds-green/40 bg-kds-green/10 px-2 py-0.5 text-xs text-kds-green font-mono">
-            🎙 {voice.lastCommand}
+            <Mic size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{voice.lastCommand}
           </span>
         )}
         {voiceEnabled && voice.lastError && (
@@ -97,13 +98,13 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
           onClick={() => setShowImages(!showImages)}
           title={showImages ? 'Hide item images' : 'Show item images'}
           aria-label="Show item images" aria-pressed={showImages}
-          className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
+          className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg border px-3 text-xs font-bold transition-colors ${
             showImages
               ? 'border-kds-green bg-kds-green text-primary-on'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
           }`}
         >
-          🖼
+          <ImageIcon size={20} aria-hidden="true" />
         </button>
 
         {/* Sound toggle */}
@@ -111,13 +112,13 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
           onClick={() => setSoundEnabled(!soundEnabled)}
           title={soundEnabled ? 'Mute new-order chime' : 'Unmute new-order chime'}
           aria-label="New-order chime" aria-pressed={soundEnabled}
-          className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
+          className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg border px-3 text-xs font-bold transition-colors ${
             soundEnabled
               ? 'border-kds-green bg-kds-green text-primary-on'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
           }`}
         >
-          {soundEnabled ? '🔔' : '🔕'}
+          {soundEnabled ? <Bell size={20} aria-hidden="true" /> : <BellOff size={20} aria-hidden="true" />}
         </button>
 
         {/* Voice control toggle */}
@@ -125,18 +126,18 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
           onClick={() => setVoiceEnabled(!voiceEnabled)}
           title={voiceEnabled ? 'Disable voice control' : 'Enable voice control (say "bump 47", "hold 23", "fire 12")'}
           aria-label="Voice control" aria-pressed={voiceEnabled}
-          className={`min-h-11 min-w-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
+          className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg border px-3 text-xs font-bold transition-colors ${
             voiceEnabled
               ? 'border-kds-amber bg-kds-amber text-black'
               : 'border-kds-border text-kds-subtext hover:text-kds-text'
           }`}
         >
-          🎙
+          <Mic size={20} aria-hidden="true" />
         </button>
 
         <div className="flex items-center gap-4 text-xs text-kds-subtext">
           <span>{new Date().toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })}</span>
-          <a href="/w" className="hover:text-kds-text">← Workspace</a>
+          <a href="/w" className="inline-flex min-h-11 items-center gap-1.5 hover:text-kds-text"><ArrowLeft size={16} aria-hidden="true" /> Workspace</a>
         </div>
       </div>
     </header>

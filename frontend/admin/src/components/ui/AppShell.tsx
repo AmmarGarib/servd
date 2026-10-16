@@ -572,6 +572,9 @@ function DrawerBehaviour({ panelRef, onClose }: { panelRef: React.RefObject<HTML
   return null
 }
 
+// A small round floating button (menu, search, bell) — styled by .fab in globals.css.
+const FAB = 'fab'
+
 const SCROLL_KEY = 'servd_scroll:'
 // Module level, not a ref: a Back may remount the shell, and the flag must survive that.
 let poppedNav = false
@@ -606,6 +609,15 @@ function Shell({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem('servd_sidebar_collapsed', next ? '1' : '0') } catch { /* ignore */ }
   }
   const [clockingOut, setClockingOut] = useState(false)
+  // Quick-jump (UX-7): Ctrl/Cmd+K anywhere in the shell.
+  const [jumpOpen, setJumpOpen] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setJumpOpen((o) => !o) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   const { user, token, clearAuth } = useAuthStore()
 
   const hamburgerRef = useRef<HTMLButtonElement>(null)
@@ -806,7 +818,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen h-dvh overflow-hidden" style={{ background: 'var(--bg)' }}>
+    <div className="flex h-screen h-dvh overflow-hidden" style={{ background: 'var(--bg)', ['--sw' as string]: collapsed ? '64px' : '232px' }}>
 
       <a href="#main"
         onClick={(e) => { e.preventDefault(); mainRef.current?.focus() }}
@@ -866,8 +878,34 @@ function Shell({ children }: { children: React.ReactNode }) {
         {UserFooter({ collapsed: false, switcher: false })}
       </aside>
 
-      {/* ── Phone: the switcher module, pinned bottom-left ─────────────────── */}
+      {/* ── The switcher module: a small round button, bottom-left, every size ── */}
       <TenantSwitcher placement="floating" hidden={mobileOpen} />
+
+      {/* ── Floating buttons (UX-6, owner 2026-10-16): no top header on any screen.
+          Phone: menu + search top-left, bell top-right. Desktop: search + bell
+          top-right (the sidebar is already there). <main> reserves a strip under
+          them so they never sit on a page's own title or its top-right buttons. */}
+      {!mobileOpen && (
+        <>
+          <div className="fixed left-3 z-[35] flex gap-2 md:hidden" style={{ top: 'calc(8px + env(safe-area-inset-top, 0px))' }}>
+            <button ref={hamburgerRef} onClick={() => setMobileOpen(true)} aria-label="Open menu" aria-expanded={mobileOpen} aria-controls="mobile-drawer"
+              className={FAB}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <div className="fixed right-3 z-[35] flex items-center gap-2" style={{ top: 'calc(8px + env(safe-area-inset-top, 0px))' }}>
+            <button onClick={() => setJumpOpen(true)} aria-label="Search pages (Ctrl+K)" title="Search pages (Ctrl+K)" className={FAB}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+              </svg>
+            </button>
+            <span className={`${FAB} !p-0`}><NotificationBell variant="mobile" /></span>
+          </div>
+        </>
+      )}
+      <QuickJump open={jumpOpen} onClose={() => setJumpOpen(false)} />
 
       {/* ── Desktop sidebar ────────────────────────────────────────────────── */}
       <aside
@@ -891,7 +929,6 @@ function Shell({ children }: { children: React.ReactNode }) {
           {!collapsed && (
             <>
               <span className="flex-1" />
-              <NotificationBell variant="sidebar" />
               <button onClick={() => setCollapsedPersisted(true)} aria-label="Collapse sidebar" aria-expanded={true}
                 className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/70 transition-colors rounded"
                 style={{ marginRight: '-12px' }}>
@@ -903,9 +940,6 @@ function Shell({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
-        {collapsed && (
-          <div className="relative z-10 flex justify-center py-1"><NotificationBell variant="collapsed" /></div>
-        )}
         {collapsed && (
           <button onClick={() => setCollapsedPersisted(false)} aria-label="Expand sidebar" aria-expanded={false}
             className="relative z-10 flex items-center justify-center min-h-[44px] transition-colors"
@@ -919,32 +953,18 @@ function Shell({ children }: { children: React.ReactNode }) {
         )}
 
         <NavLinks pathname={pathname} collapsed={collapsed} label="Sidebar" />
-        {UserFooter({ collapsed })}
+        {UserFooter({ collapsed, switcher: false })}
       </aside>
 
       {/* ── Main content ──────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden" style={{ background: 'var(--bg)' }}>
-
-        <header className="md:hidden flex items-center h-[54px] shrink-0 px-4 gap-3"
-          style={{ background: 'var(--surface)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.055)' }}>
-          <button ref={hamburgerRef} onClick={() => setMobileOpen(true)} aria-label="Open menu" aria-expanded={mobileOpen} aria-controls="mobile-drawer"
-            className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/80 transition-colors rounded-lg"
-            style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
-          <ServdLogo size={26} />
-          <span className="flex-1" />
-          <NotificationBell variant="mobile" />
-        </header>
 
         <PortfolioBanner />
         <TestCompanyBanner />
         <LensBanner />
         <ImpersonationBanner />
         <main id="main" ref={mainRef} tabIndex={-1}
-          className="flex-1 min-h-0 overflow-y-auto animate-fade-in pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0 outline-none">
+          className="flex-1 min-h-0 overflow-y-auto animate-fade-in pt-[calc(3.25rem+env(safe-area-inset-top,0px))] pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-16 outline-none">
           <PageGuard pathname={pathname}>{children}</PageGuard>
         </main>
       </div>

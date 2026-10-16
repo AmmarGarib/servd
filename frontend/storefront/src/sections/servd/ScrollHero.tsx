@@ -14,6 +14,10 @@ import type { SectionProps } from '../types'
 import { link, list, safeHref, safeSrc, str } from '../safe'
 import { Chevron } from './icons'
 
+// A layout saved before the logo field existed gets the servd logo; an explicit '' = none.
+const logoSrcOf = (f: Record<string, unknown>): string =>
+  typeof f.logoSrc === 'string' ? safeSrc(f.logoSrc) : '/brand/servd-logo.png'
+
 export function ScrollHero({ fields }: SectionProps) {
   const mediaType = fields.mediaType === 'image' ? 'image' : 'video'
   const mediaSrc = safeSrc(mediaType === 'video' ? fields.mediaSrc : fields.mediaImage)
@@ -46,7 +50,7 @@ export function ScrollHero({ fields }: SectionProps) {
       {...(date && { date })}
       scrollToExpand={str(fields.scrollToExpand)}
       textBlend={fields.textBlend === true}
-      {...(fields.showLogo !== false && safeSrc(fields.logoSrc) && { logoSrc: safeSrc(fields.logoSrc), logoAlt: str(fields.logoAlt).trim() })}
+      {...(fields.showLogo !== false && logoSrcOf(fields) && { logoSrc: logoSrcOf(fields), logoAlt: str(fields.logoAlt).trim() })}
       scrollCue={fields.scrollCue !== false}
       revealPadded={Boolean(overview || conclusion || primary.text || secondary.text)}
     >

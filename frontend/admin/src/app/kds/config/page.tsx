@@ -1,5 +1,6 @@
 'use client'
 import { useState, useMemo } from 'react'
+import { ArrowLeft, ChevronDown, Maximize2, Plus } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../lib/api'
 import Link from 'next/link'
@@ -177,10 +178,10 @@ function StationsTab() {
             return (
               <div key={group.id} className="rounded-xl border border-kds-border bg-kds-card overflow-hidden">
                 <button onClick={() => toggleGroup(group.id)}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kds-bg/40 transition-colors">
+                  className="w-full min-h-11 flex items-center gap-3 px-4 py-3 hover:bg-kds-bg/40 transition-colors">
                   <span className="text-kds-subtext text-xs"
                     style={{ display: 'inline-block', transition: 'transform 120ms', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>
-                    ▼
+                    <ChevronDown size=16 aria-hidden="true" />
                   </span>
                   <span className="font-bold text-kds-text">{group.name}</span>
                   <span className="text-xs text-kds-subtext">
@@ -209,7 +210,7 @@ function StationsTab() {
                                 value={draftName}
                                 onChange={(e) => setDraftName(e.target.value)}
                                 placeholder="Station name"
-                                className="rounded border border-kds-green bg-kds-bg px-2 py-1 text-sm text-kds-text focus:outline-none w-44"
+                                className="min-h-11 rounded-lg border border-kds-green bg-kds-bg px-3 text-sm text-kds-text focus:outline-none w-44"
                                 autoFocus
                               />
                               <label className="text-[11px] text-kds-subtext flex items-center gap-1.5">
@@ -218,19 +219,19 @@ function StationsTab() {
                                   type="number"
                                   value={draftOrder}
                                   onChange={(e) => setDraftOrder(Number(e.target.value))}
-                                  className="rounded border border-kds-green bg-kds-bg px-2 py-1 text-sm text-kds-text focus:outline-none w-16"
+                                  className="min-h-11 rounded-lg border border-kds-green bg-kds-bg px-3 text-sm text-kds-text focus:outline-none w-20"
                                 />
                               </label>
                               <div className="ml-auto flex items-center gap-2">
                                 <button
                                   onClick={() => saveEdit(s.id)}
                                   disabled={patchStation.isPending || !draftName.trim()}
-                                  className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
+                                  className="min-h-11 rounded-lg bg-kds-green px-4 text-sm font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
                                   Save
                                 </button>
                                 <button
                                   onClick={cancelEdit}
-                                  className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:text-kds-text">
+                                  className="min-h-11 rounded-lg border border-kds-border px-4 text-sm font-medium text-kds-subtext hover:text-kds-text">
                                   Cancel
                                 </button>
                               </div>
@@ -249,11 +250,11 @@ function StationsTab() {
                                 onClick={() => toggleActive(s)}
                                 disabled={patchStation.isPending}
                                 title={s.isActive ? 'Deactivate' : 'Activate'}
-                                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
+                                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
                                   s.isActive ? 'bg-kds-green' : 'bg-kds-border'
                                 }`}>
-                                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                                  s.isActive ? 'translate-x-4' : 'translate-x-1'
+                                <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                                  s.isActive ? 'translate-x-6' : 'translate-x-1.5'
                                 }`} />
                               </button>
                               <div className="ml-auto flex items-center gap-2">
@@ -264,12 +265,12 @@ function StationsTab() {
                                   href={`/kds/${s.id}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors inline-flex items-center gap-1">
-                                  ⤢ Preview
+                                  className="min-h-11 rounded-lg border border-kds-border px-4 text-sm font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors inline-flex items-center gap-1.5">
+                                  <Maximize2 size=14 aria-hidden="true" /> Preview
                                 </Link>
                                 <button
                                   onClick={() => startEdit(s)}
-                                  className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
+                                  className="min-h-11 rounded-lg border border-kds-border px-4 text-sm font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
                                   Edit
                                 </button>
                                 <button
@@ -283,7 +284,7 @@ function StationsTab() {
                                     }
                                   }}
                                   disabled={deleteStation.isPending && deleteStation.variables === s.id}
-                                  className="rounded-lg border border-red-500/40 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-500/10 transition-colors disabled:opacity-50">
+                                  className="min-h-11 rounded-lg border border-red-500/40 px-4 text-sm font-medium text-red-700 hover:bg-red-500/10 transition-colors disabled:opacity-50">
                                   Delete
                                 </button>
                               </div>
@@ -300,17 +301,17 @@ function StationsTab() {
                       <form
                         onSubmit={(e) => { e.preventDefault(); addStation(group) }}
                         className="flex items-center gap-2 flex-wrap">
-                        <span className="text-kds-green text-lg leading-none">＋</span>
+                        <Plus size=20 aria-hidden="true" className="text-kds-green" />
                         <input
                           value={draft}
                           onChange={(e) => setNewStationDraft((d) => ({ ...d, [group.id]: e.target.value }))}
                           placeholder={`New ${group.name} station — e.g. "Grill", "Cold prep"`}
-                          className="flex-1 min-w-[12rem] rounded border border-kds-border bg-kds-bg px-2 py-1 text-sm text-kds-text focus:border-kds-green focus:outline-none"
+                          className="flex-1 min-w-[12rem] min-h-11 rounded-lg border border-kds-border bg-kds-bg px-3 text-sm text-kds-text focus:border-kds-green focus:outline-none"
                         />
                         <button
                           type="submit"
                           disabled={!draft.trim() || isCreating}
-                          className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
+                          className="min-h-11 rounded-lg bg-kds-green px-4 text-sm font-bold text-primary-on hover:opacity-90 disabled:opacity-50">
                           {isCreating ? 'Adding…' : 'Add station'}
                         </button>
                       </form>
@@ -342,8 +343,8 @@ export default function KdsConfigPage() {
     <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between gap-3 shrink-0">
         <div>
-          <Link href="/kds" className="text-sm text-gray-500 hover:text-gray-600 flex items-center gap-1 mb-1 transition-colors">
-            ← Back to Kitchen view
+          <Link href="/kds" className="min-h-11 text-sm text-kds-subtext hover:text-kds-text flex items-center gap-1.5 mb-1 transition-colors">
+            <ArrowLeft size=16 aria-hidden="true" /> Back to Kitchen view
           </Link>
           <h1 className="text-2xl font-black text-kds-text">KDS Config</h1>
           <p className="text-sm text-kds-subtext">

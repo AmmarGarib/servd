@@ -27,7 +27,7 @@ import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } fr
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { verifyCustomerToken } from '../auth/service.js'
-import { normalisePhone } from '../auth/otp.js'
+import { isRevoked } from '../../lib/tokenRevocation.js'
 import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
 import { customerScope } from '../../lib/outboundScope.js'
 import { emitReservationEvent } from '../../lib/ws.js'
@@ -108,6 +108,37 @@ async function assertCustomerInScope(req: FastifyRequest, customerId: string, mo
     select: { id: true },
   })
   if (!customer) throw new NotFoundError('Customer', customerId)
+}
+
+/**
+ * The signed-in servd customer making a booking (UX-5: members only), or 401
+ * AUTH_REQUIRED. Same checks as requireCustomerAuth (a customer token, not
+ * logged out / revoked) plus a live account — but WITHOUT switching the
+ * request to the customer's RLS context.
+ */
+async function signedInCustomer(req: FastifyRequest) {
+  const authRequired = () => new AppError(
+    'AUTH_REQUIRED',
+    'Sign in to your servd account to book a table.',
+    401,
+    { signInToBook: true },
+  )
+  const bearer = req.headers.authorization
+  if (!bearer?.startsWith('Bearer ')) throw authRequired()
+  const token = bearer.slice(7)
+  let payload: ReturnType<typeof verifyCustomerToken>
+  try {
+    payload = verifyCustomerToken(token)
+  } catch {
+    throw authRequired()
+  }
+  if (await isRevoked(token, payload.sub, payload.iat)) throw authRequired()
+  const self = await prisma.customer.findFirst({
+    where: { id: payload.sub, deletedAt: null },
+    select: { id: true, name: true, phone: true, email: true, phoneVerifiedAt: true, emailVerifiedAt: true },
+  })
+  if (!self) throw authRequired()
+  return self
 }
 
 /**
@@ -1381,15 +1412,15 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
       if (notifyPhone) {
-        void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`, 'reservation.requested', customerScope(r.concept.tenantId))
+        void sendPhoneMessage(guestPhone!, `${formatBrandName(r.concept.name)}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`, 'reservation.requested', customerScope(r.concept.tenantId))
           .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking WhatsApp failed'))
       }
-      if (notifyEmail && body.guestEmail) {
-        const html = `<p>Hi ${escapeHtml(body.guestName)},</p>
+      if (notifyEmail && guestEmail) {
+        const html = `<p>Hi ${escapeHtml(guestName)},</p>
           <p>Your reservation at <strong>${formatBrandName(r.concept.name)}</strong> for <strong>${body.partySize} on ${when} PKT</strong> is pending confirmation.</p>
           <p><a href="${confirmUrl}" style="background:#22c55e;color:#000;padding:10px 20px;border-radius:999px;text-decoration:none;font-weight:bold">Confirm or cancel</a></p>
           ${remindable ? '<p>We’ll send you a reminder before your booking.</p>' : ''}`
-        void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} — confirm your reservation`, html, 'reservation.requested', customerScope(r.concept.tenantId))
+        void sendEmail(guestEmail, `${formatBrandName(r.concept.name)} — confirm your reservation`, html, 'reservation.requested', customerScope(r.concept.tenantId))
           .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking email failed'))
       }
 

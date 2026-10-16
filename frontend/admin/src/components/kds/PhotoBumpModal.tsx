@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { Camera, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useAuthStore } from '../../store/auth'
 
@@ -109,9 +110,9 @@ export function PhotoBumpModal({ itemId, itemName, isUrdu, onClose }: Props) {
       >
         <div className="px-4 py-3 flex items-center justify-between border-b border-kds-border">
           <p className="font-bold text-kds-text">
-            📸 {isUrdu ? 'پلیٹنگ کی تصویر' : 'Plating photo'} — {itemName}
+            <Camera size={16} aria-hidden="true" className="inline-block align-[-3px] mr-1.5" />{isUrdu ? 'پلیٹنگ کی تصویر' : 'Plating photo'} — {itemName}
           </p>
-          <button onClick={onClose} className="text-kds-subtext hover:text-kds-text text-xl px-2">✕</button>
+          <button onClick={onClose} aria-label="Close" className="flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><X size={20} aria-hidden="true" /></button>
         </div>
 
         <div className="aspect-video bg-black relative">
@@ -131,23 +132,23 @@ export function PhotoBumpModal({ itemId, itemName, isUrdu, onClose }: Props) {
         <div className="p-3 flex items-center gap-2 justify-end">
           <button
             onClick={onClose}
-            className="rounded-lg border border-kds-border text-kds-subtext px-3 py-1.5 text-xs font-bold hover:text-kds-text"
+            className="min-h-11 rounded-lg border border-kds-border text-kds-subtext px-4 py-1.5 text-sm font-bold hover:text-kds-text"
           >
             {isUrdu ? 'چھوڑیں' : 'Skip'}
           </button>
           {!snapped && !error && (
             <button
               onClick={snap}
-              className="rounded-lg bg-kds-green text-primary-on px-4 py-1.5 text-xs font-black"
+              className="min-h-11 inline-flex items-center gap-1.5 rounded-lg bg-kds-green text-primary-on px-4 py-1.5 text-sm font-black"
             >
-              {isUrdu ? 'تصویر لیں' : '📸 Capture'}
+              <Camera size={16} aria-hidden="true" />{isUrdu ? 'تصویر لیں' : 'Capture'}
             </button>
           )}
           {snapped && (
             <button
               onClick={upload}
               disabled={uploading}
-              className="rounded-lg bg-kds-green text-primary-on px-4 py-1.5 text-xs font-black disabled:opacity-50"
+              className="min-h-11 rounded-lg bg-kds-green text-primary-on px-4 py-1.5 text-sm font-black disabled:opacity-50"
             >
               {uploading ? (isUrdu ? 'اپلوڈ…' : 'Uploading…') : (isUrdu ? 'محفوظ' : 'Save')}
             </button>

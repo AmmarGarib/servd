@@ -1,6 +1,5 @@
 'use client'
 import Link from 'next/link'
-import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
 import { LoginForm } from '../../components/auth/LoginForm'
 import { useAuthReturnPath, withReturnPath } from '../../components/auth/authFlow'
 
@@ -14,28 +13,28 @@ import { useAuthReturnPath, withReturnPath } from '../../components/auth/authFlo
 export default function LoginPage() {
   const signupHref = withReturnPath('/signup', useAuthReturnPath())
   return (
-    <div className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: 'var(--servd-black)' }}>
-      <SmokeyBackground color="#5c3458" backdropBlur="sm" />
-
+    <div className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: 'var(--servd-surface)' }}>
       <div className="relative z-10 w-full max-w-sm">
-        <Link href="/" aria-label="servd home" className="mb-6 block text-center"
-          style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
-          servd<span style={{ color: 'var(--servd-green)' }}>.</span>
+        <Link href="/" aria-label="servd home" className="mb-6 flex justify-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/servd-logo.png" alt="servd" width={64} height={64} style={{ width: 64, height: 64, borderRadius: 14 }} />
         </Link>
 
-        <div className="w-full rounded-3xl px-7 py-8 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both', background: 'linear-gradient(rgb(255 255 255 / 0.10), rgb(255 255 255 / 0.10)), color-mix(in srgb, var(--servd-black) 80%, transparent)' }}>
-          <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Sign in</h1>
-          <p className="text-sm mb-6 text-white/60">Welcome back.</p>
+        <div className="w-full rounded-3xl px-7 py-8 shadow-xl" style={{ animation: 'fadeSlideUp 0.4s both', background: '#ffffff', border: '1px solid var(--servd-line)', color: 'var(--servd-ink)' }}>
+          <h1 className="font-black tracking-tight mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Sign in</h1>
+          <p className="text-sm mb-6 text-[color:var(--servd-mute)]">Welcome back.</p>
 
           <LoginForm />
 
-          <p className="text-center text-sm mt-6 text-white/60">
-            Don&apos;t have an account?{' '}
-            <Link href={signupHref} className="font-black text-white hover:text-white/80 transition-colors">Create one →</Link>
-          </p>
+          <p className="text-center text-sm mt-6 mb-3 text-[color:var(--servd-mute)]">Don&apos;t have an account?</p>
+          <Link href={signupHref}
+            className="flex items-center justify-center w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-colors"
+            style={{ background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', textDecoration: 'none' }}>
+            Create an account
+          </Link>
         </div>
 
-        <Link href="/" className="mt-6 block text-center text-xs font-semibold text-white/50 hover:text-white/80 transition-colors" style={{ textDecoration: 'none' }}>
+        <Link href="/" className="mt-6 block text-center text-xs font-semibold text-[color:var(--servd-mute)] hover:text-[color:var(--servd-ink)] transition-colors" style={{ textDecoration: 'none' }}>
           ← Back to home
         </Link>
       </div>
