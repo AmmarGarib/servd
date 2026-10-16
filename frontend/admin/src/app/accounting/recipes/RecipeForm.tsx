@@ -41,8 +41,11 @@ interface InventoryItem {
   yieldPct: number
   allergens: string[]
   category: string | null
+  /** null = a legacy item with no company (a sale never takes it) — fixable here. */
+  tenantId?: string | null
+  currentStock?: number
 }
-interface Concept { id: string; name: string; slug: string; forecastPortionsPerMonth: number; serviceVessel?: string }
+interface Concept { id: string; name: string; slug: string; forecastPortionsPerMonth: number; serviceVessel?: string; tenantId?: string | null }
 interface MenuItem { id: string; name: string; conceptId: string; priceCents: number }
 
 // GET /menu/:conceptId — the brand's menu tree (categories → dishes → add-on groups → add-ons).
@@ -921,6 +924,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
 
         {/* Cost panel (right) */}
         <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+          <NoCompanyItems items={inventory.filter((it) => !it.tenantId && ings.some((r) => r.source !== 'component' && r.inventoryItemId === it.id))}
+            defaultTenantId={activeConcept?.tenantId ?? null}
+            onAssigned={() => { void qc.invalidateQueries({ queryKey: ['recipes', 'inventory'] }); void qc.invalidateQueries({ queryKey: ['inventory'] }); void preview.refetch() }} />
           <CostWarningBanners warnings={preview.data?.warnings} lineWarnings={preview.data?.lineWarnings} brandName={activeConcept?.name} />
           {previewError && (
             <div className="rounded-xl border p-3 text-xs" style={dangerBox}>{previewError}</div>
@@ -990,6 +996,72 @@ const warnBox: React.CSSProperties = {
   color: 'var(--erp-warning)',
   background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)',
   borderColor: 'color-mix(in srgb, var(--erp-warning) 35%, transparent)',
+}
+
+/**
+ * Stock items on this recipe that belong to no company (legacy rows). The
+ * recipe cannot save with them, so the fix is offered right here: give the
+ * item its company — the same PATCH /inventory/:id { tenantId } as Inventory →
+ * "Assign a company" (an item holding stock needs its opening unit cost).
+ */
+function NoCompanyItems({ items, defaultTenantId, onAssigned }: {
+  items: InventoryItem[]
+  defaultTenantId: string | null
+  onAssigned: () => void
+}) {
+  const { data: tenants = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['my-tenants'],
+    queryFn: () => api.get('/tenants/mine'),
+    enabled: items.length > 0,
+  })
+  const [pick, setPick] = useState<Record<string, { tenantId: string; costPkr: string }>>({})
+  const [err, setErr] = useState<Record<string, string>>({})
+  const assign = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch(`/inventory/${id}`, body),
+  })
+  if (items.length === 0) return null
+  const fallback = defaultTenantId ?? (tenants.length === 1 ? tenants[0]!.id : '')
+  return (
+    <div className="space-y-2">
+      {items.map((it) => {
+        const p = pick[it.id] ?? { tenantId: fallback, costPkr: it.unitCostCents != null ? String(it.unitCostCents / 100) : '' }
+        const holdsStock = (it.currentStock ?? 0) > 0
+        const ready = !!p.tenantId && (!holdsStock || p.costPkr.trim() !== '')
+        return (
+          <div key={it.id} className="rounded-xl border p-3 text-xs space-y-2" style={dangerBox}>
+            <p><strong>{it.name}</strong> has no company yet, so this recipe can&rsquo;t use it. Give it its company:</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <Select value={p.tenantId} onChange={(e) => setPick({ ...pick, [it.id]: { ...p, tenantId: e.target.value } })}
+                className="rounded-lg border border-s-border bg-s-surface px-2 py-1.5 text-xs text-s-text" aria-label={`Company for ${it.name}`}>
+                <option value="">— Pick company —</option>
+                {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </Select>
+              {holdsStock && (
+                <label className="text-[11px] text-s-muted">Opening cost (PKR per {it.unit})
+                  <input type="number" min={0} step="any" value={p.costPkr}
+                    onChange={(e) => setPick({ ...pick, [it.id]: { ...p, costPkr: e.target.value } })}
+                    className="ml-1 w-24 rounded-lg border border-s-border bg-s-surface px-2 py-1 text-xs text-s-text" />
+                </label>
+              )}
+              <button type="button" disabled={!ready || assign.isPending}
+                onClick={() => {
+                  setErr({ ...err, [it.id]: '' })
+                  assign.mutate(
+                    { id: it.id, body: { tenantId: p.tenantId, ...(holdsStock ? { unitCostCents: Math.round(Number(p.costPkr) * 100) } : {}) } },
+                    { onSuccess: onAssigned, onError: (e: Error) => setErr({ ...err, [it.id]: e.message || 'Could not assign the company' }) },
+                  )
+                }}
+                className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 disabled:opacity-50">
+                {assign.isPending ? 'Assigning…' : 'Assign company'}
+              </button>
+            </div>
+            {holdsStock && <p className="text-[11px] opacity-80">It holds {it.currentStock} {it.unit}: that stock is booked as an opening count in the company you pick.</p>}
+            {err[it.id] && <p role="alert" className="font-bold">{err[it.id]}</p>}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 /** Older lines that break today's rules — they still save (only new or changed lines are refused). */
