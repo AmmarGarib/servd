@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Check, Delete, LogIn, LogOut, MapPin } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
 
@@ -48,7 +49,7 @@ const whereLine = (r: PunchResult) => {
   const w = r.where
   if (!w) return ''
   if (w.outOfArea) return ' Outside your work location — recorded and flagged for HR.'
-  if (w.matched) return ` At ${w.location ?? r.location ?? 'your work location'} \u2713`
+  if (w.matched) return ` At ${w.location ?? r.location ?? 'your work location'}.`
   return ''
 }
 
@@ -69,6 +70,17 @@ function locationProblem(err: GeolocationPositionError | null): string {
   if (err.code === err.PERMISSION_DENIED) return 'Location is blocked. Allow location for this site in the browser settings, then press Retry.'
   if (err.code === err.TIMEOUT) return 'Finding your location took too long. Press Retry.'
   return 'Your location could not be found. Press Retry.'
+}
+
+/** Live clock for the top of the screen: Karachi time, ticking each second. */
+function useNow() {
+  const [now, setNow] = useState<Date | null>(null)
+  useEffect(() => {
+    setNow(new Date())
+    const t = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return now
 }
 
 export default function TimeClockPage() {
@@ -94,6 +106,16 @@ export default function TimeClockPage() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [asked, setAsked] = useState(false)
   const [mediaNote, setMediaNote] = useState('')
+  const [branch, setBranch] = useState('')
+  const now = useNow()
+
+  // The company this device is signed in to (the active one of /tenants/mine).
+  const company = useQuery({
+    queryKey: ['my-tenants'],
+    queryFn: () => api.get<Array<{ id: string; name: string; isActive?: boolean }>>('/tenants/mine'),
+    staleTime: 30_000,
+  })
+  const companyName = company.data?.find((t) => t.isActive)?.name ?? ''
 
   const status = useQuery({ queryKey: ['time-clock-status'], queryFn: () => api.get<Status>('/time-clock/status'), enabled: mode === 'me' })
 
@@ -191,6 +213,7 @@ export default function TimeClockPage() {
     const selfie = dir === 'in' ? await selfieUrl() : undefined
     setStep('Recording…')
     const r = await api.post<PunchResult>(`/time-clock/punch-${dir}`, { ...where(), ...(dir === 'in' && { selfieUrl: selfie }) })
+    if (r.where?.location ?? r.location) setBranch((r.where?.location ?? r.location)!)
     if (r.alreadyClockedIn) return 'You are already clocked in.'
     const missed = r.missedClockOut ? ` ${r.missedClockOut.note}` : ''
     if (r.notClockedIn) return `You were not clocked in.${missed}`
@@ -209,6 +232,7 @@ export default function TimeClockPage() {
         const selfie = await selfieUrl()
         setStep('Recording…')
         const r = await api.post<PunchResult>('/time-clock/kiosk/punch', { employeeCode: code.trim(), pin, ...where(), selfieUrl: selfie })
+        if (r.where?.location ?? r.location) setBranch((r.where?.location ?? r.location)!)
         setPin(''); setCode('')
         return r.action === 'in'
           ? `Welcome, ${r.employee?.fullName}. You are clocked in.${whereLine(r)}${attendanceLine(r)}`
@@ -257,6 +281,24 @@ export default function TimeClockPage() {
   return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg)' }}>
       <div className="w-full max-w-md p-6">
+        {/* Who and when: logo, company / branch, and the live clock */}
+        <header className="mb-5 flex items-center gap-3">
+          <img src="/brand/servd-logo.png" alt="servd" width={44} height={44} className="h-11 w-11 shrink-0 rounded-full" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-black text-white">{companyName || 'servd'}</p>
+            <p className="flex items-center gap-1 truncate text-xs text-white/55">
+              <MapPin size={12} aria-hidden="true" className="shrink-0" />{branch || 'Branch found when you punch'}
+            </p>
+          </div>
+          <div className="shrink-0 text-right" aria-live="off">
+            <p className="text-2xl font-black tabular-nums leading-none text-white">
+              {now ? now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: TZ }) : '--:--:--'}
+            </p>
+            <p className="mt-1 text-[11px] text-white/55">
+              {now ? now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: TZ }) : ''}
+            </p>
+          </div>
+        </header>
         <div role="group" aria-label="Who is punching" className="flex gap-1 mb-4 justify-center">
           {(['me', 'kiosk'] as const).map((m) => (
             <button key={m} type="button" aria-pressed={mode === m} onClick={() => switchMode(m)}
@@ -274,7 +316,7 @@ export default function TimeClockPage() {
           {asked && (
             <div className="absolute top-3 right-3 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full"
               style={{ background: coords ? 'rgb(var(--erp-accent-rgb) / 0.22)' : 'color-mix(in srgb, var(--erp-danger) 18%, transparent)', color: coords ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
-              {coords ? 'located' : mediaNote ? 'no location' : 'locating…'}
+              <MapPin size={10} aria-hidden="true" className="mr-1 inline-block align-[-1px]" />{coords ? 'located' : mediaNote ? 'no location' : 'locating…'}
             </div>
           )}
         </div>
@@ -297,8 +339,8 @@ export default function TimeClockPage() {
               )}
             </p>
             {punchedIn
-              ? <button type="button" onClick={() => void punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'color-mix(in srgb, var(--erp-danger) 15%, transparent)', color: 'var(--erp-danger)', border: '1px solid color-mix(in srgb, var(--erp-danger) 35%, transparent)' }}>Clock out</button>
-              : <button type="button" onClick={() => void punchMe('in')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>Clock in</button>}
+              ? <button type="button" onClick={() => void punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'color-mix(in srgb, var(--erp-danger) 15%, transparent)', color: 'var(--erp-danger)', border: '1px solid color-mix(in srgb, var(--erp-danger) 35%, transparent)' }}><span className="inline-flex items-center justify-center gap-2"><LogOut size={22} aria-hidden="true" />Clock out</span></button>
+              : <button type="button" onClick={() => void punchMe('in')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}><span className="inline-flex items-center justify-center gap-2"><LogIn size={22} aria-hidden="true" />Clock in</span></button>}
           </div>
         )}
 
@@ -310,15 +352,18 @@ export default function TimeClockPage() {
               className="w-full mb-3 rounded-xl px-4 py-3 text-center text-white outline-none"
               style={{ background: 'rgb(var(--fg-rgb) / 0.05)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }} />
             <div ref={pinRef} tabIndex={0} role="group" aria-label={`PIN, ${pin.length} digits entered. Type 4 to 6 digits, then press Enter.`} className="text-center mb-3 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-primary">
-              <span aria-hidden="true" className="text-4xl font-black text-white tracking-[0.35em]" style={{ fontFamily: 'monospace' }}>
-                {Array.from({ length: 6 }, (_, i) => (i < pin.length ? '●' : '○')).join('')}
+              <span aria-hidden="true" className="inline-flex items-center gap-3 py-3">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <span key={i} className="h-4 w-4 rounded-full border-2 transition-colors"
+                    style={{ borderColor: 'var(--erp-primary)', background: i < pin.length ? 'var(--erp-primary)' : 'transparent' }} />
+                ))}
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-2 mb-2">
+            <div className="mx-auto mb-3 grid max-w-[18rem] grid-cols-3 gap-3">
               {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => <PinKey key={d} digit={d} onClick={() => { clearError(); setPin((p) => (p.length < 6 ? p + d : p)) }} />)}
-              <PinKey digit="←" label="Delete last digit" onClick={() => { clearError(); setPin((p) => p.slice(0, -1)) }} />
+              <PinKey icon={<Delete size={26} aria-hidden="true" />} label="Delete last digit" onClick={() => { clearError(); setPin((p) => p.slice(0, -1)) }} />
               <PinKey digit="0" onClick={() => { clearError(); setPin((p) => (p.length < 6 ? p + '0' : p)) }} />
-              <PinKey digit="✓" label="Clock in or out" highlight disabled={!canPunch} onClick={() => void punchKiosk()} />
+              <PinKey icon={<Check size={28} aria-hidden="true" />} label="Clock in or out" highlight disabled={!canPunch} onClick={() => void punchKiosk()} />
             </div>
             {!canPunch && <p className="text-xs text-white/50 text-center mb-4">{code.trim() ? 'Enter your PIN (4 to 6 digits).' : 'Enter your employee ID, then your PIN.'}</p>}
           </>
@@ -344,11 +389,11 @@ export default function TimeClockPage() {
   )
 }
 
-function PinKey({ digit, onClick, highlight, label, disabled }: { digit: string; onClick: () => void; highlight?: boolean; label?: string; disabled?: boolean }) {
+function PinKey({ digit, icon, onClick, highlight, label, disabled }: { digit?: string; icon?: React.ReactNode; onClick: () => void; highlight?: boolean; label?: string; disabled?: boolean }) {
   return (
-    <button type="button" onClick={onClick} aria-label={label} disabled={disabled} className="aspect-square rounded-2xl text-2xl font-black active:scale-95 transition-transform disabled:opacity-40"
+    <button type="button" onClick={onClick} aria-label={label} disabled={disabled} className="flex h-16 w-full items-center justify-center rounded-2xl text-2xl font-black active:scale-95 transition-transform disabled:opacity-40"
       style={highlight ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' } : { background: 'rgb(var(--fg-rgb) / 0.06)', color: 'var(--text)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
-      <span aria-hidden={label ? true : undefined}>{digit}</span>
+      <span aria-hidden={label ? true : undefined} className="flex items-center justify-center">{icon ?? digit}</span>
     </button>
   )
 }

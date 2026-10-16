@@ -229,7 +229,7 @@ function NavLinks({
       '/trash': !allowedModules.has('trash'),
     }
     return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
-      href: p.href, label: p.label, icon: PERSONAL_ICONS[p.href],
+      href: p.href, label: p.label, icon: PERSONAL_ICONS[p.href] ?? '',
       ...(p.href === '/ceo/approvals' && approvalsWaiting > 0 && { badge: String(approvalsWaiting) }),
     }))
   }, [team, me?.role, me?.childRoles, allowedModules, approvalsWaiting, isDelegate])

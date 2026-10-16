@@ -98,8 +98,8 @@ export default function StaffLoginPage() {
   const field = 'w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none'
   const pwField = 'w-full rounded-xl px-4 py-3 text-s-text outline-none'
   const emailProps = { type: 'email', inputMode: 'email', autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, autoComplete: 'username', 'aria-label': 'Email', placeholder: 'Email' } as const
-  const linkCls = 'py-2.5 text-xs text-s-dim hover:text-s-muted transition-colors'
-  const fieldStyle = { background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }
+  const linkCls = 'py-2.5 text-xs text-s-muted hover:text-s-muted transition-colors'
+  const fieldStyle = { background: 'var(--elevated)', border: '1px solid var(--border-strong)' }
   const cta = 'w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40'
   const ctaStyle = {
     background: 'var(--erp-primary)',
@@ -296,23 +296,20 @@ export default function StaffLoginPage() {
       {/* Brand bar */}
       <div className="flex items-center justify-between px-6 pt-5">
         <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg flex items-center justify-center font-black text-primary-on text-xs"
-            style={{ background: 'var(--erp-primary)', boxShadow: '0 0 14px rgb(var(--erp-primary-rgb) / 0.3)' }}>
-            S
-          </div>
-          <span className="text-sm font-black tracking-tight text-s-text">servd</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/servd-logo.png" alt="servd" width={44} height={44} className="h-11 w-11 block" />
         </div>
-        <a href={STOREFRONT_URL} className="text-xs text-s-dim hover:text-s-muted transition-colors">
+        <a href={STOREFRONT_URL} className="text-xs text-s-muted hover:text-s-muted transition-colors">
           Order food →
         </a>
       </div>
 
       {/* Centre card */}
       <div className="flex-1 flex items-center justify-center px-4 py-10">
-        <div className="w-full max-w-xs">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-6 sm:p-8" style={{ background: '#ffffff', border: '1px solid var(--border)', boxShadow: '0 8px 32px rgb(var(--ink-rgb) / 0.08)' }}>
 
           <div className="text-center mb-8">
-            <p className="text-[11px] font-bold text-success uppercase tracking-[0.25em] mb-2">
+            <p className="text-xs font-bold text-success uppercase tracking-[0.25em] mb-2">
               Staff Portal
             </p>
             <h1 className="text-2xl font-black text-s-text">
@@ -322,7 +319,7 @@ export default function StaffLoginPage() {
                 : mode === 'forgot' ? 'Reset your password'
                 : 'Change your password'}
             </h1>
-            <p className="text-xs text-s-dim mt-1">
+            <p className="text-xs text-s-muted mt-1">
               {mode === 'password'  ? 'Authorized personnel only'
                 : mode === 'code' ? (codeSent
                     ? (codeFromManager ? 'Enter the code your manager gave you' : 'Same code sent to your WhatsApp and email — use whichever arrives first')
@@ -371,13 +368,13 @@ export default function StaffLoginPage() {
                   {loading ? 'Checking…' : 'Sign in'}
                 </button>
                 <div className="mt-3 flex items-center justify-between text-xs">
-                  <button type="button" onClick={() => { setCodeSent(false); setCodeValue(''); setError(''); setCodeFromManager(false) }} className="text-s-dim hover:text-s-muted">← Change number</button>
+                  <button type="button" onClick={() => { setCodeSent(false); setCodeValue(''); setError(''); setCodeFromManager(false) }} className="text-s-muted hover:text-s-muted">← Change number</button>
                   {!codeFromManager && (
-                    <button type="button" disabled={loading} onClick={() => { void requestStaffCode() }} className="text-s-dim hover:text-s-muted">Send again</button>
+                    <button type="button" disabled={loading} onClick={() => { void requestStaffCode() }} className="text-s-muted hover:text-s-muted">Send again</button>
                   )}
                 </div>
                 {!codeFromManager && (
-                  <p className="text-[10px] text-s-dim mt-4 text-center leading-relaxed">
+                  <p className="text-xs text-s-muted mt-4 text-center leading-relaxed">
                     The code works for 5 minutes.<br />
                     No code arriving? A manager can give you one from Workforce (&ldquo;Sign-in code&rdquo; next to your name).
                   </p>
@@ -413,7 +410,7 @@ export default function StaffLoginPage() {
                 className={`w-full mt-1 ${linkCls}`}>
                 ← Start over
               </button>
-              <p className="text-[10px] text-s-dim mt-3 text-center leading-relaxed">
+              <p className="text-xs text-s-muted mt-3 text-center leading-relaxed">
                 The code works for 5 minutes. To get a new one, start over.<br />
                 Didn&rsquo;t ask to sign in? Someone has your password. Change it as soon as you&rsquo;re in.
               </p>
@@ -423,7 +420,7 @@ export default function StaffLoginPage() {
             fgDone ? (
               <div className="text-center">
                 <p className="text-sm text-s-text mb-2">Check your email.</p>
-                <p className="text-xs text-s-dim mb-5 leading-relaxed">
+                <p className="text-xs text-s-muted mb-5 leading-relaxed">
                   If that address has an account, a reset link is on its way
                   there &mdash; and to its WhatsApp, if we have a number for it.
                   The link works once and expires in 30 minutes.
@@ -434,7 +431,7 @@ export default function StaffLoginPage() {
               </div>
             ) : (
               <form onSubmit={submitForgot}>
-                <p className="text-xs text-s-dim mb-4 leading-relaxed text-center">
+                <p className="text-xs text-s-muted mb-4 leading-relaxed text-center">
                   Enter the email you sign in with and we&rsquo;ll send you a link
                   to set a new password.
                 </p>
@@ -458,7 +455,7 @@ export default function StaffLoginPage() {
             cpDone ? (
               <div className="text-center">
                 <p className="text-sm font-bold text-success mb-2">Password changed.</p>
-                <p className="text-xs text-s-dim mb-5 leading-relaxed">
+                <p className="text-xs text-s-muted mb-5 leading-relaxed">
                   Every other device signed in as you has been signed out.
                 </p>
                 <button type="button" onClick={backToSignIn} className={cta} style={ctaStyle}>
@@ -486,7 +483,7 @@ export default function StaffLoginPage() {
                   placeholder="Repeat new password" aria-label="Repeat new password" autoComplete="new-password"
                   wrapperClassName="mb-4" className={pwField} style={fieldStyle}
                 />
-                <p className="text-[10px] text-s-dim mb-3 text-center">At least 12 characters.</p>
+                <p className="text-xs text-s-muted mb-3 text-center">At least 12 characters.</p>
                 {error && <p role="alert" className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
                 <button type="submit" className={cta} style={ctaStyle}
                   disabled={loading}>
@@ -523,7 +520,7 @@ export default function StaffLoginPage() {
                 >
                   Forgot my password
                 </button>
-                <span className="text-xs text-s-dim">&middot;</span>
+                <span className="text-xs text-s-muted">&middot;</span>
                 <button
                   type="button"
                   onClick={() => { setMode('code'); setError(''); setCodeSent(false) }}
@@ -531,7 +528,7 @@ export default function StaffLoginPage() {
                 >
                   Sign in with a code
                 </button>
-                <span className="text-xs text-s-dim">&middot;</span>
+                <span className="text-xs text-s-muted">&middot;</span>
                 <button
                   type="button"
                   onClick={() => { setMode('changepw'); setError(''); setCpDone(false) }}
@@ -543,7 +540,7 @@ export default function StaffLoginPage() {
             </form>
           )}
 
-          <p className="text-[10px] text-s-dim mt-8 text-center leading-relaxed">
+          <p className="text-xs text-s-muted mt-8 text-center leading-relaxed">
             Need an account? Ask the CEO to add you from Workforce — they will
             hand you a password to sign in with.
           </p>
