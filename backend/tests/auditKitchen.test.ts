@@ -492,7 +492,7 @@ describe('exceptions inbox for finance (BOOKS-02)', () => {
 
   it('finance can acknowledge and resolve its company’s flags; another company’s are 404', async () => {
     expect((await call('financeA', 'PATCH', `/crosschecks/exceptions/${flagB}/acknowledge`)).statusCode).toBe(404)
-    expect((await call('financeA', 'PATCH', `/crosschecks/exceptions/${flagB}/resolve`, { resolution: 'x' })).statusCode).toBe(404)
+    expect((await call('financeA', 'PATCH', `/crosschecks/exceptions/${flagB}/resolve`, { resolution: 'x — not my company' })).statusCode).toBe(404)
     expect((await prisma.exceptionFlag.findUniqueOrThrow({ where: { id: flagB } })).status).toBe('open')
 
     expect((await call('financeA', 'PATCH', `/crosschecks/exceptions/${flagA}/acknowledge`)).statusCode).toBe(204)

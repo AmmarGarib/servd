@@ -152,21 +152,24 @@ describe('#20 finance records cash received on the holder\'s behalf', () => {
     expect((await call('cashA', 'POST', url, { reason: 'Holder has left the company' })).statusCode).toBe(403)
     expect(code(await call('cookA', 'POST', url, { reason: 'Holder has left the company' }))).toBe('NOT_FINANCE')
     expect((await call('finA', 'POST', url, { reason: 'short' })).statusCode).toBe(400)
-    const detail = await ok('finA', 'GET', `${V}/${v.id}`)
+    // finA paid it: the payer never attests the hand-over for the holder (gate fix).
+    expect((await ok('finA', 'GET', `${V}/${v.id}`)).canConfirmReceivedOnBehalf).toBe(false)
+    expect(code(await call('finA', 'POST', url, { reason: 'Holder has left the company' }))).toBe('PAYER_CANNOT_CONFIRM')
+    const detail = await ok('finA2', 'GET', `${V}/${v.id}`)
     expect(detail.canConfirmReceivedOnBehalf).toBe(true)
 
-    const done = await call('finA', 'POST', url, { reason: 'Holder has left the company' })
+    const done = await call('finA2', 'POST', url, { reason: 'Holder has left the company' })
     expect(done.statusCode, done.body).toBe(200)
     const row = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })
-    expect(row.cashReceivedById).toBe(U['finA']!.id)
+    expect(row.cashReceivedById).toBe(U['finA2']!.id)
     expect(row.cashReceivedAt).not.toBeNull()
     const log = await prisma.auditLog.findFirstOrThrow({ where: { entityId: v.id, action: { contains: 'confirm_received' } }, orderBy: { createdAt: 'desc' } })
     expect(JSON.stringify(log.after)).toContain('finance_on_behalf')
     expect(JSON.stringify(log.after)).toContain('Holder has left the company')
-    const twice = await call('finA', 'POST', url, { reason: 'Holder has left the company' })
+    const twice = await call('ceoA', 'POST', url, { reason: 'Holder has left the company' })
     expect(twice.statusCode).toBe(409)
     expect(code(twice)).toBe('ALREADY_CONFIRMED')
-    // The documents check now goes through (another finance person — the payer may too).
+    // The documents check now goes through (another finance person).
     expect((await call('finA2', 'POST', `${V}/${v.id}/verify-docs`, {})).statusCode).toBe(200)
   })
 

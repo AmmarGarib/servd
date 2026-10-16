@@ -59,7 +59,7 @@ import {
 } from './creditNotes.js'
 import { receiveGoods } from './receiving.js'
 import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
-import { syncOpeningBalanceOrFlag } from './openingBalance.js'
+import { postedOpeningBalances, syncOpeningBalanceOrFlag } from './openingBalance.js'
 import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
 import { audit } from '../../lib/audit.js'
 import { type DbMoney, toCents, zInt4Cents, zMoneyCents } from '../../lib/money.js'
@@ -415,6 +415,24 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         throw new AppError('SYSTEM_SUPPLIER', `${existing.name} is a system supplier — it cannot be edited`, 422)
       }
       assertManagerFields(req, body, existing)
+      // The opening DATE dates the opening entry. Once an opening is on the
+      // books, a new date would not move it (only a later delta would land on
+      // the new day), so the books and the form would disagree: refuse it.
+      // To move it: set the opening balance to 0 (the reversal posts at the
+      // old date), then enter the date and the amount again.
+      if (body.openingBalanceDate !== undefined) {
+        const before = existing.openingBalanceDate ? existing.openingBalanceDate.toISOString().slice(0, 10) : null
+        if (body.openingBalanceDate !== before) {
+          const posted = (await postedOpeningBalances([existing.id])).get(existing.id)
+          if (posted && Array.from(posted.values()).some((v) => v !== 0)) {
+            throw new AppError(
+              'OPENING_DATE_LOCKED',
+              `${existing.name}'s opening balance is already on the books at its current date — set the opening balance to 0 and save, then enter the new date and the amount again`,
+              409,
+            )
+          }
+        }
+      }
       // A supplier moves between the operator's companies, never out of them:
       // clearing its company would make it (and its POs, bills and threads)
       // visible to every company.
@@ -451,8 +469,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         },
       })
       // A new opening balance, or a move to another company, re-posts it.
-      // (A new opening DATE dates the next delta; what is posted stays put.)
-      if (body.openingBalanceCents !== undefined || body.tenantId !== undefined) {
+      // (A new opening DATE is refused above once anything is posted.)
+      if (body.openingBalanceCents !== undefined || body.openingBalanceDate !== undefined || body.tenantId !== undefined) {
         await syncOpening(req, updated.id)
       }
       return updated

@@ -85,6 +85,7 @@ beforeAll(async () => {
   await mkUser('finB', 'finance', tenantB)
   await mkUser('ceoA', 'admin', tenantA)
   await mkUser('mktA', 'marketing', tenantA)
+  await mkUser('mgrNoCrm', 'manager', tenantA, { moduleDeny: ['crm', 'accounting'] })
 
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
@@ -193,6 +194,15 @@ describe('#25 finance records paid wallet top-ups', () => {
     expect((await call('finNoAcct', 'GET', `/wallet/customers?q=${encodeURIComponent('Bulk One')}`)).statusCode).toBe(403)
     expect((await call('mktA', 'POST', '/wallet/topup', { customerId: a1.id, amountCents: 1_000, kind: 'paid', tender: 'cash', paymentRef: uniq('C') })).statusCode).toBe(403)
   })
+
+  it('the customer search is a contact lookup: a manager needs CRM (or accounting) — gate checked, A only', async () => {
+    const a1 = await mkCustomer(conceptA, `Lookup Gate ${RUN}`)
+    const ok = await call('mgrA', 'GET', `/wallet/customers?q=${encodeURIComponent(`Lookup Gate ${RUN}`)}`)
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect((ok.json().customers as Array<{ id: string }>).map((c) => c.id)).toEqual([a1.id])
+    expect((await call('mgrNoCrm', 'GET', `/wallet/customers?q=${encodeURIComponent(`Lookup Gate ${RUN}`)}`)).statusCode).toBe(403)
+    expect((await call('mktA', 'GET', `/wallet/customers?q=${encodeURIComponent(`Lookup Gate ${RUN}`)}`)).statusCode).toBe(403)
+  })
 })
 
 // ─── #26 Finance settles value on voided / expired gift cards ────────────────
@@ -242,6 +252,16 @@ describe('#26 finance settles voided / expired gift cards; managers void live on
     const r = await call('finA', 'POST', `/gift-cards/${card.id}/void`, { reason: 'transfer bounced', disposition: 'payment_not_received' })
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json()).toMatchObject({ postedCents: 2_500, creditCode: '1010', status: 'voided', balanceCents: 0 })
+  })
+
+  it('finance never voids an expired card holding nothing (409 NOTHING_TO_SETTLE, card unchanged, nothing booked)', async () => {
+    const card = await soldCard(10_000)
+    await prisma.giftCard.update({ where: { id: card.id }, data: { status: 'expired', expiredAt: new Date(), breakageAt: new Date(), breakageCents: 10_000, balanceCents: 0 } })
+    const r = await call('finA', 'POST', `/gift-cards/${card.id}/void`, { reason: 'tidy up', disposition: 'payment_not_received' })
+    expect(r.statusCode, r.body).toBe(409)
+    expect(r.json().error.code).toBe('NOTHING_TO_SETTLE')
+    expect(await prisma.giftCard.findUniqueOrThrow({ where: { id: card.id } })).toMatchObject({ status: 'expired', balanceCents: 0 })
+    expect(await entryOf(tenantA, `giftcard.void:${card.id}`)).toBeNull()
   })
 })
 

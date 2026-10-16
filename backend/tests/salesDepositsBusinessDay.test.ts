@@ -115,6 +115,37 @@ describe('item 1 — two bags for one shift never credit the safe twice', () => 
   })
 })
 
+describe('item 1 (gate) — two bags for one shift at the same moment', () => {
+  it('parallel bags are ordered under the per-shift lock: the safe is credited once, the drawer once', async () => {
+    const shiftId = await mkShift(A, { drops: 2_000_000, takings: 5_000_000, openedAt: at('2026-02-13', '09:00'), closedAt: at('2026-02-13', '23:00') })
+    const [r1, r2] = await Promise.all([
+      call('finA', 'POST', '/trustops/deposit-drops', { shiftId, amountCents: 3_500_000, bankAccountId: A.bank }),
+      call('finA', 'POST', '/trustops/deposit-drops', { shiftId, amountCents: 3_500_000, bankAccountId: A.bank }),
+    ])
+    expect(r1.statusCode, r1.body).toBe(201)
+    expect(r2.statusCode, r2.body).toBe(201)
+    const c1 = await creditsOf(A.tenantId, r1.json().id)
+    const c2 = await creditsOf(A.tenantId, r2.json().id)
+    const total = (code: string) => (c1[code] ?? 0) + (c2[code] ?? 0)
+    // 70,000 banked of 70,000 cash: 20,000 from the safe's drops, 50,000 from the drawer — never 40,000 from the safe.
+    expect(total('1010')).toBe(2_000_000)
+    expect(total('1015')).toBe(5_000_000)
+    // The two bags' expected figures add up to the shift (one saw the whole, the other the rest).
+    expect(r1.json().expectedCents + r2.json().expectedCents).toBe(7_000_000 + 3_500_000)
+  })
+
+  it('an extra bag for a shift already banked in full is still flagged as cash over', async () => {
+    const shiftId = await mkShift(A, { takings: 1_000_000, openedAt: at('2026-02-14', '09:00'), closedAt: at('2026-02-14', '23:00') })
+    const full = await call('finA', 'POST', '/trustops/deposit-drops', { shiftId, amountCents: 1_000_000, bankAccountId: A.bank })
+    expect(await varianceFlags(full.json().id)).toHaveLength(0)
+    const extra = await call('finA', 'POST', '/trustops/deposit-drops', { shiftId, amountCents: 500_000, bankAccountId: A.bank })
+    expect(extra.json()).toMatchObject({ expectedCents: 0, varianceCents: 500_000 })
+    expect((await varianceFlags(extra.json().id)).map((f) => f.status)).toEqual(['open'])
+    // The extra cash came from the safe (1010) — the shift's takings were already taken.
+    expect(await creditsOf(A.tenantId, extra.json().id)).toEqual({ '1010': 500_000 })
+  })
+})
+
 describe('item 28 — partial bags against what is still to bank', () => {
   it('30,000 + 20,000 of 50,000: the first is flagged short, the second ties and resolves it', async () => {
     const shiftId = await mkShift(A, { takings: 5_000_000, openedAt: at('2026-02-11', '09:00'), closedAt: at('2026-02-11', '23:00') })

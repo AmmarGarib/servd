@@ -57,10 +57,11 @@ export default function TaxInvoicesPage() {
     queryFn: () => api.get<TaxInvoiceRow[]>(`/invoices?${qs}`),
   })
   const byId = new Map(data.map((r) => [r.id, r.invoiceNumber]))
-  const totals = data.reduce((t, r) => {
-    const sign = r.type === 'credit_note' ? -1 : 1
-    return { taxable: t.taxable + sign * r.taxableValueCents, fbr: t.fbr + sign * r.fbrTaxCents, prov: t.prov + sign * r.provincialTaxCents, total: t.total + sign * r.totalCents }
-  }, { taxable: 0, fbr: 0, prov: 0, total: 0 })
+  // A credit note is stored with NEGATIVE amounts (invoices/service.ts
+  // issueCreditNote), so a plain sum already deducts it — never flip its sign.
+  const totals = data.reduce((t, r) => ({
+    taxable: t.taxable + r.taxableValueCents, fbr: t.fbr + r.fbrTaxCents, prov: t.prov + r.provincialTaxCents, total: t.total + r.totalCents,
+  }), { taxable: 0, fbr: 0, prov: 0, total: 0 })
 
   const download = () => {
     setErr('')

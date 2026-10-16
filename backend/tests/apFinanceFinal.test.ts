@@ -58,7 +58,7 @@ async function mkUser(key: string, role: string, primary: string, extra: { modul
   users[key] = { id: u.id, token: (issueStaffSession(u) as { accessToken: string }).accessToken }
 }
 
-const call = (who: string, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown) =>
+const call = (who: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, payload?: unknown) =>
   app.inject({ method, url, headers: { authorization: `Bearer ${users[who]!.token}` }, ...(payload !== undefined ? { payload: payload as object } : {}) })
 
 const day = (offsetDays: number) => fmtPktDate(new Date(Date.now() + offsetDays * 86_400_000))
@@ -269,6 +269,27 @@ describe('a refused supplier opening balance is flagged and dated at its opening
     expect((await syncOpeningBalanceOrFlag(sup)).ok).toBe(true)
     const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: A, reference: { startsWith: `supplier.opening:${sup}:` } } })
     expect(je.entryDate.getTime()).toBe(createdAt.getTime())
+  })
+})
+
+describe('the opening date cannot move under a posted opening balance (gate)', () => {
+  it('409 OPENING_DATE_LOCKED while posted; after zeroing it the date and amount post at the new day; B gets 404', async () => {
+    const sup = (await prisma.supplier.create({ data: { name: `Opening3 ${RUN}`, tenantId: A, filerStatus: 'filer', openingBalanceCents: 2_000 } })).id
+    expect((await syncOpeningBalanceOrFlag(sup)).ok).toBe(true)
+    const newDay = day(-3)
+    const moved = await call('ceo', 'PATCH', `/api/v1/procurement/suppliers/${sup}`, { openingBalanceDate: newDay })
+    expect(moved.statusCode, moved.body).toBe(409)
+    expect(moved.json().error.code).toBe('OPENING_DATE_LOCKED')
+    // Company B's finance never reaches it.
+    expect((await call('finB', 'PATCH', `/api/v1/procurement/suppliers/${sup}`, { openingBalanceDate: newDay })).statusCode).toBe(403)
+    // Zero it (reversal at the old date), then the new date + amount.
+    expect((await call('ceo', 'PATCH', `/api/v1/procurement/suppliers/${sup}`, { openingBalanceCents: 0 })).statusCode).toBe(200)
+    const ok = await call('ceo', 'PATCH', `/api/v1/procurement/suppliers/${sup}`, { openingBalanceDate: newDay, openingBalanceCents: 2_500 })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const entries = await prisma.journalEntry.findMany({ where: { tenantId: A, reference: { startsWith: `supplier.opening:${sup}:` } }, orderBy: { createdAt: 'asc' } })
+    expect(entries).toHaveLength(3)
+    expect(fmtPktDate(entries[2]!.entryDate)).toBe(newDay)
+    expect(await prisma.journalEntry.count({ where: { tenantId: B, reference: { startsWith: `supplier.opening:${sup}:` } } })).toBe(0)
   })
 })
 

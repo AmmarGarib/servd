@@ -8,9 +8,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { requireActiveCompany, assertConceptAttachable } from '../financePlanning/companyRefs.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
-import { requireModule } from '../notifications/requireModule.js'
 import { parsePktStartOfDay, parsePktEndOfDay } from '../accounting/dates.js'
-import type { UserRole } from '@prisma/client'
 
 const ruleSchema = z.object({
   name: z.string().min(1),
@@ -34,11 +32,9 @@ const runSchema = z.object({
   periodEnd: pktDay,
 })
 
-// Running an existing rule for a month is a month-end book-keeping job:
-// the CEO and finance (with the accounting module). Defining or deleting a
-// rule (how shared cost is split across brands) stays the CEO's. Postings
-// into closed / reopened months are refused by the journal's own guards.
-const ALLOCATION_RUNNERS = ['admin', 'finance'] as UserRole[]
+// Running a rule stays the CEO's (ADMIN_ONLY), like defining or deleting
+// one: allocation runs were not among the jobs the owner handed to finance
+// on 2026-10-16. The admin page shows the Run button to the CEO only.
 
 export async function allocationRoutes(fastify: FastifyInstance) {
   // Rules and runs belong to one company each (CostAllocationRule.tenantId,
@@ -152,7 +148,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/rules/:id/run',
-    { preHandler: [requireAuth(...ALLOCATION_RUNNERS), requireModule('accounting')] },
+    { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
       const body = runSchema.parse(req.body)
       // Resolve the rule inside the operator's companies first; the run then

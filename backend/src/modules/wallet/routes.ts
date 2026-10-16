@@ -191,10 +191,12 @@ export async function walletRoutes(fastify: FastifyInstance) {
   // GET /wallet/customers?q= — find the customer to top up (finance's Wallet
   // top-ups page; finance holds no CRM module). Only customers of the ACTIVE
   // company (the company a top-up is booked in); name, phone or email, at
-  // least 3 characters, 20 at most, with their wallet there.
+  // least 3 characters, 20 at most, with their wallet there. A contact
+  // search, so it needs the CRM module (managers) or accounting (finance) —
+  // a manager without CRM does not get a customer lookup through here.
   fastify.get<{ Querystring: { q?: string } }>(
     '/customers',
-    { preHandler: TOPUP_GUARD },
+    { preHandler: [...TOPUP_GUARD, requireModule('crm', 'accounting')] },
     async (req) => {
       const q = z.string().trim().min(3).max(100).parse(req.query.q ?? '')
       const tenantId = activeTenantId(req, 'a wallet top-up is booked in one company')

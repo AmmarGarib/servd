@@ -152,6 +152,15 @@ const bankAccount: TrashProvider = {
       if (!acc) {
         throw new AppError('BANK_ACCOUNT_NOT_LINKED', `Chart code ${row.accountCode} is no longer an active account in this company's chart — relink it first`, 409)
       }
+      // Each bank has its own code (lib/bankAccounts.ts linkBankLedgerAccount): a code another live bank
+      // of the company took while this one was in the trash is never shared by the restore.
+      const other = await tx.bankAccount.findFirst({
+        where: { tenantId: row.tenantId, deletedAt: null, accountCode: row.accountCode, id: { not: entry.entityId } },
+        select: { name: true },
+      })
+      if (other) {
+        throw new AppError('BANK_CODE_IN_USE', `Code ${row.accountCode} is now the ledger of ${other.name} — each bank has its own code`, 409)
+      }
     }
     // Back as it was (active unless it was switched off) — but NEVER receiving
     // Raast again by itself: not the company default, and brand overrides that

@@ -346,6 +346,11 @@ export async function voidGiftCard(input: VoidGiftCardInput): Promise<VoidGiftCa
     if (input.settleOnly && card.status !== 'voided' && card.status !== 'expired') {
       throw new AppError('VOID_NEEDS_MANAGER', `${card.code} is still live — only a manager voids a live card. Finance settles value left on voided or expired cards.`, 403)
     }
+    if (input.settleOnly && B <= 0) {
+      // A settle moves value; an expired card holding nothing is not
+      // finance's to void (no money, no entry — a manager's housekeeping).
+      throw new AppError('NOTHING_TO_SETTLE', `${card.code} holds nothing to settle`, 409)
+    }
 
     // What the disposition may do with this kind of card.
     if (card.kind === 'promotional' && input.disposition !== 'forfeit') {

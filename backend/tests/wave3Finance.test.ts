@@ -304,7 +304,7 @@ describe('UI-07 finance does the workspace\'s normal work, bound to its active c
       ['dismiss an exception', 'DELETE', `/crosschecks/exceptions/${ids.flagA}`, undefined],
       ['set headcount', 'POST', '/positions', { title: 'Barista', monthlySalaryCents: 1 }],
       ['move money between companies', 'POST', '/positions/contributions', { sourceTenantId: tenantA, destinationTenantId: tenantB, category: 'other', monthlyCents: 1, label: 'x' }],
-      ['backfill unposted shifts', 'POST', '/reconciliation/backfill-unposted', {}],
+      // Backfill unposted is finance's too now (owner, 2026-10-16; tests/finGlClose.test.ts).
     ]
     for (const [what, method, url, body] of refused) {
       expect((await call('finA', method, url, body)).statusCode, what).toBe(403)

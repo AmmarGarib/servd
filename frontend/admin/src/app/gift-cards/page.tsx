@@ -22,6 +22,7 @@ import { api } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
 import { useManagerRoles } from '../../lib/roles'
+import { usePermissions } from '../../hooks/useCan'
 import { useActiveCompany } from '../../lib/connectorsApi'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 import {
@@ -114,6 +115,7 @@ const ERROR_TEXT: Record<string, string> = {
   REASON_REQUIRED: 'Say why this promotional card is being given.',
   EXPIRY_IN_PAST: 'The expiry date must be in the future.',
   VOID_NEEDS_MANAGER: 'This card is still live — only a manager voids a live card. Finance settles value left on voided or expired cards.',
+  NOTHING_TO_SETTLE: 'This card holds nothing to settle.',
   ...PAYMENT_REFERENCE_ERROR_TEXT,
 }
 const errText = (e: unknown) => {
@@ -132,7 +134,9 @@ export default function GiftCardsPage() {
   const canSell = financeTeam.has(role)
   // Finance settles value left on voided / expired cards (owner, 2026-10-16);
   // voiding a LIVE card stays with managers (API 403 VOID_NEEDS_MANAGER).
-  const canSettleValue = isManager || role === 'finance'
+  // Finance needs its 'accounting' module too (the API's financeNeedsAccounting).
+  const { data: perms } = usePermissions()
+  const canSettleValue = isManager || (role === 'finance' && (perms?.modules ?? []).includes('accounting'))
   // The books' audit trail is the CEO's and management's (accounting_audit);
   // everyone else reads a card's history in the row below instead.
   const canReadBooksTrail = useAuthStore((s) => s.isRole('admin', 'management'))
@@ -287,7 +291,7 @@ export default function GiftCardsPage() {
                     {openId === c.id && (
                       <tr className="border-t border-s-border/50">
                         <td colSpan={6} className="p-0">
-                          <CardHistoryPanel id={c.id} row={c} canVoid={isManager || (canSettleValue && (c.status === 'voided' || c.status === 'expired'))} onVoid={(t) => setVoiding(t)} />
+                          <CardHistoryPanel id={c.id} row={c} canVoid={isManager || (canSettleValue && (c.status === 'voided' || c.status === 'expired') && c.balanceCents > 0)} onVoid={(t) => setVoiding(t)} />
                         </td>
                       </tr>
                     )}

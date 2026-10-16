@@ -197,13 +197,14 @@ const DEPOSIT_VARIANCE_TITLE_PREFIX = 'Deposit drop variance'
  * variance flags of every drop with a share of `shiftIds` whose shifts are
  * ALL banked within the tolerance (Σ shares vs the shift's cash to bank). A
  * partial first bag is flagged short; the bag that completes the shift clears
- * it (audit fix, 2026-10-16). Only the drops' own company is read.
+ * it (audit fix, 2026-10-16). Only the drops' own company is read. Returns
+ * whether every one of `shiftIds` now ties.
  */
-async function resolveTiedDepositVariance(tenantId: string, shiftIds: string[], limitCents: number, userId: string): Promise<void> {
-  if (shiftIds.length === 0) return
+async function resolveTiedDepositVariance(tenantId: string, shiftIds: string[], limitCents: number, userId: string): Promise<boolean> {
+  if (shiftIds.length === 0) return false
   const { dropAllocations, expectedShiftDeposit } = await import('../accounting/depositPosting.js')
   const dropIds = [...new Set((await dropAllocations(prisma, { tenantId, shiftIds })).map((a) => a.dropId))]
-  if (dropIds.length === 0) return
+  if (dropIds.length === 0) return false
   const flags = await prisma.exceptionFlag.findMany({
     where: {
       tenantId, kind: 'cash_variance', entityType: 'DepositDrop', entityId: { in: dropIds },
@@ -229,6 +230,10 @@ async function resolveTiedDepositVariance(tenantId: string, shiftIds: string[], 
       data: { status: 'resolved', resolvedById: userId, resolvedAt: new Date(), resolution: 'The shift\'s deposits now add up to its cash to bank' },
     })
   }
+  // Do ALL of `shiftIds` add up now? (The new drop raises no variance flag then:
+  // a split bag's per-till differences inside the tolerance can sum past it.)
+  for (const id of shiftIds) if (!(await shiftTies(id))) return false
+  return true
 }
 
 const zDepositSlipFile = z.object({
@@ -1211,11 +1216,18 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // for one shift are ordered and the posting's split (earlier drops first)
     // is the same however they race.
     let expected = 0
+    // The shifts' whole cash to bank: a bag for a shift with cash is judged
+    // even once nothing is left to bank (an extra bag is "cash over").
+    let shiftCash = 0
     const drop = await prisma.$transaction(async (tx) => {
       for (const a of [...allocs].sort((x, y) => (x.shiftId < y.shiftId ? -1 : 1))) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`deposit_drop_shift:${a.shiftId}`}))`
       }
-      for (const a of allocs) expected += (await remainingShiftDeposit(tx, tenantId, a.shiftId)).remainingCents
+      for (const a of allocs) {
+        const r = await remainingShiftDeposit(tx, tenantId, a.shiftId)
+        expected += r.remainingCents
+        shiftCash += r.expectedCents
+      }
       const created = await tx.depositDrop.create({
         data: {
           ...rest,
@@ -1283,8 +1295,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // earlier drops' open variance flags for them are resolved.
     const variance = drop.varianceCents
     const limit = await cashVarianceLimitCents(tenantId)
-    await resolveTiedDepositVariance(tenantId, allocs.map((a) => a.shiftId), limit, req.staffUser!.id)
-    if (Math.abs(variance) > limit && expected > 0) {
+    const allTied = await resolveTiedDepositVariance(tenantId, allocs.map((a) => a.shiftId), limit, req.staffUser!.id)
+    if (Math.abs(variance) > limit && shiftCash > 0 && !allTied) {
       await flagException({
         tenantId,
         conceptId: body.conceptId ?? null,

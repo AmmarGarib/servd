@@ -293,12 +293,12 @@ describe('the exceptions inbox is per company', () => {
 
   it('B cannot acknowledge, resolve or dismiss A\'s flag', async () => {
     expect((await call('mgrB', 'PATCH', `/crosschecks/exceptions/${flagA}/acknowledge`)).statusCode).toBe(404)
-    expect((await call('mgrB', 'PATCH', `/crosschecks/exceptions/${flagA}/resolve`, { resolution: 'hide it' })).statusCode).toBe(404)
+    expect((await call('mgrB', 'PATCH', `/crosschecks/exceptions/${flagA}/resolve`, { resolution: 'hide it from A' })).statusCode).toBe(404)
     expect((await call('mgrB', 'DELETE', `/crosschecks/exceptions/${flagA}`)).statusCode).toBe(404)
     expect((await prisma.exceptionFlag.findUnique({ where: { id: flagA } }))!.status).toBe('open')
 
     expect((await call('mgrA', 'PATCH', `/crosschecks/exceptions/${flagA}/acknowledge`)).statusCode).toBe(204)
-    expect((await call('mgrA', 'PATCH', `/crosschecks/exceptions/${flagA}/resolve`, { resolution: 'checked' })).statusCode).toBe(204)
+    expect((await call('mgrA', 'PATCH', `/crosschecks/exceptions/${flagA}/resolve`, { resolution: 'checked the drawer' })).statusCode).toBe(204)
     expect((await prisma.exceptionFlag.findUnique({ where: { id: flagA } }))!.status).toBe('resolved')
   })
 })

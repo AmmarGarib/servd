@@ -251,12 +251,25 @@ describe('blocks refuse the close with their key; the CEO closes over them with 
       expect(ok.statusCode).toBe(201)
     })
     await resetLocks()
-    const boom: CloseCheck = { key: 'boom', severity: 'block', overridable: false, async run() { throw new Error('kaput') } }
+    // A throwing check keeps its own rule (finance audit 2026-10-16, item 12):
+    // an overridable block that cannot run is closed over with a reason …
+    const boom: CloseCheck = { key: 'boom', severity: 'block', overridable: true, async run() { throw new Error('kaput') } }
     await withCheck(boom, async () => {
       const refused = await close('ceo', A)
       expect(refused.statusCode).toBe(409)
       expect(keysOf(refused)).toEqual(['check_failed:boom'])
       expect((await close('ceo', A, { acknowledge: { keys: ['check_failed:boom'], reason: 'Known bug, books checked by hand' } })).statusCode).toBe(201)
+    })
+    await resetLocks()
+    // … a never-overridable one (like trial_balance) that cannot run is never.
+    const hardBoom: CloseCheck = { key: 'hard_boom', severity: 'block', overridable: false, async run() { throw new Error('kaput') } }
+    await withCheck(hardBoom, async () => {
+      const refused = await close('ceo', A)
+      expect(refused.statusCode).toBe(409)
+      expect(keysOf(refused)).toEqual(['check_failed:hard_boom'])
+      const ack = await close('ceo', A, { acknowledge: { keys: ['check_failed:hard_boom'], reason: 'Known bug, books checked by hand' } })
+      expect(ack.statusCode).toBe(422)
+      expect(ack.json().error.code).toBe('NOT_OVERRIDABLE')
     })
   })
 })

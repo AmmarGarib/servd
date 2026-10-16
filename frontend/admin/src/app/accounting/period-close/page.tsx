@@ -44,6 +44,24 @@ interface CloseProblem {
   overridable: boolean
 }
 
+/**
+ * Who may press a check's one-click fix: the roles the fix's OWN route admits
+ * (the server still decides). Finance runs the routine month-end jobs; the
+ * fleet recharge stays the CEO's. A fix path not listed here is CEO-only.
+ *   /accounting/fixed-assets/depreciate   fixedAssets FA_WRITER_ROLES
+ *   /finance/prepaid-releases             financePlanning FA_WRITERS
+ *   /reconciliation/card-payouts/rematch  cardPayoutRoutes SETTINGS_EDITORS
+ *   /hr/final-settlement/post-unposted    hr PAYROLL_PAYERS (finance with accounting)
+ *   /accounting/intercompany/fleet/charge ADMIN_ONLY
+ */
+const FIX_ROLES: Record<string, readonly string[]> = {
+  '/accounting/fixed-assets/depreciate': ['admin', 'finance'],
+  '/finance/prepaid-releases': ['admin', 'finance'],
+  '/reconciliation/card-payouts/rematch': ['admin', 'finance'],
+  '/hr/final-settlement/post-unposted': ['admin', 'finance'],
+}
+const fixRolesOf = (path: string): readonly string[] => FIX_ROLES[path.split('?')[0]!] ?? ['admin']
+
 interface Override { key: string; title?: string; count?: number; cents?: number; via?: string }
 
 interface CloseState {
@@ -84,6 +102,7 @@ function Chip({ kind, children }: { kind: 'block' | 'warn' | 'clear' | 'fixed'; 
 export default function PeriodClosePage() {
   const qc = useQueryClient()
   const isAdmin = useAuthStore((s) => s.isRole('admin'))
+  const myRole = useAuthStore((s) => s.user?.role ?? null)
   const [lockedThrough, setLockedThrough] = useState(yesterdayPktIso())
   const [note, setNote] = useState('')
   const [reopenReason, setReopenReason] = useState('')
@@ -319,7 +338,7 @@ export default function PeriodClosePage() {
                   <p className="text-xs text-s-muted">{p.detail}</p>
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <Link href={p.link} className="text-primary-ink underline">Open</Link>
-                    {p.fix && isAdmin && (
+                    {p.fix && myRole && fixRolesOf(p.fix.path).includes(myRole) && (
                       <button onClick={() => fix.mutate(p)} disabled={fix.isPending} className="s-btn-secondary text-xs">
                         {fix.isPending && fix.variables?.key === p.key ? 'Working…' : p.fix.label}
                       </button>

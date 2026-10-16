@@ -163,6 +163,25 @@ describe('#5 a bank links only to a bank code', () => {
   })
 })
 
+describe('#5 (gate) a restored bank never shares a code another live bank took', () => {
+  it('restore refuses 409 BANK_CODE_IN_USE in the same company; another company\'s bank on the code does not block', async () => {
+    const { trashProvider } = await import('../src/modules/trash/registry.js')
+    const p = trashProvider('bank_account')!
+    await ensureAccount(T.A, '1043')
+    await ensureAccount(T.B, '1043')
+    const gone = await prisma.bankAccount.create({ data: { tenantId: T.A, name: `${P} closed`, bankName: 'UBL', accountCode: '1043', deletedAt: new Date(), isActive: false } })
+    await prisma.bankAccount.create({ data: { tenantId: T.B, name: `${P} B on 1043`, bankName: 'UBL', accountCode: '1043' } })
+    const entry = { entityId: gone.id, tenantId: T.A, meta: {} } as unknown as Parameters<NonNullable<typeof p.restore>>[2]
+    const ctx = {} as Parameters<NonNullable<typeof p.restore>>[1]
+    await prisma.$transaction((tx) => p.restore!(tx, ctx, entry))
+    expect((await prisma.bankAccount.findUniqueOrThrow({ where: { id: gone.id } })).deletedAt).toBeNull()
+    await prisma.bankAccount.update({ where: { id: gone.id }, data: { deletedAt: new Date(), isActive: false } })
+    await prisma.bankAccount.create({ data: { tenantId: T.A, name: `${P} A on 1043`, bankName: 'UBL', accountCode: '1043' } })
+    await expect(prisma.$transaction((tx) => p.restore!(tx, ctx, entry))).rejects.toMatchObject({ code: 'BANK_CODE_IN_USE' })
+    expect((await prisma.bankAccount.findUniqueOrThrow({ where: { id: gone.id } })).deletedAt).not.toBeNull()
+  })
+})
+
 describe('#18 ignore needs a reason; unignore; the close counts ignored lines', () => {
   it('ignore → reason + audit; unignore brings it back; company B 404', async () => {
     const line = await statementLine(T.A, bank['A1']!.id, '1020', 12_345, new Date())

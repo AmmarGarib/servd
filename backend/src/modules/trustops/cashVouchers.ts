@@ -336,7 +336,8 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
       && viewer.financeApprover && !own,
     canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt
       && (s === 'disbursed' || s === 'posted' || s === 'settled' || s === 'converted'),
-    canConfirmReceivedOnBehalf: v.kind === 'request' && !v.cashReceivedAt && newPaid && viewer.financeApprover && !own,
+    canConfirmReceivedOnBehalf: v.kind === 'request' && !v.cashReceivedAt && newPaid && viewer.financeApprover && !own
+      && v.disbursedById !== me,
     canExport: true, // every stage; stamped NOT APPROVED / VOID until the CEO approves (owner, 2026-10-16)
     canUploadReceipts,
     canSettle: canUploadReceipts && remaining > 0,
@@ -1400,7 +1401,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   // POST /:id/confirm-received-on-behalf {reason ≥10} — finance (role finance with the accounting module) or the
   // CEO records "cash received" for a holder who never confirmed (left, offboarded, unreachable), so the documents
   // check is not blocked for good (422 CASH_RECEIPT_NOT_CONFIRMED). Never the raiser or the holder (409
-  // SELF_APPROVE); only a paid request of the 2026-10-15 flow still waiting (409 ALREADY_CONFIRMED / VOUCHER_NOT_PAID);
+  // SELF_APPROVE), never whoever paid it (409 PAYER_CANNOT_CONFIRM); only a paid request of the 2026-10-15 flow still waiting (409 ALREADY_CONFIRMED / VOUCHER_NOT_PAID);
   // conditional on cashReceivedAt still null. Received by = the actor; audited 'confirm_received' with
   // via 'finance_on_behalf' and the reason. Books nothing.
   fastify.post<{ Params: { id: string } }>('/:id/confirm-received-on-behalf', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
@@ -1413,6 +1414,10 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (v.kind !== 'request') throw new AppError('NOT_A_REQUEST', 'A payee voucher records its receipt when it is paid', 422)
     if (isOwn(viewer, v)) {
       throw new AppError('SELF_APPROVE', 'You raised or hold this voucher — another finance person or the CEO records it', 409)
+    }
+    // The receipt is the holder's word that the payer handed the cash over: the payer never gives it for them.
+    if (v.disbursedById && v.disbursedById === viewer.id) {
+      throw new AppError('PAYER_CANNOT_CONFIRM', 'You paid this voucher — another finance person or the CEO records that the holder received it', 409)
     }
     if (v.status !== 'disbursed' || !v.expenseOnVerify) {
       throw wrongStatus('VOUCHER_NOT_PAID', v, 'receipt is recorded on behalf only for a paid voucher waiting for its documents check')

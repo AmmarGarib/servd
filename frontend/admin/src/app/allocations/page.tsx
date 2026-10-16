@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { api } from '../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
-import { usePermissions } from '../../hooks/useCan'
 
 /** A stored instant as its Karachi calendar day (a run covers whole PKT days). */
 const pktDay = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(0, 10)
@@ -25,12 +24,9 @@ export default function AllocationsPage() {
   const [to,   setTo]   = useState(todayPktIso())
   const [running, setRunning] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
-  // Running a rule is the CEO's and finance's (with the accounting module) —
-  // the API refuses everyone else, so the button is not shown to them.
-  const isAdmin = useAuthStore((s) => s.isRole('admin'))
-  const isFinance = useAuthStore((s) => s.isRole('finance'))
-  const { data: perms } = usePermissions()
-  const canRun = isAdmin || (isFinance && !!perms?.modules.includes('accounting'))
+  // Running a rule is the CEO's (the API is ADMIN_ONLY), so the button is
+  // not shown to anyone else.
+  const canRun = useAuthStore((s) => s.isRole('admin'))
 
   const { data: rules } = useQuery({
     queryKey: ['allocation-rules'],
