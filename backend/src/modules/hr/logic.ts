@@ -508,6 +508,10 @@ export interface PayslipResult {
 }
 
 const fmtDays = (n: number) => String(days2(n))
+
+/** The payslip line notes for a month with no paid days (owner, 2026-10-16). */
+export const NO_TAX_NO_PAID_DAYS = 'Income tax — none: no paid days this month'
+export const NO_EOBI_NO_PAID_DAYS = 'EOBI — none: no paid days this month'
 const fmtRs = (cents: number) => `Rs ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 /**
@@ -570,17 +574,31 @@ export function computePayslip(
     lines.push({ kind: 'deduction', code: 'late', label: `Late coming (${inputs.lateCount} lates = ${days} day${days === 1 ? '' : 's'})`, amountCents: dock(days * daily) })
   }
 
+  // No paid days (owner, 2026-10-16: "skip tax when no paid days"): a month
+  // with no salary earned — absent or on unpaid leave every day employed —
+  // takes no income tax and no EOBI / SESSI. The EOBI employee share on the
+  // usual `fixed` base is a flat amount that does not shrink with pay, so it
+  // (and the tax) would turn the net negative and stop the run; the employer
+  // shares are skipped by the same rule, so the accrual never books a
+  // contribution on a month nobody was paid for (hr/ledger.ts reads only the
+  // lines, so the entry still balances). A zero line says why on the payslip.
+  const noPaidDays = employedDays > 0 && paidDays <= 0
   // Contributions on a gross base are on the days employed this month, not
   // the full monthly salary a joiner or leaver was never paid.
-  const eobi = employedCents > 0 ? eobiContribution(employedCents, s) : { employeeCents: 0, employerCents: 0 }
+  const eobi = employedCents > 0 && !noPaidDays ? eobiContribution(employedCents, s) : { employeeCents: 0, employerCents: 0 }
   if (eobi.problem) warnings.push(eobi.problem)
   if (eobi.employeeCents > 0) lines.push({ kind: 'deduction', code: 'eobi_employee', label: `EOBI employee (${s.eobi.employeePct}%)`, amountCents: eobi.employeeCents })
-  if (emp.monthlyTaxCents > 0 && employedCents > 0) lines.push({ kind: 'deduction', code: 'tax', label: 'Income tax', amountCents: emp.monthlyTaxCents })
+  if (emp.monthlyTaxCents > 0 && employedCents > 0) {
+    lines.push(noPaidDays
+      ? { kind: 'deduction', code: 'tax', label: NO_TAX_NO_PAID_DAYS, amountCents: 0 }
+      : { kind: 'deduction', code: 'tax', label: 'Income tax', amountCents: emp.monthlyTaxCents })
+  }
+  if (noPaidDays && s.eobi.enabled) lines.push({ kind: 'deduction', code: 'eobi_employee', label: NO_EOBI_NO_PAID_DAYS, amountCents: 0 })
   if (inputs.loanInstallmentsCents > 0) lines.push({ kind: 'deduction', code: 'loan', label: 'Loan / advance installment', amountCents: inputs.loanInstallmentsCents })
   if (inputs.deductionAdjustmentsCents > 0) lines.push({ kind: 'deduction', code: 'other', label: 'Other deductions', amountCents: inputs.deductionAdjustmentsCents })
 
   if (eobi.employerCents > 0) lines.push({ kind: 'employer', code: 'eobi_employer', label: `EOBI employer (${s.eobi.employerPct}%)`, amountCents: eobi.employerCents })
-  const sessi = employedCents > 0 ? sessiEmployerCents(employedCents, s) : 0
+  const sessi = employedCents > 0 && !noPaidDays ? sessiEmployerCents(employedCents, s) : 0
   if (sessi > 0) lines.push({ kind: 'employer', code: 'sessi_employer', label: `SESSI employer (${s.sessi.employerPct}%)`, amountCents: sessi })
 
   const earnings = lines.filter((l) => l.kind === 'earning').reduce((a, l) => a + l.amountCents, 0)
@@ -611,6 +629,17 @@ export interface SettlementInputs {
   salaryByPeriod?: Record<string, number>
   /** Gratuity at exit (gratuityFor's amountCents); 0 when not due. */
   gratuityCents?: number
+  /** Each month's absences and approved unpaid leave inside the days the
+   *  settlement pays (owner, 2026-10-16: "apply absences in F&F") — read by
+   *  service `settlementAttendance`, the same reading a payroll run uses. A
+   *  month not listed has none. */
+  attendanceByPeriod?: Record<string, { absentDays: number; unpaidLeaveDays: number }>
+}
+
+/** The first day a full & final pays salary for: `salaryFrom`, or the joining
+ *  day when they joined after it. */
+export function settlementSalaryStart(joiningDate: Date | null, salaryFrom: Date | null): Date | null {
+  return salaryFrom && joiningDate && joiningDate > salaryFrom ? joiningDate : salaryFrom
 }
 
 /** One month of salary a full & final pays, worked out as that month's
@@ -618,6 +647,8 @@ export interface SettlementInputs {
 export interface SettlementMonth {
   period: string
   salaryCents: number
+  /** The month's pay basis (days employed, absent, unpaid leave, paid). */
+  basis: PayBasis
   taxCents: number
   eobiEmployeeCents: number
   eobiEmployerCents: number
@@ -630,12 +661,14 @@ export function finalSettlement(
   inp: SettlementInputs,
   s: HrSettings,
 ) {
-  const from = inp.salaryFrom && emp.joiningDate && emp.joiningDate > inp.salaryFrom ? emp.joiningDate : inp.salaryFrom
+  const from = settlementSalaryStart(emp.joiningDate, inp.salaryFrom)
   // Each month the settlement pays salary for is that month's payslip —
   // computePayslip, the one engine — so the leaver's last salary carries the
   // same income tax, EOBI and SESSI a payroll would have taken for those days
   // (finance gaps, extra finding "F&F has no statutory deductions"). `from`
   // stands in for the joining date, so the first month is prorated from it.
+  // Each month's absences and unpaid leave are docked as payroll docks them
+  // (owner, 2026-10-16), and a month with no paid days takes no tax or EOBI.
   const months: SettlementMonth[] = []
   const warnings = new Set<string>()
   if (from && from <= lastWorkingDay) {
@@ -644,16 +677,16 @@ export function finalSettlement(
         grossSalaryCents: inp.salaryByPeriod?.[p] ?? emp.grossSalaryCents,
         monthlyTaxCents: emp.monthlyTaxCents ?? 0,
         joiningDate: from, lastWorkingDay,
-      }, p, EMPTY_INPUTS, s)
+      }, p, { ...EMPTY_INPUTS, ...(inp.attendanceByPeriod?.[p] ?? {}) }, s)
       const line = (code: string) => slip.lines.filter((l) => l.code === code).reduce((a, l) => a + l.amountCents, 0)
       months.push({
-        period: p, salaryCents: slip.grossCents, taxCents: line('tax'),
+        period: p, salaryCents: slip.grossCents, basis: slip.basis, taxCents: line('tax'),
         eobiEmployeeCents: line('eobi_employee'), eobiEmployerCents: line('eobi_employer'), sessiEmployerCents: line('sessi_employer'),
       })
       for (const w of slip.warnings) warnings.add(w)
     }
   }
-  const total = (k: keyof Omit<SettlementMonth, 'period'>) => months.reduce((a, m) => a + m[k], 0)
+  const total = (k: keyof Omit<SettlementMonth, 'period' | 'basis'>) => months.reduce((a, m) => a + m[k], 0)
   const leaveEncashment = s.encashLeaveOnExit && inp.leaveBalanceDays > 0
     ? Math.round(inp.leaveBalanceDays * dailyRateCents(emp.grossSalaryCents, s, periodOf(lastWorkingDay)))
     : 0

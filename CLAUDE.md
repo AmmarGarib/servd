@@ -1171,7 +1171,8 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (`allocation.run.reversal:<runId>`, brand tags kept) on the run's own day
   (today if that month is closed), once (409 `RUN_ALREADY_REVERSED`); a reversed
   run no longer blocks its period and the cost reader skips run and reversal
-  entries. Closed books stay the CEO's through the ledger. Audited with
+  entries. One run of a rule at a time (advisory lock + overlap re-check in the
+  run's transaction). Closed books stay the CEO's through the ledger. Audited with
   `actorRole`. Tests: `tests/allocationsFinance.test.ts`.
 
 ### Finance wave B (2026-10-14; Hasnain's answers H1–H31 + the owner's)
@@ -1339,10 +1340,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   'company'` named exactly `GS Foods`, else nothing changes and no marker
   (`/health` `supplierCompanies`, counts only). Deleted suppliers move too. A
   supplier with any record in ANOTHER company (or a system supplier GS Foods
-  already has) is skipped and flagged `supplier_company_unassigned` for the CEO;
+  already has — incl. a receipt at another company's outlet, with its stock,
+  lots, GRNI matches or petty-cash lines there) is skipped and flagged
+  `supplier_company_unassigned` (under the row lock: once) for the CEO; a
+  supplier whose move throws is left for the next boot and the marker waits;
   the supplier editor resolves it. Ledger entries never move; company-less goods
   receipts are stamped; the opening balance posts in GS Foods. Audit
-  `supplier.company_assigned`. Tests: `tests/companylessSuppliers.test.ts`.
+  `supplier.company_assigned`; a moved supplier with bills / payments never
+  posted raises `supplier_unposted_after_move` (high) for the CEO → Procurement
+  → Post unposted. Tests: `tests/companylessSuppliers.test.ts`.
 - **Combining companies (`POST /tenants/merge`):** everything with a
   `tenantId` moves or the merge is refused (422) — never stranded on the
   deleted company. A new company table is added to the merge

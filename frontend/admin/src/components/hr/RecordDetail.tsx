@@ -136,7 +136,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
       setEditing(true)
       const through = r['paidThrough'] ? `; payroll pays through ${String(r['paidThrough'])}${r['paidThroughStatus'] && r['paidThroughStatus'] !== 'locked' ? ` (still ${String(r['paidThroughStatus'])} — lock it before approving this)` : ''}` : ''
       const warnings = Array.isArray(r['warnings']) && r['warnings'].length ? ` ${(r['warnings'] as string[]).join(' ')}` : ''
-      setMsg(`Calculated from ${String(r['leaveBalanceDays'])} day(s) of paid leave earned this leave year${through}.${gratuityText(r)} Review, then save.${warnings}`)
+      setMsg(`Calculated from ${String(r['leaveBalanceDays'])} day(s) of paid leave earned this leave year${through}.${salaryDaysText(r)}${gratuityText(r)} Review, then save.${warnings}`)
     },
     onError: fail,
   })
@@ -364,6 +364,18 @@ function LeaveRotaEffects({ data }: { data: Record<string, unknown> }) {
 }
 
 /** "Calculate"'s gratuity line, in words: the service it counted, or why none is due. */
+/** The days each salary month of a full & final pays for — net of that
+ *  month's absences and unpaid leave, as payroll docks them (owner, 2026-10-16). */
+function salaryDaysText(r: Record<string, unknown>): string {
+  const months = Array.isArray(r['months']) ? r['months'] as Array<{ period: string; basis?: { daysInMonth: number; paidDays: number; absentDays: number; unpaidLeaveDays: number } }> : []
+  const parts = months.filter((m) => m.basis).map((m) => {
+    const b = m.basis!
+    const off = [b.absentDays > 0 ? `${b.absentDays} absent` : '', b.unpaidLeaveDays > 0 ? `${b.unpaidLeaveDays} unpaid leave` : ''].filter(Boolean).join(', ')
+    return `${m.period}: ${b.paidDays} of ${b.daysInMonth} days${off ? ` (${off})` : ''}${b.paidDays === 0 ? ' — no tax: no paid days' : ''}`
+  })
+  return parts.length ? ` Salary paid for ${parts.join('; ')}.` : ''
+}
+
 function gratuityText(r: Record<string, unknown>): string {
   const g = r['gratuityDetail'] as {
     eligible: boolean; reason: string | null; years: number; months: number; days: number

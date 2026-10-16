@@ -13,7 +13,7 @@
 //   - idempotent: the marker stops a second run; a re-run without it moves
 //     nothing twice and raises no second flag
 //   - /health detail carries counts only
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import bcrypt from 'bcryptjs'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
@@ -172,6 +172,10 @@ describe('the assignment', () => {
     expect(a.userId).toBeNull()
     const m = a.metadata as { actor: string; buyerCleared: boolean; receiptsStamped: number; bills: number; billsWithoutEntry: number }
     expect(m).toMatchObject({ actor: 'system', buyerCleared: true, receiptsStamped: 1, bills: 1, billsWithoutEntry: 1 })
+    // A moved supplier with bills that never posted raises one flag for the CEO in GS Foods.
+    const unposted = await prisma.exceptionFlag.findMany({ where: { kind: 'supplier_unposted_after_move', entityId: s.plain! } })
+    expect(unposted).toHaveLength(1)
+    expect(unposted[0]!.tenantId).toBe(G)
     const flags = await prisma.exceptionFlag.findMany({ where: { kind: SUPPLIER_UNASSIGNED_KIND, entityId: { in: [s.itemInV!, s.ledgerInV!, s.system!] } } })
     expect(flags).toHaveLength(3)
     for (const f of flags) {
@@ -205,5 +209,77 @@ describe('the assignment', () => {
       expect(h.detail).not.toContain(P)
       expect(h.detail).toMatch(/^\d+ supplier\(s\) with no company/)
     }
+  })
+})
+
+describe('gate additions: receipts tied to another company, one failure, two boxes', () => {
+  const g: Record<string, string> = {}
+  const mk = async (key: string) => (g[key] = (await prisma.supplier.create({ data: { name: `${P} g ${key}` } })).id)
+
+  beforeAll(async () => {
+    const itemV = (await prisma.inventoryItem.create({ data: { name: `${P} V oil`, unit: 'kg', tenantId: V } })).id
+    // A company-less receipt left at company V's outlet.
+    await mk('rcptAtVOutlet')
+    const locV = (await prisma.location.create({ data: { name: `${P} V outlet`, slug: `${P}-locv`, tenantId: V } })).id
+    await prisma.goodsReceipt.create({ data: { supplierId: g.rcptAtVOutlet!, receivedById: keeper, locationId: locV } })
+    // A company-less receipt whose line received company V's stock item.
+    await mk('rcptLineItemV')
+    const r1 = await prisma.goodsReceipt.create({ data: { supplierId: g.rcptLineItemV!, receivedById: keeper } })
+    await prisma.goodsReceiptLine.create({ data: { receiptId: r1.id, description: 'oil', receivedQty: 1, inventoryItemId: itemV } })
+    // A company-less receipt whose line opened a stock lot in company V.
+    await mk('lotInV')
+    const r2 = await prisma.goodsReceipt.create({ data: { supplierId: g.lotInV!, receivedById: keeper } })
+    const l2 = await prisma.goodsReceiptLine.create({ data: { receiptId: r2.id, description: 'oil', receivedQty: 1 } })
+    await prisma.stockLot.create({ data: {
+      tenantId: V, inventoryItemId: itemV, sourceType: 'goods_receipt_line', sourceId: l2.id, receiptLineId: l2.id,
+      costClass: 'food', qtyIn: 1, unitCostCents: 100, remainingValueCents: 100, receivedAt: new Date(), remainingQty: 1, valueInCents: 100,
+    } })
+    await mk('fine1'); await mk('fine2'); await mk('fine3')
+  }, 60_000)
+
+  it('a receipt at another company\'s outlet, with its stock, or with lots there → skipped and flagged, not stamped', async () => {
+    const ids = [g.rcptAtVOutlet!, g.rcptLineItemV!, g.lotInV!]
+    const r = await assignCompanylessSuppliers({ targetName: TARGET, markerKey: `${MARKER}.rcpt`, supplierIds: ids })
+    expect(r.assigned).toEqual([])
+    expect(new Set(r.skipped.map((x) => x.supplierId))).toEqual(new Set(ids))
+    expect(await prisma.supplier.count({ where: { id: { in: ids }, tenantId: null } })).toBe(3)
+    expect(await prisma.goodsReceipt.count({ where: { supplierId: { in: ids }, tenantId: { not: null } } })).toBe(0)
+    expect(await prisma.exceptionFlag.count({ where: { kind: SUPPLIER_UNASSIGNED_KIND, entityId: { in: ids } } })).toBe(3)
+  })
+
+  it('one supplier whose move throws: the others still move, no marker; the next run finishes and writes it', async () => {
+    const key = `${MARKER}.fail`
+    const orig = prisma.$transaction.bind(prisma)
+    let calls = 0
+    const spy = vi.spyOn(prisma, '$transaction').mockImplementation(((...args: Parameters<typeof prisma.$transaction>) => {
+      if (calls++ === 0) return Promise.reject(new Error('boom'))
+      return (orig as (...a: unknown[]) => unknown)(...args)
+    }) as typeof prisma.$transaction)
+    let r: Awaited<ReturnType<typeof assignCompanylessSuppliers>>
+    try {
+      r = await assignCompanylessSuppliers({ targetName: TARGET, markerKey: key, supplierIds: [g.fine1!, g.fine2!] })
+    } finally { spy.mockRestore() }
+    expect(r.failed).toBe(1)
+    expect(r.assigned).toHaveLength(1)
+    expect(await prisma.setting.findUnique({ where: { key } })).toBeNull()
+    const again = await assignCompanylessSuppliers({ targetName: TARGET, markerKey: key, supplierIds: [g.fine1!, g.fine2!] })
+    expect(again.failed).toBe(0)
+    expect(again.assigned).toHaveLength(1)
+    expect(await prisma.supplier.count({ where: { id: { in: [g.fine1!, g.fine2!] }, tenantId: G } })).toBe(2)
+    expect(await prisma.setting.findUnique({ where: { key } })).not.toBeNull()
+  })
+
+  it('two boxes booting at once: one move, one audit, one flag', async () => {
+    const conflict = (await prisma.supplier.create({ data: { name: `${P} g race conflict` } })).id
+    await prisma.inventoryItem.create({ data: { name: `${P} race item`, unit: 'kg', tenantId: V, supplierId: conflict } })
+    const ids = [g.fine3!, conflict]
+    const [a, b] = await Promise.all([
+      assignCompanylessSuppliers({ targetName: TARGET, markerKey: `${MARKER}.boxA`, supplierIds: ids }),
+      assignCompanylessSuppliers({ targetName: TARGET, markerKey: `${MARKER}.boxB`, supplierIds: ids }),
+    ])
+    expect(a.assigned.length + b.assigned.length).toBe(1)
+    expect((a.failed ?? 0) + (b.failed ?? 0)).toBe(0)
+    expect(await prisma.auditLog.count({ where: { action: 'supplier.company_assigned', entityId: g.fine3! } })).toBe(1)
+    expect(await prisma.exceptionFlag.count({ where: { kind: SUPPLIER_UNASSIGNED_KIND, entityId: conflict } })).toBe(1)
   })
 })

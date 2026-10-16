@@ -121,6 +121,7 @@ export type ExceptionKind =
   | 'cash_voucher_hold_unconverted' // a voucher still held on 1357 could not be booked as one expense entry — finance fixes it
   // Company-less suppliers → GS Foods, once (owner, 2026-10-16; procurement/companylessSuppliers.ts).
   | 'supplier_company_unassigned' // left company-less: it has records in another company — the CEO assigns it by hand
+  | 'supplier_unposted_after_move' // a supplier moved to GS Foods has bills / payments that never reached the books — CEO runs Post unposted
 
 /**
  * The kind a flag was filed under before it had its own. A query that looks

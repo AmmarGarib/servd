@@ -146,6 +146,7 @@ describe('runs — finance runs and reverses; closed books stay the CEO\'s', () 
   let janRun: string
   let janRerun: string
   let febRun: string
+  let aprRun: string
 
   beforeAll(async () => {
     ruleId = (await prisma.costAllocationRule.findFirstOrThrow({ where: { tenantId: A, sourceAccountCode: '6010', deletedAt: null } })).id
@@ -252,5 +253,33 @@ describe('runs — finance runs and reverses; closed books stay the CEO\'s', () 
     expect(ceoRev.statusCode, ceoRev.body).toBe(201)
     const rev = await prisma.journalEntry.findUniqueOrThrow({ where: { id: ceoRev.json().reversalEntryId } })
     expect(fmtPktDate(rev.entryDate)).toBe(fmtPktDate(pktToday().from))
+  })
+
+  it('two runs of one period at once (finance + CEO): one posts, the other is refused — never allocated twice', async () => {
+    await post(A, new Date('2026-04-20T10:00:00Z'), '6010', '1020', 80_000)
+    const body = { periodStart: '2026-04-01', periodEnd: '2026-04-30' }
+    const [r1, r2] = await Promise.all([
+      call('fin', 'POST', `/allocations/rules/${ruleId}/run`, body),
+      call('ceo', 'POST', `/allocations/rules/${ruleId}/run`, body),
+    ])
+    expect([r1.statusCode, r2.statusCode].sort()).toEqual([201, 409])
+    expect([r1, r2].find((r) => r.statusCode === 409)!.json().error.code).toBe('RUN_OVERLAPS')
+    expect(await prisma.costAllocationRun.count({ where: { ruleId, periodStart: new Date('2026-04-01T00:00:00+05:00') } })).toBe(1)
+    aprRun = [r1, r2].find((r) => r.statusCode === 201)!.json().runId
+    const tagged = await prisma.journalLine.findMany({
+      where: { account: { code: '6010', tenantId: A }, conceptId: { not: null }, journalEntry: { reference: { startsWith: 'allocation.run:' }, entryDate: { gte: new Date('2026-04-01T00:00:00+05:00'), lte: new Date('2026-04-30T23:59:59.999+05:00') } } },
+      select: { amountCents: true },
+    })
+    expect(tagged.reduce((t, l) => t + Number(l.amountCents), 0)).toBe(80_000)
+  })
+
+  it('two reversals of one run at once: one reverses, the other is 409 — one reversal entry', async () => {
+    const [r1, r2] = await Promise.all([
+      call('fin', 'POST', `/allocations/runs/${aprRun}/reverse`, { reason: 'Double click on reverse' }),
+      call('ceo', 'POST', `/allocations/runs/${aprRun}/reverse`, { reason: 'Double click on reverse' }),
+    ])
+    expect([r1.statusCode, r2.statusCode].sort()).toEqual([201, 409])
+    expect(await prisma.journalEntry.count({ where: { tenantId: A, reference: `allocation.run.reversal:${aprRun}` } })).toBe(1)
+    expect(await prisma.auditLog.count({ where: { action: 'allocation.run_reverse', entityId: aprRun } })).toBe(1)
   })
 })

@@ -55,6 +55,7 @@
 import type { Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
+import { flagException } from '../../lib/exceptions.js'
 import { syncOpeningBalanceOrFlag } from './openingBalance.js'
 
 export const COMPANYLESS_SUPPLIERS_MARKER = 'procurement.companylessSuppliersAssignedAt'
@@ -293,6 +294,21 @@ export async function assignCompanylessSuppliers(opts: { targetName?: string; ma
           payments: outcome.payments, paymentsWithoutEntry: outcome.paymentsWithoutEntry,
         },
       })
+      // Bills / payments recorded while the supplier had no company never
+      // reached the books: they now show in GS Foods' ageing but not in 2010
+      // until the CEO runs Procurement → Post unposted. Tell the CEO once.
+      if (outcome.billsWithoutEntry + outcome.paymentsWithoutEntry > 0) {
+        await flagException({
+          tenantId: target,
+          kind: 'supplier_unposted_after_move',
+          severity: 'high',
+          title: `A supplier moved to GS Foods has ${outcome.billsWithoutEntry} bill(s) and ${outcome.paymentsWithoutEntry} payment(s) not in the books`,
+          description: 'These were recorded while the supplier had no company, so they never posted. They now show in supplier ageing but not in Accounts payable (2010). Run Procurement → Post unposted (CEO).',
+          entityType: 'Supplier',
+          entityId: id,
+          metadata: { billsWithoutEntry: outcome.billsWithoutEntry, paymentsWithoutEntry: outcome.paymentsWithoutEntry },
+        })
+      }
       // The opening balance follows the supplier into GS Foods' ledger (never
       // throws; a refusal is flagged for the backfill).
       if (outcome.opening) await syncOpeningBalanceOrFlag(id)

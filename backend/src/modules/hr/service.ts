@@ -15,7 +15,7 @@ import {
   computePayslip, overtimeCents, otMultiplierFor, hourlyRateCents, periodStart, periodEnd, periodOf, pktToday,
   leaveYear, leaveBalance, leaveQuantity, leaveDaysWithin, leaveYearsBetween, carriedForwardDays, attendanceInputs,
   loanInstallmentCents, allocateLoanCents, isDueWithin, salaryInForce, EOBI_NOT_CALCULATED, settledFromPeriod, settlementParts,
-  type SalaryChange,
+  nextPeriod, settlementSalaryStart, type SalaryChange,
 } from './logic.js'
 
 type Tx = Prisma.TransactionClient
@@ -595,6 +595,51 @@ export async function unpaidOvertime(tenantId: string, employeeId: string, from:
 
 export type PrefilledInputs = PayrollInputs & { loans: LoanLine[]; otRecordIds: string[] }
 
+/**
+ * Absences, lates and approved unpaid leave over [from, to] — a window
+ * already clipped to the days employed (and to one month). THE reading of
+ * attendance for pay: a payroll run (prefillInputs) and a full & final
+ * (settlementAttendance) both come here, never a second copy.
+ */
+export async function attendanceWithin(tenantId: string, employeeId: string, from: Date, to: Date, s: HrSettings): Promise<{ absentDays: number; lateCount: number; unpaidLeaveDays: number }> {
+  const none = { absentDays: 0, lateCount: 0, unpaidLeaveDays: 0 }
+  if (Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()) > to.getTime()) return none
+  const [attendance, leaves, unpaidTypes] = await Promise.all([
+    prisma.hrRecord.findMany({
+      where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: { gte: from, lte: to } },
+      select: { startDate: true, category: true, quantity: true, createdAt: true },
+    }),
+    prisma.hrRecord.findMany({ where: { tenantId, section: 'leave', employeeId, status: 'approved', startDate: { lte: to }, endDate: { gte: from } } }),
+    prisma.hrRecord.findMany({ where: { tenantId, section: 'leave_type', category: 'unpaid' }, select: { id: true } }),
+  ])
+  const unpaid = new Set(unpaidTypes.map((t) => t.id))
+  return attendanceInputs(
+    from, to,
+    attendance.filter((a) => a.startDate).map((a) => ({ date: a.startDate!, status: a.category, lateMinutes: a.quantity, createdAt: a.createdAt })),
+    leaves.filter((l) => l.startDate && l.endDate).map((l) => ({ startDate: l.startDate!, endDate: l.endDate!, quantity: l.quantity, unpaid: !!l.refId && unpaid.has(l.refId) })),
+    s,
+  )
+}
+
+/**
+ * A full & final's attendance (owner, 2026-10-16: "apply absences in F&F"):
+ * for each month it pays salary for, the absences and approved unpaid leave
+ * between the first unpaid day (`settlementSalaryStart`) and the last working
+ * day — read exactly as a payroll run reads them (attendanceWithin).
+ */
+export async function settlementAttendance(tenantId: string, employeeId: string, joiningDate: Date | null, salaryFrom: Date | null, lastWorkingDay: Date, s: HrSettings): Promise<Record<string, { absentDays: number; unpaidLeaveDays: number }>> {
+  const start = settlementSalaryStart(joiningDate, salaryFrom)
+  const out: Record<string, { absentDays: number; unpaidLeaveDays: number }> = {}
+  if (!start || start > lastWorkingDay) return out
+  for (let p = periodOf(start); p <= periodOf(lastWorkingDay); p = nextPeriod(p)) {
+    const from = start > periodStart(p) ? start : periodStart(p)
+    const to = lastWorkingDay < periodEnd(p) ? lastWorkingDay : periodEnd(p)
+    const a = await attendanceWithin(tenantId, employeeId, from, to, s)
+    out[p] = { absentDays: a.absentDays, unpaidLeaveDays: a.unpaidLeaveDays }
+  }
+  return out
+}
+
 /** The month's payroll inputs for one employee, read from HR records.
  *  `runId` is the run they are for, left out of what other runs have claimed. */
 export async function prefillInputs(tenantId: string, emp: HrEmployee, period: string, s?: HrSettings, runId?: string): Promise<PrefilledInputs> {
@@ -602,31 +647,18 @@ export async function prefillInputs(tenantId: string, emp: HrEmployee, period: s
   const to = periodEnd(period)
   const settings = s ?? await getSettings(tenantId)
   const otFrom = await firstPayrollStart(tenantId, from)
-  const [attendance, leaves, unpaidTypes, ot, adjustments, loans] = await Promise.all([
-    prisma.hrRecord.findMany({
-      where: { tenantId, section: 'attendance', employeeId: emp.id, status: STANDING_ATTENDANCE, startDate: { gte: from, lte: to } },
-      select: { startDate: true, category: true, quantity: true, createdAt: true },
-    }),
-    prisma.hrRecord.findMany({ where: { tenantId, section: 'leave', employeeId: emp.id, status: 'approved', startDate: { lte: to }, endDate: { gte: from } } }),
-    prisma.hrRecord.findMany({ where: { tenantId, section: 'leave_type', category: 'unpaid' }, select: { id: true } }),
-    unpaidOvertime(tenantId, emp.id, otFrom, to, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
-    prisma.hrRecord.findMany({ where: { tenantId, section: 'payroll_adjustment', employeeId: emp.id, status: 'approved', effectiveDate: { gte: from, lte: to } } }),
-    loansFor(tenantId, emp.id, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
-  ])
-  const unpaid = new Set(unpaidTypes.map((t) => t.id))
-  const inputs: PrefilledInputs = { ...EMPTY_INPUTS, loans: [], otRecordIds: [] }
   // Only the days the person was employed: the salary is already prorated to
   // them, so an absence or unpaid leave outside them would be charged twice.
   const wFrom = emp.joiningDate && emp.joiningDate > from ? emp.joiningDate : from
   const wTo = emp.lastWorkingDay && emp.lastWorkingDay < to ? emp.lastWorkingDay : to
-  if (Date.UTC(wFrom.getUTCFullYear(), wFrom.getUTCMonth(), wFrom.getUTCDate()) <= wTo.getTime()) {
-    Object.assign(inputs, attendanceInputs(
-      wFrom, wTo,
-      attendance.filter((a) => a.startDate).map((a) => ({ date: a.startDate!, status: a.category, lateMinutes: a.quantity, createdAt: a.createdAt })),
-      leaves.filter((l) => l.startDate && l.endDate).map((l) => ({ startDate: l.startDate!, endDate: l.endDate!, quantity: l.quantity, unpaid: !!l.refId && unpaid.has(l.refId) })),
-      settings,
-    ))
-  }
+  const [att, ot, adjustments, loans] = await Promise.all([
+    attendanceWithin(tenantId, emp.id, wFrom, wTo, settings),
+    unpaidOvertime(tenantId, emp.id, otFrom, to, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
+    prisma.hrRecord.findMany({ where: { tenantId, section: 'payroll_adjustment', employeeId: emp.id, status: 'approved', effectiveDate: { gte: from, lte: to } } }),
+    loansFor(tenantId, emp.id, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
+  ])
+  const inputs: PrefilledInputs = { ...EMPTY_INPUTS, loans: [], otRecordIds: [] }
+  Object.assign(inputs, att)
   for (const o of ot) {
     const d = o.data as Record<string, unknown>
     inputs.otHours += typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : o.quantity ?? 0

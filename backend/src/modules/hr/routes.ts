@@ -28,7 +28,7 @@ import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder,
-  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
+  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
 } from './service.js'
 import {
   mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -1900,6 +1900,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (salaryFrom && salaryFrom <= lwd) {
       for (let p = periodOf(salaryFrom); p <= periodOf(lwd); p = nextPeriod(p)) salaryByPeriod[p] = await salaryForPeriod(emp, p)
     }
+    // The final month(s) are docked for absences and approved unpaid leave
+    // exactly as payroll docks them (owner, 2026-10-16).
+    const attendanceByPeriod = await settlementAttendance(emp.tenantId, emp.id, emp.joiningDate, salaryFrom, lwd, s)
     const leaveDays = Math.round(balances.filter((b) => b.paid).reduce((a, b) => a + accruedLeaveDays(b, b.yearFrom, emp.joiningDate, lwd), 0) * 100) / 100
     // Gratuity (H6) on the last gross — the gross in force at the last working
     // day, worked out above (never a second salaryForPeriod).
@@ -1912,6 +1915,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       loanOutstandingCents: loans.reduce((a, l) => a + l.outstandingCents, 0),
       deductionsCents: 0, otherAdjustmentsCents: 0,
       salaryByPeriod,
+      attendanceByPeriod,
       gratuityCents: g.amountCents,
     }, s)
     // Stamped only while the settlement can still be edited: once an

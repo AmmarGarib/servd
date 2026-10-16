@@ -6,6 +6,7 @@
 // and posts a JE that derecognises it back to source and debits per-concept
 // destination accounts (or the same source code with concept memos).
 
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { postJournalEntry, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
@@ -19,9 +20,9 @@ export const RUN_SOURCE = 'allocation.run'
 export const runReversalRef = (runId: string) => `${RUN_SOURCE}.reversal:${runId}`
 
 /** Which of these runs have had their entry reversed (in the run's company). */
-export async function reversedRunIds(tenantId: string, runIds: string[]): Promise<Map<string, Date>> {
+export async function reversedRunIds(tenantId: string, runIds: string[], db: Prisma.TransactionClient | typeof prisma = prisma): Promise<Map<string, Date>> {
   if (runIds.length === 0) return new Map()
-  const rows = await prisma.journalEntry.findMany({
+  const rows = await db.journalEntry.findMany({
     where: { tenantId, reference: { in: runIds.map(runReversalRef) } },
     select: { reference: true, createdAt: true },
   })
@@ -131,19 +132,23 @@ export async function runAllocationRule(input: {
   // earlier run of the same rule would allocate that cost a second time. A
   // REVERSED run (its entry reversed by POST /allocations/runs/:id/reverse)
   // no longer counts, so the corrected run can go in for the same period.
-  const candidates = await prisma.costAllocationRun.findMany({
-    where: { ruleId: rule.id, periodStart: { lte: input.periodEnd }, periodEnd: { gte: input.periodStart } },
-    select: { id: true, periodStart: true, periodEnd: true },
-  })
-  const reversed = await reversedRunIds(input.tenantId, candidates.map((c) => c.id))
-  const overlapping = candidates.find((c) => !reversed.has(c.id))
-  if (overlapping) {
-    throw new AppError(
-      'RUN_OVERLAPS',
-      `This rule already ran for ${fmtPktDate(overlapping.periodStart)}–${fmtPktDate(overlapping.periodEnd)} — pick a period that does not overlap it`,
-      409,
-    )
+  // Checked here for a quick answer, and again under the rule's lock below.
+  const assertNoOverlap = async (db: Prisma.TransactionClient | typeof prisma) => {
+    const candidates = await db.costAllocationRun.findMany({
+      where: { ruleId: rule.id, periodStart: { lte: input.periodEnd }, periodEnd: { gte: input.periodStart } },
+      select: { id: true, periodStart: true, periodEnd: true },
+    })
+    const reversed = await reversedRunIds(input.tenantId, candidates.map((c) => c.id), db)
+    const overlapping = candidates.find((c) => !reversed.has(c.id))
+    if (overlapping) {
+      throw new AppError(
+        'RUN_OVERLAPS',
+        `This rule already ran for ${fmtPktDate(overlapping.periodStart)}–${fmtPktDate(overlapping.periodEnd)} — pick a period that does not overlap it`,
+        409,
+      )
+    }
   }
+  await assertNoOverlap(prisma)
 
   const sourceAccount = await prisma.account.findFirst({ where: { tenantId: input.tenantId, code: rule.sourceAccountCode } })
   if (!sourceAccount) throw new NotFoundError('Account', rule.sourceAccountCode)
@@ -241,6 +246,12 @@ export async function runAllocationRule(input: {
   // The run row and its entry together: a run the ledger refuses (closed
   // period, missing account) leaves no run row behind to block a retry.
   const run = await prisma.$transaction(async (tx) => {
+    // One run of a rule at a time: two clicks (finance and the CEO, or a
+    // double submit) both passed the check above and would each post the
+    // period's cost — allocating it twice. The second waits here, then sees
+    // the first's run and is refused.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('allocation.rule'), hashtext(${rule.id}::text))`
+    await assertNoOverlap(tx)
     const run = await tx.costAllocationRun.create({
       data: {
         tenantId: input.tenantId,
