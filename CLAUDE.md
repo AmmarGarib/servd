@@ -1325,6 +1325,47 @@ only the types its modules + roles allow.
 - Promo codes and allocation rules are soft-deleted (partial unique over live
   rows); every promo redemption read filters `deletedAt: null`.
 
+### Night audit — sales module only (owner, 2026-10-16)
+
+"It should not proceed for night run / audit until cash / card settlement /
+bank transfers or any other payment mode is reconciled and closed" — and
+"Night run / audit / day close is only for sales module". Contract:
+`backend/src/modules/nightAudit/README.md`; page Finance → Night audit
+(`/finance/night-audit`, API `/accounting/night-audit`, module `accounting`).
+
+- **Two steps per company per Karachi business day** (`night_audit_days`):
+  the night run (finance or the CEO) needs that day's SALES money settled —
+  tills closed and counted, Raast matched, COD handed in, every other tender
+  resolved — then the day is `audited` (locked, report saved). It becomes
+  `closed` by itself once its card payout and the bank side of its sales money
+  (till cash deposits, customer bank transfers) are matched (worker
+  `nightAuditSettle`, posts nothing). A block is pushed through only by the
+  CEO with a reason ≥10, audited and flagged.
+- **The day lock is SALES ONLY** (`nightAudit/lock.ts` `isSalesSource`
+  allow-list: order*, pos.*, shift.close, deposit.drop, Raast write-off, COD
+  rider debt, loyalty earn/redeem). Supplier, petty cash, OpEx, CapEx,
+  payroll, manual journals, receivables, inter-company, tax, fixed assets,
+  gift cards and wallets never read it. A new sales posting source goes on
+  that list in the same change.
+- **Back-dated sales are the CEO's** (`nightAudit/backdate.ts`): voiding,
+  comping, cancelling, reversing a card charge or issuing a credit note on a
+  sale whose day is before today (final, or its day locked) answers 403
+  `CEO_ONLY_BACKDATED` to everyone else; the CEO gives `backdatedReason` (≥10;
+  422 `BACKDATED_REASON_REQUIRED`, the admin asks for it). Reopening a day is
+  CEO-only. Today's refund of an older bill posts today and is not gated.
+- **Month close** has the check `night_audit_days`: every business day of the
+  month with sales must be `closed` (CEO-overridable).
+
+### Closed books are the CEO's (owner, 2026-10-16)
+
+`accounting/closedBooks.ts`. A closed month refuses every posting (as
+before). Reopening is CEO-only (with a reason); the reopened window
+(Setting `ledger.reopenedThrough:<tenantId>`) takes person-made postings from
+the CEO only until the CEO closes through it again (403
+`CEO_ONLY_CLOSED_BOOKS`; automatic 'system' postings keep their own rules).
+Cancelling / reversing an entry DATED in closed or reopened books is the
+CEO's only (`reverseJournalEntry` checks it). Open months work as before.
+
 ### Parked (owner, 2026-10-13)
 
 Delivery and customers, and corporate clients on account, were PARKED on

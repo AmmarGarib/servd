@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
+import { forgetReopened, rememberReopened } from './closedBooks.js'
 import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
@@ -839,6 +840,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         snapshot: takeSnapshot('PeriodLock', latest),
       })
       await tx.periodLock.delete({ where: { id: latest.id } })
+      // The reopened month stays the CEO's until it is closed again.
+      await rememberReopened(tx, tenantId, latest.lockedThrough)
     })
     const now = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
 
@@ -1020,6 +1023,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         )
       }
       const overridden: CloseProblem[] = blocks
+      await forgetReopened(tx, tenantId, newLock)
       const created = await tx.periodLock.create({
         data: {
           tenantId,

@@ -22,6 +22,7 @@ import { AppError } from '../../lib/errors.js'
 import { fmtPktDate } from './dates.js'
 import { amountTooLarge, assertMoneyFits, toCents } from '../../lib/money.js'
 import { assertSalesDayOpenTx, dayLockOf, isSalesSource, salesDayLateNote } from '../nightAudit/lock.js'
+import { assertMayPostIntoReopened, assertMayUndoEntry } from './closedBooks.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -371,6 +372,10 @@ export async function postJournalEntry(
         422,
       )
     }
+    // A month the CEO reopened stays the CEO's until it is closed again
+    // (owner, 2026-10-16; closedBooks.ts) — person-made postings into it by
+    // anyone else are refused (403 CEO_ONLY_CLOSED_BOOKS).
+    await assertMayPostIntoReopened(tx, input.tenantId, entryDate, input.postedBy)
     // Night audit day lock (owner, 2026-10-16) — SALES postings only
     // (nightAudit/lock.ts isSalesSource): a sale, refund, void, till close or
     // deposit of till cash dated into a day the night audit locked is refused
@@ -433,6 +438,9 @@ export async function reverseJournalEntry(
       404,
     )
   }
+
+  // Cancelling an entry dated in closed books is the CEO's (closedBooks.ts).
+  await assertMayUndoEntry(tx, tenantId, original.entryDate, options.postedBy)
 
   const suffix = options.suffix ?? 'reversal'
   return postJournalEntry(
