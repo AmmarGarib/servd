@@ -1268,10 +1268,10 @@ type AgingSupplier = { id: string; name: string; tenantId: string | null; openin
  *   • bills / credit notes dated on or before asOf (posted at their own date),
  *     not void — or voided after asOf (the void's reversal is dated the void);
  *   • payments dated on or before asOf, not voided by then;
- *   • paid / credited rebuilt from the applications that existed at asOf
- *     (made by then, of a payment / credit note counted, to a bill counted).
- *     An application made later leaves the money an unapplied credit at asOf,
- *     which nets the same in the total.
+ *   • paid / credited rebuilt from the applications of a payment / credit
+ *     note counted to a bill counted — an application takes effect at the
+ *     later of its two documents' dates (when it was keyed in does not
+ *     matter; either way the total nets the same).
  */
 async function suppliersAsOf(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): Promise<AgingSupplier[]> {
   const liveAt = { OR: [{ voidedAt: null, status: { not: 'void' } }, { voidedAt: { gt: asOf } }] }
@@ -1294,11 +1294,11 @@ async function suppliersAsOf(supplierWhere: Prisma.SupplierWhereInput, asOf: Dat
   const paymentIds = suppliers.flatMap((s) => s.payments.map((p) => p.id))
   const [payApps, creditApps] = await Promise.all([
     billIds.length === 0 || paymentIds.length === 0 ? [] : prisma.supplierPaymentApplication.findMany({
-      where:  { billId: { in: billIds }, paymentId: { in: paymentIds }, createdAt: { lte: asOf } },
+      where:  { billId: { in: billIds }, paymentId: { in: paymentIds } },
       select: { billId: true, paymentId: true, amountAppliedCents: true },
     }),
     billIds.length === 0 || cnIds.length === 0 ? [] : prisma.supplierCreditApplication.findMany({
-      where:  { billId: { in: billIds }, creditNoteId: { in: cnIds }, createdAt: { lte: asOf } },
+      where:  { billId: { in: billIds }, creditNoteId: { in: cnIds } },
       select: { billId: true, creditNoteId: true, amountCents: true },
     }),
   ])

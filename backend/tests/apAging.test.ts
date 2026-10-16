@@ -178,15 +178,21 @@ describe('one AP aging, tied to ledger AP', () => {
     expect(res.statusCode).toBe(200)
     expect((res.json() as { total: { total: number } }).total.total).toBe(await ledgerAp(tenantA))
     await expect(enforceModuleAccess('/api/v1/procurement/ap-aging', { role: 'finance' })).resolves.toBeUndefined()
-    await expect(enforceModuleAccess('/api/v1/procurement/bills', { role: 'finance' })).rejects.toThrow()
+    // Finance records bills too now (owner, 2026-10-16) — apFinanceFinal.test.ts.
+    await expect(enforceModuleAccess('/api/v1/procurement/bills', { role: 'finance' })).resolves.toBeUndefined()
     expect((await get('ceo', '/procurement/aging')).statusCode).toBe(404)
   })
 
-  it('finance READS payables with its accounting module but never writes them (wave 3 UI-07)', async () => {
-    // Reads pass on 'accounting'; a write needs 'procurement'.
+  it('finance READS payables with its accounting module; writes only bills, credit notes and payments (owner, 2026-10-16)', async () => {
+    // Reads pass on 'accounting'; POs and suppliers still need 'procurement' to write.
     for (const url of ['/api/v1/procurement/bills', '/api/v1/procurement/payments', '/api/v1/procurement/purchase-orders?limit=5', '/api/v1/procurement/suppliers']) {
       await expect(enforceModuleAccess(url, { role: 'finance' }, 'GET'), url).resolves.toBeUndefined()
+    }
+    for (const url of ['/api/v1/procurement/purchase-orders', '/api/v1/procurement/suppliers']) {
       await expect(enforceModuleAccess(url, { role: 'finance' }, 'POST'), url).rejects.toThrow(/module/)
+    }
+    for (const url of ['/api/v1/procurement/bills', '/api/v1/procurement/payments', '/api/v1/procurement/credit-notes/x/apply']) {
+      await expect(enforceModuleAccess(url, { role: 'finance' }, 'POST'), url).resolves.toBeUndefined()
     }
     // The rest of /procurement stays procurement-only, reads included.
     await expect(enforceModuleAccess('/api/v1/procurement/reorder', { role: 'finance' }, 'GET')).rejects.toThrow(/module/)
@@ -194,10 +200,11 @@ describe('one AP aging, tied to ledger AP', () => {
     await expect(enforceModuleAccess('/api/v1/procurement/bills', { role: 'finance', moduleDeny: ['accounting'] }, 'GET')).rejects.toThrow(/module/)
     // A role with neither module is refused.
     await expect(enforceModuleAccess('/api/v1/procurement/bills', { role: 'cashier' }, 'GET')).rejects.toThrow(/module/)
-    // Through the real middleware: finance lists bills (200), cannot enter one (403).
+    // Through the real middleware: finance lists bills (200) and may enter one
+    // (an empty body is a validation error, not a 403).
     expect((await get('fin', '/procurement/bills')).statusCode).toBe(200)
     const post = await app.inject({ method: 'POST', url: '/procurement/bills', headers: { authorization: `Bearer ${users['fin']!.token}` }, payload: {} })
-    expect(post.statusCode).toBe(403)
+    expect(post.statusCode).toBe(400)
   })
 
   it('the supplier statement reads the same row: ledger balance + opening', async () => {
