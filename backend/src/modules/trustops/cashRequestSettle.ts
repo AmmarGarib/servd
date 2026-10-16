@@ -1,7 +1,22 @@
 // Cash vouchers — what happens after the cash is paid (child routes of
 // /trustops/cash-vouchers, registered by cashVouchers.ts).
 //
-// ── The 2026-10-15 flow (CashVoucher.expenseOnVerify true; every pay since) ──
+// ── Booked at pay (CashVoucher.bookedAtPay true; every pay since 2026-10-16) ──
+// Owner, 2026-10-16: "It should pass only one entry when booked by finance,
+// either docs are attached or not, if docs are attached with voucher after
+// transaction is booked by Finance, it should only save the doc and attached
+// it below the system generated voucher". Finance's pay was THE entry (Dr the
+// voucher's 6xxx / Cr 1011 | 1010 | the bank — cashVouchers.ts). Here:
+//   • POST /:id/documents — stored under the voucher; books nothing.
+//   • POST /:id/spend — 409 EXPENSE_BOOKED_AT_PAY (nothing to record).
+//   • POST /:id/verify-docs {note?} — finance marks the documents checked
+//     (≥ 1 supporting document, receipt confirmed, never its own): disbursed →
+//     posted, settledCents = amount. Books NOTHING. lines / changeCents /
+//     changeBoxId / topUpBoxId → 422 EXPENSE_BOOKED_AT_PAY: a change or an
+//     overspend is corrected by a manual journal (Finance → Journal).
+//
+// ── The 2026-10-15 hold flow (expenseOnVerify true, bookedAtPay false: paid
+//    before the one-entry rule) ──
 // The pay held the cash on 1357 (Dr 1357 / Cr 1011). Then:
 //   • POST /:id/documents { fileName, mime, dataBase64 } — supporting
 //     documents (kind 'supporting'): PDF, JPG / PNG / WebP, Excel, Word,
@@ -54,7 +69,7 @@
 // scope first (another company's request is 404); boxes, items, CapEx lines,
 // brands and outlets must be the request's own company's (422).
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -172,6 +187,53 @@ async function flagOverrides(
       amountCents: l.amountCents,
     })
   }
+}
+
+/**
+ * Finance's check of a voucher booked at pay (bookedAtPay): marks the
+ * documents checked — disbursed → posted (docsVerified*, posted*, settledCents
+ * = amount) — and books NOTHING (the pay was the one entry). No lines, no
+ * change, no overspend (422 EXPENSE_BOOKED_AT_PAY: a manual journal corrects
+ * it). The caller has checked finance, self, receipt confirmed and ≥ 1 document.
+ */
+async function markDocsChecked(
+  req: FastifyRequest,
+  v: VoucherRow,
+  viewer: Viewer,
+  body: { lines?: unknown[]; changeCents?: number; changeBoxId?: string; topUpBoxId?: string; note?: string },
+) {
+  if (body.lines || (body.changeCents ?? 0) > 0 || body.changeBoxId || body.topUpBoxId) {
+    throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} was booked in one entry when finance paid it — checking its documents books nothing; correct any change or overspend with a manual journal`, 422)
+  }
+  const me = viewer.id
+  const now = new Date()
+  await prisma.$transaction(async (tx) => {
+    await lockVoucherTx(tx, v.id)
+    const docs = await tx.cashVoucherAttachment.count({ where: { voucherId: v.id, tenantId: v.tenantId, kind: 'supporting' } })
+    if (docs === 0) throw new AppError('DOCS_REQUIRED', `Cash voucher ${v.number} has no supporting document yet`, 422)
+    // The claim: checked once.
+    const claimed = await tx.cashVoucher.updateMany({
+      where: { id: v.id, tenantId: v.tenantId, status: 'disbursed', bookedAtPay: true, postedAt: null },
+      data: {
+        status: 'posted', docsVerifiedById: me, docsVerifiedAt: now, postedAt: now, postedById: me,
+        settledCents: v.amountCents, settledAt: now,
+      },
+    })
+    if (claimed.count === 0) {
+      const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true, number: true } })
+      if (cur.status === 'posted') throw new AppError('ALREADY_POSTED', `Cash voucher ${v.number} is already checked`, 409)
+      throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', cur, 'finance checks a paid voucher')
+    }
+  })
+  const entryId = v.payJournalEntryId
+    ?? (v.pettyCashMovementId
+      ? (await prisma.pettyCashMovement.findUnique({ where: { id: v.pettyCashMovementId }, select: { journalEntryId: true } }))?.journalEntryId ?? null
+      : null)
+  await auditVoucher(req, 'verify_docs', v, {
+    status: 'posted', bookedAtPay: true, payEntryId: entryId, postsNothing: true, ...(body.note && { note: body.note }),
+  }, { status: v.status })
+  voucherTaskNotice('verified', v.id, me)
+  return { entryId, spentCents: v.amountCents, changeCents: 0, topUpCents: 0, voucher: await detailOf(v.id, viewer) }
 }
 
 export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
@@ -514,6 +576,9 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       note: z.string().trim().max(500).nullable().optional(),
     }).parse(req.body ?? {})
     const { v, viewer } = await loadVisible(req, req.params.id)
+    if (v.bookedAtPay) {
+      throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} was booked in one entry when finance paid it — attach the documents; finance corrects any difference with a manual journal`, 409)
+    }
     if (v.status !== 'disbursed' || !v.expenseOnVerify) {
       throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', v, 'what was spent is recorded once it is paid, until finance verifies it')
     }
@@ -575,6 +640,7 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
     if (!v.attachments.some((a) => a.kind === 'supporting')) {
       throw new AppError('DOCS_REQUIRED', `Cash voucher ${v.number} has no supporting document yet — they are uploaded first`, 422)
     }
+    if (v.bookedAtPay) return markDocsChecked(req, v, viewer, body)
     const boxOf = async (id: string) => {
       const b = await prisma.pettyCashBox.findFirst({ where: { id, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { id: true } })
       if (!b) throw new AppError('BOX_NOT_IN_COMPANY', 'That cash box is not an open petty-cash box of this voucher\'s company', 422)

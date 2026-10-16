@@ -40,16 +40,20 @@
 // • Return for correction (POST /:id/return {note}) and reject: finance from
 //   submitted, the CEO from finance_approved. The raiser edits and resubmits
 //   (POST /:id/resubmit).
-// • POST /:id/pay — the box's custodian (or a keeper) hands the cash over. ONE
-//   transaction: approved → disbursed (it pays once), expenseOnVerify = true,
-//   dueBy = now + OperationsConfig.cashAdvanceSettleDays, and ONE petty-cash
-//   spend through recordPettyCashSpendTx (nature 'voucher_hold'): Dr 1357
-//   Petty Cash Vouchers Awaiting Documents / Cr 1011 — NOT the expense.
-//   Or (owner, 2026-10-16) finance / the CEO pays from cash on hand or a bank
-//   account: Dr 1357 / Cr 1010 | the bank's code, 'cashvoucher.pay:<id>', no
-//   box (paySource; GET /:id/pay-sources lists what the viewer may pick).
-// • Supporting documents, the spend lines, verification and the posting
-//   (Dr expense / Cr 1357, once): cashRequestSettle.ts.
+// • POST /:id/pay — finance pays (viewer.payer). ONE transaction: approved →
+//   disbursed (it pays once), expenseOnVerify = true, bookedAtPay = true,
+//   dueBy = now + OperationsConfig.cashAdvanceSettleDays, and ONE entry that
+//   books the EXPENSE (owner, 2026-10-16: "It should pass only one entry when
+//   booked by finance, either docs are attached or not"): from a box, the
+//   petty-cash spend through recordPettyCashSpendTx with one expense line
+//   (cashRequestPayLine): Dr <the voucher's 6xxx> / Cr 1011; from cash on hand
+//   or a bank, 'cashvoucher.pay:<id>' Dr <the voucher's 6xxx> / Cr 1010 | the
+//   bank's code (paySource; GET /:id/pay-sources lists what the viewer may
+//   pick). Nothing is held on 1357.
+// • Supporting documents (stored under the voucher, book nothing) and
+//   finance's check (marks it posted, books nothing): cashRequestSettle.ts.
+//   Vouchers paid before bookedAtPay (held on 1357) still book Dr expense /
+//   Cr 1357 at verification.
 // • Legacy rows: 'draft' (waiting for an HOD) is treated as 'submitted'
 //   (finance approves it); 'hod_signed' exactly like 'finance_approved'.
 //   Rows PAID under H3 (expenseOnVerify false: expensed at pay) keep their
@@ -79,7 +83,7 @@ import { assertInt4Fits, zInt4Cents } from '../../lib/money.js'
 import { amountInWords } from '../../lib/amountInWords.js'
 import { EVIDENCE_MAX_BYTES, sendEvidence } from '../../lib/evidenceFile.js'
 import { resolveSpendAccount } from '../accounting/expenseCategories.js'
-import { cashRequestPaidAccountTx, categoryRefOf, paidFromLabel, postCashVoucherSourceTx } from '../accounting/pettyCashPosting.js'
+import { cashRequestPaidAccountTx, cashRequestPayLine, categoryRefOf, paidFromLabel, postCashVoucherSourceTx } from '../accounting/pettyCashPosting.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { passesCashGuard, recordPettyCashSpendTx } from './pettyCash.js'
@@ -132,6 +136,8 @@ export type CashRequestStage =
 type ClosedInput = {
   status: CashVoucherStatus
   expenseOnVerify: boolean
+  /** Booked in one entry when finance paid it (owner, 2026-10-16) — its books are 'booked' from the pay. */
+  bookedAtPay?: boolean
   disbursedAt: Date | null
   returnedAt: Date | null
   attachments: Array<{ kind: string; createdAt: Date }>
@@ -153,6 +159,8 @@ export function sentBackOf(v: ClosedInput): boolean {
  * The presentational CLOSED state (owner, 2026-10-16): a paid 2026-10-15
  * voucher is closed once it carries a supporting document (and is not sent
  * back since) — books 'pending' until finance verifies, 'booked' once posted.
+ * A voucher booked at pay (bookedAtPay) is 'booked' from the pay: finance's
+ * check only marks the documents checked.
  * Legacy rows and unpaid vouchers: never closed here (books null).
  */
 export function closedStateOf(v: ClosedInput): { closed: boolean; booksState: 'pending' | 'booked' | null; sentBack: boolean } {
@@ -161,7 +169,7 @@ export function closedStateOf(v: ClosedInput): { closed: boolean; booksState: 'p
   if (v.status !== 'disbursed') return { closed: false, booksState: null, sentBack: false }
   const sentBack = sentBackOf(v)
   const closed = !sentBack && v.attachments.some((a) => a.kind === 'supporting')
-  return { closed, booksState: closed ? 'pending' : null, sentBack }
+  return { closed, booksState: v.bookedAtPay ? 'booked' : closed ? 'pending' : null, sentBack }
 }
 
 /**
@@ -314,8 +322,9 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canCancel: (EDITABLE.includes(s) && raiser) || (viewer.keeper && PRE_PAY.includes(s)),
     canPay: s === 'approved' && viewer.payer,
     canUpload: ((s === 'approved' || newPaid) && docsParty) || (s === 'posted' && viewer.keeper),
-    canSendBack: newPaid && docState.closed && docState.booksState === 'pending' && viewer.financeApprover && !own,
-    canRecordSpend: newPaid && docsParty,
+    canSendBack: newPaid && docState.closed && viewer.financeApprover && !own,
+    // Booked at pay: what was spent is not recorded here (finance corrects by manual journal).
+    canRecordSpend: newPaid && !v.bookedAtPay && docsParty,
     canVerify: newPaid && viewer.financeApprover && !own && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
     canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt
       && (s === 'disbursed' || s === 'posted' || s === 'settled' || s === 'converted'),
@@ -476,15 +485,19 @@ export async function detailOf(id: string, viewer: Viewer) {
   }
   const submitters = [...new Set(settlements.map((s) => s.submittedById))]
   const names = submitters.length ? await prisma.user.findMany({ where: { id: { in: submitters } }, select: { id: true, name: true } }) : []
-  // 2026-10-15 flow: what the holder (or finance) says was spent, before / as verified.
-  const spentCents = v.expenseOnVerify ? settlements.reduce((t, s) => t + s.lines.reduce((u, l) => u + l.amountCents, 0), 0) : null
-  const spendLines = v.expenseOnVerify ? settlements.flatMap((s) => s.lines) : []
+  // 2026-10-15 flow: what the holder (or finance) says was spent, before / as verified. A voucher booked at pay
+  // has no spend lines (spend null): its one entry is the pay.
+  const hold = v.expenseOnVerify && !v.bookedAtPay
+  const spentCents = hold ? settlements.reduce((t, s) => t + s.lines.reduce((u, l) => u + l.amountCents, 0), 0) : null
+  const spendLines = hold ? settlements.flatMap((s) => s.lines) : []
   return {
     ...base,
     paidAccountCode,
     payMovement,
+    /** The ONE entry that booked a bookedAtPay voucher (the box spend's or 'cashvoucher.pay:<id>'). */
+    payEntryId: v.payJournalEntryId ?? payMovement?.journalEntryId ?? null,
     settlements: settlements.map((s) => ({ ...s, submittedByName: names.find((n) => n.id === s.submittedById)?.name ?? null })),
-    spend: v.expenseOnVerify ? {
+    spend: hold ? {
       lines: spendLines,
       spentCents,
       /** spent < paid: the change the holder hands back at verification. */
@@ -1399,22 +1412,24 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   })
 
   // POST /:id/pay { source?, boxId?, bankAccountId? } — the cash is handed to
-  // the holder (kind request) or the payee (kind expense). ONE transaction:
-  // claim approved → disbursed (409 ALREADY_PAID / VOUCHER_NOT_APPROVED),
-  // expenseOnVerify = true, dueBy (documents due), paySource, and ONE hold on
-  // 1357 — the expense is booked when finance verifies the documents:
-  //   source 'box' (default): the box's custodian or a keeper. The box: the
-  //     voucher's, else `boxId` (only a keeper changes a box already set),
-  //     else the custodian's only open box of the voucher's company. The
-  //     spend through recordPettyCashSpendTx (nature 'voucher_hold'): Dr 1357
-  //     / Cr 1011 (400 INSUFFICIENT_FLOAT).
+  // the holder (kind request) or the payee (kind expense). Finance only
+  // (403 PAY_FINANCE_ONLY). ONE transaction: claim approved → disbursed (409
+  // ALREADY_PAID / VOUCHER_NOT_APPROVED), expenseOnVerify = true, bookedAtPay
+  // = true, dueBy (documents due), paySource, and ONE entry that books the
+  // expense now (Dr the voucher's account, its brand) — documents and
+  // finance's check later book nothing:
+  //   source 'box' (default). The box: the voucher's, else `boxId` (only a
+  //     keeper changes a box already set), else the payer's only open box of
+  //     the voucher's company. The spend through recordPettyCashSpendTx with
+  //     one expense line (cashRequestPayLine): Dr <6xxx> / Cr 1011, the float
+  //     drops (400 INSUFFICIENT_FLOAT).
   //   source 'cash_on_hand' | 'bank' (owner, 2026-10-16): finance with the
   //     accounting module, or the CEO (403 PAY_SOURCE_FINANCE_ONLY). The
   //     account is lib/bankAccounts.ts moneyAccountCode for the VOUCHER's
   //     company — cash → 1010; bank → `bankAccountId` (a live linked bank of
   //     that company, else 422), none named → its only bank (422
   //     BANK_ACCOUNT_REQUIRED with two or more). ONE entry
-  //     'cashvoucher.pay:<id>' Dr 1357 / Cr that account; no box, no float.
+  //     'cashvoucher.pay:<id>' Dr <6xxx> / Cr that account; no box, no float.
   // 422 PERIOD_LOCKED (and every other refused posting) rolls it all back.
   fastify.post<{ Params: { id: string } }>('/:id/pay', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const body = z.object({
@@ -1467,9 +1482,9 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (v.kind === 'request' && !v.payeeUserId) {
       throw new AppError('HOLDER_REQUIRED', `Cash request ${v.number} names nobody to take the cash — finance names the holder first`, 422)
     }
-    // The expense account is booked at verification, but it must be usable
-    // before any cash leaves (finance fixes it with PATCH otherwise).
-    await resolveSpendAccount(prisma, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })
+    // The expense account is booked by this pay: it must be usable before any
+    // cash leaves (finance fixes it with PATCH otherwise).
+    const expense = await resolveSpendAccount(prisma, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })
 
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
     const settleDays = (await getOperationsConfig(v.tenantId))?.cashAdvanceSettleDays ?? 30
@@ -1488,7 +1503,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       const claimed = await tx.cashVoucher.updateMany({
         where: { id: v.id, tenantId: v.tenantId, status: 'approved' },
         data: {
-          status: 'disbursed', disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true,
+          status: 'disbursed', disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true, bookedAtPay: true,
           ...(box
             ? { boxId: box.id, paySource: 'box', payAccountCode: null, payBankAccountId: null }
             : { boxId: null, paySource: body.source, payAccountCode: account!.code, payBankAccountId: account!.bankAccountId }),
@@ -1502,12 +1517,13 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         throw wrongStatus('VOUCHER_NOT_APPROVED', { number: v.number, status: cur.status }, 'only a voucher the CEO has approved can be paid')
       }
       if (!box) {
-        // Dr 1357 / Cr 1010 | the bank's code — 'cashvoucher.pay:<id>', in this transaction.
+        // THE one entry: Dr <the voucher's 6xxx> / Cr 1010 | the bank's code — 'cashvoucher.pay:<id>', in this transaction.
         const posted = await postCashVoucherSourceTx(tx, v.id, 'pay', v.amountCents, me)
         await tx.cashVoucher.update({ where: { id: v.id }, data: { payJournalEntryId: posted.entryId } })
         return { movement: null, newFloatCents: null, entryId: posted.entryId, account }
       }
-      // The one spend path (pettyCash.ts) — Dr 1357 / Cr 1011, in this transaction.
+      // The one spend path (pettyCash.ts) — THE one entry, one expense line in the voucher's account (the H3
+      // booking, cashRequestPayLine): Dr <6xxx> / Cr 1011, the float drops, in this transaction.
       const spent = await recordPettyCashSpendTx(tx, {
         box: { id: box.id },
         amountCents: v.amountCents,
@@ -1515,7 +1531,11 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         vendorName: v.payeeName.slice(0, 120),
         approvedById: v.directorSignedById,
         createdById: me,
-        nature: 'voucher_hold',
+        nature: 'expense',
+        lines: [cashRequestPayLine(v)],
+        allowExplicit: true,
+        stockAllowed: false,
+        equipmentCheck: false,
         cashVoucherId: v.id,
         conceptId: v.conceptId,
         actor: { id: me, role: viewer.role },
@@ -1533,7 +1553,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       ...(result.movement && { pettyCashMovementId: result.movement.id, newFloatCents: result.newFloatCents }),
       cashierName,
       dueBy: dueBy.toISOString(),
-      heldOn: '1357',
+      expenseAccountCode: expense.code,
+      bookedAtPay: true,
     }, { status: v.status, boxId: v.boxId })
     voucherTaskNotice('paid', v.id, me)
 

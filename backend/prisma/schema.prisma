@@ -7794,7 +7794,8 @@ model CashVoucher {
   submittedAt          DateTime?
   financeApprovedById  String?
   financeApprovedAt    DateTime?
-  // true = paid under the 2026-10-15 flow (pay held on 1357, expense booked when finance verifies the documents);
+  // true = paid under the 2026-10-15 documents flow (pay held on 1357, expense booked when finance verifies the
+  // documents — unless bookedAtPay, below);
   // false = a legacy request paid under H3 (expensed at pay; its old settlement rules still apply).
   expenseOnVerify      Boolean         @default(false)
   returnedById         String?
@@ -7819,6 +7820,13 @@ model CashVoucher {
   payAccountCode       String?
   payBankAccountId     String?
   payJournalEntryId    String?         @unique
+  // ONE entry at pay (owner, 2026-10-16: "It should pass only one entry when booked by finance, either docs are
+  // attached or not"): true = finance's pay booked the expense — Dr the voucher's account / Cr 1011 (the box's spend,
+  // one expense line) | 1010 | the bank ('cashvoucher.pay:<id>'). Nothing is held on 1357; supporting documents and
+  // finance's check (POST /:id/verify-docs → posted) book NOTHING; change / an overspend is a manual journal.
+  // expenseOnVerify stays true on these rows (the documents flow and its CLOSED state). false = every row paid
+  // before this (a 1357 hold still clears at verification; legacy H3 unchanged).
+  bookedAtPay          Boolean         @default(false)
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).

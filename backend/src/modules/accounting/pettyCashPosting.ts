@@ -71,6 +71,19 @@
 // on the voucher's one settlement row (no entry of its own: a settlement of
 // such a voucher is booked by the voucher's entry, never 'cashvoucher.settle').
 //
+// ONE entry at pay (owner, 2026-10-16: "It should pass only one entry when
+// booked by finance, either docs are attached or not"; CashVoucher.bookedAtPay
+// true, every voucher paid since): finance's pay books the expense at once and
+// nothing touches 1357 —
+//   from a box          the box's spend with ONE expense line (cashRequestPayLine,
+//                       the H3 booking): Dr <the voucher's 6xxx> / Cr 1011
+//                       'pettycash.spend:<movementId>' (the float drops)
+//   cash on hand / bank 'cashvoucher.pay:<id>' Dr <the voucher's 6xxx> /
+//                       Cr 1010 | the bank's code (postCashVoucherSourceTx)
+// Supporting documents and finance's check book NOTHING
+// (postCashVoucherVerifiedTx refuses such a voucher); change or an overspend is
+// a manual journal by finance. cashRequestPaidAccountTx reads back the 6xxx.
+//
 // The posting goes through syncSourcePosting, so a finance reclass of a spend
 // line reverses the live entry (today) and reposts it on the live entry's own
 // date; a replay is a no-op. The movement's journalEntryId is (re-)stamped
@@ -644,10 +657,21 @@ export function cashRequestPayLine(v: { number: string; purpose: string; categor
  * (book the petty-cash history first); 409 VOUCHER_NOT_PAID before it is paid.
  */
 export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId: string): Promise<string> {
-  const v = await tx.cashVoucher.findUnique({ where: { id: voucherId }, select: { number: true, pettyCashMovementId: true, payJournalEntryId: true } })
+  const v = await tx.cashVoucher.findUnique({ where: { id: voucherId }, select: { number: true, pettyCashMovementId: true, payJournalEntryId: true, bookedAtPay: true } })
   if (!v) throw new NotFoundError('CashVoucher', voucherId)
-  // Paid from cash on hand / a bank (2026-10-16): the pay entry held it on 1357.
-  if (!v.pettyCashMovementId && v.payJournalEntryId) return ACCT.VOUCHERS_AWAITING_DOCS
+  if (!v.pettyCashMovementId && v.payJournalEntryId) {
+    // Paid from cash on hand / a bank in ONE entry (bookedAtPay): the expense account its pay entry debited.
+    if (v.bookedAtPay) {
+      const debit = await tx.journalLine.findFirst({
+        where: { journalEntryId: v.payJournalEntryId, type: 'debit' },
+        select: { account: { select: { code: true } } },
+      })
+      if (debit) return debit.account.code
+      throw new AppError('PAYMENT_NOT_BOOKED', `The payment of cash voucher ${v.number} is not on the books`, 409)
+    }
+    // Paid from cash on hand / a bank under the hold flow (2026-10-16 morning): the pay entry held it on 1357.
+    return ACCT.VOUCHERS_AWAITING_DOCS
+  }
   if (!v.pettyCashMovementId) throw new AppError('VOUCHER_NOT_PAID', `Cash request ${v.number} has not been paid`, 409)
   const m = await tx.pettyCashMovement.findUnique({
     where: { id: v.pettyCashMovementId },
@@ -784,13 +808,13 @@ export async function postCashVoucherVerifiedTx(
   const v = await tx.cashVoucher.findUnique({
     where: { id: voucherId },
     select: {
-      id: true, tenantId: true, number: true, payeeName: true, purpose: true, status: true, expenseOnVerify: true,
+      id: true, tenantId: true, number: true, payeeName: true, purpose: true, status: true, expenseOnVerify: true, bookedAtPay: true,
       postedAt: true, postedById: true, postedJournalEntryId: true,
     },
   })
   if (!v) throw new NotFoundError('CashVoucher', voucherId)
-  if (!v.expenseOnVerify) {
-    throw new AppError('NOT_A_VERIFIED_VOUCHER', `Cash request ${v.number} was expensed when it was paid (H3) — it has no verification entry`, 409)
+  if (!v.expenseOnVerify || v.bookedAtPay) {
+    throw new AppError('NOT_A_VERIFIED_VOUCHER', `Cash voucher ${v.number} was expensed when it was paid — it has no verification entry`, 409)
   }
   if (v.status !== 'posted' || !v.postedAt) return { entryId: null }
   const settlements = await tx.cashVoucherSettlement.findMany({
@@ -844,7 +868,9 @@ export async function postCashVoucherVerifiedTx(
 // ─── Cash vouchers paid from cash on hand or a bank (owner, 2026-10-16) ─────
 //
 // "Give the option box to pay from petty cash/Cash on hand and bank accounts."
-// A voucher paid from a box keeps the rules above (its movement: Dr 1357 /
+// (This hold layout is for vouchers paid BEFORE bookedAtPay; one paid since
+// posts only 'cashvoucher.pay:<id>' Dr <its 6xxx> / Cr <source> — see the
+// header.) A voucher paid from a box keeps the rules above (its movement: Dr 1357 /
 // Cr 1011). Paid from cash on hand or a bank (CashVoucher.paySource
 // 'cash_on_hand' | 'bank', payAccountCode = lib/bankAccounts.ts
 // moneyAccountCode: 1010, or the named live linked bank of the VOUCHER's
@@ -875,8 +901,12 @@ export function paidFromLabel(v: { paySource: string; disbursedAt: Date | null }
 /**
  * One cash-on-hand / bank movement of a voucher's money, inside `tx`, in the
  * voucher's company: 'pay' and 'overspend' Dr 1357 / Cr the source account;
- * 'change' Dr the source account / Cr 1357. 409 when the voucher was paid
- * from a box (those use the box's movements) or the entry is already there.
+ * 'change' Dr the source account / Cr 1357. A voucher booked at pay
+ * (bookedAtPay): 'pay' is THE one entry Dr <the voucher's expense account> /
+ * Cr the source (resolveSpendAccount of its category, under its brand), and
+ * 'change' / 'overspend' are 409 EXPENSE_BOOKED_AT_PAY (finance corrects by
+ * manual journal). 409 when the voucher was paid from a box (those use the
+ * box's movements) or the entry is already there.
  */
 export async function postCashVoucherSourceTx(
   tx: Tx,
@@ -887,20 +917,26 @@ export async function postCashVoucherSourceTx(
 ): Promise<{ entryId: string }> {
   const v = await tx.cashVoucher.findUnique({
     where: { id: voucherId },
-    select: { id: true, tenantId: true, number: true, payeeName: true, purpose: true, paySource: true, payAccountCode: true },
+    select: { id: true, tenantId: true, number: true, payeeName: true, purpose: true, paySource: true, payAccountCode: true, bookedAtPay: true, category: true },
   })
   if (!v) throw new NotFoundError('CashVoucher', voucherId)
   if (v.paySource === 'box' || !v.payAccountCode) {
     throw new AppError('PAY_SOURCE_IS_BOX', `Cash voucher ${v.number} was paid from a petty-cash box — its money moves through the box`, 409)
   }
+  if (v.bookedAtPay && kind !== 'pay') {
+    throw new AppError('EXPENSE_BOOKED_AT_PAY', `Cash voucher ${v.number} was booked in one entry when it was paid — finance corrects any change or overspend with a manual journal`, 409)
+  }
   assertInt4Fits(amountCents, 'The amount')
   if (!(amountCents > 0)) throw new AppError('AMOUNT_REQUIRED', 'Nothing to book', 422)
   const source = v.payAccountCode
-  const hold = ACCT.VOUCHERS_AWAITING_DOCS
+  // Booked at pay: the voucher's own expense account (its category, or the explicit 6xxx finance set).
+  const hold = v.bookedAtPay
+    ? (await resolveSpendAccount(tx, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })).code
+    : ACCT.VOUCHERS_AWAITING_DOCS
   const concept = await cashRequestBrandTx(tx, v.id)
   const from = v.paySource === 'cash_on_hand' ? 'cash on hand' : 'the bank'
   const spec = {
-    pay: { sourceType: CASH_VOUCHER_PAY_ENTRY, debit: hold, credit: source, what: `paid from ${from} to ${v.payeeName} — documents awaited` },
+    pay: { sourceType: CASH_VOUCHER_PAY_ENTRY, debit: hold, credit: source, what: v.bookedAtPay ? `paid from ${from} to ${v.payeeName}` : `paid from ${from} to ${v.payeeName} — documents awaited` },
     change: { sourceType: CASH_VOUCHER_CHANGE_ENTRY, debit: source, credit: hold, what: `change returned to ${from}` },
     overspend: { sourceType: CASH_VOUCHER_OVERSPEND_ENTRY, debit: hold, credit: source, what: `overspend paid from ${from} at verification` },
   }[kind]
@@ -990,8 +1026,8 @@ export async function pettyCashTieOut(tenantIds: string[]): Promise<PettyCashTie
     // and an overspend included, in one transaction).
     const held = await prisma.cashVoucher.aggregate({
       where: {
-        tenantId, status: 'disbursed', expenseOnVerify: true,
-        // Paid from a box (its movement) or from cash on hand / a bank (its pay entry) — both hold on 1357.
+        tenantId, status: 'disbursed', expenseOnVerify: true, bookedAtPay: false,
+        // Booked at pay (one entry) never touches 1357. Paid from a box (its movement) or from cash on hand / a bank (its pay entry) — both hold on 1357.
         OR: [{ pettyCashMovementId: { not: null } }, { payJournalEntryId: { not: null } }],
       },
       _sum: { amountCents: true },

@@ -48,7 +48,7 @@ export async function runCashAdvanceOverdueOnce(now: Date = new Date()): Promise
           where: { ...due, tenantId },
           select: {
             id: true, tenantId: true, number: true, payeeName: true, purpose: true, conceptId: true, dueBy: true,
-            amountCents: true, settledCents: true, returnedCents: true, convertedCents: true, expenseOnVerify: true,
+            amountCents: true, settledCents: true, returnedCents: true, convertedCents: true, expenseOnVerify: true, bookedAtPay: true,
           },
           orderBy: { dueBy: 'asc' },
         })
@@ -68,7 +68,9 @@ export async function runCashAdvanceOverdueOnce(now: Date = new Date()): Promise
             severity: 'medium',
             title: `Supporting documents overdue on cash voucher ${v.number} (${v.payeeName})`.slice(0, 200),
             description: `${v.payeeName} was paid PKR ${(open / 100).toFixed(0)} for "${v.purpose}" and no supporting document was uploaded by ${v.dueBy!.toISOString().slice(0, 10)}. `
-              + (v.expenseOnVerify
+              + (v.bookedAtPay
+                ? 'The expense was booked when finance paid it; the documents are needed for the file.'
+                : v.expenseOnVerify
                 ? 'The cash waits on 1357 (vouchers awaiting documents) — the expense is booked only once finance verifies the documents.'
                 : 'The cash was booked to its category when paid; the receipts are needed for the file.'),
             entityType: 'CashVoucher',
