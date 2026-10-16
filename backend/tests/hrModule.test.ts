@@ -32,10 +32,10 @@ const RS = (r: number) => r * 100 // rupees → paisa
 
 // ─── pure logic ─────────────────────────────────────────────────────────────
 
-// These figures were written on a 26-day basis (Rs 52,000 / 26 = Rs 2,000 a day).
-// The default pay basis is the actual days of the month now (owner HR-1); pin 26 here so the sums stay
-// readable, and check the default itself below.
-const S26 = { ...DEFAULT_HR_SETTINGS, workingDaysPerMonth: 26 }
+// Pay basis (owner HR-1, 2026-10-16): monthly gross ÷ the month's calendar days
+// × paid days — not a setting. S26 is the defaults (the name is history; any
+// workingDaysPerMonth a row or a PUT carries is dropped).
+const S26 = { ...DEFAULT_HR_SETTINGS }
 
 describe('payroll ledger', () => {
   it('books pay to the wages account of the department', () => {
@@ -71,12 +71,14 @@ describe('overtime', () => {
     // 52,000 / 26 / 8 = Rs 250/h; 3 h at 2× = Rs 1,500
     // Owner HR-1: the actual days of the month (0). 62,000 / 31 / 8 = Rs 250/h in October;
     // 56,000 / 28 / 8 = Rs 250/h in February 2026.
-    expect(DEFAULT_HR_SETTINGS.workingDaysPerMonth).toBe(0)
+    expect('workingDaysPerMonth' in DEFAULT_HR_SETTINGS).toBe(false)
+    expect('workingDaysPerMonth' in mergeSettings({ workingDaysPerMonth: 26 } as never)).toBe(false)
     expect(overtimeCents(3, RS(62000), DEFAULT_HR_SETTINGS, null, '2026-10')).toBe(RS(1500))
     expect(overtimeCents(3, RS(56000), DEFAULT_HR_SETTINGS, null, '2026-02')).toBe(RS(1500))
-    expect(overtimeCents(3, RS(52000), S26)).toBe(RS(1500))
-    expect(overtimeCents(3, RS(52000), S26, 1.5)).toBe(RS(1125))
-    expect(overtimeCents(0, RS(52000), S26)).toBe(0)
+    // 60,000 / 30 / 8 = Rs 250/h in September.
+    expect(overtimeCents(3, RS(60000), S26, null, '2026-09')).toBe(RS(1500))
+    expect(overtimeCents(3, RS(60000), S26, 1.5, '2026-09')).toBe(RS(1125))
+    expect(overtimeCents(0, RS(60000), S26, null, '2026-09')).toBe(0)
   })
   it('pays at the HR setting unless HR set a multiplier, and never outside 1–5', () => {
     expect(otMultiplierFor(undefined, S26)).toBe(2)
@@ -89,33 +91,72 @@ describe('overtime', () => {
 })
 
 describe('payslip', () => {
-  const s = mergeSettings({ workingDaysPerMonth: 26, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3 })
-  const emp = { grossSalaryCents: RS(52000), monthlyTaxCents: RS(1000), joiningDate: null, lastWorkingDay: null }
+  // Rs 60,000 in September (30 days) = Rs 2,000 a day.
+  const s = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3 })
+  const emp = { grossSalaryCents: RS(60000), monthlyTaxCents: RS(1000), joiningDate: null, lastWorkingDay: null }
+  const salaryOf = (r: ReturnType<typeof computePayslip>) => r.lines.find((l) => l.code === 'salary')!
 
-  it('adds and deducts every line, and nets to the paisa', () => {
+  it('pays gross ÷ days in month × paid days, and nets to the paisa', () => {
     const r = computePayslip(emp, '2026-09', {
       ...EMPTY_INPUTS, absentDays: 1, lateCount: 4, otHours: 3, otCents: RS(1500),
       earningAdjustmentsCents: RS(2000), loanInstallmentsCents: RS(5000),
     }, s)
-    const daily = RS(52000) / 26 // Rs 2,000
-    // earnings 52,000 + 1,500 + 2,000; deductions absence 2,000 + late (4 lates → 1 day) 2,000 + EOBI 400 + tax 1,000 + loan 5,000
-    expect(r.earningsCents).toBe(RS(55500))
-    expect(r.deductionsCents).toBe(daily * 2 + RS(400) + RS(1000) + RS(5000))
-    expect(r.netCents).toBe(RS(55500) - RS(10400))
+    // 29 paid of 30 days × Rs 2,000 = 58,000; no separate absence line.
+    expect(r.basis).toEqual({ daysInMonth: 30, employedDays: 30, absentDays: 1, unpaidLeaveDays: 0, paidDays: 29, dailyRateCents: RS(2000), monthlyGrossCents: RS(60000) })
+    expect(salaryOf(r).amountCents).toBe(RS(58000))
+    expect(salaryOf(r).label).toBe('Salary — 29 of 30 days × Rs 2,000.00/day (1 absent)')
+    expect(r.grossCents).toBe(RS(58000))
+    expect(r.lines.map((l) => l.code)).not.toContain('absence')
+    // earnings 58,000 + 1,500 + 2,000; deductions late (4 lates → 1 day) 2,000 + EOBI 400 + tax 1,000 + loan 5,000
+    expect(r.earningsCents).toBe(RS(61500))
+    expect(r.deductionsCents).toBe(RS(2000) + RS(400) + RS(1000) + RS(5000))
+    expect(r.netCents).toBe(RS(61500) - RS(8400))
     expect(r.eobiEmployerCents).toBe(RS(2000))
-    expect(r.lines.find((l) => l.kind === 'employer')?.amountCents).toBe(RS(2000))
     expect(r.warnings).toEqual([])
   })
 
-  it('pays a mid-month joiner for the days employed', () => {
+  it('divides by the actual days of the month: 28, 30 and 31', () => {
+    const none = { ...emp, monthlyTaxCents: 0 }
+    const g = RS(62000)
+    // Two unpaid days in each month.
+    const feb = computePayslip({ ...none, grossSalaryCents: g }, '2027-02', { ...EMPTY_INPUTS, unpaidLeaveDays: 2 }, s)
+    const sep = computePayslip({ ...none, grossSalaryCents: g }, '2026-09', { ...EMPTY_INPUTS, unpaidLeaveDays: 2 }, s)
+    const oct = computePayslip({ ...none, grossSalaryCents: g }, '2026-10', { ...EMPTY_INPUTS, unpaidLeaveDays: 2 }, s)
+    expect([feb.basis.daysInMonth, sep.basis.daysInMonth, oct.basis.daysInMonth]).toEqual([28, 30, 31])
+    expect(feb.grossCents).toBe(Math.round(g * 26 / 28))
+    expect(sep.grossCents).toBe(Math.round(g * 28 / 30))
+    expect(oct.grossCents).toBe(RS(58000)) // 62,000 / 31 = 2,000 × 29
+    expect(oct.basis).toMatchObject({ paidDays: 29, dailyRateCents: RS(2000), unpaidLeaveDays: 2 })
+    expect(salaryOf(oct).label).toMatch(/29 of 31 days .*2 unpaid leave/)
+    // A full month with nobody absent is the full gross, whatever its length.
+    for (const p of ['2027-02', '2026-09', '2026-10', '2028-02']) {
+      expect(computePayslip({ ...none, grossSalaryCents: g }, p, EMPTY_INPUTS, s).grossCents, p).toBe(g)
+    }
+    expect(computePayslip(none, '2028-02', EMPTY_INPUTS, s).basis.daysInMonth).toBe(29) // leap year
+  })
+
+  it('pays a mid-month joiner only for the days employed — the days before are not absences', () => {
     // joins 16 Sep: 15 of 30 days
     const r = computePayslip({ ...emp, joiningDate: new Date('2026-09-16') }, '2026-09', EMPTY_INPUTS, s)
-    expect(r.grossCents).toBe(RS(26000))
+    expect(r.grossCents).toBe(RS(30000))
+    expect(r.basis).toMatchObject({ employedDays: 15, absentDays: 0, paidDays: 15 })
+    expect(salaryOf(r).label).toBe('Salary — 15 of 30 days × Rs 2,000.00/day (15 not employed)')
     expect(employedFraction('2026-09', new Date('2026-09-16'), null)).toBe(0.5)
+    // Joins 10 Oct (22 of 31 days) with one absence: 21 paid days.
+    const oct = computePayslip({ ...emp, grossSalaryCents: RS(62000), monthlyTaxCents: 0, joiningDate: new Date('2026-10-10') }, '2026-10', { ...EMPTY_INPUTS, absentDays: 1 }, s)
+    expect(oct.basis).toMatchObject({ daysInMonth: 31, employedDays: 22, absentDays: 1, paidDays: 21 })
+    expect(oct.grossCents).toBe(RS(42000))
+  })
+
+  it('pays a leaver to the last working day, with unpaid leave out of the paid days', () => {
+    // Leaves 20 Oct, 2 days unpaid leave: 18 paid of 31 × Rs 2,000.
+    const r = computePayslip({ ...emp, grossSalaryCents: RS(62000), monthlyTaxCents: 0, lastWorkingDay: new Date('2026-10-20') }, '2026-10', { ...EMPTY_INPUTS, unpaidLeaveDays: 2 }, s)
+    expect(r.basis).toMatchObject({ daysInMonth: 31, employedDays: 20, unpaidLeaveDays: 2, paidDays: 18 })
+    expect(r.grossCents).toBe(RS(36000))
   })
 
   it('charges EOBI on a gross base, and SESSI, on what a joiner earned — not the full month', () => {
-    const g = mergeSettings({ workingDaysPerMonth: 26, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null }, sessi: { employerPct: 6, wageCeilingCents: null } })
+    const g = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null }, sessi: { employerPct: 6, wageCeilingCents: null } })
     // Rs 40,000, joins 16 Sep: earns Rs 20,000
     const r = computePayslip({ ...emp, grossSalaryCents: RS(40000), monthlyTaxCents: 0, joiningDate: new Date('2026-09-16') }, '2026-09', EMPTY_INPUTS, g)
     expect(r.grossCents).toBe(RS(20000))
@@ -125,17 +166,24 @@ describe('payslip', () => {
     expect(r.lines.find((l) => l.code === 'sessi_employer')?.amountCents).toBe(RS(1200))
   })
 
-  it('never docks more days than were worked, nor takes the salary below nothing', () => {
-    // A whole month of unpaid leave at the working-day rate would be 31 × 2,000.
-    const month = computePayslip({ ...emp, monthlyTaxCents: 0 }, '2026-03', { ...EMPTY_INPUTS, unpaidLeaveDays: 31 }, s)
-    expect(month.lines.find((l) => l.code === 'unpaid_leave')?.amountCents).toBe(RS(52000))
-    // A leaver on the 10th charged for the whole month is docked 10 days at most.
+  it('never takes out more days than were employed, nor pays below nothing', () => {
+    const month = computePayslip({ ...emp, monthlyTaxCents: 0 }, '2026-03', { ...EMPTY_INPUTS, unpaidLeaveDays: 40 }, s)
+    expect(month.basis).toMatchObject({ unpaidLeaveDays: 31, paidDays: 0 })
+    expect(month.grossCents).toBe(0)
+    // A leaver on the 10th: 4 absent + at most 6 unpaid.
     const leaver = computePayslip({ ...emp, monthlyTaxCents: 0, lastWorkingDay: new Date('2026-03-10') }, '2026-03', { ...EMPTY_INPUTS, absentDays: 4, unpaidLeaveDays: 31 }, s)
-    const unpaid = leaver.lines.find((l) => l.code === 'unpaid_leave')!
-    expect(unpaid.label).toMatch(/6 days/)
-    const dayLines = leaver.lines.filter((l) => l.code === 'absence' || l.code === 'unpaid_leave').reduce((a, l) => a + l.amountCents, 0)
-    expect(dayLines).toBe(leaver.grossCents)
+    expect(leaver.basis).toMatchObject({ employedDays: 10, absentDays: 4, unpaidLeaveDays: 6, paidDays: 0 })
+    expect(leaver.grossCents).toBe(0)
     expect(leaver.netCents).toBe(-RS(400)) // only EOBI is left to deduct — flagged, not hidden
+    // Lates never take the salary below nothing either.
+    const lates = computePayslip({ ...emp, monthlyTaxCents: 0, lastWorkingDay: new Date('2026-03-01') }, '2026-03', { ...EMPTY_INPUTS, lateCount: 30 }, s)
+    expect(lates.lines.find((l) => l.code === 'late')!.amountCents).toBe(lates.grossCents)
+  })
+
+  it('pays absences when the company does not deduct them', () => {
+    const r = computePayslip({ ...emp, monthlyTaxCents: 0 }, '2026-09', { ...EMPTY_INPUTS, absentDays: 3 }, mergeSettings({ deductAbsences: false }))
+    expect(r.basis).toMatchObject({ absentDays: 0, paidDays: 30 })
+    expect(r.grossCents).toBe(RS(60000))
   })
 
   it('flags a negative net instead of hiding it', () => {
@@ -1002,9 +1050,13 @@ describe('HR through the API', () => {
     const run = (await call('hr', 'POST', '/payroll/runs', { period: '2027-02' })).json()
     const slip = (await call('hr', 'GET', `/payroll/runs/${run.id}`)).json().payslips.find((p: { employeeId: string }) => p.employeeId === w)
     expect(slip.inputs).toMatchObject({ absentDays: 1, lateCount: 0, unpaidLeaveDays: 3.5 })
-    const daily = RS(52000) / daysInPeriod('2027-02') // 28 days
-    expect(slip.lines.find((l: { code: string }) => l.code === 'absence').amountCents).toBe(Math.round(daily))
-    expect(slip.lines.find((l: { code: string }) => l.code === 'unpaid_leave').amountCents).toBe(Math.round(daily * 3.5))
+    // HR-1: 52,000 ÷ 28 days × (28 − 1 absent − 3.5 unpaid = 23.5 paid days).
+    expect(daysInPeriod('2027-02')).toBe(28)
+    expect(slip.inputs.payBasis).toMatchObject({ daysInMonth: 28, employedDays: 28, absentDays: 1, unpaidLeaveDays: 3.5, paidDays: 23.5, dailyRateCents: Math.round(RS(52000) / 28) })
+    expect(slip.lines.find((l: { code: string }) => l.code === 'salary').amountCents).toBe(Math.round(RS(52000) * 23.5 / 28))
+    expect(slip.grossCents).toBe(Math.round(RS(52000) * 23.5 / 28))
+    expect(slip.lines.map((l: { code: string }) => l.code)).not.toContain('absence')
+    expect(slip.lines.map((l: { code: string }) => l.code)).not.toContain('unpaid_leave')
     expect(slip.lines.map((l: { code: string }) => l.code)).not.toContain('late')
     expect((await call('hr', 'DELETE', `/payroll/runs/${run.id}`)).statusCode).toBe(204)
   })

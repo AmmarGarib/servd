@@ -31,7 +31,7 @@ export async function reversedRunIds(tenantId: string, runIds: string[]): Promis
 }
 
 // Net debit balance for an account in a period — the cost to allocate.
-// Allocation runs' own lines are excluded: a run debits the brands and
+// Allocation runs' own lines (and their reversals) are excluded: a run debits the brands and
 // credits the source on the SAME account when no target code is set, so
 // counting them would make an overlapping later run (January, then Q1) see
 // January's cost again and allocate it twice.
@@ -48,7 +48,13 @@ async function netDebitForAccount(accountId: string, periodStart: Date, periodEn
       conceptId: tagged ? { not: null } : null,
       journalEntry: {
         entryDate: { gte: periodStart, lte: periodEnd },
-        NOT: { reference: { startsWith: 'allocation.run:' } },
+        // …and their reversals (POST /allocations/runs/:id/reverse): a
+        // reversed run and its reversal both stay out, so the period's shared
+        // cost is whole again for the corrected run.
+        NOT: [
+          { reference: { startsWith: 'allocation.run:' } },
+          { reference: { startsWith: 'allocation.run.reversal:' } },
+        ],
       },
     },
   })

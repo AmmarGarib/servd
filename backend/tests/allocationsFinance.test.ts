@@ -240,7 +240,8 @@ describe('runs — finance runs and reverses; closed books stay the CEO\'s', () 
     await prisma.periodLock.create({ data: { tenantId: A, lockedThrough: new Date('2026-03-31T23:59:59.999+05:00'), lockedBy: users['ceo']!.id } })
     for (const who of ['fin', 'ceo']) {
       const res = await call(who, 'POST', `/allocations/rules/${ruleId}/run`, { periodStart: '2026-03-01', periodEnd: '2026-03-31' })
-      expect(res.statusCode, who).toBe(409)
+      expect(res.statusCode, who).toBe(422)
+      expect(res.json().error.code).toBe('PERIOD_LOCKED')
     }
     expect(await prisma.costAllocationRun.count({ where: { ruleId, periodStart: new Date('2026-03-01T00:00:00+05:00') } })).toBe(0)
 
