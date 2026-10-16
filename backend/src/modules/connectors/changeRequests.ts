@@ -29,6 +29,7 @@
 //
 // Head offices (A24) have no fiscal POS: a request for a head office is 422.
 
+import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { Prisma, PosConnectorChange, UserRole } from '@prisma/client'
@@ -277,6 +278,8 @@ export async function connectorChangeRoutes(fastify: FastifyInstance) {
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
       metadata: { kind, changes: Object.keys(patch), viaHeadOfficeId },
     })
+    // The bell (queued, after the commit): the CEO (or Dev hand-over) has a connector change to decide.
+    approvalWaiting(TYPE, row.id, { round: `submit:${row.preparedAt.toISOString()}`, actorId: req.staffUser!.id })
     return reply.status(201).send(changeView(row, await namesOf([row.preparedById])))
   })
 

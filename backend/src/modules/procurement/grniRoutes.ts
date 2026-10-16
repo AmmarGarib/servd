@@ -27,6 +27,9 @@ import { requireAuth, ADMIN_ONLY, PROCUREMENT_TEAM } from '../auth/middleware.js
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
+import { auditApproval } from '../../lib/approvalRights.js'
+import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { sumCents } from '../../lib/money.js'
 import { postGrniWriteOffTx } from '../accounting/inventoryPosting.js'
 import { findSupplierInScope } from './scope.js'
@@ -121,6 +124,19 @@ async function writeAudit(req: FastifyRequest, action: string, line: { id: strin
     category: 'accounting', action, entity: 'GoodsReceiptLine', entityId: line.id,
     userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: line.tenantId, metadata,
   })
+}
+
+/** approval.decide for a write-off decision (grant 'role': ADMIN_ONLY guard); the approve notice reaches the
+ *  requester through the funnel. After the commit; never fails the decision. */
+async function decidedAudit(req: FastifyRequest, line: { id: string; tenantId: string }, decision: 'approve' | 'reject', note: string | null) {
+  try {
+    await auditApproval(req, {
+      type: 'grni_writeoff', id: line.id, tenantId: line.tenantId, decision, grant: { via: 'role' }, entity: 'GoodsReceiptLine',
+      metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}) },
+    })
+  } catch (err) {
+    console.warn(`[grni] approval.decide not recorded: ${(err as Error).message}`)
+  }
 }
 
 /** Post the write-off and stamp the line, in one transaction under the line's lock. */
@@ -281,6 +297,9 @@ export async function grniRoutes(fastify: FastifyInstance) {
       })
       if (claimed.count === 0) throw new AppError('WRITE_OFF_PENDING', 'A write-off of this line is already waiting for the CEO', 409)
       await writeAudit(req, 'procurement.grni_writeoff.request', line, { reason })
+      // The bell (queued, after the claim): the CEO has a write-off to decide. A re-request after a reject is a new round.
+      const asked = await prisma.goodsReceiptLine.findUnique({ where: { id: line.id }, select: { writeOffRequestedAt: true } })
+      approvalWaiting('grni_writeoff', line.id, { round: `request:${(asked?.writeOffRequestedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
       return { receiptLineId: line.id, status: 'requested' }
     },
   )
@@ -294,6 +313,7 @@ export async function grniRoutes(fastify: FastifyInstance) {
       await writeAudit(req, 'procurement.grni_writeoff.approve', line, {
         requestedById: line.writeOffRequestedById, reason: line.writeOffReason, entryId: posted.entryId, valueCents: posted.valueCents,
       })
+      await decidedAudit(req, line, 'approve', null)
       return { receiptLineId: line.id, status: 'written_off', entryId: posted.entryId, valueCents: posted.valueCents }
     },
   )
@@ -310,6 +330,20 @@ export async function grniRoutes(fastify: FastifyInstance) {
       })
       if (cleared.count === 0) throw new AppError('NO_WRITE_OFF_REQUEST', 'Nobody has asked to write this line off', 409)
       await writeAudit(req, 'procurement.grni_writeoff.reject', line, { note, requestedById: line.writeOffRequestedById, reason: line.writeOffReason })
+      await decidedAudit(req, line, 'reject', note)
+      // The rejection CLEARS writeOffRequestedById, so the funnel cannot find the requester any more:
+      // tell them directly from the id read before the reject.
+      const requesterId = line.writeOffRequestedById
+      if (requesterId && requesterId !== req.staffUser!.id) {
+        const actorId = req.staffUser!.id
+        const decidedAt = new Date().toISOString()
+        queueStaffNotify(() => notifyStaffMany([{
+          userId: requesterId, tenantId: line.tenantId, kind: 'approval.decided', severity: 'warning',
+          title: `Write-off of "${line.description}" rejected`.slice(0, 140), body: `Reason: ${note}`.slice(0, 500),
+          link: '/procurement/grni', entityType: 'grni_writeoff', entityId: line.id, actorId,
+          dedupeKey: `approval.decided:grni_writeoff:${line.id}:reject:${decidedAt}`,
+        }]))
+      }
       return { receiptLineId: line.id, status: 'rejected' }
     },
   )

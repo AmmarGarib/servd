@@ -70,7 +70,7 @@ import {
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
 import { CASH_GUARD, mayBuyStock, recordPettyCashSpendTx, recordPettyCashTopupTx } from './pettyCash.js'
 import {
-  auditVoucher, detailOf, loadVisible, loadVoucher, remainingOf, viewerOf, wrongStatus, CASH_VOUCHER_PHOTO_MAX_BYTES,
+  auditVoucher, detailOf, loadVisible, loadVoucher, remainingOf, viewerOf, voucherTaskNotice, wrongStatus, CASH_VOUCHER_PHOTO_MAX_BYTES,
   type Viewer, type VoucherRow,
 } from './cashVouchers.js'
 
@@ -682,6 +682,8 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       changeMovementId: done.changeMovementId, topUpMovementId: done.topUpMovementId, ...(body.note && { note: body.note }),
     }, { status: v.status })
     if (done.overrides.length) await flagOverrides(v, me, done.overrides)
+    // The bell (queued): the raiser and holder hear it is booked.
+    voucherTaskNotice('verified', v.id, me)
     return {
       entryId: done.entryId,
       spentCents: done.spent,

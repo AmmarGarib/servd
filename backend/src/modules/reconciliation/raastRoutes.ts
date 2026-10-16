@@ -49,6 +49,9 @@ import { scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { toCents } from '../../lib/money.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { auditApproval } from '../../lib/approvalRights.js'
+import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { normalizeBankRef, refInText } from '../../connectors/raast/reference.js'
 import { reportDateRange } from '../reports/service.js'
 import {
@@ -439,6 +442,8 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       after: { voidRequestedAt: res.receipt.voidRequestedAt, reason: body.reason },
       metadata: { orderId: r.orderId, bankRef: r.bankRef, amountCents: r.amountCents, actorTenantId: req.staffUser!.tenantId ?? null },
     })
+    // The bell (queued, after the commit): the CEO has a void request to decide. A new request = a new round.
+    approvalWaiting('raast_void', r.id, { round: `void-request:${(res.receipt.voidRequestedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
     return viewOne(req, r.id)
   })
 
@@ -459,6 +464,15 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
         reason: body.reason, requestReason: r.voidRequestReason, noLedgerEntry: true, actorTenantId: req.staffUser!.tenantId ?? null,
       },
     })
+    // approval.decide + "decided" notice to whoever asked for the void (grant 'role': ADMIN_ONLY guard). Never fails the void.
+    try {
+      await auditApproval(req, {
+        type: 'raast_void', id: r.id, tenantId: r.tenantId, decision: 'approve', grant: { via: 'role' }, entity: 'RaastReceipt',
+        metadata: { decidedAt: (voided.voidedAt ?? new Date()).toISOString(), reason: body.reason },
+      })
+    } catch (err) {
+      console.warn(`[raast] approval.decide not recorded: ${(err as Error).message}`)
+    }
     return viewOne(req, r.id)
   })
 
@@ -474,6 +488,27 @@ export async function raastReconciliationRoutes(fastify: FastifyInstance) {
       after: { voidRequestedAt: null },
       metadata: { orderId: r.orderId, note: body.note, actorTenantId: req.staffUser!.tenantId ?? null },
     })
+    // approval.decide (audit row) + the requester's notice. The rejection CLEARS voidRequestedById, so the
+    // funnel can no longer find the requester: tell them directly from the id read before the reject.
+    const decidedAt = new Date().toISOString()
+    try {
+      await auditApproval(req, {
+        type: 'raast_void', id: r.id, tenantId: r.tenantId, decision: 'reject', grant: { via: 'role' }, entity: 'RaastReceipt',
+        metadata: { decidedAt, reason: body.note },
+      })
+    } catch (err) {
+      console.warn(`[raast] approval.decide not recorded: ${(err as Error).message}`)
+    }
+    const requesterId = res.before.voidRequestedById
+    if (requesterId && requesterId !== req.staffUser!.id) {
+      const actorId = req.staffUser!.id
+      queueStaffNotify(() => notifyStaffMany([{
+        userId: requesterId, tenantId: r.tenantId, kind: 'approval.decided', severity: 'warning',
+        title: `Raast void request for order ${orderRefOf(r.orderId)} rejected`, body: `Reason: ${body.note}`.slice(0, 500),
+        link: '/reconciliation?tab=raast', entityType: 'raast_void', entityId: r.id, actorId,
+        dedupeKey: `approval.decided:raast_void:${r.id}:reject:${decidedAt}`,
+      }]))
+    }
     return viewOne(req, r.id)
   })
 

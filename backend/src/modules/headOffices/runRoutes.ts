@@ -22,6 +22,7 @@
 // the head office's trail AND each company's on the run (A19: never the
 // caller's active company).
 
+import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { Prisma, UserRole } from '@prisma/client'
@@ -250,6 +251,8 @@ export async function rechargeRunRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/:id/submit', { preHandler: requireAuth(...PREPARERS) }, async (req) => {
     const run = await submitRun(actorOf(req), req.params.id)
     await auditRun(req, run, 'ho.recharge.submit')
+    // The bell (queued, after the commit): the approver has a recharge run to decide.
+    approvalWaiting('ho_recharge', run.id, { round: `submit:${(run.submittedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
     return view(req, run)
   })
 
@@ -280,7 +283,7 @@ export async function rechargeRunRoutes(fastify: FastifyInstance) {
     const body = noteSchema.parse(req.body ?? {})
     const r = await rejectRun(req, req.params.id, body.note)
     await auditRun(req, r.run, 'ho.recharge.reject', { via: r.grant.via, note: body.note })
-    await auditApproval(req, { type: 'ho_recharge', id: r.run.id, tenantId: r.run.tenantId, decision: 'reject', grant: r.grant, entity: 'RechargeRun' })
+    await auditApproval(req, { type: 'ho_recharge', id: r.run.id, tenantId: r.run.tenantId, decision: 'reject', grant: r.grant, entity: 'RechargeRun', metadata: { note: body.note } })
     return view(req, r.run)
   })
 

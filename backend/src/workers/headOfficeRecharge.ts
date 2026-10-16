@@ -23,6 +23,7 @@
 // workers/intercompanyFleet.ts (head-office pairs are inter-company pairs).
 // Started by index.ts under ENABLE_WORKERS (orchestrator).
 
+import { approvalWaiting } from '../modules/approvals/notify.js'
 import type { Prisma } from '@prisma/client'
 import { serviceClient as db } from '../lib/prisma.js'
 import { flagException } from '../lib/exceptions.js'
@@ -105,8 +106,11 @@ async function prepareAndSubmit(hoId: string, period: string, now: Date, r: Tick
 
 async function trySubmit(runId: string, hoId: string, period: string, r: TickResult): Promise<void> {
   try {
-    await submitRun(SYSTEM, runId)
+    const run = await submitRun(SYSTEM, runId)
     r.submitted += 1
+    // The bell (queued; the worker owns no transaction here): the approver has a recharge run to decide.
+    // No actor (a system submit), so everyone who must decide it is told.
+    approvalWaiting('ho_recharge', runId, { round: `submit:${(run?.submittedAt ?? new Date()).toISOString()}`, actorId: null })
   } catch (err) {
     console.warn(`[headOfficeRecharge] ${hoId} ${period}: run ${runId} left as a draft — ${(err as Error).message}`)
   }

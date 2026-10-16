@@ -15,6 +15,7 @@
 // HO_SUBMIT_ROUTES); approve / reject are passthrough (the guard resolves the
 // row's company itself).
 
+import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance } from 'fastify'
 import type { UserRole } from '@prisma/client'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
@@ -47,7 +48,10 @@ export async function journalRequestRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post<{ Params: { id: string } }>('/:id/submit', { preHandler: requireAuth(...PREPARERS) }, async (req) => {
-    return { request: await submitRequest(req, req.params.id) }
+    const request = await submitRequest(req, req.params.id)
+    // The bell (queued, after the commit): the approver has a request to decide. A resend after a return is a new round.
+    approvalWaiting('journal_request', req.params.id, { round: `submit:${new Date(request.submittedAt ?? Date.now()).toISOString()}`, actorId: req.staffUser!.id })
+    return { request }
   })
 
   fastify.post<{ Params: { id: string } }>('/:id/withdraw', { preHandler: requireAuth(...PREPARERS) }, async (req) => {

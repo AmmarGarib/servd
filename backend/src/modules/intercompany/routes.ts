@@ -42,6 +42,7 @@
 // (approvalSubject → assertCanApprove, ceoOnly unless it is a head-office
 // pair). With no head office linked every path is exactly as before.
 
+import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { Prisma, UserRole } from '@prisma/client'
@@ -383,6 +384,8 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
     const row = await createTransfer(actorOf(req), body, { postNow: body.postNow })
     const [view] = await withApprovalFlags(req, await presentTransfers([row], actorOf(req)))
     await auditBoth(req, [row.tenantId, row.counterpartyTenantId], body.postNow ? 'intercompany.transfer.post' : 'intercompany.transfer.submit', 'IntercompanyTransfer', row.id, view)
+    // The bell (queued, after the write): a submitted transfer waits for its approver.
+    if (row.status === 'submitted') approvalWaiting('intercompany_transfer', row.id, { round: `submit:${row.preparedAt.toISOString()}`, actorId: req.staffUser!.id })
     return reply.status(201).send({ ...view, referenceUsedBefore: await referenceUsesOfPair(row, req.staffUser!.memberTenantIds) })
   })
 

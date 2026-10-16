@@ -22,6 +22,7 @@ import { z } from 'zod'
 import { requireAuth, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { scopeTenantWhere, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
+import { auditApproval } from '../../lib/approvalRights.js'
 import { parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import {
   approveStockDifferences, listStockDifferences, queryStockDifference, stockDifferencesByIds, STOCK_DIFFERENCE_APPROVERS,
@@ -76,6 +77,19 @@ export async function stockDifferenceRoutes(fastify: FastifyInstance): Promise<v
       after: { cleared: result.cleared, alreadyCleared: result.alreadyCleared, clearedCents: result.clearedCents },
       metadata: { ip: req.ip, lineIds: body.lineIds },
     })
+    // approval.decide per cleared line (the one funnel; grant 'role': the guard is a plain CEO role list) and the
+    // "approved" notice to whoever posted the difference (none for a system posting). After the commit; never fails it.
+    const decidedAt = new Date().toISOString()
+    for (const c of result.cleared) {
+      try {
+        await auditApproval(req, {
+          type: 'stock_difference', id: c.lineId, tenantId: result.tenantId, decision: 'approve', grant: { via: 'role' }, entity: 'JournalLine',
+          metadata: { decidedAt },
+        })
+      } catch (err) {
+        console.warn(`[stock-differences] approval.decide not recorded: ${(err as Error).message}`)
+      }
+    }
     const rows = await stockDifferencesByIds([result.tenantId], body.lineIds)
     return { ...result, rows, canApprove: true }
   })
@@ -87,6 +101,15 @@ export async function stockDifferenceRoutes(fastify: FastifyInstance): Promise<v
       tenantIds, lineId: req.params.lineId, note: body.note,
       actor: { id: req.staffUser!.id, email: req.staffUser!.email },
     })
+    // approval.decide row for the CEO's query (decision 'query' writes the audit row only: no "decided" notice).
+    try {
+      await auditApproval(req, {
+        type: 'stock_difference', id: req.params.lineId, tenantId: tenantIds[0] ?? null, decision: 'query', grant: { via: 'role' }, entity: 'JournalLine',
+        metadata: { note: body.note },
+      })
+    } catch (err) {
+      console.warn(`[stock-differences] approval.decide not recorded: ${(err as Error).message}`)
+    }
     return { row, canApprove: true }
   })
 }

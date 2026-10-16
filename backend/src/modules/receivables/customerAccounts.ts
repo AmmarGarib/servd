@@ -47,6 +47,8 @@
 //
 // Lock order (receivables/onAccount.ts): order → client account → invoice.
 
+import { auditApproval } from '../../lib/approvalRights.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { CustomerAccount, CustomerAccountCard, Prisma } from '@prisma/client'
 import { z } from 'zod'
@@ -503,6 +505,8 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
       tenantId, ...actorOf(req),
       after: { number: created.number, legalName: created.legalName, status: created.status, creditLimitCents: toCents(created.creditLimitCents), termsDays: created.termsDays, conceptIds },
     })
+    // The bell (queued, after the commit): a new client waits for the CEO.
+    if (created.status === 'pending') approvalWaiting('on_account_client', created.id, { round: 'created', actorId: req.staffUser!.id })
     return reply.status(201).send(await reload(created.id, req))
   })
 
@@ -631,8 +635,29 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
         })
       }
     }
+    // The bell (queued): a credit-limit increase, or a rejected application sent back, waits for the CEO.
+    if (before !== after) {
+      if (actions.includes('limit_requested') && after.limitRequestedAt) {
+        approvalWaiting('on_account_client', after.id, { round: `limit:${after.limitRequestedAt.toISOString()}`, actorId: req.staffUser!.id })
+      } else if (actions.includes('resubmitted')) {
+        approvalWaiting('on_account_client', after.id, { round: `resubmit:${after.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+      }
+    }
     return reload(after.id, req)
   })
+
+  // approval.decide + the "decided" notice (the bell). The guard is a plain role list (CEO), so the grant is 'role'.
+  // After the commit; never fails the decision.
+  async function decidedNotice(req: FastifyRequest, a: { id: string; tenantId: string }, decision: 'approve' | 'reject', note?: string | null) {
+    try {
+      await auditApproval(req, {
+        type: 'on_account_client', id: a.id, tenantId: a.tenantId, decision, grant: { via: 'role' }, entity: 'CustomerAccount',
+        metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}) },
+      })
+    } catch (err) {
+      console.warn(`[on-account] approval.decide not recorded: ${(err as Error).message}`)
+    }
+  }
 
   // ── The CEO decides: a new client, or a limit increase ──
   app.post<{ Params: { id: string } }>('/:id/approve', ceo, async (req) => {
@@ -672,6 +697,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
       after: { status: after.status, creditLimitCents: toCents(after.creditLimitCents) },
       metadata: { kind, note: body.note || null, requestedById: kind === 'new_client' ? before.createdById : before.limitRequestedById },
     })
+    await decidedNotice(req, after, 'approve')
     return reload(after.id, req)
   })
 
@@ -705,6 +731,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
       after: { status: after.status },
       metadata: { kind, note },
     })
+    await decidedNotice(req, after, 'reject', note)
     return reload(after.id, req)
   })
 

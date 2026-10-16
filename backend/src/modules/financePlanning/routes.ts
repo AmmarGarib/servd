@@ -13,6 +13,7 @@
 // capital-ledger writer and the ProForma scenarios are gone (/projections is
 // the one projections module).
 
+import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
@@ -1086,6 +1087,8 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         capitaliseError = { code: err instanceof AppError ? err.code : 'CAPITALISE_FAILED', message: (err as Error).message }
       }
     }
+    // The bell (queued, after the commit): a Quick buy's capitalisation waits for the CEO.
+    if (out.eventId && !applied) approvalWaiting('fixed_asset_request', out.eventId, { round: `create:${out.eventId}`, actorId: actor.id })
     await audit({
       category: 'accounting', action: 'capex.quick_buy', entity: 'CapexLine', entityId: out.lineId,
       userId: actor.id, userEmail: req.staffUser!.email, tenantId,

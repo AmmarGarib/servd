@@ -28,6 +28,7 @@
 // its buttons call the module's approve / reject routes, which call
 // applyEvent / rejectEvent — never a second approval engine.
 
+import { approvalWaiting } from '../approvals/notify.js'
 import { z } from 'zod'
 import type { FixedAsset, FixedAssetEvent, FixedAssetPool, Prisma } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
@@ -494,6 +495,8 @@ export async function createRequest(
   try {
     if (!applyNow) {
       const event = await serviceClient.fixedAssetEvent.create({ data })
+      // The bell (queued, no transaction open here): the CEO has a request to decide.
+      approvalWaiting('fixed_asset_request', event.id, { round: `create:${event.requestedAt.toISOString()}`, actorId: actor.id })
       return { event, applied: false }
     }
     const event = await serviceClient.$transaction(async (tx) => {

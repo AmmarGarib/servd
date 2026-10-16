@@ -52,6 +52,8 @@
 // (lockInvoice), then the write-off row — on request, approve and recover.
 // Files are decoded before the transaction opens.
 
+import { auditApproval } from '../../lib/approvalRights.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma, ReceivableInvoice, ReceivableWriteOff, UserRole } from '@prisma/client'
 import { z } from 'zod'
@@ -420,8 +422,23 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
       after: { invoiceId: found.id, invoiceNumber: found.number, amountCents: body.amountCents, reason: body.reason, files: files.length, appliedAtOnce: ceo },
     })
     await auditSuspension(req, found.tenantId, suspendedAccountId, created.id)
+    // The bell (queued, after the commit): the CEO has a write-off to decide (the CEO's own applies at once).
+    if (!ceo) approvalWaiting('bad_debt', created.id, { round: `requested:${created.requestedAt.toISOString()}`, actorId: me.id })
     return reply.status(201).send(await reload(created.id, me))
   })
+
+  // approval.decide + the "decided" notice to the requester (the bell). The guard is a plain role list (CEO):
+  // grant 'role'. After the commit; never fails the decision.
+  async function decidedNotice(req: FastifyRequest, w: { id: string; tenantId: string }, decision: 'approve' | 'reject', note?: string | null) {
+    try {
+      await auditApproval(req, {
+        type: 'bad_debt', id: w.id, tenantId: w.tenantId, decision, grant: { via: 'role' }, entity: 'ReceivableWriteOff',
+        metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}) },
+      })
+    } catch (err) {
+      console.warn(`[write-offs] approval.decide not recorded: ${(err as Error).message}`)
+    }
+  }
 
   // POST /accounting/receivables/write-offs/:id/approve {note?} — the CEO.
   fastify.post<{ Params: { id: string } }>('/:id/approve', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
@@ -444,6 +461,7 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
       metadata: { invoiceId: w.invoiceId, amountCents: toCents(w.amountCents) },
     })
     await auditSuspension(req, w.tenantId, suspendedAccountId, w.id)
+    await decidedNotice(req, w, 'approve', body.note)
     return reload(w.id, me)
   })
 
@@ -460,6 +478,7 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
       category: 'accounting', action: 'receivable.write_off.reject', entity: 'ReceivableWriteOff', entityId: w.id,
       ...staffOf(req), tenantId: w.tenantId, before: { status: w.status }, after: { status: 'rejected', note: body.note },
     })
+    await decidedNotice(req, w, 'reject', body.note)
     return reload(w.id, callerOf(req))
   })
 

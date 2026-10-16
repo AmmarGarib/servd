@@ -15,6 +15,7 @@
 // of another company named in a transfer is 422. Audits carry the ROW's
 // company. Smallwares pool requests and counts are in pools.routes.ts.
 
+import { auditApproval } from '../../lib/approvalRights.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { FixedAssetEvent, UserRole } from '@prisma/client'
@@ -128,6 +129,19 @@ export async function shapeEvents(db: Db, events: FixedAssetEvent[], who: { id: 
       canCancel: pending && (isCeo || e.requestedById === who.id),
     }
   })
+}
+
+/** approval.decide + the "decided" notice to the requester (the bell). The routes' guard is a
+ *  plain role list, so the grant is 'role'. After the status move committed; never fails the action. */
+async function decidedNotice(req: FastifyRequest, ev: { id: string; tenantId: string }, decision: 'approve' | 'reject' | 'cancel', note?: string | null) {
+  try {
+    await auditApproval(req, {
+      type: 'fixed_asset_request', id: ev.id, tenantId: ev.tenantId, decision, grant: { via: 'role' }, entity: 'FixedAssetEvent',
+      metadata: { decidedAt: new Date().toISOString(), ...(note ? { reason: note } : {}) },
+    })
+  } catch (err) {
+    console.warn(`[fixed-assets] approval.decide not recorded: ${(err as Error).message}`)
+  }
 }
 
 /** An event in the caller's companies ('write' scope) or 404. */
@@ -274,6 +288,7 @@ export async function fixedAssetRequestRoutes(fastify: FastifyInstance) {
       userId: actor.id, userEmail: actor.email, tenantId: done.tenantId,
       before: { status: ev.status }, after: { kind: done.kind, status: done.status, journalEntryId: done.journalEntryId, payload: done.payload },
     })
+    await decidedNotice(req, done, 'approve')
     const [shaped] = await shapeEvents(prisma, [done], actor)
     return { event: shaped, applied: true, status: 'posted' }
   })
@@ -289,6 +304,7 @@ export async function fixedAssetRequestRoutes(fastify: FastifyInstance) {
       userId: actor.id, userEmail: actor.email, tenantId: done.tenantId,
       before: { status: ev.status }, after: { status: done.status, decisionNote: done.decisionNote },
     })
+    await decidedNotice(req, done, 'reject', body.note)
     const [shaped] = await shapeEvents(prisma, [done], actor)
     return { event: shaped, status: 'rejected' }
   })
@@ -303,6 +319,7 @@ export async function fixedAssetRequestRoutes(fastify: FastifyInstance) {
       userId: actor.id, userEmail: actor.email, tenantId: done.tenantId,
       before: { status: ev.status }, after: { status: done.status },
     })
+    await decidedNotice(req, done, 'cancel')
     const [shaped] = await shapeEvents(prisma, [done], actor)
     return { event: shaped, status: 'cancelled' }
   })
