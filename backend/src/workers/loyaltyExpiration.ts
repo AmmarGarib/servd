@@ -46,7 +46,7 @@ export function startLoyaltyExpirationWorker() {
   }
 }
 
-async function runExpirationSweep(): Promise<void> {
+export async function runExpirationSweep(): Promise<void> {
   const accounts = await prisma.loyaltyAccount.findMany({
     where: { pointsBalance: { gt: 0 } },
     select: { id: true, tenantId: true, customerId: true, pointsBalance: true },

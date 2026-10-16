@@ -87,7 +87,7 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, resolvePostingFailed, revenueCodeForConcept, type JournalLineInput } from './journal.js'
 import { tillClearingCodeTx } from './tillClearingCode.js'
 import {
   computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, isVoidedRaast, outputTaxCodeFor, withTenderTips,
@@ -805,6 +805,14 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
     }
     try {
       const r = await postShiftClose(s.id, locked ? { intoCurrentMonth: { note, postedBy: opts.postedBy } } : {})
+      // The close is on the books now: its open posting_failed flag (raised by
+      // closeShift when the ledger refused it — pos/service.ts
+      // flagShiftPostingFailed) is closed here, as every other re-poster does.
+      // Left open it kept blocking the month close (posting_failed) and the
+      // night audit for a till that is already booked.
+      if (r.entryId) {
+        await resolvePostingFailed('Shift', s.id, 'shift.close', 'Posted by Reconciliation → Backfill unposted.', { tenantIds: [entry.tenantId] })
+      }
       rows.push({
         shiftId: s.id, closedAt, businessAt, tenantId: entry.tenantId,
         outcome: r.posted ? (locked ? 'posted_into_current_month' : 'posted') : 'already_posted',
