@@ -158,6 +158,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Trial balance', href: '/accounting/trial-balance', sub: true },
     { label: 'Balance sheet', href: '/accounting/balance-sheet', sub: true },
     { label: 'Cash flow', href: '/accounting/cash-flow', sub: true },
+    { label: 'Night audit', href: '/finance/night-audit', sub: true, hint: 'Lock each business day: tills, Raast, COD and payments the same night; closed when card payouts and the bank match' },
     { label: 'Period close', href: '/accounting/period-close', sub: true },
     { label: 'Chart of accounts', href: '/configuration/chart-of-accounts', sub: true },
     { label: 'Allocations', href: '/allocations', sub: true },

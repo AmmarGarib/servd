@@ -5191,8 +5191,12 @@ model Tenant {
   /// "All companies" totals, it never messages customers or outside parties, and its brands are never advertised.
   /// Its own books work normally. ONE predicate: lib/testCompany.ts (isTestTenant / testTenantIds).
   isTest             Boolean   @default(false)
+  /// Night audit (owner, 2026-10-16): 'YYYY-MM-DD' PKT — the first business day the month close requires to be
+  /// night-audited and closed; null = not started (the first run sets it). CHECK tenants_night_audit_start_chk (SQL only).
+  nightAuditStartDay String?
 
   concepts               Concept[]
+  nightAuditDays         NightAuditDay[]      @relation("TenantNightAuditDays")
   users                  User[]
   members                TenantMember[]
   riders                 Rider[]
@@ -8236,4 +8240,49 @@ model TrashCopy {
 
   @@index([tenantId, entityType, entityId])
   @@map("trash_copies")
+}
+
+// ─── Night audit (owner, 2026-10-16) ──────────────────────────────────────────
+// Lock each business day, then close it when its money settles. Contract:
+// backend/src/modules/nightAudit/README.md. Migration 20261016120000_night_audit.
+
+enum NightAuditStatus {
+  open // not run, or reopened by the CEO — postings into the day allowed
+  audited // night run done ("awaiting settlement") — day LOCKED
+  closed // settlement matched (or CEO override) — day LOCKED
+}
+
+/// One row per company per Karachi business date. No row = open.
+/// CHECKs night_audit_days_* (SQL only, migration 20261016120000_night_audit).
+model NightAuditDay {
+  id                       String           @id @default(uuid())
+  tenantId                 String
+  businessDate             String // 'YYYY-MM-DD' PKT (same convention as CardSettlementDay.day)
+  status                   NightAuditStatus @default(open)
+  auditedAt                DateTime?
+  auditedById              String?
+  /// Night-step blocks the CEO pushed through: [{key,title,count,cents}]; null = none.
+  nightOverrides           Json?
+  nightOverrideReason      String?
+  closedAt                 DateTime?
+  closedById               String? // null = closed automatically
+  closedVia                String? // 'auto' | 'manual' | 'override'
+  settlementOverrides      Json?
+  settlementOverrideReason String?
+  /// Daily audit report snapshot; `closing` added when the day closes.
+  report                   Json?
+  /// Latest check result shown on the calendar: {phase, at, blocks:[{key,title,count,cents}], warnings:[…]}.
+  lastCheck                Json?
+  lastCheckedAt            DateTime?
+  reopenCount              Int              @default(0)
+  /// Append-only: [{at, byId, action, from, to, reason?, keys?}]
+  history                  Json             @default("[]")
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+
+  tenant Tenant @relation("TenantNightAuditDays", fields: [tenantId], references: [id])
+
+  @@unique([tenantId, businessDate])
+  @@index([tenantId, status, businessDate])
+  @@map("night_audit_days")
 }
