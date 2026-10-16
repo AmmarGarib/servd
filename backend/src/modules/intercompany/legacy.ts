@@ -67,6 +67,43 @@ async function walletSubledgerAt(db: Db, tenantId: string, asOf?: Date): Promise
   return Number(bal._sum.balanceCents ?? 0) - Number(after?._sum.amountCents ?? 0)
 }
 
+/**
+ * Wallet money spent on orders whose sale is not in the books at `asOf`
+ * (finance sim MI-4): the wallet is debited at checkout, 2050 only when the
+ * sale is booked (order.complete, or the till ticket's drawer close), so
+ * until then 2050 still holds it. Net per order up to `asOf` (a cancel or a
+ * refund that gave the wallet back nets to 0).
+ */
+async function walletAwaitingSaleAt(db: Db, tenantId: string, asOf: Date): Promise<{ count: number; cents: number }> {
+  const grouped = await db.walletTransaction.groupBy({
+    by: ['orderId'],
+    where: { tenantId, orderId: { not: null }, createdAt: { lte: asOf } },
+    _sum: { amountCents: true },
+  })
+  const spent = new Map<string, number>()
+  for (const g of grouped) {
+    const net = Number(g._sum.amountCents ?? 0)
+    if (g.orderId && net < 0) spent.set(g.orderId, -net)
+  }
+  if (spent.size === 0) return { count: 0, cents: 0 }
+  // Most were booked by their order.complete: one query clears them.
+  const completes = await db.journalEntry.findMany({
+    where: { tenantId, reference: { in: [...spent.keys()].map((id) => `order.complete:${id}`) }, entryDate: { lte: asOf } },
+    select: { reference: true },
+  })
+  for (const e of completes) spent.delete((e.reference ?? '').slice('order.complete:'.length))
+  // The rest: a till ticket booked at its drawer close, or not booked yet.
+  const { orderSaleBookedEntry } = await import('../accounting/cogs.js')
+  let count = 0, cents = 0
+  for (const [orderId, amount] of spent) {
+    const booked = await orderSaleBookedEntry(db, tenantId, orderId)
+    if (booked && booked.entryDate <= asOf) continue
+    count += 1
+    cents += amount
+  }
+  return { count, cents }
+}
+
 /** The company's loyalty points at `asOf`, valued at its point value. */
 async function loyaltySubledgerAt(db: Db, tenantId: string, asOf?: Date): Promise<{ points: number; cents: number }> {
   const [bal, after] = await Promise.all([
@@ -111,16 +148,21 @@ export interface ControlTieOut {
 
 /** 2050 / 2060 at `asOf`; 2080 from the gift-card books check (as of now — it explains its own differences). */
 export async function controlTieOut(db: Db, tenantId: string, asOf: Date): Promise<ControlTieOut> {
-  const [ledger, wallets, loyalty, tenant] = await Promise.all([
+  const [ledger, wallets, walletAwaiting, loyalty, tenant] = await Promise.all([
     ledgerLiabilitiesAt(db, tenantId, asOf),
     walletSubledgerAt(db, tenantId, asOf),
+    walletAwaitingSaleAt(db, tenantId, asOf),
     loyaltySubledgerAt(db, tenantId, asOf),
     db.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
   ])
   const at = asOf.toISOString()
   const rows: TieOutRow[] = []
   const w = ledger.get(ACCT.WALLET_LIABILITY) ?? 0
-  rows.push({ code: '2050', label: 'Customer wallets', ledgerCents: w, subledgerCents: wallets, differenceCents: w - wallets, asOf: at })
+  const walletOwed = wallets + walletAwaiting.cents
+  rows.push({
+    code: '2050', label: 'Customer wallets', ledgerCents: w, subledgerCents: walletOwed, differenceCents: w - walletOwed, asOf: at,
+    ...(walletAwaiting.count > 0 && { note: `Wallet balances plus ${walletAwaiting.count} order(s) paid from the wallet whose sale is not booked yet` }),
+  })
   const l = ledger.get(ACCT.LOYALTY_LIABILITY) ?? 0
   rows.push({
     code: '2060', label: 'Loyalty points', ledgerCents: l, subledgerCents: loyalty.cents, differenceCents: l - loyalty.cents, asOf: at,

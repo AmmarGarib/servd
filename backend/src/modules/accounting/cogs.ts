@@ -140,6 +140,11 @@ export async function orderStockCostCents(orderId: string, db: Db = prisma): Pro
  * the transaction to see what it has written.
  */
 export async function orderCostBookedAt(db: Db, tenantId: string, orderId: string): Promise<Date | null> {
+  return (await orderSaleBookedEntry(db, tenantId, orderId))?.createdAt ?? null
+}
+
+/** The entry that booked the order's sale (its order.complete, or its home drawer's shift.close), or null. */
+export async function orderSaleBookedEntry(db: Db, tenantId: string, orderId: string): Promise<{ createdAt: Date; entryDate: Date } | null> {
   const order = await db.order.findUnique({
     where: { id: orderId },
     select: {
@@ -155,10 +160,10 @@ export async function orderCostBookedAt(db: Db, tenantId: string, orderId: strin
   const closeRef = home ? `shift.close:${home}` : null
   const entries = await db.journalEntry.findMany({
     where: { tenantId, reference: { in: closeRef ? [completeRef, closeRef] : [completeRef] } },
-    select: { id: true, reference: true, createdAt: true },
+    select: { id: true, reference: true, createdAt: true, entryDate: true },
   })
   const complete = entries.find((e) => e.reference === completeRef)
-  if (complete) return complete.createdAt
+  if (complete) return complete
   const close = closeRef ? entries.find((e) => e.reference === closeRef) : undefined
   if (!close) return null
   const due = await db.journalLine.findFirst({
@@ -178,7 +183,7 @@ export async function orderCostBookedAt(db: Db, tenantId: string, orderId: strin
     const money = order.payments.some((p) => p.shiftId === home && p.amountCents > 0 && p.method !== 'comp' && p.method !== 'on_account' && !isVoidedRaast(p) && isShiftReceipt(p))
     if (!money) return null
   }
-  return close.createdAt
+  return close
 }
 
 /**

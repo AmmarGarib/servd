@@ -611,7 +611,7 @@ describe('known defects found by the simulation (open)', () => {
   // shows as a "real difference to find" — the gift-card check explains the same timing
   // (awaitingSale), the wallet row does not. Fix: add the wallet spent on orders whose sale is not
   // booked by asOf (as giftCardBooksCheck does) to the subledger figure. When fixed, drop `.fails`.
-  it.fails('MI-4: B\'s 2050 tie-out row is clean at 31 Oct with a wallet-paid order still in the kitchen', async () => {
+  it('MI-4: B\'s 2050 tie-out row is clean at 31 Oct with a wallet-paid order still in the kitchen', async () => {
     const { B } = sim
     const r = ok(await sim.as(B.finance, B).get('/accounting/intercompany/tie-out?asOf=2026-10-31'), 200)
     const row = (r.companies as Array<{ tenantId: string; tieOut: { rows: Array<{ code: string; differenceCents: number }> } }>)
