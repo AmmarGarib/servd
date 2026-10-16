@@ -1765,6 +1765,24 @@ person and links there). Full list: `/me/notifications`. No phone push (owner:
   company and reopen; run by the hourly `nightAuditSettle` worker after it
   settles (`nightAudit/service.ts notifyAwaitingSettlement`).
 
+### Payroll pay basis (owner HR-1 / HR-2, 2026-10-16)
+
+"We will do by actual number of days in a month." `computePayslip`
+(`backend/src/modules/hr/logic.ts`) is the ONE engine (payroll and full &
+final): **salary = monthly gross ÷ the month's calendar days (28–31) × paid
+days**, paid days = days employed − absent days − unpaid leave days, rounded
+once. Days before joining / after the last working day are not employed — never
+absences (HR-2). Absent = an `absent` record (1) / `half_day` (0.5) on a day not
+covered by approved leave; weekly off days, holidays, paid leave, lates and days
+with no record are PAID. Lates stay a deduction line at the same daily rate.
+EOBI-on-gross / SESSI / tax keep the employed-days base. The breakdown is kept on
+each payslip as `inputs.payBasis` and is what the run page, the register CSV and
+the Payroll Report's Days Worked show. New payslips carry no `absence` /
+`unpaid_leave` lines (old ones keep theirs; `hr/ledger.ts` reads both). The old
+"working days per month" (26) setting is RETIRED (`mergeSettings` drops it; a PUT
+that sends it is ignored). Only drafts are recalculated; approved / locked runs
+keep their figures. Tests: `tests/hrPayDaysBasis.test.ts`, `tests/hrModule.test.ts`.
+
 ### Closed books are the CEO's (owner, 2026-10-16)
 
 `accounting/closedBooks.ts`. A closed month refuses every posting (as

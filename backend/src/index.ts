@@ -919,6 +919,16 @@ async function build() {
               if (h.detail) details.headOffice = h.detail
             } catch (err) { warnOf('headOffice', err) }
           })(),
+          // Suppliers with no company (the one-time GS Foods assignment, owner
+          // 2026-10-16). Counts only.
+          (async () => {
+            try {
+              const { companylessSupplierHealth } = await import('./modules/procurement/companylessSuppliers.js')
+              const h = await companylessSupplierHealth()
+              checks.supplierCompanies = h.status
+              if (h.detail) details.supplierCompanies = h.detail
+            } catch (err) { warnOf('supplierCompanies', err) }
+          })(),
           // Till clearing / on account (resumed 2026-10-15): open unexplained till-clearing lines and overdue
           // on-account clients. Counts only — never an amount or a name.
           (async () => {
@@ -1127,6 +1137,22 @@ async function build() {
     fastify.log.info(`[complete] completion recovery counts orders completed since ${since.toISOString()}`)
   } catch (err) {
     fastify.log.warn(`[complete] completion recovery marker skipped: ${(err as Error).message}`)
+  }
+  // Company-less suppliers → GS Foods, ONCE (owner, 2026-10-16: "All to GS
+  // Foods"; marker Setting procurement.companylessSuppliersAssignedAt). Before
+  // the opening-balance sync so a moved supplier's opening posts this boot.
+  // Not exactly one 'GS Foods' company → nothing changes (and /health says
+  // so); a supplier with records in another company is skipped and flagged.
+  try {
+    const { assignCompanylessSuppliers } = await import('./modules/procurement/companylessSuppliers.js')
+    const r = await assignCompanylessSuppliers()
+    if (r.status === 'done' && (r.assigned.length || r.skipped.length)) {
+      fastify.log.info(`[suppliers] company-less suppliers: ${r.assigned.length} assigned, ${r.skipped.length} left for the CEO (flagged)`)
+    } else if (r.status === 'no_target') {
+      fastify.log.warn(`[suppliers] company-less supplier assignment waiting: ${r.targetCount} target companies (expected exactly 1)`)
+    }
+  } catch (err) {
+    fastify.log.warn(`[suppliers] company-less supplier assignment skipped: ${(err as Error).message}`)
   }
   // Supplier opening balances live in the ledger (Dr 3020 / Cr 2010). Post any
   // that predate this, so AP aging and the ledger agree from the first boot.

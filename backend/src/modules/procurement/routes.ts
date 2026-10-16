@@ -473,6 +473,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       if (body.openingBalanceCents !== undefined || body.openingBalanceDate !== undefined || body.tenantId !== undefined) {
         await syncOpening(req, updated.id)
       }
+      // A supplier the one-time GS Foods assignment left company-less
+      // (companylessSuppliers.ts) is done once someone gives it a company.
+      if (!existing.tenantId && updated.tenantId) {
+        await prisma.exceptionFlag.updateMany({
+          where: { kind: 'supplier_company_unassigned', entityType: 'Supplier', entityId: updated.id, status: { in: ['open', 'acknowledged'] } },
+          data: { status: 'resolved', resolvedById: req.staffUser!.id, resolvedAt: new Date(), resolution: 'Company assigned in the supplier editor.' },
+        })
+      }
       return updated
     },
   )

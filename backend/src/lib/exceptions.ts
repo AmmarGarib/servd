@@ -119,6 +119,8 @@ export type ExceptionKind =
   | 'backdated_sale_change'      // the CEO voided / comped / cancelled / reversed / credit-noted a bill of an earlier sales day
   // Cash vouchers (owner, 2026-10-16: 1357 retired). Plain String column — no migration.
   | 'cash_voucher_hold_unconverted' // a voucher still held on 1357 could not be booked as one expense entry — finance fixes it
+  // Company-less suppliers → GS Foods, once (owner, 2026-10-16; procurement/companylessSuppliers.ts).
+  | 'supplier_company_unassigned' // left company-less: it has records in another company — the CEO assigns it by hand
 
 /**
  * The kind a flag was filed under before it had its own. A query that looks
