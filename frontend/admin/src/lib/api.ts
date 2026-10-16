@@ -105,6 +105,7 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   /^\/tenants\b/,               // tenant primitives: switch, list, merge
   /^\/me\b/,                    // self-prefs (theme, notifications)
   /^\/media\/upload-url\b/,     // presigned URL is tenant-agnostic
+  /^\/record-files\b/,           // files on a saved record: the server stamps the RECORD's company
   /^\/site-layouts\b/,          // page's company comes from its slug (brand) or none (shared pages)
   // Head office (D1/D3): the CEO's head-office pages and staff moves name their companies in the body, and a
   // delegation names its own scope — no active-company prompt.

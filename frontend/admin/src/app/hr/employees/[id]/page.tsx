@@ -17,6 +17,9 @@ import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { usePermissions } from '../../../../hooks/useCan'
 import { OffboardButtons, FLOOR_LOGIN_ROLES } from '../../../../components/hr/OffboardButtons'
 import { roleLabel } from '../../../../lib/appRoles'
+import { RecordFiles } from '@/components/files/RecordFiles'
+import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 
 interface Profile {
   employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
@@ -184,11 +187,23 @@ function DocumentsTab({ p }: { p: Profile }) {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const { data: types = [] } = useQuery({ queryKey: ['hr-doc-types'], queryFn: () => api.get<string[]>('/hr/documents/types') })
-  const [f, setF] = useState({ docType: 'cnic_front', title: '', fileUrl: '', issueDate: '', expiryDate: '' })
+  const [f, setF] = useState({ docType: 'cnic_front', title: '', issueDate: '', expiryDate: '' })
+  const [files, setFiles] = useState<PickedFile[]>([])
   const [err, setErr] = useState('')
   const add = useMutation({
-    mutationFn: () => api.post('/hr/documents', { employeeId: p.employee.id, docType: f.docType, title: f.title.trim() || undefined, fileUrl: f.fileUrl.trim() || undefined, issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined }),
-    onSuccess: () => { setErr(''); setF({ ...f, title: '', fileUrl: '', issueDate: '', expiryDate: '' }); void qc.invalidateQueries() },
+    mutationFn: async () => {
+      const doc = await api.post<{ id: string }>('/hr/documents', { employeeId: p.employee.id, docType: f.docType, title: f.title.trim() || undefined, issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined })
+      let uploadError = ''
+      if (files.length > 0) {
+        try { await uploadRecordFiles('hr_document', doc.id, files, { tenantId: p.employee.tenantId }) }
+        catch (e) { uploadError = (e as Error).message }
+      }
+      return uploadError
+    },
+    onSuccess: (uploadError: string) => {
+      setErr(uploadError ? `Document saved; files failed: ${uploadError}` : '')
+      setF({ ...f, title: '', issueDate: '', expiryDate: '' }); setFiles([]); void qc.invalidateQueries()
+    },
     onError: (e: Error) => setErr(e.message),
   })
   const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: () => void qc.invalidateQueries(), onError: (e: Error) => setErr(`Could not verify: ${e.message}`) })
@@ -197,7 +212,7 @@ function DocumentsTab({ p }: { p: Profile }) {
   const submit = (ev: React.FormEvent) => {
     ev.preventDefault()
     if (add.isPending) return
-    if (!f.title.trim() && !f.fileUrl.trim()) { setErr('Give the document a title or a link to the file.'); return }
+    if (!f.title.trim() && files.length === 0) { setErr('Give the document a title or attach a file.'); return }
     if (f.issueDate && f.expiryDate && f.expiryDate < f.issueDate) { setErr('The expiry date is before the issue date.'); return }
     setErr('')
     add.mutate()
@@ -210,8 +225,7 @@ function DocumentsTab({ p }: { p: Profile }) {
           <Select className={inp} value={f.docType} onChange={(e) => setF({ ...f, docType: e.target.value })} aria-label="Document type">{types.map((t) => <option key={t} value={t}>{human(t)}</option>)}</Select></div>
         <label><span className={lbl}>Title</span>
           <input className={inp} placeholder="e.g. CNIC front" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} autoComplete="off" /></label>
-        <label className="md:col-span-2"><span className={lbl}>Link to the file</span>
-          <input type="url" className={inp} placeholder="https://…" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} autoComplete="off" /></label>
+        <div className="md:col-span-2"><PendingFilesPicker ownerType="hr_document" value={files} onChange={setFiles} label="File" /></div>
         <label><span className={lbl}>Issue date</span>
           <input type="date" className={inp} value={f.issueDate} onChange={(e) => setF({ ...f, issueDate: e.target.value })} /></label>
         <label><span className={lbl}>Expiry date</span>
@@ -224,7 +238,8 @@ function DocumentsTab({ p }: { p: Profile }) {
         {p.documents.map((d) => (
           <div key={d.id} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <span className="font-bold text-white/85 sm:w-48 shrink-0">{d.title || human(d.docType)}</span>
-            {d.fileUrl ? <a href={d.fileUrl} target="_blank" rel="noreferrer" className="text-primary-ink text-xs hover:underline">Open</a> : <span className="text-xs text-white/30">No file</span>}
+            {d.fileUrl ? <a href={d.fileUrl} target="_blank" rel="noreferrer" className="text-primary-ink text-xs hover:underline">Open</a> : null}
+            <RecordFiles ownerType="hr_document" ownerId={d.id} tenantId={p.employee.tenantId} canUpload compact lazy />
             <span className="text-xs" style={{ color: soon(d.expiryDate) ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.45)' }}>{d.expiryDate ? `Expires ${day(d.expiryDate)}` : ''}</span>
             <span className="ml-auto flex gap-1">
               {d.verifiedAt ? <span className="text-xs text-primary-ink">Verified</span> : <button type="button" className="text-xs text-white/50 hover:text-white px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Mark verified</button>}

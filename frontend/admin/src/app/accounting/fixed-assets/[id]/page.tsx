@@ -21,6 +21,7 @@ import { AssetRequestModal, ASSET_REQUEST_TITLE, type AssetRequestKind, type Req
 import { RequestCard } from '../../../../components/fixedAssets/RequestCard'
 import { ScheduleTable, type PostedMonth, type UpcomingMonth } from '../../../../components/fixedAssets/ScheduleTable'
 import { Select } from '@/components/ui/Select'
+import { RecordFiles } from '@/components/files/RecordFiles'
 
 interface DocLink { label?: string; url: string }
 interface TaxYear {
@@ -207,6 +208,9 @@ export default function FixedAssetPage() {
                 ))}
               </div>
             )}
+            <div className="mt-4">
+              <RecordFiles ownerType="fixed_asset" ownerId={a.id} tenantId={a.tenantId} canUpload={canWrite} title="Documents and photos" />
+            </div>
           </section>
 
           {/* Schedule */}
@@ -290,24 +294,6 @@ export default function FixedAssetPage() {
 
 // ─── Edit the descriptive fields ────────────────────────────────────────────
 
-function LinkListEditor({ title, value, onChange }: { title: string; value: DocLink[]; onChange: (v: DocLink[]) => void }) {
-  return (
-    <div>
-      <span className="text-[11px] font-bold text-white/50">{title}</span>
-      <div className="space-y-2 mt-1">
-        {value.map((d, i) => (
-          <div key={i} className="flex gap-2">
-            <input className={inp} placeholder="Name" aria-label={`${title} name`} value={d.label ?? ''} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
-            <input className={inp} placeholder="https://…" aria-label={`${title} link`} value={d.url} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))} />
-            <button type="button" aria-label="Remove" onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-white/40 hover:text-s-red px-1">&times;</button>
-          </div>
-        ))}
-        <button type="button" onClick={() => onChange([...value, { label: '', url: '' }])} className="text-xs font-bold text-primary-ink hover:underline">+ Add a link</button>
-      </div>
-    </div>
-  )
-}
-
 function EditDetails({ detail, lookups, onClose, onSaved }: {
   detail: AssetDetail; lookups: NonNullable<ReturnType<typeof useFaLookups>['data']>; onClose: () => void; onSaved: () => void
 }) {
@@ -317,9 +303,6 @@ function EditDetails({ detail, lookups, onClose, onSaved }: {
   const [notes, setNotes] = useState(a.notes ?? '')
   const [warranty, setWarranty] = useState(a.warrantyUntil ?? '')
   const [supplierId, setSupplierId] = useState(a.supplierId ?? '')
-  const [docs, setDocs] = useState<DocLink[]>(detail.documentUrls ?? [])
-  const [photos, setPhotos] = useState<DocLink[]>(detail.photoUrls ?? [])
-  const clean = (l: DocLink[]) => l.filter((d) => d.url.trim()).map((d) => ({ ...(d.label?.trim() ? { label: d.label.trim() } : {}), url: d.url.trim() }))
 
   const save = useMutation({
     mutationFn: () => api.patch(`${FA_BASE}/${a.id}`, {
@@ -328,8 +311,6 @@ function EditDetails({ detail, lookups, onClose, onSaved }: {
       notes: notes.trim() || null,
       warrantyUntil: warranty || null,
       supplierId: supplierId || null,
-      documentUrls: clean(docs).length ? clean(docs) : null,
-      photoUrls: clean(photos).length ? clean(photos) : null,
     }, { tenantId: a.tenantId }),
     onSuccess: onSaved,
   })
@@ -352,8 +333,6 @@ function EditDetails({ detail, lookups, onClose, onSaved }: {
           </Select>
         </L>
         <L t="Notes"><textarea className={inp} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></L>
-        <LinkListEditor title="Documents (invoice, warranty card)" value={docs} onChange={setDocs} />
-        <LinkListEditor title="Photos" value={photos} onChange={setPhotos} />
         <ErrorLine error={save.error} />
         <div className="flex gap-2 pt-2">
           <button type="submit" disabled={save.isPending || !name.trim()} className={btnPrimary}>{save.isPending ? 'Saving…' : 'Save'}</button>

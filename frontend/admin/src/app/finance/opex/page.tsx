@@ -31,6 +31,9 @@ import { Select } from '@/components/ui/Select'
 import { Modal as SharedModal } from '../../../components/ui/Modal'
 import { NumberField } from '../../../components/ui/NumberField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { RecordFiles } from '@/components/files/RecordFiles'
+import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 import { Field, dateBounds, firstMissing, focusField, useSubmitOnce } from '../cash-vouchers/ui'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
@@ -1145,7 +1148,6 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
       coversMonths: payment?.coversMonths ? String(payment.coversMonths) : '12',
       paidOn:      payment?.paidAt ? dayOf(payment.paidAt) : today,
       paymentRef:  payment?.paymentRef ?? '',
-      receiptUrl:  payment?.receiptUrl ?? '',
       // Where it was paid from: what its entry says once posted, else the line's.
       cash:        postedFrom ? postedFrom === '1010' : (line.paymentMethod === 'cash' && !line.bankAccountId),
       bankAccountId: postedFrom ? bankOfCode(postedFrom) : (line.bankAccountId ?? ''),
@@ -1167,7 +1169,11 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   const [notEquipmentReason, setNotEquipmentReason] = useState('')
   const [paidOn, setPaidOn] = useState(initial.paidOn)
   const [paymentRef, setPaymentRef] = useState(initial.paymentRef)
-  const [receiptUrl, setReceiptUrl] = useState(initial.receiptUrl)
+  // Receipts are files in the private record store (no URL). New payment: chosen
+  // here, uploaded once the payment exists. Saved payment: <RecordFiles>.
+  const [files, setFiles] = useState<PickedFile[]>([])
+  const [savedId, setSavedId] = useState<string | null>(null)
+  const [uploadErr, setUploadErr] = useState<string | null>(null)
   const [cash, setCash] = useState(initial.cash)
   const [bankAccountId, setBankAccountId] = useState(initial.bankAccountId)
   // Only a deliberate change of cash / bank is sent on a correction — an
@@ -1227,9 +1233,9 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   }
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async (): Promise<unknown> => {
       if (!payment) {
-        return api.post('/opex/payments', {
+        const created = await api.post<{ id: string }>('/opex/payments', {
           lineId: line.id,
           periodStart: `${periodStart}T00:00:00Z`,
           periodEnd:   `${periodEnd}T23:59:59Z`,
@@ -1237,10 +1243,18 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
           ...(payroll ? { actualCents: invoiceCents } : moneyBody()),
           paidAt: paidAtFor(paidOn),
           paymentRef: paymentRef.trim() || null,
-          receiptUrl: receiptUrl.trim() || null,
           ...(cash ? { payFrom: 'cash' } : { payFrom: 'bank', ...(bankAccountId && { bankAccountId }) }),
           ...(expenseAccountCode && { expenseAccountCode }),
         })
+        if (files.length) {
+          try { await uploadRecordFiles('opex_payment', created.id, files, { tenantId: category.tenantId ?? undefined }) }
+          catch (e) {
+            setSavedId(created.id); setFiles([])
+            setUploadErr(`Payment saved; files failed: ${(e as Error).message}`)
+            return { uploadFailed: true }
+          }
+        }
+        return created
       }
       // A correction sends only what changed, so an untouched date, bank or
       // amount never moves the entry.
@@ -1254,14 +1268,13 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
       }
       if (!payment.paidAt || paidOn !== initial.paidOn) body.paidAt = paidAtFor(paidOn)
       if (paymentRef !== initial.paymentRef) body.paymentRef = paymentRef.trim() || null
-      if (receiptUrl !== initial.receiptUrl) body.receiptUrl = receiptUrl.trim() || null
       if (moneyTouched) {
         Object.assign(body, cash ? { payFrom: 'cash' } : { payFrom: 'bank', ...(bankAccountId && { bankAccountId }) })
       }
       if (expenseAccountCode) body.expenseAccountCode = expenseAccountCode
       return api.patch(`/opex/payments/${payment.id}`, body)
     },
-    onSuccess: onDone,
+    onSuccess: (r) => { if (!(r as { uploadFailed?: boolean } | null)?.uploadFailed) onDone() },
     meta: { inlineErrors: true },
   })
   const unpay = useMutation({
@@ -1298,6 +1311,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   if (!notEquipmentOk) problems.push([`ne-${idp}`, 'Say why it is an expense (10 characters or more).'])
   const firstProblem = problems.find(([, m]) => m)
   const submit = useSubmitOnce(save.isPending || unpay.isPending)(() => {
+    if (savedId) { onDone(); return false }
     if (firstProblem) { setProblem(firstProblem[1]); focusField(firstProblem[0]); return false }
     setProblem(null)
     save.mutate()
@@ -1428,8 +1442,15 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
           <input id={`ref-${idp}`} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} maxLength={120} className={fieldCls} />
         </div>
         <div>
-          <label htmlFor={`rc-${idp}`} className="text-[11px] text-white/55">Receipt link</label>
-          <input id={`rc-${idp}`} type="url" value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} />
+          {payment || savedId ? (
+            <RecordFiles ownerType="opex_payment" ownerId={(payment?.id ?? savedId)!} tenantId={category.tenantId ?? undefined} canUpload title="Receipts" />
+          ) : (
+            <PendingFilesPicker ownerType="opex_payment" label="Receipts" value={files} onChange={setFiles} />
+          )}
+          {payment?.receiptUrl && /^https?:\/\//i.test(payment.receiptUrl) && (
+            <a href={payment.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary-ink hover:underline">Old receipt link ↗</a>
+          )}
+          {uploadErr && <p role="alert" className="text-xs" style={{ color: 'var(--erp-danger)' }}>{uploadErr}</p>}
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">

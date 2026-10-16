@@ -11,6 +11,9 @@ import { card, inp, btn, btnGhost, day, human } from '../../../lib/hr'
 import { HrShell, Modal, useHrLookups } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { RecordFiles } from '@/components/files/RecordFiles'
+import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 
 interface Doc {
   id: string; employeeId: string; docType: string; title: string | null; fileUrl: string | null
@@ -87,6 +90,7 @@ export default function HrDocumentsPage() {
                     <td className="px-4 py-2 text-white/75">
                       {d.fileUrl ? <a href={d.fileUrl} target="_blank" rel="noreferrer" className="hover:underline">{d.title || human(d.docType)}</a> : (d.title || human(d.docType))}
                       {d.title && <span className="text-white/35 text-xs"> · {human(d.docType)}</span>}
+                      <RecordFiles ownerType="hr_document" ownerId={d.id} canUpload compact lazy />
                     </td>
                     <td className="px-4 py-2 text-white/60">{day(d.issueDate)}</td>
                     <td className="px-4 py-2" style={{ color: tone }}>{day(d.expiryDate)}</td>
@@ -110,21 +114,33 @@ export default function HrDocumentsPage() {
 function AddDocument({ types, employees, defaultEmployee, onClose, onSaved }: {
   types: string[]; employees: Array<{ id: string; fullName: string; employeeCode: string }>; defaultEmployee: string; onClose: () => void; onSaved: () => void
 }) {
-  const [f, setF] = useState({ employeeId: defaultEmployee, docType: types[0] ?? '', title: '', fileUrl: '', issueDate: '', expiryDate: '' })
+  const [f, setF] = useState({ employeeId: defaultEmployee, docType: types[0] ?? '', title: '', issueDate: '', expiryDate: '' })
   const [formErr, setFormErr] = useState('')
+  const [files, setFiles] = useState<PickedFile[]>([])
+  const [uploadErr, setUploadErr] = useState('')
   const save = useMutation({
-    mutationFn: () => api.post('/hr/documents', {
-      employeeId: f.employeeId, docType: f.docType, title: f.title.trim() || undefined, fileUrl: f.fileUrl.trim() || undefined,
-      issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined,
-    }),
-    onSuccess: onSaved,
+    mutationFn: async () => {
+      const doc = await api.post<{ id: string }>('/hr/documents', {
+        employeeId: f.employeeId, docType: f.docType, title: f.title.trim() || undefined,
+        issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined,
+      })
+      if (files.length) {
+        try { await uploadRecordFiles('hr_document', doc.id, files) }
+        catch (e) { return { failed: (e as Error).message } }
+      }
+      return { failed: '' }
+    },
+    onSuccess: (r) => {
+      if (r.failed) { setUploadErr(`Document saved; files failed: ${r.failed}. Open it in the list to attach them again.`); return }
+      onSaved()
+    },
   })
-  const dirty = !!(f.title || f.fileUrl || f.issueDate || f.expiryDate)
+  const dirty = !!(f.title || files.length || f.issueDate || f.expiryDate)
   const submit = (ev: React.FormEvent) => {
     ev.preventDefault()
     if (save.isPending) return
     if (!f.employeeId) { setFormErr('Pick an employee.'); return }
-    if (!f.title.trim() && !f.fileUrl.trim()) { setFormErr('Give the document a title or a link to the file.'); return }
+    if (!f.title.trim() && files.length === 0) { setFormErr('Give the document a title or attach a file.'); return }
     if (f.issueDate && f.expiryDate && f.expiryDate < f.issueDate) { setFormErr('The expiry date is before the issue date.'); return }
     setFormErr('')
     save.mutate()
@@ -144,16 +160,15 @@ function AddDocument({ types, employees, defaultEmployee, onClose, onSaved }: {
           </Select>
         </L>
         <L label="Title"><input className={inp} value={f.title} autoComplete="off" onChange={(e) => setF({ ...f, title: e.target.value })} /></L>
-        <L label="Link to the file"><input type="url" className={inp} placeholder="https://…" autoComplete="off" value={f.fileUrl} onChange={(e) => setF({ ...f, fileUrl: e.target.value })} /></L>
-        <p className="text-xs text-white/55 -mt-1">A title or a link is needed.</p>
+        <PendingFilesPicker ownerType="hr_document" value={files} onChange={setFiles} label="Attach the file" hint="A title or a file is needed." />
         <div className="grid grid-cols-2 gap-3">
           <L label="Issued"><input type="date" className={inp} value={f.issueDate} onChange={(e) => setF({ ...f, issueDate: e.target.value })} /></L>
           <L label="Expires"><input type="date" className={inp} value={f.expiryDate} onChange={(e) => setF({ ...f, expiryDate: e.target.value })} /></L>
         </div>
-        {(formErr || save.error) && <p className="text-xs text-red-700" role="alert">{formErr || (save.error as Error).message}</p>}
+        {(formErr || save.error || uploadErr) && <p className="text-xs text-red-700" role="alert">{formErr || (save.error as Error)?.message || uploadErr}</p>}
         <div className="flex justify-end gap-2">
-          <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
-          <button type="submit" className={btn} disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</button>
+          <button type="button" className={btnGhost} onClick={uploadErr ? onSaved : onClose}>{uploadErr ? 'Close' : 'Cancel'}</button>
+          <button type="submit" className={btn} disabled={save.isPending || !!uploadErr}>{save.isPending ? 'Saving…' : 'Save'}</button>
         </div>
       </form>
     </Modal>

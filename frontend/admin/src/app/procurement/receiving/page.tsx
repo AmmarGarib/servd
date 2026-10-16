@@ -25,6 +25,8 @@ import { Select } from '@/components/ui/Select'
 import { FormField } from '../../../components/ui/FormField'
 import { NumberField } from '../../../components/ui/NumberField'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
+import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import { asUploadBody, type PickedFile } from '@/components/files/recordFiles'
 
 // The API's MANAGERS take a delivery in (owner decision 27) — the list comes
 // from the server (lib/roles.ts useManagerRoles).
@@ -96,7 +98,7 @@ export default function ReceivingPage() {
   const [locationId, setLocationId] = useState('')
   const [supplierId, setSupplierId] = useState('')
   const [poId, setPoId] = useState<string | null>(null)
-  const [photoUrl, setPhotoUrl] = useState('')
+  const [photos, setPhotos] = useState<PickedFile[]>([])
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<DraftLine[]>([])
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null)
@@ -183,7 +185,7 @@ export default function ReceivingPage() {
     const all = Array.from(e.currentTarget.querySelectorAll<HTMLInputElement>('input:not([disabled])'))
     const next = all[all.indexOf(e.target) + 1]
     if (next) next.focus()
-    else document.getElementById('recv-photo')?.focus()
+    else document.getElementById('recv-photo')?.querySelector('button')?.focus()
   }
   // Every PO line to what is still due (nothing is saved until Accept delivery).
   const fillAllAsOrdered = () => setLines((prev) => prev.map((l) => (l.outstanding != null ? { ...l, receivedQty: String(l.outstanding) } : l)))
@@ -193,7 +195,7 @@ export default function ReceivingPage() {
       poId,
       supplierId: poId ? null : supplierId,
       locationId: locationId || null,
-      photoUrl: photoUrl.trim() || null,
+      photos: asUploadBody(photos),
       notes: notes.trim() || null,
       lines: lines.map((l) => ({
         poLineId: l.poLineId,
@@ -209,7 +211,7 @@ export default function ReceivingPage() {
       void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       void qc.invalidateQueries({ queryKey: ['exceptions'] })
-      setLines([]); setPoId(null); setPhotoUrl(''); setNotes(''); setSupplierId('')
+      setLines([]); setPoId(null); setPhotos([]); setNotes(''); setSupplierId('')
       setFeedback(r.varianceFlag
         ? { tone: 'warn', text: 'Receipt saved. A variance over 5% was flagged in Exceptions.' }
         : { tone: 'ok', text: r.poStatus === 'partial'
@@ -417,9 +419,9 @@ export default function ReceivingPage() {
               <p className="text-[11px] text-white/35 mt-1">Stock is still one pool per company; the outlet is recorded for when per-outlet stock arrives.</p>
             </div>
           )}
-          <FormField label="Dock-door photo URL" hint="Required above your company's photo threshold. Settles supplier disputes later.">
-            <input id="recv-photo" type="url" inputMode="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://… (snap with phone, paste link)" className={fieldCls} />
-          </FormField>
+          <div id="recv-photo">
+            <PendingFilesPicker ownerType="goods_receipt" max={5} value={photos} onChange={setPhotos} label="Dock-door photos" hint="Required above your company's photo threshold. Settles supplier disputes later." />
+          </div>
           <FormField className="mt-3" label="Notes">
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Driver name, time, anything off about the delivery." className={fieldCls} />
           </FormField>

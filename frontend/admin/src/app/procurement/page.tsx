@@ -20,6 +20,9 @@ import { NumberField } from '../../components/ui/NumberField'
 import { MoneyInput } from '../../components/ui/MoneyInput'
 import { useConfirm } from '../../components/ui/ConfirmDialog'
 import { toast } from 'sonner'
+import { RecordFiles } from '@/components/files/RecordFiles'
+import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 import { useTrashPrefill } from '../../lib/trash'
 import { unwrapPrefill, pStr, pNum, pArr, type Prefill } from '../../lib/trashPrefill'
 
@@ -758,6 +761,9 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
   const [voidReason, setVoidReason] = useState('')
   const [voidTried, setVoidTried] = useState(false)
   const [matchId, setMatchId] = useState<string | null>(null)
+  const [filesId, setFilesId] = useState<string | null>(null)
+  const me = useAuthStore((s) => s.user)
+  const isManager = useManagerRoles().has(me?.role ?? '')
   const [creditBillId, setCreditBillId] = useState<string | null>(null)
   const [applyCn, setApplyCn] = useState<Bill | null>(null)
   const [unapplyCnId, setUnapplyCnId] = useState<string | null>(null)
@@ -870,7 +876,12 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
                 const isOverdue = b.status !== 'paid' && b.status !== 'void' && new Date(b.dueDate) < new Date()
                 return (
                   <tr key={b.id} className={`border-b border-s-border/50 last:border-0 hover:bg-s-surface/30 transition-colors ${isOverdue ? 'bg-red-100/5' : ''}`}>
-                    <td className="px-4 py-3 font-mono text-xs text-primary-ink">{b.billNumber}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-primary-ink">
+                      {b.billNumber}
+                      {b.attachmentUrl && /^https?:\/\//i.test(b.attachmentUrl) && (
+                        <a href={b.attachmentUrl} target="_blank" rel="noopener noreferrer" className="block font-sans text-[10px] text-s-muted hover:underline">Old attachment ↗</a>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-s-text font-medium">{b.supplier?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(b.billDate)}</td>
                     <td className={`px-4 py-3 hidden md:table-cell ${isOverdue ? 'text-s-red font-semibold' : 'text-s-muted'}`}>{fmt(b.dueDate)}</td>
@@ -888,6 +899,8 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
                       <div className="flex flex-wrap gap-2">
                         <button onClick={() => setMatchId(matchId === b.id ? null : b.id)}
                           className="text-xs text-sky-700 hover:opacity-80 font-semibold">Match</button>
+                        <button onClick={() => setFilesId(filesId === b.id ? null : b.id)}
+                          className="text-xs text-primary-ink hover:opacity-80 font-semibold">Files</button>
                         {b.status !== 'void' && (
                           <button onClick={() => setCreditBillId(b.id)}
                             className="text-xs text-primary-ink hover:opacity-80 font-semibold whitespace-nowrap">Credit note / return</button>
@@ -968,6 +981,16 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
           </div>
         </div>
       ))}
+
+      {filesId && (
+        <div className="rounded-xl border border-s-border bg-s-surface p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-bold text-s-text text-sm">Bill files</p>
+            <button type="button" onClick={() => setFilesId(null)} aria-label="Close bill files" className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
+          </div>
+          <RecordFiles ownerType="supplier_bill" ownerId={filesId} canUpload={isManager} compact />
+        </div>
+      )}
 
       {/* 3-way match result */}
       {matchId && matchResult && (
@@ -1341,8 +1364,9 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
     supplierId: pStr(prefill ?? null, 'supplierId') ?? '', poId: '',
     billNumber: pStr(prefill ?? null, 'billNumber', 'reference') ?? '',
     billDate: '', dueDate: '', taxPkr: '', taxAuthority: '', whtSection: '',
-    notes: pStr(prefill ?? null, 'notes') ?? '', attachmentUrl: '',
+    notes: pStr(prefill ?? null, 'notes') ?? '',
   }))
+  const [files, setFiles] = useState<PickedFile[]>([])
   const [lines, setLines] = useState<BillLine[]>(() => {
     const raw = pArr<Prefill>(prefill ?? null, 'lines', 'items')
     return raw.filter((l) => !pStr(l, 'inventoryItemId') && !pStr(l, 'receiptLineId') && !pStr(l, 'poLineId')).map<BillLine>((l) => ({
@@ -1416,14 +1440,15 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
 
   const toCents = (v: string) => Math.round(Number(v) * 100)
   const mut = useMutation({
-    mutationFn: () => api.post('/procurement/bills', {
+    mutationFn: async () => {
+      const bill = await api.post<{ id: string }>('/procurement/bills', {
       supplierId: form.supplierId, poId: form.poId || null, billNumber: form.billNumber.trim(),
       billDate: form.billDate, dueDate: form.dueDate || null,
       taxCents: form.taxPkr ? toCents(form.taxPkr) : 0,
       // Left empty, the server uses the supplier's usual authority / section.
       ...(form.taxAuthority ? { taxAuthority: form.taxAuthority } : {}),
       ...(form.whtSection ? { whtSection: form.whtSection } : {}),
-      notes: form.notes || null, attachmentUrl: form.attachmentUrl || null,
+      notes: form.notes || null,
       lines: lines.map((l) => l.kind === 'stock'
         ? {
             description: l.description, inventoryItemId: l.inventoryItemId,
@@ -1435,8 +1460,16 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
             quantity: Number(l.quantity), unitCostCents: toCents(l.unitCostPkr),
             ...(l.notEquipment ? { notEquipment: true, notEquipmentReason: l.notEquipmentReason.trim() } : {}),
           }),
-    }),
-    onSuccess: () => {
+      })
+      let uploadError: string | null = null
+      if (files.length > 0) {
+        try { await uploadRecordFiles('supplier_bill', bill.id, files) }
+        catch (e) { uploadError = (e as Error).message || 'upload failed' }
+      }
+      return { uploadError }
+    },
+    onSuccess: ({ uploadError }) => {
+      if (uploadError) toast.error(`Bill saved, but the files were not attached: ${uploadError}. Open the bill's Files to add them again.`)
       void qc.invalidateQueries({ queryKey: ['procurement'] })
       void qc.invalidateQueries({ queryKey: ['ap-aging'] })
       void qc.invalidateQueries({ queryKey: ['inventory'] })
@@ -1526,9 +1559,7 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
         <Field label="Notes">
           <input enterKeyHint="next" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
-        <Field label="Attachment URL">
-          <input type="url" inputMode="url" enterKeyHint="done" value={form.attachmentUrl} onChange={(e) => setForm({ ...form, attachmentUrl: e.target.value })} placeholder="https://…" className={fi} />
-        </Field>
+        <PendingFilesPicker ownerType="supplier_bill" label="Bill scan / documents" value={files} onChange={setFiles} />
       </div>
       {supplier && (
         <p className="text-xs text-s-muted">

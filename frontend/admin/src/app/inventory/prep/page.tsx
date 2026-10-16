@@ -20,12 +20,17 @@ import { stockErrorText } from '../../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
 import { FormField } from '../../../components/ui/FormField'
 import { NumberField } from '../../../components/ui/NumberField'
+import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import { RecordFiles } from '@/components/files/RecordFiles'
+import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
+import { useAuthStore } from '../../../store/auth'
+import { useManagerRoles } from '../../../lib/roles'
 
 interface InventoryItem { id: string; name: string; unit: string; currentStock: number }
 interface DraftInput { inventoryItemId: string; qtyDrawn: number; unit: string }
-interface PrepBatch { id: string; itemName: string; actualYieldQty: number; expectedYieldQty: number | null; yieldVariancePct: number | null; createdAt: string; staffId: string; unit: string; recipeId?: string | null; drawValueCents?: number | null; locationId?: string | null }
+interface PrepBatch { id: string; itemName: string; actualYieldQty: number; expectedYieldQty: number | null; yieldVariancePct: number | null; createdAt: string; staffId: string; unit: string; recipeId?: string | null; drawValueCents?: number | null; locationId?: string | null; photoUrl?: string | null }
 interface OutletLite { id: string; name: string; isActive?: boolean }
-interface BatchResult { ledger?: { posted: boolean; reason?: string; error?: string } | null }
+interface BatchResult { id: string; uploadError?: string | null; ledger?: { posted: boolean; reason?: string; error?: string } | null }
 interface PrepOption {
   id: string; name: string; yieldGrams: number | null
   inputs: Array<{ inventoryItemId: string | null; name: string; unit: string; qtyDrawn: number; missing: boolean }>
@@ -41,6 +46,10 @@ export default function PrepBatchPage() {
   // can open.
   const { data: me } = usePermissions()
   const canOpen = (path: string) => !!me && canOpenPath(path, me.role, me.modules ?? [])
+  // A prep's photos are added by the cook who logged it or a manager (the server's rule).
+  const authUser = useAuthStore((st) => st.user)
+  const managers = useManagerRoles()
+  const canAddPhotos = (staffId: string) => !!authUser && (authUser.id === staffId || managers.has(authUser.role))
   // The stock list needs the inventory module; kitchen and expediter open this
   // page from the par sheet (par_sheet) without it, so GET /inventory 403s for
   // them — no toast, no retry. Their batches still work: the sub-recipe fills
@@ -68,7 +77,7 @@ export default function PrepBatchPage() {
   const [inputs, setInputs] = useState<DraftInput[]>([])
   const [expectedYieldQty, setExpectedYieldQty] = useState<number | ''>('')
   const [actualYieldQty, setActualYieldQty] = useState<number | ''>('')
-  const [photoUrl, setPhotoUrl] = useState('')
+  const [photos, setPhotos] = useState<PickedFile[]>([])
   const [notes, setNotes] = useState('')
   const [locationId, setLocationId] = useState('')
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null)
@@ -111,16 +120,24 @@ export default function PrepBatchPage() {
   }, [preps])
 
   const submit = useMutation({
-    mutationFn: () => api.post<BatchResult>('/crosschecks/prep-batches', {
+    mutationFn: async () => {
+      const res = await api.post<BatchResult>('/crosschecks/prep-batches', {
       recipeId: adHoc || !recipeId ? null : recipeId,
       locationId: locationId || null,
       itemName, inputs,
       expectedYieldQty: expectedYieldQty === '' ? null : expectedYieldQty,
       actualYieldQty: actualYieldQty === '' ? 0 : actualYieldQty,
       unit: 'g',
-      photoUrl: photoUrl || null,
       notes: notes || null,
-    }),
+      })
+      // The batch is saved; a failed upload never undoes it.
+      let uploadError: string | null = null
+      if (photos.length > 0) {
+        try { await uploadRecordFiles('prep_batch', res.id, photos) }
+        catch (e) { uploadError = (e as Error).message || 'the upload failed' }
+      }
+      return { ...res, uploadError }
+    },
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['prep-batches'] })
       qc.invalidateQueries({ queryKey: ['inventory'] })
@@ -128,14 +145,16 @@ export default function PrepBatchPage() {
       qc.invalidateQueries({ queryKey: ['exceptions'] })
       const yieldPct = expectedYieldQty && actualYieldQty ? +actualYieldQty / +expectedYieldQty : null
       const ledger = res?.ledger
-      setFeedback(ledger && !ledger.posted
+      setFeedback(res?.uploadError
+        ? { tone: 'bad', text: `Batch saved; photo failed: ${res.uploadError}` }
+        : ledger && !ledger.posted
         ? { tone: 'bad', text: `Batch saved and stock drawn, but its books entry did not post: ${ledger.reason ?? ledger.error ?? 'the ledger refused it'}. Finance can re-post it from Reconciliation → Backfill unposted.` }
         : yieldPct != null && yieldPct < 0.85
           ? { tone: 'warn', text: 'Batch saved — low yield flagged.' }
           : { tone: 'ok', text: adHoc ? 'Batch logged. The ingredients were drawn from stock at the price paid.' : 'Batch logged.' })
       setRecipeId(''); setMultiplier(1); setTried(false)
-      setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setPhotoUrl(''); setNotes('')
-      if (!ledger || ledger.posted) setTimeout(() => setFeedback(null), 6000)
+      setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setPhotos([]); setNotes('')
+      if ((!ledger || ledger.posted) && !res?.uploadError) setTimeout(() => setFeedback(null), 6000)
     },
   })
 
@@ -281,7 +300,7 @@ export default function PrepBatchPage() {
         </Section>
 
         <Section title="Evidence (optional)">
-          <Field label="Photo URL"><input type="url" inputMode="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://… of finished prep" className={fieldCls} /></Field>
+          <PendingFilesPicker ownerType="prep_batch" label="Photo of the finished prep" value={photos} onChange={setPhotos} />
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
         </Section>
 
@@ -308,6 +327,8 @@ export default function PrepBatchPage() {
                       {b.actualYieldQty} {b.unit} yielded · {new Date(b.createdAt).toLocaleString()}
                       {b.drawValueCents != null && b.drawValueCents > 0 && ` · drew ${fmtPkrWhole(b.drawValueCents)} of stock`}
                     </p>
+                    {b.photoUrl && /^https?:\/\//i.test(b.photoUrl) && <a href={b.photoUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-bold" style={{ color: 'var(--erp-primary)' }}>Photo ↗</a>}
+                    <RecordFiles ownerType="prep_batch" ownerId={b.id} canUpload={canAddPhotos(b.staffId)} compact lazy />
                   </div>
                   {b.yieldVariancePct != null && (
                     <span className="text-xs font-bold" style={{ color: b.yieldVariancePct < 0.85 ? 'var(--erp-warning)' : 'var(--erp-success)' }}>

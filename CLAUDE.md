@@ -1464,6 +1464,48 @@ only the types its modules + roles allow.
 - Promo codes and allocation rules are soft-deleted (partial unique over live
   rows); every promo redemption read filters `deletedAt: null`.
 
+### Record files (owner, 2026-10-16)
+
+"It should ask for attachment instead of URL for supporting docs" — and, for
+every screen, "One private store … so any record can carry files — only staff
+of that company can open them, View + Download. One store across servd, no new
+copies."
+
+- **No URL fields for supporting documents.** A receipt, bill scan, dock
+  photo, prep photo, HR document or asset document is an uploaded FILE. Old
+  URL columns (`receiptUrl`, `attachmentUrl`, `photoUrl`, `fileUrl`,
+  `documentUrls`) stay readable and displayed for old rows; new screens never
+  ask for one.
+- **One store:** `CashVoucherAttachment` (bytes in the DB, RLS by `tenantId`),
+  kind `record_file`, owner `(ownerType, ownerId)` (migration
+  `20261016210000_record_files`; owner CHECK in `tests/setup.ts`).
+  `lib/recordFiles.ts` is the ONE writer / reader: files decode only through
+  `lib/evidenceFile.ts` (images + PDF; Office / CSV / text where the provider
+  allows it), ≤ 3 MB each, ≤ 10 per record (409 `TOO_MANY_FILES`, advisory
+  lock), all checked before any write, stamped with the RECORD's company.
+- **A provider per record type** (`modules/recordFiles/providers.ts`):
+  `opex_payment`, `supplier_bill`, `goods_receipt`, `prep_batch`,
+  `hr_document`, `fixed_asset`. Each applies its module's OWN rule — its role
+  arrays, its Module Access gate (the central rule of the module's path via
+  `enforceModuleAccess`, or its in-route `moduleGateForNewRoles`; `/record-files`
+  is not a gated prefix itself) and its company scope (foreign → 404).
+- **API `/record-files/:ownerType/:ownerId`** — GET list (metadata, never
+  bytes), POST `{ files }` (1–5), GET `/:fileId` (inline for images / PDF,
+  attachment otherwise). **No delete**: evidence on posted money is never
+  removed (upload the right file instead); the Trash purge of an owner (HR
+  document) erases its files (`purgeRecordFilesTx`). The dock receive takes
+  `photos` inline and they satisfy the photo threshold.
+- **Admin:** `components/files/RecordFiles.tsx` (saved record: list, View,
+  Download, attach), `PendingFilesPicker.tsx` + `uploadRecordFiles`
+  (create forms: create the record via its own route, then upload to its id),
+  `FileViewModal.tsx`. ERP tokens only. One `<RecordFiles>` per row of a
+  list takes `lazy` (loads on "Files") — never one request per row (the API
+  rate limit is 200/min). `/record-files` is excluded from the portfolio
+  "which company?" prompt (`lib/api.ts`): the server stamps the record's company.
+- **A new screen with supporting documents = a provider + a two-company test**
+  (`tests/recordFiles.test.ts`) in the same change — never a URL field, never
+  a new file table.
+
 ### Night audit — sales module only (owner, 2026-10-16)
 
 "It should not proceed for night run / audit until cash / card settlement /

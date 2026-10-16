@@ -110,6 +110,10 @@ beforeAll(async () => {
   await mkUser('hrNoModuleA', 'hr', tA, { moduleDeny: ['staff_hr'] })
   await mkUser('finNoCapitalA', 'finance', tA, { moduleDeny: ['capital'] })
   await mkUser('finNoAcctA', 'finance', tA, { moduleDeny: ['accounting'] })
+  // A finance login in BOTH companies (active company A) — the admin sends no company on a
+  // record-file upload (lib/api.ts excludes /record-files from the portfolio prompt).
+  await mkUser('finBothA', 'finance', tA)
+  await prisma.tenantMember.create({ data: { tenantId: tB, userId: who.finBothA!.id } })
   A = await mkRecords('A', tA, who.cookA!.id)
   B = await mkRecords('B', tB, who.cookB!.id)
   invalidateSetupCache()
@@ -169,6 +173,18 @@ describe('record files: every owner type, two companies', () => {
       expect((await filesOf(ownerType, idA)).length).toBe(rows.length)
     })
   }
+
+  it('a member of both companies uploads to the OTHER company\'s record with no company chosen: stamped with the record\'s company', async () => {
+    const idB = B.ids[RECORD_OWNER.opex_payment]!
+    const up = await call('finBothA', 'POST', `/record-files/${RECORD_OWNER.opex_payment}/${idB}`, { files: [png(7)] })
+    expect(up.statusCode, up.body).toBe(201)
+    const id = (up.json() as { files: Array<{ id: string }> }).files[0]!.id
+    const row = await prisma.cashVoucherAttachment.findUnique({ where: { id }, select: { tenantId: true } })
+    expect(row?.tenantId).toBe(B.tenantId)
+    // Company B's own finance sees it; company A's finance (not a member of B) does not.
+    expect((await call('finB', 'GET', `/record-files/${RECORD_OWNER.opex_payment}/${idB}/${id}`)).statusCode).toBe(200)
+    expect((await call('finA', 'GET', `/record-files/${RECORD_OWNER.opex_payment}/${idB}/${id}`)).statusCode).toBe(404)
+  })
 
   it('an unknown owner type is 404', async () => {
     expect((await call('ceoA', 'GET', `/record-files/order/${A.ids.opex_payment}`)).statusCode).toBe(404)
