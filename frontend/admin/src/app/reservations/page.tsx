@@ -11,6 +11,7 @@
 //   • mark complete on departure → table goes "cleaning"
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { ArrowRight, Plus } from 'lucide-react'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -179,13 +180,13 @@ export default function ReservationsPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
-            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+            className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
-          <button onClick={() => setDate(todayPktIso())} className="s-btn-secondary text-xs">Today</button>
-          <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ New booking</button>
+            className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+          <button onClick={() => setDate(todayPktIso())} className="min-h-11 s-btn-secondary text-xs">Today</button>
+          <button onClick={() => setShowNew(true)} className="min-h-11 s-btn-primary text-xs"><Plus size={16} aria-hidden="true" /> New booking</button>
         </div>
       </header>
 
@@ -385,7 +386,7 @@ function SeatButton({
   return (
     <span className="relative">
       <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-11 text-[11px] font-bold px-3 rounded bg-secondary text-secondary-on">
-        Seat →
+        Seat <ArrowRight size={12} aria-hidden="true" className="inline-block align-[-2px]" />
       </button>
       {open && (
         <span className="absolute right-0 top-full mt-1 z-20 bg-s-surface border border-s-border rounded shadow-lg p-1 min-w-[180px]">
@@ -484,7 +485,7 @@ function NewReservationModal({
   if (booked) {
     return (
       <Modal title="Booking made" onClose={onCreated}
-        footer={<div className="flex justify-end"><button autoFocus onClick={onCreated} className="s-btn-primary min-h-11 text-sm">Done</button></div>}>
+        footer={<div className="flex justify-end"><button autoFocus onClick={onCreated} className="min-h-11 s-btn-primary min-h-11 text-sm">Done</button></div>}>
         <p className="text-sm text-s-text">{guestName.trim()} · {partySize} ppl · {fmtDay(startDate)} {startTime}</p>
         <p className={`text-sm ${booked.overbooked ? 'text-s-amber' : 'text-s-text'}`}>{bookedLine(booked)}</p>
       </Modal>
@@ -503,15 +504,15 @@ function NewReservationModal({
     <Modal title="New reservation" wide onClose={onClose} dirty={dirty} dismissible={!create.isPending}
       footer={
         <div className="flex justify-end gap-2 flex-wrap">
-          <button type="button" onClick={onClose} className="s-btn-secondary min-h-11 text-sm">Cancel</button>
+          <button type="button" onClick={onClose} className="min-h-11 s-btn-secondary min-h-11 text-sm">Cancel</button>
           {slotFull ? (
             <button type="submit" form="new-reservation-form"
               disabled={create.isPending || !formOk || !overbookReady(overReason, overPin, slotFull.managerRequired)}
-              className="s-btn-primary min-h-11 text-sm">
+              className="min-h-11 s-btn-primary min-h-11 text-sm">
               {create.isPending ? 'Booking…' : 'Book past capacity'}
             </button>
           ) : (
-            <button type="submit" form="new-reservation-form" disabled={create.isPending || !formOk} className="s-btn-primary min-h-11 text-sm">
+            <button type="submit" form="new-reservation-form" disabled={create.isPending || !formOk} className="min-h-11 s-btn-primary min-h-11 text-sm">
               {create.isPending ? 'Booking…' : 'Confirm booking'}
             </button>
           )}
@@ -519,14 +520,14 @@ function NewReservationModal({
       }>
       <form id="new-reservation-form" className="space-y-3 text-sm" onSubmit={(e) => { e.preventDefault(); submit() }}>
           <Field label="Guest name *">
-            <input autoFocus required autoComplete="name" value={guestName} onChange={(e) => setGuestName(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+            <input autoFocus required autoComplete="name" value={guestName} onChange={(e) => setGuestName(e.target.value)} className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </Field>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Phone">
-              <input type="tel" inputMode="tel" autoComplete="tel" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="+92 …" className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              <input type="tel" inputMode="tel" autoComplete="tel" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="+92 …" className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Email">
-              <input type="email" inputMode="email" autoComplete="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              <input type="email" inputMode="email" autoComplete="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
           </div>
           <div className="grid grid-cols-3 gap-2">
@@ -534,10 +535,10 @@ function NewReservationModal({
               <NumberField min={1} max={50} value={partySize} onValueChange={setPartySize} aria-invalid={!sizeOk} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Date">
-              <input type="date" min={today} value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              <input type="date" min={today} value={startDate} onChange={(e) => setStartDate(e.target.value)} className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Time">
-              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -545,7 +546,7 @@ function NewReservationModal({
               <NumberField min={15} max={480} value={durationMin} onValueChange={setDurationMin} aria-invalid={!durOk} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </Field>
             <Field label="Table">
-              <Select value={tableId} onChange={(e) => setTableId(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5">
+              <Select value={tableId} onChange={(e) => setTableId(e.target.value)} className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5">
                 <option value="">— Waitlist (assign later) —</option>
                 {tables.map((t) => (
                   <option key={t.id} value={t.id}>{t.label} ({t.capacity}p · {t.floorName})</option>
@@ -554,7 +555,7 @@ function NewReservationModal({
             </Field>
           </div>
           <Field label="Notes (allergies, occasion, requests)">
-            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </Field>
           <div className="flex items-center gap-4 text-xs">
             <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={isVip} onChange={(e) => setIsVip(e.target.checked)} /> VIP</label>
@@ -571,7 +572,7 @@ function NewReservationModal({
               <Field label="Reason for booking past capacity *">
                 <input value={overReason} onChange={(e) => setOverReason(e.target.value)} maxLength={OVERBOOK_REASON_MAX}
                   placeholder="e.g. Regular, two 4-tops pushed together"
-                  className="w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
+                  className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
               </Field>
               {slotFull.managerRequired && (
                 <Field label="Manager PIN *">

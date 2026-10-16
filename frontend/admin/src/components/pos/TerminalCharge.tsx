@@ -247,7 +247,7 @@ export function TerminalCharge({
                   <button key={t.id} type="button"
                     onClick={() => { setTerminalId(t.id); rememberTerminal(t.id) }}
                     aria-pressed={terminalId === t.id}
-                    className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                    className={`min-h-11 rounded-lg border px-3 py-2 text-sm font-semibold ${
                       terminalId === t.id ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-subtext'
                     }`}>
                     {t.label}
@@ -273,7 +273,7 @@ export function TerminalCharge({
           <p className="text-lg font-bold text-kds-text">Insert / tap card on {label}…</p>
           <p className="mt-1 text-sm text-kds-subtext">{fmtPkr(charge.amountCents)} · {left > 0 ? `${left}s left` : 'checking with the machine…'}</p>
           <button type="button" onClick={() => void act(() => cancelTerminalCharge(charge.id))} disabled={acting}
-            className="mt-3 rounded-lg border border-kds-border px-4 py-2 text-sm font-semibold text-kds-subtext disabled:opacity-40">
+            className="min-h-11 mt-3 rounded-lg border border-kds-border px-4 py-2 text-sm font-semibold text-kds-subtext disabled:opacity-40">
             {acting ? 'Cancelling…' : 'Cancel'}
           </button>
         </div>
@@ -319,10 +319,10 @@ export function TerminalCharge({
                 className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-lg font-bold text-kds-green" />
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setSlipOpen(false)} disabled={acting}
-                  className="rounded-lg border border-kds-border py-2 text-sm text-kds-subtext">Back</button>
+                  className="min-h-11 rounded-lg border border-kds-border py-2 text-sm text-kds-subtext">Back</button>
                 <button type="button" disabled={acting || slipRef.trim().length < 3}
                   onClick={() => void act(() => resolveTerminalCharge(charge.id, { outcome: 'approved_manual', gatewayRef: slipRef.trim() }))}
-                  className="rounded-lg bg-kds-green py-2 text-sm font-bold text-primary-on disabled:opacity-30">
+                  className="min-h-11 rounded-lg bg-kds-green py-2 text-sm font-bold text-primary-on disabled:opacity-30">
                   {acting ? 'Recording…' : 'Record payment'}
                 </button>
               </div>
@@ -345,7 +345,7 @@ export function TerminalCharge({
             <p className="text-xs text-kds-subtext">{charge.message}</p>
           )}
           <button type="button" onClick={startOver}
-            className="w-full rounded-lg border border-kds-green py-2 text-sm font-bold text-kds-green">
+            className="min-h-11 w-full rounded-lg border border-kds-green py-2 text-sm font-bold text-kds-green">
             Try the card machine again
           </button>
         </div>
@@ -363,7 +363,7 @@ export function TerminalCharge({
             The card was charged but {refusalText(charge.refusalCode)} — reversed automatically. Nothing was taken.
           </p>
           <button type="button" onClick={startOver}
-            className="w-full rounded-lg border border-kds-green py-2 text-sm font-bold text-kds-green">
+            className="min-h-11 w-full rounded-lg border border-kds-green py-2 text-sm font-bold text-kds-green">
             Check the bill and charge again
           </button>
         </div>

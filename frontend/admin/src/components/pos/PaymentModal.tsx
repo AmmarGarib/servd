@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { TriangleAlert, X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { posApi, ApiError } from '../../lib/api'
 import { compOverrideMessage, managerPinLockedMessage, tenderNeedsPinBox, WRONG_PIN_MESSAGE } from './pinErrors'
@@ -881,7 +882,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
 
           {/* Pre-bill: the guest's bill before payment — never a tax invoice, never sent to the POS */}
           <button type="button" onClick={preBill} disabled={preBillBusy || holding}
-            className="mt-3 w-full rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">
+            className="min-h-11 mt-3 w-full rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">
             {preBillBusy ? 'Printing pre-bill…' : 'Print pre-bill'}
           </button>
           {preBillMsg && (
@@ -957,7 +958,7 @@ export function PaymentModal({ brand, ticket, onClose }: PaymentModalProps) {
           {receiptError && <p className="text-sm text-kds-red" role="alert">{receiptError}</p>}
           {preBillOffer && (
             <button type="button" onClick={preBill} disabled={preBillBusy}
-              className="w-full rounded-xl border border-kds-amber py-2.5 text-sm font-bold text-kds-amber disabled:opacity-30">
+              className="min-h-11 w-full rounded-xl border border-kds-amber py-2.5 text-sm font-bold text-kds-amber disabled:opacity-30">
               {preBillBusy ? 'Printing pre-bill…' : 'Print pre-bill'}
             </button>
           )}
@@ -993,7 +994,7 @@ function Shell({ title, onClose, children, dismissible = true }: { title: string
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold text-kds-text">{title}</h2>
           <button type="button" data-dialog-close onClick={onClose} aria-label="Close"
-            className="-mr-3 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
+            className="-mr-3 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center text-kds-subtext hover:text-kds-text"><X size={20} aria-hidden="true" /></button>
         </div>
         {children}
       </div>
@@ -1008,7 +1009,7 @@ function NoShiftDialog({ onClose }: { onClose: () => void }) {
     <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4" role="presentation">
       <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="no-shift-title"
         className="w-full max-w-sm space-y-4 rounded-2xl bg-kds-card p-6 text-center outline-none">
-        <div className="text-4xl">⚠️</div>
+        <TriangleAlert size={40} aria-hidden="true" className="mx-auto text-kds-amber" />
         <h2 id="no-shift-title" className="text-lg font-bold text-kds-text">No Shift Open</h2>
         <p className="text-sm text-kds-subtext">You need to open a shift before processing payments.</p>
         <div className="flex gap-3">

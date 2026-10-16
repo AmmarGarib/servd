@@ -4,6 +4,7 @@
 // Click a day → switch back to /reservations?date=YYYY-MM-DD.
 
 import { useQuery } from '@tanstack/react-query'
+import { ArrowLeft, ArrowRight, Star } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -77,22 +78,22 @@ export default function ReservationsWeekPage() {
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between flex-wrap gap-3">
         <div>
-          <Link href="/reservations" className="text-xs text-s-muted hover:text-s-text">← Day view</Link>
+          <Link href="/reservations" className="inline-flex min-h-11 items-center gap-1 text-xs text-s-muted hover:text-s-text"><ArrowLeft size={14} aria-hidden="true" /> Day view</Link>
           <h1 className="text-xl font-bold text-s-text">Reservations · week</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
-            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+            className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
           <button onClick={() => setAnchor(pktYmd(new Date(weekStart.getTime() - 7 * 86_400_000)))}
-            className="s-btn-secondary text-xs">← Prev</button>
+            className="min-h-11 s-btn-secondary text-xs"><ArrowLeft size={14} aria-hidden="true" /> Prev</button>
           <span className="text-xs text-s-muted whitespace-nowrap">
             {days[0]!.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: KHI })} – {days[6]!.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: KHI })}
           </span>
           <button onClick={() => setAnchor(pktYmd(new Date(weekStart.getTime() + 7 * 86_400_000)))}
-            className="s-btn-secondary text-xs">Next →</button>
-          <button onClick={() => setAnchor(todayPktIso())} className="s-btn-secondary text-xs">Today</button>
+            className="min-h-11 s-btn-secondary text-xs">Next <ArrowRight size={14} aria-hidden="true" /></button>
+          <button onClick={() => setAnchor(todayPktIso())} className="min-h-11 s-btn-secondary text-xs">Today</button>
         </div>
       </header>
 
@@ -131,7 +132,7 @@ export default function ReservationsWeekPage() {
                         className="text-[10px] px-1.5 py-0.5 rounded bg-s-surface border border-s-border truncate flex items-center gap-1"
                       >
                         <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[r.status] ?? 'bg-gray-400'}`} />
-                        <span className="truncate">{r.isVip ? '⭐ ' : ''}{r.guestName} · {r.partySize}p</span>
+                        <span className="truncate">{r.isVip && <Star size={10} aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />}{r.guestName} · {r.partySize}p</span>
                       </div>
                     ))}
                   </div>

@@ -53,6 +53,24 @@ interface Quote {
   paymentMethods?: string[]
 }
 
+// Pin -> address line. OpenStreetMap Nominatim (the same service the admin
+// location picker uses; the map tiles are OSM too). Best effort: on any
+// failure the text stays empty and editable.
+async function reverseGeocode(p: LatLng): Promise<string | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=${p.lat.toFixed(6)}&lon=${p.lng.toFixed(6)}`
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } })
+    if (!res.ok) return null
+    const d = await res.json() as { display_name?: string; address?: Record<string, string> }
+    const a = d.address ?? {}
+    const street = [a['house_number'], a['road'] ?? a['pedestrian'] ?? a['footway']].filter(Boolean).join(' ')
+    const area = a['neighbourhood'] ?? a['suburb'] ?? a['quarter'] ?? a['residential']
+    const city = a['city'] ?? a['town'] ?? a['village'] ?? a['state_district']
+    const line = [street, area, city].filter(Boolean).join(', ') || d.display_name || ''
+    return line.slice(0, 200) || null
+  } catch { return null }
+}
+
 interface CustomerAddress {
   id: string; label: string; address: string; lat?: number | null; lng?: number | null; isDefault: boolean
 }
@@ -328,10 +346,28 @@ export default function CheckoutPage() {
   // Set when "Place order" was pressed with no pin — the map then says why.
   const [pinPrompt, setPinPrompt] = useState(false)
   const pinBlockRef = useRef<HTMLDivElement | null>(null)
+  // UX-3: the pin comes first and the address text fills in from it. A line
+  // the customer typed or edited is never overwritten by a later pin move.
+  const addressEditedRef = useRef(false)
+  const geocodeSeq = useRef(0)
+  const [addressFilling, setAddressFilling] = useState(false)
   const setPin = (v: LatLng) => {
     if (!pinKey) return
     setPins((p) => ({ ...p, [pinKey]: v }))
     setPinPrompt(false)
+    if (pinKey === 'new' && !(addressEditedRef.current && deliveryAddress.trim())) {
+      const seq = ++geocodeSeq.current
+      setAddressFilling(true)
+      void reverseGeocode(v).then((line) => {
+        if (seq !== geocodeSeq.current) return
+        setAddressFilling(false)
+        if (line && !(addressEditedRef.current && deliveryAddress.trim())) {
+          addressEditedRef.current = false
+          setDeliveryAddress(line)
+          clearFieldErr('address')
+        }
+      })
+    }
   }
 
   // Open the map on the kitchen when we know where it is (else Karachi).
@@ -958,7 +994,7 @@ export default function CheckoutPage() {
                       onClick={() => {
                         setShowNewAddressInput(true)
                         setSelectedAddressId(null)
-                        setDeliveryAddress('')
+                        addressEditedRef.current = false; setDeliveryAddress('')
                       }}
                       className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all"
                       style={showNewAddressInput
@@ -973,26 +1009,6 @@ export default function CheckoutPage() {
                       <span className="text-xs font-semibold" style={{ color: 'var(--servd-ink)' }}>Enter a different address</span>
                     </button>
                   </div>
-                )}
-
-                {/* Show text input when "new address" is selected or no saved addresses exist. */}
-                {usingNewAddress && (
-                  <>
-                    <input
-                      id="co-address" name="address"
-                      value={deliveryAddress} onChange={(e) => { setDeliveryAddress(e.target.value); clearFieldErr('address') }}
-                      placeholder="Full delivery address"
-                      aria-label="Delivery address"
-                      aria-invalid={fieldErr.address ? true : undefined}
-                      aria-describedby={fieldErr.address ? 'co-address-err' : undefined}
-                      autoComplete="street-address"
-                      maxLength={200}
-                      className="servd-field w-full rounded-lg px-3 py-2 text-sm"
-                      style={{ background: '#fff', border: `1px solid ${fieldErr.address ? 'var(--servd-danger)' : 'rgba(0,0,0,0.08)'}` }} />
-                    {fieldErr.address && (
-                      <p id="co-address-err" role="alert" className="text-xs font-semibold" style={{ color: 'var(--servd-danger)' }}>{fieldErr.address}</p>
-                    )}
-                  </>
                 )}
 
                 {/* The drop point. The address text tells the rider which
@@ -1038,6 +1054,27 @@ export default function CheckoutPage() {
                     </div>
                   ) : null}
                 </div>
+
+                {/* The address text comes AFTER the pin: it fills in from the pin
+                    (reverse geocode) and stays editable. */}
+                {usingNewAddress && (
+                  <>
+                    <input
+                      id="co-address" name="address"
+                      value={deliveryAddress} onChange={(e) => { addressEditedRef.current = true; setDeliveryAddress(e.target.value); clearFieldErr('address') }}
+                      placeholder={addressFilling ? 'Finding the address from your pin…' : 'Full delivery address (filled from your pin, edit if needed)'}
+                      aria-label="Delivery address"
+                      aria-invalid={fieldErr.address ? true : undefined}
+                      aria-describedby={fieldErr.address ? 'co-address-err' : undefined}
+                      autoComplete="street-address"
+                      maxLength={200}
+                      className="servd-field w-full rounded-lg px-3 py-2 text-sm"
+                      style={{ background: '#fff', border: `1px solid ${fieldErr.address ? 'var(--servd-danger)' : 'rgba(0,0,0,0.08)'}` }} />
+                    {fieldErr.address && (
+                      <p id="co-address-err" role="alert" className="text-xs font-semibold" style={{ color: 'var(--servd-danger)' }}>{fieldErr.address}</p>
+                    )}
+                  </>
+                )}
 
                 <input
                   id="co-delivery-notes" name="deliveryNotes" aria-label="Delivery notes (optional)"

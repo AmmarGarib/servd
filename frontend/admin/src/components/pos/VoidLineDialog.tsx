@@ -104,7 +104,7 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
           <label htmlFor="void-reason" className="mb-1 block text-xs text-s-muted">Reason (required)</label>
           <input id="void-reason" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus maxLength={200}
             placeholder="Wrong item, guest changed their mind…"
-            className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none" />
+            className="min-h-11 w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none" />
         </div>
         {askPin ? (
           <div>
@@ -125,7 +125,7 @@ export function VoidLineDialog({ orderId, item, isManager, onClose, onVoided }: 
             <label htmlFor="void-raast-ref" className="block text-xs text-s-muted">Outgoing transfer reference (from the bank app)</label>
             <input id="void-raast-ref" value={refundReference} onChange={(e) => setRefundReference(e.target.value)} autoComplete="off"
               autoCapitalize="characters" spellCheck={false} maxLength={120}
-              className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 font-mono text-sm text-s-text focus:border-primary focus:outline-none" />
+              className="min-h-11 w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 font-mono text-sm text-s-text focus:border-primary focus:outline-none" />
           </div>
         )}
         {send.isError && !(send.error instanceof ApiError && send.error.code === 'RAAST_REFUND_REFERENCE_REQUIRED' && !refundReference.trim()) && (

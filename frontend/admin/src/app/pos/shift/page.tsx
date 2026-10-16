@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { ArrowLeft } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { posApi, type ZReport } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
@@ -190,7 +191,7 @@ export default function ShiftPage() {
         {shiftId && <VendorPayoutPanel shiftId={shiftId} />}
 
         <div className="text-center">
-          <a href="/pos" className="text-kds-green underline text-sm">← Back to POS</a>
+          <a href="/pos" className="inline-flex min-h-11 items-center gap-1.5 text-kds-green underline text-sm"><ArrowLeft size={16} aria-hidden="true" /> Back to POS</a>
         </div>
       </div>
     </div>
@@ -345,7 +346,7 @@ function CancelledCardRefundRow({ orderId, shiftId }: { orderId: string; shiftId
           <button
             type="button"
             onClick={() => { setOpen(true); setAmount((data.maxCents / 100).toFixed(2)); setProgress(null); refund.reset() }}
-            className="rounded-lg bg-kds-amber px-3 py-1.5 font-bold text-kds-bg"
+            className="min-h-11 rounded-lg bg-kds-amber px-3 py-1.5 font-bold text-kds-bg"
           >
             Refund to card
           </button>
@@ -359,7 +360,7 @@ function CancelledCardRefundRow({ orderId, shiftId }: { orderId: string; shiftId
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               inputMode="decimal"
-              className="mt-1 w-full rounded-lg border border-kds-border bg-kds-card px-3 py-2 font-bold text-kds-text"
+              className="min-h-11 mt-1 w-full rounded-lg border border-kds-border bg-kds-card px-3 py-2 font-bold text-kds-text"
             />
           </label>
           <label className="block text-kds-subtext">
@@ -369,7 +370,7 @@ function CancelledCardRefundRow({ orderId, shiftId }: { orderId: string; shiftId
               onChange={(e) => setReason(e.target.value)}
               maxLength={300}
               placeholder="Why the ticket was cancelled"
-              className="mt-1 w-full rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-kds-text"
+              className="min-h-11 mt-1 w-full rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-kds-text"
             />
           </label>
           {!amountOk && amount !== '' && (
@@ -380,7 +381,7 @@ function CancelledCardRefundRow({ orderId, shiftId }: { orderId: string; shiftId
               type="button"
               onClick={() => { setOpen(false); refund.reset() }}
               disabled={refund.isPending}
-              className="flex-1 rounded-lg border border-kds-border py-2 font-bold text-kds-text disabled:opacity-50"
+              className="min-h-11 flex-1 rounded-lg border border-kds-border py-2 font-bold text-kds-text disabled:opacity-50"
             >
               Back
             </button>
@@ -388,7 +389,7 @@ function CancelledCardRefundRow({ orderId, shiftId }: { orderId: string; shiftId
               type="button"
               onClick={() => refund.mutate({ paymentId: data.paymentId, amountCents })}
               disabled={!amountOk || !reasonOk || refund.isPending}
-              className="flex-1 rounded-lg bg-kds-green py-2 font-bold text-primary-on disabled:opacity-50"
+              className="min-h-11 flex-1 rounded-lg bg-kds-green py-2 font-bold text-primary-on disabled:opacity-50"
             >
               {refund.isPending ? 'On the card machine…' : 'Refund to card'}
             </button>

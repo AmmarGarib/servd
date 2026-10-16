@@ -5,6 +5,7 @@
 // (closure → no slots; reduced_capacity → fewer slots).
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { useState } from 'react'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
@@ -51,14 +52,14 @@ export default function BlockoutsPage() {
     <div className="min-h-full bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between flex-wrap gap-3">
         <div>
-          <Link href="/reservations" className="text-xs text-s-muted hover:text-s-text">← Reservations</Link>
+          <Link href="/reservations" className="inline-flex min-h-11 items-center gap-1 text-xs text-s-muted hover:text-s-text"><ArrowLeft size={14} aria-hidden="true" /> Reservations</Link>
           <h1 className="text-xl font-bold text-s-text">Closures & blockouts</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
-          <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ New blockout</button>
+          <button onClick={() => setShowNew(true)} className="min-h-11 s-btn-primary text-xs">+ New blockout</button>
         </div>
       </header>
 
@@ -79,7 +80,7 @@ export default function BlockoutsPage() {
                 <tr key={b.id} className="border-t border-s-border">
                   <td className="px-4 py-2 text-xs">
                     <p className="text-s-text">{new Date(b.startTime).toLocaleString()}</p>
-                    <p className="text-s-muted">→ {new Date(b.endTime).toLocaleString()}</p>
+                    <p className="flex items-center gap-1 text-s-muted"><ArrowRight size={12} aria-hidden="true" /> {new Date(b.endTime).toLocaleString()}</p>
                   </td>
                   <td className="px-4 py-2">
                     <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${KIND_LABEL[b.kind].tone}`}>
@@ -145,7 +146,7 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
         <div className="p-5 space-y-3 text-sm">
           <label className="block">
             <span className="text-xs text-s-muted">Kind</span>
-            <Select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
+            <Select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="min-h-11 w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
               <option value="closure">Closure (no bookings)</option>
               <option value="private_event">Private event</option>
               <option value="reduced_capacity">Reduced capacity</option>
@@ -155,11 +156,11 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="text-xs text-s-muted">Start</span>
-              <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="min-h-11 w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
             <label className="block">
               <span className="text-xs text-s-muted">End</span>
-              <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
+              <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="min-h-11 w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
             </label>
           </div>
           {kind === 'reduced_capacity' && (
@@ -170,13 +171,13 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
           )}
           <label className="block">
             <span className="text-xs text-s-muted">Reason / note (optional)</span>
-            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Eid closure, full buyout for company X" className="w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Eid closure, full buyout for company X" className="min-h-11 w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </label>
           {err && <p className="text-xs text-s-red">{err}</p>}
         </div>
         <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2">
-          <button onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={create.isPending} className="s-btn-primary text-sm">
+          <button onClick={onClose} className="min-h-11 s-btn-secondary text-sm">Cancel</button>
+          <button onClick={() => create.mutate()} disabled={create.isPending} className="min-h-11 s-btn-primary text-sm">
             {create.isPending ? 'Saving…' : 'Block these dates'}
           </button>
         </div>

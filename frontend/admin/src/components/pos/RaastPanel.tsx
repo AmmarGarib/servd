@@ -422,7 +422,7 @@ export function RaastPanel({
                 {p.bankRefLast4 && <span className="text-kds-subtext"> · ref …{p.bankRefLast4}</span>}
               </span>
               <button type="button" onClick={() => attach.mutate(p.alertId)} disabled={attach.isPending}
-                className="shrink-0 rounded-lg border border-kds-green px-3 py-1 text-xs font-bold text-kds-green disabled:opacity-30">
+                className="min-h-11 shrink-0 rounded-lg border border-kds-green px-3 py-1 text-xs font-bold text-kds-green disabled:opacity-30">
                 Attach
               </button>
             </div>
@@ -442,7 +442,7 @@ export function RaastPanel({
         <>
           {cancel.isError && <p className="mb-2 text-sm text-kds-red" role="alert">{tillErrorMessage(cancel.error, 'Could not cancel the Raast payment')}</p>}
           <button type="button" onClick={() => cancel.mutate()} disabled={cancel.isPending || !!intent.settling}
-            className="w-full rounded-xl border border-kds-red/60 py-2.5 text-sm font-bold text-kds-red disabled:opacity-30">
+            className="min-h-11 w-full rounded-xl border border-kds-red/60 py-2.5 text-sm font-bold text-kds-red disabled:opacity-30">
             {cancel.isPending ? 'Cancelling…' : 'Cancel Raast'}
           </button>
           <p className="mt-2 text-center text-xs text-kds-subtext">

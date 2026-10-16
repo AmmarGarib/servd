@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -34,16 +35,16 @@ export default function ReservationAnalyticsPage() {
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between flex-wrap gap-3">
         <div>
-          <Link href="/reservations" className="text-xs text-s-muted hover:text-s-text">← Reservations</Link>
+          <Link href="/reservations" className="inline-flex min-h-11 items-center gap-1 text-xs text-s-muted hover:text-s-text"><ArrowLeft size={14} aria-hidden="true" /> Reservations</Link>
           <h1 className="text-xl font-bold text-s-text">Reservation analytics</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
+          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
             {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
-          <span className="text-xs text-s-muted">→</span>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
+          <ArrowRight size={14} aria-hidden="true" className="text-s-muted" />
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
         </div>
       </header>
 

@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { ArrowLeft, ArrowRight, CircleCheck, Clock, TriangleAlert, Utensils } from 'lucide-react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Modifier } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
@@ -136,7 +137,7 @@ export default function WaiterPage() {
   if (step === 'done') {
     return (
       <div className="erp-kitchen-dark flex flex-col items-center justify-center h-screen h-dvh gap-6 bg-kds-bg px-6 text-center">
-        <div className="text-6xl">{queuedOffline ? '⏳' : '✅'}</div>
+        {queuedOffline ? <Clock size={56} aria-hidden="true" className="text-kds-amber" /> : <CircleCheck size={56} aria-hidden="true" className="text-kds-green" />}
         <h1 className="text-2xl font-black text-kds-text">{queuedOffline ? 'Queued offline' : 'Order Sent!'}</h1>
         <p className="text-kds-subtext">
           Table {selectedTable?.label} · {cart.reduce((s, c) => s + c.qty, 0)} items
@@ -188,17 +189,17 @@ export default function WaiterPage() {
       <div className="flex items-center gap-3 h-12 px-4 border-b border-kds-border bg-kds-card shrink-0">
         {step !== 'table' ? (
           <button onClick={() => setStep(step === 'confirm' ? 'menu' : 'table')}
-            className="text-kds-subtext text-sm hover:text-kds-text">← Back</button>
+            className="inline-flex min-h-11 items-center gap-1 text-kds-subtext text-sm hover:text-kds-text"><ArrowLeft size={16} aria-hidden="true" /> Back</button>
         ) : (
-          <Link href="/pos" className="text-kds-subtext text-sm hover:text-kds-text">← POS</Link>
+          <Link href="/pos" className="inline-flex min-h-11 items-center gap-1 text-kds-subtext text-sm hover:text-kds-text"><ArrowLeft size={16} aria-hidden="true" /> POS</Link>
         )}
         <span className="font-bold text-kds-text flex-1 text-center">
           {step === 'table' ? 'Select Table' : step === 'menu' ? `Table ${selectedTable?.label}` : 'Confirm Order'}
         </span>
         {cart.length > 0 && step === 'menu' && (
           <button onClick={() => setStep('confirm')}
-            className="rounded-xl bg-kds-green px-3 py-1.5 text-xs font-bold text-primary-on">
-            Order ({cart.reduce((s, c) => s + c.qty, 0)}) →
+            className="min-h-11 rounded-xl bg-kds-green px-3 py-1.5 text-xs font-bold text-primary-on">
+            Order ({cart.reduce((s, c) => s + c.qty, 0)}) <ArrowRight size={14} aria-hidden="true" className="inline-block align-[-2px]" />
           </button>
         )}
       </div>
@@ -208,7 +209,7 @@ export default function WaiterPage() {
         <div className="flex-1 overflow-y-auto p-4">
           {!shiftId && (
             <div className="mb-3 rounded-xl bg-kds-red/15 border border-kds-red/40 px-3 py-2 text-sm font-semibold text-kds-red">
-              ⚠ No shift open — orders won't have a shift assigned
+              <TriangleAlert size={16} aria-hidden="true" className="inline-block align-[-3px] mr-1" />No shift open — orders won't have a shift assigned
             </div>
           )}
           {brandsFailed && (
@@ -224,7 +225,7 @@ export default function WaiterPage() {
                   if (c.id !== conceptId) { setCart([]); setSelectedCategory(null) }
                   usePosStore.getState().setConceptId(c.id)
                 }}
-                  className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  className={`min-h-11 shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold ${
                     c.id === conceptId ? 'bg-kds-green text-primary-on' : 'border border-kds-border text-kds-subtext'
                   }`}>
                   {c.name}
@@ -259,7 +260,7 @@ export default function WaiterPage() {
           <div className="flex gap-2 overflow-x-auto px-3 py-2 border-b border-kds-border bg-kds-card shrink-0 scrollbar-hide">
             {categories.map(cat => (
               <button key={cat.id} onClick={() => setSelectedCategory(cat.id)}
-                className={`shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                className={`min-h-11 shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                   cat.id === (selectedCategory ?? categories[0]?.id)
                     ? 'bg-kds-green text-primary-on'
                     : 'text-kds-subtext hover:bg-kds-border'
@@ -336,7 +337,7 @@ export default function WaiterPage() {
             <label className="text-xs font-semibold text-kds-subtext block mb-1">Order note (optional)</label>
             <textarea value={orderNote} onChange={e => setOrderNote(e.target.value)}
               rows={2} placeholder="Allergies, special requests…"
-              className="w-full rounded-xl border border-kds-border bg-kds-card px-3 py-2 text-sm text-kds-text resize-none" />
+              className="min-h-11 w-full rounded-xl border border-kds-border bg-kds-card px-3 py-2 text-sm text-kds-text resize-none" />
           </div>
 
           {submitMutation.isError && (
@@ -357,7 +358,7 @@ export default function WaiterPage() {
           <button onClick={() => submitMutation.mutate()}
             disabled={submitMutation.isPending || cart.length === 0}
             className="w-full rounded-xl bg-kds-green py-4 font-bold text-primary-on text-base disabled:opacity-30 active:scale-95">
-            {submitMutation.isPending ? 'Sending…' : 'Send to Kitchen 🍽'}
+            {submitMutation.isPending ? 'Sending…' : <span className="inline-flex items-center justify-center gap-2">Send to Kitchen <Utensils size={18} aria-hidden="true" /></span>}
           </button>
         </div>
       )}
@@ -389,7 +390,7 @@ function WaiterModifierModal({ item, onConfirm, onClose }: { item: MenuItem; onC
             <div className="grid grid-cols-2 gap-2">
               {g.modifiers.map((m: Modifier) => (
                 <button key={m.id} onClick={() => toggle(m.id)}
-                  className={`rounded-lg border px-3 py-2 text-sm transition-colors ${selected.has(m.id) ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'}`}>
+                  className={`min-h-11 rounded-lg border px-3 py-2 text-sm transition-colors ${selected.has(m.id) ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'}`}>
                   {m.name}{m.priceDeltaCents !== 0 && <span className="text-kds-subtext ml-1">+{(m.priceDeltaCents/100).toFixed(0)}</span>}
                 </button>
               ))}

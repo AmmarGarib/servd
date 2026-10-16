@@ -1,5 +1,6 @@
 'use client'
 import { useRef, useState } from 'react'
+import { X } from 'lucide-react'
 import { useDialog } from '../ui/Modal'
 import { fmtPkrWhole } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
@@ -52,7 +53,7 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
             <p className="text-xs text-kds-subtext">{brandName ?? 'This brand'} · rung, not yet paid</p>
           </div>
           <button type="button" data-dialog-close onClick={onClose} aria-label="Close"
-            className="flex h-11 w-11 shrink-0 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
+            className="flex h-11 w-11 shrink-0 items-center justify-center text-kds-subtext hover:text-kds-text"><X size={20} aria-hidden="true" /></button>
         </div>
         {note && (
           <p className={`border-b border-kds-border px-5 py-2 text-xs ${note.ok ? 'text-kds-subtext' : 'text-kds-red'}`} role={note.ok ? 'status' : 'alert'}>

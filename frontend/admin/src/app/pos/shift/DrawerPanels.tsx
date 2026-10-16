@@ -156,7 +156,7 @@ export function CodPayInPanel({ shiftId }: { shiftId: string }) {
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="font-mono text-sm text-kds-text">{fmtPkrWhole(p.amountCents)}</span>
                     <button onClick={() => take.mutate(p.id)} disabled={take.isPending}
-                      className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">Take cash</button>
+                      className="min-h-11 rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">Take cash</button>
                   </div>
                 </li>
               )

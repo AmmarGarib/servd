@@ -322,12 +322,12 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
           />
           <div className="flex gap-2">
             <button type="button" onClick={() => submitCode(typed)} disabled={!typed.trim() || lookupPending}
-              className="flex-1 rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">
+              className="min-h-11 flex-1 rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">
               {lookupPending ? 'Checking the card…' : 'Look up card'}
             </button>
             {Detector ? (
               <button type="button" onClick={() => { setScanError(null); setCameraOn((v) => !v) }} disabled={lookupPending}
-                className="flex-1 rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">
+                className="min-h-11 flex-1 rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">
                 {cameraOn ? 'Stop camera' : 'Use camera'}
               </button>
             ) : null}
@@ -407,7 +407,7 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
           )}
           {needsRescan && (!found.blocked || replayNote) && (
             <button type="button" onClick={scanAnother}
-              className="w-full rounded-xl border border-kds-amber py-2.5 text-sm font-bold text-kds-amber">
+              className="min-h-11 w-full rounded-xl border border-kds-amber py-2.5 text-sm font-bold text-kds-amber">
               {replayNote ? 'Scan the same card again to check' : 'Scan the card again to retry'}
             </button>
           )}

@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { X } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { usePosStore } from '../../store/pos'
 import { fmtPkrWhole } from '../../lib/money'
@@ -43,7 +44,7 @@ export function PosCart({ conceptId, onCheckout, onClose }: PosCartProps) {
         </div>
         {onClose && (
           <button type="button" data-dialog-close onClick={onClose} aria-label="Close order"
-            className="flex h-11 w-11 shrink-0 items-center justify-center text-xl leading-none text-kds-subtext hover:text-kds-text">✕</button>
+            className="flex h-11 w-11 shrink-0 items-center justify-center text-kds-subtext hover:text-kds-text"><X size={20} aria-hidden="true" /></button>
         )}
       </div>
 
@@ -93,7 +94,7 @@ export function PosCart({ conceptId, onCheckout, onClose }: PosCartProps) {
                     className="ml-auto h-11 w-11 shrink-0 rounded-lg bg-kds-red/20 text-kds-red font-bold active:bg-kds-red/30"
                     aria-label={`Remove ${item.name} from cart`}
                   >
-                    ✕
+                    <X size={18} aria-hidden="true" className="mx-auto" />
                   </button>
                 </div>
                 <input

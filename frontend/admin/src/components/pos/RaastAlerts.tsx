@@ -16,6 +16,7 @@
 // Dark till styling (kds tokens); text labels, no emoji.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 import { useDialog } from '../ui/Modal'
 import { PasswordInput } from '../ui/PasswordInput'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -115,7 +116,7 @@ export function RaastAlerts({ shiftId, brand, tickets, isManager, onBillPaid }: 
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex shrink-0 items-center gap-2 rounded-lg border border-kds-amber px-3 py-1 text-sm font-semibold text-kds-amber hover:bg-kds-amber/10"
+          className="min-h-11 flex shrink-0 items-center gap-2 rounded-lg border border-kds-amber px-3 py-1 text-sm font-semibold text-kds-amber hover:bg-kds-amber/10"
         >
           Bank alerts
           <span className="rounded-full bg-kds-amber px-2 text-xs font-black text-black">{alerts.length}</span>
@@ -127,7 +128,7 @@ export function RaastAlerts({ shiftId, brand, tickets, isManager, onBillPaid }: 
           <div className="flex items-start gap-3">
             <p className="text-sm font-semibold text-kds-green">{toast}</p>
             <button type="button" onClick={() => setToast(null)} aria-label="Dismiss"
-              className="-mr-2 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center text-kds-subtext">✕</button>
+              className="-mr-2 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center text-kds-subtext"><X size={20} aria-hidden="true" /></button>
           </div>
           <p className="mt-1 text-xs text-kds-subtext">Provisional until the bank statement.</p>
         </div>
@@ -141,7 +142,7 @@ export function RaastAlerts({ shiftId, brand, tickets, isManager, onBillPaid }: 
                 <p className="text-xs text-kds-subtext">Raast transfers no bill claimed on its own · last 48 hours</p>
               </div>
               <button type="button" data-dialog-close onClick={() => setOpen(false)} aria-label="Close"
-                className="flex h-11 w-11 shrink-0 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
+                className="flex h-11 w-11 shrink-0 items-center justify-center text-kds-subtext hover:text-kds-text"><X size={20} aria-hidden="true" /></button>
             </div>
             <p className="border-b border-kds-border px-5 py-2 text-xs text-kds-amber">{RAAST_COUNTER_WARNING}</p>
             <div className="flex-1 overflow-y-auto">
@@ -258,7 +259,7 @@ function AlertRow({ alert, shiftId, brand, tickets, isManager, onDone }: {
           <button key={m} type="button" disabled={busy}
             onClick={() => { setMode(mode === m ? null : m); setConfirmFor(null); attach.reset(); dismiss.reset() }}
             aria-pressed={mode === m}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-30 ${
+            className={`min-h-11 rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-30 ${
               mode === m ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'
             }`}>
             {m === 'attach' ? 'Attach to a bill' : m === 'fix' ? 'Fix a typed reference' : 'Not a sale'}
@@ -311,7 +312,7 @@ function AlertRow({ alert, shiftId, brand, tickets, isManager, onDone }: {
           </p>
           <label htmlFor={`raast-dismiss-reason-${alert.id}`} className="sr-only">Why it is not a sale</label>
           <input id={`raast-dismiss-reason-${alert.id}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Why it is not a sale (required)"
-            className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text" />
+            className="min-h-11 w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text" />
           {!isManager && (
             <>
               <label htmlFor={`raast-dismiss-pin-${alert.id}`} className="sr-only">Manager PIN</label>
@@ -321,7 +322,7 @@ function AlertRow({ alert, shiftId, brand, tickets, isManager, onDone }: {
           )}
           {dismiss.isError && <p className="text-sm text-kds-red" role="alert">{approvalError(dismiss.error, 'Could not mark it not a sale')}</p>}
           <button type="submit" disabled={busy || reason.trim().length < 3 || (!isManager && !pin.trim())}
-            className="w-full rounded-xl border border-kds-red py-2.5 text-sm font-bold text-kds-red disabled:opacity-30">
+            className="min-h-11 w-full rounded-xl border border-kds-red py-2.5 text-sm font-bold text-kds-red disabled:opacity-30">
             {dismiss.isPending ? 'Saving…' : 'Mark not a sale'}
           </button>
         </form>
@@ -354,16 +355,16 @@ function AttachLine({ label, sub, dueCents, matches, confirming, busy, onAttach,
       {confirming ? (
         <div className="flex shrink-0 gap-1">
           <button type="button" onClick={onConfirm} disabled={busy}
-            className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-primary-on disabled:opacity-30">
+            className="min-h-11 rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-primary-on disabled:opacity-30">
             {busy ? 'Attaching…' : 'Confirm'}
           </button>
-          <button type="button" onClick={onCancel} disabled={busy} className="rounded-lg border border-kds-border px-2 py-1 text-xs text-kds-subtext">
+          <button type="button" onClick={onCancel} disabled={busy} className="min-h-11 rounded-lg border border-kds-border px-2 py-1 text-xs text-kds-subtext">
             Back
           </button>
         </div>
       ) : (
         <button type="button" onClick={onAttach} disabled={busy}
-          className="shrink-0 rounded-lg border border-kds-green px-3 py-1 text-xs font-bold text-kds-green disabled:opacity-30">
+          className="min-h-11 shrink-0 rounded-lg border border-kds-green px-3 py-1 text-xs font-bold text-kds-green disabled:opacity-30">
           Attach
         </button>
       )}
@@ -438,7 +439,7 @@ function FixReference({ alert, brand, isManager, onDone }: {
       )}
       {fix.isError && <p className="text-sm text-kds-red" role="alert">{approvalError(fix.error, 'Could not fix the reference')}</p>}
       <button type="button" onClick={() => pick && fix.mutate(pick)} disabled={!pick || fix.isPending || (!isManager && !pin.trim())}
-        className="w-full rounded-xl border border-kds-green py-2.5 text-sm font-bold text-kds-green disabled:opacity-30">
+        className="min-h-11 w-full rounded-xl border border-kds-green py-2.5 text-sm font-bold text-kds-green disabled:opacity-30">
         {fix.isPending ? 'Saving…' : 'Use the bank SMS reference'}
       </button>
     </div>

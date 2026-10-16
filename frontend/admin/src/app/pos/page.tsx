@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react'
+import { ArrowLeft, ArrowRight, Check, ShoppingCart, TriangleAlert, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Modifier } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
@@ -224,9 +225,9 @@ export default function PosPage() {
       {cartCount > 0 && !cartOpen && (
         <button
           onClick={() => setCartOpen(true)}
-          className="fixed bottom-5 right-5 z-40 lg:hidden flex items-center gap-2 rounded-2xl px-5 py-3 font-bold text-sm text-black shadow-lg active:scale-95 transition-transform"
+          className="fixed bottom-5 right-5 z-40 lg:hidden flex items-center gap-2 rounded-2xl px-5 py-3 font-bold text-sm text-primary-on shadow-lg active:scale-95 transition-transform"
           style={{ background: 'var(--erp-primary)', boxShadow: '0 4px 20px rgb(var(--erp-primary-rgb) / 0.4)' }}>
-          <span>🛒</span>
+          <ShoppingCart size={18} aria-hidden="true" />
           <span>{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
         </button>
       )}
@@ -244,22 +245,22 @@ export default function PosPage() {
         {/* Sync success banner */}
         {syncedCount > 0 && (
           <div className="flex items-center gap-2 bg-kds-green/15 border-b border-kds-green/30 px-3 py-2">
-            <span className="text-sm font-semibold text-kds-green">✓ {syncedCount} offline order{syncedCount !== 1 ? 's' : ''} synced</span>
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-kds-green"><Check size={16} aria-hidden="true" /> {syncedCount} offline order{syncedCount !== 1 ? 's' : ''} synced</span>
           </div>
         )}
         {/* Shift warning banner */}
         {!shiftId && (
           <div className="flex items-center justify-between bg-kds-red/20 border-b border-kds-red px-3 py-2">
-            <span className="text-sm font-semibold text-kds-red">⚠ No shift open — payments will be blocked</span>
-            <Link href="/pos/shift" className="rounded bg-kds-red px-3 py-1 text-xs font-bold text-white hover:opacity-90">
-              Open Shift →
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-kds-red"><TriangleAlert size={16} aria-hidden="true" /> No shift open — payments will be blocked</span>
+            <Link href="/pos/shift" className="inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-kds-red px-4 text-sm font-bold text-white hover:opacity-90">
+              Open Shift <ArrowRight size={16} aria-hidden="true" />
             </Link>
           </div>
         )}
 
         {/* Brand selector */}
         <div className="flex min-h-12 items-center gap-2 overflow-x-auto border-b border-kds-border bg-kds-card px-3 scrollbar-hide">
-          <Link href="/w" className="text-kds-subtext text-xs hover:text-kds-text mr-2 shrink-0">← Back</Link>
+          <Link href="/w" className="mr-2 inline-flex min-h-11 shrink-0 items-center gap-1 text-sm text-kds-subtext hover:text-kds-text"><ArrowLeft size={16} aria-hidden="true" /> Back</Link>
           <span className="text-sm text-kds-subtext shrink-0">Brand:</span>
           {brandsFailed && <span className="text-sm font-semibold text-kds-red">Could not load your brands — reload, or ask a manager</span>}
           {!brandsFailed && !brandsLoading && concepts.length === 0 && <span className="text-sm text-kds-subtext">No brands in your company yet</span>}
@@ -286,7 +287,7 @@ export default function PosPage() {
                   st.setConceptId(c.id)
                   setSelectedCategory(null)
                 }}
-                className={`min-h-11 shrink-0 rounded px-3 py-1 text-sm font-semibold ${
+                className={`min-h-11 shrink-0 rounded-lg px-4 py-1 text-sm font-semibold ${
                   c.id === conceptId
                     ? 'bg-kds-green text-primary-on'
                     : 'text-kds-subtext hover:text-kds-text'
@@ -531,7 +532,7 @@ function ModifierModal({
         <div className="flex shrink-0 items-center justify-between border-b border-kds-border pl-5 pr-1">
           <h2 id="modifier-modal-title" className="py-3 text-lg font-bold text-kds-text">{item.name} — Options</h2>
           <button type="button" data-dialog-close onClick={onClose} aria-label="Close"
-            className="flex h-11 w-11 items-center justify-center text-xl text-kds-subtext hover:text-kds-text">✕</button>
+            className="flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><X size={20} aria-hidden="true" /></button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4" style={{ overscrollBehavior: 'contain' }}>
@@ -588,7 +589,7 @@ function ModifierModal({
         </div>
 
         <div className="sticky bottom-0 flex shrink-0 gap-3 border-t border-kds-border bg-kds-card px-5 py-3">
-          <button type="button" onClick={onClose} className="kds-btn-ghost flex-1 py-3">
+          <button type="button" onClick={onClose} className="kds-btn-ghost flex-1 min-h-11 py-3">
             Cancel
           </button>
           <button type="button" onClick={confirm} disabled={!canConfirm}

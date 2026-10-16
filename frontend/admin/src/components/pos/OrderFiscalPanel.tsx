@@ -79,13 +79,13 @@ export function OrderFiscalPanel({ orderId, canRetry, onReprint }: {
         <div className="flex gap-2">
           {canRetry && anyFailed && (
             <button type="button" onClick={() => retry.mutate()} disabled={retry.isPending}
-              className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-text hover:border-primary disabled:opacity-50">
+              className="min-h-11 rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-text hover:border-primary disabled:opacity-50">
               {retry.isPending ? 'Retrying…' : 'Retry filing'}
             </button>
           )}
           {onReprint && list.some((d) => d.kind === 'sale') && (
             <button type="button" onClick={onReprint}
-              className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-text hover:border-primary">
+              className="min-h-11 rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-text hover:border-primary">
               Reprint bill
             </button>
           )}

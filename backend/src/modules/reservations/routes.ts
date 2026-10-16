@@ -132,7 +132,7 @@ async function signedInCustomer(req: FastifyRequest) {
   } catch {
     throw authRequired()
   }
-  if (await isRevoked(token, payload.sub, payload.iat)) throw authRequired()
+  if (await isRevoked(token, payload.sub, (payload as { iat?: number }).iat)) throw authRequired()
   const self = await prisma.customer.findFirst({
     where: { id: payload.sub, deletedAt: null },
     select: { id: true, name: true, phone: true, email: true, phoneVerifiedAt: true, emailVerifiedAt: true },
