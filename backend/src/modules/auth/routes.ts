@@ -105,6 +105,8 @@ const PIN_CHANGE_USER_LIMIT = { scope: 'pin-change-user', max: 5, lockoutSec: 15
 // answer is a yes/no on "is this a colleague's PIN?", so this is what keeps the
 // 4-digit space from being enumerated.
 const PIN_CHANGE_ATTEMPT_LIMIT = { scope: 'pin-change-attempt', max: 6, lockoutSec: 60 * 60 }
+// HR / CEO "send reset link": at most this many links per login per hour.
+const RESET_LINKS_PER_HOUR = 3
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -1328,6 +1330,61 @@ export async function authRoutes(fastify: FastifyInstance) {
         })
       }
       return { id: target.id, name: target.name, status: 'suspended' as const, alreadyOffboarded: !changed }
+    },
+  )
+
+  // POST /auth/staff/:id/send-password-link — HR or the CEO sends someone a
+  // password reset link (owner, 2026-10-16: "give hr a way to issue password
+  // reset links to employee emails"). The SAME link and sender as the login
+  // page's "Forgot password" (passwordReset.ts requestPasswordReset): it goes to
+  // the person's OWN email (and WhatsApp when they have a number), works once,
+  // lasts 30 minutes and kills any older link. Nobody but the person sees it —
+  // unlike /users/:id/reissue-password, which shows the CEO a password.
+  // Same scope as offboard (findManagedStaff: other company 404 / 403); HR never
+  // for the CEO's or a co-owner's login (403 RESET_LINK_CEO_ONLY). At most
+  // RESET_LINKS_PER_HOUR per login an hour (429), so it cannot be used to spam.
+  fastify.post<{ Params: { id: string } }>(
+    '/staff/:id/send-password-link',
+    { preHandler: requireAuth(...OFFBOARDERS) },
+    async (req) => {
+      await assertHrBackOffice(req)
+      const isCeo = req.staffUser!.role === 'admin'
+      const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true })
+      if (!isCeo && (target.role === 'admin' || target.role === 'owner')) {
+        throw new AppError('RESET_LINK_CEO_ONLY', "Only the CEO can send a reset link to the CEO's or a co-owner's login.", 403)
+      }
+      if (!target.email) throw new AppError('EMAIL_REQUIRED', 'This login has no email address. Add one first.', 422)
+      if (accountStateOf(target) !== 'active') {
+        throw new AppError('LOGIN_NOT_ACTIVE', 'This login is not active (waiting for approval or switched off), so a reset link would not work.', 409)
+      }
+      if (sandboxBlocks('password_reset', { to: target.email })) {
+        throw new AppError('PRACTICE_NO_LINKS', 'The practice copy sends no reset links. Use "Reissue password" instead.', 503)
+      }
+      if (!(await deliveryConfigured())) {
+        throw new AppError('RESET_DELIVERY_UNAVAILABLE', 'Email and WhatsApp are not set up, so the link cannot be sent.', 503)
+      }
+      const recent = await prisma.staffPasswordReset.count({
+        where: { userId: target.id, createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
+      })
+      if (recent >= RESET_LINKS_PER_HOUR) {
+        throw new AppError('TOO_MANY_LINKS', `${RESET_LINKS_PER_HOUR} links were already sent to this person in the last hour. Try again later.`, 429)
+      }
+      const outcome = await requestPasswordReset(target.email, req.ip ?? null)
+      if (outcome.errors.length) req.log.error({ target: target.id, outcome }, 'staff reset link: delivery problem')
+      const sent = outcome.email === 'sent' || outcome.whatsapp === 'sent'
+      await audit({
+        category: 'identity',
+        action: 'user.password_link_sent',
+        entity: 'User',
+        entityId: target.id,
+        userId: req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: auditCompanyOf(target),
+        after: { targetEmail: target.email, email: outcome.email, whatsapp: outcome.whatsapp },
+        metadata: { actorTenantId: req.staffUser!.tenantId ?? null, actorRole: req.staffUser!.role },
+      })
+      if (!sent) throw new AppError('LINK_NOT_DELIVERED', 'The link could not be sent. Check the email and WhatsApp setup, then try again.', 502)
+      return { id: target.id, name: target.name, email: target.email, sentBy: { email: outcome.email === 'sent', whatsapp: outcome.whatsapp === 'sent' } }
     },
   )
 

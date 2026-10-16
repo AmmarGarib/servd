@@ -32,12 +32,34 @@ export function OffboardButtons({ login, onDone }: { login: { id: string; name: 
     onSuccess: (r) => { setMsg(r?.waitsForCeo ? 'Reinstated — waiting for the CEO to approve it.' : `${login.name} can sign in again.`); onDone() },
     onError: (e: Error) => setMsg(e.message),
   })
+  // Password reset link (owner, 2026-10-16): the same one-use, 30-minute link
+  // as "Forgot password", sent to the person's own email / WhatsApp
+  // (POST /auth/staff/:id/send-password-link). Nobody else sees it.
+  const link = useMutation({
+    mutationFn: () => api.post<{ email: string; sentBy: { email: boolean; whatsapp: boolean } }>(`/auth/staff/${login.id}/send-password-link`, {}),
+    onSuccess: (r) => {
+      const where = [r?.sentBy?.email ? r.email : null, r?.sentBy?.whatsapp ? 'WhatsApp' : null].filter(Boolean).join(' and ')
+      setMsg(`Reset link sent to ${where || 'them'}. It works once and expires in 30 minutes.`)
+    },
+    onError: (e: Error) => setMsg(e.message),
+  })
   const role = me?.role
   if (role !== 'hr' && role !== 'admin') return null
   if (login.role === 'admin' || login.id === myId) return null
   return (
     <div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
+        {/* Floor logins sign in with a WhatsApp code, not a password. */}
+        {login.status !== 'suspended' && login.status !== 'pending' && !FLOOR_LOGIN_ROLES.includes(login.role) && (role === 'admin' || login.role !== 'owner') && (
+          <button type="button" className={ghost} disabled={link.isPending} onClick={async () => {
+            const r = await confirm({
+              title: `Send ${login.name} a password reset link?`,
+              body: 'A link to set a new password goes to their own email (and WhatsApp if they have a number). It works once and expires in 30 minutes. Their current password keeps working until they use it.',
+              confirmLabel: 'Send link',
+            })
+            if (r) link.mutate()
+          }}>{link.isPending ? 'Sending…' : 'Send password reset link'}</button>
+        )}
         {login.status !== 'suspended' ? (
           <button type="button" className={ghost} disabled={off.isPending} onClick={async () => {
             const r = await confirm({
