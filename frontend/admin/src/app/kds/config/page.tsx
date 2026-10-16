@@ -181,7 +181,7 @@ function StationsTab() {
                   className="w-full min-h-11 flex items-center gap-3 px-4 py-3 hover:bg-kds-bg/40 transition-colors">
                   <span className="text-kds-subtext text-xs"
                     style={{ display: 'inline-block', transition: 'transform 120ms', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>
-                    <ChevronDown size=16 aria-hidden="true" />
+                    <ChevronDown size={16} aria-hidden="true" />
                   </span>
                   <span className="font-bold text-kds-text">{group.name}</span>
                   <span className="text-xs text-kds-subtext">
@@ -266,7 +266,7 @@ function StationsTab() {
                                   target="_blank"
                                   rel="noreferrer"
                                   className="min-h-11 rounded-lg border border-kds-border px-4 text-sm font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors inline-flex items-center gap-1.5">
-                                  <Maximize2 size=14 aria-hidden="true" /> Preview
+                                  <Maximize2 size={14} aria-hidden="true" /> Preview
                                 </Link>
                                 <button
                                   onClick={() => startEdit(s)}
@@ -301,7 +301,7 @@ function StationsTab() {
                       <form
                         onSubmit={(e) => { e.preventDefault(); addStation(group) }}
                         className="flex items-center gap-2 flex-wrap">
-                        <Plus size=20 aria-hidden="true" className="text-kds-green" />
+                        <Plus size={20} aria-hidden="true" className="text-kds-green" />
                         <input
                           value={draft}
                           onChange={(e) => setNewStationDraft((d) => ({ ...d, [group.id]: e.target.value }))}
@@ -344,7 +344,7 @@ export default function KdsConfigPage() {
       <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between gap-3 shrink-0">
         <div>
           <Link href="/kds" className="min-h-11 text-sm text-kds-subtext hover:text-kds-text flex items-center gap-1.5 mb-1 transition-colors">
-            <ArrowLeft size=16 aria-hidden="true" /> Back to Kitchen view
+            <ArrowLeft size={16} aria-hidden="true" /> Back to Kitchen view
           </Link>
           <h1 className="text-2xl font-black text-kds-text">KDS Config</h1>
           <p className="text-sm text-kds-subtext">

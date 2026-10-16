@@ -7,7 +7,7 @@ import { useKdsActions } from '../../hooks/useKdsSocket'
 import { useKdsStore } from '../../store/kds'
 import { useAuthStore } from '../../store/auth'
 import { PhotoBumpModal } from './PhotoBumpModal'
-import { Check, Pause, Timer, Utensils, X } from 'lucide-react'
+import { Check, Pause, Timer, TriangleAlert, Utensils, X } from 'lucide-react'
 import { fmtPkrWhole } from '../../lib/money'
 
 // Aggregator sources (ubereats / doordash / deliveroo) are gone. GS Foods
@@ -31,8 +31,6 @@ const SOURCE_LABELS: Record<string, string> = {
 
 const UR = {
   ago: 'پہلے',
-  hold: '⏸',
-  bump: '✓',
   recall: 'واپس',
   fire: 'شروع',
   course: 'کورس',
@@ -278,7 +276,7 @@ export function TicketCard({ order, stationId, compact }: TicketCardProps) {
         <div className="mt-2 rounded bg-kds-border/50 px-2 py-1 text-xs text-kds-amber">
           {order.items.filter((i) => i.notes).map((i) => (
             <div key={i.id}>
-              ⚠ {isUrdu && i.menuItem?.nameUrdu ? i.menuItem.nameUrdu : i.name}: {i.notes}
+              <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{isUrdu && i.menuItem?.nameUrdu ? i.menuItem.nameUrdu : i.name}: {i.notes}
             </div>
           ))}
         </div>

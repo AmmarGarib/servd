@@ -40,6 +40,9 @@ const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { AppError, errorResponse } = await import('../src/lib/errors.js')
 
 const RUN = Math.random().toString(36).slice(2, 8)
+/** A phone unique to this run: +92300 + 7 digits. */
+const RUN_DIGITS = String(Math.floor(Math.random() * 900) + 100)
+const runPhone = (n: number) => `+92300${RUN_DIGITS}${String(n).padStart(4, '0')}`
 const HOUR = 3_600_000
 const DAY = 86_400_000
 
@@ -61,11 +64,21 @@ function pktAt(days: number, hhmm: string): string {
 let phoneSeq = 0
 const nextPhone = () => `0333${RUN.replace(/\D/g, '').padEnd(3, '7').slice(0, 3)}${String(++phoneSeq).padStart(4, '0')}`
 
-const book = (payload: Record<string, unknown>, bearer?: string) => app.inject({
-  method: 'POST', url: '/reservations/public',
-  payload: { conceptSlug: slugA, partySize: 2, guestName: 'Guest', guestPhone: nextPhone(), ...payload } as never,
-  headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
-})
+// UX-5 (owner, 2026-10-16): every customer booking needs a signed-in servd
+// account. With no bearer given, the helper books as a fresh signed-in member
+// whose phone is NOT verified — the old "anonymous guest" of these suites.
+const book = async (payload: Record<string, unknown>, bearer?: string) => {
+  let token = bearer
+  if (!token) {
+    const c = await prisma.customer.create({ data: { name: 'Guest', phone: `+92${nextPhone().slice(1)}` } })
+    token = customerToken(c.id)
+  }
+  return app.inject({
+    method: 'POST', url: '/reservations/public',
+    payload: { conceptSlug: slugA, partySize: 2, guestName: 'Guest', ...payload } as never,
+    headers: { authorization: `Bearer ${token}` },
+  })
+}
 const availability = (slug: string, days: number, partySize: number, bearer?: string) => app.inject({
   method: 'GET', url: `/reservations/availability?conceptSlug=${slug}&date=${pktDate(days)}&partySize=${partySize}`,
   headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
@@ -231,15 +244,15 @@ describe('ONL-09: only a verified contact of the signed-in customer is messaged'
 
   beforeAll(async () => {
     verified = await prisma.customer.create({
-      data: { name: 'Sana', phone: '+923001112233', email: `sana.${RUN}@example.com`, phoneVerifiedAt: new Date(), emailVerifiedAt: new Date() },
+      data: { name: 'Sana', phone: runPhone(1), email: `sana.${RUN}@example.com`, phoneVerifiedAt: new Date(), emailVerifiedAt: new Date() },
     }) as never
     unverified = await prisma.customer.create({
-      data: { name: 'Omar', phone: '+923004445566', email: `omar.${RUN}@example.com` },
+      data: { name: 'Omar', phone: runPhone(2), email: `omar.${RUN}@example.com` },
     }) as never
   })
 
-  it('an anonymous booking is recorded but messages nobody, now or as a reminder', async () => {
-    const r = await book({ startTime: pktAt(6, '20:00'), guestPhone: '03335550101', guestEmail: `victim.${RUN}@example.com` })
+  it('a member without a verified contact is booked but messaged nobody, now or as a reminder', async () => {
+    const r = await book({ startTime: pktAt(6, '20:00'), guestPhone: '03335550101', guestEmail: `victim.${RUN}@example.com` }, customerToken(unverified.id))
     expect(r.statusCode).toBe(201)
     expect(r.json()).toMatchObject({ notified: { whatsapp: false, email: false, reminders: false } })
     expect(r.json().confirmUrl).toContain(`/reserve/confirm/${r.json().confirmToken}`)
@@ -247,56 +260,40 @@ describe('ONL-09: only a verified contact of the signed-in customer is messaged'
     expect(sentPhone).toEqual([])
     expect(sentEmail).toEqual([])
     const row = await prisma.reservation.findUniqueOrThrow({ where: { id: r.json().id } })
-    expect(row).toMatchObject({ guestPhone: '03335550101', customerId: null })
+    // The typed phone / email are ignored: the row carries the account's own.
+    expect(row).toMatchObject({ guestPhone: unverified.phone, guestEmail: `omar.${RUN}@example.com`, customerId: unverified.id })
     expect(row.reminder24hSentAt).not.toBeNull()
   })
 
-  it('a signed-in customer booking with their own verified phone and email is messaged, however the number is spelled', async () => {
-    const r = await book({ startTime: pktAt(6, '18:00'), guestPhone: '0300 1112233', guestEmail: verified.email.toUpperCase() }, customerToken(verified.id))
+  it('a member with a verified phone and email is messaged on their own contacts', async () => {
+    const r = await book({ startTime: pktAt(6, '18:00') }, customerToken(verified.id))
     expect(r.statusCode).toBe(201)
     expect(r.json().notified).toEqual({ whatsapp: true, email: true, reminders: true })
     await new Promise((res) => setTimeout(res, 50))
-    expect(sentPhone.map((m) => m.to)).toEqual(['0300 1112233'])
-    expect(sentEmail.map((m) => m.to)).toEqual([verified.email.toUpperCase()])
+    expect(sentPhone.map((m) => m.to)).toEqual([verified.phone])
+    expect(sentEmail.map((m) => m.to)).toEqual([verified.email])
     const row = await prisma.reservation.findUniqueOrThrow({ where: { id: r.json().id } })
     expect(row.customerId).toBe(verified.id)
     expect(row.reminder24hSentAt).toBeNull()
   })
 
-  it("a signed-in customer typing someone else's number: recorded, not linked, nobody messaged", async () => {
-    const r = await book({ startTime: pktAt(7, '20:00'), guestPhone: '03335550202' }, customerToken(verified.id))
+  it("a member typing someone else's number: the stranger is never stored or messaged", async () => {
+    const r = await book({ startTime: pktAt(7, '20:00'), guestPhone: '03335550202', guestEmail: `stranger.${RUN}@example.com` }, customerToken(verified.id))
     expect(r.statusCode).toBe(201)
     await new Promise((res) => setTimeout(res, 50))
-    expect(sentPhone).toEqual([])
+    expect(sentPhone.some((m) => m.to.includes('3335550202'))).toBe(false)
+    expect(sentEmail.some((m) => m.to.startsWith('stranger.'))).toBe(false)
     const row = await prisma.reservation.findUniqueOrThrow({ where: { id: r.json().id } })
-    expect(row.customerId).toBeNull()
-    expect(row.reminder24hSentAt).not.toBeNull()
-  })
-
-  it('an unverified number on the account is linked but not messaged', async () => {
-    const r = await book({ startTime: pktAt(7, '18:00'), guestPhone: unverified.phone }, customerToken(unverified.id))
-    expect(r.statusCode).toBe(201)
-    expect(r.json().notified.whatsapp).toBe(false)
-    await new Promise((res) => setTimeout(res, 50))
-    expect(sentPhone).toEqual([])
-    expect((await prisma.reservation.findUniqueOrThrow({ where: { id: r.json().id } })).customerId).toBe(unverified.id)
-  })
-
-  it('a verified own email beside a stranger’s number: the email is sent, the number and reminders are not', async () => {
-    const r = await book({ startTime: pktAt(8, '20:00'), guestPhone: '03335550303', guestEmail: verified.email }, customerToken(verified.id))
-    expect(r.statusCode).toBe(201)
-    expect(r.json().notified).toEqual({ whatsapp: false, email: true, reminders: false })
-    await new Promise((res) => setTimeout(res, 50))
-    expect(sentPhone).toEqual([])
-    expect(sentEmail.map((m) => m.to)).toEqual([verified.email])
+    expect(row).toMatchObject({ customerId: verified.id, guestPhone: verified.phone, guestEmail: verified.email })
   })
 
   it('the reminder worker reminds the verified booking and never the anonymous one', async () => {
     // At company B's brand (its own table), two sittings apart, both inside
     // the 24 h reminder lead at the sweep time below.
     const minute = (t: number) => new Date(Math.ceil(t / 60_000) * 60_000).toISOString()
-    const anon = await book({ conceptSlug: slugB, startTime: minute(Date.now() + 30 * HOUR), partySize: 2, guestPhone: '03335550404', guestEmail: `victim2.${RUN}@example.com` })
-    const mine = await book({ conceptSlug: slugB, startTime: minute(Date.now() + 32 * HOUR), partySize: 2, guestPhone: verified.phone }, customerToken(verified.id))
+    const anonC = await prisma.customer.create({ data: { name: 'Unverified', phone: '+923335550404', email: `victim2.${RUN}@example.com` } })
+    const anon = await book({ conceptSlug: slugB, startTime: minute(Date.now() + 30 * HOUR), partySize: 2 }, customerToken(anonC.id))
+    const mine = await book({ conceptSlug: slugB, startTime: minute(Date.now() + 32 * HOUR), partySize: 2 }, customerToken(verified.id))
     expect([anon.statusCode, mine.statusCode]).toEqual([201, 201])
     sentPhone.length = 0
     sentEmail.length = 0
@@ -306,7 +303,7 @@ describe('ONL-09: only a verified contact of the signed-in customer is messaged'
     expect(res.reminded).not.toContain(anon.json().id)
     expect(sentPhone.some((m) => m.to.endsWith('3335550404'))).toBe(false)
     expect(sentEmail.some((m) => m.to === `victim2.${RUN}@example.com`)).toBe(false)
-    expect(sentPhone.some((m) => m.to.endsWith('3001112233'))).toBe(true)
+    expect(sentPhone.some((m) => m.to.replace(/\D/g, '').endsWith(verified.phone.slice(-10)))).toBe(true)
   })
 })
 
@@ -360,7 +357,7 @@ describe('ONLINE-R2: anonymous bookings cannot fill the book', () => {
     expect(verified).toEqual([201, 201, 201, 201, 409])
 
     // A signed-in guest whose phone is not verified is still "unverified".
-    const unv = await prisma.customer.create({ data: { name: 'Unverified', phone: '+923009990001' } })
+    const unv = await prisma.customer.create({ data: { name: 'Unverified', phone: runPhone(3) } })
     const later = pktAt(10, '21:00')
     await book({ conceptSlug: slugC, startTime: later, partySize: 2 })
     await book({ conceptSlug: slugC, startTime: later, partySize: 2 })

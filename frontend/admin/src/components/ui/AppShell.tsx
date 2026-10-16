@@ -959,10 +959,13 @@ function Shell({ children }: { children: React.ReactNode }) {
       {/* ── Main content ──────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden" style={{ background: 'var(--bg)' }}>
 
-        <PortfolioBanner />
-        <TestCompanyBanner />
-        <LensBanner />
-        <ImpersonationBanner />
+        {/* Banners keep their text clear of the floating buttons (.fab). */}
+        <div className="erp-banners">
+          <PortfolioBanner />
+          <TestCompanyBanner />
+          <LensBanner />
+          <ImpersonationBanner />
+        </div>
         <main id="main" ref={mainRef} tabIndex={-1}
           className="flex-1 min-h-0 overflow-y-auto animate-fade-in pt-[calc(3.25rem+env(safe-area-inset-top,0px))] pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-16 outline-none">
           <PageGuard pathname={pathname}>{children}</PageGuard>
