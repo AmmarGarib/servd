@@ -21,6 +21,7 @@ import { attachmentPath, kb, preparePhoto } from './photo'
 import { ErrorBanner, fieldCls, primaryBtn, secondaryBtn, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { Modal } from '../../../components/ui/Modal'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 export const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt'
@@ -109,6 +110,22 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
     onSuccess: refresh,
   })
 
+  // View in the browser (owner, 2026-10-16: "see the document without downloading"): photos and PDFs open in
+  // a viewer; Office / text files can only be downloaded. Always shown with the type the upload was checked as.
+  const [viewing, setViewing] = useState<{ name: string; url: string; kind: 'image' | 'pdf' } | null>(null)
+  const viewable = (d: SupportingDoc) => d.mime.startsWith('image/') || d.mime === 'application/pdf'
+  async function view(d: SupportingDoc) {
+    try {
+      const blob = await api.fetchBlob(attachmentPath(v.id, d.id))
+      const typed = new Blob([blob], { type: d.mime })
+      setViewing({ name: d.fileName || `Document ${d.id.slice(0, 6)}`, url: URL.createObjectURL(typed), kind: d.mime === 'application/pdf' ? 'pdf' : 'image' })
+    } catch (e) { setError(errorWords(e)) }
+  }
+  function closeViewer() {
+    if (viewing) URL.revokeObjectURL(viewing.url)
+    setViewing(null)
+  }
+
   async function download(d: SupportingDoc) {
     try { await api.download(attachmentPath(v.id, d.id), d.fileName || `${v.number}-document-${d.id.slice(0, 6)}`) }
     catch (e) { setError(errorWords(e)) }
@@ -166,6 +183,9 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
                 <span className="text-white/45"> · {kb(d.sizeBytes)} · {d.uploadedByName ?? '—'} · {fmtDateTime(d.createdAt)}</span>
               </span>
               <span className="flex items-center gap-3 shrink-0">
+                {viewable(d) && (
+                  <button type="button" onClick={() => void view(d)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>View</button>
+                )}
                 <button type="button" onClick={() => void download(d)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>Download</button>
                 {!locked && (v.canUpload || isKeeper) && (
                   <button type="button" onClick={async () => {
@@ -181,6 +201,16 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
       )}
       {error && <div className="whitespace-pre-line"><ErrorBanner message={error} /></div>}
       {del.error && <ErrorBanner message={errorWords(del.error)} />}
+      {viewing && (
+        <Modal title={viewing.name} onClose={closeViewer} wide>
+          {viewing.kind === 'pdf' ? (
+            <iframe src={viewing.url} title={viewing.name} className="w-full rounded-lg" style={{ height: '75vh', border: '1px solid var(--border)' }} />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={viewing.url} alt={viewing.name} className="mx-auto max-h-[75vh] max-w-full rounded-lg object-contain" />
+          )}
+        </Modal>
+      )}
     </div>
   )
 }

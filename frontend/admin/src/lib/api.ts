@@ -293,7 +293,17 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
 /** Download a file the API generates (CSV exports), with the session attached.
  *  An expired session is refreshed and the download retried once, the same
  *  as request(); any failure rejects, for the caller to show. */
-async function download(path: string, filename: string, retry = true): Promise<void> {
+async function download(path: string, filename: string): Promise<void> {
+  const url = URL.createObjectURL(await fetchBlob(path))
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+/** The same authenticated fetch as download(), returning the file instead of
+ *  saving it — for viewing a document in the browser ("View"). */
+async function fetchBlob(path: string, retry = true): Promise<Blob> {
   const token = getToken()
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     credentials: 'include',
@@ -305,7 +315,7 @@ async function download(path: string, filename: string, retry = true): Promise<v
     },
   })
   if (res.status === 401 && retry) {
-    if (await refreshAccessToken()) return download(path, filename, false)
+    if (await refreshAccessToken()) return fetchBlob(path, false)
     useAuthStore.getState().clearAuth()
     window.location.href = '/login'
     throw new ApiError(401, 'UNAUTHORIZED', 'Session expired')
@@ -313,15 +323,12 @@ async function download(path: string, filename: string, retry = true): Promise<v
   if (!res.ok) {
     throw await errorFrom(res, 'DOWNLOAD_FAILED', 'Download failed')
   }
-  const url = URL.createObjectURL(await res.blob())
-  const a = document.createElement('a')
-  a.href = url; a.download = filename
-  document.body.appendChild(a); a.click(); a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return res.blob()
 }
 
 export const api = {
   download,
+  fetchBlob,
   get:    <T>(path: string) => request<T>(path),
   // Mutations accept an optional second arg shape: either the body alone
   // (legacy callers) or `{ tenantId }` to pin the write to a specific company
