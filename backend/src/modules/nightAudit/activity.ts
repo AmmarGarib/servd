@@ -1,7 +1,7 @@
 // Which days had SALES activity (owner, 2026-10-16: the night audit is for the
 // sales module only). A day is active when the company had, that Karachi day:
 //   • an order placed, completed or scheduled (through its brand's company);
-//   • a till opened or closed (Shift.tenantId, else its location's, else —
+//   • a till opened, or closed on that BUSINESS day (lib/businessDay.ts) (Shift.tenantId, else its location's, else —
 //     no location — its cashier's company: tenantScope.shiftOfCompany);
 //   • a payment created (through its order's brand).
 // Nothing else: deposit drops, card-machine charges and Raast receipts always
@@ -10,6 +10,7 @@
 
 import type { PrismaClient, Prisma } from '@prisma/client'
 import { parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
+import { BUSINESS_DAY_CUTOFF_HOURS, shiftCloseCandidateRange } from '../../lib/businessDay.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -18,6 +19,7 @@ export async function activityDaysBetween(db: Db, tenantId: string, fromDay: str
   if (fromDay > toDay) return []
   const from = parsePktStartOfDay(fromDay)
   const to = parsePktEndOfDay(toDay)
+  const closeTo = shiftCloseCandidateRange(from, to).lte
   const rows = await db.$queryRaw<Array<{ day: string }>>`
     WITH ts AS (
       SELECT o."placedAt" AS t FROM orders o JOIN concepts c ON c.id = o."conceptId"
@@ -35,7 +37,13 @@ export async function activityDaysBetween(db: Db, tenantId: string, fromDay: str
       SELECT x.t FROM (
         SELECT s."openedAt" AS t, s."tenantId", s."locationId", s."userId" FROM shifts s WHERE s."openedAt" BETWEEN ${from} AND ${to}
         UNION ALL
-        SELECT s."closedAt", s."tenantId", s."locationId", s."userId" FROM shifts s WHERE s."closedAt" BETWEEN ${from} AND ${to}
+        -- A close counts on its BUSINESS day (lib/businessDay.ts): the later of the day
+        -- it opened and the day of the close less the 05:00 cut-off.
+        SELECT b.t, b."tenantId", b."locationId", b."userId" FROM (
+          SELECT GREATEST(s."openedAt", s."closedAt" - make_interval(hours => ${BUSINESS_DAY_CUTOFF_HOURS}::int)) AS t,
+                 s."tenantId", s."locationId", s."userId"
+            FROM shifts s WHERE s."closedAt" BETWEEN ${from} AND ${closeTo}
+        ) b WHERE b.t BETWEEN ${from} AND ${to}
       ) x
       LEFT JOIN locations l ON l.id = x."locationId"
       LEFT JOIN users u ON u.id = x."userId"

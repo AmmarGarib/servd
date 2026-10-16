@@ -16,9 +16,9 @@ import {
   CHECK_FAILED_PREFIX, openTillsThrough, postingFailedBetween, runChecks, unpostedOrderRows, unpostedShiftRows,
 } from '../accounting/closeChecks.js'
 import { parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
-import { shiftOfCompany } from '../../lib/tenantScope.js'
+import { closedShiftsOfBusinessDays } from '../../lib/businessDay.js'
 import { toCents } from '../../lib/money.js'
-import { codPendingRows } from '../reconciliation/codCloseCheck.js'
+import { codPendingLink, codPendingRows } from '../reconciliation/codCloseCheck.js'
 import { raastNightOpenBetween, raastOpenBetween } from '../reconciliation/raast.js'
 import { raastConnectorTx } from '../../connectors/raast/match.js'
 import { cardDayGrossTx, cardSettlementSettings, dayNum, unsettledCardDays } from '../reconciliation/cardPayouts.js'
@@ -36,12 +36,13 @@ function block(key: string, title: string, detail: string, count: number, link: 
 /** Order statuses that end a ticket. */
 const ENDED_ORDER = ['completed', 'cancelled', 'rejected', 'refunded'] as const
 
-/** Shifts of the company closed in [from, to]. */
+/**
+ * Shifts of the company closed on the business days [from, to]: a till that
+ * closes before 05:00 PKT belongs to the day it opened (lib/businessDay.ts —
+ * owner, 2026-10-16).
+ */
 async function shiftsClosedBetween(db: CloseCheckDb, tenantId: string, from: Date, to: Date): Promise<Array<{ id: string }>> {
-  return db.shift.findMany({
-    where: { status: 'closed', closedAt: { gte: from, lte: to }, ...shiftOfCompany({ tenantId: { in: [tenantId] } }) },
-    select: { id: true },
-  })
+  return closedShiftsOfBusinessDays(db, tenantId, from, to)
 }
 
 /** Open cash_variance flags on the company's shifts closed in [from, to] (owner question Q4). */
@@ -102,26 +103,32 @@ export async function unresolvedTendersBetween(db: CloseCheckDb, tenantId: strin
 }
 
 /**
- * Tills closed in [from, to] whose cash the drawer handed over
- * (expectedShiftDeposit fromDrawerCents > 0) with no deposit drop naming the
- * shift (owner question Q2: the day's till cash must be banked).
+ * Tills closed on the business days [from, to] whose cash is not banked in
+ * full: the amounts banked for the shift (every deposit drop's share for it —
+ * one bag may be split across several tills, owner 2026-10-16) fall short of
+ * its cash to bank (expectedShiftDeposit: its drops + counted close − float
+ * kept) — wholly, or by more than the company's cash tolerance when part is
+ * banked. "A deposit exists" is not enough — the night audit compares amounts. `cents` = what is still unbanked.
  */
 export async function cashNotBankedBetween(db: CloseCheckDb, tenantId: string, from: Date, to: Date): Promise<{ count: number; cents: number }> {
   const shifts = await shiftsClosedBetween(db, tenantId, from, to)
   if (shifts.length === 0) return { count: 0, cents: 0 }
-  const dropped = new Set((await db.depositDrop.findMany({
-    where: { shiftId: { in: shifts.map((s) => s.id) } },
-    select: { shiftId: true },
-  })).map((d) => d.shiftId))
-  const { expectedShiftDeposit } = await import('../accounting/depositPosting.js')
+  const { bankedByShift, expectedShiftDeposit } = await import('../accounting/depositPosting.js')
+  const { cashVarianceLimitCents } = await import('../../lib/drawer.js')
+  const banked = await bankedByShift(db, tenantId, shifts.map((s) => s.id))
+  const tolerance = await cashVarianceLimitCents(tenantId)
   let count = 0
   let cents = 0
   for (const s of shifts) {
-    if (dropped.has(s.id)) continue
     const e = await expectedShiftDeposit(s.id)
-    if (e.fromDrawerCents <= 0) continue
+    if (e.expectedCents <= 0) continue
+    const bankedCents = banked.get(s.id) ?? 0
+    const short = e.expectedCents - bankedCents
+    // Nothing banked at all blocks whatever the amount; a part banked blocks
+    // when the rest is beyond the tolerance (a counting difference at the bank).
+    if (short <= 0 || (bankedCents > 0 && short <= tolerance)) continue
     count += 1
-    cents += e.fromDrawerCents
+    cents += short
   }
   return { count, cents }
 }
@@ -189,9 +196,10 @@ export const NIGHT_CHECKS: NightCheck[] = [
     const rows = await codPendingRows(ctx.db, ctx.tenantId, ctx.from, ctx.to)
     if (rows.length === 0) return null
     const cents = rows.reduce((t, p) => t + toCents(p.amountCents), 0)
+    const go = await codPendingLink(ctx.db, ctx.tenantId)
     return block('cod_pending', 'Cash on delivery not handed in',
-      `${plural(rows.length, 'cash-on-delivery payment')} of ${ctx.day} (${pkr(cents)}) ${rows.length === 1 ? 'has' : 'have'} not been paid into a drawer. Take the cash in on the till or settle it on Reconciliation → Cash on delivery.`,
-      rows.length, '/reconciliation?tab=cod', cents)
+      `${plural(rows.length, 'cash-on-delivery payment')} of ${ctx.day} (${pkr(cents)}) ${rows.length === 1 ? 'has' : 'have'} not been paid into a drawer. ${go.where}`,
+      rows.length, go.link, cents)
   }),
   {
     key: 'tenders_unresolved', phase: 'night', severity: 'block', overridable: true,
@@ -249,7 +257,7 @@ export const SETTLEMENT_CHECKS: NightCheck[] = [
     const r = await cashNotBankedBetween(ctx.db, ctx.tenantId, ctx.from, ctx.to)
     if (r.count === 0) return null
     return block('cash_not_banked', 'Till cash not deposited',
-      `${plural(r.count, 'till')} closed on ${ctx.day} handed over ${pkr(r.cents)} of cash with no bank deposit recorded. Record the deposit on Finance → Deposit drops.`,
+      `${plural(r.count, 'till')} closed on ${ctx.day} still ${r.count === 1 ? 'has' : 'have'} ${pkr(r.cents)} of cash not deposited in the bank. Record the deposit (one bag may be split across several tills) on Finance → Deposit drops.`,
       r.count, '/finance/deposit-drops', r.cents)
   }),
   settlement('sales_bank_unmatched', async (ctx) => {

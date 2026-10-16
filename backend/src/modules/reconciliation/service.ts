@@ -706,8 +706,8 @@ export async function unmatchStatementLine(lineId: string): Promise<{ before: { 
 //   (i) the entry is dated in [from, to] and its reference is a SALES source
 //       (nightAudit/lock.ts salesReferenceSqlPatterns) — Raast lines
 //       (RAAST_RECEIPTS_MEMO) excluded, Raast reconciles receipt by receipt;
-//  (ii) or it is the 'deposit.drop:<id>' of a drop of a till closed in
-//       [from, to], whatever day it was dropped — the day's till cash must
+//  (ii) or it is the 'deposit.drop:<id>' of a drop with a share of a till
+//       closed on the business days [from, to], whatever day it was dropped — the day's till cash must
 //       reach the bank statement.
 // Supplier, petty-cash, payroll, OpEx, CapEx, receivable and inter-company
 // bank lines are never read.
@@ -717,20 +717,18 @@ export async function salesBankUnmatchedBetween(
 ): Promise<{ count: number; cents: number }> {
   const { salesReferenceSqlPatterns } = await import('../nightAudit/lock.js')
   const { NON_BANK_MONEY_CODES } = await import('../../connectors/raast/accounts.js')
-  const { shiftOfCompany } = await import('../../lib/tenantScope.js')
   const banks = await db.bankAccount.findMany({ where: { tenantId, accountCode: { not: null } }, select: { accountCode: true } })
   const excluded = new Set<string>([ACCT.CASH_ON_HAND, ACCT.PETTY_CASH, ACCT.CASH_DRAWER, ACCT.CARD_RECEIVABLE, ...NON_BANK_MONEY_CODES])
   const codes = [...new Set([ACCT.BANK as string, ...banks.map((b) => b.accountCode!)])].filter((c) => !excluded.has(c))
   if (codes.length === 0) return { count: 0, cents: 0 }
-  const shifts = await db.shift.findMany({
-    where: { status: 'closed', closedAt: { gte: from, lte: to }, ...shiftOfCompany({ tenantId: { in: [tenantId] } }) },
-    select: { id: true },
-  })
-  const drops = shifts.length === 0 ? [] : await db.depositDrop.findMany({
-    where: { tenantId, shiftId: { in: shifts.map((s) => s.id) } },
-    select: { id: true },
-  })
-  const dropRefs = drops.map((d) => `deposit.drop:${d.id}`)
+  // Tills of the BUSINESS days [from, to] (a close before 05:00 PKT is the
+  // day it opened — lib/businessDay.ts), and every drop with a share of them
+  // (one bag may cover several tills — dropAllocations).
+  const { closedShiftsOfBusinessDays } = await import('../../lib/businessDay.js')
+  const { dropAllocations } = await import('../accounting/depositPosting.js')
+  const shifts = await closedShiftsOfBusinessDays(db, tenantId, from, to)
+  const drops = shifts.length === 0 ? [] : await dropAllocations(db, { tenantId, shiftIds: shifts.map((s) => s.id) })
+  const dropRefs = [...new Set(drops.map((d) => `deposit.drop:${d.dropId}`))]
   const patterns = salesReferenceSqlPatterns()
   const rows = await db.$queryRaw<Array<{ n: number; cents: bigint | number | null }>>`
     SELECT count(*)::int AS n, COALESCE(sum(l."amountCents"), 0)::bigint AS cents

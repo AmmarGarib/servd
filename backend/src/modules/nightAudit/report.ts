@@ -7,6 +7,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import { shiftOfCompany } from '../../lib/tenantScope.js'
+import { closedShiftsOfBusinessDays } from '../../lib/businessDay.js'
 import { toCents } from '../../lib/money.js'
 import { drawerExpectation } from '../../lib/drawer.js'
 import { cardDayGrossTx, cardSettlementSettings, dayNum } from '../reconciliation/cardPayouts.js'
@@ -112,9 +113,12 @@ export async function buildDailyReport(db: Db, tenantId: string, day: string, op
     if (p.method === 'comp' && p.status === 'paid') { comps += 1; compCents += p.amountCents }
   }
 
-  // ── Cash: tills closed (or opened and still open) on the day ──
+  // ── Cash: tills closed on the day — by BUSINESS day, so a till closing
+  // before 05:00 PKT is on the day it opened (lib/businessDay.ts) — or opened
+  // on the day and still open ──
+  const closedIds = (await closedShiftsOfBusinessDays(db, tenantId, from, to)).map((s) => s.id)
   const shifts = await db.shift.findMany({
-    where: { AND: [shiftOfCompany({ tenantId: { in: [tenantId] } }), { OR: [{ closedAt: at }, { closedAt: null, openedAt: at }] }] },
+    where: { AND: [shiftOfCompany({ tenantId: { in: [tenantId] } }), { OR: [{ id: { in: closedIds } }, { closedAt: null, openedAt: at }] }] },
     select: {
       id: true, openedAt: true, closedAt: true, openingFloatCents: true, closingFloatCents: true,
       user: { select: { name: true } }, location: { select: { name: true } },
@@ -123,7 +127,9 @@ export async function buildDailyReport(db: Db, tenantId: string, day: string, op
     orderBy: { openedAt: 'asc' },
   })
   const shiftIds = shifts.map((s) => s.id)
-  const drops = shiftIds.length ? await db.depositDrop.findMany({ where: { shiftId: { in: shiftIds } }, select: { shiftId: true, amountCents: true } }) : []
+  // Each drop's share per shift (one bag may cover several tills).
+  const { bankedByShift } = await import('../accounting/depositPosting.js')
+  const banked = await bankedByShift(db, tenantId, shiftIds)
   const varFlags = shiftIds.length ? await db.exceptionFlag.findMany({
     where: { tenantId, kind: 'cash_variance', entityType: 'Shift', entityId: { in: shiftIds } },
     select: { entityId: true, status: true },
@@ -145,7 +151,7 @@ export async function buildDailyReport(db: Db, tenantId: string, day: string, op
       shiftId: s.id, cashier: s.user.name, location: s.location?.name ?? null,
       openedAt: s.openedAt.toISOString(), closedAt: s.closedAt?.toISOString() ?? null,
       openingFloatCents: s.openingFloatCents, expectedCents: expected, countedCents: counted, varianceCents: variance,
-      depositDropCents: drops.filter((d) => d.shiftId === s.id).reduce((t, d) => t + d.amountCents, 0),
+      depositDropCents: banked.get(s.id) ?? 0,
       varianceFlag: (flag?.status as 'open' | 'acknowledged' | 'resolved' | undefined) ?? null,
     })
   }

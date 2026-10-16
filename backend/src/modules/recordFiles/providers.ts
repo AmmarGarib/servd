@@ -16,7 +16,7 @@
 //
 //   owner type      record           read                         write                          gate
 //   opex_payment    OpexPayment      OPEX_TEAM                    OPEX_TEAM                      'capital' (moduleGateForNewRoles, managers exempt)
-//   supplier_bill   SupplierBill     AP_READERS                   MANAGERS (POST /bills)         /procurement/bills (read: procurement|accounting, write: procurement)
+//   supplier_bill   SupplierBill     AP_READERS                   AP_WRITERS (POST /bills)       /procurement/bills (procurement|accounting) + requireApWriterModule on write
 //   goods_receipt   GoodsReceipt     PROCUREMENT_TEAM             MANAGERS (dock receive)        none (the dock page is deliberately ungated, decision 27)
 //   prep_batch      PrepBatch        ALL_STAFF                    the cook who logged it, or a manager   none (as /crosschecks/prep-batches)
 //   hr_document     HrDocument       HR_ADMIN                     HR_ADMIN                       /hr/documents (staff_hr)
@@ -36,7 +36,7 @@ import { registerRecordFileProvider, type RecordFileMode, type RecordFileProvide
 import { ALL_STAFF, FINANCIALS_VIEWERS, MANAGERS, PROCUREMENT_TEAM } from '../auth/middleware.js'
 import { moduleGateForNewRoles } from '../opex/moduleGate.js'
 import { OPEX_TEAM } from '../opex/routes.js'
-import { AP_READERS } from '../procurement/routes.js'
+import { AP_READERS, AP_WRITERS, requireApWriterModule } from '../procurement/routes.js'
 import { supplierScopeWhere } from '../procurement/scope.js'
 import { HR_ADMIN } from '../hr/routes.js'
 import { FA_WRITER_ROLES } from '../fixedAssets/events.js'
@@ -98,8 +98,10 @@ const supplierBill: RecordFileProvider = {
   auditCategory: 'accounting',
   fileStem: 'supplier-bill',
   async resolve(req, ownerId, mode) {
-    assertRole(req, mode === 'read' ? AP_READERS : MANAGERS, this.label)
+    assertRole(req, mode === 'read' ? AP_READERS : AP_WRITERS, this.label)
     await gateAs(req, '/procurement/bills', mode)
+    // As POST /bills: finance with 'accounting', every other role 'procurement'.
+    if (mode !== 'read') await requireApWriterModule(req)
     const bill = await prisma.supplierBill.findFirst({
       where: { id: ownerId, supplier: await supplierScopeWhere(req, scopeMode(mode)) },
       select: { supplier: { select: { tenantId: true } } },

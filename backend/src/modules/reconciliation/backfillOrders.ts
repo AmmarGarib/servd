@@ -70,6 +70,8 @@ export type RefusedPostingKind = 'deposit.drop' | 'inventory.waste' | 'inventory
   // On-account clients / Delivery (2026-10-15): the CEO's till-clearing cut-over
   // (and its late moves), and a rider's COD pay-in that did not clear the debt.
   | 'ledger.till_clearing_split' | 'cod.rider_debt.reversal'
+  // A supplier's opening balance (procurement/openingBalance.ts) the ledger refused.
+  | 'supplier.opening'
 /** Step 5's kinds: a stock step of an order that failed ('stock_restore_failed', by metadata.phase). */
 export type StockRerunKind = 'stock.deplete' | 'stock.restore' | 'stock.remake'
 export type OrderBackfillKind = 'order.complete' | 'loyalty.earn' | 'loyalty.redeem' | 'order.refund' | RefusedPostingKind | StockRerunKind
@@ -428,6 +430,38 @@ function metaOf(v: Prisma.JsonValue): Record<string, unknown> {
 }
 
 const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
+  // A supplier's opening balance (finance final, item 4): posted as DELTAS
+  // under 'supplier.opening:<supplierId>:<uuid>' (so multiPost), dated at its
+  // opening date; the sync posts only what the ledger still lacks.
+  'supplier.opening': {
+    entityType: 'Supplier',
+    title: 'A supplier\'s opening balance did not reach the ledger',
+    multiPost: true,
+    nothingToPost: new Set(['nothing_owed']),
+    load: async (supplierId) => {
+      const s = await prisma.supplier.findUnique({
+        where:  { id: supplierId },
+        select: { id: true, name: true, tenantId: true, openingBalanceCents: true, openingBalanceDate: true, createdAt: true },
+      })
+      if (!s) return null
+      const { postedOpeningBalances, openingDateOf, syncSupplierOpeningBalance } = await import('../procurement/openingBalance.js')
+      const posted = (await postedOpeningBalances([supplierId])).get(supplierId) ?? new Map<string, number>()
+      const target = toCents(s.openingBalanceCents)
+      const owedHere = s.tenantId ? target - (posted.get(s.tenantId) ?? 0) : 0
+      const owedElsewhere = Array.from(posted.entries()).some(([t, v]) => t !== s.tenantId && v !== 0)
+      return {
+        tenantId: s.tenantId, date: openingDateOf(s), orderId: null, amountCents: owedHere,
+        what: `Opening balance of ${s.name}: ${pkr(owedHere)} still to post`,
+        nothingOwed: owedHere === 0 && !owedElsewhere ? 'The opening balance is already on the books — nothing to post.' : undefined,
+        post: async (o) => {
+          const r = await syncSupplierOpeningBalance(supplierId, { postedBy: o.postedBy, entryDate: o.entryDate, memoNote: o.memoNote })
+          return r.postings.length > 0
+            ? { posted: true, entryId: r.postings[0]!.entryId }
+            : { posted: false, entryId: null, reason: 'nothing_owed' }
+        },
+      }
+    },
+  },
   'deposit.drop': {
     entityType: 'DepositDrop',
     title: 'Bank deposit did not reach the ledger',

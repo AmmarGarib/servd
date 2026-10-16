@@ -254,19 +254,42 @@ export async function rejectPo(poId: string, approverId: string, reason: string,
 }
 
 export async function cancelPo(poId: string, userId: string, reason: string) {
-  const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, include: { lines: true } })
-  if (!po) throw new NotFoundError('PurchaseOrder', poId)
-  if (po.status === 'cancelled') throw new AppError('INVALID_STATE', 'Already cancelled', 400)
-  if (po.status === 'received') throw new AppError('INVALID_STATE', 'Cannot cancel a fully received PO', 400)
-
-  const hasReceiving = po.lines.some((l) => l.quantityReceived > 0)
-  if (hasReceiving) throw new AppError('INVALID_STATE', 'Cannot cancel — some lines have been received. Adjust manually.', 400)
-
   return prisma.$transaction(async (tx) => {
-    await tx.purchaseOrder.update({
-      where: { id: poId },
+    // Serialised with receiving (receiving.ts locks the same row) and with a
+    // bill billed ahead of delivery (supplierPosting.ts locks it too): the
+    // checks below read the PO as it is under the lock.
+    await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`
+    const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, include: { lines: { select: { id: true, quantityReceived: true } } } })
+    if (!po) throw new NotFoundError('PurchaseOrder', poId)
+    if (po.status === 'cancelled') throw new AppError('INVALID_STATE', 'Already cancelled', 400)
+    if (po.status === 'received') throw new AppError('INVALID_STATE', 'Cannot cancel a fully received PO', 400)
+
+    const hasReceiving = po.lines.some((l) => l.quantityReceived > 0)
+    if (hasReceiving) throw new AppError('INVALID_STATE', 'Cannot cancel — some lines have been received. Adjust manually.', 400)
+
+    // A bill booked against this PO before delivery debited 2015 GRNI and
+    // waits (a 'pending' GrniMatch) for the goods. Cancelling would strand
+    // that debit and leave the bill payable for goods that can never arrive.
+    // (A "short" credit note for the whole quantity voids those matches, so
+    // the cancel goes through after it.)
+    const lineIds = po.lines.map((l) => l.id)
+    const pending = lineIds.length === 0 ? null : await tx.grniMatch.findFirst({
+      where:  { poLineId: { in: lineIds }, status: 'pending' },
+      select: { bill: { select: { billNumber: true } } },
+    })
+    if (pending) {
+      throw new AppError(
+        'PO_BILLED_AHEAD',
+        `Bill ${pending.bill.billNumber} was booked against this purchase order before the goods arrived — void that bill (or raise a "short" credit note for what never came) before cancelling the order`,
+        409,
+      )
+    }
+
+    const claimed = await tx.purchaseOrder.updateMany({
+      where: { id: poId, status: { notIn: ['cancelled', 'received'] } },
       data:  { status: 'cancelled', cancelledById: userId, cancelledAt: new Date(), cancelReason: reason },
     })
+    if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO changed meanwhile — reload it', 409)
     await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId, action: 'cancelled', details: { reason } } })
     return { id: poId, status: 'cancelled' }
   })
@@ -542,6 +565,7 @@ export async function createBill(input: CreateBillInput) {
   const dueDate  = input.dueDate
     ? new Date(input.dueDate)
     : new Date(billDate.getTime() + supplier.paymentTermsDays * 24 * 60 * 60 * 1000)
+  if (Number.isNaN(dueDate.getTime())) throw new AppError('INVALID_DATE', 'The due date is not a date — use YYYY-MM-DD', 422)
 
   // Tax (H8): who charged the sales tax decides the input account. Withholding
   // (H8 / H28): the ONE resolver, fixed now and booked from these stored figures.
@@ -901,6 +925,9 @@ export async function createPayment(input: CreatePaymentInput) {
 export async function createPaymentTx(tx: Prisma.TransactionClient, input: CreatePaymentInput) {
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Amount must be positive', 400)
   assertMoneyFits(input.amountCents, 'This payment')
+  // A date that is not a date is the caller's mistake (422), never a 500 at insert.
+  const paymentDate = new Date(input.paymentDate)
+  if (Number.isNaN(paymentDate.getTime())) throw new AppError('INVALID_DATE', 'The payment date is not a date — use YYYY-MM-DD', 422)
 
   const allocations = input.applications ?? []
   allocations.forEach((a) => assertMoneyFits(a.amountAppliedCents, 'An amount applied to a bill'))
@@ -952,7 +979,7 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
   const payment = await tx.supplierPayment.create({
     data: {
       supplierId:  input.supplierId,
-      paymentDate: new Date(input.paymentDate),
+      paymentDate,
       method:      input.method,
       bankAccountId,
       reference:   input.reference ?? null,
@@ -1231,20 +1258,82 @@ export function creditNoteAvailableCents(cn: { totalCents: DbMoney; whtCents: Db
   return toCents(cn.totalCents) - toCents(cn.whtCents) - toCents(cn.creditedCents)
 }
 
-async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): Promise<AgingRow[]> {
+type AgingDoc = { id: string; kind: string; dueDate: Date; totalCents: DbMoney; whtCents: DbMoney; paidCents: DbMoney; creditedCents: DbMoney }
+type AgingSupplier = { id: string; name: string; tenantId: string | null; openingBalanceCents: DbMoney; bills: AgingDoc[]; payments: Array<{ amountCents: DbMoney; appliedCents: DbMoney }> }
+
+/**
+ * The suppliers' bills, credit notes and payments AS AT `asOf` (finance final,
+ * item 17) — what AP 2010 held at the end of that day, so a month-end aging
+ * run later still ties to the trial balance:
+ *   • bills / credit notes dated on or before asOf (posted at their own date),
+ *     not void — or voided after asOf (the void's reversal is dated the void);
+ *   • payments dated on or before asOf, not voided by then;
+ *   • paid / credited rebuilt from the applications that existed at asOf
+ *     (made by then, of a payment / credit note counted, to a bill counted).
+ *     An application made later leaves the money an unapplied credit at asOf,
+ *     which nets the same in the total.
+ */
+async function suppliersAsOf(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): Promise<AgingSupplier[]> {
+  const liveAt = { OR: [{ voidedAt: null, status: { not: 'void' } }, { voidedAt: { gt: asOf } }] }
   const suppliers = await prisma.supplier.findMany({
     where: supplierWhere,
     select: {
       id: true, name: true, tenantId: true, openingBalanceCents: true,
       bills: {
+        where:  { status: { not: 'draft' }, billDate: { lte: asOf }, ...liveAt },
+        select: { id: true, kind: true, dueDate: true, totalCents: true, whtCents: true },
+      },
+      payments: {
+        where:  { paymentDate: { lte: asOf }, OR: [{ voidedAt: null }, { voidedAt: { gt: asOf } }] },
+        select: { id: true, amountCents: true },
+      },
+    },
+  })
+  const billIds = suppliers.flatMap((s) => s.bills.filter((b) => b.kind === 'bill').map((b) => b.id))
+  const cnIds = suppliers.flatMap((s) => s.bills.filter((b) => b.kind === 'credit_note').map((b) => b.id))
+  const paymentIds = suppliers.flatMap((s) => s.payments.map((p) => p.id))
+  const [payApps, creditApps] = await Promise.all([
+    billIds.length === 0 || paymentIds.length === 0 ? [] : prisma.supplierPaymentApplication.findMany({
+      where:  { billId: { in: billIds }, paymentId: { in: paymentIds }, createdAt: { lte: asOf } },
+      select: { billId: true, paymentId: true, amountAppliedCents: true },
+    }),
+    billIds.length === 0 || cnIds.length === 0 ? [] : prisma.supplierCreditApplication.findMany({
+      where:  { billId: { in: billIds }, creditNoteId: { in: cnIds }, createdAt: { lte: asOf } },
+      select: { billId: true, creditNoteId: true, amountCents: true },
+    }),
+  ])
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v)
+  const paidByBill = new Map<string, number>(), appliedByPayment = new Map<string, number>()
+  for (const a of payApps) { add(paidByBill, a.billId, toCents(a.amountAppliedCents)); add(appliedByPayment, a.paymentId, toCents(a.amountAppliedCents)) }
+  const creditedByBill = new Map<string, number>(), usedByCn = new Map<string, number>()
+  for (const a of creditApps) { add(creditedByBill, a.billId, toCents(a.amountCents)); add(usedByCn, a.creditNoteId, toCents(a.amountCents)) }
+  return suppliers.map((s) => ({
+    ...s,
+    bills: s.bills.map((b) => b.kind === 'credit_note'
+      ? { ...b, paidCents: 0, creditedCents: usedByCn.get(b.id) ?? 0 }
+      : { ...b, paidCents: paidByBill.get(b.id) ?? 0, creditedCents: creditedByBill.get(b.id) ?? 0 }),
+    payments: s.payments.map((p) => ({ amountCents: p.amountCents, appliedCents: appliedByPayment.get(p.id) ?? 0 })),
+  }))
+}
+
+/**
+ * `pointInTime`: rebuild every figure as at `asOf` (suppliersAsOf); otherwise
+ * the documents as they stand now, aged at `asOf`.
+ */
+async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date, pointInTime = false): Promise<AgingRow[]> {
+  const suppliers: AgingSupplier[] = pointInTime ? await suppliersAsOf(supplierWhere, asOf) : await prisma.supplier.findMany({
+    where: supplierWhere,
+    select: {
+      id: true, name: true, tenantId: true, openingBalanceCents: true,
+      bills: {
         where: { status: { notIn: ['void', 'draft'] } },
-        select: { kind: true, dueDate: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true, status: true },
+        select: { id: true, kind: true, dueDate: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true },
       },
       payments: { where: { voidedAt: null }, select: { amountCents: true, appliedCents: true } },
     },
   })
 
-  const posted = await postedOpeningBalances(suppliers.map((s) => s.id))
+  const posted = await postedOpeningBalances(suppliers.map((s) => s.id), prisma, pointInTime ? asOf : undefined)
   const rows: AgingRow[] = []
   for (const s of suppliers) {
     // Company suppliers: the opening as posted to that company's ledger.
@@ -1255,7 +1344,8 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
       supplierId: s.id, supplierName: s.name, tenantId: s.tenantId,
       bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0,
       creditsCents: 0, creditNotesCents: 0, total: 0, openingCents,
-      openingUnpostedCents: s.tenantId ? opening - openingCents : 0,
+      // As at a past date the posted opening is the figure; "not yet posted" is today's question.
+      openingUnpostedCents: s.tenantId && !pointInTime ? opening - openingCents : 0,
     }
     for (const b of s.bills) {
       if (b.kind === 'credit_note') {
@@ -1293,15 +1383,21 @@ function totalsOf(rows: AgingRow[]): AgingTotals {
  */
 export async function agingReport(
   tenantIds: string[],
+  /**
+   * asOf: the report AS AT that instant (every figure rebuilt — see
+   * suppliersAsOf), e.g. the end of a month's last day; omitted = now, from
+   * the documents as they stand.
+   */
   opts: { includeUnassigned?: boolean; asOf?: Date } = {},
 ): Promise<AgingReport> {
+  const pointInTime = !!opts.asOf
   const asOf = opts.asOf ?? new Date()
   if (tenantIds.length === 0) {
     return { asOf: asOf.toISOString(), bySupplier: [], total: emptyTotals(), unassigned: { bySupplier: [], total: emptyTotals() } }
   }
   const [rows, orphanRows] = await Promise.all([
-    agingRows({ tenantId: { in: tenantIds } }, asOf),
-    opts.includeUnassigned === false ? Promise.resolve([]) : agingRows({ tenantId: null }, asOf),
+    agingRows({ tenantId: { in: tenantIds } }, asOf, pointInTime),
+    opts.includeUnassigned === false ? Promise.resolve([]) : agingRows({ tenantId: null }, asOf, pointInTime),
   ])
   return {
     asOf: asOf.toISOString(),

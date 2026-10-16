@@ -10,12 +10,23 @@
 //     Drawer (the close leaves the takings there)
 //   • anything beyond that, or a deposit not tied to a shift → 1010
 //
+// A drop may be split across several shifts (owner, 2026-10-16, bank bags:
+// "One deposit can be split across several shifts") — deposit_drop_shifts
+// rows, read only through `dropAllocations` below (a legacy drop with
+// `shiftId` and no rows is one allocation of its whole amount). Each shift's
+// share takes from that shift's cash in the order the drops were made: what
+// EARLIER drops of the same shift already took (their drops first, then the
+// drawer takings) is not taken again, so two bags for one shift never credit
+// 1010 twice (audit fix, 2026-10-16). The split is a pure function of the
+// earlier drops, so a re-post books the same lines.
+//
 // With this entry on the bank's code, a bank-statement import auto-matches
 // the deposit line instead of leaving it for a manual adjustment. One entry
 // per drop, keyed on the drop id. The bank's deposit slip # (when given) and
 // the tamper-bag serial are in the description and every line's memo, so the
 // statement line can be found by either (owner, 2026-10-14).
 
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { drawerExpectation } from '../../lib/drawer.js'
 import { bankLedgerCode } from '../../lib/bankAccounts.js'
@@ -38,6 +49,85 @@ export async function expectedShiftDeposit(shiftId: string): Promise<{ dropsCent
   return { dropsCents: drawer.dropsCents, fromDrawerCents, expectedCents: drawer.dropsCents + fromDrawerCents }
 }
 
+type Db = Prisma.TransactionClient | PrismaClient
+
+/** One shift's share of a deposit drop. */
+export interface DropAllocation { dropId: string; shiftId: string; amountCents: number; droppedAt: Date }
+
+const byDropOrder = (a: DropAllocation, b: DropAllocation) =>
+  a.droppedAt.getTime() - b.droppedAt.getTime() || (a.dropId < b.dropId ? -1 : a.dropId > b.dropId ? 1 : 0)
+
+/**
+ * THE reader of how deposit drops split across shifts: the deposit_drop_shifts
+ * rows, plus a legacy drop that names `shiftId` and has no rows (one
+ * allocation of its whole amount). Filter by the drops' company and either
+ * shifts or one drop. Sorted in drop order (droppedAt, then id).
+ */
+export async function dropAllocations(db: Db, where: { tenantId: string; shiftIds?: string[]; dropId?: string }): Promise<DropAllocation[]> {
+  if (where.shiftIds && where.shiftIds.length === 0) return []
+  const [rows, legacy] = await Promise.all([
+    db.depositDropShift.findMany({
+      where: {
+        tenantId: where.tenantId,
+        ...(where.shiftIds ? { shiftId: { in: where.shiftIds } } : {}),
+        ...(where.dropId ? { depositDropId: where.dropId } : {}),
+      },
+      select: { depositDropId: true, shiftId: true, amountCents: true, depositDrop: { select: { droppedAt: true } } },
+    }),
+    db.depositDrop.findMany({
+      where: {
+        tenantId: where.tenantId,
+        shiftId: where.shiftIds ? { in: where.shiftIds } : { not: null },
+        ...(where.dropId ? { id: where.dropId } : {}),
+        amountCents: { gt: 0 },
+        allocations: { none: {} },
+      },
+      select: { id: true, shiftId: true, amountCents: true, droppedAt: true },
+    }),
+  ])
+  return [
+    ...rows.map((r) => ({ dropId: r.depositDropId, shiftId: r.shiftId, amountCents: r.amountCents, droppedAt: r.depositDrop.droppedAt })),
+    ...legacy.map((d) => ({ dropId: d.id, shiftId: d.shiftId!, amountCents: d.amountCents, droppedAt: d.droppedAt })),
+  ].sort(byDropOrder)
+}
+
+/** Σ banked per shift, from `dropAllocations`. */
+export async function bankedByShift(db: Db, tenantId: string, shiftIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  for (const a of await dropAllocations(db, { tenantId, shiftIds })) out.set(a.shiftId, (out.get(a.shiftId) ?? 0) + a.amountCents)
+  return out
+}
+
+/**
+ * What is still to be banked from `shiftId`: its expected deposit less every
+ * allocation already recorded for it (floor 0) — the figure a NEW drop is
+ * compared with (audit fix: a second bag is no longer compared with the whole
+ * shift).
+ */
+export async function remainingShiftDeposit(db: Db, tenantId: string, shiftId: string): Promise<{ expectedCents: number; bankedCents: number; remainingCents: number }> {
+  const expected = await expectedShiftDeposit(shiftId)
+  const bankedCents = (await bankedByShift(db, tenantId, [shiftId])).get(shiftId) ?? 0
+  return { expectedCents: expected.expectedCents, bankedCents, remainingCents: Math.max(0, expected.expectedCents - bankedCents) }
+}
+
+/**
+ * How one shift's share of a drop splits between the safe (1010 — the shift's
+ * mid-shift drops) and the drawer (1015 — its counted takings), net of what
+ * EARLIER drops of the same shift took: earlier shares consume the drops
+ * first, then the takings; this share does the same with what is left. The
+ * rest of the share (beyond the shift's cash) comes from the safe.
+ */
+export async function shiftShareSplit(db: Db, tenantId: string, alloc: DropAllocation): Promise<{ fromDropsCents: number; fromDrawerCents: number; restCents: number }> {
+  const expected = await expectedShiftDeposit(alloc.shiftId)
+  const all = await dropAllocations(db, { tenantId, shiftIds: [alloc.shiftId] })
+  const before = all.filter((a) => a.dropId !== alloc.dropId && byDropOrder(a, alloc) < 0).reduce((t, a) => t + a.amountCents, 0)
+  const tookDrops = Math.min(before, expected.dropsCents)
+  const tookDrawer = Math.min(before - tookDrops, expected.fromDrawerCents)
+  const fromDropsCents = Math.min(alloc.amountCents, Math.max(0, expected.dropsCents - tookDrops))
+  const fromDrawerCents = Math.min(alloc.amountCents - fromDropsCents, Math.max(0, expected.fromDrawerCents - tookDrawer))
+  return { fromDropsCents, fromDrawerCents, restCents: alloc.amountCents - fromDropsCents - fromDrawerCents }
+}
+
 /**
  * `opts` is for re-posting a refused drop (reconciliation/backfillOrders.ts):
  * dated in the open period with a note naming the drop's date when its own
@@ -51,14 +141,14 @@ export async function postDepositDrop(dropId: string, opts: RepostOptions = {}):
 
   const bankCode = await bankLedgerCode(drop.tenantId, drop.bankAccountId)
 
-  let fromSafe = drop.amountCents
+  // Each shift's share: the safe takes its drops part and anything beyond
+  // the shift's cash; the drawer its takings part. Unallocated → the safe.
   let fromDrawer = 0
-  if (drop.shiftId) {
-    const expected = await expectedShiftDeposit(drop.shiftId)
-    const drops = Math.min(drop.amountCents, expected.dropsCents)
-    fromDrawer = Math.min(drop.amountCents - drops, expected.fromDrawerCents)
-    fromSafe = drop.amountCents - fromDrawer
+  for (const alloc of await dropAllocations(prisma, { tenantId: drop.tenantId, dropId: drop.id })) {
+    fromDrawer += (await shiftShareSplit(prisma, drop.tenantId, alloc)).fromDrawerCents
   }
+  fromDrawer = Math.min(fromDrawer, drop.amountCents)
+  const fromSafe = drop.amountCents - fromDrawer
 
   const marks = [drop.slipNumber ? `slip ${drop.slipNumber}` : null, drop.bagSerial ? `bag ${drop.bagSerial}` : null].filter(Boolean)
   const tag = marks.length > 0 ? ` (${marks.join(', ')})` : ''

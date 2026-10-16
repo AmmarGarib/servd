@@ -98,6 +98,7 @@ import { drawerExpectationOf } from '../../lib/drawer.js'
 import { cogsLinesForOrders } from './cogs.js'
 import { SHIFT_COMPANY_INCLUDE, shiftTenantId } from '../../lib/tenantScope.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { shiftBusinessDate } from '../../lib/businessDay.js'
 
 /** processPayment accepts a tender within 2 paisa of what is due. */
 export const TENDER_ROUNDING_CENTS = 2
@@ -665,7 +666,10 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     `tips=${sales.totals.tipCents} discounts=${sales.totals.discountCents} wallet=${sales.totals.walletAppliedCents} ` +
     `giftCards=${sales.totals.giftCardAppliedCents} cancelledPaid=${cp.cashCents + cp.cardCents + cancelledRaastCents} ` +
     `cancelledRaast=${cancelledRaastCents}[${perCode(cp.raastByCode)}]`
-  return { ok: true, tenantId, entryDate: shift.closedAt ?? new Date(), lines, debits, credits, diagnostics }
+  // Dated by the shift's BUSINESS day (lib/businessDay.ts — owner, 2026-10-16):
+  // a till closing before 05:00 PKT books to the day it opened on, so a dinner
+  // shift's sales and GST stay in that day, month and tax return.
+  return { ok: true, tenantId, entryDate: shiftBusinessDate(shift) ?? shift.closedAt ?? new Date(), lines, debits, credits, diagnostics }
 }
 
 export interface PostShiftCloseOptions {
@@ -728,6 +732,8 @@ export async function postShiftClose(shiftId: string, opts: PostShiftCloseOption
 export interface BackfillRow {
   shiftId: string
   closedAt: string | null
+  /** The date the close is booked on — its business day (lib/businessDay.ts); null while unknown. */
+  businessAt: string | null
   tenantId: string | null
   outcome: 'posted' | 'posted_into_current_month' | 'would_post' | 'would_post_into_current_month'
     | 'unbalanced' | 'shift_has_no_company' | 'no_postable_activity' | 'shift_not_found' | 'already_posted' | 'error'
@@ -739,7 +745,7 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
   const { fmtPktDate } = await import('./dates.js')
   const closed = await prisma.shift.findMany({
     where: { status: 'closed', ...shiftOfCompany({ tenantId: { in: opts.tenantIds } }) },
-    select: { id: true, closedAt: true, tenantId: true, locationId: true, ...SHIFT_COMPANY_INCLUDE },
+    select: { id: true, openedAt: true, closedAt: true, tenantId: true, locationId: true, ...SHIFT_COMPANY_INCLUDE },
     orderBy: { closedAt: 'asc' },
   })
   const posted = new Set(
@@ -761,6 +767,7 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
   for (const s of closed) {
     if (posted.has(s.id)) continue
     const closedAt = s.closedAt?.toISOString() ?? null
+    const businessAt = shiftBusinessDate(s)?.toISOString() ?? null
     // A close the ledger refuses outright (e.g. a Raast row with no bank code
     // on record — RAAST_ACCOUNT_UNKNOWN) is listed, never forced, and never
     // stops the rest of the run.
@@ -770,15 +777,15 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
     } catch (err) {
       const tenantId = shiftTenantId(s)
       if (!tenantId || !opts.tenantIds.includes(tenantId)) continue
-      rows.push({ shiftId: s.id, closedAt, tenantId, outcome: 'error', detail: (err as Error).message })
+      rows.push({ shiftId: s.id, closedAt, businessAt, tenantId, outcome: 'error', detail: (err as Error).message })
       continue
     }
-    if (!entry.ok) { rows.push({ shiftId: s.id, closedAt, tenantId: null, outcome: entry.reason, detail: '' }); continue }
+    if (!entry.ok) { rows.push({ shiftId: s.id, closedAt, businessAt, tenantId: null, outcome: entry.reason, detail: '' }); continue }
     // Only this call's companies — the shift→company precedence can differ
     // from the query's OR in an edge case, so check the resolved company.
     if (!opts.tenantIds.includes(entry.tenantId)) continue
     if (entry.debits !== entry.credits) {
-      rows.push({ shiftId: s.id, closedAt, tenantId: entry.tenantId, outcome: 'unbalanced', detail: `debits ${entry.debits} credits ${entry.credits}; ${entry.diagnostics}` })
+      rows.push({ shiftId: s.id, closedAt, businessAt, tenantId: entry.tenantId, outcome: 'unbalanced', detail: `debits ${entry.debits} credits ${entry.credits}; ${entry.diagnostics}` })
       continue
     }
     const lock = await lockedThrough(entry.tenantId)
@@ -793,18 +800,18 @@ export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun
       ? `closed ${salesDayLateNote(dayLock.day).slice('dated '.length)}`
       : `closed ${fmtPktDate(entry.entryDate)}, posted late into the open month (books closed through ${lock ? fmtPktDate(lock) : '—'})`
     if (opts.dryRun) {
-      rows.push({ shiftId: s.id, closedAt, tenantId: entry.tenantId, outcome: locked ? 'would_post_into_current_month' : 'would_post', detail: locked ? note : entry.diagnostics })
+      rows.push({ shiftId: s.id, closedAt, businessAt, tenantId: entry.tenantId, outcome: locked ? 'would_post_into_current_month' : 'would_post', detail: locked ? note : entry.diagnostics })
       continue
     }
     try {
       const r = await postShiftClose(s.id, locked ? { intoCurrentMonth: { note, postedBy: opts.postedBy } } : {})
       rows.push({
-        shiftId: s.id, closedAt, tenantId: entry.tenantId,
+        shiftId: s.id, closedAt, businessAt, tenantId: entry.tenantId,
         outcome: r.posted ? (locked ? 'posted_into_current_month' : 'posted') : 'already_posted',
         detail: r.entryId ?? r.reason ?? '',
       })
     } catch (err) {
-      rows.push({ shiftId: s.id, closedAt, tenantId: entry.tenantId, outcome: 'error', detail: (err as Error).message })
+      rows.push({ shiftId: s.id, closedAt, businessAt, tenantId: entry.tenantId, outcome: 'error', detail: (err as Error).message })
     }
   }
   const summary: Record<string, number> = {}

@@ -475,6 +475,16 @@ async function postFifoBillTx(tx: Tx, bill: BillForPosting, tenantId: string): P
       if (!line.poLineId) {
         throw new AppError('OVER_BILLED', `"${line.description}": only ${fmtQty(line.quantity - qtyLeft)} of that receipt is left to bill`, 422)
       }
+      // Under the PO's lock (procurement/service.ts cancelPo takes the same
+      // one): goods billed ahead of a CANCELLED order can never arrive.
+      const plPo = await tx.purchaseOrderLine.findUnique({ where: { id: line.poLineId }, select: { purchaseOrderId: true } })
+      if (plPo) {
+        await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${plPo.purchaseOrderId} FOR UPDATE`
+        const poRow = await tx.purchaseOrder.findUnique({ where: { id: plPo.purchaseOrderId }, select: { status: true } })
+        if (poRow?.status === 'cancelled') {
+          throw new AppError('PO_CANCELLED', `"${line.description}": its purchase order was cancelled — nothing more will arrive on it, so it cannot be billed ahead of delivery`, 409)
+        }
+      }
       const pl = await tx.purchaseOrderLine.findUnique({ where: { id: line.poLineId }, select: { quantityOrdered: true, quantityReceived: true } })
       const pending = await tx.grniMatch.aggregate({ where: { poLineId: line.poLineId, status: 'pending', tenantId }, _sum: { qty: true } })
       const room = (pl ? pl.quantityOrdered - pl.quantityReceived : 0) - (pending._sum.qty ?? 0)

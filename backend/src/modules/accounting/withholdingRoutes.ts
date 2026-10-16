@@ -19,8 +19,16 @@
 //                  the bill's live credit notes), paid OpEx payments and paid
 //                  CapEx payments with WHT. For the CA's s.165 statement.
 //
-// The switch itself (OperationsConfig.withholdingTaxEnabled) stays on
-// Configuration → Operations.
+//   PUT /enabled   admin, finance (RATE_EDITORS; module 'accounting' via the
+//                  '/accounting' gate), the ACTIVE company: { enabled, reason
+//                  (≥10) } — switches OperationsConfig.withholdingTaxEnabled
+//                  on or off for that company (owner, 2026-10-16: finance
+//                  switches withholding on, with a reason, audited
+//                  'withholding.switch'). 409 WHT_SWITCH_UNCHANGED when it is
+//                  already so. Bills fix their withholding when recorded, so
+//                  the switch changes NEW bills only.
+//
+// Configuration → Operations keeps the same switch for the CEO.
 
 import type { FastifyInstance } from 'fastify'
 import type { Prisma, UserRole } from '@prisma/client'
@@ -270,6 +278,44 @@ export async function withholdingRoutes(fastify: FastifyInstance): Promise<void>
       before: { rates: before.rates, defaultsUsed: before.defaultsUsed },
       after: { rates: after, withholdingTaxPct: after['153_1_a'].filerBps / 10_000 },
       metadata: { ip: req.ip, sections: given.map(([s]) => s) },
+    })
+    const r = await withholdingRatesFor(prisma, tenantId)
+    return { ...r, maxBps: MAX_WHT_BPS, sections: WHT_SECTIONS.map((key) => ({ key, label: WHT_SECTION_LABEL[key] })), canEdit: true }
+  })
+
+  fastify.put('/enabled', { preHandler: requireAuth(...RATE_EDITORS) }, async (req) => {
+    const body = z.object({
+      enabled: z.boolean(),
+      reason:  z.string().trim().min(10, 'Give a reason of at least 10 characters'),
+    }).parse(req.body ?? {})
+    const tenantId = activeTenantId(req, 'withholding is switched per company')
+    const { before, cfgId } = await prisma.$transaction(async (tx) => {
+      // The same lock as PUT /rates: one writer of the company's settings row.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text), hashtext(${'operations-config'}::text))`
+      const existing = await tx.operationsConfig.findFirst({
+        where: { tenantId, scope: 'global', scopeId: null }, select: { id: true, withholdingTaxEnabled: true },
+      })
+      const prev = existing?.withholdingTaxEnabled ?? false
+      if (prev === body.enabled) {
+        throw new AppError('WHT_SWITCH_UNCHANGED', `Withholding is already ${body.enabled ? 'on' : 'off'} for this company`, 409)
+      }
+      const data = { withholdingTaxEnabled: body.enabled, updatedById: req.staffUser!.id }
+      const row = existing
+        ? await tx.operationsConfig.update({ where: { id: existing.id }, data, select: { id: true } })
+        : await tx.operationsConfig.create({ data: { tenantId, scope: 'global', scopeId: null, ...data }, select: { id: true } })
+      return { before: prev, cfgId: row.id }
+    })
+    const { invalidateSetupCache } = await import('../../lib/setup-config.js')
+    invalidateSetupCache()
+    await audit({ category: 'accounting',
+      action: 'withholding.switch',
+      entity: 'OperationsConfig',
+      entityId: cfgId,
+      userId: req.staffUser!.id, tenantId,
+      userEmail: req.staffUser!.email,
+      before: { enabled: before },
+      after: { enabled: body.enabled },
+      metadata: { ip: req.ip, reason: body.reason, actorRole: req.staffUser!.role },
     })
     const r = await withholdingRatesFor(prisma, tenantId)
     return { ...r, maxBps: MAX_WHT_BPS, sections: WHT_SECTIONS.map((key) => ({ key, label: WHT_SECTION_LABEL[key] })), canEdit: true }

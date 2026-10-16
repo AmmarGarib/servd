@@ -15,7 +15,8 @@
 // the close date and that is still not paid into a drawer: with the rider,
 // overdue, booked as owed by the rider (1351 — booked, but the cash is still
 // out) or a pickup's cash not yet at the counter. The detail splits them by
-// status; the link is Finance → Reconciliation → Cash on delivery.
+// status; the link is Finance → Reconciliation → Cash on delivery while the
+// company's code-only switch is on, else the till's pay-in list (codPendingLink).
 // The orchestrator adds codCloseCheck to CLOSE_CHECKS (accounting/closeChecks.ts).
 
 import type { Prisma } from '@prisma/client'
@@ -23,6 +24,7 @@ import type { CloseCheck, CloseCheckDb } from '../accounting/closeCheckTypes.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import { codDueWhere, codStatusOf, type CodStatus } from '../../lib/cod.js'
 import { toCents } from '../../lib/money.js'
+import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
 
 const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
@@ -61,6 +63,20 @@ export async function codPendingRows(db: CloseCheckDb, tenantId: string, from: D
   })
 }
 
+/**
+ * Where a COD block sends finance. Reconciliation → Cash on delivery lists
+ * (and books) a company's rows only while its code-only delivery switch is on
+ * (codRoutes.ts) — the tab is hidden otherwise — so while it is off the link
+ * is the till's own pay-in list (Till → Rider cash-on-delivery, GET
+ * /pos/cod-due, no switch). Used by this check and the night audit's
+ * cod_pending.
+ */
+export async function codPendingLink(db: CloseCheckDb, tenantId: string): Promise<{ link: string; where: string }> {
+  return (await codeOnlyDelivery(db, tenantId))
+    ? { link: '/reconciliation?tab=cod', where: 'Take the cash in on the till or settle it on Finance → Reconciliation → Cash on delivery.' }
+    : { link: '/pos/shift', where: 'Take the cash in on the till (Till → Rider cash-on-delivery).' }
+}
+
 export const codCloseCheck: CloseCheck = {
   key: 'cod_with_rider',
   severity: 'block',
@@ -81,17 +97,18 @@ export const codCloseCheck: CloseCheck = {
     const parts = (['overdue', 'with_rider', 'rider_owes', 'at_counter'] as CodStatus[])
       .filter((k) => by.has(k))
       .map((k) => `${by.get(k)!.n} ${STATUS_WORDS[k]} (${pkr(by.get(k)!.cents)})`)
+    const go = await codPendingLink(ctx.db, ctx.tenantId)
     return {
       key: 'cod_with_rider',
       severity: 'block',
       title: 'Cash on delivery still pending',
       detail: `${plural(rows.length, 'cash-on-delivery payment')}, ${pkr(cents)}, on orders completed up to ${fmtPktDate(ctx.newLock)} `
         + `${rows.length === 1 ? 'has' : 'have'} not been paid into a drawer: ${parts.join('; ')}. `
-        + 'Take the cash in on the till or settle it on Finance → Reconciliation → Cash on delivery. '
+        + `${go.where} `
         + 'Only the CEO can close over this, with a reason.',
       count: rows.length,
       cents,
-      link: '/reconciliation?tab=cod',
+      link: go.link,
       overridable: true,
     }
   },

@@ -2206,6 +2206,9 @@ model Supplier {
   paymentTermsDays    Int       @default(30)
   leadTimeDays        Int?
   openingBalanceCents BigInt    @default(0)
+  // The day the opening balance is brought forward at (the company's go-live
+  // for this supplier). Its ledger postings are dated at it; null = createdAt.
+  openingBalanceDate  DateTime? @db.Date
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
@@ -5966,11 +5969,35 @@ model DepositDrop {
   // Deposit slips / bank receipts uploaded as files (owner, 2026-10-16: "it
   // should ask for attachment instead of URL") — kind 'deposit_slip'.
   attachments CashVoucherAttachment[]
+  // One bag split across several tills (owner, 2026-10-16: "One deposit can
+  // be split across several shifts"). Σ amountCents = the drop's amount.
+  allocations DepositDropShift[]
 
   @@index([conceptId, droppedAt])
   @@index([shiftId])
   @@index([tenantId, droppedAt])
   @@map("deposit_drops")
+}
+
+// How much of a deposit drop came from each till shift (owner decision
+// 2026-10-16, bank bags: "Split one bag"). The drop's company owns every row;
+// each shift must be that company's. A legacy drop with `shiftId` and no rows
+// counts as one allocation of its whole amount (accounting/depositPosting.ts
+// dropAllocations is the ONE reader).
+model DepositDropShift {
+  id            String   @id @default(cuid())
+  tenantId      String
+  depositDropId String
+  shiftId       String
+  amountCents   Int
+  createdAt     DateTime @default(now())
+
+  depositDrop DepositDrop @relation(fields: [depositDropId], references: [id], onDelete: Restrict)
+
+  @@unique([depositDropId, shiftId])
+  @@index([tenantId, shiftId])
+  @@index([shiftId])
+  @@map("deposit_drop_shifts")
 }
 
 // ─── Staff meals ─────────────────────────────────────────────────────────────

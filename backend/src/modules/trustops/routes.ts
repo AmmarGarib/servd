@@ -187,6 +187,50 @@ const DEPOSIT_SLIP_BODY_LIMIT = 22 * 1024 * 1024
 const DEPOSIT_NO_SLIP_TITLE = 'Deposit drop without a deposit slip'
 /** The title flags raised before 2026-10-16 carry — still resolved by an attach. */
 const DEPOSIT_NO_SLIP_LEGACY_TITLE = 'Deposit drop without bank receipt'
+/** One bag split across at most this many tills (owner, 2026-10-16). */
+const DEPOSIT_MAX_SHIFTS = 20
+/** The title prefix of a deposit's variance flag (vs the no-slip flag, same kind). */
+const DEPOSIT_VARIANCE_TITLE_PREFIX = 'Deposit drop variance'
+
+/**
+ * Bags for the same shifts that now add up: resolve the open / acknowledged
+ * variance flags of every drop with a share of `shiftIds` whose shifts are
+ * ALL banked within the tolerance (Σ shares vs the shift's cash to bank). A
+ * partial first bag is flagged short; the bag that completes the shift clears
+ * it (audit fix, 2026-10-16). Only the drops' own company is read.
+ */
+async function resolveTiedDepositVariance(tenantId: string, shiftIds: string[], limitCents: number, userId: string): Promise<void> {
+  if (shiftIds.length === 0) return
+  const { dropAllocations, expectedShiftDeposit } = await import('../accounting/depositPosting.js')
+  const dropIds = [...new Set((await dropAllocations(prisma, { tenantId, shiftIds })).map((a) => a.dropId))]
+  if (dropIds.length === 0) return
+  const flags = await prisma.exceptionFlag.findMany({
+    where: {
+      tenantId, kind: 'cash_variance', entityType: 'DepositDrop', entityId: { in: dropIds },
+      title: { startsWith: DEPOSIT_VARIANCE_TITLE_PREFIX }, status: { in: ['open', 'acknowledged'] },
+    },
+    select: { id: true, entityId: true },
+  })
+  const tied = new Map<string, boolean>()
+  const shiftTies = async (shiftId: string) => {
+    if (!tied.has(shiftId)) {
+      const banked = (await dropAllocations(prisma, { tenantId, shiftIds: [shiftId] })).reduce((t, a) => t + a.amountCents, 0)
+      tied.set(shiftId, Math.abs(banked - (await expectedShiftDeposit(shiftId)).expectedCents) <= limitCents)
+    }
+    return tied.get(shiftId)!
+  }
+  for (const f of flags) {
+    const shares = await dropAllocations(prisma, { tenantId, dropId: f.entityId! })
+    let all = shares.length > 0
+    for (const a of shares) if (!(await shiftTies(a.shiftId))) { all = false; break }
+    if (!all) continue
+    await prisma.exceptionFlag.updateMany({
+      where: { id: f.id, status: { in: ['open', 'acknowledged'] } },
+      data: { status: 'resolved', resolvedById: userId, resolvedAt: new Date(), resolution: 'The shift\'s deposits now add up to its cash to bank' },
+    })
+  }
+}
+
 const zDepositSlipFile = z.object({
   fileName:   z.string().max(200).optional(),
   mime:       z.string().min(1).max(100),
@@ -1074,6 +1118,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
           select: { id: true, fileName: true, mime: true, sizeBytes: true, createdAt: true },
           orderBy: { createdAt: 'asc' },
         },
+        // Each shift's share of a split bag (a legacy drop shows its shiftId only).
+        allocations: { select: { shiftId: true, amountCents: true }, orderBy: { createdAt: 'asc' } },
       },
     })
     // Each drop is judged by its own company's cash tolerance — clients show
@@ -1120,6 +1166,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     const { files: rawFiles, ...body } = z.object({
       files:         z.array(zDepositSlipFile).max(DEPOSIT_SLIP_MAX_FILES, `At most ${DEPOSIT_SLIP_MAX_FILES} files per deposit`).optional(),
       shiftId:       z.string().uuid().nullable().optional(),
+      // One bag split across several tills (owner, 2026-10-16): each shift's
+      // share; the shares add up to the deposit. Instead of `shiftId`.
+      shifts:        z.array(z.object({ shiftId: z.string().uuid(), amountCents: zInt4Cents('A shift\'s share') }))
+        .min(1).max(DEPOSIT_MAX_SHIFTS, `At most ${DEPOSIT_MAX_SHIFTS} shifts per deposit`).optional(),
       conceptId:     z.string().uuid().nullable().optional(),
       bankAccountId: z.string().min(1).nullable().optional(),
       amountCents:   zInt4Cents('The deposit'),
@@ -1135,22 +1185,41 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // at another company's shift cash).
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before recording a deposit', 422)
-    if (body.shiftId) await assertShiftOf(tenantId, body.shiftId, false)
+    // The shifts it came from: `shifts` (a split bag) or the one `shiftId`
+    // (its whole amount). Every shift must be the active company's (422).
+    const { shifts: split, ...rest } = body
+    if (split && body.shiftId) throw new AppError('SHIFT_AND_SHIFTS', 'Give either one shift or the split across shifts, not both', 422)
+    const allocs = split ?? (body.shiftId ? [{ shiftId: body.shiftId, amountCents: body.amountCents }] : [])
+    if (new Set(allocs.map((a) => a.shiftId)).size !== allocs.length) throw new AppError('SHIFT_LISTED_TWICE', 'A shift appears twice in the split', 422)
+    if (allocs.length > 0 && allocs.reduce((t, a) => t + a.amountCents, 0) !== body.amountCents) {
+      throw new AppError('SPLIT_NOT_EQUAL_DEPOSIT', 'The shifts\' shares must add up to the amount deposited', 422)
+    }
+    for (const a of allocs) await assertShiftOf(tenantId, a.shiftId, false)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
     const bank = await moneyAccountCode(prisma, tenantId, { method: 'bank', bankAccountId: body.bankAccountId ?? null })
     // Every file is checked before anything is written: a bad one is 400 and no drop is saved.
     const files = decodeDepositSlips(rawFiles ?? [])
 
-    const { expectedShiftDeposit, postDepositDrop } = await import('../accounting/depositPosting.js')
-    const expected = body.shiftId ? (await expectedShiftDeposit(body.shiftId)).expectedCents : 0
-    const variance = body.amountCents - expected
+    const { remainingShiftDeposit, postDepositDrop } = await import('../accounting/depositPosting.js')
 
+    // Expected = what is STILL to be banked from each shift (its cash to bank
+    // less earlier drops' shares) — a second bag is never compared with the
+    // whole shift (audit fix, 2026-10-16). Read and written under a per-shift
+    // advisory lock (sorted), and droppedAt is stamped inside it, so two drops
+    // for one shift are ordered and the posting's split (earlier drops first)
+    // is the same however they race.
+    let expected = 0
     const drop = await prisma.$transaction(async (tx) => {
+      for (const a of [...allocs].sort((x, y) => (x.shiftId < y.shiftId ? -1 : 1))) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`deposit_drop_shift:${a.shiftId}`}))`
+      }
+      for (const a of allocs) expected += (await remainingShiftDeposit(tx, tenantId, a.shiftId)).remainingCents
       const created = await tx.depositDrop.create({
         data: {
-          ...body,
+          ...rest,
           tenantId,
-          shiftId: body.shiftId ?? null,
+          droppedAt: new Date(),
+          shiftId: allocs.length === 1 ? allocs[0]!.shiftId : null,
           conceptId: body.conceptId ?? null,
           bankAccountId: bank.bankAccountId,
           bagSerial: body.bagSerial ?? null,
@@ -1159,10 +1228,15 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
           witnessedById: body.witnessedById ?? null,
           notes: body.notes ?? null,
           expectedCents: expected,
-          varianceCents: variance,
+          varianceCents: body.amountCents - expected,
           droppedById: req.staffUser!.id,
         },
       })
+      if (allocs.length) {
+        await tx.depositDropShift.createMany({
+          data: allocs.map((a) => ({ tenantId, depositDropId: created.id, shiftId: a.shiftId, amountCents: a.amountCents })),
+        })
+      }
       if (files.length) {
         await tx.cashVoucherAttachment.createMany({
           data: files.map((f) => ({
@@ -1202,21 +1276,25 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }
 
     // Beyond the company's cash tolerance fires a cash-variance flag
-    // (a different entity than the till variance).
+    // (a different entity than the till variance), against what was still
+    // to be banked. Once the shifts' bags add up (within the tolerance), the
+    // earlier drops' open variance flags for them are resolved.
+    const variance = drop.varianceCents
     const limit = await cashVarianceLimitCents(tenantId)
+    await resolveTiedDepositVariance(tenantId, allocs.map((a) => a.shiftId), limit, req.staffUser!.id)
     if (Math.abs(variance) > limit && expected > 0) {
       await flagException({
         tenantId,
         conceptId: body.conceptId ?? null,
         kind: 'cash_variance',
         severity: Math.abs(variance) > 100000 ? 'high' : 'medium',
-        title: `Deposit drop variance: ${variance >= 0 ? '+' : ''}PKR ${(variance / 100).toFixed(0)}`,
-        description: `Expected PKR ${(expected / 100).toFixed(0)} from the shift (drops + counted close − float kept), deposited PKR ${(body.amountCents / 100).toFixed(0)}. ${variance < 0 ? 'Cash short — investigate till handover.' : 'Cash over — check shift records.'}`,
+        title: `${DEPOSIT_VARIANCE_TITLE_PREFIX}: ${variance >= 0 ? '+' : ''}PKR ${(variance / 100).toFixed(0)}`,
+        description: `Expected PKR ${(expected / 100).toFixed(0)} still to bank from the ${allocs.length === 1 ? 'shift' : `${allocs.length} shifts`} (drops + counted close − float kept, less earlier deposits), deposited PKR ${(body.amountCents / 100).toFixed(0)}. ${variance < 0 ? 'Cash short — investigate till handover.' : 'Cash over — check shift records.'}`,
         entityType: 'DepositDrop',
         entityId: drop.id,
         actorId: req.staffUser!.id,
         amountCents: Math.abs(variance),
-        metadata: { expected, deposited: body.amountCents, variance, limitCents: limit, shiftId: body.shiftId, bagSerial: body.bagSerial },
+        metadata: { expected, deposited: body.amountCents, variance, limitCents: limit, shiftId: drop.shiftId, shiftIds: allocs.map((a) => a.shiftId), bagSerial: body.bagSerial },
       })
     }
 

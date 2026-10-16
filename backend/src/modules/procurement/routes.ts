@@ -14,6 +14,7 @@ import {
 import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './scope.js'
 import type { UserRole } from '@prisma/client'
 import { approvalWaiting } from '../approvals/notify.js'
+import { requireModule } from '../notifications/requireModule.js'
 
 // Company scope: every procurement row belongs to its supplier's company, so
 // every route below scopes through the supplier (./scope.ts). Reads use
@@ -27,12 +28,14 @@ import { approvalWaiting } from '../approvals/notify.js'
 //     bills, payments, the 3-way match, AP aging, reorder and price history.
 //     The buyer role holds the procurement module, so these used to load the
 //     page and then 403 on every PO, bill and reorder call.
-//   MANAGERS: receiving (receiveGoods' own rule), recording / voiding bills,
-//     supplier credit notes (record / apply / unapply / void), paying,
-//     allocating, unapplying and voiding payments, a supplier's opening
-//     balance or company move — money moves and the books, kept apart from
-//     whoever raised the order. Each of these writes an 'accounting' audit
-//     row under the supplier's company.
+//   MANAGERS: receiving (receiveGoods' own rule), a supplier's opening
+//     balance or company move.
+//   AP_WRITERS (MANAGERS with 'procurement' + finance with 'accounting';
+//     owner, 2026-10-16): recording / voiding bills, supplier credit notes
+//     (record / apply / unapply / void), paying (cash, bank, cheque, wallet),
+//     allocating, unapplying and voiding payments — money moves and the
+//     books, kept apart from whoever raised the order. Each of these writes
+//     an 'accounting' audit row under the supplier's company.
 //   ADMIN_ONLY: the approval threshold, the backfill. Approve / reject: the CEO or a live
 //     Procurement hand-over (lib/approvalRights.ts — see poDecisionRight below).
 //   AP_READERS (PROCUREMENT_TEAM + finance, wave 3 UI-07): READ the payables
@@ -42,8 +45,8 @@ import { approvalWaiting } from '../approvals/notify.js'
 //     paying a bill) but holds no 'procurement' module; the module gate on
 //     these read paths must admit 'accounting' as well (lib/moduleAccess.ts
 //     GATED_PREFIXES — as /procurement/ap-aging already does). Finance
-//     raises, approves, receives, bills and pays NOTHING here — those stay
-//     with the roles above.
+//     raises, approves and receives NOTHING here; it bills and pays as an
+//     AP_WRITER.
 import {
   createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, markPoSent,
   createBill, voidBill, matchBill,
@@ -56,7 +59,7 @@ import {
 } from './creditNotes.js'
 import { receiveGoods } from './receiving.js'
 import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
-import { syncSupplierOpeningBalance } from './openingBalance.js'
+import { syncOpeningBalanceOrFlag } from './openingBalance.js'
 import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
 import { audit } from '../../lib/audit.js'
 import { type DbMoney, toCents, zInt4Cents, zMoneyCents } from '../../lib/money.js'
@@ -65,6 +68,29 @@ import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { parsePktEndOfDay, fmtPktDate } from '../accounting/dates.js'
 
 export const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
+
+/**
+ * Who records supplier bills, supplier credit notes and supplier payments
+ * (owner, 2026-10-16: "Yes, all" — finance does these jobs): the managers, as
+ * before, plus finance holding the 'accounting' module. Raising, approving and
+ * receiving POs stay out of finance's reach. Every write is audited.
+ */
+export const AP_WRITERS = Array.from(new Set([...MANAGERS, 'finance'])) as UserRole[]
+
+/**
+ * The module half of AP_WRITERS (after requireAuth). lib/moduleAccess.ts
+ * GATED_PREFIXES admits 'procurement' OR 'accounting' on these paths; this
+ * keeps each role to its own: finance needs 'accounting', every other role
+ * still needs 'procurement' (a manager holding only 'accounting' gets
+ * nothing new). The CEO is never refused.
+ */
+const financeAccounting = requireModule('accounting')
+const managerProcurement = requireModule('procurement')
+export async function requireApWriterModule(req: FastifyRequest): Promise<void> {
+  if (req.staffUser?.role === 'finance') return financeAccounting(req)
+  return managerProcurement(req)
+}
+const apWrite = { preHandler: [requireAuth(...AP_WRITERS), requireApWriterModule] }
 
 const PO_TYPE: ApprovalType = 'purchase_order'
 
@@ -105,14 +131,13 @@ async function withOriginalBill<T extends { originalBillId: string | null }>(row
 }
 
 // Post a supplier's opening balance to its company's ledger (a delta — see
-// openingBalance.ts). A failure (e.g. the month is locked) is logged; the AP
-// aging shows the amount as openingUnpostedCents until it posts.
+// openingBalance.ts), dated at its opening date. A refusal (e.g. the month is
+// locked) raises a posting_failed flag that Reconciliation → Backfill
+// unposted re-posts; the AP aging shows the amount as openingUnpostedCents
+// until it posts.
 async function syncOpening(req: FastifyRequest, supplierId: string) {
-  try {
-    await syncSupplierOpeningBalance(supplierId, { postedBy: req.staffUser?.id })
-  } catch (err) {
-    req.log.error({ err: (err as Error).message, supplierId }, 'syncSupplierOpeningBalance failed')
-  }
+  const r = await syncOpeningBalanceOrFlag(supplierId, { postedBy: req.staffUser?.id })
+  if (!r.ok) req.log.error({ err: r.error, supplierId }, 'supplier opening balance refused — flagged')
 }
 
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
@@ -183,6 +208,14 @@ const supplierTaxFields = {
 }
 const exemptUntilOf = (v: string | null | undefined): Date | null | undefined =>
   v === undefined ? undefined : v === null ? null : parsePktEndOfDay(v)
+// The day a supplier's opening balance is brought forward at (YYYY-MM-DD,
+// stored as a DATE); null = the day the supplier was set up. Its postings are
+// dated at it (openingBalance.ts).
+const zOpeningDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'A date (YYYY-MM-DD)')
+  .refine((v) => !Number.isNaN(new Date(`${v}T00:00:00Z`).getTime()), 'Not a real date')
+  .nullable().optional()
+const openingDateOf = (v: string | null | undefined): Date | null | undefined =>
+  v === undefined ? undefined : v === null ? null : new Date(`${v}T00:00:00Z`)
 
 const paymentApplicationSchema = z.object({
   billId:             z.string().uuid(),
@@ -283,12 +316,16 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // so only a CHANGE is refused).
   const assertManagerFields = (
     req: FastifyRequest,
-    body: { openingBalanceCents?: number; tenantId?: string | null },
-    existing: { openingBalanceCents: DbMoney; tenantId: string | null } | null,
+    body: { openingBalanceCents?: number; openingBalanceDate?: string | null; tenantId?: string | null },
+    existing: { openingBalanceCents: DbMoney; openingBalanceDate: Date | null; tenantId: string | null } | null,
   ) => {
     if ((MANAGERS as string[]).includes(req.staffUser!.role)) return
     if (body.openingBalanceCents !== undefined && body.openingBalanceCents !== toCents(existing?.openingBalanceCents ?? 0)) {
       throw new ForbiddenError('Only a manager can set a supplier\'s opening balance.')
+    }
+    const before = existing?.openingBalanceDate ? existing.openingBalanceDate.toISOString().slice(0, 10) : null
+    if (body.openingBalanceDate !== undefined && body.openingBalanceDate !== before) {
+      throw new ForbiddenError('Only a manager can set the date of a supplier\'s opening balance.')
     }
     if (existing && body.tenantId !== undefined && body.tenantId !== existing.tenantId) {
       throw new ForbiddenError('Only a manager can move a supplier to another company.')
@@ -307,6 +344,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       paymentTermsDays:    z.number().int().min(0).max(365).optional(),
       leadTimeDays:        z.number().int().min(0).max(365).optional(),
       openingBalanceCents: zMoneyCents('The opening balance').optional(),
+      openingBalanceDate:  zOpeningDate,
       ...supplierTaxFields,
       // Explicit company picker from the Add Supplier modal. In portfolio
       // view the frontend renders a required dropdown so the CEO doesn't
@@ -332,9 +370,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
     // Strip body.tenantId before spreading — Prisma needs the resolved value,
     // not the body field which may be undefined.
-    const { tenantId: _bodyTenantId, whtExemptUntil, ...rest } = body
+    const { tenantId: _bodyTenantId, whtExemptUntil, openingBalanceDate, ...rest } = body
     const supplier = await prisma.supplier.create({
-      data: { ...rest, ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}), tenantId },
+      data: {
+        ...rest,
+        ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}),
+        ...(openingBalanceDate !== undefined ? { openingBalanceDate: openingDateOf(openingBalanceDate) } : {}),
+        tenantId,
+      },
       include: {
         assignedStaff: { select: { id: true, name: true } },
         tenant:        { select: { id: true, name: true, slug: true } },
@@ -365,6 +408,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         paymentTermsDays:    z.number().int().min(0).max(365).optional(),
         leadTimeDays:        z.number().int().min(0).max(365).optional(),
         openingBalanceCents: zMoneyCents('The opening balance').optional(),
+        openingBalanceDate:  zOpeningDate,
         ...supplierTaxFields,
       }).parse(req.body)
       if (existing.systemKind) {
@@ -393,16 +437,21 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         })
         if (!staff) throw new AppError('STAFF_NOT_IN_COMPANY', 'That staff member does not work for this supplier\'s company', 422)
       }
-      const { whtExemptUntil, ...fields } = body
+      const { whtExemptUntil, openingBalanceDate, ...fields } = body
       const updated = await prisma.supplier.update({
         where: { id: req.params.id },
-        data:  { ...fields, ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}) },
+        data:  {
+          ...fields,
+          ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}),
+          ...(openingBalanceDate !== undefined ? { openingBalanceDate: openingDateOf(openingBalanceDate) } : {}),
+        },
         include: {
           assignedStaff: { select: { id: true, name: true } },
           tenant:        { select: { id: true, name: true, slug: true } },
         },
       })
       // A new opening balance, or a move to another company, re-posts it.
+      // (A new opening DATE dates the next delta; what is posted stays put.)
       if (body.openingBalanceCents !== undefined || body.tenantId !== undefined) {
         await syncOpening(req, updated.id)
       }
@@ -678,9 +727,23 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // credits, opening balances on their own, suppliers with no company apart.
   // Behind the Accounting AP aging page and the Procurement Aging tab; open to
   // finance as well as managers (module: procurement OR accounting).
+  //
+  // ?asOf=YYYY-MM-DD: the aging AS AT the end of that Karachi day (every bill,
+  // credit note, payment and application rebuilt as it stood then), so a
+  // month-end aging run later still ties to AP 2010 in the trial balance.
+  // Suppliers with no company (legacy rows, never in any company's books) are
+  // listed to the CEO only — anyone else would see other companies' names.
   fastify.get('/ap-aging', { preHandler: requireAuth(...FINANCE_TEAM, 'procurement') }, async (req) => {
+    const q = z.object({
+      asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Give the date as YYYY-MM-DD').optional(),
+    }).parse(req.query ?? {})
+    let asOf: Date | undefined
+    if (q.asOf) {
+      asOf = parsePktEndOfDay(q.asOf)
+      if (Number.isNaN(asOf.getTime())) throw new AppError('INVALID_DATE', 'Give the date as YYYY-MM-DD', 422)
+    }
     const scope = await resolveTenantScope(req)
-    return agingReport(scope.tenantIds)
+    return agingReport(scope.tenantIds, { asOf, includeUnassigned: req.staffUser!.role === 'admin' })
   })
 
   // Bills by default. A supplier credit note is a SupplierBill row too (kind
@@ -736,14 +799,18 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.post('/bills', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/bills', apWrite, async (req, reply) => {
     const body = billCreateSchema.parse(req.body)
     // createBill then checks the PO, PO lines and items are this supplier's,
     // and posts the bill in the same transaction that saves it (a closed
     // month is PERIOD_LOCKED 422 — nothing saved half-way).
-    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    const supplier = await findSupplierInScope(req, body.supplierId, 'write', { live: true })
     const bill = await createBill({
       ...body, createdBy: req.staffUser!.id, actorRole: req.staffUser!.role, actorEmail: req.staffUser!.email ?? null,
+    })
+    await auditMoney(req, 'supplier.bill.create', 'SupplierBill', bill.id, supplier.tenantId, {
+      supplierId: supplier.id, billNumber: bill.billNumber, poId: body.poId ?? null,
+      totalCents: toCents(bill.totalCents), whtCents: toCents(bill.whtCents), actorRole: req.staffUser!.role,
     })
     return reply.status(201).send(bill)
   })
@@ -803,7 +870,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/bills/:id/void',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req) => {
       const found = await guardBill(req, req.params.id)
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
@@ -828,7 +895,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // applied to the bill at once unless applyToBill is false.
   fastify.post<{ Params: { id: string } }>(
     '/bills/:id/credit-notes',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req, reply) => {
       const found = await guardBill(req, req.params.id)
       const body = creditNoteCreateSchema.parse(req.body)
@@ -845,7 +912,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // Apply a credit note to open bills of the same supplier (no ledger change).
   fastify.post<{ Params: { id: string } }>(
     '/credit-notes/:id/apply',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req) => {
       const cn = await guardCreditNote(req, req.params.id)
       const body = z.object({ applications: z.array(creditApplicationSchema).min(1) }).parse(req.body)
@@ -859,7 +926,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // Take a credit note off a bill (no ledger change).
   fastify.post<{ Params: { id: string } }>(
     '/credit-notes/:id/unapply',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req) => {
       const cn = await guardCreditNote(req, req.params.id)
       const { billId } = z.object({ billId: z.string().uuid() }).parse(req.body)
@@ -873,7 +940,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // Void a credit note entered in error — only while applied to no bill.
   fastify.post<{ Params: { id: string } }>(
     '/credit-notes/:id/void',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req) => {
       const cn = await guardCreditNote(req, req.params.id)
       const { reason } = z.object({ reason: z.string().trim().min(1) }).parse(req.body)
@@ -912,7 +979,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.post('/payments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+  fastify.post('/payments', apWrite, async (req, reply) => {
     const body = paymentCreateSchema.parse(req.body)
     // createPayment then checks every applied bill is this supplier's, and
     // the bank account is a live, linked account of the supplier's company
@@ -941,12 +1008,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string }; Body: { applications: Array<{ billId: string; amountAppliedCents: number }> } }>(
     '/payments/:id/allocate',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req) => {
-      await guardPayment(req, req.params.id)
+      const payment = await guardPayment(req, req.params.id)
       const body = z.object({ applications: z.array(paymentApplicationSchema).min(1) }).parse(req.body)
       await assertBillsInScope(req, body.applications.map((a) => a.billId))
-      return allocatePayment(req.params.id, body.applications)
+      const r = await allocatePayment(req.params.id, body.applications)
+      await auditMoney(req, 'supplier.payment.allocate', 'SupplierPayment', req.params.id, payment.supplier.tenantId, { applications: body.applications })
+      return r
     },
   )
 
@@ -954,7 +1023,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // credit again. No ledger change (the payment already debited AP 2010).
   fastify.post<{ Params: { id: string } }>(
     '/payments/:id/unapply',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req) => {
       const payment = await guardPayment(req, req.params.id)
       const { billId } = z.object({ billId: z.string().uuid() }).parse(req.body)
@@ -970,7 +1039,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // ('supplier.payment.void', dated today); voiding twice is a no-op.
   fastify.post<{ Params: { id: string } }>(
     '/payments/:id/void',
-    { preHandler: requireAuth(...MANAGERS) },
+    apWrite,
     async (req) => {
       const payment = await guardPayment(req, req.params.id)
       const { reason } = z.object({ reason: z.string().trim().min(1) }).parse(req.body)

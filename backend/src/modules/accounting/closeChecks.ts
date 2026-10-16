@@ -38,6 +38,7 @@ import { fiscalYearEndMonthOf, isFiscalYearEndInRange } from './fiscalYear.js'
 import { fmtPktDate } from './dates.js'
 import { sumCents } from '../../lib/money.js'
 import { shiftOfCompany } from '../../lib/tenantScope.js'
+import { shiftBusinessDate } from '../../lib/businessDay.js'
 import { withSavepoint } from '../../lib/savepoint.js'
 import { raastOpenThrough } from '../reconciliation/raast.js'
 import { hrCloseChecks } from '../hr/closeChecks.js'
@@ -112,7 +113,7 @@ export function monthsInRange(prevLock: Date | null, newLock: Date, firstEntryDa
 export type CheckCache = Map<string, Promise<unknown>>
 
 type OrderDryRunRow = { kind: string; id: string; tenantId: string; date: string | null; outcome: string; detail: string }
-type ShiftDryRunRow = { shiftId: string; closedAt: string | null; tenantId: string | null; outcome: string; detail: string }
+type ShiftDryRunRow = { shiftId: string; closedAt: string | null; businessAt: string | null; tenantId: string | null; outcome: string; detail: string }
 
 function memo<T>(cache: CheckCache | undefined, key: string, fn: () => Promise<T>): Promise<T> {
   if (!cache) return fn()
@@ -163,9 +164,13 @@ export async function openTillsThrough(db: CloseCheckDb, tenantId: string, throu
   })
 }
 
-/** Closed tills (closedAt in [from, to], from null = no lower bound; no closedAt counts only then) that never reached the books. */
+/**
+ * Closed tills whose BUSINESS date (lib/businessDay.ts — a close before 05:00
+ * PKT belongs to the day the till opened) is in [from, to] (from null = no
+ * lower bound; an undated row counts only then) that never reached the books.
+ */
 export async function unpostedShiftRows(_db: CloseCheckDb, tenantId: string, from: Date | null, to: Date, cache?: CheckCache): Promise<ShiftDryRunRow[]> {
-  return (await shiftsDryRun(tenantId, cache)).filter((row) => SHIFT_UNPOSTED.has(row.outcome) && inWindow(row.closedAt, from, to))
+  return (await shiftsDryRun(tenantId, cache)).filter((row) => SHIFT_UNPOSTED.has(row.outcome) && inWindow(row.businessAt ?? row.closedAt, from, to))
 }
 
 /** Documents (dated in [from, to]; undated only when from is null) that still owe the books an entry — Backfill unposted's own dry run. */
@@ -208,8 +213,9 @@ export async function documentDateOf(db: CloseCheckDb, f: { entityType: string |
       return o ? (o.completedAt ?? o.placedAt) : null
     }
     case 'Shift': {
-      const s = await db.shift.findUnique({ where: { id: f.entityId }, select: { closedAt: true } })
-      return s?.closedAt ?? null
+      // Its business date (lib/businessDay.ts), as the close posting is dated.
+      const s = await db.shift.findUnique({ where: { id: f.entityId }, select: { openedAt: true, closedAt: true } })
+      return s ? (shiftBusinessDate(s) ?? s.closedAt) : null
     }
     case 'WasteLog': {
       const w = await db.wasteLog.findUnique({ where: { id: f.entityId }, select: { recordedAt: true } })

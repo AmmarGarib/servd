@@ -521,8 +521,13 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // procurement — finance REQUESTS a write-off of goods never billed, the CEO
   // approves it (the route's own guard decides). Before '/procurement/bills'.
   { prefix: '/procurement/grni',            anyOf: ['procurement', 'accounting'] },
-  { prefix: '/procurement/bills',           anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
-  { prefix: '/procurement/payments',        anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
+  // Supplier bills, credit notes and payments are finance's work too (owner,
+  // 2026-10-16): writes admit 'accounting' here; the routes' own
+  // requireApWriterModule keeps finance to 'accounting' and every other role
+  // to 'procurement' (procurement/routes.ts AP_WRITERS).
+  { prefix: '/procurement/bills',           anyOf: ['procurement', 'accounting'] },
+  { prefix: '/procurement/credit-notes',    anyOf: ['procurement', 'accounting'] },
+  { prefix: '/procurement/payments',        anyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement/purchase-orders', anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
   // 'capital' reads the supplier picker (?view=picker) of the OpEx / CapEx
   // forms (vendor, filer status, WHT section); adding a supplier stays procurement.

@@ -719,7 +719,7 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     // Tax and statutory payments (clashes refused in assertMergeable).
     tx.salesTaxPayment,
     // Payments, references and the bank's own records.
-    tx.raastReceipt, tx.terminalCharge, tx.bankSmsDevice, tx.bankSmsAlert, tx.depositDrop, tx.bankStatementImport,
+    tx.raastReceipt, tx.terminalCharge, tx.bankSmsDevice, tx.bankSmsAlert, tx.depositDrop, tx.depositDropShift, tx.bankStatementImport,
     tx.supplierCreditApplication,
     // Customer money.
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
