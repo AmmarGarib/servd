@@ -31,6 +31,7 @@ let keeper: string
 let buyerV: string
 const s: Record<string, string> = {}
 const bill: Record<string, string> = {}
+const gsTwins: string[] = []
 
 async function supplier(key: string, data: Record<string, unknown> = {}) {
   s[key] = (await prisma.supplier.create({ data: { name: `${P} ${key}`, ...data } })).id
@@ -75,6 +76,8 @@ beforeAll(async () => {
 }, 60_000)
 
 afterAll(async () => {
+  // The two 'GS Foods' twins must not outlive this file (other files' "GS Foods").
+  await prisma.tenant.deleteMany({ where: { id: { in: gsTwins } } }).catch(() => {})
   await prisma.setting.deleteMany({ where: { key: { startsWith: MARKER } } })
 })
 
@@ -90,8 +93,7 @@ describe('the target company must be exactly one', () => {
   })
 
   it('two companies named \'GS Foods\' (the real name) → nothing changes, no marker', async () => {
-    await prisma.tenant.create({ data: { name: 'GS Foods', slug: `${P}-gs1` } })
-    await prisma.tenant.create({ data: { name: 'GS Foods', slug: `${P}-gs2` } })
+    for (const n of [1, 2]) gsTwins.push((await prisma.tenant.create({ data: { name: 'GS Foods', slug: `${P}-gs${n}` } })).id)
     const r = await assignCompanylessSuppliers({ markerKey: `${MARKER}.two`, supplierIds: ours() })
     expect(r.status).toBe('no_target')
     expect(r.targetCount).toBeGreaterThanOrEqual(2)
