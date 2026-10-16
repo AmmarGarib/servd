@@ -75,7 +75,8 @@ export async function openOrdersBetween(db: CloseCheckDb, tenantId: string, from
  * Tenders of the day not resolved: (a) pending payments (any method but COD,
  * which is cod_pending's) created in [from, to] on the company's orders that
  * are not cancelled / rejected; (b) card-machine charges created in [from, to]
- * whose outcome is not final. `unverified` charges are counted apart (a warn).
+ * whose outcome is not final, or that need a person (needs_attention).
+ * `unverified` / `manual_resolved` charges are counted apart (a warn).
  */
 export async function unresolvedTendersBetween(db: CloseCheckDb, tenantId: string, from: Date, to: Date): Promise<{ payments: number; charges: number; unverified: number; cents: number }> {
   const at = { gte: from, lte: to }
@@ -89,10 +90,13 @@ export async function unresolvedTendersBetween(db: CloseCheckDb, tenantId: strin
     select: { amountCents: true },
   })
   const charges = await db.terminalCharge.findMany({
-    where: { tenantId, createdAt: at, status: { in: ['pending', 'sent', 'approved', 'cancel_requested', 'unknown', 'void_pending'] } },
+    // needs_attention: a reversal that failed (or an unknown past 24 h) — money may sit on the
+    // customer's card with no outcome in servd; a person must resolve it before the day locks.
+    where: { tenantId, createdAt: at, status: { in: ['pending', 'sent', 'approved', 'cancel_requested', 'unknown', 'void_pending', 'needs_attention'] } },
     select: { amountCents: true },
   })
-  const unverified = await db.terminalCharge.count({ where: { tenantId, createdAt: at, status: 'unverified' } })
+  // Still being verified against the machine (a warn): marked "not charged", or recorded from the slip.
+  const unverified = await db.terminalCharge.count({ where: { tenantId, createdAt: at, status: { in: ['unverified', 'manual_resolved'] } } })
   const cents = pending.reduce((t, p) => t + p.amountCents, 0) + charges.reduce((t, c) => t + c.amountCents, 0)
   return { payments: pending.length, charges: charges.length, unverified, cents }
 }
@@ -198,7 +202,7 @@ export const NIGHT_CHECKS: NightCheck[] = [
         if (r.unverified === 0) return null
         return {
           key: 'tenders_unresolved', severity: 'warn', title: 'Card charges still being verified',
-          detail: `${plural(r.unverified, 'card-machine charge')} of ${ctx.day} the cashier marked "not charged" ${isAre(r.unverified)} still being verified against the machine.`,
+          detail: `${plural(r.unverified, 'card-machine charge')} of ${ctx.day} the cashier marked "not charged" or recorded from the slip ${isAre(r.unverified)} still being verified against the machine.`,
           count: r.unverified, link: '/orders', overridable: false,
         }
       }

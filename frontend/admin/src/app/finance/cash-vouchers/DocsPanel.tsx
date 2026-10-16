@@ -114,22 +114,39 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
     catch (e) { setError(errorWords(e)) }
   }
 
+  // The requester's / holder's job after the cash is paid: attach the bills. Shown big until the voucher is closed.
+  const needsDocs = !!v.canUpload && v.status === 'disbursed' && !!v.expenseOnVerify && !v.closed
   return (
-    <div className="rounded-2xl p-5 space-y-3" style={card}>
+    <div className="rounded-2xl p-5 space-y-3"
+      style={needsDocs ? { background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.45)' } : card}>
+      {needsDocs && (
+        <div className="rounded-xl p-3 space-y-2" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)' }}>
+          <p className="text-sm font-black text-white/90">{v.sentBack ? 'Finance needs more documents' : 'Attach your supporting documents'}</p>
+          <p className="text-xs text-white/60">
+            {v.sentBack && v.sentBackNote ? `Finance: “${v.sentBackNote}”. ` : ''}
+            Attach the bills, receipts or invoices for this cash. Once they are attached the voucher is closed for you — finance checks them afterwards and books the expense.
+          </p>
+          <button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={primaryBtn}>
+            {busy ? 'Uploading…' : docs.length ? '+ Attach more documents' : '+ Attach documents'}
+          </button>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <p className="text-sm font-black text-white/90">Supporting documents</p>
           <p className="text-xs text-white/50">
-            Bills, receipts, invoices — PDF, photos, Excel, Word and similar. Finance books the expense once it has checked them.
+            Bills, receipts, invoices — PDF, photos, Excel, Word and similar. Attached documents close the voucher; finance books the expense once it has checked them.
             {v.dueBy && v.status === 'disbursed' ? ` Due by ${fmtDateTime(v.dueBy).split(',')[0]}.` : ''}
           </p>
         </div>
         {v.canUpload && !locked && (
           <>
             <input ref={input} type="file" multiple accept={DOC_ACCEPT} className="hidden" onChange={(e) => void add(e.target.files)} />
-            <button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={secondaryBtn}>
-              {busy ? 'Uploading…' : '+ Add documents'}
-            </button>
+            {!needsDocs && (
+              <button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={secondaryBtn}>
+                {busy ? 'Uploading…' : '+ Add documents'}
+              </button>
+            )}
           </>
         )}
       </div>
@@ -137,7 +154,7 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
       {uploading && <p role="status" className="text-xs font-bold text-white/70">{uploading}</p>}
       {docs.length === 0 && (
         <p className="text-xs font-bold" style={{ color: v.status === 'disbursed' ? 'var(--erp-warning)' : undefined }}>
-          {v.status === 'disbursed' ? 'No documents yet — they are missing.' : 'No documents.'}
+          {v.status === 'disbursed' && v.expenseOnVerify ? 'No documents yet — they are missing.' : 'No supporting documents attached.'}
         </p>
       )}
       {docs.length > 0 && (

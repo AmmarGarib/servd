@@ -87,6 +87,10 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
   const waitingWord = v.status === 'rejected' ? 'Rejected' : v.status === 'returned' ? 'Returned for correction' : v.status === 'cancelled' ? 'Cancelled' : 'Pending'
   const receiver = v.receiverName ?? (v.kind === 'expense' ? v.payeeName : (v.holderName ?? v.payeeName))
   const payee = v.kind === 'expense' ? v.payeeName : (v.holderName ?? v.payeeName)
+  const attached = [
+    ...(v.documents ?? []).map((d) => ({ id: d.id, name: d.fileName || `Document ${d.id.slice(0, 6)}`, by: d.uploadedByName ?? '—', when: fmtDateTime(d.createdAt), at: d.createdAt })),
+    ...(v.receipts ?? []).map((r, i) => ({ id: r.id, name: `Receipt ${i + 1}`, by: '—', when: fmtDateTime(r.createdAt), at: r.createdAt })),
+  ].sort((a, b) => a.at.localeCompare(b.at))
   const th: React.CSSProperties = { textAlign: 'left', fontSize: '8pt', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: muted, padding: '2mm 3mm', borderBottom: `1.5px solid ${rule}` }
   const td: React.CSSProperties = { padding: '2.2mm 3mm', fontSize: '10.5pt', borderBottom: `1px solid ${hair}` }
 
@@ -141,6 +145,28 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
       <div style={{ display: 'flex', gap: '6mm' }}>
         <FieldBox label="Raised by" value={v.preparedByName ?? '—'} />
         <FieldBox label="Documents due by" value={v.dueBy ? fmtDate(v.dueBy) : '—'} />
+      </div>
+
+      {/* Attached documents — they travel with the voucher (owner, 2026-10-16); the files themselves are in servd and in the PDF download. */}
+      <div>
+        <Label>Attached supporting documents</Label>
+        {attached.length === 0 ? (
+          <div style={{ fontSize: '9pt', color: muted, padding: '1mm 0' }}>None attached</div>
+        ) : (
+          <ol style={{ margin: '1mm 0 0', paddingLeft: '5mm', fontSize: '8.5pt', color: ink }}>
+            {attached.slice(0, 12).map((d) => (
+              <li key={d.id} style={{ overflowWrap: 'anywhere' }}>
+                <b>{d.name}</b> <span style={{ color: muted }}>· {d.by} · {d.when}</span>
+              </li>
+            ))}
+            {attached.length > 12 && <li style={{ color: muted, listStyle: 'none' }}>+ {attached.length - 12} more attached in servd</li>}
+          </ol>
+        )}
+        {v.closed && (
+          <div style={{ fontSize: '8pt', fontWeight: 700, color: v.booksState === 'booked' ? 'var(--erp-success)' : muted, marginTop: '1mm' }}>
+            Closed — books {v.booksState === 'booked' ? 'booked' : 'pending (finance checks the documents)'}
+          </div>
+        )}
       </div>
 
       {/* Digital approvals — status, name and time from servd; nothing to sign */}

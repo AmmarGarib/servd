@@ -274,7 +274,7 @@ export async function settleDay(input: { tenantId: string; day: string; actor: A
 }
 
 /**
- * Re-check the company's audited days (oldest first, at most `limit`), closing
+ * Re-check the company's audited days (least recently checked first, at most `limit`), closing
  * the ones whose settlement is now clear. `staleMinutes`: only days last
  * checked longer ago than that. `from` / `to` limit the dates.
  */
@@ -287,7 +287,8 @@ export async function refreshAuditedDays(tenantId: string, opts: { from?: string
       ...(stale ? { OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: stale } }] } : {}),
     },
     select: { businessDate: true },
-    orderBy: { businessDate: 'asc' },
+    // Least recently checked first, so `limit` rotates through a long backlog.
+    orderBy: [{ lastCheckedAt: { sort: 'asc', nulls: 'first' } }, { businessDate: 'asc' }],
     take: opts.limit ?? 62,
   })
   let closed = 0

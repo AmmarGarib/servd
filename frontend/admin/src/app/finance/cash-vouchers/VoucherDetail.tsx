@@ -27,9 +27,10 @@ import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
-type Act = 'confirm-received' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
+type Act = 'confirm-received' | 'send-back' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
 const ACT_DONE: Record<Act, string> = {
   'confirm-received': 'Cash received confirmed — finance can now verify the documents.',
+  'send-back': 'Sent back — the requester attaches the missing documents.',
   'finance-approve': 'Approved by finance — now waiting for the CEO.',
   approve: 'Approved — the cashier can pay it.',
   return: 'Returned for correction.',
@@ -37,9 +38,9 @@ const ACT_DONE: Record<Act, string> = {
   reject: 'Voucher rejected.',
   cancel: 'Voucher cancelled.',
 }
-const NOTE_ACTS = { return: 'Why is it returned? (the requester sees this and corrects it)', reject: 'Why is it rejected? (the requester sees this)', cancel: 'Why is it cancelled?' } as const
+const NOTE_ACTS = { 'send-back': 'What is wrong with the documents? (the requester sees this and attaches what is missing)', return: 'Why is it returned? (the requester sees this and corrects it)', reject: 'Why is it rejected? (the requester sees this)', cancel: 'Why is it cancelled?' } as const
 type NoteAct = keyof typeof NOTE_ACTS
-const NOTE_BTN: Record<NoteAct, string> = { return: 'Return for correction', reject: 'Reject voucher', cancel: 'Cancel voucher' }
+const NOTE_BTN: Record<NoteAct, string> = { 'send-back': 'Send back to the requester', return: 'Return for correction', reject: 'Reject voucher', cancel: 'Cancel voucher' }
 const APPROVED_ON = ['approved', 'disbursed', 'settled', 'posted', 'converted']
 
 export function VoucherDetail({ id }: { id: string }) {
@@ -137,6 +138,28 @@ export function VoucherDetail({ id }: { id: string }) {
           </div>
         )}
 
+        {v.sentBack && (
+          <div className="rounded-2xl p-4 border" style={{ background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', borderColor: 'var(--erp-warning)' }}>
+            <p className="text-sm font-black text-white/90">
+              Finance sent it back{v.returnedByName ? ` (${v.returnedByName})` : ''}{v.returnedAt ? ` · ${fmtDateTime(v.returnedAt)}` : ''}
+            </p>
+            {v.sentBackNote && <p className="text-sm text-white/80 mt-1 whitespace-pre-wrap">{v.sentBackNote}</p>}
+            <p className="text-xs text-white/55 mt-1">Attach the missing or corrected documents below — the voucher closes again once they are in.</p>
+          </div>
+        )}
+        {v.closed && (
+          <div className="rounded-2xl p-4 border" style={{ background: 'color-mix(in srgb, var(--erp-success) 10%, transparent)', borderColor: 'var(--erp-success)' }}>
+            <p className="text-sm font-black text-success">
+              Closed — books {v.booksState === 'booked' ? 'booked' : 'pending'}
+            </p>
+            <p className="text-xs text-white/60 mt-1">
+              {v.booksState === 'booked'
+                ? 'The supporting documents are attached and finance has checked them; the expense is booked.'
+                : 'The supporting documents are attached — nothing more is needed from the requester. Finance checks them and books the expense; if something is missing it is sent back.'}
+            </p>
+          </div>
+        )}
+
         {/* Actions */}
         <div className="rounded-2xl p-4 space-y-3" style={card}>
           <div className="flex flex-wrap items-center gap-2">
@@ -149,6 +172,11 @@ export function VoucherDetail({ id }: { id: string }) {
             )}
             {v.status === 'returned' && (v.canResubmit ?? v.canEdit) && (
               <button disabled={act.isPending} className={primaryBtn} onClick={() => run('resubmit')}>Resubmit</button>
+            )}
+            {v.canSendBack && (
+              <button onClick={() => { act.reset(); setNoteFor(noteFor === 'send-back' ? null : 'send-back') }} disabled={act.isPending} className={secondaryBtn}>
+                Send back for documents
+              </button>
             )}
             {v.canReturn && (
               <button onClick={() => { act.reset(); setNoteFor(noteFor === 'return' ? null : 'return') }} disabled={act.isPending} className={secondaryBtn}>Return for correction</button>
@@ -219,7 +247,8 @@ export function VoucherDetail({ id }: { id: string }) {
         {v.canPay && <PayPanel v={v} isKeeper={isKeeper} onDone={refresh} />}
 
         {/* After payment */}
-        {paid && newFlow && <DocumentsPanel v={v} isKeeper={isKeeper} />}
+        {/* Supporting documents travel with the voucher: listed and downloadable for everyone who can open it. */}
+        {(paid || (v.status === 'approved' && v.canUpload)) && (newFlow || (v.documents?.length ?? 0) > 0 || v.canUpload) && <DocumentsPanel v={v} isKeeper={isKeeper} />}
         {v.status === 'disbursed' && newFlow && (v.canRecordSpend ?? v.canUpload) && !v.canVerify && <SpentPanel v={v} isKeeper={isKeeper} />}
         {v.status === 'disbursed' && newFlow && v.canVerify && <VerifyPanel v={v} isKeeper={isKeeper} />}
         {paid && !newFlow && <SettlePanel v={v} isKeeper={isKeeper} />}
@@ -328,13 +357,13 @@ function Steps({ v }: { v: CashVoucher }) {
     { title: 'Paid', who: v.paidByName ?? null, when: v.disbursedAt ?? null, state: paid ? 'done' : 'todo' },
     { title: 'Cash received', who: v.cashReceivedAt ? (v.cashReceivedByName ?? v.receiverName ?? null) : null, when: v.cashReceivedAt ?? null, state: v.cashReceivedAt ? 'done' : 'todo' },
     {
-      title: 'Documents',
-      who: docs ? `${docs} file${docs === 1 ? '' : 's'}` : null,
+      title: v.closed ? 'Documents — closed' : 'Documents',
+      who: v.sentBack ? 'Sent back by finance' : docs ? `${docs} file${docs === 1 ? '' : 's'}` : null,
       when: null,
-      state: v.overdue ? 'bad' : docs > 0 ? 'done' : 'todo',
+      state: v.sentBack || v.overdue ? 'bad' : docs > 0 ? 'done' : 'todo',
     },
     {
-      title: legacy ? (v.status === 'converted' ? 'Converted' : 'Settled') : 'Verified & booked',
+      title: legacy ? (v.status === 'converted' ? 'Converted' : 'Settled') : 'Checked & booked',
       who: v.docsVerifiedByName ?? v.postedByName ?? null,
       when: verifiedAt ?? v.settledAt ?? null,
       state: v.status === 'posted' || v.status === 'settled' || v.status === 'converted' ? 'done' : 'todo',
@@ -410,7 +439,7 @@ const ACTION_WORDS: Record<string, string> = {
   confirm_received: 'Cash received confirmed', resubmit: 'Resubmitted', reject: 'Rejected', rejected: 'Rejected', cancel: 'Cancelled', cancelled: 'Cancelled', pay: 'Cash paid',
   document_add: 'Document added', document_remove: 'Document removed', receipt_add: 'Receipt added', receipt_remove: 'Receipt removed',
   spend: 'Spend recorded', verify_docs: 'Documents verified & expense booked', export: 'Exported', settle: 'Receipts submitted',
-  return_change: 'Change returned', settlement_line_reclass: 'Line moved to another account', name_holder: 'Holder named',
+  return_change: 'Change returned', send_back: 'Sent back by finance for documents', settlement_line_reclass: 'Line moved to another account', name_holder: 'Holder named',
 }
 
 function noteOf(r: HistoryRow): string | null {

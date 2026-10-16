@@ -616,3 +616,88 @@ describe('review gate', () => {
     expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('disbursed')
   })
 })
+
+// ─── Closed once the documents are in; finance checks after (owner, 2026-10-16) ───
+
+describe('closed when the supporting documents are attached; finance checks after', () => {
+  type Detail = Row & {
+    closed: boolean; booksState: 'pending' | 'booked' | null; sentBack: boolean; sentBackNote: string | null
+    cashReceivedById: string | null; cashReceivedAt: string | null; canSendBack: boolean; payeeUserId: string | null
+    documents: Array<{ id: string; fileName: string; uploadedByName: string | null }>
+  }
+  const get = async (key: string, id: string) => {
+    const r = await call(key, 'GET', `${V}/${id}`)
+    expect(r.statusCode, r.body).toBe(200)
+    return r.json() as Detail
+  }
+  const ids = async (key: string, view: string) => ((await call(key, 'GET', `${V}?view=${view}`)).json() as { items: Row[] }).items.map((x) => x.id)
+
+  it('requester (not the holder) attaches after pay → receipt confirmed, CLOSED (books pending); send back reopens; a new upload closes; verify → booked', async () => {
+    // cookA asks for cash that waiterA takes.
+    const v = await approved({ amountCents: 3_000, holderUserId: U['waiterA']!.id, purpose: 'Gas cylinder refill' })
+    expect(v).toMatchObject({ status: 'approved' })
+    const pay = await call('cashA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    expect(pay.statusCode, pay.body).toBe(200)
+
+    const before = await get('cookA', v.id)
+    expect(before).toMatchObject({ payeeUserId: U['waiterA']!.id, canUpload: true, closed: false, booksState: null, stage: 'awaiting_docs', cashReceivedAt: null })
+    expect(await ids('cookA', 'open')).toContain(v.id)
+    expect(await ids('cookA', 'closed')).not.toContain(v.id)
+
+    // The requester attaches the bill: that confirms the cash was received (audited) and closes the voucher.
+    const docId = await upload('cookA', v.id)
+    const closed = await get('cookA', v.id)
+    expect(closed).toMatchObject({
+      status: 'disbursed', closed: true, booksState: 'pending', sentBack: false, stage: 'awaiting_verification',
+      cashReceivedById: U['cookA']!.id, canUpload: true, canSendBack: false,
+    })
+    expect(closed.documents.map((d) => d.id)).toContain(docId)
+    const conf = await prisma.auditLog.findFirst({ where: { entityId: v.id, action: 'cash_voucher.confirm_received' } })
+    expect(conf?.after).toMatchObject({ via: 'document_upload' })
+    expect(conf?.tenantId).toBe(T.A)
+    expect(await ids('cookA', 'open')).not.toContain(v.id)
+    expect(await ids('cookA', 'closed')).toContain(v.id)
+    expect(await ids('finA', 'awaiting_verification')).toContain(v.id)
+    expect(await ids('finA', 'missing_docs')).not.toContain(v.id)
+    // Everyone who can see it opens and downloads the document.
+    expect((await call('waiterA', 'GET', `${V}/${v.id}/attachments/${docId}`)).statusCode).toBe(200)
+    // A second document by the holder does not confirm again.
+    await upload('waiterA', v.id, doc('bill2.pdf', PDF, 'application/pdf'))
+    expect(await prisma.auditLog.count({ where: { entityId: v.id, action: 'cash_voucher.confirm_received' } })).toBe(1)
+
+    // Send back: finance only, never another company's, never the requester.
+    expect((await get('finA', v.id)).canSendBack).toBe(true)
+    expect((await call('cookA', 'POST', `${V}/${v.id}/send-back`, { note: 'Bill is unreadable' })).json().error.code).toBe('NOT_FINANCE')
+    for (const who of ['finB', 'ceoB', 'cookB']) {
+      expect((await call(who, 'POST', `${V}/${v.id}/send-back`, { note: 'not ours at all' })).statusCode).toBe(404)
+    }
+    expect((await call('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'x' })).statusCode).toBe(400)
+    const sb = await ok('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'Bill is unreadable' })
+    expect(sb).toMatchObject({ status: 'disbursed', closed: false, booksState: null, sentBack: true, sentBackNote: 'Bill is unreadable', stage: 'sent_back' })
+    expect((await call('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'Again please' })).json().error.code).toBe('VOUCHER_NOT_CLOSED')
+    expect(await ids('cookA', 'open')).toContain(v.id)
+    expect(await ids('finA', 'sent_back')).toContain(v.id)
+    expect(await ids('finA', 'awaiting_verification')).not.toContain(v.id)
+    const dash = (await call('finA', 'GET', `${V}/dashboard`)).json() as Record<string, { count: number }>
+    expect(dash['sentBack']!.count).toBeGreaterThanOrEqual(1)
+    expect(await prisma.auditLog.count({ where: { entityId: v.id, action: 'cash_voucher.send_back' } })).toBe(1)
+
+    // A new document closes it again.
+    await upload('cookA', v.id, doc('bill-clear.pdf', PDF, 'application/pdf'))
+    expect(await get('cookA', v.id)).toMatchObject({ closed: true, booksState: 'pending', sentBack: false, stage: 'awaiting_verification' })
+    expect(await ids('cookA', 'open')).not.toContain(v.id)
+
+    // Finance verifies exactly as before: the expense is booked → closed, booked.
+    const ver = await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})
+    expect(ver.statusCode, ver.body).toBe(200)
+    expect((ver.json() as { voucher: Detail }).voucher).toMatchObject({ status: 'posted', closed: true, booksState: 'booked', canSendBack: false })
+    expect(await entry(`cashvoucher.post:${v.id}`)).toEqual([['1357', 'credit', 3_000], ['6140', 'debit', 3_000]])
+
+    // A booked voucher is never sent back.
+    const late = await call('finA', 'POST', `${V}/${v.id}/send-back`, { note: 'Too late now' })
+    expect(late.statusCode).toBe(409)
+    expect(late.json().error.code).toBe('VOUCHER_POSTED')
+    // The documents stay on it for reference, for the requester too.
+    expect((await get('cookA', v.id)).documents).toHaveLength(3)
+  })
+})

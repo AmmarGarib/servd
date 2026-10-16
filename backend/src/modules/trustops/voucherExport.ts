@@ -9,6 +9,14 @@
 // scope are loadVisible's: another company's voucher is 404. Every export is
 // audited (cash_voucher.export). Files are generated in memory; nothing is
 // stored.
+//
+// Attached documents travel with the voucher (owner, 2026-10-16: "supporting
+// docs should be attached with voucher when we open any voucher for
+// reference"): both formats list every supporting document and receipt (name,
+// uploaded by, when); the PDF then appends each attached JPEG / PNG as its own
+// page and merges each attached PDF after the voucher page. Office, CSV, text
+// and WebP files (and a PDF that cannot be read) are named on a line saying
+// they are attached in servd.
 
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
@@ -47,7 +55,7 @@ interface VoucherDoc {
   totalCents: number
   words: string
   approvals: Approval[]
-  documents: string[]
+  documents: DocLine[]
   footer: string
 }
 
@@ -59,21 +67,27 @@ const fmtWhen = (d: Date | null | undefined) =>
 const fmtStamp = (d: Date) =>
   new Intl.DateTimeFormat('en-GB', { timeZone: KARACHI, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(d) + ' PKT'
 
+/** One attached file as the voucher lists it. */
+interface DocLine { id: string; name: string; mime: string; by: string; when: string }
+
 const EXT_BY_MIME: Record<string, string> = {
   'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
 }
 
 async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
   const tenantId = v.tenantId
-  const ids = [v.preparedById, v.financeApprovedById, v.hodSignedById, v.directorSignedById, v.disbursedById, v.payeeUserId, v.cashReceivedById].filter((x): x is string => !!x)
-  const [tenant, users, atts] = await Promise.all([
+  const atts = await prisma.cashVoucherAttachment.findMany({
+    where: { voucherId: v.id, tenantId, kind: { in: ['supporting', 'receipt'] } },
+    select: { id: true, kind: true, mime: true, fileName: true, createdAt: true, uploadedById: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  const ids = [
+    v.preparedById, v.financeApprovedById, v.hodSignedById, v.directorSignedById, v.disbursedById, v.payeeUserId, v.cashReceivedById,
+    ...atts.map((a) => a.uploadedById),
+  ].filter((x): x is string => !!x)
+  const [tenant, users] = await Promise.all([
     prisma.tenant.findFirst({ where: { id: tenantId }, select: { name: true } }),
-    prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
-    prisma.cashVoucherAttachment.findMany({
-      where: { voucherId: v.id, tenantId, kind: { in: ['supporting', 'receipt'] } },
-      select: { id: true, kind: true, mime: true, fileName: true },
-      orderBy: { createdAt: 'asc' },
-    }),
+    prisma.user.findMany({ where: { id: { in: [...new Set(ids)] } }, select: { id: true, name: true } }),
   ])
   const name = (id: string | null | undefined) => (id ? users.find((u) => u.id === id)?.name ?? '' : '')
 
@@ -114,11 +128,14 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
     },
   ]
   const used = new Map<string, number>()
-  const documents = atts.map((a) => {
-    if (a.fileName) return a.fileName
-    const n = (used.get(a.kind) ?? 0) + 1
-    used.set(a.kind, n)
-    return `${a.kind}-${n}.${EXT_BY_MIME[a.mime] ?? 'bin'}`
+  const documents: DocLine[] = atts.map((a) => {
+    let fileName = a.fileName
+    if (!fileName) {
+      const n = (used.get(a.kind) ?? 0) + 1
+      used.set(a.kind, n)
+      fileName = `${a.kind}-${n}.${EXT_BY_MIME[a.mime] ?? 'bin'}`
+    }
+    return { id: a.id, name: fileName, mime: a.mime, by: name(a.uploadedById) || '—', when: fmtWhen(a.createdAt) }
   })
 
   return {
@@ -164,7 +181,17 @@ function wrap(text: string, font: PDFFont, size: number, width: number): string[
   return out.length ? out : ['']
 }
 
-async function renderPdf(d: VoucherDoc): Promise<Buffer> {
+/** The bytes of the voucher's attached files (PDF export only — never in a list). */
+async function attachmentBytes(v: VoucherRow, docs: DocLine[]): Promise<Map<string, Uint8Array>> {
+  if (!docs.length) return new Map()
+  const rows = await prisma.cashVoucherAttachment.findMany({
+    where: { id: { in: docs.map((d) => d.id) }, voucherId: v.id, tenantId: v.tenantId },
+    select: { id: true, data: true },
+  })
+  return new Map(rows.map((r) => [r.id, new Uint8Array(r.data)]))
+}
+
+async function renderPdf(d: VoucherDoc, files: Map<string, Uint8Array> = new Map()): Promise<Buffer> {
   const pdf = await PDFDocument.create()
   pdf.setTitle(`${d.title} ${d.number}`)
   pdf.setCreator('servd')
@@ -279,6 +306,41 @@ async function renderPdf(d: VoucherDoc): Promise<Buffer> {
   })
   y -= bh + 22
 
+  // Attach each file after the voucher page: an image as its own page, a PDF merged. The rest are named only.
+  const notes = new Map<string, string>()
+  const appendTitle = (p: PDFPage, s: string) =>
+    p.drawText(winAnsi(s).slice(0, 110), { x: M, y: 841.89 - M + 10, size: 8, font, color: mute })
+  for (const [i, f] of d.documents.entries()) {
+    const bytes = files.get(f.id)
+    const label = `${d.number} - attachment ${i + 1} of ${d.documents.length}: ${f.name}`
+    if (!bytes) { notes.set(f.id, 'attached in servd'); continue }
+    try {
+      if (f.mime === 'image/jpeg' || f.mime === 'image/png') {
+        const img = f.mime === 'image/png' ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes)
+        const p = pdf.addPage([595.28, 841.89])
+        const maxW = 595.28 - M * 2
+        const maxH = 841.89 - M * 2 - 10
+        const k = Math.min(maxW / img.width, maxH / img.height, 1)
+        const w = img.width * k
+        const h = img.height * k
+        p.drawImage(img, { x: (595.28 - w) / 2, y: M + (maxH - h), width: w, height: h })
+        appendTitle(p, label)
+        notes.set(f.id, `page ${pdf.getPageCount()}`)
+      } else if (f.mime === 'application/pdf') {
+        const src = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false })
+        const first = pdf.getPageCount() + 1
+        const copied = await pdf.copyPages(src, src.getPageIndices())
+        for (const cp of copied) pdf.addPage(cp)
+        if (copied.length) notes.set(f.id, copied.length === 1 ? `page ${first}` : `pages ${first}-${first + copied.length - 1}`)
+        else notes.set(f.id, 'attached in servd (empty PDF)')
+      } else {
+        notes.set(f.id, 'attached in servd (open it there)')
+      }
+    } catch {
+      notes.set(f.id, 'attached in servd (could not be added here)')
+    }
+  }
+
   // Attached supporting documents
   text('Attached supporting documents', M, y, { size: 9, bold: true })
   y -= 14
@@ -286,14 +348,16 @@ async function renderPdf(d: VoucherDoc): Promise<Buffer> {
     text('None attached', M + 6, y, { size: 9, color: mute })
     y -= 13
   } else {
-    const shown = d.documents.slice(0, 14)
+    // As many as fit above the footer; the rest are counted.
+    const room = Math.max(1, Math.floor((y - (M + 30)) / 13))
+    const shown = d.documents.slice(0, d.documents.length > room ? room - 1 : room)
     shown.forEach((f, i) => {
-      const l = wrap(`${i + 1}. ${f}`, font, 9, W - 12)[0]!
+      const l = wrap(`${i + 1}. ${f.name} - ${f.by}, ${f.when} - ${notes.get(f.id) ?? 'attached in servd'}`, font, 9, W - 12)[0]!
       text(l, M + 6, y, { size: 9 })
       y -= 13
     })
     if (d.documents.length > shown.length) {
-      text(`+ ${d.documents.length - shown.length} more attached`, M + 6, y, { size: 9, color: mute })
+      text(`+ ${d.documents.length - shown.length} more attached in servd`, M + 6, y, { size: 9, color: mute })
       y -= 13
     }
   }
@@ -327,7 +391,12 @@ function renderXlsx(d: VoucherDoc): Buffer {
     ...d.approvals.map((s): XlsxCell[] => [{ v: s.role, s: 'bold' }, s.sub ? `${s.status} (${s.sub})` : s.status, s.name, s.when]),
     [],
     [{ v: 'Attached supporting documents', s: 'bold' }],
-    ...(d.documents.length ? d.documents.map((f, i): XlsxCell[] => [`${i + 1}`, f]) : [['None attached']]),
+    ...(d.documents.length
+      ? [
+          [{ v: '#', s: 'header' }, { v: 'File', s: 'header' }, { v: 'Uploaded by', s: 'header' }, { v: 'When', s: 'header' }] as XlsxCell[],
+          ...d.documents.map((f, i): XlsxCell[] => [`${i + 1}`, f.name, f.by, f.when]),
+        ]
+      : [['None attached']]),
     [],
     [d.footer],
   ]
@@ -350,7 +419,7 @@ export async function cashVoucherExportRoutes(fastify: FastifyInstance) {
     fastify.get<{ Params: { id: string } }>(`/:id/export.${format}`, { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
       const { v } = await loadVisible(req, req.params.id)
       const doc = await buildDoc(v)
-      const body = format === 'pdf' ? await renderPdf(doc) : renderXlsx(doc)
+      const body = format === 'pdf' ? await renderPdf(doc, await attachmentBytes(v, doc.documents)) : renderXlsx(doc)
       await auditVoucher(req, 'export', v, { format, status: v.status })
       return send(
         reply, body,

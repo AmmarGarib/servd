@@ -37,16 +37,18 @@ answers 422 `DAY_AUDITED { day, status }` to a sales source dated into one.
 Everything else posts as before. Sales, voids, comps, refunds and cancels post
 "now", so a change today to an older bill lands today. Backfills
 (`reconciliation/backfillOrders.ts`, `accounting/shiftPosting.ts`
-backfill) and `lateDatingFor(…, sourceType)` move a sales posting out of a
-locked day to today with the note "dated <day>, posted late (the night audit
-locked that sales day)".
+backfill), a retried refund (`orderPosting.ts postRefundPayment`, through
+`lock.ts salesPostingDate`) and `lateDatingFor(…, sourceType)` move a sales
+posting out of a locked day to today with the note "dated <day>, posted late
+(the night audit locked that sales day)".
 
 ## Checks (`checks.ts`; every block CEO-overridable with a reason)
 
 Night (open → audited): `open_tills`, `cash_variance_open` (Q4),
 `open_orders`, `unposted_shifts`, `unposted_orders`, `posting_failed` (SALES
 sources only), `raast_open_night` (Q1), `cod_pending`, `tenders_unresolved`
-(an `unverified` card charge alone is a warn).
+(a card-machine charge with no final outcome blocks, `needs_attention`
+included; an `unverified` / `manual_resolved` charge alone is a warn).
 
 Settlement (audited → closed): `card_unsettled_day` (or `card_matching_off`),
 `raast_unmatched_day`, `cash_not_banked` (Q2), `sales_bank_unmatched` (bank

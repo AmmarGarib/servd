@@ -12,6 +12,7 @@ import { AppError } from '../src/lib/errors.js'
 import { postJournalEntry, lateDatingFor } from '../src/modules/accounting/journal.js'
 import { fmtPktDate } from '../src/modules/accounting/dates.js'
 import { backfillUnpostedShifts } from '../src/modules/accounting/shiftPosting.js'
+import { postOrderCompletion, postRefundPayment } from '../src/modules/accounting/orderPosting.js'
 import { SALES_SOURCES, SALES_SOURCE_PREFIXES, isSalesSource, salesReferenceSqlPatterns } from '../src/modules/nightAudit/lock.js'
 import { reopenDay } from '../src/modules/nightAudit/service.js'
 
@@ -139,6 +140,29 @@ describe('late dating', () => {
     const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: A, reference: `shift.close:${shift.id}` } })
     expect(fmtPktDate(je.entryDate)).toBe(today)
     expect(je.description).toContain(`closed ${yesterday}, posted late (the night audit locked that sales day)`)
+  })
+})
+
+describe('a refund retried after its day was audited', () => {
+  it('posts today with the note (never DAY_AUDITED forever); company B untouched', async () => {
+    const o = await prisma.order.create({
+      data: {
+        conceptId: conceptA, source: 'servd', status: 'completed', placedAt: new Date(`${yesterday}T12:00:00+05:00`), completedAt: new Date(`${yesterday}T12:30:00+05:00`),
+        totalCents: 11_500, taxCents: 1_500, items: { create: [{ name: 'Haleem', quantity: 1, unitPriceCents: 10_000 }] },
+      },
+    })
+    await prisma.payment.create({ data: { orderId: o.id, method: 'cash', amountCents: 11_500, status: 'paid', processedAt: new Date(`${yesterday}T12:30:00+05:00`) } })
+    // The sale itself, moved out of the locked day by the backfill's options.
+    const sale = await postOrderCompletion(o.id, { entryDate: new Date(), memoNote: 'test' })
+    expect(sale.posted, sale.reason).toBe(true)
+    // A refund made on the (then open) day whose posting was refused, retried now.
+    const refund = await prisma.payment.create({ data: { orderId: o.id, method: 'cash', amountCents: -5_750, status: 'refunded', processedAt: new Date(`${yesterday}T21:00:00+05:00`) } })
+    const r = await postRefundPayment(refund.id)
+    expect(r.posted, r.reason).toBe(true)
+    const je = await prisma.journalEntry.findUniqueOrThrow({ where: { id: r.entryId! } })
+    expect(je.tenantId).toBe(A)
+    expect(fmtPktDate(je.entryDate)).toBe(today)
+    expect(je.description).toContain(`dated ${yesterday}, posted late (the night audit locked that sales day)`)
   })
 })
 

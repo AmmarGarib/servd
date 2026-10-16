@@ -25,7 +25,7 @@ export type VoucherStatus =
   | 'rejected' | 'cancelled' | 'settled' | 'converted'
 /** The step shown. Server `stage` may add words; unknown ones render as plain text. */
 export type RequestStage =
-  | 'waiting_finance' | 'waiting_ceo' | 'awaiting_docs'
+  | 'waiting_finance' | 'waiting_ceo' | 'awaiting_docs' | 'sent_back'
   | 'submitted' | 'finance_approved' | 'returned' | 'approved' | 'missing_docs' | 'awaiting_verification' | 'posted'
   | 'draft' | 'hod_signed' | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
 
@@ -34,13 +34,15 @@ export const STAGE_META: Record<RequestStage, { label: string; badge: string }> 
   waiting_finance:  { label: 'Waiting for finance',     badge: 's-badge-amber' },
   waiting_ceo:      { label: 'Waiting for CEO',         badge: 's-badge-amber' },
   awaiting_docs:    { label: 'Paid — documents missing', badge: 's-badge-red' },
+  sent_back:        { label: 'Sent back — documents needed', badge: 's-badge-red' },
   submitted:        { label: 'Waiting for finance',     badge: 's-badge-amber' },
   finance_approved: { label: 'Waiting for CEO',         badge: 's-badge-amber' },
   returned:         { label: 'Returned for correction', badge: 's-badge-red' },
   approved:         { label: 'Approved — to pay',       badge: 's-badge-purple' },
   missing_docs:     { label: 'Paid — documents missing', badge: 's-badge-red' },
-  awaiting_verification: { label: 'Documents in — finance to verify', badge: 's-badge-teal' },
-  posted:           { label: 'Verified & booked',       badge: 's-badge-green' },
+  // Closed (owner, 2026-10-16): documents attached — the requester is done; finance checks and books after.
+  awaiting_verification: { label: 'Closed — books pending', badge: 's-badge-teal' },
+  posted:           { label: 'Closed — booked',         badge: 's-badge-green' },
   // Legacy rows (before the 2026-10-15 flow)
   draft:        { label: 'Waiting for finance',  badge: 's-badge-amber' },
   hod_signed:   { label: 'Waiting for CEO',      badge: 's-badge-amber' },
@@ -90,6 +92,8 @@ export interface Dashboard {
   missingDocs: { count: number; cents: number }
   awaitingVerification: { count: number; cents: number }
   docsOverdue: { count: number; cents: number }
+  /** Finance sent it back after the documents came in. */
+  sentBack?: { count: number; cents: number }
   postedThisMonth: { count: number; cents: number }
 }
 
@@ -134,6 +138,12 @@ export interface CashVoucher {
   expenseOnVerify?: boolean
   supportingCount?: number
   documents?: SupportingDoc[]
+  /** Documents attached → closed for the requester; finance still checks them (booksState). */
+  closed?: boolean
+  booksState?: 'pending' | 'booked' | null
+  /** Finance sent it back after the documents came in (open again until another document is attached). */
+  sentBack?: boolean
+  sentBackNote?: string | null
   spend?: { lines: SettlementLine[]; spentCents: number | null; changeDueCents: number | null; topUpDueCents: number | null } | null
   totalCents?: number
   grossOrAmountCents?: number
@@ -206,6 +216,7 @@ export interface CashVoucher {
   canReturn?: boolean
   canReject: boolean
   canUpload?: boolean
+  canSendBack?: boolean
   canEditDiscount?: boolean
   canConfirmReceived?: boolean
   canResubmit?: boolean
@@ -252,6 +263,7 @@ function asOne(r: unknown): CashVoucher {
 
 /** The list views the server knows (GET /trustops/cash-vouchers?view=). */
 export type ListView =
+  | 'open' | 'closed' | 'sent_back'
   | 'mine' | 'finance' | 'ceo' | 'returned' | 'to_pay' | 'missing_docs' | 'awaiting_verification' | 'posted'
   | 'overdue' | 'receipts_due' | 'settled' | 'needs_review' | 'all'
 
@@ -360,6 +372,8 @@ export function useStaffNames() {
 // ─── Error words ────────────────────────────────────────────────────────────
 
 const ERROR_WORDS: Record<string, string> = {
+  VOUCHER_NOT_CLOSED: 'Only a voucher whose documents are in (closed, books pending) can be sent back.',
+  VOUCHER_POSTED: 'This voucher is already verified and booked — it cannot be sent back.',
   CASH_RECEIPT_NOT_CONFIRMED: 'The person who took the cash has not confirmed receiving it yet — finance verifies after that.',
   NOT_HOLDER: 'Only the person who holds this cash can confirm receiving it.',
   ALREADY_CONFIRMED: 'The cash is already confirmed as received.',

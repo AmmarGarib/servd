@@ -81,6 +81,17 @@ export function salesDayLateNote(day: string): string {
 }
 
 /**
+ * The date a SALES posting whose natural date is `natural` takes: its own
+ * while that sales day is open, else NOW with the night-audit note (a retry
+ * of a refund refused on a day that has since been audited posts today
+ * instead of being refused forever). Today is never locked.
+ */
+export async function salesPostingDate(db: Db, tenantId: string, natural: Date): Promise<{ entryDate: Date; memoNote?: string }> {
+  const lock = await dayLockOf(db, tenantId, natural)
+  return lock ? { entryDate: new Date(), memoNote: salesDayLateNote(lock.day) } : { entryDate: natural }
+}
+
+/**
  * postJournalEntry's day guard: a SALES posting dated into an audited or
  * closed day is refused (422 DAY_AUDITED { day, status }). A non-sales source
  * returns at once without reading anything.

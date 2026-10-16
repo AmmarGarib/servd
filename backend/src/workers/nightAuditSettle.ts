@@ -26,6 +26,8 @@ export async function runNightAuditSettleOnce(now: Date = new Date()): Promise<{
     // (service.ts lockTenant), so two API processes never close a day twice;
     // the pending flag is de-duplicated on its entity.
     try {
+      // At most 62 days a tick, least recently checked first — a company with a
+      // longer backlog is worked through over the following ticks.
       closed += (await refreshAuditedDays(id, { limit: 62 })).closed
       if (await flagPendingYesterday(id, now)) flagged++
     } catch (err) {

@@ -11,6 +11,9 @@ import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { cashVoucherExportRoutes } from '../src/modules/trustops/voucherExport.js'
 import { amountInWords } from '../src/lib/amountInWords.js'
 import { buildXlsx } from '../src/lib/xlsxWriter.js'
+import { PDFDocument } from 'pdf-lib'
+
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
 
 const P = `cve${Date.now()}`
 let app: FastifyInstance
@@ -57,6 +60,19 @@ beforeAll(async () => {
   await prisma.cashVoucherAttachment.create({
     data: { tenantId: T.A, voucherId: V['approved']!, kind: 'supporting', mime: 'application/pdf', fileName: 'invoice-77.pdf', sizeBytes: 4, data: Buffer.from('%PDF'), uploadedById: U['ceoA']!.id },
   })
+  // The posted voucher carries a photo, a two-page PDF and a spreadsheet: the PDF export appends the first two.
+  const two = await PDFDocument.create()
+  two.addPage([300, 300]); two.addPage([300, 300])
+  const twoPages = Buffer.from(await two.save())
+  for (const [fileName, mime, data] of [
+    ['bill.png', 'image/png', PNG_1PX],
+    ['invoice.pdf', 'application/pdf', twoPages],
+    ['lines.csv', 'text/csv', Buffer.from('item,amount\ntaxi,90\n')],
+  ] as const) {
+    await prisma.cashVoucherAttachment.create({
+      data: { tenantId: T.A, voucherId: V['posted']!, kind: 'supporting', mime, fileName, sizeBytes: data.length, data, uploadedById: U['ceoA']!.id },
+    })
+  }
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } })
@@ -86,6 +102,20 @@ describe('cash voucher exports', () => {
   it('PDF of a posted voucher with odd characters still renders', async () => {
     const r = await get('ceoA', `/${V['posted']}/export.pdf`)
     expect(r.statusCode, r.body).toBe(200)
+  })
+
+  it('PDF appends the attached image as a page and merges the attached PDF; the Excel lists who uploaded each', async () => {
+    const r = await get('ceoA', `/${V['posted']}/export.pdf`)
+    expect(r.statusCode, r.body).toBe(200)
+    const out = await PDFDocument.load(r.rawPayload)
+    // voucher page + the photo + the two PDF pages (the CSV is only named)
+    expect(out.getPageCount()).toBe(4)
+    // An unreadable "PDF" attachment never breaks the export: it is only named.
+    const bad = await get('ceoA', `/${V['approved']}/export.pdf`)
+    expect(bad.statusCode).toBe(200)
+    expect((await PDFDocument.load(bad.rawPayload)).getPageCount()).toBe(1)
+    const x = (await get('ceoA', `/${V['posted']}/export.xlsx`)).rawPayload.toString('utf8')
+    for (const f of ['bill.png', 'invoice.pdf', 'lines.csv', 'Uploaded by', `${P} ceoA`]) expect(x).toContain(f)
   })
 
   it('XLSX: a valid zip with the number, total and escaped text', async () => {

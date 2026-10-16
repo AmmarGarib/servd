@@ -6,10 +6,14 @@
 //   • POST /:id/documents { fileName, mime, dataBase64 } — supporting
 //     documents (kind 'supporting'): PDF, JPG / PNG / WebP, Excel, Word,
 //     PowerPoint, CSV, text (lib/evidenceFile.ts allowOffice: extension, mime
-//     and magic bytes must agree), ≤ 5 MB each, ≤ 20 per voucher. The holder
-//     (kind request), finance or the cashier, from 'approved' on; after
-//     posting, keepers only. DELETE /:id/documents/:aid — the uploader or
-//     finance, before verification. They book nothing.
+//     and magic bytes must agree), ≤ 5 MB each, ≤ 20 per voucher. The
+//     requester (whoever raised it), the holder (kind request), finance or
+//     the cashier, from 'approved' on; after posting, keepers only. The first
+//     document a requester / holder attaches to a paid request also confirms
+//     the cash was received (they clearly have it). With ≥ 1 document the
+//     voucher shows CLOSED (books pending) until finance verifies it
+//     (cashVouchers.ts closedStateOf). DELETE /:id/documents/:aid — the
+//     uploader or finance, before verification. They book nothing.
 //   • POST /:id/spend { lines, note? } — what was actually spent (expense /
 //     stock / capex lines, Σ any amount: under the paid amount means change
 //     comes back, over means finance tops the holder up). Stored on the
@@ -108,9 +112,10 @@ function assertLegacyRow(v: { number: string; expenseOnVerify: boolean }): void 
   }
 }
 
-/** The holder (kind request), finance, a keeper or the paying box's custodian. */
+/** The requester, the holder (kind request), finance, a keeper or the paying box's custodian. */
 function isDocsParty(viewer: Viewer, v: VoucherRow): boolean {
   return viewer.financeApprover || viewer.keeper || (!!v.box && v.box.custodianId === viewer.id)
+    || v.preparedById === viewer.id
     || (v.kind === 'request' && !!v.payeeUserId && v.payeeUserId === viewer.id)
 }
 
@@ -428,14 +433,14 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
     if (!open && !closed) throw wrongStatus('VOUCHER_NOT_APPROVED', v, 'documents are added once the CEO has approved it')
     if (open ? !isDocsParty(viewer, v) : !viewer.keeper) {
       throw new AppError('DOCUMENT_NOT_ALLOWED', open
-        ? 'Only the person who holds this cash, the cashier, finance or a manager can add its documents'
+        ? 'Only whoever asked for this cash, the person who holds it, the cashier, finance or a manager can add its documents'
         : 'Once it is verified, only finance or a manager can add documents', 403)
     }
     // Decoded before the transaction (never hold one across a decode).
     const file = decodeEvidenceFile(body.dataBase64, body.mime, { allowOffice: true, fileName: body.fileName, maxBytes: DOCUMENT_MAX_BYTES })
-    const row = await prisma.$transaction(async (tx) => {
+    const { row, receivedAt } = await prisma.$transaction(async (tx) => {
       await lockVoucherTx(tx, v.id)
-      const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true, number: true } })
+      const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true, number: true, cashReceivedAt: true } })
       if (cur.status !== v.status && !(v.status === 'approved' && cur.status === 'disbursed') && !(v.status === 'disbursed' && cur.status === 'posted' && viewer.keeper)) {
         throw new AppError('VOUCHER_CHANGED', `Cash request ${cur.number} was changed by someone else — reload it`, 409)
       }
@@ -443,15 +448,29 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       if (count >= MAX_DOCUMENTS_PER_VOUCHER) {
         throw new AppError('TOO_MANY_DOCUMENTS', `A cash voucher takes at most ${MAX_DOCUMENTS_PER_VOUCHER} documents`, 409)
       }
-      return tx.cashVoucherAttachment.create({
+      const created = await tx.cashVoucherAttachment.create({
         data: {
           tenantId: v.tenantId, voucherId: v.id, kind: 'supporting', mime: file.mime, fileName: file.fileName, sizeBytes: file.sizeBytes,
           data: file.bytes, uploadedById: viewer.id,
         },
         select: { id: true, kind: true, mime: true, fileName: true, sizeBytes: true, createdAt: true, uploadedById: true },
       })
+      // The requester / holder attaching the bills of a paid request clearly has the cash: the upload confirms
+      // receipt when nobody has yet (owner, 2026-10-16). Conditional, so a confirm racing it wins once.
+      let receivedAt: Date | null = null
+      const mine = v.payeeUserId === viewer.id || v.preparedById === viewer.id
+      if (v.kind === 'request' && cur.status === 'disbursed' && !cur.cashReceivedAt && mine) {
+        const now = new Date()
+        const done = await tx.cashVoucher.updateMany({
+          where: { id: v.id, status: 'disbursed', cashReceivedAt: null },
+          data: { cashReceivedById: viewer.id, cashReceivedAt: now },
+        })
+        if (done.count === 1) receivedAt = now
+      }
+      return { row: created, receivedAt }
     })
     await auditVoucher(req, 'document_add', v, { attachmentId: row.id, fileName: row.fileName, mime: row.mime, sizeBytes: row.sizeBytes })
+    if (receivedAt) await auditVoucher(req, 'confirm_received', v, { cashReceivedAt: receivedAt.toISOString(), via: 'document_upload', attachmentId: row.id })
     return reply.status(201).send(row)
   })
 

@@ -3,7 +3,9 @@
 //
 // A request is a voucher the moment it is sent: it goes to finance, then to the
 // CEO; after the CEO approves the cashier pays it, the holder uploads the
-// supporting documents and finance verifies them — the expense is booked then.
+// supporting documents — the voucher is CLOSED for them then (it leaves "My
+// open vouchers") — and finance checks the documents after, which books the
+// expense (books: pending → booked). Finance may send it back with a note.
 // Finance can also raise a voucher for an outside payee (with a discount).
 //
 // Dashboard tiles filter the list (server views). API: /trustops/cash-vouchers.
@@ -34,13 +36,16 @@ const TILES: Tile[] = [
   { view: 'ceo', label: 'Waiting for CEO', key: 'waitingCeo' },
   { view: 'returned', label: 'Returned', key: 'returned', bad: true },
   { view: 'to_pay', label: 'Approved – unpaid', key: 'approvedUnpaid' },
-  { view: 'missing_docs', label: 'Missing documents', key: 'missingDocs', bad: true },
-  { view: 'awaiting_verification', label: 'Awaiting verification', key: 'awaitingVerification' },
+  { view: 'missing_docs', label: 'Paid — documents missing', key: 'missingDocs', bad: true },
+  { view: 'awaiting_verification', label: 'Closed — finance to check', key: 'awaitingVerification' },
   { view: 'overdue', label: 'Documents overdue', key: 'docsOverdue', bad: true },
   { view: 'posted', label: 'Booked this month', key: 'postedThisMonth', good: true },
 ]
-const EXTRA_VIEWS: Array<{ view: ListView; label: string }> = [
-  { view: 'mine', label: 'My vouchers' },
+const EXTRA_VIEWS: Array<{ view: ListView; label: string; count?: Exclude<keyof Dashboard, 'scope'> }> = [
+  { view: 'open', label: 'My open vouchers' },
+  { view: 'sent_back', label: 'Sent back by finance', count: 'sentBack' },
+  { view: 'closed', label: 'Closed' },
+  { view: 'mine', label: 'All mine' },
   { view: 'all', label: 'All' },
 ]
 const VIEW_IDS = new Set<string>([...TILES.map((t) => t.view), ...EXTRA_VIEWS.map((e) => e.view), 'receipts_due', 'settled', 'needs_review'])
@@ -55,7 +60,7 @@ function CashVouchers() {
   useEffect(() => { if (linkedId) router.replace(`/finance/cash-vouchers/${linkedId}`) }, [linkedId, router])
 
   const initial = params?.get('view') ?? ''
-  const [view, setView] = useState<ListView>(VIEW_IDS.has(initial) ? (initial as ListView) : 'mine')
+  const [view, setView] = useState<ListView>(VIEW_IDS.has(initial) ? (initial as ListView) : 'open')
   const [mode, setMode] = useState<'request' | 'expense' | null>(null)
   // "Recover as copy" from the Trash: a rejected / cancelled voucher opens the
   // new-voucher form pre-filled. It is a normal submission (finance, then CEO).
@@ -80,7 +85,7 @@ function CashVouchers() {
             <h1 className="text-2xl font-black text-white/90">Cash vouchers</h1>
             <p className="text-sm text-white/45 mt-1 max-w-2xl">
               Request cash here — a voucher is created and goes to finance at once, then to the CEO. After approval the cashier pays you;
-              upload the supporting documents and finance verifies them, which books the expense.
+              attach the supporting documents and the voucher is closed for you. Finance checks them afterwards and books the expense.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -128,6 +133,7 @@ function CashVouchers() {
                 ? { background: 'var(--erp-accent-dim)', border: '1px solid var(--erp-accent)', color: 'var(--text)' }
                 : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
               {e.label}
+              {e.count && (dash.data?.[e.count]?.count ?? 0) > 0 ? ` (${dash.data?.[e.count]?.count})` : ''}
             </button>
           ))}
           <span className="text-xs text-white/40">Showing: <b className="text-white/70">{label}</b></span>
@@ -141,7 +147,7 @@ function CashVouchers() {
           {!isLoading && !error && rows.length === 0 && (
             <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
               <p className="font-bold text-white/85">Nothing in &ldquo;{label}&rdquo;</p>
-              {view === 'mine' && <p className="text-sm text-white/45 mt-1">Need cash for work? Request it — it goes to finance first.</p>}
+              {(view === 'mine' || view === 'open') && <p className="text-sm text-white/45 mt-1">Need cash for work? Request it — it goes to finance first.</p>}
             </div>
           )}
 

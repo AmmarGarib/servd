@@ -23,6 +23,7 @@ import type { Order, Payment, Concept, Prisma, PrismaClient } from '@prisma/clie
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, ON_ACCOUNT_MEMO, TILL_CLEARING_CODES, postJournalEntry, revenueCodeForConcept, withLateNote, type JournalLineInput, type RepostOptions } from './journal.js'
 import { tillClearingCodeTx } from './tillClearingCode.js'
+import { salesPostingDate } from '../nightAudit/lock.js'
 import { cogsLinesForOrders } from './cogs.js'
 import { postLoyaltyReversal } from './loyaltyPosting.js'
 import { restoreOrderWallet } from '../wallet/service.js'
@@ -921,6 +922,9 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
   // ON_ACCOUNT_MEMO like the charge, so the till-clearing cut-over leaves it.
   const memo = `${payment.method === 'on_account' ? `${ON_ACCOUNT_MEMO} — ` : ''}Refund on ${order.concept.slug} #${orderRefOf(order.id)}`
   const creditLine = { accountCode: refundCreditAccount(payment), type: 'credit' as const, amountCents: amount, memo, conceptId: order.conceptId }
+  // Night audit (sales only): a refund retried after its own sales day was
+  // night-audited posts today with a note naming its date (never DAY_AUDITED).
+  const placed = await salesPostingDate(db, tenantId, payment.processedAt ?? new Date())
 
   // LEDGER-R5: money taken on a cancelled / rejected ticket was never a sale.
   // The shift close holds it as a refund due (Cr 1110); handing it back clears
@@ -932,18 +936,23 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
     const onDrawer = order.payments.some((p) => p.shiftId && p.amountCents > 0 && p.method !== 'on_account' && isShiftReceipt(p))
     if (booking.refundDue || (!booking.booked && onDrawer)) {
       const dueMemo = `Refund due handed back — cancelled order ${order.id}`
-      const result = await postJournalEntry({
-        tenantId,
-        sourceType: 'order.refund',
-        sourceId: payment.id,
-        description: `Money taken on cancelled order ${orderRefOf(order.id)} handed back (${order.concept.slug}, ${payment.method}) — not a sale`,
-        entryDate: payment.processedAt ?? new Date(),
-        postedBy: options.postedBy ?? 'system',
-        lines: [
+      const handBack = withLateNote(
+        `Money taken on cancelled order ${orderRefOf(order.id)} handed back (${order.concept.slug}, ${payment.method}) — not a sale`,
+        [
           // Till clearing: 1110 until the company's cut-over, 1115 after it.
           { accountCode: await tillClearingCodeTx(db, tenantId), type: 'debit', amountCents: amount, memo: dueMemo, conceptId: order.conceptId },
           { ...creditLine, memo: dueMemo },
         ],
+        placed.memoNote,
+      )
+      const result = await postJournalEntry({
+        tenantId,
+        sourceType: 'order.refund',
+        sourceId: payment.id,
+        description: handBack.description,
+        entryDate: placed.entryDate,
+        postedBy: options.postedBy ?? 'system',
+        lines: handBack.lines,
       }, { tx: options.tx })
       return { posted: result.posted, entryId: result.entryId }
     }
@@ -968,15 +977,19 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
     share = refundShareOf(netOfVoidRefunds(order, others), prior, amount)
   }
   const taxAccount = await refundTaxAccountFor(db, tenantId, order, booking.saleTaxAccount, share.taxCents)
-  const lines = [...shareDebitLines(order, share, memo, taxAccount), creditLine]
+  const refund = withLateNote(
+    `Refund of PKR ${(amount / 100).toFixed(0)} on order ${orderRefOf(order.id)} (${order.concept.slug} / ${order.source}, ${payment.method})`,
+    [...shareDebitLines(order, share, memo, taxAccount), creditLine],
+    placed.memoNote,
+  )
   const result = await postJournalEntry({
     tenantId,
     sourceType: 'order.refund',
     sourceId: payment.id,
-    description: `Refund of PKR ${(amount / 100).toFixed(0)} on order ${orderRefOf(order.id)} (${order.concept.slug} / ${order.source}, ${payment.method})`,
-    entryDate: payment.processedAt ?? new Date(),
+    description: refund.description,
+    entryDate: placed.entryDate,
     postedBy: options.postedBy ?? 'system',
-    lines,
+    lines: refund.lines,
   }, { tx: options.tx })
   return { posted: result.posted, entryId: result.entryId }
 }

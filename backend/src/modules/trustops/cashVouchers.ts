@@ -13,6 +13,17 @@
 //       ▲  return (finance / CEO, note) → returned ──resubmit──┘      reject (finance / CEO, note) → rejected
 //   cancel: the raiser (submitted / returned) or a cash keeper (any status before pay) → cancelled
 //
+// CLOSED (owner, 2026-10-16: "When user attach the supporting then it should
+// marked as closed" — "Closed, finance checks after"): a paid 2026-10-15
+// voucher shows CLOSED as soon as it carries ≥ 1 supporting document (and
+// finance has not sent it back since the latest upload) — the requester is
+// done and it leaves their open list; finance still checks the documents and
+// the expense is booked at that check (books: 'pending' → 'booked' once
+// posted). Derived only (closedStateOf) — the DB status stays 'disbursed'.
+// Finance (or the CEO) may SEND BACK a closed, not-yet-booked voucher with a
+// note (POST /:id/send-back: returnedAt / returnNote / returnCount, status
+// unchanged); it is open again until the requester attaches another document.
+//
 // • Raise (POST /): kind 'request' — ANY login, the ACTIVE company, the holder
 //   is the raiser by default; status 'submitted' at once (the voucher is
 //   created automatically, no draft step). Kind 'expense' — finance only, for
@@ -106,17 +117,79 @@ const isLegacyNoHolder = (v: { status: CashVoucherStatus; payeeUserId: string | 
 /** The steps the UI shows (the DB status stays as stored). */
 export type CashRequestStage =
   | 'waiting_finance' | 'waiting_ceo' | 'returned' | 'approved'
-  | 'awaiting_docs' | 'awaiting_verification' | 'posted'
+  | 'awaiting_docs' | 'sent_back' | 'awaiting_verification' | 'posted'
   | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
 
-export function stageOf(v: { status: CashVoucherStatus; payeeUserId: string | null; kind: string; expenseOnVerify: boolean; attachments: Array<{ kind: string }> }): CashRequestStage {
+type ClosedInput = {
+  status: CashVoucherStatus
+  expenseOnVerify: boolean
+  disbursedAt: Date | null
+  returnedAt: Date | null
+  attachments: Array<{ kind: string; createdAt: Date }>
+}
+
+/**
+ * Finance sent this paid voucher back (returnedAt after the pay — a return
+ * before the pay is the approval-stage "returned for correction") and no
+ * supporting document has been added since.
+ */
+export function sentBackOf(v: ClosedInput): boolean {
+  if (v.status !== 'disbursed' || !v.expenseOnVerify || !v.returnedAt || !v.disbursedAt) return false
+  if (v.returnedAt.getTime() <= v.disbursedAt.getTime()) return false
+  const back = v.returnedAt.getTime()
+  return !v.attachments.some((a) => a.kind === 'supporting' && a.createdAt.getTime() > back)
+}
+
+/**
+ * The presentational CLOSED state (owner, 2026-10-16): a paid 2026-10-15
+ * voucher is closed once it carries a supporting document (and is not sent
+ * back since) — books 'pending' until finance verifies, 'booked' once posted.
+ * Legacy rows and unpaid vouchers: never closed here (books null).
+ */
+export function closedStateOf(v: ClosedInput): { closed: boolean; booksState: 'pending' | 'booked' | null; sentBack: boolean } {
+  if (!v.expenseOnVerify) return { closed: false, booksState: null, sentBack: false }
+  if (v.status === 'posted') return { closed: true, booksState: 'booked', sentBack: false }
+  if (v.status !== 'disbursed') return { closed: false, booksState: null, sentBack: false }
+  const sentBack = sentBackOf(v)
+  const closed = !sentBack && v.attachments.some((a) => a.kind === 'supporting')
+  return { closed, booksState: closed ? 'pending' : null, sentBack }
+}
+
+/**
+ * Ids of every paid 2026-10-15 voucher (status disbursed) that is CLOSED
+ * (books pending) and that is SENT BACK — closedStateOf in SQL, for the list
+ * views and the dashboard. Callers intersect with their own company scope.
+ * Small set: only vouchers paid and not yet verified.
+ */
+export async function paidDocStates(): Promise<{ closedIds: string[]; sentBackIds: string[] }> {
+  const rows = await prisma.$queryRaw<Array<{ id: string; closed: boolean; sentBack: boolean }>>`
+    SELECT v.id,
+      EXISTS (
+        SELECT 1 FROM cash_voucher_attachments a
+        WHERE a."voucherId" = v.id AND a.kind = 'supporting'
+          AND (v."returnedAt" IS NULL OR v."disbursedAt" IS NULL OR v."returnedAt" <= v."disbursedAt" OR a."createdAt" > v."returnedAt")
+      ) AS closed,
+      (v."returnedAt" IS NOT NULL AND v."disbursedAt" IS NOT NULL AND v."returnedAt" > v."disbursedAt"
+        AND NOT EXISTS (
+          SELECT 1 FROM cash_voucher_attachments a
+          WHERE a."voucherId" = v.id AND a.kind = 'supporting' AND a."createdAt" > v."returnedAt"
+        )) AS "sentBack"
+    FROM cash_vouchers v
+    WHERE v.status = 'disbursed' AND v."expenseOnVerify" = true`
+  return { closedIds: rows.filter((r) => r.closed).map((r) => r.id), sentBackIds: rows.filter((r) => r.sentBack).map((r) => r.id) }
+}
+
+export function stageOf(v: ClosedInput & { payeeUserId: string | null; kind: string }): CashRequestStage {
   switch (v.status) {
     case 'draft':
     case 'submitted': return 'waiting_finance'
     case 'hod_signed':
     case 'finance_approved': return 'waiting_ceo'
     case 'disbursed':
-      if (v.expenseOnVerify) return v.attachments.some((a) => a.kind === 'supporting') ? 'awaiting_verification' : 'awaiting_docs'
+      if (v.expenseOnVerify) {
+        const st = closedStateOf(v)
+        return st.closed ? 'awaiting_verification' : st.sentBack ? 'sent_back' : 'awaiting_docs'
+      }
       if (isLegacyNoHolder(v)) return 'needs_review'
       return v.attachments.some((a) => a.kind === 'receipt') ? 'receipts_in' : 'paid'
     default: return v.status
@@ -175,6 +248,8 @@ export interface CashRequestCaps {
   canPay: boolean
   /** Add supporting documents (POST /:id/documents). */
   canUpload: boolean
+  /** Finance sends a closed, not-yet-booked voucher back to the requester (POST /:id/send-back). */
+  canSendBack: boolean
   /** Record what was spent (POST /:id/spend) before finance verifies. */
   canRecordSpend: boolean
   /** Finance verifies the documents and books the expense (POST /:id/verify-docs). */
@@ -210,7 +285,9 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
   const financeStep = WAIT_FINANCE.includes(s) && viewer.financeApprover && !own
   const ceoStep = WAIT_CEO.includes(s) && viewer.isAdmin && !own
   const canUploadReceipts = legacyPaid && (viewer.keeper || (!!holder && holder === me))
-  const docsParty = viewer.financeApprover || viewer.keeper || custodian || (v.kind === 'request' && !!holder && holder === me)
+  // The requester (whoever raised it) and the holder attach the documents once the cash is paid (owner, 2026-10-16).
+  const docsParty = viewer.financeApprover || viewer.keeper || custodian || raiser || (v.kind === 'request' && !!holder && holder === me)
+  const docState = closedStateOf(v)
   return {
     canEdit: EDITABLE.includes(s) && (raiser || viewer.keeper),
     canEditCategory: (EDITABLE.includes(s) && (raiser || viewer.keeper)) || (viewer.keeper && (WAIT_CEO.includes(s) || s === 'approved')),
@@ -224,6 +301,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canCancel: (EDITABLE.includes(s) && raiser) || (viewer.keeper && PRE_PAY.includes(s)),
     canPay: s === 'approved' && (viewer.keeper || custodian || (!v.boxId && viewer.payBoxTenants.has(v.tenantId))),
     canUpload: ((s === 'approved' || newPaid) && docsParty) || (s === 'posted' && viewer.keeper),
+    canSendBack: newPaid && docState.closed && docState.booksState === 'pending' && viewer.financeApprover && !own,
     canRecordSpend: newPaid && docsParty,
     canVerify: newPaid && viewer.financeApprover && !own && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
     canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt
@@ -297,9 +375,16 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
     const supporting = attachments.filter((a) => a.kind === 'supporting')
     const remainingCents = remainingOf(v)
     const ref = categoryRefOf(v.category)
+    const docState = closedStateOf(v)
     return {
       ...voucher,
       stage: stageOf(v),
+      /** Closed for the requester (documents attached); finance still checks them — booksState says if the expense is booked. */
+      closed: docState.closed,
+      booksState: docState.booksState,
+      /** Finance sent it back after the documents came in; open again until another document is attached. */
+      sentBack: docState.sentBack,
+      sentBackNote: docState.sentBack ? v.returnNote : null,
       /** The amount paid (= gross − discount). */
       totalCents: v.amountCents,
       grossOrAmountCents: v.grossCents ?? v.amountCents + v.discountCents,
@@ -309,7 +394,7 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       holderUserId: v.payeeUserId,
       holderName: nameOf(v.payeeUserId),
       remainingCents,
-      overdue: v.status === 'disbursed' && !!v.dueBy && v.dueBy.getTime() < now && (v.expenseOnVerify || remainingCents > 0),
+      overdue: v.status === 'disbursed' && !!v.dueBy && v.dueBy.getTime() < now && !docState.closed && (v.expenseOnVerify || remainingCents > 0),
       needsReview: isLegacyNoHolder(v),
       supportingCount: supporting.length,
       documents: supporting.map((a) => ({
@@ -537,6 +622,8 @@ const notMe = (field: 'financeApprovedById' | 'hodSignedById', me: string): Pris
   ({ OR: [{ [field]: null }, { [field]: { not: me } }] })
 
 const VIEWS = [
+  // open: mine, not finished and not closed; closed: documents in (books pending) or booked; sent_back: finance sent it back.
+  'open', 'closed', 'sent_back',
   'mine', 'finance', 'ceo', 'returned', 'to_pay', 'missing_docs', 'awaiting_verification', 'posted', 'all',
   // Kept working: hod (= finance), director (= ceo), and the legacy H3 views.
   'hod', 'director', 'receipts_due', 'overdue', 'settled', 'needs_review',
@@ -584,7 +671,17 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const sees = viewer.keeper || viewer.financeApprover
     const none: Prisma.CashVoucherWhereInput = { id: { in: [] } }
     let view: Prisma.CashVoucherWhereInput = {}
+    const needsDocStates = ['open', 'closed', 'sent_back', 'missing_docs', 'awaiting_verification', 'overdue'].includes(q.view)
+    const ds = needsDocStates ? await paidDocStates() : { closedIds: [], sentBackIds: [] }
+    const paidNew: Prisma.CashVoucherWhereInput = { status: 'disbursed', expenseOnVerify: true }
     switch (q.view) {
+      case 'open': view = {
+        OR: [{ preparedById: me }, { payeeUserId: me }],
+        status: { notIn: ['posted', 'settled', 'converted', 'rejected', 'cancelled'] },
+        id: { notIn: ds.closedIds },
+      }; break
+      case 'closed': view = { OR: [{ status: { in: ['posted', 'settled', 'converted'] } }, { id: { in: ds.closedIds } }] }; break
+      case 'sent_back': view = { ...paidNew, id: { in: ds.sentBackIds } }; break
       case 'mine': view = { OR: [{ preparedById: me }, { payeeUserId: me }] }; break
       case 'hod':
       case 'finance': view = viewer.financeApprover ? { status: { in: WAIT_FINANCE } } : none; break
@@ -595,11 +692,13 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         status: 'approved',
         OR: [{ boxId: { in: [...viewer.heldBoxIds] } }, { boxId: null, tenantId: { in: [...viewer.payBoxTenants] } }],
       }; break
-      case 'missing_docs': view = { status: 'disbursed', expenseOnVerify: true, attachments: { none: { kind: 'supporting' } } }; break
-      case 'awaiting_verification': view = { status: 'disbursed', expenseOnVerify: true, attachments: { some: { kind: 'supporting' } } }; break
+      // Paid, not closed: no document yet, or finance sent it back.
+      case 'missing_docs': view = { ...paidNew, id: { notIn: ds.closedIds } }; break
+      // Closed — books pending: documents in, finance to check and book.
+      case 'awaiting_verification': view = { ...paidNew, id: { in: ds.closedIds } }; break
       case 'posted': view = { status: 'posted' }; break
       case 'receipts_due': view = { status: 'disbursed', ...(sees ? {} : { payeeUserId: me }) }; break
-      case 'overdue': view = { status: 'disbursed', dueBy: { lt: new Date() }, ...(sees ? {} : { payeeUserId: me }) }; break
+      case 'overdue': view = { status: 'disbursed', dueBy: { lt: new Date() }, id: { notIn: ds.closedIds }, ...(sees ? {} : { OR: [{ payeeUserId: me }, { preparedById: me }] }) }; break
       case 'settled': view = { status: 'settled' }; break
       case 'needs_review': view = viewer.keeper ? { status: 'disbursed', payeeUserId: null, kind: 'request', expenseOnVerify: false } : none; break
       case 'all': break
@@ -634,8 +733,11 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   //   waitingFinance (submitted + legacy draft) · waitingCeo (finance_approved
   //   + legacy hod_signed) · returned · approvedUnpaid · missingDocs (paid, no
   //   supporting document) · awaitingVerification (paid, documents in) ·
-  //   docsOverdue (paid, documents due date passed, not verified) ·
+  //   docsOverdue (paid, documents due date passed, not closed) ·
+  //   sentBack (finance sent it back after the documents came in) ·
   //   postedThisMonth (verified and booked this Karachi month).
+  // missingDocs counts every paid voucher that is not CLOSED (no document, or
+  // sent back); awaitingVerification every closed one whose books are pending.
   fastify.get('/dashboard', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const viewer = await viewerOf(req)
     const scope = await scopeTenantWhere(req, 'read')
@@ -649,19 +751,21 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       return { count: r._count._all, cents: r._sum.amountCents ?? 0 }
     }
     const paidNew: Prisma.CashVoucherWhereInput = { status: 'disbursed', expenseOnVerify: true }
-    const [waitingFinance, waitingCeo, returned, approvedUnpaid, missingDocs, awaitingVerification, docsOverdue, postedThisMonth] = await Promise.all([
+    const ds = await paidDocStates()
+    const [waitingFinance, waitingCeo, returned, approvedUnpaid, missingDocs, awaitingVerification, docsOverdue, sentBack, postedThisMonth] = await Promise.all([
       bucket({ status: { in: WAIT_FINANCE } }),
       bucket({ status: { in: WAIT_CEO } }),
       bucket({ status: 'returned' }),
       bucket({ status: 'approved' }),
-      bucket({ ...paidNew, attachments: { none: { kind: 'supporting' } } }),
-      bucket({ ...paidNew, attachments: { some: { kind: 'supporting' } } }),
-      bucket({ ...paidNew, dueBy: { lt: now } }),
+      bucket({ ...paidNew, id: { notIn: ds.closedIds } }),
+      bucket({ ...paidNew, id: { in: ds.closedIds } }),
+      bucket({ ...paidNew, dueBy: { lt: now }, id: { notIn: ds.closedIds } }),
+      bucket({ ...paidNew, id: { in: ds.sentBackIds } }),
       bucket({ status: 'posted', postedAt: { gte: pktMonthStart(now) } }),
     ])
     return {
       scope: company ? 'company' : 'mine',
-      waitingFinance, waitingCeo, returned, approvedUnpaid, missingDocs, awaitingVerification, docsOverdue, postedThisMonth,
+      waitingFinance, waitingCeo, returned, approvedUnpaid, missingDocs, awaitingVerification, docsOverdue, sentBack, postedThisMonth,
     }
   })
 
@@ -1053,6 +1157,49 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     if (res.count === 0) throw new AppError('VOUCHER_NOT_CANCELLABLE', `Cash request ${v.number} was paid or changed by someone else — reload it`, 409)
     await auditVoucher(req, 'cancel', v, { status: 'cancelled', note }, { status: v.status })
+    return detailOf(v.id, viewer)
+  })
+
+  // POST /:id/send-back {note} — finance (a finance approver, or the CEO)
+  // sends a CLOSED voucher (paid under the 2026-10-15 flow, documents in,
+  // books pending) back to the requester: returnedById/At, returnNote,
+  // returnCount + 1; the status stays 'disbursed'. It shows open again
+  // ("Finance sent it back: <note>") until another supporting document is
+  // attached. Never a booked voucher (409 VOUCHER_POSTED), never one that is
+  // not closed (409 VOUCHER_NOT_CLOSED), never one's own (409 SELF_APPROVE).
+  // Audited (cash_voucher.send_back).
+  fastify.post<{ Params: { id: string } }>('/:id/send-back', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const { note } = NoteBody.parse(req.body ?? {})
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (!viewer.financeApprover) throw new AppError('NOT_FINANCE', 'Only finance (or the CEO) sends a voucher back for its documents', 403)
+    if (v.status === 'posted' || v.postedAt) {
+      throw new AppError('VOUCHER_POSTED', `Cash voucher ${v.number} is verified and booked — it cannot be sent back`, 409)
+    }
+    if (v.status !== 'disbursed' || !v.expenseOnVerify) {
+      throw wrongStatus('VOUCHER_NOT_CLOSED', v, 'only a paid voucher whose documents are in can be sent back')
+    }
+    if (isOwn(viewer, v)) throw selfApprove()
+    const now = new Date()
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM cash_vouchers WHERE id = ${v.id} FOR UPDATE`
+      const cur = await tx.cashVoucher.findUniqueOrThrow({
+        where: { id: v.id },
+        select: {
+          status: true, number: true, postedAt: true, expenseOnVerify: true, disbursedAt: true, returnedAt: true,
+          attachments: { where: { kind: 'supporting' }, select: { kind: true, createdAt: true } },
+        },
+      })
+      if (cur.status === 'posted' || cur.postedAt) throw new AppError('VOUCHER_POSTED', `Cash voucher ${cur.number} is verified and booked — it cannot be sent back`, 409)
+      if (!closedStateOf(cur).closed) {
+        throw new AppError('VOUCHER_NOT_CLOSED', `Cash voucher ${cur.number} has no new supporting document since it was sent back — nothing to send back`, 409)
+      }
+      await tx.cashVoucher.update({
+        where: { id: v.id },
+        data: { returnedById: viewer.id, returnedAt: now, returnNote: note, returnCount: { increment: 1 } },
+      })
+    })
+    await auditVoucher(req, 'send_back', v, { note, returnedAt: now.toISOString() }, { returnedAt: v.returnedAt?.toISOString() ?? null, returnNote: v.returnNote })
     return detailOf(v.id, viewer)
   })
 

@@ -21,6 +21,7 @@ import { postShiftClose } from '../src/modules/accounting/shiftPosting.js'
 import { postDepositDrop } from '../src/modules/accounting/depositPosting.js'
 import { nightAuditRoutes } from '../src/modules/nightAudit/routes.js'
 import { refreshAuditedDays } from '../src/modules/nightAudit/service.js'
+import { unresolvedTendersBetween } from '../src/modules/nightAudit/checks.js'
 
 let app: FastifyInstance
 let A: string
@@ -179,6 +180,25 @@ describe('the night blocks', () => {
   it('every sales block shows on the day; other modules\' refused postings do not', async () => {
     const r = await call('fin', 'GET', `/${D1}`, A)
     expect(blockKeys(r.json())).toEqual(['cash_variance_open', 'cod_pending', 'open_orders', 'open_tills', 'raast_open_night', 'tenders_unresolved'])
+  })
+
+  it('a card-machine charge that needs a person (needs_attention) is unresolved; recorded-from-slip is a warn count; own company only', async () => {
+    const C = (await prisma.tenant.create({ data: { name: 'Night Third', slug: 'na-c' } })).id
+    const conceptC = (await prisma.concept.create({ data: { name: 'Stackd N', slug: 'stackd', type: 'restaurant', tenantId: C, taxRateCash: 15, taxRateCard: 8 } })).id
+    const day = dayAgo(9)
+    const o = await order(conceptC, { status: 'completed', placedAt: at(day, '12:00'), completedAt: at(day, '12:30'), totalCents: 9_000 })
+    const conn = await prisma.posConnector.create({ data: { tenantId: C, kind: 'terminal', webhookToken: randomBytes(16).toString('hex') } })
+    for (const [status, key] of [['needs_attention', 'tc-na'], ['manual_resolved', 'tc-mr']] as const) {
+      await prisma.terminalCharge.create({ data: {
+        tenantId: C, connectorId: conn.id, terminalId: 'trm-c', orderId: o.id, amountCents: 9_000, quoteDueCents: 9_000,
+        idempotencyKey: key, status, expiresAt: at(day, '13:00'), createdById: users.ceo!.id, createdAt: at(day, '12:20'),
+      } })
+    }
+    const r = await unresolvedTendersBetween(prisma, C, at(day, '00:00'), parsePktEndOfDay(day))
+    expect(r.charges).toBe(1)
+    expect(r.unverified).toBe(1)
+    const other = await unresolvedTendersBetween(prisma, B, at(day, '00:00'), parsePktEndOfDay(day))
+    expect(other.charges + other.unverified + other.payments).toBe(0)
   })
 
   it('a refused SALES posting of the day is a block', async () => {
