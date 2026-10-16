@@ -1810,6 +1810,16 @@ the Payroll Report's Days Worked show. New payslips carry no `absence` /
 "working days per month" (26) setting is RETIRED (`mergeSettings` drops it; a PUT
 that sends it is ignored). Only drafts are recalculated; approved / locked runs
 keep their figures. Tests: `tests/hrPayDaysBasis.test.ts`, `tests/hrModule.test.ts`.
+**No paid days, no tax; F&F docks absences (owner, 2026-10-16: "skip tax when
+no paid days, apply absences in F&F").** A month with paid days = 0 takes NO
+income tax, NO EOBI (employee or employer) and NO SESSI; zero lines say why
+(`NO_TAX_NO_PAID_DAYS`, `NO_EOBI_NO_PAID_DAYS`), and the accrual still balances.
+Half a paid day is a paid month. A month whose tax exceeds a few days' pay still
+goes negative and is blocked (`runBlocker`) — not capped. A full & final docks
+each month it pays with that month's absences, half days and approved unpaid
+leave, read by `service.ts attendanceWithin` (the ONE attendance reading
+`prefillInputs` uses too); lates are not docked in F&F. Calculate stamps only a
+settlement still editable with no approvals. Tests: `tests/hrNoPaidDaysFnf.test.ts`.
 
 ### Closed books are the CEO's (owner, 2026-10-16)
 

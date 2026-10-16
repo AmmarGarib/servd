@@ -174,7 +174,9 @@ describe('payslip', () => {
     const leaver = computePayslip({ ...emp, monthlyTaxCents: 0, lastWorkingDay: new Date('2026-03-10') }, '2026-03', { ...EMPTY_INPUTS, absentDays: 4, unpaidLeaveDays: 31 }, s)
     expect(leaver.basis).toMatchObject({ employedDays: 10, absentDays: 4, unpaidLeaveDays: 6, paidDays: 0 })
     expect(leaver.grossCents).toBe(0)
-    expect(leaver.netCents).toBe(-RS(400)) // only EOBI is left to deduct — flagged, not hidden
+    // No paid days (owner, 2026-10-16): no EOBI or tax either — never below nothing.
+    expect(leaver.netCents).toBe(0)
+    expect(leaver.eobiEmployeeCents).toBe(0)
     // Lates never take the salary below nothing either.
     const lates = computePayslip({ ...emp, monthlyTaxCents: 0, lastWorkingDay: new Date('2026-03-01') }, '2026-03', { ...EMPTY_INPUTS, lateCount: 30 }, s)
     expect(lates.lines.find((l) => l.code === 'late')!.amountCents).toBe(lates.grossCents)
