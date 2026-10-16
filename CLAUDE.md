@@ -225,6 +225,21 @@ module id must be placed in a workspace in the same change.
   HR leaver sweep (`hr/separations.ts`) uses too. HR's reinstate of a manager
   / office login goes back to `pending` for the CEO. UI: the HR employee
   Login tab (Create login, Offboard / Reinstate) and Workforce.
+- **HR sends password reset links (owner, 2026-10-16).**
+  `POST /auth/staff/:id/send-password-link` (HR with `staff_hr`, or the CEO;
+  button "Send password reset link" in `components/hr/OffboardButtons.tsx`)
+  reuses the Forgot-password sender (`passwordReset.ts requestPasswordReset`):
+  one-use 30-minute link to the person's OWN email / WhatsApp, kills older
+  links, never returned to the caller or written to the audit row (audit
+  `user.password_link_sent`). Scope = `findManagedStaff` (other company 404,
+  shared login 403; head-office reach 404 / lens 403). HR never for `admin` /
+  `owner` (403 `RESET_LINK_CEO_ONLY`); floor logins 400
+  `NOT_A_PASSWORD_LOGIN`; no email 422; not active 409; practice copy 503
+  `PRACTICE_NO_LINKS`; no channel 503. Cap: 3 links per person an hour
+  (counting their own Forgot-password links, plus an atomic bucket for
+  parallel clicks) and 20 per sender (429). HR cannot change a login's email
+  or phone (`PATCH /auth/users/:id` is ADMIN_ONLY) — keep it that way, or the
+  link becomes a takeover path. Tests: `tests/staffResetLink.test.ts`.
 - **Module access is per person; only the CEO changes a PERSON's (owner,
   2026-10-15).** Role presets (`PUT /permissions/role-modules`, page
   "Role presets", module `role_modules`) are the base case. **Presets are

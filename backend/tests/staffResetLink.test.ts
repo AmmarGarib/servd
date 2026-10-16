@@ -51,7 +51,7 @@ const U: Record<string, U> = {}
 async function mkUser(key: string, role: string, tenants: string[], extra: Record<string, unknown> = {}) {
   const u = await prisma.user.create({
     data: {
-      name: `${P} ${key}`, email: `${P}.${key}@gsfoods.pk`, password: await bcrypt.hash('x-Password-1', 4),
+      name: `${P} ${key}`, email: `${P}.${key}@gsfoods.pk`.toLowerCase() /* stored normalised, as the app does */, password: await bcrypt.hash('x-Password-1', 4),
       role: role as never, tenantId: tenants[0] ?? null, isActive: true, accountStatus: 'active', ...extra,
       tenantMemberships: { create: tenants.map((id) => ({ tenant: { connect: { id } }, role: 'member' })) },
     },
