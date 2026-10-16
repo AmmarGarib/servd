@@ -35,7 +35,7 @@ export function PendingFilesPicker({ ownerType, value, onChange, label = 'Suppor
 
   return (
     <div className="space-y-1.5">
-      <span className="text-[11px] font-bold text-white/50">{label}{required && <span style={{ color: 'var(--erp-danger)' }}> *</span>}</span>
+      <span className="block text-[11px] font-bold text-white/50">{label}{required && <span style={{ color: 'var(--erp-danger)' }}> *</span>}</span>
       {value.length > 0 && (
         <ul className="space-y-1">
           {value.map((f, i) => (
@@ -49,7 +49,7 @@ export function PendingFilesPicker({ ownerType, value, onChange, label = 'Suppor
       {value.length < max && (
         <>
           <input ref={input} type="file" multiple accept={acceptFor(ownerType)} className="hidden" onChange={(e) => void add(e.target.files)} />
-          <button type="button" onClick={() => input.current?.click()} disabled={busy} className="text-xs font-bold disabled:opacity-50" style={{ color: 'var(--erp-primary)' }}>
+          <button type="button" onClick={() => input.current?.click()} disabled={busy} className="rounded-lg border px-3 py-2 text-xs font-bold disabled:opacity-50" style={{ color: 'var(--erp-primary)', borderColor: 'rgb(var(--erp-primary-rgb) / 0.35)' }}>
             {busy ? 'Preparing…' : value.length ? '+ Add another file' : '+ Attach file'}
           </button>
         </>
