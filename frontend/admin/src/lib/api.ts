@@ -260,6 +260,25 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
     if (err.status === 403 && err.code === 'HEAD_OFFICE_SUBMIT_ONLY' && typeof window !== 'undefined') {
       toast.error(err.message || 'Through head office you can look and send changes for approval, but not change this directly.', { id: 'head-office-submit-only' })
     }
+    // Back-dated sale (CEO only): ask for a reason once, retry with it.
+    if (err.status === 422 && err.code === 'BACKDATED_REASON_REQUIRED' && ['POST', 'PUT', 'PATCH'].includes(method)
+      && typeof window !== 'undefined' && typeof options.body === 'string') {
+      let parsed: unknown = null
+      try { parsed = JSON.parse(options.body) } catch { /* not JSON: leave it */ }
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('backdatedReason' in parsed)) {
+        const { askReason } = await import('../components/ui/ConfirmDialog')
+        const reason = await askReason({
+          title: 'Back-dated sale — CEO only',
+          body: 'This sale belongs to an earlier business day. Give a reason; it is recorded in the audit log.',
+          label: 'Reason',
+          minLength: 10,
+        })
+        if (reason) {
+          return request<T>(path, { ...options, body: JSON.stringify({ ...parsed, backdatedReason: reason }) }, retry,
+            { ...extra, tenantId: resolvedTenantId })
+        }
+      }
+    }
     throw err
   }
 

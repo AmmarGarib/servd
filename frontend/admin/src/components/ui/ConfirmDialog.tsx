@@ -10,7 +10,7 @@
 // Danger dialogs focus Cancel and Enter does not confirm. Without a provider
 // (a test, a stray root) it falls back to window.confirm.
 
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Modal } from './Modal'
 
 export interface ConfirmOptions {
@@ -33,6 +33,21 @@ export function useConfirm(): ConfirmFn {
   return useContext(ConfirmContext)
 }
 
+// Imperative bridge for non-React code (lib/api.ts): the mounted provider
+// registers its confirm function; askReason() asks for a reason with it.
+let bridge: ConfirmFn | null = null
+
+/** Ask for a reason (>= minLength chars) with the app's confirm dialog.
+ *  Resolves to the trimmed reason, or null if cancelled / no provider mounted. */
+export async function askReason(opts: { title: string; body?: ReactNode; label?: string; minLength?: number; confirmLabel?: string }): Promise<string | null> {
+  if (!bridge) return null
+  const r = await bridge({
+    title: opts.title, body: opts.body, confirmLabel: opts.confirmLabel ?? 'Continue',
+    reason: { label: opts.label ?? 'Reason', minLength: opts.minLength ?? 10 },
+  })
+  return r && r.reason ? r.reason : null
+}
+
 interface Pending { opts: ConfirmOptions; resolve: (r: ConfirmResult) => void }
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
@@ -41,6 +56,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     (opts) => new Promise<ConfirmResult>((resolve) => setQueue((q) => [...q, { opts, resolve }])),
     [],
   )
+  useEffect(() => {
+    bridge = confirm
+    return () => { if (bridge === confirm) bridge = null }
+  }, [confirm])
   const current = queue[0]
   const settle = (r: ConfirmResult) => {
     if (!current) return
