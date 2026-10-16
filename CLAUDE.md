@@ -1273,9 +1273,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   re-posted by the REPOSTERS `supplier.opening` entry; use
   `syncOpeningBalanceOrFlag`, never a bare sync in a route. Once anything is
   posted, changing the date is 409 `OPENING_DATE_LOCKED` (set the balance to
-  0, then enter the date and amount again). The offset is **3010** (H49,
-  2026-10-16; none expected at go-live) — the code still posts 3020
-  (`TODO(H49)`). Suppliers with no company are for the CEO to place.
+  0, then enter the date and amount again). The offset is **3010** Owner's
+  capital (H49, Hasnain 2026-10-16; none expected at go-live;
+  `openingBalance.ts OPENING_OFFSET_CODE`): entries already on 3020 stay; a
+  reduction or a move to another company takes 3010 off first, then legacy
+  3020. Suppliers with no company go to GS Foods (owner, 2026-10-16).
 - **AP aging** takes `?asOf=YYYY-MM-DD` (end of the Karachi day) and is
   rebuilt as at that day (bills, credit notes, payments, applications, posted
   opening balance), tying to 2010 as at that day; company-less suppliers are
@@ -1755,8 +1757,13 @@ person and links there). Full list: `/me/notifications`. No phone push (owner:
   exception claim-poller (`workers/staffNotifications.ts`,
   `ExceptionFlag.notifiedAt`). Night audit: day audited / closed / not run →
   finance (with accounting) + the CEO. The "still awaiting settlement" warning
-  fires after 2 working days (H45, Hasnain 2026-10-16) — `TODO(H45)` until
-  built.
+  fires after 2 working days (H45, Hasnain 2026-10-16): an `audited` day not
+  `closed` once its 2nd working day after the sales day is over → ONE
+  `night_audit.awaiting` bell notice to that company's CEO + finance (with
+  accounting), naming what is unmatched; Mon–Sat working, Sunday off
+  (`NON_WORKING_WEEKDAYS`, no bank-holiday calendar); once per day per
+  company and reopen; run by the hourly `nightAuditSettle` worker after it
+  settles (`nightAudit/service.ts notifyAwaitingSettlement`).
 
 ### Closed books are the CEO's (owner, 2026-10-16)
 
