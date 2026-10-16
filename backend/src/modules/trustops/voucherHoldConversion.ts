@@ -94,12 +94,14 @@ async function blockerOf(db: Tx | typeof prisma, v: {
 /**
  * The live 1357 debit of the voucher's hold pay: its petty-cash movement's
  * 'pettycash.spend:<movementId>' (a lineless 1357 spend), else its
- * 'cashvoucher.pay:<voucherId>' (paid from cash on hand / a bank). The amount
- * and the brand the hold debited 1357 with — what the conversion credits back.
+ * 'cashvoucher.pay:<voucherId>' (paid from cash on hand / a bank). The net it
+ * holds on 1357, the brands of those lines and the entry — whatever the amount
+ * (the conversion insists it equals the voucher's; a resolve by manual journal
+ * — voucherHoldResolve.ts — clears exactly this net, whatever it is).
  */
-async function heldOnLedger(db: Tx | typeof prisma, v: {
-  id: string; tenantId: string; amountCents: number; pettyCashMovementId: string | null; payJournalEntryId: string | null
-}): Promise<{ cents: number; conceptId: string | null } | { code: string; reason: string }> {
+export async function liveHoldOf(db: Tx | typeof prisma, v: {
+  id: string; tenantId: string; pettyCashMovementId: string | null; payJournalEntryId: string | null
+}): Promise<{ cents: number; conceptIds: Array<string | null>; entryId: string; entryDate: Date } | { code: string; reason: string }> {
   let source: { type: string; id: string }
   if (v.pettyCashMovementId) {
     const m = await db.pettyCashMovement.findUnique({ where: { id: v.pettyCashMovementId }, select: { journalEntryId: true, accountCode: true } })
@@ -114,16 +116,24 @@ async function heldOnLedger(db: Tx | typeof prisma, v: {
   }
   const { live } = await liveRevision(v.tenantId, source.type, source.id, db)
   const held = (live?.lines ?? []).filter((l) => l.accountCode === ACCT.VOUCHERS_AWAITING_DOCS)
-  const net = held.reduce((t, l) => t + (l.type === 'debit' ? l.amountCents : -l.amountCents), 0)
   if (!live || held.length === 0) {
     return { code: 'HOLD_NOT_BOOKED', reason: 'its pay is not on the books as a live 1357 hold (missing or reversed)' }
   }
-  if (net !== v.amountCents) {
-    return { code: 'HOLD_AMOUNT_MISMATCH', reason: `its 1357 hold is PKR ${(net / 100).toFixed(2)}, not the voucher's PKR ${(v.amountCents / 100).toFixed(2)}` }
+  const net = held.reduce((t, l) => t + (l.type === 'debit' ? l.amountCents : -l.amountCents), 0)
+  return { cents: net, conceptIds: [...new Set(held.map((l) => l.conceptId ?? null))], entryId: live.entryId, entryDate: live.entryDate }
+}
+
+/** The live hold, which must equal the voucher's amount and sit under one brand (what the conversion credits back). */
+async function heldOnLedger(db: Tx | typeof prisma, v: {
+  id: string; tenantId: string; amountCents: number; pettyCashMovementId: string | null; payJournalEntryId: string | null
+}): Promise<{ cents: number; conceptId: string | null } | { code: string; reason: string }> {
+  const hold = await liveHoldOf(db, v)
+  if ('code' in hold) return hold
+  if (hold.cents !== v.amountCents) {
+    return { code: 'HOLD_AMOUNT_MISMATCH', reason: `its 1357 hold is PKR ${(hold.cents / 100).toFixed(2)}, not the voucher's PKR ${(v.amountCents / 100).toFixed(2)}` }
   }
-  const brands = [...new Set(held.map((l) => l.conceptId ?? null))]
-  if (brands.length !== 1) return { code: 'HOLD_SPLIT', reason: 'its 1357 hold is split across brands' }
-  return { cents: net, conceptId: brands[0] ?? null }
+  if (hold.conceptIds.length !== 1) return { code: 'HOLD_SPLIT', reason: 'its 1357 hold is split across brands' }
+  return { cents: hold.cents, conceptId: hold.conceptIds[0] ?? null }
 }
 
 /**
@@ -237,11 +247,11 @@ async function flagUnconverted(
   })
 }
 
-async function resolveUnconvertedFlags(voucherId: string): Promise<void> {
+export async function resolveUnconvertedFlags(voucherId: string, resolution = 'Converted to one expense entry', resolvedById: string | null = null): Promise<void> {
   try {
     await prisma.exceptionFlag.updateMany({
       where: { kind: HOLD_UNCONVERTED_KIND, entityType: 'CashVoucher', entityId: voucherId, status: { in: ['open', 'acknowledged'] } },
-      data: { status: 'resolved', resolvedAt: new Date(), resolution: 'Converted to one expense entry' },
+      data: { status: 'resolved', resolvedAt: new Date(), resolution: resolution.slice(0, 500), ...(resolvedById ? { resolvedById } : {}) },
     })
   } catch (err) {
     console.warn(`[cashVoucher] could not resolve the hold flag of ${voucherId}: ${(err as Error).message}`)
