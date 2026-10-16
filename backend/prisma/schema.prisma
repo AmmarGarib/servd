@@ -7849,6 +7849,11 @@ model CashVoucher {
 /// cash request's settlement, a direct box spend (movementId) or a box (boxId; company = the box's). Stored in the
 /// database (file storage is not configured on every server); the admin compresses it first. Bytes are NEVER
 /// selected in lists. CHECK cash_voucher_attachments_owner_chk (voucherId, boxId, movementId or depositDropId set) is SQL only.
+// THE private record-file store (owner decision 2026-10-16: "One private store … so any record can carry files —
+// only staff of that company can open them, View + Download. One store across servd, no new copies"). Bytes live
+// in the DB, RLS by tenantId. Besides the cash-voucher / petty-cash / deposit-drop owners below, ANY record can own
+// files through (ownerType, ownerId), kind 'record_file' — lib/recordFiles.ts is the one writer / reader and holds a
+// provider per ownerType (its module's own access rule and company). Never a URL field for a supporting document.
 model CashVoucherAttachment {
   id            String   @id @default(cuid())
   tenantId      String
@@ -7864,6 +7869,8 @@ model CashVoucherAttachment {
   movementId    String?
   boxId         String? // a direct box-spend receipt (company = the box's)
   depositDropId String? // kind 'deposit_slip': the bank deposit slip of a deposit drop (company = the drop's)
+  ownerType     String? // kind 'record_file': the provider key in lib/recordFiles.ts (opex_payment, supplier_bill, …)
+  ownerId       String? // kind 'record_file': the owning record's id (no FK — the provider resolves it; company = the record's)
 
   tenant      Tenant                 @relation("TenantCashVoucherAttachments", fields: [tenantId], references: [id])
   voucher     CashVoucher?           @relation(fields: [voucherId], references: [id], onDelete: Restrict) // Restrict kept from the original required relation
@@ -7877,6 +7884,7 @@ model CashVoucherAttachment {
   @@index([movementId])
   @@index([boxId])
   @@index([depositDropId])
+  @@index([tenantId, ownerType, ownerId])
   @@map("cash_voucher_attachments")
 }
 

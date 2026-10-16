@@ -148,6 +148,11 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   await prisma.$executeRawUnsafe('ALTER TABLE "cash_voucher_attachments" DROP CONSTRAINT IF EXISTS "cash_voucher_attachments_owner_chk"')
   for (const statement of migrationSection('20261016200000_deposit_drop_attachments',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // Record files (2026-10-16): any record can own files (ownerType + ownerId)
+  // — drop the deposit-drop version of the owner check, then the migration's.
+  await prisma.$executeRawUnsafe('ALTER TABLE "cash_voucher_attachments" DROP CONSTRAINT IF EXISTS "cash_voucher_attachments_owner_chk"')
+  for (const statement of migrationSection('20261016210000_record_files',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
   // Night audit (2026-10-16, sales only): the night_audit_days CHECKs (an
   // audited / closed day names its auditor, an override names its reason)
   // and the start-day format — the migration's SQL-only section (RLS out).
