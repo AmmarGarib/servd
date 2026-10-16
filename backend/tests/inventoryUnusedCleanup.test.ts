@@ -21,6 +21,9 @@ const { registerTrashPlugin } = await import('../src/modules/trash/index.js')
 const { inventoryRoutes } = await import('../src/modules/inventory/routes.js')
 const { recipeRoutes } = await import('../src/modules/recipes/routes.js')
 const { trashProvider } = await import('../src/modules/trash/registry.js')
+const { assertItemsNotTrashedTx } = await import('../src/modules/inventory/unusedCleanup.js')
+const { addLotTx } = await import('../src/lib/stockLedger.js')
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 const stamp = Date.now()
 const P = `tst${stamp}`
@@ -40,7 +43,7 @@ async function mkUser(key: string, role: string, tenants: string[]) {
   })
   tokens[key] = issueStaffSession({ id: u.id, name: u.name, email: u.email, role: u.role as never }).accessToken
 }
-const call = (key: string, method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown) =>
+const call = (key: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({
     method, url: `/api/v1${url}`,
     headers: { authorization: `Bearer ${tokens[key]}`, ...(payload !== undefined ? { 'content-type': 'application/json' } : {}) },
@@ -52,6 +55,7 @@ const item = async (key: string, tenantId: string, extra: Record<string, unknown
   return I[key]
 }
 type Preview = { toMove: Array<{ id: string }>; skipped: Array<{ id: string; reasons: string[] }>; counts: Record<string, number> }
+let before: Record<string, unknown> | null = null
 type Applied = { moved: Array<{ id: string }>; skipped: Array<{ id: string; reasons: string[] }>; counts: Record<string, number> }
 
 beforeAll(async () => {
@@ -70,6 +74,8 @@ beforeAll(async () => {
   await item('stockedA', T.A, { currentStock: 5 })
   await item('boughtA', T.A)
   await item('unusedB', T.B)
+  await item('lockedA', T.A)
+  await item('purgeA', T.A)
   await prisma.recipe.create({
     data: { kind: 'component', name: `${P} sauce`, yieldGrams: 1000, ingredients: { create: [{ inventoryItemId: I.inRecipeA, quantity: 10, unit: 'g' }] } },
   })
@@ -137,6 +143,7 @@ describe('unused ingredient clean-up', () => {
       data: { kind: 'component', name: `${P} late sauce`, yieldGrams: 500, ingredients: { create: [{ inventoryItemId: I.racedA, quantity: 1, unit: 'g' }] } },
     })
     const ids = [I.unusedA, I.unused2A, I.racedA, I.stockedA, I.boughtA, I.inRecipeA, I.unusedB]
+    before = await prisma.inventoryItem.findUnique({ where: { id: I.unusedA } })
     const r = await call('ceoA', 'POST', '/inventory/unused-cleanup', { itemIds: ids })
     expect(r.statusCode).toBe(200)
     const body = r.json() as Applied
@@ -162,10 +169,43 @@ describe('unused ingredient clean-up', () => {
     expect(list.map((x) => x.id)).not.toContain(I.unusedA)
   })
 
-  it('a trashed ingredient cannot go into a recipe', async () => {
+  it('a trashed ingredient cannot go into a recipe (create or edit) nor take stock', async () => {
     const r = await call('ceoA', 'POST', '/recipes', { kind: 'component', name: `${P} new sauce`, yieldGrams: 500, ingredients: [{ inventoryItemId: I.unusedA, quantity: 1, unit: 'g' }] })
     expect(r.statusCode).toBe(422)
     expect(code(r)).toBe('ITEM_IN_TRASH')
+    // Edit: an existing recipe gets a trashed line → refused, recipe unchanged.
+    const sauce = await prisma.recipe.findFirst({ where: { name: `${P} sauce` }, select: { id: true } })
+    const put = await call('ceoA', 'PUT', `/recipes/${sauce!.id}`, { ingredients: [{ inventoryItemId: I.inRecipeA, quantity: 10, unit: 'g' }, { inventoryItemId: I.unusedA, quantity: 1, unit: 'g' }] })
+    expect(put.statusCode).toBe(422)
+    expect(code(put)).toBe('ITEM_IN_TRASH')
+    expect(await prisma.recipeIngredient.count({ where: { recipeId: sauce!.id } })).toBe(1)
+    // The locked re-check itself (the guard the routes run inside their transaction).
+    await expect(prisma.$transaction((tx) => assertItemsNotTrashedTx(tx, [I.inRecipeA, I.unusedA]))).rejects.toMatchObject({ code: 'ITEM_IN_TRASH' })
+    // Stock never comes in on a trashed ingredient (lib/stockLedger.ts addLotTx).
+    await expect(prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: T.A, inventoryItemId: I.unusedA, qty: 1, unitCostCents: 100, kind: 'opening', lotSourceType: 'opening',
+      lotSourceId: `${P}-op`, movementSourceType: 'test.opening', movementSourceId: `${P}-op`, receivedAt: new Date(),
+    }))).rejects.toMatchObject({ code: 'ITEM_IN_TRASH' })
+    expect(await prisma.stockLot.count({ where: { inventoryItemId: I.unusedA } })).toBe(0)
+  })
+
+  it('a recipe save holding the item lock wins the race: the clean-up then sees the line and skips', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const recipeTx = prisma.$transaction(async (tx) => {
+      await assertItemsNotTrashedTx(tx, [I.lockedA])
+      await gate
+      await tx.recipe.create({ data: { kind: 'component', name: `${P} locked sauce`, yieldGrams: 100, ingredients: { create: [{ inventoryItemId: I.lockedA, quantity: 1, unit: 'g' }] } } })
+    }, { timeout: 20_000 })
+    await sleep(150)
+    const applying = call('ceoA', 'POST', '/inventory/unused-cleanup', { itemIds: [I.lockedA] })
+    await sleep(400)
+    release()
+    await recipeTx
+    const body = (await applying).json() as Applied
+    expect(body.moved).toHaveLength(0)
+    expect(body.skipped[0].reasons.join(' ')).toMatch(/recipe line/)
+    expect((await prisma.inventoryItem.findUnique({ where: { id: I.lockedA } }))!.deletedAt).toBeNull()
   })
 
   it('lands in the Trash and restores (B blind; name clash renames)', async () => {
@@ -176,7 +216,13 @@ describe('unused ingredient clean-up', () => {
     expect((await call('ceoB', 'POST', `/trash/inventory_item/${I.unusedA}/restore`, {})).statusCode).toBe(404)
 
     expect((await call('ownerA', 'POST', `/trash/inventory_item/${I.unusedA}/restore`, {})).statusCode).toBe(200)
-    expect((await prisma.inventoryItem.findUnique({ where: { id: I.unusedA } }))!.deletedAt).toBeNull()
+    const restored = await prisma.inventoryItem.findUnique({ where: { id: I.unusedA } })
+    expect(restored!.deletedAt).toBeNull()
+    // Identical to before the clean-up (only updatedAt moves) and usable in a recipe again.
+    const strip = (r: Record<string, unknown> | null) => { const { updatedAt: _u, ...rest } = r ?? {}; return rest }
+    expect(strip(restored as unknown as Record<string, unknown>)).toEqual(strip(before))
+    const again = await call('ceoA', 'POST', '/recipes', { kind: 'component', name: `${P} comeback sauce`, yieldGrams: 500, ingredients: [{ inventoryItemId: I.unusedA, quantity: 1, unit: 'g' }] })
+    expect(again.statusCode).toBe(201)
 
     // A live twin took the name meanwhile → clash, then a rename wins.
     await prisma.inventoryItem.create({ data: { tenantId: T.A, name: `${P} unused2A`, unit: 'g' } })
@@ -187,5 +233,15 @@ describe('unused ingredient clean-up', () => {
     expect(ok.statusCode).toBe(200)
     const back = await prisma.inventoryItem.findUnique({ where: { id: I.unused2A } })
     expect(back).toMatchObject({ deletedAt: null, name: `${P} unused2A old`, tenantId: T.A })
+  })
+
+  it('Delete forever: the CEO only, an unused trashed ingredient is erased; company B 404', async () => {
+    const r = await call('ceoA', 'POST', '/inventory/unused-cleanup', { itemIds: [I.purgeA] })
+    expect((r.json() as Applied).counts.moved).toBe(1)
+    const reason = '?reason=' + encodeURIComponent('Clean-up test, never used')
+    expect((await call('ownerA', 'DELETE', `/trash/inventory_item/${I.purgeA}${reason}`)).statusCode).toBe(403)
+    expect((await call('ceoB', 'DELETE', `/trash/inventory_item/${I.purgeA}${reason}`)).statusCode).toBe(404)
+    expect((await call('ceoA', 'DELETE', `/trash/inventory_item/${I.purgeA}${reason}`)).statusCode).toBe(204)
+    expect(await prisma.inventoryItem.findUnique({ where: { id: I.purgeA } })).toBeNull()
   })
 })

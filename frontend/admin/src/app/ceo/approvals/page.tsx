@@ -139,7 +139,8 @@ function ApprovalsInbox() {
       )}
 
       {showTabs && (
-        <div className="mt-5 flex gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Section">
+        <div className="mt-5 flex items-center gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Section">
+          <span className="text-[11px] font-black uppercase tracking-wider text-white/45 w-20 shrink-0">Workspace</span>
           <Chip on={section === 'all'} onClick={() => { setSection('all'); setFilter('all') }} label="All" count={data?.total ?? 0} />
           {sections.filter((sc) => sc.count > 0 || section === sc.id).map((sc) => (
             <Chip key={sc.id} on={section === sc.id} onClick={() => { setSection(sc.id); setFilter('all') }}
@@ -149,7 +150,8 @@ function ApprovalsInbox() {
       )}
 
       {/* Counts per type */}
-      <div className="mt-4 flex gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Type">
+      <div className="mt-4 flex items-center gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Type">
+        <span className="text-[11px] font-black uppercase tracking-wider text-white/45 w-20 shrink-0">Type</span>
         <Chip on={filter === 'all'} onClick={() => setFilter('all')} label={showTabs ? 'Every type' : 'All'}
           count={section === 'all' ? (data?.total ?? 0) : (sections.find((x) => x.id === section)?.count ?? 0)} />
         {types.filter((t) => t.count > 0 || t.error || filter === t.type).map((t) => (
@@ -258,7 +260,7 @@ function Chip({ on, onClick, label, count, error }: { on: boolean; onClick: () =
       className="rounded-full px-3 py-2 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
       style={on
         ? { background: 'var(--erp-accent-dim)', border: '1px solid var(--erp-accent)', color: 'var(--text)' }
-        : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
+        : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'rgb(var(--fg-rgb) / 0.75)', opacity: count === 0 && !error ? 0.55 : 1 }}>
       {label}
       <span className="rounded-full px-1.5 text-[10px] font-black"
         style={count > 0
@@ -342,7 +344,7 @@ function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onDecided, on
           <span key={a.label} className="text-xs" style={{ color: 'var(--erp-warning)' }}>{a.disabledReason}</span>
         ) : (
           <button key={a.label} onClick={() => click(a)} disabled={run.isPending}
-            className="rounded-lg px-3 py-1.5 text-xs font-black disabled:opacity-50"
+            className={`rounded-lg font-black disabled:opacity-50 ${a.kind === 'approve' ? 'px-5 py-2.5 text-sm' : 'px-3 py-2 text-xs'}`}
             style={a.kind === 'approve'
               ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
               : a.kind === 'return'

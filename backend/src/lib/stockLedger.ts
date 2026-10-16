@@ -786,6 +786,11 @@ export async function addLotTx(tx: Tx, a: {
   if (!Number.isFinite(a.qty) || !(a.qty > STOCK_EPS)) throw new AppError('INVALID_QTY', 'A stock lot needs a quantity above zero', 422)
   if (!Number.isInteger(a.unitCostCents) || a.unitCostCents < 0) throw new AppError('INVALID_COST', 'A unit cost must be whole paisa, zero or more', 422)
   const item = await itemForWrite(tx, a.inventoryItemId, a.tenantId)
+  // An ingredient parked in the Trash (Sourcing clean-up, inventory/unusedCleanup.ts) takes no new stock: it would
+  // hold value no sheet shows. Read under the item lock, so a clean-up that committed first is seen.
+  if (a.kind !== 'fifo_cutover' && await tx.inventoryItem.count({ where: { id: item.id, deletedAt: { not: null } } })) {
+    throw new AppError('ITEM_IN_TRASH', `${item.name} is in the Trash — restore it from the Trash before stock comes in`, 422)
+  }
   assertInt4Fits(a.unitCostCents, `${item.name}'s unit cost`)
   const value = a.valueCents ?? Math.round(a.qty * a.unitCostCents)
   if (!Number.isInteger(value) || value < 0) throw new AppError('INVALID_COST', 'A lot value must be whole paisa, zero or more', 422)

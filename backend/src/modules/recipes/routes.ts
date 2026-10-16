@@ -25,6 +25,7 @@ import { toCents } from '../../lib/money.js'
 import { audit } from '../../lib/audit.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
+import { assertItemsNotTrashedTx } from '../inventory/unusedCleanup.js'
 
 // Every cost on this module comes from lib/recipeCost.ts — THE plate cost the
 // ledger books as COGS and the stock depletion explodes. That is: each
@@ -1789,44 +1790,49 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
     let recipe
     try {
-      recipe = await prisma.recipe.create({
-        data: {
-          kind:         body.kind,
-          menuItemId:   resolvedMenuItemId,
-          modifierId:   body.kind === 'modifier' ? body.modifierId! : null,
-          pendingMenuItem: pendingMenuItem ?? Prisma.DbNull,
-          // Plate recipes normally inherit their name from the menu item, but a
-          // testing plate has none yet — carry the pending name so it's readable
-          // in the list/editor until approval creates the item. A modifier
-          // recipe is named after its add-on ("Burger — Extra cheese").
-          name: body.kind === 'plate' ? (pendingMenuItem?.name ?? null)
-            : body.kind === 'modifier' ? (body.name?.trim() || modifierName)
-            : body.name,
-          yieldGrams:   body.yieldGrams ?? null,  // total recipe yield (g) — batch yield for components, cooked total for plates
-          servings:     body.servings,
-          portionSizeG: body.portionSizeG,
-          laborMinutes: body.laborMinutes,
-          notes:        body.notes,
-          steps:        body.steps,
-          stepsUrdu:    body.stepsUrdu,
-          seasons:      body.seasons,
-          seasonStart:  body.seasonStart ?? null,
-          seasonEnd:    body.seasonEnd ?? null,
-          isActive:     body.isActive,
-          qFactorPct:              body.qFactorPct,
-          targetProfitPct:         body.targetProfitPct,
-          targetFoodCostPct:       body.targetFoodCostPct,
-          actualSellingPriceCents: body.actualSellingPriceCents ?? null,
-          category:                body.category ?? null,
-          photoUrl:                body.photoUrl ?? null,
-          methodSteps:             body.methodSteps ?? Prisma.DbNull,
-          createdById:             req.staffUser!.id,
-          ingredients:  { create: body.ingredients.map(ingredientRow) },
-        },
-        include: {
-          ingredients: { include: { inventoryItem: true, prepRecipe: { select: { id: true, name: true } } } },
-          menuItem: true,
-        },
+      // One transaction: the stock items are locked FOR SHARE and re-checked
+      // against the Sourcing clean-up (ITEM_IN_TRASH) before the lines go in.
+      recipe = await prisma.$transaction(async (tx) => {
+        await assertItemsNotTrashedTx(tx, body.ingredients.map((i) => i.inventoryItemId))
+        return tx.recipe.create({
+          data: {
+            kind:         body.kind,
+            menuItemId:   resolvedMenuItemId,
+            modifierId:   body.kind === 'modifier' ? body.modifierId! : null,
+            pendingMenuItem: pendingMenuItem ?? Prisma.DbNull,
+            // Plate recipes normally inherit their name from the menu item, but a
+            // testing plate has none yet — carry the pending name so it's readable
+            // in the list/editor until approval creates the item. A modifier
+            // recipe is named after its add-on ("Burger — Extra cheese").
+            name: body.kind === 'plate' ? (pendingMenuItem?.name ?? null)
+              : body.kind === 'modifier' ? (body.name?.trim() || modifierName)
+              : body.name,
+            yieldGrams:   body.yieldGrams ?? null,  // total recipe yield (g) — batch yield for components, cooked total for plates
+            servings:     body.servings,
+            portionSizeG: body.portionSizeG,
+            laborMinutes: body.laborMinutes,
+            notes:        body.notes,
+            steps:        body.steps,
+            stepsUrdu:    body.stepsUrdu,
+            seasons:      body.seasons,
+            seasonStart:  body.seasonStart ?? null,
+            seasonEnd:    body.seasonEnd ?? null,
+            isActive:     body.isActive,
+            qFactorPct:              body.qFactorPct,
+            targetProfitPct:         body.targetProfitPct,
+            targetFoodCostPct:       body.targetFoodCostPct,
+            actualSellingPriceCents: body.actualSellingPriceCents ?? null,
+            category:                body.category ?? null,
+            photoUrl:                body.photoUrl ?? null,
+            methodSteps:             body.methodSteps ?? Prisma.DbNull,
+            createdById:             req.staffUser!.id,
+            ingredients:  { create: body.ingredients.map(ingredientRow) },
+          },
+          include: {
+            ingredients: { include: { inventoryItem: true, prepRecipe: { select: { id: true, name: true } } } },
+            menuItem: true,
+          },
+        })
       })
     } catch (err) {
       // Two creates racing for one menu item / add-on: the unique index wins.
@@ -1870,6 +1876,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       return prisma.$transaction(async (tx) => {
         await noteEditor(tx, req.params.id, req.staffUser!.id)
         if (body.ingredients) {
+          // New stock items only (a line the user kept is never refused) — locked
+          // FOR SHARE and re-checked against the Sourcing clean-up (ITEM_IN_TRASH).
+          const kept = new Set(owned.lines.map((l) => l.inventoryItemId).filter(Boolean))
+          await assertItemsNotTrashedTx(tx, body.ingredients.map((i) => i.inventoryItemId).filter((id) => !id || !kept.has(id)))
           await tx.recipeIngredient.deleteMany({ where: { recipeId: req.params.id } })
         }
         return tx.recipe.update({
