@@ -24,6 +24,7 @@ import { hrRoutes } from '../src/modules/hr/routes.js'
 import {
   DEFAULT_HR_SETTINGS, computePayslip, finalSettlement, mergeSettings, EMPTY_INPUTS, NO_TAX_NO_PAID_DAYS, NO_EOBI_NO_PAID_DAYS,
 } from '../src/modules/hr/logic.js'
+import { settlementAttendance, getSettings } from '../src/modules/hr/service.js'
 
 const RS = (r: number) => r * 100
 const stamp = Date.now()
@@ -244,6 +245,61 @@ describe('full & final applies the final month\'s attendance', () => {
     expect(after.amountCents).toBe(before.amountCents)
     expect((after.data as Record<string, unknown>)['salaryPayable']).toBe(calc['salaryPayable'])
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA, reference: `hr.final_settlement.accrual:${fnf}` } })).toBe(1)
+  })
+})
+
+describe('full & final over several months: window edges and a month with no paid days', () => {
+  it('docks first unpaid day → last working day only; a no-paid month takes no tax / EOBI / SESSI; the accrual balances', async () => {
+    // Last on a locked May payroll; leaves 20 Aug; owed Jun, Jul, Aug.
+    const m = await mkEmp('Multi', tenantA, { status: 'resigned', lastWorkingDay: D('2026-08-20') })
+    const may = await prisma.hrPayrollRun.create({ data: { tenantId: tenantA, period: '2026-05', status: 'locked', settings: {}, lockedAt: new Date() } })
+    await prisma.hrPayslip.create({ data: { runId: may.id, tenantId: tenantA, employeeId: m, inputs: {}, lines: [], grossCents: 0, earningsCents: 0, deductionsCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, netCents: 0 } })
+    await att(tenantA, m, '2026-05-31', 'absent') // a month payroll already paid
+    await att(tenantA, m, '2026-06-01', 'absent') // the first unpaid day
+    await leave(tenantA, m, unpaidType[tenantA]!, '2026-07-01', '2026-07-31', 31) // all of July
+    await att(tenantA, m, '2026-08-20', 'half_day') // the last working day
+    await att(tenantA, m, '2026-08-21', 'absent') // after leaving
+
+    const fnf = (await call('hr', 'POST', '/records/final_settlement', { data: { employee: m, lastWorkingDay: '2026-08-20' } })).json().id as string
+    const r = await call('hr', 'POST', '/final-settlement/calculate', { employeeId: m, lastWorkingDay: '2026-08-20', recordId: fnf })
+    expect(r.statusCode, r.body).toBe(200)
+    const c = r.json()
+    expect(c.salaryFrom).toBe('2026-06-01T00:00:00.000Z')
+    expect(c.months.map((x: { period: string }) => x.period)).toEqual(['2026-06', '2026-07', '2026-08'])
+    expect(c.months[0].basis).toMatchObject({ employedDays: 30, absentDays: 1, unpaidLeaveDays: 0, paidDays: 29 })
+    expect(c.months[1].basis).toMatchObject({ employedDays: 31, absentDays: 0, unpaidLeaveDays: 31, paidDays: 0 })
+    expect(c.months[1]).toMatchObject({ salaryCents: 0, taxCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, sessiEmployerCents: 0 })
+    expect(c.months[2].basis).toMatchObject({ employedDays: 20, absentDays: 0.5, paidDays: 19.5 })
+    expect(c.salaryPayable).toBe(Math.round(RS(52000) * 29 / 30) + Math.round(RS(52000) * 19.5 / 31))
+    expect(c.incomeTax).toBe(RS(2000))
+    expect(c.eobiEmployee).toBe(RS(800))
+    expect(c.eobiEmployer).toBe(RS(4000))
+    // Gratuity / leave encashment do not read attendance.
+    const plain = finalSettlement({ grossSalaryCents: RS(52000), monthlyTaxCents: RS(1000), joiningDate: D('2026-01-01') }, D('2026-08-20'), {
+      salaryFrom: D('2026-06-01'), otPayableCents: 0, leaveBalanceDays: c.leaveBalanceDays, loanOutstandingCents: 0, deductionsCents: 0, otherAdjustmentsCents: 0, gratuityCents: c.gratuity,
+    }, mergeSettings(SETTINGS as never))
+    expect(c.leaveEncashment).toBe(plain.leaveEncashment)
+    expect(c.gratuity).toBe(plain.gratuity)
+
+    const saved = await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: Object.fromEntries(FNF_KEYS.map((k) => [k, c[k]])) })
+    expect(saved.statusCode, saved.body).toBe(200)
+    await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
+    const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const e = await entry(tenantA, `hr.final_settlement.accrual:${fnf}`)
+    expect(e).not.toBeNull()
+    expect(balanced(e!.lines)).toBe(true)
+    expect(amt(e!.lines, '2042', 'credit')).toBe(RS(2000))
+    expect(amt(e!.lines, '2043', 'credit')).toBe(RS(800 + 4000))
+    expect(await prisma.journalEntry.count({ where: { tenantId: tenantB, reference: `hr.final_settlement.accrual:${fnf}` } })).toBe(0)
+  })
+
+  it('a joining day stored with a time still counts that day\'s absence', async () => {
+    const j = await mkEmp('Joiner', tenantA, { joiningDate: new Date('2026-08-05T09:30:00.000Z'), status: 'resigned', lastWorkingDay: D('2026-08-20') })
+    await att(tenantA, j, '2026-08-05', 'absent')
+    await att(tenantA, j, '2026-08-04', 'absent') // before joining
+    const a = await settlementAttendance(tenantA, j, new Date('2026-08-05T09:30:00.000Z'), D('2026-08-01'), D('2026-08-20'), await getSettings(tenantA))
+    expect(a).toEqual({ '2026-08': { absentDays: 1, unpaidLeaveDays: 0 } })
   })
 })
 

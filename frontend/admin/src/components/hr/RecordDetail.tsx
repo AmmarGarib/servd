@@ -363,7 +363,6 @@ function LeaveRotaEffects({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-/** "Calculate"'s gratuity line, in words: the service it counted, or why none is due. */
 /** The days each salary month of a full & final pays for — net of that
  *  month's absences and unpaid leave, as payroll docks them (owner, 2026-10-16). */
 function salaryDaysText(r: Record<string, unknown>): string {
@@ -376,6 +375,7 @@ function salaryDaysText(r: Record<string, unknown>): string {
   return parts.length ? ` Salary paid for ${parts.join('; ')}.` : ''
 }
 
+/** "Calculate"'s gratuity line, in words: the service it counted, or why none is due. */
 function gratuityText(r: Record<string, unknown>): string {
   const g = r['gratuityDetail'] as {
     eligible: boolean; reason: string | null; years: number; months: number; days: number

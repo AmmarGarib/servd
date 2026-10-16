@@ -604,12 +604,17 @@ export type PrefilledInputs = PayrollInputs & { loans: LoanLine[]; otRecordIds: 
 export async function attendanceWithin(tenantId: string, employeeId: string, from: Date, to: Date, s: HrSettings): Promise<{ absentDays: number; lateCount: number; unpaidLeaveDays: number }> {
   const none = { absentDays: 0, lateCount: 0, unpaidLeaveDays: 0 }
   if (Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()) > to.getTime()) return none
+  // Whole calendar days, never instants (attendanceInputs counts by day): a
+  // joining or last working day stored with a time must not drop that day's
+  // own record or leave from the read.
+  const dayFrom = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()))
+  const dayTo = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate(), 23, 59, 59, 999))
   const [attendance, leaves, unpaidTypes] = await Promise.all([
     prisma.hrRecord.findMany({
-      where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: { gte: from, lte: to } },
+      where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: { gte: dayFrom, lte: dayTo } },
       select: { startDate: true, category: true, quantity: true, createdAt: true },
     }),
-    prisma.hrRecord.findMany({ where: { tenantId, section: 'leave', employeeId, status: 'approved', startDate: { lte: to }, endDate: { gte: from } } }),
+    prisma.hrRecord.findMany({ where: { tenantId, section: 'leave', employeeId, status: 'approved', startDate: { lte: dayTo }, endDate: { gte: dayFrom } } }),
     prisma.hrRecord.findMany({ where: { tenantId, section: 'leave_type', category: 'unpaid' }, select: { id: true } }),
   ])
   const unpaid = new Set(unpaidTypes.map((t) => t.id))
