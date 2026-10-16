@@ -472,6 +472,7 @@ const ERROR_WORDS: Record<string, string> = {
   CAPEX_LINE_NOT_IN_COMPANY: "That CapEx item is not one of this company's.",
   NOT_CAPITAL: 'That CapEx line is not equipment — pick an equipment line.',
   USE_CAPEX: 'That looks like equipment — book it as an Equipment (CapEx) line.',
+  OVERRIDE_REASON_REQUIRED: 'Say why this is not equipment — at least 10 characters.',
   PAYMENT_NOT_BOOKED: 'The payment of this request is not on the books yet — book the petty-cash history first.',
   CASH_REQUEST_PAID_FIXED: 'Receipts are already booked against this payment — move money with a settlement line instead.',
   PERIOD_LOCKED: 'That month is closed in the books.',
@@ -487,7 +488,7 @@ export function errorWords(e: unknown): string {
   if (e instanceof ApiError) {
     const known = ERROR_WORDS[e.code]
     // These carry useful specifics from the server (sizes, the float, the amounts).
-    if (known && ['BAD_PHOTO', 'BAD_FILE', 'BAD_DOCUMENT', 'DOCUMENT_NOT_ALLOWED', 'CHANGE_MISMATCH', 'INSUFFICIENT_FLOAT', 'RECEIPTS_OVER_REQUEST', 'OVER_REMAINING', 'UNIT_MISMATCH'].includes(e.code) && e.message) {
+    if (known && ['BAD_PHOTO', 'BAD_FILE', 'BAD_DOCUMENT', 'DOCUMENT_NOT_ALLOWED', 'CHANGE_MISMATCH', 'INSUFFICIENT_FLOAT', 'RECEIPTS_OVER_REQUEST', 'OVER_REMAINING', 'UNIT_MISMATCH', 'USE_CAPEX'].includes(e.code) && e.message) {
       return `${known} (${e.message})`
     }
     if (known) return known

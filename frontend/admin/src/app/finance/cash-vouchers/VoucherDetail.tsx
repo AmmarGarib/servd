@@ -9,7 +9,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api } from '../../../lib/api'
+import { api, ApiError } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { amountInWords, formatPkr } from './amountInWords'
@@ -498,15 +498,24 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const bank = chosen.startsWith('bank:') ? banks.find((b) => `bank:${b.id}` === chosen) ?? null : null
   const fromWords = box ? box.name : bank ? bank.name : chosen === 'cash' ? 'cash on hand' : ''
   const holder = v.holderName ?? v.payeeName
+  // The pay books the expense, so the server's equipment check runs here: a purpose that looks like equipment is
+  // refused (USE_CAPEX) until finance says it is not equipment, with a reason (flagged for the CEO).
+  const [notEquipment, setNotEquipment] = useState(false)
+  const [notEquipmentReason, setNotEquipmentReason] = useState('')
   const pay = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/pay`,
-      box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : { source: 'cash_on_hand' },
+      {
+        ...(box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : { source: 'cash_on_hand' }),
+        ...(notEquipment && { notEquipment: true, notEquipmentReason: notEquipmentReason.trim() }),
+      },
       { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
     onSuccess: () => { toast.success(`${v.number} is paid and booked — now waiting for the supporting documents.`); onDone() },
   })
   const short = !!box && box.floatCents < v.amountCents
   const nothing = !isLoading && options.length === 0
+  const looksLikeEquipment = notEquipment || (pay.error instanceof ApiError && pay.error.code === 'USE_CAPEX')
+  const overrideIncomplete = notEquipment && notEquipmentReason.trim().length < 10
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Pay {holder}</p>
@@ -546,7 +555,23 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
       )}
       {short && <p className="text-xs text-s-red font-bold">{box!.name} holds PKR {formatPkr(box!.floatCents)} — less than this voucher. Top it up first, or pay from another source.</p>}
       {pay.error && <ErrorBanner message={errorWords(pay.error)} />}
-      <button disabled={pay.isPending || !chosen} className={primaryBtn}
+      {looksLikeEquipment && (
+        <div className="space-y-2">
+          <p className="text-xs text-white/60">
+            Equipment goes on the register through CapEx (Finance → Project tracker → Quick buy), not a cash voucher. If this
+            is not equipment, say why — it is booked to the voucher&rsquo;s expense account and flagged for the CEO.
+          </p>
+          <label className="flex items-center gap-2 text-xs font-bold text-white/80">
+            <input type="checkbox" checked={notEquipment} onChange={(e) => setNotEquipment(e.target.checked)} />
+            This is not equipment
+          </label>
+          {notEquipment && (
+            <textarea value={notEquipmentReason} onChange={(e) => setNotEquipmentReason(e.target.value)} rows={2} maxLength={500}
+              className={fieldCls} placeholder="Why this is not equipment (at least 10 characters)" aria-label="Why this is not equipment" />
+          )}
+        </div>
+      )}
+      <button disabled={pay.isPending || !chosen || overrideIncomplete} className={primaryBtn}
         onClick={async () => { if (await confirm({ title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} is paid from ${fromWords} and booked as expense now.`, confirmLabel: 'Cash handed over' })) { pay.reset(); pay.mutate() } }}>
         {pay.isPending ? 'Paying…' : `Cash handed to ${holder}`}
       </button>

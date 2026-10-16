@@ -665,6 +665,26 @@ describe('review gate', () => {
     expect((await pettyCashTieOut([T.A]))[0]).toMatchObject({ ok: true })
   })
 
+  it('one-entry pay runs the equipment check BEFORE money moves: refused (USE_CAPEX) until finance overrides with a reason; the override is flagged', async () => {
+    const v = await approved({ amountCents: 5_000, purpose: 'Two chairs for the office' })
+    const startFloat = await floatOf(box['A']!)
+    const before = await prisma.journalEntry.count({ where: { tenantId: T.A } })
+    const refused = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'] })
+    expect(refused.statusCode, refused.body).toBe(422)
+    expect(refused.json().error.code).toBe('USE_CAPEX')
+    const short = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'], notEquipment: true, notEquipmentReason: 'rent' })
+    expect(short.json().error.code).toBe('OVERRIDE_REASON_REQUIRED')
+    // Nothing moved: still approved, the float and the books unchanged.
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id } })).status).toBe('approved')
+    expect(await floatOf(box['A']!)).toBe(startFloat)
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(before)
+    const pay = await call('payA', 'POST', `${V}/${v.id}/pay`, { boxId: box['A'], notEquipment: true, notEquipmentReason: 'Hired for one event, returned the next day' })
+    expect(pay.statusCode, pay.body).toBe(200)
+    expect(await entry(`pettycash.spend:${pay.json().movement.id}`)).toEqual([['1011', 'credit', 5_000], ['6140', 'debit', 5_000]])
+    const flag = await prisma.exceptionFlag.findFirst({ where: { kind: 'equipment_override', entityType: 'CashVoucher', entityId: v.id } })
+    expect(flag?.tenantId).toBe(T.A)
+  })
+
   it('whoever raised or holds a voucher never changes its money after finance approval; change on an exact spend is refused', async () => {
     // finA2 raises a request for itself; finA approves; finA2 may not lift the gross while it waits for the CEO.
     const own = await raise('finA2', { amountCents: 4_000 })

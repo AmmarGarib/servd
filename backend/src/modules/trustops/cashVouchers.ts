@@ -87,7 +87,8 @@ import { cashRequestPaidAccountTx, cashRequestPayLine, categoryRefOf, paidFromLa
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { passesCashGuard, recordPettyCashSpendTx } from './pettyCash.js'
-import { cashRequestSettleRoutes } from './cashRequestSettle.js'
+import { cashRequestSettleRoutes, flagOverrides } from './cashRequestSettle.js'
+import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
 
 // ─── Files ───────────────────────────────────────────────────────────────────
@@ -686,7 +687,7 @@ export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId:
   queueStaffNotify(async () => {
     const v = await serviceClient.cashVoucher.findUnique({
       where: { id: voucherId },
-      select: { id: true, tenantId: true, number: true, status: true, kind: true, preparedById: true, payeeUserId: true, boxId: true, returnCount: true, amountCents: true },
+      select: { id: true, tenantId: true, number: true, status: true, kind: true, preparedById: true, payeeUserId: true, boxId: true, returnCount: true, amountCents: true, bookedAtPay: true },
     })
     if (!v) return 0
     const wantStatus: Record<VoucherStep, CashVoucherStatus> = { approved: 'approved', paid: 'disbursed', sent_back: 'disbursed', verified: 'posted' }
@@ -704,7 +705,9 @@ export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId:
     } else if (step === 'paid') {
       userIds = v.kind === 'request' && v.payeeUserId ? [v.payeeUserId] : []
       title = `Cash request ${v.number} paid — upload the supporting documents`
-      body = 'Confirm you received the cash, then attach the receipts and record what was spent.'
+      body = v.bookedAtPay
+        ? 'Confirm you received the cash, then attach the receipts and bills under the voucher.'
+        : 'Confirm you received the cash, then attach the receipts and record what was spent.'
     } else if (step === 'sent_back') {
       userIds = holder ? [holder] : []
       title = `Cash request ${v.number} sent back by finance`
@@ -712,7 +715,7 @@ export function voucherTaskNotice(step: VoucherStep, voucherId: string, actorId:
       severity = 'warning'
     } else {
       userIds = [...new Set([v.preparedById, v.payeeUserId].filter((u): u is string => !!u))]
-      title = `Cash request ${v.number} verified and booked`
+      title = v.bookedAtPay ? `Cash request ${v.number}: documents checked by finance` : `Cash request ${v.number} verified and booked`
       severity = 'success'
     }
     const row = (userId: string, words: string | null): NotifyInput => ({
@@ -1436,6 +1439,10 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       source: z.enum(['box', 'cash_on_hand', 'bank']).default('box'),
       boxId: z.string().min(1).max(64).optional(),
       bankAccountId: z.string().min(1).max(64).optional(),
+      // The pay books the expense, so the equipment check runs here (it used to run at verification): a voucher
+      // whose purpose looks like equipment is 422 USE_CAPEX unless finance says it is not, with a reason.
+      notEquipment: z.boolean().optional(),
+      notEquipmentReason: z.string().trim().max(500).nullable().optional(),
     }).parse(req.body ?? {})
     const v = await loadVoucher(req, req.params.id)
     const viewer = await viewerOf(req)
@@ -1485,6 +1492,13 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     // The expense account is booked by this pay: it must be usable before any
     // cash leaves (finance fixes it with PATCH otherwise).
     const expense = await resolveSpendAccount(prisma, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })
+    // Equipment belongs on the register through CapEx: refused BEFORE any cash leaves (finance overrides with a
+    // reason, flagged below). The description is the pay line's own (cashRequestPayLine).
+    const payLineDescription = `${v.number}: ${v.purpose}`.slice(0, 200)
+    const eq = assertNotEquipmentLine({
+      description: payLineDescription, expenseAccountCode: expense.code,
+      notEquipment: body.notEquipment, notEquipmentReason: body.notEquipmentReason ?? null,
+    }, { role: viewer.role })
 
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
     const settleDays = (await getOperationsConfig(v.tenantId))?.cashAdvanceSettleDays ?? 30
@@ -1555,8 +1569,12 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       dueBy: dueBy.toISOString(),
       expenseAccountCode: expense.code,
       bookedAtPay: true,
+      ...(eq.overridden && { notEquipment: true, notEquipmentReason: (body.notEquipmentReason ?? '').trim() }),
     }, { status: v.status, boxId: v.boxId })
     voucherTaskNotice('paid', v.id, me)
+    if (eq.overridden) {
+      await flagOverrides(v, me, [{ accountCode: expense.code, amountCents: v.amountCents, description: payLineDescription, overrideReason: (body.notEquipmentReason ?? '').trim() }])
+    }
 
     return {
       voucher: await detailOf(v.id, viewer),

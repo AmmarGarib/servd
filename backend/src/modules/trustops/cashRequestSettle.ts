@@ -168,7 +168,7 @@ async function replaceSpendLinesTx(
 }
 
 /** An expense line booked though it looks like equipment (finance / CEO override): raised in the request's company. */
-async function flagOverrides(
+export async function flagOverrides(
   v: { id: string; tenantId: string; number: string; conceptId: string | null },
   actorId: string,
   lines: Array<Pick<ResolvedSpendLine, 'accountCode' | 'amountCents' | 'description' | 'overrideReason'>>,

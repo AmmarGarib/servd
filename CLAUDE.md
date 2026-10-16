@@ -905,7 +905,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (Dr the voucher's 6xxx / Cr 1011, `pettycash.spend:<movementId>`, the float
   drops); from cash on hand or a bank (`paySource`, account =
   `moneyAccountCode` of the VOUCHER's company), `cashvoucher.pay:<id>` Dr the 6xxx /
-  Cr 1010 | bank (`postCashVoucherSourceTx`). Brand = the voucher's. Supporting
+  Cr 1010 | bank (`postCashVoucherSourceTx`). Brand = the voucher's. The
+  account (6xxx only; a `cogs` category is 422 `USE_STOCK_LINE`) and the
+  equipment check on "<number>: <purpose>" (422 `USE_CAPEX` unless finance
+  sends `notEquipment` + a reason ≥10, flagged `equipment_override`) run
+  BEFORE any cash leaves — stock and equipment never come in through a
+  one-entry voucher (box spend stock lines / CapEx Quick buy). Supporting
   documents are stored under the voucher and book nothing; `/:id/spend` is 409
   `EXPENSE_BOOKED_AT_PAY`; finance's `/:id/verify-docs` only marks the documents
   checked (≥1 `supporting` document, else 422 `DOCS_REQUIRED`; → `posted`,
