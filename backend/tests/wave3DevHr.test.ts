@@ -352,13 +352,32 @@ describe('UI-09 HR reads the Workforce staff list, scoped to its companies', () 
     expect(r.json()).toEqual([])
   })
 
-  it('HR still cannot create, edit, approve or delete logins', async () => {
+  it('HR still cannot create, edit, approve or delete logins (it may only issue a new password, within limits)', async () => {
     expect((await call('hrA', 'POST', '/auth/users', { name: 'New', role: 'hr' })).statusCode).toBe(403)
     expect((await call('hrA', 'PATCH', `/auth/users/${U.cookA!.id}`, { role: 'management' })).statusCode).toBe(403)
     expect((await call('hrA', 'DELETE', `/auth/users/${U.cookA!.id}`)).statusCode).toBe(403)
     expect((await call('hrA', 'GET', '/auth/staff/pending')).statusCode).toBe(403)
     expect((await call('hrA', 'PATCH', `/auth/staff/${U.cookA!.id}/approve`, {})).statusCode).toBe(403)
-    expect((await call('hrA', 'POST', `/auth/users/${U.cookA!.id}/reissue-password`, {})).statusCode).toBe(403)
+    // Reissue password is HR's too (owner, 2026-10-16: "Give this option to HR also"), with limits:
+    // a normal office login of its company → 200; never the CEO's or a co-owner's; never a floor
+    // (WhatsApp-code) login; never another company's.
+    const cook = await call('hrA', 'POST', `/auth/users/${U.cookA!.id}/reissue-password`, {})
+    expect(cook.statusCode).toBe(400)
+    expect(cook.json().error.code).toBe('NOT_A_PASSWORD_LOGIN')
+    for (const who of ['ceoA', 'ownerA']) {
+      const r = await call('hrA', 'POST', `/auth/users/${U[who]!.id}/reissue-password`, {})
+      expect(r.statusCode, who).toBe(403)
+      expect(r.json().error.code, who).toBe('REISSUE_CEO_ONLY')
+    }
+    expect((await call('hrA', 'POST', `/auth/users/${U.cookB!.id}/reissue-password`, {})).statusCode).toBe(404)
+    await mkUser('officeA', 'finance', [T.A])
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: U.officeA!.id }, select: { password: true } })
+    const office = await call('hrA', 'POST', `/auth/users/${U.officeA!.id}/reissue-password`, {})
+    expect(office.statusCode, office.body).toBe(200)
+    expect(typeof office.json().temporaryPassword).toBe('string')
+    const changed = await prisma.user.findUniqueOrThrow({ where: { id: U.officeA!.id }, select: { password: true, mustChangePassword: true } })
+    expect(changed.password).not.toBe(before.password)
+    expect(changed.mustChangePassword).toBe(true)
     const after = await prisma.user.findUniqueOrThrow({ where: { id: U.cookA!.id }, select: { role: true } })
     expect(after.role).toBe('kitchen')
   })
