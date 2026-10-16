@@ -965,8 +965,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.put('/settings', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const tenantId = activeTenant(req)
     const body = z.object({
-      // Ignored: pay is always on the actual days of each month (owner,
-      // 2026-10-16 — not an HR setting). Accepted so older screens still save.
+      // Retired (owner HR-1, 2026-10-16): pay is gross ÷ the actual days of
+      // each month × paid days — not an HR setting. Accepted and dropped so
+      // older screens still save.
       workingDaysPerMonth: z.number().int().min(0).max(31).optional(),
       hoursPerDay: z.number().min(1).max(24),
       otMultiplier: z.number().min(1).max(5),
@@ -2211,7 +2212,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
     } else if (kind === 'deductions') {
       rows = [['Employee ID', 'Name', 'Deduction', 'Amount'], ...slips.flatMap((s) => (s.lines as Array<{ kind: string; label: string; amountCents: number }>).filter((l) => l.kind === 'deduction').map((l) => [s.employee.employeeCode, s.employee.fullName, l.label, r(l.amountCents)]))]
     } else {
-      rows = [['Employee ID', 'Name', 'Gross', 'Earnings', 'Deductions', 'EOBI employee', 'EOBI employer', 'Net'], ...slips.map((s) => [s.employee.employeeCode, s.employee.fullName, r(s.grossCents), r(s.earningsCents), r(s.deductionsCents), r(s.eobiEmployeeCents), r(s.eobiEmployerCents), r(s.netCents)])]
+      // The pay basis (HR-1): salary = monthly gross ÷ days in month × paid
+      // days. Blank for a payslip from before the basis was kept.
+      const basis = (inputs: unknown) => ((inputs as Record<string, unknown> | null)?.['payBasis'] ?? null) as { daysInMonth: number; paidDays: number; dailyRateCents: number; monthlyGrossCents: number } | null
+      rows = [['Employee ID', 'Name', 'Monthly gross', 'Days in month', 'Paid days', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', 'EOBI employee', 'EOBI employer', 'Net'], ...slips.map((s) => {
+        const b = basis(s.inputs)
+        return [s.employee.employeeCode, s.employee.fullName, b ? r(b.monthlyGrossCents) : null, b?.daysInMonth ?? null, b?.paidDays ?? null, b ? r(b.dailyRateCents) : null, r(s.grossCents), r(s.earningsCents), r(s.deductionsCents), r(s.eobiEmployeeCents), r(s.eobiEmployerCents), r(s.netCents)]
+      })]
     }
     return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="payroll-${run.period}-${kind}.csv"`).send(csv(rows))
   })

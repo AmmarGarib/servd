@@ -133,7 +133,7 @@ function CutoverPanel({ status, onDone }: { status: TillStatus; onDone: () => vo
       </div>
       <div className="mt-4">
         {status.canCutover
-          ? <button onClick={() => { setErr(null); setAsking(true) }} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Split till clearing</button>
+          ? <button onClick={() => { setErr(null); setAsking(true) }} className="s-btn-primary px-4 py-2">Split till clearing</button>
           : <p className="text-sm font-bold text-white/60">Waiting for the CEO</p>}
       </div>
       {asking && (
@@ -148,7 +148,7 @@ function CutoverPanel({ status, onDone }: { status: TillStatus; onDone: () => vo
           <Err msg={err} />
           <div className="flex gap-2 mt-5">
             <button type="submit" disabled={split.isPending}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">
+              className="s-btn-primary px-4 py-2">
               {split.isPending ? 'Splitting…' : 'Split till clearing'}
             </button>
             <button type="button" onClick={() => setAsking(false)} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
@@ -247,7 +247,7 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
       <Err msg={err} />
       <div className="flex gap-2 mt-5">
         <button type="submit" disabled={create.isPending}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">
+          className="s-btn-primary px-4 py-2">
           {create.isPending ? 'Saving…' : 'Create client'}
         </button>
         <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
@@ -278,7 +278,7 @@ function BulkDialog({ periodTo, month, onClose, onDone }: { periodTo: string; mo
           <Err msg={err} />
           <div className="flex gap-2 mt-5">
             <button type="submit" disabled={issue.isPending}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">
+              className="s-btn-primary px-4 py-2">
               {issue.isPending ? 'Issuing…' : `Issue ${month} statements`}
             </button>
             <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
@@ -302,7 +302,7 @@ function BulkDialog({ periodTo, month, onClose, onDone }: { periodTo: string; mo
               {result.skipped.map((s) => <li key={s.accountId}>{s.accountNumber}: {s.message}</li>)}
             </ul>
           )}
-          <button type="button" onClick={onClose} className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+          <button type="button" onClick={onClose} className="s-btn-primary mt-5 px-4 py-2">Done</button>
         </>
       )}
     </Modal>
@@ -352,7 +352,7 @@ export default function OnAccountClientsPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setBulk(true)} className="rounded-xl px-4 py-2.5 text-sm font-black text-white/90 border border-white/15 hover:bg-white/5">Issue {month} statements</button>
-            <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New client</button>
+            <button onClick={() => setCreating(true)} className="s-btn-primary px-4 py-2.5">+ New client</button>
           </div>
         </div>
       </header>

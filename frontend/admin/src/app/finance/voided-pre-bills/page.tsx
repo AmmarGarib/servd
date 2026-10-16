@@ -501,4 +501,4 @@ function KV({ k, v }: { k: React.ReactNode; v: React.ReactNode }) {
   )
 }
 
-const fieldCls = 'rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none'
+const fieldCls = 's-input !w-auto'

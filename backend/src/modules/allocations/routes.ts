@@ -1,8 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
+import type { UserRole } from '@prisma/client'
 import { requireAuth, FINANCE_TEAM, ADMIN_ONLY } from '../auth/middleware.js'
-import { runAllocationRule } from './service.js'
+import { requireModule } from '../notifications/requireModule.js'
+import { runAllocationRule, reversedRunIds, RUN_SOURCE } from './service.js'
+import { reverseJournalEntry } from '../accounting/journal.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
@@ -32,9 +35,20 @@ const runSchema = z.object({
   periodEnd: pktDay,
 })
 
-// Running a rule stays the CEO's (ADMIN_ONLY), like defining or deleting
-// one: allocation runs were not among the jobs the owner handed to finance
-// on 2026-10-16. The admin page shows the Run button to the CEO only.
+const reverseSchema = z.object({ reason: z.string().trim().min(10).max(500) })
+
+// Finance runs the allocation (owner, 2026-10-16: "Hasnain runs the monthly
+// allocation and edits the rules; every run is recorded and can be
+// reversed"). Saving a rule (create / edit), running one and reversing a run
+// are open to the CEO and to finance holding the `accounting` module
+// (ALLOCATION_RUNNERS). Deleting a rule stays the CEO's. Closed books stay the
+// CEO's through the ledger itself (accounting/closedBooks.ts): a run dated in
+// a CLOSED month is refused for everyone, one dated in a month the CEO
+// reopened — and reversing a run dated in closed or reopened books — is the
+// CEO's only (403 CEO_ONLY_CLOSED_BOOKS). Every save / run / reversal is
+// audited with the actor's role.
+const ALLOCATION_RUNNERS = ['admin', 'finance'] as UserRole[]
+const runnerGate = [requireAuth(...ALLOCATION_RUNNERS), requireModule('accounting')]
 
 export async function allocationRoutes(fastify: FastifyInstance) {
   // Rules and runs belong to one company each (CostAllocationRule.tenantId,
@@ -51,7 +65,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.post('/rules', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+  fastify.post('/rules', { preHandler: runnerGate }, async (req, reply) => {
     const body = ruleSchema.parse(req.body)
     const tenantId = requireActiveCompany(req)
 
@@ -110,7 +124,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
       userId: req.staffUser!.id, tenantId,
       userEmail: req.staffUser!.email,
       before, after: rule,
-      metadata: { ip: req.ip },
+      metadata: { ip: req.ip, actorRole: req.staffUser!.role },
     })
     return reply.status(201).send(rule)
   })
@@ -140,7 +154,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
         action: 'allocation.delete', entity: 'CostAllocationRule', entityId: rule.id,
         userId: req.staffUser!.id, tenantId: rule.tenantId, userEmail: req.staffUser!.email,
         before: { name: rule.name, sourceAccountCode: rule.sourceAccountCode }, after: null,
-        metadata: { ip: req.ip },
+        metadata: { ip: req.ip, actorRole: req.staffUser!.role },
       })
       return reply.status(204).send()
     },
@@ -148,7 +162,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/rules/:id/run',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: runnerGate },
     async (req, reply) => {
       const body = runSchema.parse(req.body)
       // Resolve the rule inside the operator's companies first; the run then
@@ -178,13 +192,68 @@ export async function allocationRoutes(fastify: FastifyInstance) {
 
   fastify.get('/runs', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const scope = await scopeTenantWhere(req, 'read')
-    return prisma.costAllocationRun.findMany({
+    const runs = await prisma.costAllocationRun.findMany({
       // Runs are stamped with their company; a run from before the column
       // falls back to its rule's company — only when its own column is NULL.
       where: { OR: [scope, { AND: [{ tenantId: null }, { rule: scope }] }] },
-      include: { rule: { select: { name: true, sourceAccountCode: true } } },
+      include: { rule: { select: { name: true, sourceAccountCode: true, tenantId: true } } },
       orderBy: { postedAt: 'desc' },
       take: 100,
     })
+    // reversedAt: when the run's entry was reversed (null = still on the books).
+    const byCompany = new Map<string, string[]>()
+    for (const r of runs) {
+      const t = r.tenantId ?? r.rule.tenantId
+      if (t) byCompany.set(t, [...(byCompany.get(t) ?? []), r.id])
+    }
+    const reversed = new Map<string, Date>()
+    for (const [t, ids] of byCompany) for (const [id, at] of await reversedRunIds(t, ids)) reversed.set(id, at)
+    return runs.map(({ rule: { tenantId: _t, ...rule }, ...r }) => ({ ...r, rule, reversedAt: reversed.get(r.id) ?? null }))
   })
+
+  // Reverse a run: its whole entry is reversed (reverseJournalEntry — the same
+  // lines flipped, brand tags kept), dated on the run's own day so the month
+  // that carried it loses it; when that day is in a closed month (nothing
+  // posts there) the reversal is dated today. Reversing a run dated in closed
+  // or reopened books is the CEO's (closedBooks.ts assertMayUndoEntry). The
+  // run row stays as the record; a reversed run no longer blocks a new run of
+  // the same period. Once only (409 RUN_ALREADY_REVERSED).
+  fastify.post<{ Params: { id: string } }>(
+    '/runs/:id/reverse',
+    { preHandler: runnerGate },
+    async (req, reply) => {
+      const body = reverseSchema.parse(req.body ?? {})
+      const scope = await scopeTenantWhere(req, 'write')
+      const run = await prisma.costAllocationRun.findFirst({
+        where: { id: req.params.id, OR: [scope, { AND: [{ tenantId: null }, { rule: scope }] }] },
+        include: { rule: { select: { tenantId: true, name: true, sourceAccountCode: true } } },
+      })
+      const tenantId = run?.tenantId ?? run?.rule.tenantId ?? null
+      if (!run || !tenantId) throw new NotFoundError('CostAllocationRun', req.params.id)
+      if ((await reversedRunIds(tenantId, [run.id])).has(run.id)) {
+        throw new AppError('RUN_ALREADY_REVERSED', 'This run has already been reversed', 409)
+      }
+      const original = await prisma.journalEntry.findFirst({
+        where: { tenantId, reference: `${RUN_SOURCE}:${run.id}` },
+        select: { id: true, entryDate: true },
+      })
+      if (!original) throw new AppError('RUN_NOT_POSTED', 'This run has no ledger entry to reverse', 409)
+      const lock = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+      const reversalDate = lock && original.entryDate <= lock.lockedThrough ? new Date() : original.entryDate
+      const result = await prisma.$transaction((tx) => reverseJournalEntry(tenantId, RUN_SOURCE, run.id, body.reason, {
+        tx, postedBy: req.staffUser!.id, entryDate: reversalDate,
+      }))
+      // Two clicks at once: the posting is idempotent on its reference, the
+      // second one finds the first's entry and books nothing.
+      if (!result.posted) throw new AppError('RUN_ALREADY_REVERSED', 'This run has already been reversed', 409)
+      await audit({ category: 'accounting',
+        action: 'allocation.run_reverse', entity: 'CostAllocationRun', entityId: run.id,
+        userId: req.staffUser!.id, tenantId, userEmail: req.staffUser!.email,
+        before: { ruleId: run.ruleId, ruleName: run.rule.name, periodStart: run.periodStart, periodEnd: run.periodEnd, totalAmountCents: run.totalAmountCents, entryId: original.id },
+        after: { reversalEntryId: result.entryId, reversalDate },
+        metadata: { ip: req.ip, actorRole: req.staffUser!.role, reason: body.reason },
+      })
+      return reply.status(201).send({ runId: run.id, reversalEntryId: result.entryId })
+    },
+  )
 }

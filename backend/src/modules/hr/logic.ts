@@ -15,12 +15,11 @@
 import type { FastifyRequest } from 'fastify'
 
 export interface HrSettings {
-  /** Days a monthly salary is divided by for the daily rate (absence, unpaid
-   *  leave, lates, OT, leave encashment). 0 = the ACTUAL days of the month in
-   *  question, 28–31. Company policy (owner HR-1, 2026-10-16), not an HR
-   *  setting: getSettings / saveSettings (service.ts) always hold 0. Only the
-   *  engine's own tests pass a fixed number. */
-  workingDaysPerMonth: number
+  // Pay basis (owner HR-1, 2026-10-16): a month's salary is divided by the
+  // ACTUAL calendar days of that month (28–31) and paid for the days worked —
+  // company policy, not a setting. The old `workingDaysPerMonth` divisor (26)
+  // is retired: mergeSettings drops it from stored rows (the stored JSON is
+  // left as it is) and nothing reads it.
   hoursPerDay: number
   /** OT multiplier when a request doesn't specify one. Sindh's shops &
    *  establishments law pays overtime at twice the ordinary rate — confirm. */
@@ -78,10 +77,6 @@ export const DEFAULT_GRATUITY: GratuitySettings = {
 }
 
 export const DEFAULT_HR_SETTINGS: HrSettings = {
-  // Pay basis (owner HR-1, 2026-10-16): the ACTUAL days of the month (0), the
-  // same basis a joiner's or leaver's month is prorated on — 26 is the
-  // company's trading days, not the pay basis.
-  workingDaysPerMonth: 0,
   hoursPerDay: 8,
   otMultiplier: 2,
   eobi: { enabled: false, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: null },
@@ -96,7 +91,8 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
 }
 
 export function mergeSettings(stored: Partial<HrSettings> | null | undefined): HrSettings {
-  const s = stored ?? {}
+  // A row saved before HR-1 may still carry workingDaysPerMonth: retired, dropped.
+  const { workingDaysPerMonth: _retired, ...s } = (stored ?? {}) as Partial<HrSettings> & { workingDaysPerMonth?: unknown }
   const g = { ...DEFAULT_GRATUITY, ...(s.gratuity ?? {}) }
   return {
     ...DEFAULT_HR_SETTINGS,
@@ -110,13 +106,13 @@ export function mergeSettings(stored: Partial<HrSettings> | null | undefined): H
 
 // ─── Rates ──────────────────────────────────────────────────────────────────
 
-/** The days a month's salary is divided by: the setting, or (0) the actual
- *  days of `period` (YYYY-MM; default this month). */
-export function payDaysFor(s: HrSettings, period?: string | null): number {
-  if (s.workingDaysPerMonth > 0) return s.workingDaysPerMonth
+/** The days a month's salary is divided by: the actual calendar days of
+ *  `period` (YYYY-MM; default this month) — 28, 29, 30 or 31 (owner HR-1). */
+export function payDaysFor(_s: HrSettings, period?: string | null): number {
   return daysInPeriod(period ?? periodOf(new Date()))
 }
 
+/** One day's pay (unrounded paisa): gross ÷ the month's calendar days. */
 export function dailyRateCents(grossCents: number, s: HrSettings, period?: string | null): number {
   const days = payDaysFor(s, period)
   return days > 0 ? grossCents / days : 0
@@ -476,8 +472,30 @@ export const EMPTY_INPUTS: PayrollInputs = {
 
 export interface PayLine { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
 
+/**
+ * How a payslip's salary was worked out (owner HR-1 / HR-2, 2026-10-16),
+ * kept on the payslip (inputs.payBasis) so the run, the payslip and the
+ * Payroll Report show the same figures.
+ */
+export interface PayBasis {
+  /** Calendar days of the month: 28, 29, 30 or 31. */
+  daysInMonth: number
+  /** Days of the month the person was employed (joining → last working day). */
+  employedDays: number
+  /** Absent days docked (0 when the company does not deduct absences). */
+  absentDays: number
+  unpaidLeaveDays: number
+  /** employedDays − absentDays − unpaidLeaveDays: the days paid for. */
+  paidDays: number
+  /** One day's pay, rounded to the paisa for display: gross ÷ daysInMonth. */
+  dailyRateCents: number
+  /** The full monthly gross the rate is worked from. */
+  monthlyGrossCents: number
+}
+
 export interface PayslipResult {
   lines: PayLine[]
+  /** Salary earned this month: monthly gross ÷ days in month × paid days. */
   grossCents: number
   earningsCents: number
   deductionsCents: number
@@ -485,8 +503,28 @@ export interface PayslipResult {
   eobiEmployerCents: number
   netCents: number
   warnings: string[]
+  basis: PayBasis
 }
 
+const fmtDays = (n: number) => String(days2(n))
+const fmtRs = (cents: number) => `Rs ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+/**
+ * One month's payslip.
+ *
+ * THE RULE (owner HR-1, 2026-10-16: "we will do by actual number of days in a
+ * month"; HR-2: count only the days they were employed):
+ *
+ *   salary = monthly gross ÷ calendar days in the month × paid days
+ *   paid days = days employed in the month − absent days − unpaid leave days
+ *
+ * Days before joining or after the last working day are simply not employed —
+ * never absences. Weekly off days, holidays, paid leave, lates, early
+ * departures, missing punches and days with no attendance record are all paid
+ * days: only an `absent` record (1 day; `half_day` 0.5) on a day not covered
+ * by approved leave, and approved UNPAID leave, take a day out. Lates (every N
+ * lates = one day at the same daily rate) stay a deduction line.
+ */
 export function computePayslip(
   emp: { grossSalaryCents: number; monthlyTaxCents: number; joiningDate: Date | null; lastWorkingDay: Date | null },
   period: string,
@@ -495,49 +533,53 @@ export function computePayslip(
 ): PayslipResult {
   const warnings: string[] = []
   const lines: PayLine[] = []
-  const fraction = employedFraction(period, emp.joiningDate, emp.lastWorkingDay)
-  const gross = Math.round(emp.grossSalaryCents * fraction)
-  const daily = dailyRateCents(emp.grossSalaryCents, s, period)
-  // Days docked can't be more than the days employed, and together they can
-  // take the salary to nothing but not below it: the working-day rate is
-  // higher than the calendar-day one, so a month of unpaid leave priced at it
-  // would otherwise cost more than the month pays.
-  const employedDays = Math.round(fraction * daysInPeriod(period) * 100) / 100
+  const daysInMonth = daysInPeriod(period)
+  const employedDays = Math.round(employedFraction(period, emp.joiningDate, emp.lastWorkingDay) * daysInMonth)
+  const monthly = emp.grossSalaryCents
+  const daily = dailyRateCents(monthly, s, period)
+  // Days taken out can't be more than the days employed.
+  const absentDays = days2(s.deductAbsences ? Math.min(Math.max(0, inputs.absentDays || 0), employedDays) : 0)
+  const unpaidDays = days2(Math.min(Math.max(0, inputs.unpaidLeaveDays || 0), Math.max(0, employedDays - absentDays)))
+  const paidDays = days2(Math.max(0, employedDays - absentDays - unpaidDays))
+  const gross = Math.round((monthly * paidDays) / daysInMonth)
+  // What the days employed would pay with nobody absent: the base for EOBI on
+  // gross and SESSI, unchanged by HR-1 (absences never lowered it).
+  const employedCents = Math.round((monthly * employedDays) / daysInMonth)
+  const basis: PayBasis = {
+    daysInMonth, employedDays, absentDays, unpaidLeaveDays: unpaidDays, paidDays,
+    dailyRateCents: Math.round(daily), monthlyGrossCents: monthly,
+  }
   let docked = 0
   const dock = (cents: number) => { const c = Math.min(Math.round(cents), Math.max(0, gross - docked)); docked += c; return c }
-  const absentDays = s.deductAbsences ? Math.min(inputs.absentDays, employedDays) : 0
-  const unpaidDays = Math.min(inputs.unpaidLeaveDays, Math.max(0, employedDays - absentDays))
 
+  const out: string[] = []
+  if (employedDays < daysInMonth) out.push(`${daysInMonth - employedDays} not employed`)
+  if (absentDays > 0) out.push(`${fmtDays(absentDays)} absent`)
+  if (unpaidDays > 0) out.push(`${fmtDays(unpaidDays)} unpaid leave`)
   lines.push({
     kind: 'earning', code: 'salary',
-    label: fraction < 1 ? `Salary (${Math.round(fraction * daysInPeriod(period))} of ${daysInPeriod(period)} days)` : 'Salary',
+    label: `Salary — ${fmtDays(paidDays)} of ${daysInMonth} days × ${fmtRs(Math.round(daily))}/day${out.length ? ` (${out.join(', ')})` : ''}`,
     amountCents: gross,
   })
   if (inputs.otCents > 0) lines.push({ kind: 'earning', code: 'overtime', label: `Overtime (${inputs.otHours} h)`, amountCents: inputs.otCents })
   if (inputs.earningAdjustmentsCents > 0) lines.push({ kind: 'earning', code: 'adjustments', label: 'Bonuses, incentives & allowances', amountCents: inputs.earningAdjustmentsCents })
 
-  if (absentDays > 0) {
-    lines.push({ kind: 'deduction', code: 'absence', label: `Absence (${absentDays} days)`, amountCents: dock(absentDays * daily) })
-  }
-  if (unpaidDays > 0) {
-    lines.push({ kind: 'deduction', code: 'unpaid_leave', label: `Unpaid leave (${unpaidDays} days)`, amountCents: dock(unpaidDays * daily) })
-  }
   if (s.latesPerDeductionDay > 0 && inputs.lateCount >= s.latesPerDeductionDay) {
     const days = Math.floor(inputs.lateCount / s.latesPerDeductionDay)
     lines.push({ kind: 'deduction', code: 'late', label: `Late coming (${inputs.lateCount} lates = ${days} day${days === 1 ? '' : 's'})`, amountCents: dock(days * daily) })
   }
 
-  // Contributions on a gross base are on what was earned this month, not the
-  // full monthly salary a joiner or leaver was never paid.
-  const eobi = gross > 0 ? eobiContribution(gross, s) : { employeeCents: 0, employerCents: 0 }
+  // Contributions on a gross base are on the days employed this month, not
+  // the full monthly salary a joiner or leaver was never paid.
+  const eobi = employedCents > 0 ? eobiContribution(employedCents, s) : { employeeCents: 0, employerCents: 0 }
   if (eobi.problem) warnings.push(eobi.problem)
   if (eobi.employeeCents > 0) lines.push({ kind: 'deduction', code: 'eobi_employee', label: `EOBI employee (${s.eobi.employeePct}%)`, amountCents: eobi.employeeCents })
-  if (emp.monthlyTaxCents > 0 && gross > 0) lines.push({ kind: 'deduction', code: 'tax', label: 'Income tax', amountCents: emp.monthlyTaxCents })
+  if (emp.monthlyTaxCents > 0 && employedCents > 0) lines.push({ kind: 'deduction', code: 'tax', label: 'Income tax', amountCents: emp.monthlyTaxCents })
   if (inputs.loanInstallmentsCents > 0) lines.push({ kind: 'deduction', code: 'loan', label: 'Loan / advance installment', amountCents: inputs.loanInstallmentsCents })
   if (inputs.deductionAdjustmentsCents > 0) lines.push({ kind: 'deduction', code: 'other', label: 'Other deductions', amountCents: inputs.deductionAdjustmentsCents })
 
   if (eobi.employerCents > 0) lines.push({ kind: 'employer', code: 'eobi_employer', label: `EOBI employer (${s.eobi.employerPct}%)`, amountCents: eobi.employerCents })
-  const sessi = gross > 0 ? sessiEmployerCents(gross, s) : 0
+  const sessi = employedCents > 0 ? sessiEmployerCents(employedCents, s) : 0
   if (sessi > 0) lines.push({ kind: 'employer', code: 'sessi_employer', label: `SESSI employer (${s.sessi.employerPct}%)`, amountCents: sessi })
 
   const earnings = lines.filter((l) => l.kind === 'earning').reduce((a, l) => a + l.amountCents, 0)
@@ -548,7 +590,7 @@ export function computePayslip(
 
   return {
     lines, grossCents: gross, earningsCents: earnings, deductionsCents: deductions,
-    eobiEmployeeCents: eobi.employeeCents, eobiEmployerCents: eobi.employerCents, netCents: net, warnings,
+    eobiEmployeeCents: eobi.employeeCents, eobiEmployerCents: eobi.employerCents, netCents: net, warnings, basis,
   }
 }
 

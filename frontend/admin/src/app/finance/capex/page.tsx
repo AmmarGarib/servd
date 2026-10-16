@@ -25,10 +25,12 @@ import { Select } from '@/components/ui/Select'
 import { toast } from 'sonner'
 import { useTrashPrefill } from '../../../lib/trash'
 import { unwrapPrefill, pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
-import { Modal as SharedModal } from '../../../components/ui/Modal'
 import { NumberField } from '../../../components/ui/NumberField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
-import { Field, dateBounds, firstMissing, focusField, useSubmitOnce } from '../cash-vouchers/ui'
+import {
+  Dialog, ErrorBanner as SharedErrorBanner, Field, Hint, SectionCard, StickyActionBar, StickySummary,
+  dangerBtn, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce,
+} from '../../../components/finance/ui'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 // The shapes of GET /finance/capex live in components/fixedAssets/capexTypes.ts.
@@ -146,7 +148,7 @@ function CapexTracker() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => { setNotice(null); setQuickBuy(true) }} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-black text-white/80 hover:text-white">Buy equipment</button>
-            <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New project</button>
+            <button onClick={() => setCreating(true)} className="s-btn-primary px-4 py-2.5">+ New project</button>
           </div>
         </div>
       </header>
@@ -342,7 +344,7 @@ function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { 
               </div>
             )}
           </div>
-          <button onClick={() => setEditingProject(true)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">
+          <button onClick={() => setEditingProject(true)} className="s-btn-secondary px-3 py-1.5 text-xs">
             Edit project
           </button>
         </div>
@@ -443,7 +445,7 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
       {/* Customize sections */}
       <div className="flex justify-end">
         <button onClick={onCustomizeScopes}
-          className="text-xs font-bold text-white/55 hover:text-white inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10">
+          className="s-btn-secondary text-xs inline-flex items-center gap-1.5 px-3 py-1.5">
           🛠 Customize sections
         </button>
       </div>
@@ -468,7 +470,7 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-black text-white/85">{PKR(scopeTotal)}</span>
                   <button onClick={() => onAddLineScope(s.key)}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on hover:opacity-90">
+                    className="s-btn-primary px-3 py-1.5 text-xs">
                     + Line
                   </button>
                 </div>
@@ -525,7 +527,7 @@ function OpexTab({ projectId, qc }: { projectId: string; qc: ReturnType<typeof u
           <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
             Rent, payroll, utilities, software — anything that pays out monthly tied to this build. Add lines to see total cost of ownership beyond the one-time CapEx.
           </p>
-          <button onClick={() => setAdding(true)} className="mt-4 rounded-xl bg-primary px-4 py-2 text-sm font-black text-primary-on hover:opacity-90">
+          <button onClick={() => setAdding(true)} className="s-btn-primary mt-4 px-4 py-2">
             + Add OpEx line
           </button>
         </div>
@@ -683,7 +685,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
               {categories.map((c) => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
             </Select>
             <button type="button" onClick={() => setCreatingCategory(!creatingCategory)}
-              className="rounded-lg border border-white/10 px-3 text-xs text-white/55 hover:text-white">+ New</button>
+              className="s-btn-secondary px-3 text-xs">+ New</button>
           </div>
           {tried && errs['ol-category'] && <p role="alert" className="text-[11px] mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-category']}</p>}
           {creatingCategory && (
@@ -701,7 +703,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
                 <button type="button" onClick={() => { setCreatingCategory(false); setNewCategoryName(''); setNewCategoryEmoji('') }}
                   className="text-xs text-white/55 hover:text-white">Cancel</button>
                 <button type="button" onClick={() => createCat.mutate()} disabled={!newCategoryName.trim() || createCat.isPending}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+                  className="s-btn-primary px-3 py-1.5 text-xs">
                   {createCat.isPending ? 'Creating…' : '+ Create category'}
                 </button>
               </div>
@@ -749,7 +751,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
           </button>
         )}
         <button type="submit" form="ol-form" disabled={save.isPending}
-          className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
+          className="s-btn-primary px-5 py-2.5">
           {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Add line'}
         </button>
       </ModalFooter>
@@ -854,7 +856,7 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
 
         <div className="flex items-center gap-2 pt-2">
           <button type="button" onClick={addBlank}
-            className="text-xs font-bold rounded-lg px-3 py-1.5 bg-primary text-primary-on hover:opacity-90">
+            className="s-btn-primary text-xs px-3 py-1.5">
             + Add section
           </button>
           <button type="button" onClick={reset}
@@ -1293,6 +1295,12 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
   })
   const dirty = !save.isPending && (item !== (line?.item ?? '') || qty !== (line?.quantity ?? 1) || unitCostCents !== (line?.unitCostCents ?? 0) || notes !== (line?.notes ?? '') || vendor !== (line?.vendor ?? ''))
   return <ModalShell title={`${line ? 'Edit' : 'Add'} ${scope} line`} onClose={onClose} wide dirty={dirty}>
+    <StickySummary items={[
+      { label: 'Budget', value: PKR(unitCostCents * qty) },
+      { label: 'Quoted', value: quotedCents === '' || quotedCents === 0 ? '—' : PKR(+quotedCents) },
+      { label: 'Negotiated', value: negotiatedCents === '' || negotiatedCents === 0 ? '—' : PKR(+negotiatedCents) },
+      { label: 'Sales tax in price', value: inputTaxCents > 0 ? PKR(inputTaxCents) : '—' },
+    ]} />
     <form id="cl-form" onSubmit={submit} className="space-y-4" noValidate>
     {onRegister && (
       <div className="rounded-xl px-4 py-3 text-xs text-white/70" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.08)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.25)' }}>
@@ -1426,7 +1434,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
     <ModalFooter onCancel={onClose}>
       {line && (
         <button type="button" onClick={async () => { if (await confirm({ title: `Delete ${item.trim() || 'this line'}?`, body: 'Its quotes and instalments are removed with it.', confirmLabel: 'Delete line', danger: true })) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">
+          className={dangerBtn + ' mr-auto text-xs'}>
           Delete line
         </button>
       )}
@@ -1511,7 +1519,7 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
         <div className="flex gap-2 mt-2 justify-end">
           <button type="button" onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
           <button type="submit" disabled={add.isPending}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">{add.isPending ? 'Saving…' : '+ Save quote'}</button>
+            className="s-btn-primary px-3 py-1.5 text-xs">{add.isPending ? 'Saving…' : '+ Save quote'}</button>
         </div>
       </form>
     ) : (
@@ -1592,7 +1600,7 @@ function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Pr
                     : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books. An admin can post it.">PAID · NOT POSTED</span>
               ) : (
                 <button onClick={() => setPaying(paying?.id === p.id ? null : p)}
-                  className="rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-on">Mark paid</button>
+                  className="s-btn-primary px-2.5 py-1 text-[10px]">Mark paid</button>
               )}
               <button onClick={() => remove.mutate(p.id)} aria-label="Delete instalment" className="text-white/30 hover:text-s-red">&times;</button>
             </div>
@@ -1652,7 +1660,7 @@ function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Pr
         <div className="flex gap-2 mt-2 justify-end">
           <button type="button" onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
           <button type="submit" disabled={add.isPending}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">{add.isPending ? 'Saving…' : '+ Schedule'}</button>
+            className="s-btn-primary px-3 py-1.5 text-xs">{add.isPending ? 'Saving…' : '+ Schedule'}</button>
         </div>
       </form>
     ) : (
@@ -1755,7 +1763,7 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
       <div className="flex gap-2 justify-end">
         <button type="button" onClick={onClose} className="text-xs text-white/55 hover:text-white">Cancel</button>
         <button type="submit" disabled={pay.isPending}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+          className="s-btn-primary px-3 py-1.5 text-xs">
           {pay.isPending ? 'Saving…' : `Paid ${PKR(amount)}`}
         </button>
       </div>
@@ -1766,24 +1774,15 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
 // ─── Shared bits ──────────────────────────────────────────────────────────
 
 function ModalShell({ title, children, onClose, wide, dirty }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; dirty?: boolean }) {
-  return <SharedModal title={title} onClose={onClose} wide={wide} dirty={dirty}>{children}</SharedModal>
+  return <Dialog title={title} onClose={onClose} wide={wide} dirty={dirty}>{children}</Dialog>
 }
+/** Cancel + the page's actions, pinned to the bottom of the dialog while a long form scrolls. */
 function ModalFooter({ children, onCancel }: { children: React.ReactNode; onCancel: () => void }) {
-  return <div className="flex items-center justify-between gap-3 pt-4 mt-4 border-t border-white/[0.05]">
-    <button type="button" onClick={onCancel} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-    {children}
-  </div>
+  return <StickyActionBar onCancel={onCancel}>{children}</StickyActionBar>
 }
 function Section({ heading, children }: { heading: string; children: React.ReactNode }) {
-  return <div className="rounded-xl p-3 space-y-2 mt-2"
-    style={{ background: 'rgb(var(--fg-rgb) / 0.015)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">{heading}</p>
-    {children}
-  </div>
+  return <SectionCard heading={heading}>{children}</SectionCard>
 }
-function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
-  return <div className="rounded-xl px-4 py-3 text-sm text-s-red" role="alert" ref={(el) => { if (el && !el.dataset['seen']) { el.dataset['seen'] = '1'; el.scrollIntoView({ block: 'nearest' }) } }} style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{errorWords(error)}</div>
+  return <SharedErrorBanner message={errorWords(error)} />
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
-const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

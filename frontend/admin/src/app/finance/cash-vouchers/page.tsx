@@ -92,12 +92,12 @@ function CashVouchers() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setMode('request')} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
+            <button onClick={() => setMode('request')} className="s-btn-primary px-4 py-2.5">
               + Request cash
             </button>
             {data?.financeApprover && (
               <button onClick={() => setMode('expense')}
-                className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-bold text-white/70 hover:text-white hover:border-primary">
+                className="s-btn-secondary px-4 py-2.5">
                 + New payee voucher
               </button>
             )}

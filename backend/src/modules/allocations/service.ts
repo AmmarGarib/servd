@@ -14,6 +14,22 @@ import { fmtPktDate } from '../accounting/dates.js'
 
 const BPS_TOTAL = 10_000
 
+/** The reference of a run's reversal entry (reverseJournalEntry, suffix 'reversal'). */
+export const RUN_SOURCE = 'allocation.run'
+export const runReversalRef = (runId: string) => `${RUN_SOURCE}.reversal:${runId}`
+
+/** Which of these runs have had their entry reversed (in the run's company). */
+export async function reversedRunIds(tenantId: string, runIds: string[]): Promise<Map<string, Date>> {
+  if (runIds.length === 0) return new Map()
+  const rows = await prisma.journalEntry.findMany({
+    where: { tenantId, reference: { in: runIds.map(runReversalRef) } },
+    select: { reference: true, createdAt: true },
+  })
+  const out = new Map<string, Date>()
+  for (const r of rows) if (r.reference) out.set(r.reference.slice(runReversalRef('').length), r.createdAt)
+  return out
+}
+
 // Net debit balance for an account in a period — the cost to allocate.
 // Allocation runs' own lines are excluded: a run debits the brands and
 // credits the source on the SAME account when no target code is set, so
@@ -106,11 +122,15 @@ export async function runAllocationRule(input: {
 
   if (!(input.periodEnd > input.periodStart)) throw new AppError('BAD_PERIOD', 'Period end must be after its start', 400)
   // One run per rule per stretch of time: a run whose period overlaps an
-  // earlier run of the same rule would allocate that cost a second time.
-  const overlapping = await prisma.costAllocationRun.findFirst({
+  // earlier run of the same rule would allocate that cost a second time. A
+  // REVERSED run (its entry reversed by POST /allocations/runs/:id/reverse)
+  // no longer counts, so the corrected run can go in for the same period.
+  const candidates = await prisma.costAllocationRun.findMany({
     where: { ruleId: rule.id, periodStart: { lte: input.periodEnd }, periodEnd: { gte: input.periodStart } },
-    select: { periodStart: true, periodEnd: true },
+    select: { id: true, periodStart: true, periodEnd: true },
   })
+  const reversed = await reversedRunIds(input.tenantId, candidates.map((c) => c.id))
+  const overlapping = candidates.find((c) => !reversed.has(c.id))
   if (overlapping) {
     throw new AppError(
       'RUN_OVERLAPS',

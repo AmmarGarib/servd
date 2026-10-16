@@ -89,7 +89,7 @@ export default function PettyCashPage() {
               Cash boxes for small spend, on the books as 1011 Petty cash. Say where every top-up came from and what every spend was for — each one is booked as it is saved. Count the boxes monthly; a difference is booked and flagged.
             </p>
           </div>
-          {isKeeper && <button onClick={() => setCreating(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New box</button>}
+          {isKeeper && <button onClick={() => setCreating(true)} className="s-btn-primary px-4 py-2.5">+ New box</button>}
         </div>
       </header>
 
@@ -137,15 +137,15 @@ export default function PettyCashPage() {
                   )}
                 </div>
                 <div className="flex flex-wrap sm:flex-col gap-1.5 shrink-0">
-                  <button onClick={() => setSpendFor(b)} className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-bold hover:opacity-90">Spend</button>
-                  <button onClick={() => setTopUpFor(b)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">Top up</button>
+                  <button onClick={() => setSpendFor(b)} className="s-btn-primary px-3 py-1.5 text-xs">Spend</button>
+                  <button onClick={() => setTopUpFor(b)} className="s-btn-secondary px-3 py-1.5 text-xs">Top up</button>
                   {isKeeper && <>
-                    <button onClick={() => setReturnFor(b)} disabled={b.floatCents <= 0} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white disabled:opacity-40">Return cash</button>
+                    <button onClick={() => setReturnFor(b)} disabled={b.floatCents <= 0} className="s-btn-secondary px-3 py-1.5 text-xs">Return cash</button>
                     <button onClick={() => setTransferFrom(b)} disabled={siblings.length === 0}
                       title={siblings.length === 0 ? 'No other box of this company to move cash to' : undefined}
-                      className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white disabled:opacity-40">Transfer</button>
-                    <button onClick={() => setReconcileFor(b)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">Count</button>
-                    <button onClick={() => setEditing(b)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">Edit</button>
+                      className="s-btn-secondary px-3 py-1.5 text-xs">Transfer</button>
+                    <button onClick={() => setReconcileFor(b)} className="s-btn-secondary px-3 py-1.5 text-xs">Count</button>
+                    <button onClick={() => setEditing(b)} className="s-btn-secondary px-3 py-1.5 text-xs">Edit</button>
                   </>}
                 </div>
               </div>

@@ -2,8 +2,9 @@
 // decision that finance re-posts refused postings in OPEN months:
 //   9  allocation runs cover whole Pakistan days (YYYY-MM-DD only)
 //   10 allocation splits only the SHARED (untagged) cost of the source account
-//      + running a rule stays the CEO's (not among the jobs handed to finance);
-//      a CEO login of company B only gets 404
+//      + running a rule is the CEO's and finance's with `accounting` (owner,
+//      2026-10-16 — tests/allocationsFinance.test.ts); a login of company B
+//      only gets 404
 //   11 resolving a flag needs the Exceptions module, an open flag and a 10+
 //      character note; flags about the books are the CEO's and finance's; a
 //      posting_failed flag closes only once its posting is on the books
@@ -95,7 +96,7 @@ beforeAll(async () => {
 
 // ─── 9 + 10: allocations ────────────────────────────────────────────────────
 
-describe('allocations — whole Pakistan days, shared cost only, the CEO runs', () => {
+describe('allocations — whole Pakistan days, shared cost only, the CEO or finance runs', () => {
   let ruleId: string
   beforeAll(async () => {
     // 31 January, 20:00 and 22:00 PKT (15:00Z / 17:00Z) — after the old
@@ -107,12 +108,12 @@ describe('allocations — whole Pakistan days, shared cost only, the CEO runs', 
     })).id
   })
 
-  it('who may run: the CEO only; finance and ops managers are refused, company B\'s CEO gets 404', async () => {
+  it('who may run: the CEO and finance with accounting; ops managers and finance without accounting are refused, company B gets 404', async () => {
     const body = { periodStart: '2026-01-01', periodEnd: '2026-01-31' }
     expect((await call('fnb', 'POST', `/allocations/rules/${ruleId}/run`, body)).statusCode).toBe(403)
     expect((await call('mgmt', 'POST', `/allocations/rules/${ruleId}/run`, body)).statusCode).toBe(403)
-    expect((await call('fin', 'POST', `/allocations/rules/${ruleId}/run`, body)).statusCode).toBe(403)
-    expect((await call('finB', 'POST', `/allocations/rules/${ruleId}/run`, body)).statusCode).toBe(403)
+    expect((await call('finNoAcc', 'POST', `/allocations/rules/${ruleId}/run`, body)).statusCode).toBe(403)
+    expect((await call('finB', 'POST', `/allocations/rules/${ruleId}/run`, body)).statusCode).toBe(404)
     expect((await call('ceoB', 'POST', `/allocations/rules/${ruleId}/run`, body)).statusCode).toBe(404)
     expect((await call('ceo', 'POST', `/allocations/rules/${ruleId}/run`, { periodStart: '2026-01-01T00:00:00Z', periodEnd: '2026-01-31' })).statusCode).toBe(400)
     expect(await prisma.costAllocationRun.count({ where: { ruleId } })).toBe(0)
@@ -147,8 +148,8 @@ describe('allocations — whole Pakistan days, shared cost only, the CEO runs', 
     expect(again.json().error.code).toBe('RUN_OVERLAPS')
   })
 
-  it('rules stay the CEO\'s', async () => {
-    const res = await call('fin', 'POST', '/allocations/rules', { name: 'x', sourceAccountCode: '6020', driver: 'fixed_pct', weights: [{ conceptId: brandA1, weightBps: 10_000 }] })
+  it('rules: finance without the accounting module is refused', async () => {
+    const res = await call('finNoAcc', 'POST', '/allocations/rules', { name: 'x', sourceAccountCode: '6020', driver: 'fixed_pct', weights: [{ conceptId: brandA1, weightBps: 10_000 }] })
     expect(res.statusCode).toBe(403)
   })
 })

@@ -170,7 +170,7 @@ function SettlementCard({ v, s, onChanged }: { v: CashVoucher; s: Settlement; on
                   {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
                 </Select>
                 <button disabled={!pick || reclass.isPending} onClick={() => reclass.mutate({ lineId: l.id, categoryKey: pick })}
-                  className="rounded-lg px-3 py-1.5 text-xs font-black bg-primary text-primary-on disabled:opacity-50">Move</button>
+                  className="s-btn-primary px-3 py-1.5 text-xs">Move</button>
                 <button onClick={() => setEditing(null)} className="text-xs text-white/50 px-1">Keep</button>
               </span>
             )}

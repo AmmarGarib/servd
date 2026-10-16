@@ -91,7 +91,7 @@ export default function DepositDropsPage() {
               Record every cash drop to the bank. It posts to the bank's ledger account, and a variance against the shift (drops + counted close − float kept) auto-flags. Attach the stamped deposit slip (photo or PDF) to make the drop reconcilable on the bank statement.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ Record drop</button>
+          <button onClick={() => setAdding(true)} className="s-btn-primary px-4 py-2.5">+ Record drop</button>
         </div>
       </header>
 
@@ -225,11 +225,11 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
     footer={
       <div className="flex justify-between gap-3">
         {done ? (
-          <button type="button" onClick={onSaved} className="ml-auto rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90">Done</button>
+          <button type="button" onClick={onSaved} className="s-btn-primary ml-auto px-5 py-2.5">Done</button>
         ) : (
           <>
-            <button type="button" onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-            <button type="submit" form="dd-form" disabled={save.isPending || preparing} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Saving…' : 'Record drop'}</button>
+            <button type="button" onClick={onClose} className="s-btn-secondary px-4 py-2.5">Cancel</button>
+            <button type="submit" form="dd-form" disabled={save.isPending || preparing} className="s-btn-primary px-5 py-2.5">{save.isPending ? 'Saving…' : 'Record drop'}</button>
           </>
         )}
       </div>
@@ -283,7 +283,7 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
               </div>
             ))}
             <button type="button" disabled={shares.length >= 20} onClick={() => setShares((all) => [...all, { shiftId: '', amountCents: 0 }])}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-white/65 hover:text-white hover:border-primary disabled:opacity-50">+ Add a till</button>
+              className="s-btn-secondary px-4 py-2">+ Add a till</button>
           </div>
         </Field>
       )}
@@ -306,7 +306,7 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
             </ul>
           )}
           <button type="button" onClick={() => slipInput.current?.click()} disabled={preparing || slips.length >= MAX_SLIPS}
-            className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-white/65 hover:text-white hover:border-primary disabled:opacity-50">
+            className="s-btn-secondary px-4 py-2">
             {preparing ? 'Preparing…' : slips.length ? '+ Attach another file' : '+ Attach slip'}
           </button>
         </div>
@@ -323,7 +323,7 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   </Modal>
 }
 
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
+const fieldCls = 's-input'
 
 /** A drop's slip files: View (photos / PDFs in the browser, no download), Download, and "Attach slip" for one that arrives later. */
 function DropSlips({ drop }: { drop: Drop }) {

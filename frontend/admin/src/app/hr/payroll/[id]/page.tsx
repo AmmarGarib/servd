@@ -14,6 +14,13 @@ import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
+/** How the salary was worked out (backend hr/logic.ts PayBasis, owner HR-1):
+ *  monthly gross ÷ days in month × paid days. Absent on payslips from before. */
+interface PayBasis { daysInMonth: number; employedDays: number; absentDays: number; unpaidLeaveDays: number; paidDays: number; dailyRateCents: number; monthlyGrossCents: number }
+const basisOf = (s: Slip): PayBasis | null => {
+  const b = s.inputs['payBasis'] as PayBasis | undefined
+  return b && typeof b.paidDays === 'number' && typeof b.daysInMonth === 'number' ? b : null
+}
 interface Slip {
   id: string; employeeId: string
   employee: { fullName: string; employeeCode: string; bankName: string | null; iban: string | null; paymentMethod: string | null; eobiNo: string | null }
@@ -128,7 +135,7 @@ export default function PayrollRunPage() {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
-                {['Employee', 'Gross', 'Earnings', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
+                {['Employee', 'Paid days', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
               </tr></thead>
               <tbody>
                 {data!.payslips.map((s) => {
@@ -136,6 +143,8 @@ export default function PayrollRunPage() {
                   return (
                     <tr key={s.id} className="border-t border-white/[0.05]">
                       <td className="px-4 py-3"><p className="font-bold text-white/85">{s.employee.fullName}</p><p className="text-[11px] text-white/40">{s.employee.employeeCode}{s.inputs['edited'] ? ' · edited' : ''}</p></td>
+                      <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basisOf(s) ? `${basisOf(s)!.paidDays} of ${basisOf(s)!.daysInMonth}` : '—'}</td>
+                      <td className="px-4 py-3 text-white/70">{basisOf(s) ? rs(basisOf(s)!.dailyRateCents) : '—'}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.grossCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.earningsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
@@ -206,6 +215,7 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
 function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: string; draft: boolean; onClose: () => void }) {
   const qc = useQueryClient()
   const initial = Object.fromEntries(INPUTS.map(([k]) => [k, Number(slip.inputs[k] ?? 0)])) as Record<string, number>
+  const basis = basisOf(slip)
   // null = the box was emptied. It is never turned into 0 behind the user's back.
   const [vals, setVals] = useState<Record<string, number | null>>(initial)
   const [err, setErr] = useState('')
@@ -227,7 +237,7 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
   }
   const print = () => {
     const row = (l: Line) => `<tr><td>${l.label}</td><td style="text-align:right">${rs(l.amountCents)}</td></tr>`
-    const html = `<h2>Payslip — ${period}</h2><p><strong>${slip.employee.fullName}</strong> (${slip.employee.employeeCode})</p>
+    const html = `<h2>Payslip — ${period}</h2><p><strong>${slip.employee.fullName}</strong> (${slip.employee.employeeCode})</p>${basis ? `<p>Salary = ${rs(basis.monthlyGrossCents)} ÷ ${basis.daysInMonth} days × ${basis.paidDays} paid days (per-day rate ${rs(basis.dailyRateCents)})</p>` : ''}
       <h4>Earnings</h4><table>${slip.lines.filter((l) => l.kind === 'earning').map(row).join('')}</table>
       <h4>Deductions</h4><table>${slip.lines.filter((l) => l.kind === 'deduction').map(row).join('')}</table>
       <p><strong>Net pay: ${rs(slip.netCents)}</strong></p>
@@ -241,6 +251,13 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
       <form onSubmit={submit} noValidate className="grid md:grid-cols-2 gap-5">
         <div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Payslip</p>
+          {basis && (
+            <div className="rounded-xl p-3 mb-3 text-xs text-white/70 space-y-0.5" style={{ background: 'rgb(var(--fg-rgb) / 0.04)' }}>
+              <p className="font-bold text-white/85">Salary = {rs(basis.monthlyGrossCents)} ÷ {basis.daysInMonth} days × {basis.paidDays} paid days</p>
+              <p>Per-day rate {rs(basis.dailyRateCents)} · days in month {basis.daysInMonth} · employed {basis.employedDays} · absent {basis.absentDays} · unpaid leave {basis.unpaidLeaveDays}</p>
+              <p className="text-white/45">Weekly offs, holidays and paid leave are paid days.</p>
+            </div>
+          )}
           {slip.lines.map((l) => (
             <div key={l.code + l.label} className="flex justify-between text-sm py-1 border-b border-white/[0.04]">
               <span style={{ color: l.kind === 'deduction' ? 'var(--erp-danger)' : l.kind === 'employer' ? 'rgb(var(--fg-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}</span>

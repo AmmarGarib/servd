@@ -32,13 +32,14 @@ export async function getSettings(tenantId: string): Promise<HrSettings> {
   const row = await prisma.setting.findUnique({ where: { key: settingsKey(tenantId) } })
   let stored: Partial<HrSettings> | null = null
   try { stored = row ? JSON.parse(row.value) as Partial<HrSettings> : null } catch { stored = null }
-  // The pay basis is company policy, not an HR setting (owner, 2026-10-16):
-  // always the actual days of each month, whatever a saved row says.
-  return { ...mergeSettings(stored), workingDaysPerMonth: 0 }
+  // The pay basis is company policy, not an HR setting (owner HR-1,
+  // 2026-10-16): the actual days of each month. mergeSettings drops a retired
+  // workingDaysPerMonth a saved row may still carry.
+  return mergeSettings(stored)
 }
 
 export async function saveSettings(tenantId: string, s: HrSettings): Promise<void> {
-  const value = JSON.stringify({ ...s, workingDaysPerMonth: 0 })
+  const value = JSON.stringify(mergeSettings(s))
   await prisma.setting.upsert({ where: { key: settingsKey(tenantId) }, create: { key: settingsKey(tenantId), value }, update: { value } })
 }
 
@@ -754,7 +755,7 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
       // paying the run credits cash slips to the safe and bank / cheque slips
       // to the bank picked (finance gaps #9) — a later change on the master
       // must not move a month already calculated.
-      inputs: { ...inputs, salaryCents, paymentMethod: emp.paymentMethod ?? 'bank', warnings: [...r.warnings, ...(staffing.get(emp.id) ?? [])] } as unknown as Prisma.InputJsonValue,
+      inputs: { ...inputs, salaryCents, payBasis: r.basis, paymentMethod: emp.paymentMethod ?? 'bank', warnings: [...r.warnings, ...(staffing.get(emp.id) ?? [])] } as unknown as Prisma.InputJsonValue,
       ...payslipData(r),
     })
   }
@@ -837,7 +838,7 @@ export async function recalcPayslip(payslipId: string, overrides: Partial<Payrol
     await claimDraft(tx, slip.runId, actorId)
     await tx.hrPayslip.update({
       where: { id: payslipId },
-      data: { inputs: { ...inputs, salaryCents, warnings: [...r.warnings, ...staffing] } as unknown as Prisma.InputJsonValue, ...payslipData(r) },
+      data: { inputs: { ...inputs, salaryCents, payBasis: r.basis, warnings: [...r.warnings, ...staffing] } as unknown as Prisma.InputJsonValue, ...payslipData(r) },
     })
     await refreshRunTotals(slip.runId, undefined, tx)
   })

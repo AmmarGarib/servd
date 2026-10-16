@@ -28,13 +28,15 @@ import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { Select } from '@/components/ui/Select'
-import { Modal as SharedModal } from '../../../components/ui/Modal'
 import { NumberField } from '../../../components/ui/NumberField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { RecordFiles } from '@/components/files/RecordFiles'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
-import { Field, dateBounds, firstMissing, focusField, useSubmitOnce } from '../cash-vouchers/ui'
+import {
+  Dialog, ErrorBanner as SharedErrorBanner, Field, Hint, SectionCard, StickyActionBar, StickySummary,
+  dangerBtn, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce,
+} from '../../../components/finance/ui'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
 
@@ -362,7 +364,7 @@ export default function OpexTrackerPage() {
               Every recurring expense — rent, payroll, utilities, software, marketing. System tracks expected vs actual and flags vendor invoices that jump unexpectedly.
             </p>
           </div>
-          <button onClick={() => setCreatingCategory(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New category</button>
+          <button onClick={() => setCreatingCategory(true)} className="s-btn-primary px-4 py-2.5">+ New category</button>
         </div>
       </header>
 
@@ -563,7 +565,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
         </div>
         <div className="flex items-center gap-2">
           <button onClick={onEditCategory} className="text-xs text-white/55 hover:text-white">Edit category</button>
-          <button onClick={onAddLine} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on hover:opacity-90">+ Line</button>
+          <button onClick={onAddLine} className="s-btn-primary px-3 py-1.5 text-xs">+ Line</button>
         </div>
       </header>
 
@@ -815,7 +817,7 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
     <ModalFooter onCancel={onClose}>
       {category && (
         <button type="button" onClick={async () => { if (await confirm({ title: `Archive ${category.name}?`, body: 'The category and its lines are hidden from OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">Archive</button>
+          className={dangerBtn + ' mr-auto text-xs'}>Archive</button>
       )}
       <button type="submit" form="opex-cat-form" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : category ? 'Save' : 'Create category'}
@@ -897,7 +899,14 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
   const dirty = !save.isPending && (name !== (line?.name ?? '') || amountCents !== (line?.amountCents ?? 0) || notes !== (line?.notes ?? '') || vendor !== (line?.vendor ?? ''))
 
   return <ModalShell title={`${line ? 'Edit' : 'Add'} line · ${category.name}`} onClose={onClose} wide dirty={dirty}>
+    <StickySummary items={[
+      { label: 'Amount', value: `${PKR(amountCents)}${CADENCE_LABELS[cadence]}` },
+      { label: 'Next due', value: nextDueDate || '—' },
+      { label: 'Paid by', value: paymentMethod ? paymentMethod.replace(/_/g, ' ') : '—' },
+      { label: 'Withholding', value: payroll ? 'n/a' : whtSection ? WHT_SECTION_LABEL[whtSection] : 'None' },
+    ]} />
     <form id="opex-line-form" onSubmit={submit} className="space-y-4" noValidate>
+    <Section heading="What it is">
     <Field label="Name *" error={shown('opex-line-name')}>
       <input id="opex-line-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Office rent — DHA Phase 5" className={fieldCls} autoFocus />
     </Field>
@@ -936,6 +945,8 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Landlord name" className={fieldCls} />
       </Field>
     )}
+    </Section>
+    <Section heading="Amount & schedule">
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <Field label="Amount (PKR) *">
         <MoneyInput value={amountCents} onChange={setAmount} className={fieldCls} />
@@ -970,6 +981,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         <Hint>Card and auto-debit payments come out of a bank account too — pick the one they draw on.</Hint>
       </div>
     )}
+    </Section>
     {!payroll && (
       <Section heading="Tax">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -993,7 +1005,9 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         {whtSection && !supplierId && <p role={tried ? 'alert' : undefined} className="text-[11px] text-s-amber">Pick the supplier — a withholding section needs one.</p>}
       </Section>
     )}
+    <Section heading="Notes">
     <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
+    </Section>
     </form>
 
     {/* Payment history — only when editing (outside the line's form: it has its own forms) */}
@@ -1005,7 +1019,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
     <ModalFooter onCancel={onClose}>
       {line && (
         <button type="button" onClick={async () => { if (await confirm({ title: `Archive ${line.name}?`, body: 'The line stops appearing in OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
-          className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto">Archive</button>
+          className={dangerBtn + ' mr-auto text-xs'}>Archive</button>
       )}
       <button type="submit" form="opex-line-form" disabled={save.isPending} className={primaryBtn}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
@@ -1506,7 +1520,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
         <button type="button" onClick={onCancel} className="text-xs text-white/55 hover:text-white">Cancel</button>
         <button type="submit"
           disabled={save.isPending}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+          className="s-btn-primary px-3 py-1.5 text-xs">
           {save.isPending ? 'Saving…' : payment ? (payment.paidAt ? 'Save correction' : 'Mark paid') : '+ Record'}
         </button>
       </div>
@@ -1565,9 +1579,9 @@ function PostOldPayments({ onEditCategory, onPosted }: { onEditCategory: (catego
         </div>
         <div className="flex gap-2">
           <button onClick={() => run.mutate(true)} disabled={run.isPending}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:text-white">Preview</button>
+            className="s-btn-secondary px-3 py-1.5 text-xs">Preview</button>
           <button onClick={() => run.mutate(false)} disabled={run.isPending || postable === 0}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
+            className="s-btn-primary px-3 py-1.5 text-xs">
             Post{postable > 0 ? ` ${postable}` : ''}
           </button>
         </div>
@@ -1603,29 +1617,15 @@ function PostOldPayments({ onEditCategory, onPosted }: { onEditCategory: (catego
 // ─── Shared ───────────────────────────────────────────────────────────────
 
 function ModalShell({ title, children, onClose, wide, dirty }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; dirty?: boolean }) {
-  return <SharedModal title={title} onClose={onClose} wide={wide} dirty={dirty}>{children}</SharedModal>
+  return <Dialog title={title} onClose={onClose} wide={wide} dirty={dirty}>{children}</Dialog>
 }
+/** Cancel + the page's actions, pinned to the bottom of the dialog while a long form scrolls. */
 function ModalFooter({ children, onCancel }: { children: React.ReactNode; onCancel: () => void }) {
-  return <div className="flex items-center justify-between gap-3 pt-4 mt-4 border-t border-white/[0.05]">
-    <button type="button" onClick={onCancel} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-    {children}
-  </div>
+  return <StickyActionBar onCancel={onCancel}>{children}</StickyActionBar>
 }
 function Section({ heading, children }: { heading: string; children: React.ReactNode }) {
-  return <div className="rounded-xl p-3 space-y-2 mt-2"
-    style={{ background: 'rgb(var(--fg-rgb) / 0.015)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">{heading}</p>
-    {children}
-  </div>
+  return <SectionCard heading={heading}>{children}</SectionCard>
 }
-function Hint({ children }: { children: React.ReactNode }) { return <p className="text-[11px] text-white/35 mt-1">{children}</p> }
 function ErrorBanner({ error }: { error: unknown }) {
-  return (
-    <div role="alert" ref={(el) => { if (el && !el.dataset['seen']) { el.dataset['seen'] = '1'; el.scrollIntoView({ block: 'nearest' }) } }} className="rounded-xl px-4 py-3 text-sm text-s-red"
-      style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>
-      {opexErrorText(error)}
-    </div>
-  )
+  return <SharedErrorBanner message={opexErrorText(error)} />
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
-const primaryBtn = "rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"

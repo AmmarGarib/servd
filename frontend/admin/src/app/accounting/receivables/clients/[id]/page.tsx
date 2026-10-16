@@ -102,7 +102,7 @@ function Dlg({ title, busy, disabled, label, error, onGo, onClose, children }: {
       {children}
       <Err msg={error} />
       <div className="flex gap-2 mt-5">
-        <button onClick={onGo} disabled={busy || disabled} className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">
+        <button onClick={onGo} disabled={busy || disabled} className="s-btn-primary px-4 py-2">
           {busy ? 'Working…' : label}
         </button>
         <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
@@ -246,7 +246,7 @@ export default function OnAccountClientPage() {
               <div className="flex gap-2 mt-3">
                 {c.canApprove && (
                   <button onClick={() => act.mutate({ path: '/approve', body: { expectedUpdatedAt: c.updatedAt, ...(c.pending === 'limit_increase' && c.requestedCreditLimitCents != null ? { creditLimitCents: c.requestedCreditLimitCents } : {}) }, ok: 'Approved.' })}
-                    className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Approve</button>
+                    className="s-btn-primary px-4 py-2">Approve</button>
                 )}
                 {c.canReject && <Btn danger onClick={() => setDialog({ kind: 'reject' })}>Reject</Btn>}
               </div>

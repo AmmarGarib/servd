@@ -172,7 +172,7 @@ export default function StockDifferencesPage() {
             </div>
             <div className="flex gap-2">
               <button type="button" onClick={() => toggle(rows.map((r) => r.lineId), selectedRows.length < rows.length)}
-                className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/60 hover:text-white">
+                className="s-btn-secondary px-3 py-2">
                 {selectedRows.length < rows.length ? 'Select all shown' : 'Clear selection'}
               </button>
               <button type="button"
@@ -182,7 +182,7 @@ export default function StockDifferencesPage() {
                     approve.mutate(selectedRows.map((r) => r.lineId))
                   }
                 }}
-                className="rounded-xl bg-primary px-4 py-2 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
+                className="s-btn-primary px-4 py-2">
                 {approve.isPending ? 'Approving…' : 'Approve'}
               </button>
             </div>
@@ -233,7 +233,7 @@ export default function StockDifferencesPage() {
 
         {list.hasNextPage && (
           <button type="button" onClick={() => list.fetchNextPage()} disabled={list.isFetchingNextPage}
-            className="w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/60 hover:text-white disabled:opacity-50">
+            className="s-btn-secondary w-full px-4 py-2.5">
             {list.isFetchingNextPage ? 'Loading…' : 'Show more'}
           </button>
         )}
@@ -291,14 +291,14 @@ function DifferenceRow({ row: r, canApprove, checked, onCheck, onQueried }: {
             <div className="mt-2 space-y-2">
               <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} autoFocus
                 placeholder="What should the kitchen or finance check? (3–500 characters)"
-                className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none" />
+                className="s-input" />
               {send.error && <p className="text-xs" style={{ color: 'var(--erp-danger)' }}>{(send.error as Error).message}</p>}
               <div className="flex gap-2">
                 <button type="button" onClick={() => send.mutate()} disabled={send.isPending || note.trim().length < 3}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-black text-primary-on hover:opacity-90 disabled:opacity-50">
+                  className="s-btn-primary px-3 py-1.5 text-xs">
                   {send.isPending ? 'Sending…' : 'Send back'}
                 </button>
-                <button type="button" onClick={() => { setAsking(false); setNote('') }} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">Cancel</button>
+                <button type="button" onClick={() => { setAsking(false); setNote('') }} className="s-btn-secondary px-3 py-1.5 text-xs">Cancel</button>
               </div>
             </div>
           )}

@@ -12,7 +12,6 @@ import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface HrSettings {
-  workingDaysPerMonth: number
   hoursPerDay: number
   otMultiplier: number
   eobi: { enabled: boolean; employeePct: number; employerPct: number; base: 'fixed' | 'gross'; fixedWageCents: number | null }
@@ -107,7 +106,7 @@ export default function HrSettingsPage() {
           <Panel title="Pay & overtime">
             <div>
               <span className="block text-[11px] font-bold text-white/55 mb-1">Pay days</span>
-              <span className="block text-xs text-white/70">The actual days of each month (28–31) — company policy, set by the CEO. Daily rate = gross ÷ that month&rsquo;s days, the same basis a joiner&rsquo;s first month is paid on; absences, unpaid leave, lates and overtime use it.</span>
+              <span className="block text-xs text-white/70">Salary = monthly gross ÷ the calendar days of the month (28–31) × paid days — company policy, set by the CEO. Paid days = days employed − absent days − unpaid leave days; weekly offs, holidays and paid leave are paid. Lates, overtime and leave encashment use the same daily rate.</span>
             </div>
             <Num label="Hours per day" max={24} help="Hourly rate = daily rate ÷ this." v={s.hoursPerDay} onSet={(v) => setS({ ...s, hoursPerDay: v })} />
             <Num label="Overtime multiplier" help="OT = hours × hourly rate × this. Factories Act default is 2." v={s.otMultiplier} step="0.25" onSet={(v) => setS({ ...s, otMultiplier: v })} />

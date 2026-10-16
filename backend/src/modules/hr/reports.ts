@@ -426,7 +426,7 @@ async function payrollReport(def: ReportDef, tenantIds: string[], q: ReportQuery
 
   const rows: unknown[][] = perSlip.map(({ s, c }) => [
     s.employee.employeeCode, s.employee.fullName, labelOf(s.employee.departmentId), branch(s.employee), costCentreOf(s.employee), d10(s.employee.joiningDate),
-    ...money(c), att.get(s.employee.id)?.daysWorked ?? null, ...rest(c),
+    ...money(c), paidDaysOf(s.inputs) ?? att.get(s.employee.id)?.daysWorked ?? null, ...rest(c),
   ])
   const sum = (k: keyof Cents) => perSlip.reduce((a, x) => a + x.c[k], 0)
   const tot = Object.fromEntries((['gross', 'earned', 'arrears', 'ot', 'totalEarned', 'late', 'loan', 'unpaid', 'advance', 'tax', 'other', 'totalDed', 'net'] as const).map((k) => [k, sum(k)])) as Cents
@@ -437,10 +437,17 @@ async function payrollReport(def: ReportDef, tenantIds: string[], q: ReportQuery
     key: def.key, title: `${def.title} — ${month}`, month, sheetTitle, header, kinds, rows, totalsRow: true,
     note: [
       notLocked ? `The ${month} run is not locked yet — figures can still change.` : null,
-      'Figures are the payroll run\'s payslips. Days Worked come from Attendance & Leaves.',
+      'Figures are the payroll run\'s payslips. Salary Earned = Gross Salary ÷ the calendar days of the month × Days Worked (owner HR-1); Days Worked = days employed − absent days − unpaid leave days (weekly offs, holidays and paid leave are paid days), as the payslip worked them out — unpaid leave is already out of Salary Earned.',
       showOther ? `${OTHER_DEDUCTIONS_COL}: absence, EOBI (employee share) and other deductions — they have no column in this format.` : null,
     ].filter(Boolean).join(' '),
   }
+}
+
+/** The paid days a payslip was calculated on (inputs.payBasis, HR-1); null
+ *  for a payslip from before it was kept. */
+const paidDaysOf = (inputs: unknown): number | null => {
+  const b = (inputs as Record<string, unknown> | null)?.['payBasis'] as { paidDays?: unknown } | undefined
+  return b && typeof b.paidDays === 'number' ? b.paidDays : null
 }
 
 const loanLinesOf = (inputs: unknown): Array<{ loanId: string; cents: number }> => {

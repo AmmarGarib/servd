@@ -169,10 +169,10 @@ function Buttons({ busy, label, busyLabel, onClose, danger }: {
   return (
     <div className="flex gap-2 mt-5">
       <button type="submit" disabled={busy}
-        className={`rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50 ${danger ? 'bg-s-red text-bone' : 'bg-primary text-primary-on'}`}>
+        className={danger ? 's-btn-danger px-4 py-2' : 's-btn-primary px-4 py-2'}>
         {busy ? busyLabel : label}
       </button>
-      <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-white/60 border border-white/10">Cancel</button>
+      <button type="button" onClick={onClose} className="s-btn-secondary px-4 py-2">Cancel</button>
     </div>
   )
 }
@@ -293,7 +293,7 @@ function Receivables() {
             <h1 className="text-2xl font-black text-white/90">Receivables</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">Invoices for customers who pay later. Till sales settle on the spot and never appear here.</p>
           </div>
-          <button onClick={() => setRaising(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New invoice</button>
+          <button onClick={() => setRaising(true)} className="s-btn-primary px-4 py-2.5">+ New invoice</button>
         </div>
       </header>
 
@@ -625,9 +625,9 @@ function Raise({ concepts, onClose, prefill }: { concepts: Concept[]; onClose: (
           <div className="flex flex-wrap items-center gap-1.5">
             <span>{preview.brandName}&apos;s rates:</span>
             <button type="button" onClick={() => applyRate(preview.rates!.cashPct)}
-              className="rounded-lg px-2 py-0.5 font-bold border border-white/10 text-white/70">Cash {preview.rates.cashPct}%</button>
+              className="s-btn-secondary px-2 py-0.5">Cash {preview.rates.cashPct}%</button>
             <button type="button" onClick={() => applyRate(preview.rates!.cardPct)}
-              className="rounded-lg px-2 py-0.5 font-bold border border-white/10 text-white/70">Card / digital {preview.rates.cardPct}%</button>
+              className="s-btn-secondary px-2 py-0.5">Card / digital {preview.rates.cardPct}%</button>
           </div>
         ) : (
           <p>Pick a brand to use its sales-tax rates.</p>
@@ -671,7 +671,7 @@ function Pay({ inv, onClose, prefill }: { inv: Invoice; onClose: () => void; pre
       <Modal title="Payment recorded" onClose={done}>
         <p className="text-sm text-white/70 mb-3">{fmtPkrWhole(toPaisa(amount))} received on {inv.number} ({receiptMethodLabel(method).toLowerCase()}, ref {reference.trim()}).</p>
         <ReferenceUsedBeforeNotice uses={usedBefore} />
-        <button type="button" onClick={done} className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+        <button type="button" onClick={done} className="s-btn-primary mt-5 px-4 py-2">Done</button>
       </Modal>
     )
   }
@@ -740,7 +740,7 @@ function Withhold({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
           {fmtPkrWhole(saved.amountCents)} of sales tax {inv.customerName} withheld is booked to 1335 (Sales Tax Withheld by Customers).
           It is netted in the {saved.authority ? <strong className="text-white/90">{saved.authority}</strong> : 'matching authority’s'} sales-tax return — the authority this invoice’s own tax was charged to.
         </p>
-        <button type="button" onClick={done} className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+        <button type="button" onClick={done} className="s-btn-primary mt-5 px-4 py-2">Done</button>
       </Modal>
     )
   }
@@ -810,7 +810,7 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
     return (
       <Modal title="Credit note issued" onClose={onClose}>
         <p className="text-sm" style={{ color: 'var(--erp-warning)' }}>{warning}</p>
-        <button type="button" onClick={onClose} className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on">Done</button>
+        <button type="button" onClick={onClose} className="s-btn-primary mt-5 px-4 py-2">Done</button>
       </Modal>
     )
   }
@@ -834,7 +834,7 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
           <div className="flex gap-1">
             <div className="flex-1 min-w-0"><RupeeField label="Tax credited (PKR)" value={tax} onChange={setTax} /></div>
             {inv.taxCents > 0 && (
-              <button type="button" onClick={taxShare} className="rounded-lg px-2 text-[11px] font-bold border border-white/10 text-white/60 whitespace-nowrap">Invoice&apos;s rate</button>
+              <button type="button" onClick={taxShare} className="s-btn-secondary px-2 text-[11px] whitespace-nowrap">Invoice&apos;s rate</button>
             )}
           </div>
         </L>

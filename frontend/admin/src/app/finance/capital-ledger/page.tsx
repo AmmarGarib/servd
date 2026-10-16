@@ -220,7 +220,7 @@ export default function InvestmentDashboardPage() {
             </p>
           </div>
           <Link href="/finance/capex"
-            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
+            className="s-btn-primary px-4 py-2.5">
             Open Project Tracker →
           </Link>
         </div>
@@ -238,7 +238,7 @@ export default function InvestmentDashboardPage() {
               you log there shows up here.
             </p>
             <Link href="/finance/capex"
-              className="inline-block rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">
+              className="s-btn-primary inline-block px-4 py-2.5">
               + Start a project
             </Link>
           </div>
