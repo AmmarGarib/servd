@@ -2,7 +2,8 @@
 -- not proceed for night run / audit until cash / card settlement / bank
 -- transfers or any other payment mode is reconciled and closed … or month
 -- close". One row per company per Karachi business date:
---   open → audited ("awaiting settlement", the day is LOCKED for postings)
+--   open → audited ("awaiting settlement", the day is LOCKED for SALES postings —
+--        owner: night audit is for the sales module only)
 --        → closed  (card payout + bank matched, or the CEO's override).
 -- The month close's CloseCheck 'night_audit_days' needs every active day from
 -- Tenant.nightAuditStartDay closed. Contract: backend/src/modules/nightAudit/README.md.
