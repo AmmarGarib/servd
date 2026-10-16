@@ -623,7 +623,7 @@ async function validateRecipeLines(
   const isPlate = owner.kind === 'plate'
   const itemIds = [...new Set(lines.map((l) => l.inventoryItemId).filter((x): x is string => !!x))]
   const items = new Map((itemIds.length
-    ? await prisma.inventoryItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, tenantId: true, category: true } })
+    ? await prisma.inventoryItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, tenantId: true, category: true, deletedAt: true } })
     : []).map((i) => [i.id, i]))
   const allowed = new Set(owner.tenantIds)
   for (const l of lines) {
@@ -646,6 +646,11 @@ async function validateRecipeLines(
     }
     const item = l.inventoryItemId ? items.get(l.inventoryItemId) : undefined
     if (!item) throw new AppError('ITEM_NOT_IN_COMPANY', 'That stock item is not part of this recipe\'s company', 422)
+    if (item.deletedAt) {
+      // Parked in the Trash (Sourcing sheet clean-up) — restore it from the Trash first.
+      refuse('ITEM_IN_TRASH', `${item.name} is in the Trash — restore it from the Trash before using it in a recipe`)
+      continue
+    }
     if (item.tenantId == null) {
       refuse('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company — a sale never uses it. Pick this company's own stock item.`)
     } else if (!allowed.has(item.tenantId)) {

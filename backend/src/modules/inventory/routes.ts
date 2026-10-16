@@ -15,6 +15,7 @@ import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js
 import { assertLocationOfCompany } from '../financePlanning/companyRefs.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
+import { unusedCleanupRoutes } from './unusedCleanup.js'
 
 // ─── One ingredient master, per company (owner decision 30, 2026-09-27) ──────
 //
@@ -855,4 +856,6 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // CEO: move every ingredient that is in no recipe to the Trash (unusedCleanup.ts).
+  await fastify.register(unusedCleanupRoutes)
 }

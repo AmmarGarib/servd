@@ -7,6 +7,7 @@ import { SETUP_TRASH_PROVIDERS } from './setup.js'
 import { MARKETING_TRASH_PROVIDERS } from './marketing.js'
 import { PEOPLE_TRASH_PROVIDERS } from './people.js'
 import { FINANCE_TRASH_PROVIDERS } from './finance.js'
+import { INVENTORY_TRASH_PROVIDERS } from './inventory.js'
 
 export const MASTER_TRASH_PROVIDERS: readonly TrashProvider[] = [
   ...MENU_TRASH_PROVIDERS,
@@ -15,4 +16,5 @@ export const MASTER_TRASH_PROVIDERS: readonly TrashProvider[] = [
   ...MARKETING_TRASH_PROVIDERS,
   ...PEOPLE_TRASH_PROVIDERS,
   ...FINANCE_TRASH_PROVIDERS,
+  ...INVENTORY_TRASH_PROVIDERS,
 ]

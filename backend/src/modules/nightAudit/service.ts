@@ -146,6 +146,86 @@ export async function notifyDayClosed(tenantId: string, day: string, actorId: st
   }))
 }
 
+// ─── H45: "audited but still awaiting settlement" (the CA, 2026-10-16) ───────
+// "After 2 working days": an audited sales day whose card payout or bank side
+// is still not matched once its 2nd working day after the sales day has ENDED
+// warns the same audience (CEO + finance with accounting, of THAT company),
+// once per company / day / reopenCount. servd keeps no bank-holiday calendar,
+// so a working day is Monday–Saturday (Sunday off: NON_WORKING_WEEKDAYS).
+// Example: Saturday's sales → Monday and Tuesday are its two working days →
+// the warning goes out from Wednesday 00:00 PKT. Run by the hourly worker
+// (workers/nightAuditSettle.ts) right after it settles what it can. Never
+// inside a transaction; never posts; never changes the day.
+
+export const AWAITING_WORKING_DAYS = 2
+/** Days of the week (0 = Sunday, UTC day of the PKT date) that are not working days. */
+export const NON_WORKING_WEEKDAYS: ReadonlySet<number> = new Set([0])
+
+const isWorkingDay = (day: string) => !NON_WORKING_WEEKDAYS.has(new Date(`${day}T00:00:00Z`).getUTCDay())
+
+/** The n-th working day after `day` ('YYYY-MM-DD'; `day` itself never counts). */
+export function addWorkingDays(day: string, n: number): string {
+  let d = day
+  for (let left = n; left > 0;) {
+    d = addDays(d, 1)
+    if (isWorkingDay(d)) left--
+  }
+  return d
+}
+
+/** The last working day a sales day's money has to be matched; the warning goes out once it is over. */
+export const awaitingDueDay = (day: string) => addWorkingDays(day, AWAITING_WORKING_DAYS)
+
+/** What a settlement block means in plain words (card payout / bank deposit / Raast). */
+export function unmatchedLabel(key: string, title: string): string {
+  if (key === 'card_unsettled_day' || key === 'card_matching_off') return 'card payout'
+  if (key === 'cash_not_banked' || key === 'sales_bank_unmatched') return 'bank deposit'
+  if (key === 'raast_unmatched_day') return 'Raast payments on the bank statement'
+  return title
+}
+
+/**
+ * Warn the night-audit audience about every audited (not closed) sales day of
+ * the company whose due day is over. Idempotent: one notice per user per
+ * (company, day, reopenCount) via the dedupe key, and a day already announced
+ * is skipped before the audience is read. Returns the days announced.
+ */
+export async function notifyAwaitingSettlement(tenantId: string, now: Date = new Date()): Promise<number> {
+  const today = todayPkt(now)
+  const rows = await prisma.nightAuditDay.findMany({
+    // Two working days need at least two calendar days; the exact cut is below.
+    where: { tenantId, status: 'audited', businessDate: { lt: addDays(today, -AWAITING_WORKING_DAYS) } },
+    select: { businessDate: true, reopenCount: true, lastCheck: true },
+    orderBy: { businessDate: 'asc' },
+    take: 62,
+  })
+  let sent = 0
+  for (const row of rows) {
+    const day = row.businessDate
+    const due = awaitingDueDay(day)
+    if (today <= due) continue
+    const dedupeKey = `night_audit.awaiting:${tenantId}:${day}:${row.reopenCount}`
+    if (await prisma.staffNotification.count({ where: { tenantId, dedupeKey } }) > 0) continue
+    const blocks = ((row.lastCheck ?? null) as LastCheck | null)?.phase === 'settlement'
+      ? ((row.lastCheck as unknown as LastCheck).blocks ?? [])
+      : []
+    const what = [...new Set(blocks.map((b) => unmatchedLabel(b.key, b.title)))]
+    const ids = await nightAuditAudience(tenantId)
+    if (ids.length === 0) continue
+    await notifyStaffMany(ids.map((userId) => ({
+      userId, tenantId, kind: 'night_audit.awaiting', severity: 'warning',
+      title: `Sales day ${dayLabel(day)} still awaiting settlement${what.length ? ` — ${what.join(', ')} not matched` : ''}`,
+      body: `Audited, but not closed ${AWAITING_WORKING_DAYS} working days later (due by ${dayLabel(due)}).`
+        + (blocks.length ? ` Open: ${blocks.map((b) => b.title).join('; ')}.` : '')
+        + ' Match it on Reconciliation, or the CEO closes the day over it.',
+      link: nightLink(day), entityType: 'NightAuditDay', entityId: `${tenantId}:${day}`, actorId: null,
+      dedupeKey,
+    })))
+    sent++
+  }
+  return sent
+}
+
 // ─── Run (open → audited) ────────────────────────────────────────────────────
 
 export async function runNightAudit(input: { tenantId: string; day: string; actor: Actor; acknowledge?: Acknowledge }): Promise<void> {

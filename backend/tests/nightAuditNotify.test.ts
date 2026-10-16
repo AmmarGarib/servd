@@ -1,7 +1,7 @@
 // Night audit notices on the staff bell (owner, 2026-10-16). Audience = CEO(s) +
 // finance (accounting) of the audited company, minus the runner; another
-// company's people never hear of it. The "still awaiting settlement" warning is
-// NOT built (TODO(H45)).
+// company's people never hear of it. The "still awaiting settlement" warning
+// (H45) is tested in nightAuditAwaiting.test.ts.
 import { describe, it, expect, beforeAll } from 'vitest'
 import bcrypt from 'bcryptjs'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
@@ -89,7 +89,7 @@ describe('night audit notices', () => {
     expect(await prisma.staffNotification.count({ where: { userId: u.finB! } })).toBe(0)
   })
 
-  it('the awaiting-settlement warning is not built (H45)', async () => {
+  it('a run or settle never sends the H45 awaiting warning itself (the worker does)', async () => {
     expect(await prisma.staffNotification.count({ where: { tenantId: A, kind: 'night_audit.awaiting' } })).toBe(0)
   })
 })

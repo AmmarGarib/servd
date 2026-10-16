@@ -54,7 +54,7 @@ export type NotificationKind =
   | 'approval.decided'        // your item was approved / rejected / returned / posted
   | 'night_audit.report'      // a sales day was audited: report ready
   | 'night_audit.closed'      // an audited sales day was closed (settled)
-  | 'night_audit.awaiting'    // reserved — TODO(H45): not built until the accountant answers
+  | 'night_audit.awaiting'    // an audited sales day still not settled 2 working days later (H45)
   | 'exception'               // a new ExceptionFlag (CEO only, plus finance for night_audit_pending)
   | 'exception.digest'        // a burst of flags collapsed into one row
   | 'task.next'               // not an approval: your step is next (cash voucher pay / documents / verify)

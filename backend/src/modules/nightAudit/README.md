@@ -83,9 +83,10 @@ After: audit `night_audit.run | night_audit.override`, flag
 
 Settle: 409 `NOT_AUDITED`, 409 `SETTLEMENT_NOT_READY`; the CEO's acknowledge
 closes with `closedVia 'override'` (audit `night_audit.settle_override`,
-flag). The worker (`workers/nightAuditSettle.ts`, hourly) settles audited days
-and, after 06:00 PKT, raises ONE `night_audit_pending` per (company,
-yesterday). It never audits a day. Nothing in this module posts.
+flag). The worker (`workers/nightAuditSettle.ts`, hourly) settles audited days,
+after 06:00 PKT raises ONE `night_audit_pending` per (company, yesterday), and
+sends the H45 "still awaiting settlement" bell notice (see The bell). It never
+audits a day. Nothing in this module posts.
 
 Reopen (CEO): 422 `REASON_REQUIRED`, 409 `NOT_AUDITED`, 409
 `DAY_IN_CLOSED_PERIOD`; history kept, `reopenCount` + 1, up to 5
@@ -140,9 +141,15 @@ link `/finance/night-audit?day=`; dedupe per company/day/`reopenCount`, so a
 reopen + rerun reports again) after a run, and "Sales day X closed" when a day
 settles later (auto, manual or CEO override). `night_audit_pending` and the
 override / reopen flags reach the bell through the exception notifier, not
-from here. NOT built: "audited but still awaiting settlement" (`TODO(H45)` in
-`workers/nightAuditSettle.ts`) — it waits for the accountant's answer on when
-card payouts land. Notices are queued after the commit and never fail a run.
+from here. **"Still awaiting settlement" (H45, the CA 2026-10-16: "after 2
+working days")**: an `audited` day not `closed` once its 2nd working day after
+the sales day is over gets ONE `night_audit.awaiting` warning (same audience;
+dedupe `night_audit.awaiting:<tenant>:<day>:<reopenCount>`), naming what is
+unmatched — card payout, bank deposit, Raast — from the day's last settlement
+check (`service.ts notifyAwaitingSettlement`, run by the hourly worker after
+it settles). Working days are Monday–Saturday (`NON_WORKING_WEEKDAYS`, Sunday
+off; there is no bank-holiday calendar): Saturday's sales → due Tuesday →
+warned from Wednesday 00:00 PKT. Notices are queued after the commit and never fail a run.
 
 ## Company merge
 
