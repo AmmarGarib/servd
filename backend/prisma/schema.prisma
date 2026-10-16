@@ -7810,6 +7810,15 @@ model CashVoucher {
   // the payer's pay records it for an outside payee (kind expense). Required before finance verifies a request.
   cashReceivedById     String?
   cashReceivedAt       DateTime?
+  // Where the cash came from (owner, 2026-10-16: "pay from petty cash / cash on hand and bank accounts"):
+  // 'box' (default, every row before: a petty-cash box, Dr 1357 / Cr 1011 via its movement) | 'cash_on_hand'
+  // (Dr 1357 / Cr 1010) | 'bank' (Dr 1357 / Cr the named bank's code). The last two post ONE entry
+  // 'cashvoucher.pay:<id>' (payJournalEntryId), no box movement; change / an overspend at verification go back to
+  // / come from the SAME account (payAccountCode). CHECK cash_vouchers_pay_source_chk is SQL only.
+  paySource            String          @default("box")
+  payAccountCode       String?
+  payBankAccountId     String?
+  payJournalEntryId    String?         @unique
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).
