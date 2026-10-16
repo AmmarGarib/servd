@@ -959,9 +959,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   other preparers (owner, management).
 - **Chart of accounts (owner, 2026-10-16):** finance (with the `accounting`
   module) and the CEO add and rename accounts (`POST` / `PATCH
-  /setup/chart-of-accounts`, `CHART_EDITORS`); switching an account off or
-  back on — the chart's "delete" — is the CEO's only (403
-  `ACCOUNT_SWITCH_CEO_ONLY`). A duplicate code in the company is 409
+  /setup/chart-of-accounts`, `CHART_EDITORS`) and switch accounts off or
+  back on (owner, 2026-10-16: "Give access to finance also"; the books'
+  guards ACCOUNT_IN_USE / ACCOUNT_CONTROLLED still refuse). A duplicate code in the company is 409
   `ACCOUNT_CODE_TAKEN`.
 - **Which money account:** `moneyAccountCode(db, tenantId, {method, bankAccountId})`
   in `lib/bankAccounts.ts` is THE answer for every non-till payment (supplier

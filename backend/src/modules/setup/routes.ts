@@ -1123,8 +1123,8 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // Who may add and edit accounts (owner, 2026-10-16: "Give Finance access to
   // create / edit new account, deletion rights remains with CEO"): the CEO and
   // finance (with the accounting module, so the CEO's untick closes it).
-  // Switching an account off or back on — the chart's "delete" — stays the
-  // CEO's only (403 ACCOUNT_SWITCH_CEO_ONLY below).
+  // Switching an account off or back on — the chart's "delete" — is theirs
+  // too (owner, 2026-10-16); the books' own guards below still refuse it.
   const CHART_EDITORS = ['admin', 'finance'] as UserRole[]
   const chartEditorGate = [requireAuth(...CHART_EDITORS), requireModule('accounting')]
   fastify.post('/chart-of-accounts', { preHandler: chartEditorGate }, async (req, reply) => {
@@ -1173,9 +1173,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!existing) throw new NotFoundError('Account', req.params.id)
-    if (body.isActive !== undefined && body.isActive !== existing.isActive && req.staffUser!.role !== 'admin') {
-      throw new AppError('ACCOUNT_SWITCH_CEO_ONLY', 'Only the CEO can switch an account off or back on.', 403)
-    }
+    // Finance switches accounts off / on too (owner, 2026-10-16: "Give access to finance also").
     if (body.isActive === false && existing.isActive) await assertAccountMayBeSwitchedOff(existing)
     const updated = await prisma.account.update({ where: { id: existing.id }, data: body })
     await audit({ category: 'accounting',

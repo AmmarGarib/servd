@@ -203,15 +203,13 @@ describe('finance adds and edits accounts; switching off stays with the CEO', ()
     expect((await call('finB', 'POST', '/setup/chart-of-accounts', { code: '9272', name: 'B account', type: 'liability' })).json().tenantId).toBe(tenantB)
   })
 
-  it('finance cannot switch an account off or back on; the CEO can', async () => {
+  it('finance switches an account off and back on (owner, 2026-10-16); the books\' guards still apply', async () => {
     const id = (await call('finA', 'POST', '/setup/chart-of-accounts', { code: '9273', name: 'To pause', type: 'expense' })).json().id as string
-    const f = await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { isActive: false })
-    expect(f.statusCode).toBe(403)
-    expect(f.json().error.code).toBe('ACCOUNT_SWITCH_CEO_ONLY')
-    expect((await off('ceoA', id)).statusCode).toBe(200)
-    expect((await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { isActive: true })).statusCode).toBe(403)
-    // Sending the unchanged value with a rename is fine.
-    expect((await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { name: 'Paused', isActive: false })).statusCode).toBe(200)
+    expect((await off('finA', id)).statusCode).toBe(200)
+    expect((await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { isActive: true })).statusCode).toBe(200)
+    const req = await off('finA', await accountId(tenantA, '2210'))
+    expect(req.statusCode).toBe(422)
+    expect(req.json().error.code).toBe('ACCOUNT_IN_USE')
   })
 
   it('other roles, and finance without the accounting module, are refused', async () => {
