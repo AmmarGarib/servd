@@ -16,8 +16,9 @@ export default function WorkspaceLanding() {
   useEffect(() => {
     if (isError) { router.replace('/modules'); return }
     if (isLoading || !me) return
-    // The CEO lands on the CEO home; everyone else on their own workspace.
-    if (me.modules.includes('ceo_overview')) { router.replace('/home'); return }
+    // Everyone, the CEO included, lands on their own workspace (owner,
+    // 2026-10-16: "Everyone's home page should be their workspace.. including
+    // me."). The CEO's first workspace is CEO; Home stays in Dashboards.
     const first = workspaces[0]
     router.replace(first ? `/w/${first.id}` : '/modules')
   }, [isError, isLoading, me, workspaces, router])
