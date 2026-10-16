@@ -172,3 +172,52 @@ describe('PATCH /setup/chart-of-accounts/:id — switching off', () => {
     expect(row.tenantId).toBe(tenantA)
   })
 })
+
+// Owner, 2026-10-16: "Give Finance access to create / edit new account,
+// deletion rights remains with CEO". Finance (with the accounting module)
+// adds and renames accounts in its own company; switching one off or on stays
+// the CEO's (403 ACCOUNT_SWITCH_CEO_ONLY); other roles are refused.
+describe('finance adds and edits accounts; switching off stays with the CEO', () => {
+  beforeAll(async () => {
+    await mkUser('finA', 'finance', [tenantA])
+    await mkUser('finB', 'finance', [tenantB])
+    await mkUser('mgmtA', 'management', [tenantA])
+    await mkUser('cashA', 'cashier', [tenantA])
+    await mkUser('finNoMod', 'finance', [tenantA])
+    await prisma.user.update({ where: { id: users['finNoMod']!.id }, data: { moduleDeny: ['accounting'] } })
+  })
+
+  it("finance creates in its own company (binds to it) and renames; another company's account is 404", async () => {
+    const c = await call('finA', 'POST', '/setup/chart-of-accounts', { code: '9272', name: 'Garibsons Pvt Ltd', type: 'liability', description: 'Capital account' })
+    expect(c.statusCode, c.body).toBe(201)
+    expect(c.json().tenantId).toBe(tenantA)
+    const id = c.json().id as string
+    const r = await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { name: 'Garibsons (Pvt) Ltd', description: 'Project financing' })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().name).toBe('Garibsons (Pvt) Ltd')
+    expect((await call('finB', 'PATCH', `/setup/chart-of-accounts/${id}`, { name: 'x' })).statusCode).toBe(404)
+    const dup = await call('finA', 'POST', '/setup/chart-of-accounts', { code: '9272', name: 'Again', type: 'liability' })
+    expect(dup.statusCode).toBe(409)
+    expect(dup.json().error.code).toBe('ACCOUNT_CODE_TAKEN')
+    // The same code in company B is B's own account.
+    expect((await call('finB', 'POST', '/setup/chart-of-accounts', { code: '9272', name: 'B account', type: 'liability' })).json().tenantId).toBe(tenantB)
+  })
+
+  it('finance cannot switch an account off or back on; the CEO can', async () => {
+    const id = (await call('finA', 'POST', '/setup/chart-of-accounts', { code: '9273', name: 'To pause', type: 'expense' })).json().id as string
+    const f = await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { isActive: false })
+    expect(f.statusCode).toBe(403)
+    expect(f.json().error.code).toBe('ACCOUNT_SWITCH_CEO_ONLY')
+    expect((await off('ceoA', id)).statusCode).toBe(200)
+    expect((await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { isActive: true })).statusCode).toBe(403)
+    // Sending the unchanged value with a rename is fine.
+    expect((await call('finA', 'PATCH', `/setup/chart-of-accounts/${id}`, { name: 'Paused', isActive: false })).statusCode).toBe(200)
+  })
+
+  it('other roles, and finance without the accounting module, are refused', async () => {
+    for (const who of ['mgmtA', 'cashA', 'finNoMod']) {
+      const r = await call(who, 'POST', '/setup/chart-of-accounts', { code: `9${who.length}99`, name: 'No', type: 'expense' })
+      expect(r.statusCode, who).toBe(403)
+    }
+  })
+})

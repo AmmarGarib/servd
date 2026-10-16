@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { usePermissions } from '../../../hooks/useCan'
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
 interface Account {
@@ -88,10 +89,13 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
   const [type, setType] = useState<AccountType>(account?.type ?? 'expense')
   const [description, setDescription] = useState(account?.description ?? '')
   const [isActive, setIsActive] = useState(account?.isActive ?? true)
+  // Finance adds and edits accounts; switching one off / on is the CEO's only
+  // (owner, 2026-10-16) — the server refuses it too (ACCOUNT_SWITCH_CEO_ONLY).
+  const isCeo = usePermissions().data?.role === 'admin'
 
   const save = useMutation({
     mutationFn: () => {
-      if (account) return api.patch(`/setup/chart-of-accounts/${account.id}`, { name: name.trim(), description: description || null, isActive })
+      if (account) return api.patch(`/setup/chart-of-accounts/${account.id}`, { name: name.trim(), description: description || null, ...(isCeo ? { isActive } : {}) })
       return api.post('/setup/chart-of-accounts', { code: code.trim(), name: name.trim(), type, description: description || null })
     },
     onSuccess: () => onSaved(),
@@ -125,11 +129,12 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
           <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={fieldCls} placeholder="What goes here vs other accounts" /></Field>
           {account && (
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />
-              <span className="text-xs text-white/65">Active</span>
+              <input type="checkbox" checked={isActive} disabled={!isCeo} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />
+              <span className="text-xs text-white/65">Active{!isCeo && ' — only the CEO can switch an account off or on'}</span>
             </label>
           )}
         </div>
+        {save.isError && <p role="alert" className="px-5 pb-3 text-xs" style={{ color: 'var(--erp-danger)' }}>{(save.error as Error).message}</p>}
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || (!account && !code.trim())}

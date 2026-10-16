@@ -26,6 +26,7 @@ import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, APPROVERS }
 import { WORKSPACES, WORKSPACE_OF_MODULE } from '../../lib/workspaces.js'
 import { SCHEDULED_REPORT_MODULES, mayScheduleReport } from '../../lib/moduleAccess.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { REQUIRED_ACCOUNT_CODES } from '../../lib/chartOfAccounts.js'
 import { ACCT, revenueCodeForConcept } from '../accounting/journal.js'
 import { AUTHORITY_LIST } from '../accounting/taxAuthorities.js'
@@ -1119,7 +1120,14 @@ export async function setupRoutes(fastify: FastifyInstance) {
   })
   // Adding, renaming or switching off an account changes what can post, so
   // both writes go on the accounting trail (category 'accounting').
-  fastify.post('/chart-of-accounts', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+  // Who may add and edit accounts (owner, 2026-10-16: "Give Finance access to
+  // create / edit new account, deletion rights remains with CEO"): the CEO and
+  // finance (with the accounting module, so the CEO's untick closes it).
+  // Switching an account off or back on — the chart's "delete" — stays the
+  // CEO's only (403 ACCOUNT_SWITCH_CEO_ONLY below).
+  const CHART_EDITORS = ['admin', 'finance'] as UserRole[]
+  const chartEditorGate = [requireAuth(...CHART_EDITORS), requireModule('accounting')]
+  fastify.post('/chart-of-accounts', { preHandler: chartEditorGate }, async (req, reply) => {
     const body = z.object({
       code:        z.string().min(1).max(20),
       name:        z.string().min(1).max(120),
@@ -1127,7 +1135,12 @@ export async function setupRoutes(fastify: FastifyInstance) {
       description: z.string().max(500).nullable().optional(),
     }).parse(req.body)
     const tenantId = activeTenantId(req)
-    const created = await prisma.account.create({ data: { ...body, tenantId } })
+    const created = await prisma.account.create({ data: { ...body, tenantId } }).catch((err: unknown) => {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new AppError('ACCOUNT_CODE_TAKEN', `Account code ${body.code} already exists in this company.`, 409)
+      }
+      throw err
+    })
     await audit({ category: 'accounting',
       action: 'account.create',
       entity: 'Account',
@@ -1150,7 +1163,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
   //                           link, the register's 15xx / 2012)
   // The type is never edited here, and POST never sets controlledBy (the
   // modules create their controlled accounts themselves).
-  fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+  fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/:id', { preHandler: chartEditorGate }, async (req) => {
     const body = z.object({
       name:        z.string().min(1).max(120).optional(),
       description: z.string().max(500).nullable().optional(),
@@ -1160,6 +1173,9 @@ export async function setupRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!existing) throw new NotFoundError('Account', req.params.id)
+    if (body.isActive !== undefined && body.isActive !== existing.isActive && req.staffUser!.role !== 'admin') {
+      throw new AppError('ACCOUNT_SWITCH_CEO_ONLY', 'Only the CEO can switch an account off or back on.', 403)
+    }
     if (body.isActive === false && existing.isActive) await assertAccountMayBeSwitchedOff(existing)
     const updated = await prisma.account.update({ where: { id: existing.id }, data: body })
     await audit({ category: 'accounting',
