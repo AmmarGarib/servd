@@ -311,6 +311,12 @@ export async function runNightAudit(input: { tenantId: string; day: string; acto
     entity: 'NightAuditDay', entityId: `${tenantId}:${day}`, userId: actor.id, userEmail: actor.email ?? null, tenantId,
     metadata: { day, ...(outcome.overrides ? { overrides: outcome.overrides, reason: ack!.reason } : {}), warnings: outcome.checks.warnings.map((w) => w.key) },
   })
+  // The run answers the worker's "Night audit of <day> not run" flag (flagPendingYesterday):
+  // without this it stayed open in Exceptions — and on the bell — after the day was audited.
+  await prisma.exceptionFlag.updateMany({
+    where: { tenantId, kind: 'night_audit_pending', entityType: 'NightAuditDay', entityId: `${tenantId}:${day}`, status: { in: ['open', 'acknowledged'] } },
+    data: { status: 'resolved', resolvedById: actor.id, resolvedAt: new Date(), resolution: `Night audit of ${day} run` },
+  })
   if (outcome.overrides) {
     await flagException({
       tenantId, kind: 'night_audit_override', severity: 'high',
