@@ -27,6 +27,7 @@ import { useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryValueOf, stockErrorText } from '../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
+import { UnusedCleanupModal } from './UnusedCleanupModal'
 
 interface Item {
   id: string; name: string; unit: string
@@ -66,6 +67,9 @@ export default function SourcingPage() {
   // A company-less item that holds stock gets an opening count in its new
   // company, at a unit cost typed here (finance, CEO or management).
   const [assigning, setAssigning] = useState<{ item: Item; tenantId: string; costPkr: string } | null>(null)
+  // The CEO's clean-up: move every ingredient that is in no recipe to the Trash.
+  const isCeo = me?.role === 'admin'
+  const [cleaning, setCleaning] = useState(false)
 
   const { data: items = [], isLoading } = useQuery<Item[]>({
     queryKey: ['inventory'],
@@ -157,11 +161,20 @@ export default function SourcingPage() {
             Cost is the price actually paid for the stock. You can type an opening cost for an item that has no stock or deliveries yet.
           </p>
         </div>
-        <button onClick={() => setShowAdd((s) => !s)}
-          className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
-          + Add ingredient
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isCeo && (
+            <button onClick={() => setCleaning(true)}
+              className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:border-primary">
+              Remove ingredients not in a recipe
+            </button>
+          )}
+          <button onClick={() => setShowAdd((s) => !s)}
+            className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
+            + Add ingredient
+          </button>
+        </div>
       </header>
+      {cleaning && <UnusedCleanupModal onClose={() => setCleaning(false)} />}
 
       {unassignedCount > 0 && (
         <div className="mx-4 sm:mx-6 mt-4 rounded-xl border border-s-amber/40 bg-s-amber/5 px-4 py-3 text-sm text-s-text">

@@ -42,6 +42,13 @@ beforeAll(async () => {
   await mk('fin', 'finance', A, [A])
   await mk('ceoB', 'admin', B, [B])
   await mk('finB', 'finance', B, [B])
+  // Not the audience: finance WITHOUT the accounting module, a switched-off CEO,
+  // and a cashier — all members of A.
+  await mk('finNoAcct', 'finance', A, [A])
+  await prisma.user.update({ where: { id: u.finNoAcct! }, data: { moduleDeny: ['accounting'] } })
+  await mk('ceoOff', 'admin', A, [A])
+  await prisma.user.update({ where: { id: u.ceoOff! }, data: { isActive: false } })
+  await mk('cashier', 'cashier', A, [A])
 })
 
 describe('working days (Sunday off)', () => {
@@ -58,6 +65,7 @@ describe('working days (Sunday off)', () => {
     expect(unmatchedLabel('card_matching_off', 'x')).toBe('card payout')
     expect(unmatchedLabel('cash_not_banked', 'x')).toBe('bank deposit')
     expect(unmatchedLabel('sales_bank_unmatched', 'x')).toBe('bank deposit')
+    expect(unmatchedLabel('raast_unmatched_day', 'x')).toBe('Raast payments on the bank statement')
     expect(unmatchedLabel('check_failed:foo', 'Check failed')).toBe('Check failed')
   })
 })
@@ -76,6 +84,7 @@ describe('the awaiting-settlement warning', () => {
     expect(ceo!.body).toMatch(/2 working days later \(due by 13 Oct\)/)
     expect(ceo!.body).toMatch(/Card sales with no bank payout; Till cash not deposited/)
     expect(await awaitingFor(u.fin!)).toHaveLength(1)
+    for (const k of ['finNoAcct', 'ceoOff', 'cashier']) expect(await awaitingFor(u[k]!)).toHaveLength(0)
     expect(await awaitingFor(u.ceoB!)).toHaveLength(0)
     expect(await awaitingFor(u.finB!)).toHaveLength(0)
   })
@@ -112,6 +121,22 @@ describe('the awaiting-settlement warning', () => {
     await prisma.nightAuditDay.update({ where: { tenantId_businessDate: { tenantId: A, businessDate: '2026-10-10' } }, data: { reopenCount: 1 } })
     expect(await notifyAwaitingSettlement(A, pkt('2026-10-16'))).toBe(1)
     expect((await awaitingFor(u.ceo!)).filter((n) => n.entityId === `${A}:2026-10-10`)).toHaveLength(2)
+  })
+
+  it('a long backlog never starves a newer day: 62 a tick, the rest on the next tick, then nothing', async () => {
+    const D = (await prisma.tenant.create({ data: { name: `H45 D ${RUN}`, slug: `h45-d-${RUN}` } })).id
+    await mk('ceoD', 'admin', D, [D])
+    const days: string[] = []
+    for (let i = 0; i < 63; i++) {
+      const d = new Date(Date.UTC(2026, 6, 1 + i)) // 1 Jul … 1 Sep 2026
+      days.push(d.toISOString().slice(0, 10))
+    }
+    await prisma.nightAuditDay.createMany({ data: days.map((businessDate) => ({ tenantId: D, businessDate, status: 'audited' as const, auditedAt: new Date(), auditedById: u.ceoD!, lastCheck: lastCheck([CARD]) })) })
+    expect(await notifyAwaitingSettlement(D, pkt('2026-10-16'))).toBe(62)
+    expect(await notifyAwaitingSettlement(D, pkt('2026-10-16', '13:00'))).toBe(1)   // the 63rd, not starved
+    expect(await notifyAwaitingSettlement(D, pkt('2026-10-16', '14:00'))).toBe(0)
+    const got = await awaitingFor(u.ceoD!)
+    expect(new Set(got.map((n) => n.entityId))).toEqual(new Set(days.map((d) => `${D}:${d}`)))
   })
 
   it('the worker settles first: a day whose money is now matched closes and is never warned about', async () => {

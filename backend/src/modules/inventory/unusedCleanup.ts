@@ -38,6 +38,7 @@ import { activeTenantId } from '../../lib/tenantScope.js'
 import { lockItemsTx } from '../../lib/stockLedger.js'
 import { moveToTrash } from '../../lib/trash.js'
 import { audit } from '../../lib/audit.js'
+import { AppError } from '../../lib/errors.js'
 
 export const INVENTORY_ITEM_TRASH = 'inventory_item'
 const EPS = 1e-9
@@ -117,6 +118,25 @@ export async function itemUsage(db: Db, items: Array<{ id: string; currentStock:
   return out
 }
 
+/**
+ * Recipe writers call this INSIDE the transaction that writes the lines: it
+ * locks the stock items the new lines use FOR SHARE (conflicts with the
+ * clean-up's FOR UPDATE, so either the clean-up waits and then sees the line,
+ * or the recipe waits and then sees deletedAt) and refuses one parked in the
+ * Trash with 422 ITEM_IN_TRASH. Closes the race validateRecipeLines' unlocked
+ * read leaves open.
+ */
+export async function assertItemsNotTrashedTx(tx: Prisma.TransactionClient, itemIds: Array<string | null | undefined>): Promise<void> {
+  const ids = [...new Set(itemIds.filter((x): x is string => !!x))].sort()
+  if (ids.length === 0) return
+  const rows = await tx.$queryRaw<Array<{ id: string; name: string; deletedAt: Date | null }>>`
+    SELECT id, name, "deletedAt" FROM inventory_items WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR SHARE`
+  const parked = rows.find((r) => r.deletedAt)
+  if (parked) {
+    throw new AppError('ITEM_IN_TRASH', `${parked.name} is in the Trash — restore it from the Trash before using it in a recipe`, 422)
+  }
+}
+
 const reasonsOf = (u: ItemUsage) => [...u.used, ...u.stock, ...u.history]
 
 export interface CleanupRow { id: string; name: string; unit: string; category: string | null }
@@ -139,7 +159,8 @@ async function preview(tenantId: string) {
     if (u.stock.length || u.history.length) skipped.push({ ...row, reasons: reasonsOf(u) })
     else toMove.push(row)
   }
-  return { toMove, skipped, counts: { total: items.length, inUse: inRecipe, toMove: toMove.length, skipped: skipped.length } }
+  const company = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } })
+  return { company, toMove, skipped, counts: { total: items.length, inUse: inRecipe, toMove: toMove.length, skipped: skipped.length } }
 }
 
 const applySchema = z.object({ itemIds: z.array(z.string().min(1).max(64)).min(1).max(MAX_IDS) })

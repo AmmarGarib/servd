@@ -158,6 +158,8 @@ export async function notifyDayClosed(tenantId: string, day: string, actorId: st
 // inside a transaction; never posts; never changes the day.
 
 export const AWAITING_WORKING_DAYS = 2
+/** At most this many days announced per company per tick (the rest next tick). */
+const AWAITING_BATCH = 62
 /** Days of the week (0 = Sunday, UTC day of the PKT date) that are not working days. */
 export const NON_WORKING_WEEKDAYS: ReadonlySet<number> = new Set([0])
 
@@ -192,27 +194,42 @@ export function unmatchedLabel(key: string, title: string): string {
  */
 export async function notifyAwaitingSettlement(tenantId: string, now: Date = new Date()): Promise<number> {
   const today = todayPkt(now)
-  const rows = await prisma.nightAuditDay.findMany({
+  // Every audited day past its due day, minus the ones already announced (read
+  // in one query), THEN at most AWAITING_BATCH a tick — so a long backlog of
+  // announced days can never starve a newer one out of the batch.
+  const candidates = (await prisma.nightAuditDay.findMany({
     // Two working days need at least two calendar days; the exact cut is below.
     where: { tenantId, status: 'audited', businessDate: { lt: addDays(today, -AWAITING_WORKING_DAYS) } },
-    select: { businessDate: true, reopenCount: true, lastCheck: true },
+    select: { businessDate: true, reopenCount: true },
     orderBy: { businessDate: 'asc' },
-    take: 62,
-  })
+  }))
+    .filter((r) => today > awaitingDueDay(r.businessDate))
+    .map((r) => ({ ...r, dedupeKey: `night_audit.awaiting:${tenantId}:${r.businessDate}:${r.reopenCount}` }))
+  if (candidates.length === 0) return 0
+  const announced = new Set((await prisma.staffNotification.findMany({
+    where: { tenantId, kind: 'night_audit.awaiting', dedupeKey: { in: candidates.map((c) => c.dedupeKey) } },
+    select: { dedupeKey: true },
+    distinct: ['dedupeKey'],
+  })).map((n) => n.dedupeKey))
+  const todo = candidates.filter((c) => !announced.has(c.dedupeKey)).slice(0, AWAITING_BATCH)
+  if (todo.length === 0) return 0
+  const ids = await nightAuditAudience(tenantId)
+  if (ids.length === 0) return 0
+  const checks = new Map((await prisma.nightAuditDay.findMany({
+    where: { tenantId, businessDate: { in: todo.map((c) => c.businessDate) } },
+    select: { businessDate: true, lastCheck: true },
+  })).map((r) => [r.businessDate, r.lastCheck]))
+  const rows = todo.map((c) => ({ ...c, lastCheck: checks.get(c.businessDate) ?? null }))
   let sent = 0
   for (const row of rows) {
     const day = row.businessDate
     const due = awaitingDueDay(day)
-    if (today <= due) continue
-    const dedupeKey = `night_audit.awaiting:${tenantId}:${day}:${row.reopenCount}`
-    if (await prisma.staffNotification.count({ where: { tenantId, dedupeKey } }) > 0) continue
+    const dedupeKey = row.dedupeKey
     const blocks = ((row.lastCheck ?? null) as LastCheck | null)?.phase === 'settlement'
       ? ((row.lastCheck as unknown as LastCheck).blocks ?? [])
       : []
     const what = [...new Set(blocks.map((b) => unmatchedLabel(b.key, b.title)))]
-    const ids = await nightAuditAudience(tenantId)
-    if (ids.length === 0) continue
-    await notifyStaffMany(ids.map((userId) => ({
+    const created = await notifyStaffMany(ids.map((userId) => ({
       userId, tenantId, kind: 'night_audit.awaiting', severity: 'warning',
       title: `Sales day ${dayLabel(day)} still awaiting settlement${what.length ? ` — ${what.join(', ')} not matched` : ''}`,
       body: `Audited, but not closed ${AWAITING_WORKING_DAYS} working days later (due by ${dayLabel(due)}).`
@@ -221,7 +238,7 @@ export async function notifyAwaitingSettlement(tenantId: string, now: Date = new
       link: nightLink(day), entityType: 'NightAuditDay', entityId: `${tenantId}:${day}`, actorId: null,
       dedupeKey,
     })))
-    sent++
+    if (created > 0) sent++
   }
   return sent
 }

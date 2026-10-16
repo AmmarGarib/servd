@@ -128,6 +128,7 @@ describe('unused ingredient clean-up', () => {
     expect(skipped.has(I.unusedB)).toBe(false)
     const bView = (await call('ceoB', 'GET', '/inventory/unused-cleanup')).json() as Preview
     expect(bView.toMove.map((x) => x.id)).toEqual([I.unusedB])
+    expect((body as unknown as { company: { id: string } }).company.id).toBe(T.A)
   })
 
   it('moves only unused items of the active company; a raced item is skipped; one audit row', async () => {

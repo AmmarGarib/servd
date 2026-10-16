@@ -88,6 +88,23 @@ describe('supplier opening balance offset (H49)', () => {
     expect(await net(B, '2010', s.id)).toBe(-8_000)
   })
 
+  it('every 3010 / 2010 line sits on the SUPPLIER\'s own company chart account (never another company\'s)', async () => {
+    const s = await prisma.supplier.create({ data: { name: `Chart ${RUN}`, tenantId: A, openingBalanceCents: 7_000 } })
+    await syncSupplierOpeningBalance(s.id)
+    await prisma.supplier.update({ where: { id: s.id }, data: { tenantId: B } })
+    await syncSupplierOpeningBalance(s.id)
+    const lines = await prisma.journalLine.findMany({
+      where: { journalEntry: { reference: { startsWith: `${OPENING_SOURCE_TYPE}:${s.id}:` } } },
+      select: { account: { select: { code: true, tenantId: true } }, journalEntry: { select: { tenantId: true } } },
+    })
+    expect(lines.length).toBe(6) // A: post + unwind, B: post — two lines each
+    for (const l of lines) {
+      expect(['3010', '2010']).toContain(l.account.code)
+      expect(l.account.tenantId).toBe(l.journalEntry.tenantId)
+    }
+    expect(await net(B, '3010', s.id)).toBe(7_000)
+  })
+
   it('a refused posting (closed month) still flags posting_failed with its document date', async () => {
     const date = new Date('2026-08-10T00:00:00Z') // a DATE column
     await prisma.periodLock.create({ data: { tenantId: B, lockedThrough: new Date('2026-08-31T23:59:59+05:00'), lockedBy: 'test' } })
