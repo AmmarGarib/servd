@@ -24,7 +24,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { amountInWords, formatPkr } from '../../lib/amountInWords.js'
 import { buildXlsx, type XlsxCell } from '../../lib/xlsxWriter.js'
-import { categoryRefOf } from '../accounting/pettyCashPosting.js'
+import { categoryRefOf, paidFromLabel } from '../accounting/pettyCashPosting.js'
 import { payoutCategory } from '../accounting/expenseCategories.js'
 import { auditVoucher, loadVisible, type VoucherRow } from './cashVouchers.js'
 
@@ -112,6 +112,11 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
   const financeAt = v.financeApprovedAt ?? v.hodSignedAt ?? null
   const financeBy = name(v.financeApprovedById ?? v.hodSignedById)
   const receiver = v.kind === 'expense' ? v.payeeName : (name(v.cashReceivedById) || name(v.payeeUserId) || v.payeeName)
+  // Where the cash came from (owner, 2026-10-16): the box, cash on hand or the bank.
+  const bank = v.payBankAccountId
+    ? await prisma.bankAccount.findFirst({ where: { id: v.payBankAccountId, tenantId }, select: { name: true } })
+    : null
+  const paidFrom = paidFromLabel(v, { boxName: v.box?.name ?? null, bankName: bank?.name ?? null })
   const approvals: Approval[] = [
     financeAt
       ? { role: 'Finance approval', status: 'Approved', name: financeBy, when: fmtWhen(financeAt), sub: '' }
@@ -120,7 +125,7 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
       ? { role: 'CEO approval', status: 'Approved', name: name(v.directorSignedById), when: fmtWhen(v.directorSignedAt), sub: '' }
       : { role: 'CEO approval', status: 'Not approved', name: '', when: '', sub: financeAt ? waitingWord : 'Pending' },
     v.disbursedAt
-      ? { role: 'Paid by', status: name(v.disbursedById) || 'Finance', name: '', when: fmtWhen(v.disbursedAt), sub: '' }
+      ? { role: 'Paid by', status: name(v.disbursedById) || 'Finance', name: '', when: fmtWhen(v.disbursedAt), sub: paidFrom ? `Paid from: ${paidFrom}` : '' }
       : { role: 'Paid by', status: 'Not paid yet', name: '', when: '', sub: '' },
     {
       role: 'Received by', status: receiver, name: '', when: v.cashReceivedAt ? fmtWhen(v.cashReceivedAt) : '',

@@ -9,6 +9,7 @@ ALTER TABLE "cash_vouchers"
 
 CREATE UNIQUE INDEX "cash_vouchers_payJournalEntryId_key" ON "cash_vouchers"("payJournalEntryId");
 
+-- ─── SQL-only objects (tests/setup.ts reads this section: no ';' inside a statement)
 -- A cash-on-hand / bank pay names the account it came out of; a box pay never does.
 ALTER TABLE "cash_vouchers" ADD CONSTRAINT "cash_vouchers_pay_source_chk" CHECK (
   "paySource" IN ('box', 'cash_on_hand', 'bank')

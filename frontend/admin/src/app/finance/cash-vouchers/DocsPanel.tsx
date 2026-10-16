@@ -240,7 +240,7 @@ export function SpentPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean 
   )
 }
 
-/** Finance: confirm the lines, then verify the documents and book the expense. Change / difference move through a box. */
+/** Finance: confirm the lines, then verify the documents and book the expense. Change / difference move through the box — or, for a voucher paid from cash on hand / a bank, that same account. */
 export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean }) {
   const qc = useQueryClient()
   const confirm = useConfirm()
@@ -251,11 +251,14 @@ export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
   const spent = lines.reduce((s, l) => s + l.amountCents, 0)
   const change = Math.max(0, v.amountCents - spent)
   const topUp = Math.max(0, spent - v.amountCents)
+  // Paid from cash on hand / a bank (2026-10-16): change goes back there and an overspend is paid from there — no box.
+  const direct = !!v.paySource && v.paySource !== 'box'
+  const where = direct ? (v.paidFrom ?? (v.paySource === 'bank' ? 'the bank' : 'cash on hand')) : 'the box'
   const verify = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/verify-docs`, {
       lines: lines.map(lineBody),
-      ...(change > 0 ? { changeCents: change, ...(boxId ? { changeBoxId: boxId } : {}) } : {}),
-      ...(topUp > 0 && boxId ? { topUpBoxId: boxId } : {}),
+      ...(change > 0 ? { changeCents: change, ...(boxId && !direct ? { changeBoxId: boxId } : {}) } : {}),
+      ...(topUp > 0 && boxId && !direct ? { topUpBoxId: boxId } : {}),
     }, { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
     onSuccess: () => {
@@ -275,9 +278,9 @@ export function VerifyPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
         tenantId={v.tenantId} fieldClassName={fieldCls} mode="atMost" />
       <p className="text-xs text-white/55">
         Spent PKR {formatPkr(spent)}
-        {change > 0 ? ` — change PKR ${formatPkr(change)} goes back into the box` : topUp > 0 ? ` — PKR ${formatPkr(topUp)} over; paid to the holder from the box in this step` : ' — equals the cash paid'}
+        {change > 0 ? ` — change PKR ${formatPkr(change)} goes back to ${where}` : topUp > 0 ? ` — PKR ${formatPkr(topUp)} over; paid to the holder from ${where} in this step` : ' — equals the cash paid'}
       </p>
-      {(change > 0 || topUp > 0) && companyBoxes.length > 0 && (
+      {(change > 0 || topUp > 0) && !direct && companyBoxes.length > 0 && (
         <div>
           <label htmlFor="vf-box" className="text-xs text-white/55">{change > 0 ? 'Change goes into' : 'Difference paid from'} (default: the box it was paid from)</label>
           <div className="mt-1">

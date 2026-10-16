@@ -72,7 +72,7 @@ export function SettlePanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
           <div>
             <p className="text-sm font-black text-white/90">Receipts</p>
             <p className="text-xs text-white/50">
-              Paid {fmtDateTime(v.disbursedAt)}{v.boxName ? ` from ${v.boxName}` : ''}{v.paidAccountCode ? ` — booked to ${v.paidAccountCode}` : ''}.
+              Paid {fmtDateTime(v.disbursedAt)}{(v.paidFrom ?? v.boxName) ? ` from ${v.paidFrom ?? v.boxName}` : ''}{v.paidAccountCode ? ` — booked to ${v.paidAccountCode}` : ''}.
               {v.dueBy && v.status === 'disbursed' ? ` Receipts due by ${fmtDate(v.dueBy)}.` : ''}
             </p>
           </div>

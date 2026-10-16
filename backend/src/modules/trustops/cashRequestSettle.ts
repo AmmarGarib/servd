@@ -23,7 +23,10 @@
 //     document (422 DOCS_REQUIRED). ONE transaction: the claim (disbursed,
 //     not posted → posted; 409 ALREADY_POSTED), change back into a box
 //     (Dr 1011 / Cr 1357) or the overspend paid from a box (a second
-//     recordPettyCashSpendTx, Dr 1357 / Cr 1011), stock / CapEx lines onto
+//     recordPettyCashSpendTx, Dr 1357 / Cr 1011) — for a voucher paid from
+//     cash on hand / a bank, back to / from that same account instead
+//     ('cashvoucher.change:<id>' Dr source / Cr 1357, 'cashvoucher.overspend:<id>'
+//     Dr 1357 / Cr source; a box id is 422 PAY_SOURCE_NOT_BOX), stock / CapEx lines onto
 //     their registers, and ONE entry 'cashvoucher.post:<id>' Dr each line /
 //     Cr 1357 (postCashVoucherVerifiedTx) — 1357 ends at zero for the voucher.
 //     422 PERIOD_LOCKED / INSUFFICIENT_FLOAT roll it all back.
@@ -65,6 +68,7 @@ import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { resolveSpendAccount } from '../accounting/expenseCategories.js'
 import {
   bookCashLinesTx, cashRequestBrandTx, cashRequestPaidAccountTx, categoryRefOf, postCashVoucherSettlementTx, postCashVoucherVerifiedTx,
+  postCashVoucherSourceTx,
   resolveSpendLinesTx, spendLineData, MAX_SPEND_LINES, type ResolvedSpendLine,
 } from '../accounting/pettyCashPosting.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
@@ -576,8 +580,14 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       if (!b) throw new AppError('BOX_NOT_IN_COMPANY', 'That cash box is not an open petty-cash box of this voucher\'s company', 422)
       return b.id
     }
-    const changeBox = body.changeBoxId ? await boxOf(body.changeBoxId) : v.boxId
-    const topUpBox = body.topUpBoxId ? await boxOf(body.topUpBoxId) : v.boxId
+    // Paid from cash on hand / a bank (2026-10-16): change and an overspend go back to / come from that SAME
+    // account (pettyCashPosting.ts postCashVoucherSourceTx) — never a box.
+    const direct = v.paySource !== 'box'
+    if (direct && (body.changeBoxId || body.topUpBoxId)) {
+      throw new AppError('PAY_SOURCE_NOT_BOX', `Cash voucher ${v.number} was paid from ${v.paySource === 'bank' ? 'a bank account' : 'cash on hand'} — its change goes back there and an overspend is paid from there, not from a cash box`, 422)
+    }
+    const changeBox = direct ? null : body.changeBoxId ? await boxOf(body.changeBoxId) : v.boxId
+    const topUpBox = direct ? null : body.topUpBoxId ? await boxOf(body.topUpBoxId) : v.boxId
     const stored = await prisma.pettyCashSpendLine.findMany({ where: { tenantId: v.tenantId, settlement: { voucherId: v.id } }, select: { kind: true } })
     const wantsStock = (body.lines ?? stored).some((l) => l.kind === 'stock')
     // The FIFO cut-over runs in its own transaction — before ours (stockLedger.ts).
@@ -635,31 +645,43 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       let topUpCents = 0
       let changeMovementId: string | null = null
       let topUpMovementId: string | null = null
+      let changeEntryId: string | null = null
+      let topUpEntryId: string | null = null
       if (spent < cur.amountCents) {
         changeCents = cur.amountCents - spent
         if (body.changeCents !== undefined && body.changeCents !== changeCents) {
           throw new AppError('CHANGE_MISMATCH', `The lines come to PKR ${(spent / 100).toFixed(2)} of PKR ${(cur.amountCents / 100).toFixed(2)} paid — the change handed back must be PKR ${(changeCents / 100).toFixed(2)}`, 422)
         }
-        if (!changeBox) throw new AppError('BOX_REQUIRED', 'Pick the cash box the change goes into', 422)
-        // Back into a box: Dr 1011 / Cr 1357 (the account the voucher was paid to), under the pay's brand.
-        const topup = await recordPettyCashTopupTx(tx, {
-          box: { id: changeBox }, amountCents: changeCents, reason: `Change returned on cash voucher ${cur.number}`,
-          createdById: me, source: 'cash_request', cashVoucherId: v.id,
-        })
-        changeMovementId = topup.movement.id
+        if (direct) {
+          // Back to where it came from: Dr 1010 | the bank / Cr 1357 ('cashvoucher.change:<id>').
+          changeEntryId = (await postCashVoucherSourceTx(tx, v.id, 'change', changeCents, me)).entryId
+        } else {
+          if (!changeBox) throw new AppError('BOX_REQUIRED', 'Pick the cash box the change goes into', 422)
+          // Back into a box: Dr 1011 / Cr 1357 (the account the voucher was paid to), under the pay's brand.
+          const topup = await recordPettyCashTopupTx(tx, {
+            box: { id: changeBox }, amountCents: changeCents, reason: `Change returned on cash voucher ${cur.number}`,
+            createdById: me, source: 'cash_request', cashVoucherId: v.id,
+          })
+          changeMovementId = topup.movement.id
+        }
       } else if (spent > cur.amountCents) {
         if ((body.changeCents ?? 0) > 0) {
           throw new AppError('CHANGE_MISMATCH', `The lines come to more than the PKR ${(cur.amountCents / 100).toFixed(2)} paid — there is no change`, 422)
         }
         topUpCents = spent - cur.amountCents
-        if (!topUpBox) throw new AppError('BOX_REQUIRED', 'Pick the cash box the difference is paid from', 422)
-        // The holder spent more: finance pays the difference now — THE one spend path, held on 1357 like the pay.
-        const extra = await recordPettyCashSpendTx(tx, {
-          box: { id: topUpBox }, amountCents: topUpCents, reason: `Cash voucher ${cur.number}: overspend paid at verification`,
-          vendorName: v.payeeName.slice(0, 120), createdById: me, nature: 'voucher_hold', cashVoucherId: v.id,
-          conceptId: await cashRequestBrandTx(tx, v.id), actor,
-        })
-        topUpMovementId = extra.movement.id
+        if (direct) {
+          // The holder spent more: paid from the same account, held on 1357 like the pay ('cashvoucher.overspend:<id>').
+          topUpEntryId = (await postCashVoucherSourceTx(tx, v.id, 'overspend', topUpCents, me)).entryId
+        } else {
+          if (!topUpBox) throw new AppError('BOX_REQUIRED', 'Pick the cash box the difference is paid from', 422)
+          // The holder spent more: finance pays the difference now — THE one spend path, held on 1357 like the pay.
+          const extra = await recordPettyCashSpendTx(tx, {
+            box: { id: topUpBox }, amountCents: topUpCents, reason: `Cash voucher ${cur.number}: overspend paid at verification`,
+            vendorName: v.payeeName.slice(0, 120), createdById: me, nature: 'voucher_hold', cashVoucherId: v.id,
+            conceptId: await cashRequestBrandTx(tx, v.id), actor,
+          })
+          topUpMovementId = extra.movement.id
+        }
       } else if ((body.changeCents ?? 0) > 0) {
         throw new AppError('CHANGE_MISMATCH', `The lines come to exactly the PKR ${(cur.amountCents / 100).toFixed(2)} paid — there is no change`, 422)
       }
@@ -674,12 +696,13 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
       })
       const posted = await postCashVoucherVerifiedTx(tx, v.id, { postedBy: me })
       if (!posted.entryId) throw new AppError('POSTING_MISSING', `Cash voucher ${cur.number} could not be booked`, 500)
-      return { settlementId, entryId: posted.entryId, spent, changeCents, topUpCents, changeMovementId, topUpMovementId, overrides: resolvedLines.filter((l) => l.equipmentOverride) }
+      return { settlementId, entryId: posted.entryId, spent, changeCents, topUpCents, changeMovementId, topUpMovementId, changeEntryId, topUpEntryId, overrides: resolvedLines.filter((l) => l.equipmentOverride) }
     }, { timeout: 30_000, maxWait: 10_000 })
 
     await auditVoucher(req, 'verify_docs', v, {
       status: 'posted', entryId: done.entryId, spentCents: done.spent, changeCents: done.changeCents, topUpCents: done.topUpCents,
-      changeMovementId: done.changeMovementId, topUpMovementId: done.topUpMovementId, ...(body.note && { note: body.note }),
+      changeMovementId: done.changeMovementId, topUpMovementId: done.topUpMovementId,
+      ...(done.changeEntryId && { changeEntryId: done.changeEntryId }), ...(done.topUpEntryId && { topUpEntryId: done.topUpEntryId }), ...(body.note && { note: body.note }),
     }, { status: v.status })
     if (done.overrides.length) await flagOverrides(v, me, done.overrides)
     // The bell (queued): the raiser and holder hear it is booked.

@@ -15,7 +15,7 @@ import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { amountInWords, formatPkr } from './amountInWords'
 import {
   CV_BASE, CV_ROOT, categoryWords, errorWords, fmtDate, fmtDateTime, stageOf, useCategories, useHistory,
-  useMyBoxes, usePettyBoxes, useStaffNames, useVoucher, type CashVoucher, type HistoryRow,
+  usePaySources, usePettyBoxes, useStaffNames, useVoucher, type CashVoucher, type HistoryRow,
 } from './data'
 import { PrintPortal, VoucherSheet } from './VoucherPrint'
 import { VoucherForm } from './VoucherForm'
@@ -244,7 +244,7 @@ export function VoucherDetail({ id }: { id: string }) {
           </p>
         )}
         {v.canNameHolder && <NameHolder v={v} onDone={refresh} />}
-        {v.canPay && <PayPanel v={v} isKeeper={isKeeper} onDone={refresh} />}
+        {v.canPay && <PayPanel v={v} onDone={refresh} />}
 
         {/* After payment */}
         {/* Supporting documents travel with the voucher: listed and downloadable for everyone who can open it. */}
@@ -291,7 +291,7 @@ export function VoucherDetail({ id }: { id: string }) {
             <Fact label="In words" value={v.amountInWords || amountInWords(v.amountCents)} wide />
             <Fact label="Particulars" value={v.purpose} wide />
             <Fact label="Expense account" value={categoryLabel} />
-            <Fact label="Paid from" value={v.boxName ?? '—'} />
+            <Fact label="Paid from" value={v.paidFrom ?? v.boxName ?? '—'} />
             <Fact label="Paid by" value={v.paidByName ?? '—'} />
             <Fact label="Received by" value={v.cashReceivedAt ? `${v.receiverName ?? holder} · confirmed ${fmtDateTime(v.cashReceivedAt)}` : `${v.receiverName ?? holder} · not confirmed yet`} />
             {v.dueBy && <Fact label="Documents due by" value={fmtDate(v.dueBy)} />}
@@ -470,43 +470,78 @@ function History({ id }: { id: string }) {
   )
 }
 
-/** Approved: the custodian picks the box and confirms the cash was handed over. */
-function PayPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean; onDone: () => void }) {
+/**
+ * Approved: whoever pays picks where the cash comes from and confirms it was handed over. One grouped picker
+ * (owner, 2026-10-16): petty-cash boxes (the custodian's own; finance and managers every open box of the
+ * company), cash on hand (the safe) and the company's bank accounts — those two for finance and the CEO only.
+ * The server's GET /:id/pay-sources decides what is listed; POST /:id/pay re-checks it.
+ */
+function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const confirm = useConfirm()
-  const { data: all = [] } = usePettyBoxes()
-  const { data: mine = [] } = useMyBoxes()
-  const boxes = (isKeeper ? all : mine).filter((b) => b.isActive && b.tenantId === v.tenantId)
-  const fixed = !!v.boxId && !isKeeper
-  const [boxId, setBoxId] = useState(v.boxId ?? (boxes.length === 1 ? boxes[0]!.id : ''))
-  const chosen = boxId || (boxes.length === 1 ? boxes[0]!.id : '')
-  const box = boxes.find((b) => b.id === chosen) ?? null
+  const { data: src, isLoading } = usePaySources(v)
+  const boxes = src?.boxes ?? []
+  const banks = src?.banks ?? []
+  const options: string[] = [
+    ...boxes.map((b) => `box:${b.id}`),
+    ...(src?.cashOnHand ? ['cash'] : []),
+    ...banks.map((b) => `bank:${b.id}`),
+  ]
+  const preferred = v.boxId && boxes.some((b) => b.id === v.boxId) ? `box:${v.boxId}` : options.length === 1 ? options[0]! : ''
+  const [pick, setPick] = useState('')
+  const chosen = pick || preferred
+  const box = chosen.startsWith('box:') ? boxes.find((b) => `box:${b.id}` === chosen) ?? null : null
+  const bank = chosen.startsWith('bank:') ? banks.find((b) => `bank:${b.id}` === chosen) ?? null : null
+  const fromWords = box ? box.name : bank ? bank.name : chosen === 'cash' ? 'cash on hand' : ''
   const holder = v.holderName ?? v.payeeName
   const pay = useMutation({
-    mutationFn: () => api.post(`${CV_BASE}/${v.id}/pay`, chosen ? { boxId: chosen } : {}, { tenantId: v.tenantId }),
+    mutationFn: () => api.post(`${CV_BASE}/${v.id}/pay`,
+      box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : { source: 'cash_on_hand' },
+      { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
     onSuccess: () => { toast.success(`${v.number} is paid — now waiting for the supporting documents.`); onDone() },
   })
   const short = !!box && box.floatCents < v.amountCents
+  const nothing = !isLoading && options.length === 0
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Pay {holder}</p>
       <p className="text-xs text-white/55">
-        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. That takes it out of the box and takes it out of the box; {holder} then uploads the
-        supporting documents and finance books the expense once they are verified.
+        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. The cash is held against this voucher until
+        {` ${holder}`} uploads the supporting documents; finance books the expense once they are verified.
       </p>
-      {fixed ? (
-        <p className="text-xs text-white/70">From <span className="font-bold">{v.boxName}</span></p>
-      ) : (
-        <Select value={chosen} onChange={(e) => setBoxId(e.target.value)} className={fieldCls} aria-label="Pay from which box">
-          {boxes.length !== 1 && <option value="">— pay from which box —</option>}
-          {boxes.map((b) => <option key={b.id} value={b.id}>{b.name} · PKR {formatPkr(b.floatCents)}</option>)}
-        </Select>
+      <Select value={chosen} onChange={(e) => setPick(e.target.value)} className={fieldCls} aria-label="Pay from" disabled={isLoading || nothing}>
+        {options.length !== 1 && <option value="">{isLoading ? 'Loading…' : '— pay from —'}</option>}
+        {boxes.length > 0 && (
+          <optgroup label="Petty cash boxes">
+            {boxes.map((b) => (
+              <option key={b.id} value={`box:${b.id}`}>
+                {b.name} · PKR {formatPkr(b.floatCents)}{!b.mine && b.custodianName ? ` · held by ${b.custodianName}` : ''}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {src?.cashOnHand && (
+          <optgroup label="Cash on hand">
+            <option value="cash">Cash on hand (safe)</option>
+          </optgroup>
+        )}
+        {banks.length > 0 && (
+          <optgroup label="Bank accounts">
+            {banks.map((b) => (
+              <option key={b.id} value={`bank:${b.id}`}>{b.name}{b.bankName && !b.name.includes(b.bankName) ? ` · ${b.bankName}` : ''}{b.accountCode ? ` · ${b.accountCode}` : ''}</option>
+            ))}
+          </optgroup>
+        )}
+      </Select>
+      {nothing && (
+        <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>
+          Nothing to pay this from: you hold no open cash box of this company. Finance or the CEO can pay it from a box, cash on hand or a bank account.
+        </p>
       )}
-      {!fixed && boxes.length === 0 && <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>You hold no open cash box of this company.</p>}
-      {short && <p className="text-xs text-s-red font-bold">{box!.name} holds PKR {formatPkr(box!.floatCents)} — less than this request. Top it up first.</p>}
+      {short && <p className="text-xs text-s-red font-bold">{box!.name} holds PKR {formatPkr(box!.floatCents)} — less than this voucher. Top it up first, or pay from another source.</p>}
       {pay.error && <ErrorBanner message={errorWords(pay.error)} />}
-      <button disabled={pay.isPending || (!fixed && !chosen)} className={primaryBtn}
-        onClick={async () => { if (await confirm({ title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} leaves the box.`, confirmLabel: 'Cash handed over' })) { pay.reset(); pay.mutate() } }}>
+      <button disabled={pay.isPending || !chosen} className={primaryBtn}
+        onClick={async () => { if (await confirm({ title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} is paid from ${fromWords}.`, confirmLabel: 'Cash handed over' })) { pay.reset(); pay.mutate() } }}>
         {pay.isPending ? 'Paying…' : `Cash handed to ${holder}`}
       </button>
     </div>

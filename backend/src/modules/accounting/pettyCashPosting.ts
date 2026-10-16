@@ -644,8 +644,10 @@ export function cashRequestPayLine(v: { number: string; purpose: string; categor
  * (book the petty-cash history first); 409 VOUCHER_NOT_PAID before it is paid.
  */
 export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId: string): Promise<string> {
-  const v = await tx.cashVoucher.findUnique({ where: { id: voucherId }, select: { number: true, pettyCashMovementId: true } })
+  const v = await tx.cashVoucher.findUnique({ where: { id: voucherId }, select: { number: true, pettyCashMovementId: true, payJournalEntryId: true } })
   if (!v) throw new NotFoundError('CashVoucher', voucherId)
+  // Paid from cash on hand / a bank (2026-10-16): the pay entry held it on 1357.
+  if (!v.pettyCashMovementId && v.payJournalEntryId) return ACCT.VOUCHERS_AWAITING_DOCS
   if (!v.pettyCashMovementId) throw new AppError('VOUCHER_NOT_PAID', `Cash request ${v.number} has not been paid`, 409)
   const m = await tx.pettyCashMovement.findUnique({
     where: { id: v.pettyCashMovementId },
@@ -839,6 +841,86 @@ export async function postCashVoucherVerifiedTx(
   return { entryId: r.entryId }
 }
 
+// ─── Cash vouchers paid from cash on hand or a bank (owner, 2026-10-16) ─────
+//
+// "Give the option box to pay from petty cash/Cash on hand and bank accounts."
+// A voucher paid from a box keeps the rules above (its movement: Dr 1357 /
+// Cr 1011). Paid from cash on hand or a bank (CashVoucher.paySource
+// 'cash_on_hand' | 'bank', payAccountCode = lib/bankAccounts.ts
+// moneyAccountCode: 1010, or the named live linked bank of the VOUCHER's
+// company), there is no box movement and no float change:
+//   pay        'cashvoucher.pay:<id>'       Dr 1357 / Cr <source>
+//   change     'cashvoucher.change:<id>'    Dr <source> / Cr 1357  (spent < paid)
+//   overspend  'cashvoucher.overspend:<id>' Dr 1357 / Cr <source>  (spent > paid)
+// and the verification entry 'cashvoucher.post:<id>' (above) books the lines
+// out of 1357 as for a box — so 1357 nets to zero per voucher. Every entry is
+// keyed per voucher, so it can never post twice; each runs in its caller's
+// transaction (PERIOD_LOCKED / CEO_ONLY_CLOSED_BOOKS roll it all back), under
+// the brand the pay was booked to (cashRequestBrandTx: the voucher's own).
+
+export type CashVoucherPaySource = 'box' | 'cash_on_hand' | 'bank'
+export const CASH_VOUCHER_PAY_SOURCES: readonly CashVoucherPaySource[] = ['box', 'cash_on_hand', 'bank']
+export const CASH_VOUCHER_PAY_ENTRY = 'cashvoucher.pay'
+export const CASH_VOUCHER_CHANGE_ENTRY = 'cashvoucher.change'
+export const CASH_VOUCHER_OVERSPEND_ENTRY = 'cashvoucher.overspend'
+
+/** Words for where a voucher's cash came from (detail, print, export). */
+export function paidFromLabel(v: { paySource: string; disbursedAt: Date | null }, names: { boxName?: string | null; bankName?: string | null }): string | null {
+  if (!v.disbursedAt) return null
+  if (v.paySource === 'cash_on_hand') return 'Cash on hand'
+  if (v.paySource === 'bank') return names.bankName ?? 'Bank'
+  return names.boxName ?? null
+}
+
+/**
+ * One cash-on-hand / bank movement of a voucher's money, inside `tx`, in the
+ * voucher's company: 'pay' and 'overspend' Dr 1357 / Cr the source account;
+ * 'change' Dr the source account / Cr 1357. 409 when the voucher was paid
+ * from a box (those use the box's movements) or the entry is already there.
+ */
+export async function postCashVoucherSourceTx(
+  tx: Tx,
+  voucherId: string,
+  kind: 'pay' | 'change' | 'overspend',
+  amountCents: number,
+  postedBy: string,
+): Promise<{ entryId: string }> {
+  const v = await tx.cashVoucher.findUnique({
+    where: { id: voucherId },
+    select: { id: true, tenantId: true, number: true, payeeName: true, purpose: true, paySource: true, payAccountCode: true },
+  })
+  if (!v) throw new NotFoundError('CashVoucher', voucherId)
+  if (v.paySource === 'box' || !v.payAccountCode) {
+    throw new AppError('PAY_SOURCE_IS_BOX', `Cash voucher ${v.number} was paid from a petty-cash box — its money moves through the box`, 409)
+  }
+  assertInt4Fits(amountCents, 'The amount')
+  if (!(amountCents > 0)) throw new AppError('AMOUNT_REQUIRED', 'Nothing to book', 422)
+  const source = v.payAccountCode
+  const hold = ACCT.VOUCHERS_AWAITING_DOCS
+  const concept = await cashRequestBrandTx(tx, v.id)
+  const from = v.paySource === 'cash_on_hand' ? 'cash on hand' : 'the bank'
+  const spec = {
+    pay: { sourceType: CASH_VOUCHER_PAY_ENTRY, debit: hold, credit: source, what: `paid from ${from} to ${v.payeeName} — documents awaited` },
+    change: { sourceType: CASH_VOUCHER_CHANGE_ENTRY, debit: source, credit: hold, what: `change returned to ${from}` },
+    overspend: { sourceType: CASH_VOUCHER_OVERSPEND_ENTRY, debit: hold, credit: source, what: `overspend paid from ${from} at verification` },
+  }[kind]
+  const memo = `${v.number} ${spec.what}`.slice(0, 250)
+  await assertTemplateAccounts(tx, v.tenantId, [spec.debit, spec.credit])
+  const r = await postJournalEntry({
+    tenantId: v.tenantId,
+    sourceType: spec.sourceType,
+    sourceId: v.id,
+    description: `Cash voucher ${v.number} ${spec.what}: ${v.purpose}`.slice(0, 250),
+    postedBy,
+    lines: [
+      { accountCode: spec.debit, type: 'debit', amountCents, memo, conceptId: concept },
+      { accountCode: spec.credit, type: 'credit', amountCents, memo, conceptId: concept },
+    ],
+  }, { tx })
+  if (!r.posted) throw new AppError('ALREADY_POSTED', `Cash voucher ${v.number}: the ${kind} entry is already booked`, 409)
+  return { entryId: r.entryId }
+}
+
 // ─── Tie-out ────────────────────────────────────────────────────────────────
 
 export interface PettyCashTieOutRow {
@@ -907,7 +989,11 @@ export async function pettyCashTieOut(tenantIds: string[]): Promise<PettyCashTie
     // holds exactly its amount on 1357 (the verification books it out, change
     // and an overspend included, in one transaction).
     const held = await prisma.cashVoucher.aggregate({
-      where: { tenantId, status: 'disbursed', expenseOnVerify: true, pettyCashMovementId: { not: null } },
+      where: {
+        tenantId, status: 'disbursed', expenseOnVerify: true,
+        // Paid from a box (its movement) or from cash on hand / a bank (its pay entry) — both hold on 1357.
+        OR: [{ pettyCashMovementId: { not: null } }, { payJournalEntryId: { not: null } }],
+      },
       _sum: { amountCents: true },
     })
     const heldVouchersCents = held._sum.amountCents ?? 0

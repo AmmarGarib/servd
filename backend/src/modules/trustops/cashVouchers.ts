@@ -45,6 +45,9 @@
 //   dueBy = now + OperationsConfig.cashAdvanceSettleDays, and ONE petty-cash
 //   spend through recordPettyCashSpendTx (nature 'voucher_hold'): Dr 1357
 //   Petty Cash Vouchers Awaiting Documents / Cr 1011 — NOT the expense.
+//   Or (owner, 2026-10-16) finance / the CEO pays from cash on hand or a bank
+//   account: Dr 1357 / Cr 1010 | the bank's code, 'cashvoucher.pay:<id>', no
+//   box (paySource; GET /:id/pay-sources lists what the viewer may pick).
 // • Supporting documents, the spend lines, verification and the posting
 //   (Dr expense / Cr 1357, once): cashRequestSettle.ts.
 // • Legacy rows: 'draft' (waiting for an HOD) is treated as 'submitted'
@@ -76,7 +79,8 @@ import { assertInt4Fits, zInt4Cents } from '../../lib/money.js'
 import { amountInWords } from '../../lib/amountInWords.js'
 import { EVIDENCE_MAX_BYTES, sendEvidence } from '../../lib/evidenceFile.js'
 import { resolveSpendAccount } from '../accounting/expenseCategories.js'
-import { cashRequestPaidAccountTx, categoryRefOf } from '../accounting/pettyCashPosting.js'
+import { cashRequestPaidAccountTx, categoryRefOf, paidFromLabel, postCashVoucherSourceTx } from '../accounting/pettyCashPosting.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { passesCashGuard, recordPettyCashSpendTx } from './pettyCash.js'
 import { cashRequestSettleRoutes } from './cashRequestSettle.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
@@ -303,7 +307,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canReject: financeStep || ceoStep || (s === 'returned' && (viewer.financeApprover || viewer.isAdmin) && !own),
     canResubmit: s === 'returned' && (raiser || (v.kind === 'expense' && viewer.financeApprover)),
     canCancel: (EDITABLE.includes(s) && raiser) || (viewer.keeper && PRE_PAY.includes(s)),
-    canPay: s === 'approved' && (viewer.keeper || custodian || (!v.boxId && viewer.payBoxTenants.has(v.tenantId))),
+    canPay: s === 'approved' && (viewer.keeper || viewer.financeApprover || custodian || (!v.boxId && viewer.payBoxTenants.has(v.tenantId))),
     canUpload: ((s === 'approved' || newPaid) && docsParty) || (s === 'posted' && viewer.keeper),
     canSendBack: newPaid && docState.closed && docState.booksState === 'pending' && viewer.financeApprover && !own,
     canRecordSpend: newPaid && docsParty,
@@ -371,6 +375,10 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
   const conceptName = new Map(concepts.map((c) => [c.id, c.name]))
   const tenantName = new Map(tenants.map((t) => [t.id, t.name]))
   const nameOf = (id: string | null) => (id ? (userName.get(id) ?? null) : null)
+  const bankIds = [...new Set(rows.map((v) => v.payBankAccountId).filter((x): x is string => !!x))]
+  const bankRows = bankIds.length
+    ? await prisma.bankAccount.findMany({ where: { id: { in: bankIds }, tenantId: { in: [...tenantIds] } }, select: { id: true, name: true, tenantId: true } })
+    : []
   const now = Date.now()
   return Promise.all(rows.map(async (v) => {
     const { box, attachments, ...voucher } = v
@@ -412,6 +420,11 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       companyName: tenantName.get(v.tenantId) ?? null,
       conceptName: v.conceptId ? (conceptName.get(v.conceptId) ?? null) : null,
       boxName: box?.name ?? null,
+      /** Where the cash came from once paid: the box's name, "Cash on hand" or the bank's name (owner, 2026-10-16). */
+      paidFrom: paidFromLabel(v, {
+        boxName: box?.name ?? null,
+        bankName: bankRows.find((b) => b.id === v.payBankAccountId && b.tenantId === v.tenantId)?.name ?? null,
+      }),
       custodianId: box?.custodianId ?? null,
       custodianName: box ? nameOf(box.custodianId) : null,
       payeeUserName: nameOf(v.payeeUserId),
@@ -453,7 +466,7 @@ export async function detailOf(id: string, viewer: Viewer) {
       : null,
   ])
   let paidAccountCode: string | null = null
-  if (v.pettyCashMovementId) {
+  if (v.pettyCashMovementId || v.payJournalEntryId) {
     try { paidAccountCode = await cashRequestPaidAccountTx(prisma, v.id) } catch { paidAccountCode = null }
   }
   const submitters = [...new Set(settlements.map((s) => s.submittedById))]
@@ -1300,16 +1313,6 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     return detailOf(v.id, viewer)
   })
 
-  // POST /:id/pay { boxId? } — the box's custodian or a keeper hands the cash
-  // to the holder (kind request) or the payee (kind expense). The box: the
-  // voucher's, else `boxId` (only a keeper changes a box already set), else
-  // the custodian's only open box in the voucher's company. ONE transaction:
-  // claim approved → disbursed (409 ALREADY_PAID / VOUCHER_NOT_APPROVED),
-  // expenseOnVerify = true, box / cashier / dueBy (documents due), and the ONE
-  // spend through recordPettyCashSpendTx (nature 'voucher_hold'): Dr 1357 /
-  // Cr 1011 for the amount — the expense is booked when finance verifies the
-  // documents. 400 INSUFFICIENT_FLOAT and 422 PERIOD_LOCKED roll everything
-  // back.
   // POST /:id/confirm-received — the holder confirms "Cash received" (owner, 2026-10-15: the whole process is
   // digital, no signatures). Only the holder of a paid request; once (409 ALREADY_CONFIRMED). Their name then
   // shows in the voucher's Received by box; finance verifies only after it (422 CASH_RECEIPT_NOT_CONFIRMED).
@@ -1333,34 +1336,105 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     return detailOf(v.id, viewer)
   })
 
+  // GET /:id/pay-sources — what this viewer may pay an approved voucher from
+  // (the Pay panel's one grouped picker): petty-cash boxes (the custodian's
+  // own open boxes of the voucher's company; finance and managers — cash
+  // keepers — every open box of it; a box the voucher names is the only one
+  // for a non-keeper), cash on hand (1010) and the company's live linked bank
+  // accounts — those two for finance (with the accounting module) and the CEO
+  // only. Everything is the VOUCHER's company's, never the viewer's active one.
+  fastify.get<{ Params: { id: string } }>('/:id/pay-sources', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (!(await canSee(viewer, v))) throw new NotFoundError('CashVoucher', v.id)
+    const boxWhere: Prisma.PettyCashBoxWhereInput = { tenantId: v.tenantId, deletedAt: null, isActive: true }
+    const boxes = await prisma.pettyCashBox.findMany({
+      where: viewer.keeper ? boxWhere : v.boxId ? { ...boxWhere, id: v.boxId, custodianId: viewer.id } : { ...boxWhere, custodianId: viewer.id },
+      select: { id: true, name: true, floatCents: true, custodianId: true },
+      orderBy: { name: 'asc' },
+    })
+    const custodians = await prisma.user.findMany({ where: { id: { in: [...new Set(boxes.map((b) => b.custodianId))] } }, select: { id: true, name: true } })
+    const direct = viewer.financeApprover
+    const banks = direct
+      ? await prisma.bankAccount.findMany({
+        where: { tenantId: v.tenantId, deletedAt: null, isActive: true, accountCode: { not: null } },
+        select: { id: true, name: true, bankName: true, accountCode: true },
+        orderBy: { name: 'asc' },
+      })
+      : []
+    return {
+      boxId: v.boxId,
+      boxes: boxes.map((b) => ({
+        id: b.id, name: b.name, floatCents: b.floatCents, mine: b.custodianId === viewer.id,
+        custodianName: custodians.find((u) => u.id === b.custodianId)?.name ?? null,
+      })),
+      cashOnHand: direct,
+      banks,
+    }
+  })
+
+  // POST /:id/pay { source?, boxId?, bankAccountId? } — the cash is handed to
+  // the holder (kind request) or the payee (kind expense). ONE transaction:
+  // claim approved → disbursed (409 ALREADY_PAID / VOUCHER_NOT_APPROVED),
+  // expenseOnVerify = true, dueBy (documents due), paySource, and ONE hold on
+  // 1357 — the expense is booked when finance verifies the documents:
+  //   source 'box' (default): the box's custodian or a keeper. The box: the
+  //     voucher's, else `boxId` (only a keeper changes a box already set),
+  //     else the custodian's only open box of the voucher's company. The
+  //     spend through recordPettyCashSpendTx (nature 'voucher_hold'): Dr 1357
+  //     / Cr 1011 (400 INSUFFICIENT_FLOAT).
+  //   source 'cash_on_hand' | 'bank' (owner, 2026-10-16): finance with the
+  //     accounting module, or the CEO (403 PAY_SOURCE_FINANCE_ONLY). The
+  //     account is lib/bankAccounts.ts moneyAccountCode for the VOUCHER's
+  //     company — cash → 1010; bank → `bankAccountId` (a live linked bank of
+  //     that company, else 422), none named → its only bank (422
+  //     BANK_ACCOUNT_REQUIRED with two or more). ONE entry
+  //     'cashvoucher.pay:<id>' Dr 1357 / Cr that account; no box, no float.
+  // 422 PERIOD_LOCKED (and every other refused posting) rolls it all back.
   fastify.post<{ Params: { id: string } }>('/:id/pay', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const body = z.object({ boxId: z.string().min(1).max(64).optional() }).parse(req.body ?? {})
+    const body = z.object({
+      source: z.enum(['box', 'cash_on_hand', 'bank']).default('box'),
+      boxId: z.string().min(1).max(64).optional(),
+      bankAccountId: z.string().min(1).max(64).optional(),
+    }).parse(req.body ?? {})
     const v = await loadVoucher(req, req.params.id)
     const viewer = await viewerOf(req)
     const me = viewer.id
     if (PAID_STATUSES.includes(v.status)) throw new AppError('ALREADY_PAID', `Cash request ${v.number} has already been paid`, 409)
     if (v.status !== 'approved') throw wrongStatus('VOUCHER_NOT_APPROVED', v, 'only a voucher the CEO has approved can be paid')
-
-    let boxId = v.boxId
-    if (body.boxId && body.boxId !== v.boxId) {
-      if (v.boxId && !viewer.keeper) {
-        throw new AppError('BOX_PICK_KEEPERS_ONLY', 'This request names its cash box — only finance or a manager can change it', 403)
+    const direct = body.source !== 'box'
+    if (direct) {
+      if (!viewer.financeApprover) {
+        throw new AppError('PAY_SOURCE_FINANCE_ONLY', 'Only finance or the CEO pays a voucher from cash on hand or a bank account', 403)
       }
-      boxId = body.boxId
+      if (body.boxId) throw new AppError('BOX_NOT_FOR_SOURCE', 'A cash box is only picked when paying from petty cash', 422)
+    } else if (body.bankAccountId) {
+      throw new AppError('BANK_NOT_FOR_SOURCE', 'A bank account is only picked when paying from a bank', 422)
     }
-    if (!boxId) {
-      const mine = await prisma.pettyCashBox.findMany({
-        where: { custodianId: me, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { id: true },
-      })
-      if (mine.length === 1) boxId = mine[0]!.id
-      else if (mine.length === 0 && !viewer.keeper) throw new AppError('NOT_CUSTODIAN', 'Only the cashier who holds a cash box of this company, finance or a manager can pay this', 403)
-      else throw new AppError('BOX_REQUIRED', 'Pick the cash box the money comes from', 422)
-    }
-    const box = await prisma.pettyCashBox.findFirst({ where: { id: boxId, deletedAt: null }, select: { id: true, tenantId: true, isActive: true, custodianId: true, name: true } })
-    if (!box || box.tenantId !== v.tenantId) throw new AppError('BOX_NOT_IN_COMPANY', 'That cash box is not one of this request\'s company\'s', 422)
-    if (!box.isActive) throw new AppError('BOX_UNAVAILABLE', `${box.name} is closed — pick another box`, 409)
-    if (box.custodianId !== me && !viewer.keeper) {
-      throw new AppError('NOT_CUSTODIAN', `Only the cashier who holds ${box.name}, finance or a manager can pay from it`, 403)
+
+    let box: { id: string; tenantId: string | null; isActive: boolean; custodianId: string; name: string } | null = null
+    if (!direct) {
+      let boxId = v.boxId
+      if (body.boxId && body.boxId !== v.boxId) {
+        if (v.boxId && !viewer.keeper) {
+          throw new AppError('BOX_PICK_KEEPERS_ONLY', 'This request names its cash box — only finance or a manager can change it', 403)
+        }
+        boxId = body.boxId
+      }
+      if (!boxId) {
+        const mine = await prisma.pettyCashBox.findMany({
+          where: { custodianId: me, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { id: true },
+        })
+        if (mine.length === 1) boxId = mine[0]!.id
+        else if (mine.length === 0 && !viewer.keeper) throw new AppError('NOT_CUSTODIAN', 'Only the cashier who holds a cash box of this company, finance or a manager can pay this', 403)
+        else throw new AppError('BOX_REQUIRED', 'Pick the cash box the money comes from', 422)
+      }
+      box = await prisma.pettyCashBox.findFirst({ where: { id: boxId, deletedAt: null }, select: { id: true, tenantId: true, isActive: true, custodianId: true, name: true } })
+      if (!box || box.tenantId !== v.tenantId) throw new AppError('BOX_NOT_IN_COMPANY', 'That cash box is not one of this request\'s company\'s', 422)
+      if (!box.isActive) throw new AppError('BOX_UNAVAILABLE', `${box.name} is closed — pick another box`, 409)
+      if (box.custodianId !== me && !viewer.keeper) {
+        throw new AppError('NOT_CUSTODIAN', `Only the cashier who holds ${box.name}, finance or a manager can pay from it`, 403)
+      }
     }
     if (v.kind === 'request' && !v.payeeUserId) {
       throw new AppError('HOLDER_REQUIRED', `Cash request ${v.number} names nobody to take the cash — finance names the holder first`, 422)
@@ -1371,18 +1445,25 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
 
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
     const settleDays = (await getOperationsConfig(v.tenantId))?.cashAdvanceSettleDays ?? 30
-    const custodian = await prisma.user.findUnique({ where: { id: box.custodianId }, select: { name: true } })
-    const cashierName = custodian?.name ?? null
+    const payer = await prisma.user.findUnique({ where: { id: box ? box.custodianId : me }, select: { name: true } })
+    const cashierName = payer?.name ?? null
     const reasonFull = `Cash voucher ${v.number}: ${v.purpose}`
     const reason = reasonFull.length > 200 ? `${reasonFull.slice(0, 199)}…` : reasonFull
     const now = new Date()
     const dueBy = new Date(now.getTime() + settleDays * 86_400_000)
 
     const result = await prisma.$transaction(async (tx) => {
+      // Cash on hand / bank: THE resolver, for the VOUCHER's company, inside the transaction.
+      const account = direct
+        ? await moneyAccountCode(tx, v.tenantId, { method: body.source === 'cash_on_hand' ? 'cash' : 'bank_transfer', bankAccountId: body.bankAccountId ?? null })
+        : null
       const claimed = await tx.cashVoucher.updateMany({
         where: { id: v.id, tenantId: v.tenantId, status: 'approved' },
         data: {
-          status: 'disbursed', boxId: box.id, disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true,
+          status: 'disbursed', disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true,
+          ...(box
+            ? { boxId: box.id, paySource: 'box', payAccountCode: null, payBankAccountId: null }
+            : { boxId: null, paySource: body.source, payAccountCode: account!.code, payBankAccountId: account!.bankAccountId }),
           // An outside payee has no login: the payer's record of the hand-over is the receipt (kind expense).
           ...(v.kind === 'expense' && { cashReceivedById: me, cashReceivedAt: now }),
         },
@@ -1391,6 +1472,12 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true } })
         if (PAID_STATUSES.includes(cur.status)) throw new AppError('ALREADY_PAID', `Cash request ${v.number} has already been paid`, 409)
         throw wrongStatus('VOUCHER_NOT_APPROVED', { number: v.number, status: cur.status }, 'only a voucher the CEO has approved can be paid')
+      }
+      if (!box) {
+        // Dr 1357 / Cr 1010 | the bank's code — 'cashvoucher.pay:<id>', in this transaction.
+        const posted = await postCashVoucherSourceTx(tx, v.id, 'pay', v.amountCents, me)
+        await tx.cashVoucher.update({ where: { id: v.id }, data: { payJournalEntryId: posted.entryId } })
+        return { movement: null, newFloatCents: null, entryId: posted.entryId, account }
       }
       // The one spend path (pettyCash.ts) — Dr 1357 / Cr 1011, in this transaction.
       const spent = await recordPettyCashSpendTx(tx, {
@@ -1406,15 +1493,16 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         actor: { id: me, role: viewer.role },
       })
       await tx.cashVoucher.update({ where: { id: v.id }, data: { pettyCashMovementId: spent.movement.id } })
-      return { movement: spent.movement, newFloatCents: spent.newFloatCents }
+      return { movement: spent.movement, newFloatCents: spent.newFloatCents, entryId: spent.movement.journalEntryId, account: null }
     }, { timeout: 20_000, maxWait: 10_000 })
 
     await auditVoucher(req, 'pay', v, {
       status: 'disbursed',
       amountCents: v.amountCents,
-      boxId: box.id,
-      pettyCashMovementId: result.movement.id,
-      newFloatCents: result.newFloatCents,
+      paySource: body.source,
+      boxId: box?.id ?? null,
+      ...(result.account && { payAccountCode: result.account.code, payBankAccountId: result.account.bankAccountId, journalEntryId: result.entryId }),
+      ...(result.movement && { pettyCashMovementId: result.movement.id, newFloatCents: result.newFloatCents }),
       cashierName,
       dueBy: dueBy.toISOString(),
       heldOn: '1357',
@@ -1423,8 +1511,11 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
 
     return {
       voucher: await detailOf(v.id, viewer),
-      movement: { id: result.movement.id, amountCents: result.movement.amountCents, createdAt: result.movement.createdAt, journalEntryId: result.movement.journalEntryId },
+      movement: result.movement
+        ? { id: result.movement.id, amountCents: result.movement.amountCents, createdAt: result.movement.createdAt, journalEntryId: result.movement.journalEntryId }
+        : null,
       newFloatCents: result.newFloatCents,
+      journalEntryId: result.entryId,
     }
   })
 

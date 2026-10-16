@@ -177,7 +177,7 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
           name={v.directorSignedAt ? (v.directorSignedByName ?? '—') : null} when={v.directorSignedAt ? fmtDateTime(v.directorSignedAt) : null}
           sub={v.directorSignedAt ? null : financeAt ? waitingWord : 'Pending'} />
         <StatusBlock title="Paid by" ok={!!v.disbursedAt} head={v.disbursedAt ? (v.paidByName ?? 'Finance') : 'Not paid yet'}
-          name={null} when={v.disbursedAt ? fmtDateTime(v.disbursedAt) : null} sub={null} />
+          name={null} when={v.disbursedAt ? fmtDateTime(v.disbursedAt) : null} sub={v.disbursedAt && (v.paidFrom ?? v.boxName) ? `Paid from: ${v.paidFrom ?? v.boxName}` : null} />
         <StatusBlock title="Received by" ok={!!v.cashReceivedAt} head={receiver}
           name={null} when={v.cashReceivedAt ? fmtDateTime(v.cashReceivedAt) : null}
           sub={v.cashReceivedAt ? 'Cash received — confirmed' : 'Not confirmed yet'} />

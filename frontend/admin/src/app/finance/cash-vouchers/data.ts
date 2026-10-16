@@ -203,6 +203,12 @@ export interface CashVoucher {
   cancelledByName?: string | null
   disbursedByName?: string | null
   boxName?: string | null
+  /** Where the cash came from (2026-10-16): 'box' (petty cash), 'cash_on_hand' (1010) or 'bank'. */
+  paySource?: 'box' | 'cash_on_hand' | 'bank' | null
+  payAccountCode?: string | null
+  payBankAccountId?: string | null
+  /** Words for it once paid: the box's name, "Cash on hand" or the bank's name. */
+  paidFrom?: string | null
   custodianId?: string | null
   custodianName?: string | null
   conceptName?: string | null
@@ -316,6 +322,22 @@ export function usePettyBoxes() {
     queryFn: () => api.get('/trustops/petty-cash/boxes'),
     retry: false,
     meta: { background: true },
+  })
+}
+
+/** What this viewer may pay an approved voucher from (the voucher's company): boxes, cash on hand, banks. */
+export interface PaySources {
+  boxId: string | null
+  boxes: Array<{ id: string; name: string; floatCents: number; mine: boolean; custodianName: string | null }>
+  cashOnHand: boolean
+  banks: Array<{ id: string; name: string; bankName: string | null; accountCode: string | null }>
+}
+export function usePaySources(v: { id: string; tenantId: string }, enabled = true) {
+  return useQuery<PaySources>({
+    queryKey: [CV_ROOT, 'pay-sources', v.id],
+    queryFn: () => api.get(`${CV_BASE}/${v.id}/pay-sources`),
+    enabled,
+    retry: false,
   })
 }
 
