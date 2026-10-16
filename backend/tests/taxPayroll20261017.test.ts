@@ -300,6 +300,18 @@ describe('item 22 — a month takes a top-up challan with its own CPR', () => {
     expect(b.statusCode, b.body).toBe(201)
     expect(b.json().tenantId).toBe(tenantB)
   })
+
+  // Regression (tax / payroll simulation, 2026-10-16): the register's list
+  // with no dates used an upper bound of year 275760 that Prisma cannot send
+  // — every call was a 500.
+  it('the payments list with no dates answers 200 with the company\'s own payments only', async () => {
+    const res = await call('finA', 'GET', '/accounting/sales-tax-return/payments?statutory=1')
+    expect(res.statusCode, res.body).toBe(200)
+    const rows = res.json().payments as Array<{ id: string; authority: string }>
+    expect(rows.filter((r) => r.authority === 'eobi')).toHaveLength(2)
+    const ids = new Set((await prisma.salesTaxPayment.findMany({ where: { tenantId: tenantA }, select: { id: true } })).map((r) => r.id))
+    expect(rows.every((r) => ids.has(r.id))).toBe(true)
+  })
 })
 
 // ─── Item 23: the tax invoice register ───────────────────────────────────────

@@ -4,8 +4,11 @@
 //
 // October 2026 (31 days), company A ('GS Foods', withholding ON) and company B
 // ('GS x Viva'). Logins added here (seeded like the harness's): an HR login per
-// company and a management login in A ('Ops Director', the second person who
-// approves payroll). Everything else goes through the real API.
+// company, a management login in A ('Ops Director', the second person who
+// approves payroll) and a buyer in A (role procurement — OBSERVATION: the F&B
+// manager's default modules hold no 'procurement', so the harness manager gets
+// 403 on /procurement although Operations "owns buying"). Everything else goes
+// through the real API.
 //
 //   30 Sep   HR settings (EOBI on a fixed PKR 40,000 wage, 1% / 5%; SESSI 6%),
 //            leave types, five employees in A — Ayesha (bank, full month),
@@ -17,8 +20,9 @@
 //            her resignation (last working day 20 Oct).
 //   2 Oct    a till in each company: SRB and FBR bills, a Keenu card with a
 //            PKR 200 tip (output tax, tax invoices, 2095).
-//   3–8 Oct  purchasing for the tax return: chicken received at the dock and
-//            billed with FBR tax (federal input on food stock — H8 / H34), a
+//   3–8 Oct  purchasing for the tax return: chicken and takeaway boxes received
+//            at the dock and billed with 18% FBR tax (federal input on food and
+//            packaging stock — H8 / H34), a
 //            pest-control bill with SRB tax (input 1322), withholding taken at
 //            the bill (2040, H47); a client invoice from Simmer with SRB tax.
 //   20 Oct   the client withholds sales tax (1335, H13).
@@ -47,6 +51,13 @@
 // 1320 = federal input still unused; 2040 / 2042 / 2043 / 2044 = accrued − paid
 // = /accounting/statutory; 2095 = tips collected − paid (A 0, B the unpaid tip);
 // tax invoices numbered per company; B 404 on A's runs, settlements, challans.
+//
+// Defect found and fixed here: GET /accounting/sales-tax-return/payments with
+// no dates was always a 500 (upper bound new Date(8.64e15), year 275760, which
+// Prisma cannot send) — fixed in accounting/routes.ts, regression in
+// tests/taxPayroll20261017.test.ts (and the B / A list checks at the end).
+// Reading note: a tax payment is dated noon PKT of its paid day, so balances
+// here are read as at 30 Nov (AS_OF), not "now" (the morning of the 12th).
 //
 // Requires a disposable database ("test" in DATABASE_URL).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -79,7 +90,11 @@ const RUN = Math.random().toString(36).slice(2, 7).toUpperCase()
 const cardRef = () => `KN${RUN}${String(500000 + ++seq)}`
 const key = (s: string) => `simtp-${s}-${++seq}-${Math.random().toString(36).slice(2, 8)}`
 /** A credit balance (liability / income) as a positive number. */
-const credit = async (co: SimCompany, code: string, asOf?: string) => 0 - (await sim.ledger.balanceOf(co, code, asOf)) || 0
+// Read as at the end of the simulated month's checks (12 Nov): a tax payment is
+// dated noon PKT of its paid day, later than the clock's morning time.
+const AS_OF = '2026-11-30'
+const bal = async (co: SimCompany, code: string, asOf = AS_OF) => (await sim.ledger.balanceOf(co, code, asOf)) || 0
+const credit = async (co: SimCompany, code: string, asOf = AS_OF) => 0 - (await sim.ledger.balanceOf(co, code, asOf)) || 0
 const line = (item: SimItem, quantity = 1) => ({ menuItemId: item.id, name: item.name, quantity, unitPriceCents: item.priceCents, modifiers: [] })
 
 interface Rung { id: string; totalCents: number; taxCents: number }
@@ -153,7 +168,7 @@ const st: {
   payments: string[]
   fbrInputSetOff: number
   crossSetOff: number
-} = { stockTaxCents: 54_000, srbInputCents: 8_000, withheldBySrbClientCents: 6_400, payments: [], fbrInputSetOff: 0, crossSetOff: 0 }
+} = { stockTaxCents: 59_400, srbInputCents: 8_000, withheldBySrbClientCents: 6_400, payments: [], fbrInputSetOff: 0, crossSetOff: 0 }
 
 beforeAll(async () => {
   sim = await startSim()
@@ -280,20 +295,32 @@ describe('purchasing and a client invoice for the return (3–20 Oct)', () => {
     const meat = ok(await mgr.post('/procurement/suppliers', { name: 'Karachi Meat Co', filerStatus: 'filer', defaultTaxAuthority: 'fbr', paymentTermsDays: 30 }), 201)
     const pest = ok(await mgr.post('/procurement/suppliers', { name: 'Clean Sweep Pest Control', filerStatus: 'filer', defaultTaxAuthority: 'srb', defaultWhtSection: '153_1_b', paymentTermsDays: 15 }), 201)
     const chicken = ok(await mgr.post('/inventory', { name: 'Chicken breast', unit: 'kg', category: 'protein', unitCostCents: 90_000 }), 201)
-    const po = ok(await mgr.post('/procurement/purchase-orders', { supplierId: meat.id, lines: [{ inventoryItemId: chicken.id, quantityOrdered: 100, unitCostCents: 3_000 }] }), 201)
+    const boxes = ok(await mgr.post('/inventory', { name: 'Takeaway boxes', unit: 'pcs', category: 'packaging', unitCostCents: 60 }), 201)
+    const po = ok(await mgr.post('/procurement/purchase-orders', { supplierId: meat.id, lines: [
+      { inventoryItemId: chicken.id, quantityOrdered: 100, unitCostCents: 3_000 },
+      { inventoryItemId: boxes.id, quantityOrdered: 500, unitCostCents: 60 },
+    ] }), 201)
     let s = ok(await mgr.post(`/procurement/purchase-orders/${po.id}/submit`, {}), 200)
     if (s.status === 'pending_approval') s = ok(await sim.as(sim.ceo, A).post(`/procurement/purchase-orders/${po.id}/approve`, {}), 200)
+    ok(await mgr.post(`/procurement/purchase-orders/${po.id}/mark-sent`, { channel: 'phone' }), 200)
     const poRow = await sim.prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
+    const poLine = (itemId: string) => poRow.lines.find((l) => l.inventoryItemId === itemId)!
     const got = ok(await sim.as(sim.ceo, A).post(`/procurement/purchase-orders/${po.id}/receive`, {
-      locationId: A.locationId, photos: [pdfFile('dock.pdf')], lines: [{ poLineId: poRow.lines[0]!.id, quantityReceived: 100 }],
+      locationId: A.locationId, photos: [pdfFile('dock.pdf')],
+      lines: [{ poLineId: poLine(chicken.id).id, quantityReceived: 100 }, { poLineId: poLine(boxes.id).id, quantityReceived: 500 }],
     }), 201)
-    const receiptLine = (got.receipt.lines as Array<{ id: string }>)[0]!
+    const rl = (itemId: string) => (got.receipt.lines as Array<{ id: string; inventoryItemId: string }>).find((l) => l.inventoryItemId === itemId)!
+    expect(await bal(A, '1210'), 'food stock at cost').toBe(300_000)
+    expect(await bal(A, '1230'), 'packaging stock at cost').toBe(30_000)
 
     sim.clock.at('2026-10-05', '11:00')
     const fin = sim.as(A.finance, A)
     const bill = ok(await fin.post('/procurement/bills', {
       supplierId: meat.id, poId: po.id, billNumber: 'KMC-1001', billDate: '2026-10-05', taxCents: st.stockTaxCents, taxAuthority: 'fbr',
-      lines: [{ inventoryItemId: chicken.id, receiptLineId: receiptLine.id, description: 'Chicken breast 100 kg', quantity: 100, unitCostCents: 3_000 }],
+      lines: [
+        { inventoryItemId: chicken.id, receiptLineId: rl(chicken.id).id, description: 'Chicken breast 100 kg', quantity: 100, unitCostCents: 3_000 },
+        { inventoryItemId: boxes.id, receiptLineId: rl(boxes.id).id, description: 'Takeaway boxes 500 pcs', quantity: 500, unitCostCents: 60 },
+      ],
     }), 201)
     expect(Number(bill.whtCents), 'WHT is taken at the bill (H47)').toBeGreaterThan(0)
     sim.clock.at('2026-10-06', '11:00')
@@ -302,8 +329,9 @@ describe('purchasing and a client invoice for the return (3–20 Oct)', () => {
       lines: [{ expenseAccountCode: '6042', description: 'Monthly fumigation — Clifton', quantity: 1, unitCostCents: RS(500) }],
     }), 201)
     expect(Number(pb.whtCents)).toBeGreaterThan(0)
-    expect(await sim.ledger.balanceOf(A, '1320'), '1320 = the FBR input on the chicken').toBe(st.stockTaxCents)
-    expect(await sim.ledger.balanceOf(A, '1322'), '1322 = the SRB input on the service').toBe(st.srbInputCents)
+    expect(await bal(A, '1320'), '1320 = the FBR input on the chicken and the boxes (18%)').toBe(st.stockTaxCents)
+    expect(await credit(A, '2015'), 'GRNI cleared by the bill').toBe(0)
+    expect(await bal(A, '1322'), '1322 = the SRB input on the service').toBe(st.srbInputCents)
     expect(await credit(A, '2040'), '2040 = WHT on both bills').toBe(Number(bill.whtCents) + Number(pb.whtCents))
   })
 
@@ -318,7 +346,7 @@ describe('purchasing and a client invoice for the return (3–20 Oct)', () => {
     sim.clock.at('2026-10-20', '12:00')
     const w = ok(await fin.post(`/accounting/receivables/${inv.id}/withholding`, { date: '2026-10-20', kind: 'sales_tax', amountCents: st.withheldBySrbClientCents, certificateNo: 'SRB-WH-PB-1' }), 201)
     expect(w).toMatchObject({ method: 'st_withheld', taxAuthority: 'srb' })
-    expect(await sim.ledger.balanceOf(A, '1335')).toBe(st.withheldBySrbClientCents)
+    expect(await bal(A, '1335')).toBe(st.withheldBySrbClientCents)
     expect(await credit(A, '2032')).toBe(sales.A.srbTax + RS(320))
   })
 })
@@ -369,7 +397,7 @@ describe('Farah\'s full & final (21 Oct)', () => {
     expect(sum('2044', 'credit')).toBe(f['sessiEmployer'])
     expect(sum('2020', 'credit')).toBe(net)
     expect(e!.entryDate.toISOString().slice(0, 7), 'booked in October').toBe('2026-10')
-    expect(await sim.ledger.balanceOf(A, '1350'), 'no loan left on 1350').toBe(0)
+    expect(await bal(A, '1350'), 'no loan left on 1350').toBe(0)
   })
 })
 
@@ -414,7 +442,7 @@ describe('the October payroll (31 Oct – 1 Nov)', () => {
     // Ammar: a full month.
     expect(slip('ammar').grossCents).toBe(RS(310000))
     const by = (k: string) => Object.fromEntries(slip(k).lines.map((l) => [l.code, l.amountCents]))
-    expect(by('ayesha'), JSON.stringify(slip('ayesha').lines)).toMatchObject({ tax: RS(1500), eobi_employee: RS(400), eobi_employer: RS(2000), sessi_employer: Math.round(RS(55000) * 0.06) })
+    expect(by('ayesha'), JSON.stringify(slip('ayesha').lines)).toMatchObject({ tax: RS(1500), eobi_employee: RS(400), eobi_employer: RS(2000), sessi_employer: Math.round(RS(62000) * 0.06) }) // SESSI on the employed days' wage, not lowered by absences
     expect(slip('ayesha').netCents).toBe(RS(55000 - 1500 - 400))
   })
 
@@ -535,7 +563,6 @@ describe('EOBI, SESSI and salary-tax challans (10 Nov)', () => {
     expect(errCode(again)).toBe('TAX_PAYMENT_EXISTS')
 
     const s1 = ok(await fin.get('/accounting/statutory?from=2026-10&to=2026-10'), 200)
-    for (const e of await sim.prisma.journalEntry.findMany({ where: { tenantId: A.tenantId, lines: { some: { account: { code: { in: ['2042'] } } } } }, include: { lines: { include: { account: true } } } })) console.log('DBG2042', e.reference, e.entryDate.toISOString(), e.lines.map((l) => `${l.type} ${l.account.code} ${l.amountCents}`).join(' | '))
     for (const [k, code] of [['salary_tax', '2042'], ['eobi', '2043'], ['sessi', '2044']] as const) {
       const cell = s1.months[0][k]
       expect(cell.owedCents, `${k}: owed after the challans`).toBe(0)
@@ -561,7 +588,8 @@ describe('the October sales tax return (12 Nov)', () => {
     expect(srb.output.totalCents).toBe(sales.A.srbTax + RS(320))
     expect(srb.input.totalCents).toBe(st.srbInputCents)
     expect(srb.withheldByCustomersCents).toBe(st.withheldBySrbClientCents)
-    expect(srb.federalInputClaimableCents, 'federal input on the chicken (H8 / H34)').toBeGreaterThan(0)
+    expect(r.federalCrossSetOff.eligibleToDateCents, 'all of it is on food and packaging stock — eligible (H8 / H34)').toBe(st.stockTaxCents)
+    expect(srb.federalInputClaimableCents, 'federal input claimable against SRB').toBeGreaterThan(0)
   })
 
   it('FBR: part of its own input set off, the rest paid; cross set-off against FBR is refused', async () => {
@@ -602,9 +630,9 @@ describe('the October sales tax return (12 Nov)', () => {
     st.payments.push(ok(await topUp('SRB-OCT-2'), 201).id)
 
     expect(await credit(A, '2032'), '2032 cleared by the two SRB payments').toBe(0)
-    expect(await sim.ledger.balanceOf(A, '1322'), 'SRB input used').toBe(0)
-    expect(await sim.ledger.balanceOf(A, '1335'), 'client-withheld tax used').toBe(0)
-    expect(await sim.ledger.balanceOf(A, '1320'), '1320 = federal input − FBR set-off − cross set-off').toBe(st.stockTaxCents - st.fbrInputSetOff - st.crossSetOff)
+    expect(await bal(A, '1322'), 'SRB input used').toBe(0)
+    expect(await bal(A, '1335'), 'client-withheld tax used').toBe(0)
+    expect(await bal(A, '1320'), '1320 = federal input − FBR set-off − cross set-off').toBe(st.stockTaxCents - st.fbrInputSetOff - st.crossSetOff)
 
     const r = ok(await fin.get('/accounting/sales-tax-return?dateFrom=2026-10-01&dateTo=2026-10-31'), 200)
     const srb = r.byAuthority.find((a: { key: string }) => a.key === 'srb')
@@ -637,13 +665,13 @@ describe('month-end checks', () => {
     await sim.ledger.assertBalanced(A)
     await sim.ledger.assertBalanced(B)
     expect(await credit(A, '2020'), '2020 wages payable').toBe(0)
-    expect(await sim.ledger.balanceOf(A, '1350'), '1350 staff loans').toBe(0)
+    expect(await bal(A, '1350'), '1350 staff loans').toBe(0)
     for (const code of ['2030', '2032', '2040', '2042', '2043', '2044']) expect(await credit(A, code), code).toBe(0)
     expect(await credit(A, '2095'), 'A: 2095 = tips collected − paid').toBe(sales.A.tips - sales.A.tips)
     expect(await credit(B, '2095'), 'B: 2095 = its tip, not pooled yet').toBe(sales.B.tips)
     expect(await credit(B, '2032'), 'B never paid A\'s tax').toBe(sales.B.srbTax)
     // The trial balance lists one net figure per account and no zero rows.
-    const tb = await sim.ledger.trialBalance(A)
+    const tb = await sim.ledger.trialBalance(A, AS_OF)
     expect(tb.debitCents).toBe(tb.creditCents)
     expect(tb.rows.filter((r) => r.debitCents === 0 && r.creditCents === 0)).toEqual([])
     expect(tb.rows.filter((r) => r.debitCents !== 0 && r.creditCents !== 0)).toEqual([])
@@ -666,6 +694,8 @@ describe('month-end checks', () => {
     }
     const listB = ok(await finB.get('/accounting/sales-tax-return/payments?statutory=1'), 200)
     expect(listB.payments).toEqual([])
+    const listA = ok(await sim.as(A.finance, A).get('/accounting/sales-tax-return/payments?statutory=1'), 200)
+    expect(new Set((listA.payments as Array<{ id: string }>).map((p) => p.id))).toEqual(new Set(st.payments))
     // A tax payment from B naming A's bank is refused (cross-company attach).
     const attach = await finB.post('/accounting/sales-tax-return/payments', { authority: 'srb', ...PERIOD, paidCents: 100, paidAt: '2026-11-12', bankAccountId: A.banks.main.id })
     expect(attach.statusCode, attach.body).toBe(422)

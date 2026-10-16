@@ -120,7 +120,8 @@ const goodsReceipt: RecordFileProvider = {
   auditCategory: 'identity',
   fileStem: 'dock-photo',
   async resolve(req, ownerId, mode) {
-    assertRole(req, mode === 'read' ? PROCUREMENT_TEAM : MANAGERS, this.label)
+    // Finance bills against the receipt, so it opens the dock photos too (read only).
+    assertRole(req, mode === 'read' ? [...PROCUREMENT_TEAM, 'finance'] : MANAGERS, this.label)
     const ids = idsOf(await scopeTenantWhere(req, scopeMode(mode)))
     const r = await prisma.goodsReceipt.findFirst({ where: { id: ownerId }, select: { tenantId: true, supplierId: true } })
     // Every new receipt carries its company; an old one falls back to its supplier's.

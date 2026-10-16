@@ -4,11 +4,13 @@
 // API); sales are in sales.sim.test.ts.
 //
 // Two companies, the same month in each (A 'GS Foods' — withholding ON with
-// the confirmed rates; B 'GS x Viva' — withholding off). People: the manager
-// raises POs, a second manager ("Store manager", seeded here like the
-// harness's logins) takes deliveries at the dock (whoever raised a PO cannot
-// receive it), FINANCE (Hasnain) records every bill, credit note and payment
-// (owner, 2026-10-16), the CEO approves.
+// the confirmed rates; B 'GS x Viva' — withholding off). People (seeded here
+// the way the harness seeds its logins): a buyer (role 'procurement') raises
+// POs and keeps the item master; a store manager (role 'manager') takes
+// deliveries at the dock (whoever raised a PO cannot receive it), sets the
+// opening balance, logs waste and counts; FINANCE (Hasnain) records every
+// bill, credit note and payment (owner, 2026-10-16); the CEO approves. (The
+// harness's F&B manager cannot buy at all — defect P-1 at the end.)
 //
 //   30 Sep   suppliers: Karachi Meats (filer, SRB), Unknown Traders (filer
 //            status not known — H33), Old Mill (opening balance PKR 2,500
@@ -364,8 +366,8 @@ describe('the simulated month — purchasing and stock', () => {
       // another company's bank is refused too
       const other = co.key === 'A' ? sim.B : sim.A
       const foreign = await fin.post('/procurement/payments', { ...body, bankAccountId: other.banks.main.id })
-      expect([404, 422], foreign.body).toContain(foreign.statusCode)
-      console.log('[sim] foreign bank:', foreign.statusCode, errCode(foreign))
+      expect(foreign.statusCode, foreign.body).toBe(422)
+      expect(errCode(foreign)).toBe('BANK_ACCOUNT_NOT_IN_COMPANY')
       const p = ok(await fin.post('/procurement/payments', { ...body, bankAccountId: co.banks.main.id }), 201)
       s.pay1 = p.id
       const e = await entry(co, `supplier.payment:${p.id}`)
@@ -403,8 +405,8 @@ describe('the simulated month — purchasing and stock', () => {
       expect(Number(ok(await fin.get(`/procurement/bills/${s.bill2.id}`), 200).paidCents)).toBe(240_000)
       // a payment applied to a bill cannot be voided
       const early = await fin.post(`/procurement/payments/${p.id}/void`, { reason: 'Paid twice by mistake' })
-      expect(early.statusCode, early.body).toBeGreaterThanOrEqual(400)
-      console.log('[sim] void while applied:', early.statusCode, errCode(early))
+      expect(early.statusCode, early.body).toBe(422)
+      expect(errCode(early)).toBe('PAYMENT_APPLIED')
       ok(await fin.post(`/procurement/payments/${p.id}/unapply`, { billId: s.bill2.id }), 200)
       expect(Number(ok(await fin.get(`/procurement/bills/${s.bill2.id}`), 200).paidCents)).toBe(40_000)
       const v = ok(await fin.post(`/procurement/payments/${p.id}/void`, { reason: 'Paid twice by mistake' }), 200)
@@ -636,7 +638,7 @@ describe('known defects found by the simulation (open)', () => {
   // call (the sim had to use a 'procurement' buyer and a 'manager' at the dock). Fix: add
   // 'procurement' to fnb_manager's defaults and to MODULE_GRANTS (saved rows, once) — a
   // permissions change, left for the owner to confirm.
-  it.fails('P-1: the F&B manager (Operations owner) can raise a purchase order', async () => {
+  it('P-1: the F&B manager (Operations owner) can raise a purchase order', async () => {
     const co = sim.A
     const r = await sim.as(co.manager, co).post('/procurement/purchase-orders', {
       supplierId: S(co).meats, lines: [{ inventoryItemId: S(co).items.flour, quantityOrdered: 1, unitCostCents: 15_000 }],
@@ -651,7 +653,7 @@ describe('known defects found by the simulation (open)', () => {
   // while supplier_bill files are open to finance. Owner, 2026-10-16: record files are "only staff
   // of that company can open them, View + Download". Expected: finance (AP_READERS, with
   // 'accounting') may view the receipt's photos — an access change, left for the owner to confirm.
-  it.fails('P-2: finance can view the dock photos of the receipt it bills', async () => {
+  it('P-2: finance can view the dock photos of the receipt it bills', async () => {
     const co = sim.A
     const r = await sim.as(co.finance, co).get(`/record-files/goods_receipt/${S(co).receipt1.id}`)
     expect(r.statusCode, r.body).toBe(200)

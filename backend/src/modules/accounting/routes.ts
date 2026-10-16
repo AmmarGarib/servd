@@ -697,7 +697,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const tenantId = activeTenantId(req, 'tax payments are per company')
       const { from, to } = req.query.dateFrom || req.query.dateTo
         ? resolveDateRange(req.query.dateFrom, req.query.dateTo)
-        : { from: new Date(0), to: new Date(8.64e15) }
+        // No dates = every payment. The upper bound is a date Postgres (and the
+        // Prisma engine) can hold: new Date(8.64e15) — year 275760 — made this
+        // list a 500 (tax / payroll simulation, 2026-10-16).
+        : { from: new Date(0), to: new Date('9999-12-31T23:59:59.999Z') }
       return { payments: await taxPaymentsFor(tenantId, from, to, { statutory: req.query.statutory === '1' }) }
     },
   )

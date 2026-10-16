@@ -212,6 +212,9 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'dashboard', 'ops', 'orders', 'refunds', 'curbside',
     'kds_all', 'kds_dashboard', 'expo_station',
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
+    // Buying (owner decision 47: the F&B manager owns Operations — "all BOH and
+    // FOH, menu, stock, buying"); missing until the 2026-10-17 simulation.
+    'procurement',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'emergency_overrides',
     'complaints', 'reviews',
@@ -283,6 +286,9 @@ export const MODULE_GRANTS: readonly string[] = [
   // MODULE_GRANT_ROLES: management / legacy manager defaults already hold it,
   // and a saved row of theirs is left exactly as the CEO saved it.
   'role_modules',
+  // The F&B manager owns buying (decision 47; found by the simulated month,
+  // 2026-10-17). Scoped to fnb_manager in MODULE_GRANT_ROLES.
+  'procurement',
 ]
 /**
  * Grants that reach only SOME of the roles whose defaults hold the module
@@ -290,6 +296,7 @@ export const MODULE_GRANTS: readonly string[] = [
  */
 export const MODULE_GRANT_ROLES: Readonly<Partial<Record<string, readonly UserRole[]>>> = {
   role_modules: ['hr'],
+  procurement: ['fnb_manager'],
 }
 export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 
