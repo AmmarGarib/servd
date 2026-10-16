@@ -248,7 +248,7 @@ describe('the import pass', () => {
     expect(rm.statusCode, rm.body).toBe(200)
     expect(rm.json()).toMatchObject({ matched: 0, candidates: 2 })
     // …ignore the duplicate, and the original re-matches as '@2'.
-    expect((await call(s.finance, 'POST', `/reconciliation/bank/lines/${dup.id}/ignore`, {})).statusCode).toBe(200)
+    expect((await call(s.finance, 'POST', `/reconciliation/bank/lines/${dup.id}/ignore`, { reason: 'Duplicate statement row, already reconciled' })).statusCode).toBe(200)
     const rm2 = await call(s.finance, 'POST', '/reconciliation/card-payouts/rematch', {})
     expect(rm2.json()).toMatchObject({ matched: 1 })
     expect(await entry(s.co.tenantId, `card.settlement:${line.id}@2`)).not.toBeNull()

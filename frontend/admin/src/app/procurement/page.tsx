@@ -41,6 +41,8 @@ interface Supplier {
   id: string; name: string; phone?: string | null; email?: string | null
   address?: string | null; taxId?: string | null; notes?: string | null
   paymentTermsDays: number; leadTimeDays?: number | null; openingBalanceCents: number
+  /** YYYY-MM-DD…: the day the opening balance is brought forward at (its ledger date); null = the day the supplier was added. */
+  openingBalanceDate?: string | null
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
   _count?: { purchaseOrders: number; inventoryItems: number; bills: number; payments: number }
@@ -218,9 +220,36 @@ const statusLabel = (st: string) => STATUS_LABEL[st] ?? (st ? st.charAt(0).toUpp
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+/**
+ * Finance's payables view (owner, 2026-10-16: finance records supplier bills,
+ * credit notes and payments): a login without the 'procurement' module that
+ * holds 'accounting' sees only Bills, Payments and Aging here — POs, the
+ * supplier master, reorder, approvals and price history stay with procurement
+ * (the API refuses them anyway). The CEO always sees everything.
+ */
+function useApOnly(): boolean {
+  const { data: me } = usePermissions()
+  if (!me || me.role === 'admin') return false
+  const mods = me.modules ?? []
+  return !mods.includes('procurement') && mods.includes('accounting')
+}
+
+/** May this login record / void bills, credit notes and payments (the API's AP_WRITERS)? */
+function useCanWriteAp(): boolean {
+  const me = useAuthStore((s) => s.user)
+  const { data: perms } = usePermissions()
+  const isManager = useManagerRoles().has(me?.role ?? '')
+  return isManager || (me?.role === 'finance' && (perms?.modules ?? []).includes('accounting'))
+}
+
+const AP_ONLY_TABS: readonly Tab[] = ['bills', 'payments', 'aging']
+
 export default function ProcurementPage() {
   const qc = useQueryClient()
+  const apOnly = useApOnly()
   const [tab, setTab] = useState<Tab>('pos')
+  // Finance lands on Bills (the PO tab is not theirs).
+  useEffect(() => { if (apOnly && !AP_ONLY_TABS.includes(tab)) setTab('bills') }, [apOnly, tab])
   // /procurement?new=po[&item=<id>&qty=<n>] — opened from Inventory's
   // "Purchase order" button: lands on Purchase Orders with the new-PO form
   // open (and, when an item is given, that item as its first line).
@@ -242,7 +271,7 @@ export default function ProcurementPage() {
     } catch { /* no window */ }
   }, [])
 
-  const tabs: { id: Tab; label: string; icon: string }[] = [
+  const allTabs: { id: Tab; label: string; icon: string }[] = [
     { id: 'pos',       label: 'Purchase Orders', icon: '' },
     { id: 'bills',     label: 'Bills (AP)',       icon: '' },
     { id: 'payments',  label: 'Payments',         icon: '' },
@@ -252,12 +281,13 @@ export default function ProcurementPage() {
     { id: 'approvals', label: 'Approvals',        icon: '' },
     { id: 'history',   label: 'Price History',    icon: '' },
   ]
+  const tabs = apOnly ? allTabs.filter((t) => AP_ONLY_TABS.includes(t.id)) : allTabs
 
   return (
     <div className="min-h-screen bg-s-bg flex flex-col">
       <header className="border-b border-s-border px-6 py-4 shrink-0">
-        <h1 className="text-2xl font-black text-s-text">Procurement</h1>
-        <p className="text-sm text-s-muted mt-0.5">Purchase orders · Accounts payable · Supplier management</p>
+        <h1 className="text-2xl font-black text-s-text">{apOnly ? 'Supplier bills & payments' : 'Procurement'}</h1>
+        <p className="text-sm text-s-muted mt-0.5">{apOnly ? 'Supplier bills, credit notes and payments · AP aging' : 'Purchase orders · Accounts payable · Supplier management'}</p>
       </header>
 
       {/* Tab strip */}
@@ -762,8 +792,8 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
   const [voidTried, setVoidTried] = useState(false)
   const [matchId, setMatchId] = useState<string | null>(null)
   const [filesId, setFilesId] = useState<string | null>(null)
-  const me = useAuthStore((s) => s.user)
-  const isManager = useManagerRoles().has(me?.role ?? '')
+  // Managers and finance (with accounting) record bills — their files too.
+  const canWriteAp = useCanWriteAp()
   const [creditBillId, setCreditBillId] = useState<string | null>(null)
   const [applyCn, setApplyCn] = useState<Bill | null>(null)
   const [unapplyCnId, setUnapplyCnId] = useState<string | null>(null)
@@ -988,7 +1018,7 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
             <p className="font-bold text-s-text text-sm">Bill files</p>
             <button type="button" onClick={() => setFilesId(null)} aria-label="Close bill files" className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
           </div>
-          <RecordFiles ownerType="supplier_bill" ownerId={filesId} canUpload={isManager} compact />
+          <RecordFiles ownerType="supplier_bill" ownerId={filesId} canUpload={canWriteAp} compact />
         </div>
       )}
 
@@ -2216,6 +2246,7 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
     address: supplier?.address ?? '', taxId: supplier?.taxId ?? '', notes: supplier?.notes ?? '',
     paymentTermsDays: String(supplier?.paymentTermsDays ?? 30), leadTimeDays: String(supplier?.leadTimeDays ?? ''),
     openingBalanceCents: String(supplier?.openingBalanceCents ? supplier.openingBalanceCents / 100 : ''),
+    openingBalanceDate: supplier?.openingBalanceDate ? supplier.openingBalanceDate.slice(0, 10) : '',
     // Tax profile
     filerStatus: supplier?.filerStatus ?? 'unknown',
     whtExemptCertNo: supplier?.whtExemptCertNo ?? '',
@@ -2245,6 +2276,7 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         paymentTermsDays: form.paymentTermsDays ? Number(form.paymentTermsDays) : undefined,
         leadTimeDays: form.leadTimeDays ? Number(form.leadTimeDays) : undefined,
         openingBalanceCents: form.openingBalanceCents ? Math.round(Number(form.openingBalanceCents) * 100) : 0,
+        openingBalanceDate: form.openingBalanceDate || null,
         filerStatus: form.filerStatus,
         // The exemption certificate only exists for an exempt supplier.
         whtExemptCertNo: form.filerStatus === 'exempt' ? form.whtExemptCertNo.trim() || null : null,
@@ -2313,6 +2345,13 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         <Field label="Opening balance (PKR)">
           <MoneyInput allowNegative value={centsOf(form.openingBalanceCents)} onChange={(cts) => setForm({ ...form, openingBalanceCents: cts ? String(cts / 100) : '' })} placeholder="0" className={fi} />
         </Field>
+        <Field label="Opening balance as at">
+          <input type="date" value={form.openingBalanceDate} onChange={(e) => setForm({ ...form, openingBalanceDate: e.target.value })}
+            aria-describedby="opening-date-hint" className={fi} />
+        </Field>
+        <p id="opening-date-hint" className="col-span-2 sm:col-span-3 text-[11px] text-s-muted -mt-1">
+          The day the opening balance is brought forward at (your go-live with this supplier) — it is booked on that day. Empty = the day the supplier was added.
+        </p>
         <Field label="Notes">
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>

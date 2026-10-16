@@ -1349,7 +1349,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
             <option value="">Not on file</option>
             {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </Select>
-          <Hint>Pick a supplier so income tax can be withheld at their filer rate.</Hint>
+          <Hint>Pick a supplier so income tax can be withheld at the rate for their filer status (the non-filer rate until it is confirmed).</Hint>
         </Field>
         <Field label="Vendor name"><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
         <Field label="Contact (name · phone)"><input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="Bilal · +92 300 1234567" className={fieldCls} /></Field>
@@ -1527,7 +1527,7 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
 // (backend lib/bankAccounts.ts moneyAccountCode): picked when scheduling or
 // when marking paid; with one bank it is used automatically, with several a
 // pick is required (BANK_ACCOUNT_REQUIRED). Marking one paid posts it to the
-// books at once: income tax is withheld at the supplier's filer rate (gross,
+// books at once: income tax is withheld at the rate for the supplier's filer status (non-filer until confirmed) (gross,
 // withheld and net are shown), a rent advance must say which months it covers,
 // and a refundable deposit can be returned or partly kept.
 function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Project; line: Line; tenantId: string | null; onChange: () => void; fill?: Prefill | null }) {

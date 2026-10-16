@@ -149,7 +149,7 @@ describe('PATCH /setup/chart-of-accounts/:id — switching off', () => {
   })
 
   it('an ordinary account switches off and back on', async () => {
-    const created = await call('ceoA', 'POST', '/setup/chart-of-accounts', { code: '6210', name: 'Marketing software', type: 'expense' })
+    const created = await call('ceoA', 'POST', '/setup/chart-of-accounts', { code: '6310', name: 'Marketing software', type: 'expense' })
     expect(created.statusCode).toBe(201)
     expect((await off('ceoA', created.json().id)).statusCode).toBe(200)
     expect((await call('ceoA', 'PATCH', `/setup/chart-of-accounts/${created.json().id}`, { isActive: true })).statusCode).toBe(200)
@@ -163,7 +163,7 @@ describe('PATCH /setup/chart-of-accounts/:id — switching off', () => {
 
   it('POST never sets controlledBy (a body field is ignored)', async () => {
     const res = await call('ceoA', 'POST', '/setup/chart-of-accounts', {
-      code: '1451', name: 'Sneaky due-from', type: 'asset', controlledBy: 'intercompany', counterpartyTenantId: tenantB,
+      code: '1096', name: 'Sneaky due-from', type: 'asset', controlledBy: 'intercompany', counterpartyTenantId: tenantB,
     })
     expect(res.statusCode).toBe(201)
     const row = await prisma.account.findUniqueOrThrow({ where: { id: res.json().id } })
@@ -217,5 +217,26 @@ describe('finance adds and edits accounts; switching off stays with the CEO', ()
       const r = await call(who, 'POST', '/setup/chart-of-accounts', { code: `9${who.length}99`, name: 'No', type: 'expense' })
       expect(r.statusCode, who).toBe(403)
     }
+  })
+})
+
+// Finance audit 2026-10-16 (item 40): the ranges a module owns are never
+// created by hand — CEO and finance alike; nothing is written. Two companies:
+// the refusal is the same in each; the code just outside binds to the caller's.
+describe('module-owned account ranges are never created by hand', () => {
+  it('a code in a reserved range is refused 422 ACCOUNT_CODE_RESERVED', async () => {
+    for (const [who, tid, code] of [
+      ['ceoA', tenantA, '1451'], ['finA', tenantA, '1555'], ['finA', tenantA, '2012'], ['ceoA', tenantA, '2160'],
+      ['finA', tenantA, '6210'], ['finA', tenantA, '6995'], ['finA', tenantA, '1555.01'], ['finB', tenantB, '1420'],
+    ] as const) {
+      const before = await prisma.account.count({ where: { tenantId: tid, code } })
+      const res = await call(who, 'POST', '/setup/chart-of-accounts', { code, name: 'Hand made', type: 'asset' })
+      expect(res.statusCode, `${who} ${code}`).toBe(422)
+      expect(res.json().error.code).toBe('ACCOUNT_CODE_RESERVED')
+      expect(await prisma.account.count({ where: { tenantId: tid, code } })).toBe(before)
+    }
+    const ok = await call('finB', 'POST', '/setup/chart-of-accounts', { code: '6250', name: 'Outside the range', type: 'expense' })
+    expect(ok.statusCode).toBe(201)
+    expect(ok.json().tenantId).toBe(tenantB)
   })
 })

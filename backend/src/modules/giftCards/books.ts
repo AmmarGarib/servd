@@ -7,7 +7,7 @@
 //   issue  'giftcard.issue:<card>' — in the SAME transaction as the card, so a
 //          refused entry means no card (it used to be .catch(log): the card was
 //          live, its spend later debited 2080, and 2080 went debit-negative).
-//            sold        Dr 1010 cash | 1030 card | the bank's own code / Cr 2080
+//            sold        Dr 1010 cash | the bank's own code / Cr 2080 (1030 card on old rows only)
 //            promotional Dr 6060 Marketing & Promo                     / Cr 2080
 //   spend  the sale the order becomes debits 2080 for the card-paid share
 //          (accounting/orderPosting computeSaleAccounting, ONL-05).
@@ -50,8 +50,8 @@
 //          breakageAt null) is treated as held and booked on the next sweep.
 //
 // Money moved outside a till: a sold card is a back-office receipt (owner,
-// 2026-10-14): paid by cash, card, bank transfer, bank deposit or cheque
-// (lib/bankAccounts.ts RECEIPT_METHODS), always with its payment reference #
+// 2026-10-14): paid by cash, bank transfer, bank deposit or cheque — no card
+// since 2026-10-16 (lib/bankAccounts.ts RECEIPT_METHODS), always with its payment reference #
 // (assertPaymentReference — every method, cash included), stored on
 // GiftCard.paymentRef and written into the issue entry's description and the
 // money line's memo (never journal_entries.reference — that is the
@@ -69,7 +69,7 @@ import { randomBytes } from 'crypto'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import {
-  moneyAccountCode, ledgerBalancesByCode, RECEIPT_METHODS, assertPaymentReference, receiptText, type ReceiptMethod,
+  moneyAccountCode, ledgerBalancesByCode, RECEIPT_METHODS, assertPaymentReference, assertReceiptMethod, receiptText, type ReceiptMethod,
 } from '../../lib/bankAccounts.js'
 import { toCents } from '../../lib/money.js'
 import { withSavepoint } from '../../lib/savepoint.js'
@@ -162,6 +162,8 @@ export async function issueGiftCard(input: IssueGiftCardInput): Promise<GiftCard
   } else if (!input.paymentMethod) {
     throw new AppError('PAYMENT_METHOD_REQUIRED', 'Say how the customer paid for the card', 422)
   } else {
+    // Back-office receipts take no card (owner, 2026-10-16) — 422 CARD_NOT_A_RECEIPT.
+    assertReceiptMethod(input.paymentMethod)
     paymentRef = assertPaymentReference(input.paymentMethod, input.paymentRef)
   }
 
@@ -242,6 +244,7 @@ export async function bookMissingIssue(input: {
   paymentRef?: string | null
   postedBy: string
 }): Promise<{ card: GiftCard; entryId: string; debitCode: string }> {
+  assertReceiptMethod(input.paymentMethod)
   const paymentRef = assertPaymentReference(input.paymentMethod, input.paymentRef)
   return prisma.$transaction(async (tx) => {
     await lockGiftCardTx(tx, input.cardId)
@@ -297,6 +300,12 @@ export interface VoidGiftCardInput {
    * customer-money-to-income decision). Anyone else gets 403 FORFEIT_NEEDS_CEO.
    */
   canForfeitSold?: boolean
+  /**
+   * The caller may only SETTLE value left on a card that is already voided or
+   * expired (finance, owner 2026-10-16) — never void a live card (403
+   * VOID_NEEDS_MANAGER, checked under the card's row lock).
+   */
+  settleOnly?: boolean
 }
 
 export interface VoidGiftCardResult {
@@ -333,6 +342,9 @@ export async function voidGiftCard(input: VoidGiftCardInput): Promise<VoidGiftCa
     const B = card.balanceCents
     if (card.status === 'voided' && B <= 0) {
       throw new AppError('GIFTCARD_ALREADY_VOIDED', `${card.code} is already voided and holds nothing`, 409)
+    }
+    if (input.settleOnly && card.status !== 'voided' && card.status !== 'expired') {
+      throw new AppError('VOID_NEEDS_MANAGER', `${card.code} is still live — only a manager voids a live card. Finance settles value left on voided or expired cards.`, 403)
     }
 
     // What the disposition may do with this kind of card.

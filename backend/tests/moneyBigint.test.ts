@@ -565,6 +565,12 @@ describe('(4) a PKR 25m bank statement line', () => {
   let importId: string, lineId: string
   beforeAll(async () => {
     const bankA = (await prisma.bankAccount.create({ data: { tenantId: tenantA, name: `HBL ${RUN}`, bankName: 'HBL', accountCode: '1020' } })).id
+    // A LIVE PKR 25m Dr 1020 (the manual entry of (2) was reversed, and a
+    // reversed entry never matches a statement line — finance final #32).
+    await postJournalEntry({
+      tenantId: tenantA, sourceType: 'test.capital', sourceId: RUN, description: 'Capital injection (live)',
+      lines: [{ accountCode: '1020', type: 'debit', amountCents: 2_500_000_000 }, { accountCode: '3010', type: 'credit', amountCents: 2_500_000_000 }],
+    })
     const r = await call('finA', 'POST', '/reconciliation/bank/imports', {
       bankAccountId: bankA, statementDate: pktToday(), openingBalanceCents: 2_500_000_000, closingBalanceCents: 5_000_000_000,
       filename: 'big.csv', fileUrl: 'https://files.example.invalid/big.csv',
@@ -581,7 +587,7 @@ describe('(4) a PKR 25m bank statement line', () => {
     expect(lines).toHaveLength(2)
     const capital = lines.find((l) => l.amountCents === 2_500_000_000)!
     // Matching indexes candidates by amount (a Map keyed by number): the
-    // manual PKR 25m Dr 1020 from (2) is found.
+    // live PKR 25m Dr 1020 is found (never the reversed manual entry of (2)).
     expect(capital.matchStatus).toBe('matched')
     const loan = lines.find((l) => l.amountCents === 2_600_000_000)!
     expect(loan.matchStatus).toBe('unmatched')

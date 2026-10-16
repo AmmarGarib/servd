@@ -180,11 +180,13 @@ async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: st
       { days: clash!.n },
     )
   }
-  // One challan per (company, authority, month): two are never collapsed into one.
+  // A month may hold several challans (top-ups, finance audit 2026-10-17
+  // item 22) but one CPR number once per (company, authority, month): two
+  // records of the same challan are never collapsed into one.
   const taxClash = await db.$queryRaw<Array<{ authority: string; periodFrom: Date }>>`
     SELECT a.authority, a."periodFrom"
       FROM sales_tax_payments a
-      JOIN sales_tax_payments b ON b.authority = a.authority AND b."periodFrom" = a."periodFrom"
+      JOIN sales_tax_payments b ON b.authority = a.authority AND b."periodFrom" = a."periodFrom" AND b."cprNumber" = a."cprNumber"
      WHERE a."tenantId" = ${src} AND b."tenantId" = ${dst}
      ORDER BY a."periodFrom", a.authority`
   if (taxClash.length > 0) {
@@ -193,7 +195,7 @@ async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: st
     const list = taxClash.map((c) => `${c.authority.toUpperCase()} ${month(c.periodFrom)}`)
     throw new AppError(
       'MERGE_TAX_PAYMENT_CLASH',
-      `Both companies have recorded a tax payment for the same authority and month (${list.join(', ')}) — a company holds one per authority per month. Remove the wrong record on Accounting → Sales tax return before merging.`,
+      `Both companies have recorded the same challan (CPR number) for the same authority and month (${list.join(', ')}) — a CPR is recorded once. Remove the wrong record on Accounting → Sales tax return before merging.`,
       422,
       { clashes: taxClash.map((c) => ({ authority: c.authority, month: month(c.periodFrom) })) },
     )

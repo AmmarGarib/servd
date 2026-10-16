@@ -144,7 +144,7 @@ describe('reads stay inside the company', () => {
     expect(lookA.brands.map((l: { id: string }) => l.id).sort()).toEqual([A.conceptId, A.concept2].sort())
     expect(lookA.suppliers.map((s: { id: string }) => s.id)).toEqual([A.supplierId])
     expect(lookA.pools.map((p: { id: string }) => p.id)).toEqual([poolA.id])
-    expect(lookA.capabilities).toEqual({ canWrite: true, canCount: true, canApprove: false })
+    expect(lookA.capabilities).toEqual({ canWrite: true, canCount: true, canApprove: false, canSetInitialAllowance: true })
     expect(lookA.depreciation).toBe('automatic')
 
     const polB = (await call('finB', 'GET', '/policy')).json()

@@ -10,6 +10,7 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { postJournalEntry, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
 import { sumCents } from '../../lib/money.js'
+import { fmtPktDate } from '../accounting/dates.js'
 
 const BPS_TOTAL = 10_000
 
@@ -18,12 +19,17 @@ const BPS_TOTAL = 10_000
 // credits the source on the SAME account when no target code is set, so
 // counting them would make an overlapping later run (January, then Q1) see
 // January's cost again and allocate it twice.
-async function netDebitForAccount(accountId: string, periodStart: Date, periodEnd: Date): Promise<number> {
+//
+// Only UNTAGGED lines (conceptId null) are shared cost. A line already tagged
+// to a brand is that brand's own cost: allocating it again would leave the
+// brand carrying it twice and push the shared bucket below zero.
+async function netDebitForAccount(accountId: string, periodStart: Date, periodEnd: Date, tagged = false): Promise<number> {
   const sums = await prisma.journalLine.groupBy({
     by: ['type'],
     _sum: { amountCents: true },
     where: {
       accountId,
+      conceptId: tagged ? { not: null } : null,
       journalEntry: {
         entryDate: { gte: periodStart, lte: periodEnd },
         NOT: { reference: { startsWith: 'allocation.run:' } },
@@ -108,7 +114,7 @@ export async function runAllocationRule(input: {
   if (overlapping) {
     throw new AppError(
       'RUN_OVERLAPS',
-      `This rule already ran for ${overlapping.periodStart.toISOString().slice(0, 10)}–${overlapping.periodEnd.toISOString().slice(0, 10)} — pick a period that does not overlap it`,
+      `This rule already ran for ${fmtPktDate(overlapping.periodStart)}–${fmtPktDate(overlapping.periodEnd)} — pick a period that does not overlap it`,
       409,
     )
   }
@@ -117,8 +123,11 @@ export async function runAllocationRule(input: {
   if (!sourceAccount) throw new NotFoundError('Account', rule.sourceAccountCode)
 
   const totalCents = await netDebitForAccount(sourceAccount.id, input.periodStart, input.periodEnd)
+  // Shown with the result: cost already booked straight to a brand on the
+  // source account — left where it is, never allocated again.
+  const brandTaggedCents = await netDebitForAccount(sourceAccount.id, input.periodStart, input.periodEnd, true)
   if (totalCents <= 0) {
-    throw new AppError('NOTHING_TO_ALLOCATE', `No net debit balance to allocate from ${rule.sourceAccountCode} in this period`, 422)
+    throw new AppError('NOTHING_TO_ALLOCATE', `No shared (untagged) net debit balance to allocate from ${rule.sourceAccountCode} in this period`, 422)
   }
 
   // Compute per-concept allocations
@@ -199,7 +208,7 @@ export async function runAllocationRule(input: {
     accountCode: rule.sourceAccountCode,
     type: 'credit',
     amountCents: totalCents,
-    memo: `Allocated out for ${input.periodStart.toISOString().slice(0,10)}–${input.periodEnd.toISOString().slice(0,10)}`,
+    memo: `Allocated out for ${fmtPktDate(input.periodStart)}–${fmtPktDate(input.periodEnd)}`,
     conceptId: null,
   })
 
@@ -228,5 +237,5 @@ export async function runAllocationRule(input: {
     return run
   })
 
-  return { runId: run.id, totalAmountCents: totalCents, allocations: perConcept }
+  return { runId: run.id, totalAmountCents: totalCents, brandTaggedCents, allocations: perConcept }
 }

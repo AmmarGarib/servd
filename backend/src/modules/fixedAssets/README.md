@@ -137,14 +137,31 @@ pooled class becomes one layer of its pool with a quantity.
 |---|---|---|---|---|---|
 | kitchen_equipment | 1510 | 1591 | 60 | 15% | 25% |
 | furniture_fixtures | 1520 | 1592 | 84 | 15% | 0 |
-| it_equipment | 1530 | 1593 | 36 | 30% | 25% |
+| it_equipment | 1530 | 1593 | 36 | 30% | 0 (ticked per asset) |
 | vehicles | 1540 | 1594 | 60 | 15% | 0 |
 | leasehold | 1550 | 1595 | 120 (or the lease end) | 10% | 0 |
 | buildings | 1505 | 1596 | 240 | 10% | 0 |
 | power_equipment | 1515 | 1597 | 84 | 15% | 25% |
-| office_equipment | 1525 | 1598 | 60 | 15% | 25% |
-| smallwares (pooled) | 1560 | 1599 | 24 | — (to confirm, H23) | — |
+| office_equipment | 1525 | 1598 | 60 | 15% | 0 (ticked per asset) |
+| smallwares (pooled) | 1560 | 1599 | 24 | 100% in the year bought (H35) | — |
 | land | 1500 | — | not depreciated | 0 | 0 |
+
+**Initial allowance is per asset (Hasnain H42, 2026-10-16).**
+`FixedAsset.initialAllowanceEligible` decides it in the tax view
+(`tax.ts initialAllowanceBpOf`): ticked → the class's initial-allowance rate,
+or the statutory 25% when the class carries 0; unticked → 0. It starts ticked
+for kitchen_equipment and power_equipment and unticked for every other class
+(capitalisation, and the backfill in migration
+`20261017090000_fa_initial_allowance_flag`; a NULL row reads as that rule).
+Finance or the CEO changes it with `PUT /:id/initial-allowance {eligible,
+reason?}` (audit `fixed_asset.initial_allowance`; PATCH refuses the field).
+Tax view only — the books never read it. The allowance falls in the asset's
+first tax year and carries through the WDV of every later one, so once the
+company has frozen that year OR any later year the tick is final (409
+`TAX_YEAR_FROZEN`; `GET /:id` reports it as `tax.initialAllowance
+{applicable, frozenTaxYear}`, which the admin checkbox reads); re-sending the
+tick an asset already has is a 200 no-op; smallwares, land, voided assets and split-off layers are
+422 `INITIAL_ALLOWANCE_NOT_APPLICABLE`.
 
 Codes are fixed per key (`PATCH /classes/:id` refuses them); the CEO may edit
 the label, default life, tax rates, pooled (only while the class has no

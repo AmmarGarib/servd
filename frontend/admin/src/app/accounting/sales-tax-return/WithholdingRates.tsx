@@ -4,8 +4,10 @@
 //   GET /accounting/withholding/rates → { enabled, rates, defaultsUsed, maxBps, sections, canEdit }
 //   PUT /accounting/withholding/rates { rates: { [section]: { filerBps, nonFilerBps } } }
 // The API is the one writer (it also keeps the old single % in step); who may
-// edit is its `canEdit` flag (admin + finance), never a role list here. The
-// on/off switch stays on Configuration → Operations.
+// edit is its `canEdit` flag (admin + finance), never a role list here.
+//   PUT /accounting/withholding/enabled { enabled, reason ≥10 } — the on/off
+// switch for the ACTIVE company (owner, 2026-10-16: finance switches it on),
+// audited; the CEO keeps the same switch on Configuration → Operations.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -29,6 +31,7 @@ const ERROR_TEXT: Record<string, string> = {
   BAD_WHT_SECTION: 'One of the sections is not a withholding section servd knows.',
   NOTHING_TO_SAVE: 'Change at least one rate before saving.',
   NO_ACTIVE_COMPANY: 'Pick a company first — withholding rates are set per company.',
+  WHT_SWITCH_UNCHANGED: 'It is already switched that way — reload the page.',
   FORBIDDEN: 'Only the CEO and finance can change withholding rates.',
 }
 const errText = (e: unknown) => {
@@ -70,6 +73,16 @@ export default function WithholdingRates() {
     },
   })
 
+  const [switchReason, setSwitchReason] = useState('')
+  const [switchTried, setSwitchTried] = useState(false)
+  const toggle = useMutation({
+    mutationFn: (body: { enabled: boolean; reason: string }) => api.put<RatesResp>('/accounting/withholding/enabled', body),
+    onSuccess: (r) => {
+      qc.setQueryData(['withholding-rates'], r)
+      setSwitchReason(''); setSwitchTried(false)
+    },
+  })
+
   if (q.isLoading) return <p className="text-s-muted text-sm">Loading…</p>
   if (q.isError || !q.data) return <p className="text-s-red text-sm">{errText(q.error)}</p>
   const d = q.data
@@ -100,9 +113,46 @@ export default function WithholdingRates() {
           Income tax withheld from vendors when a supplier bill is recorded, or when an OpEx or CapEx payment is made (s.153 / s.155).
           A filer on FBR&apos;s Active Taxpayers List pays the filer rate; a non-filer the higher rate; a supplier with a valid
           exemption certificate pays none. A vendor whose status is not known is charged the non-filer rate until it is confirmed, and flagged
-          &quot;Check ATL status&quot;. The switch is on{' '}
+          &quot;Check ATL status&quot;. The CEO also has this switch on{' '}
           <Link href="/configuration/operations" className="font-semibold underline" style={{ color: 'var(--erp-primary)' }}>Configuration → Operations</Link>.
         </p>
+        {d.canEdit && (
+          <div className="pt-2 border-t border-s-border space-y-2">
+            <p className="text-xs font-semibold text-s-text">
+              {d.enabled ? 'Switch withholding off for this company' : 'Switch withholding on for this company'}
+            </p>
+            <p className="text-[11px] text-s-muted">
+              Applies to bills recorded and OpEx / CapEx payments made from now on; nothing already booked changes. Your reason is kept in the audit log.
+            </p>
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="flex-1 min-w-[16rem]">
+                <input
+                  value={switchReason}
+                  onChange={(e) => setSwitchReason(e.target.value)}
+                  placeholder="Reason (at least 10 characters), e.g. CA confirmed the rates"
+                  aria-label="Reason for switching withholding"
+                  className="w-full rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text"
+                />
+                {switchTried && switchReason.trim().length < 10 && (
+                  <p role="alert" className="text-[11px] text-s-red mt-1">Give a reason of at least 10 characters.</p>
+                )}
+              </div>
+              <button
+                type="button"
+                className={d.enabled ? 's-btn-secondary text-sm' : 's-btn-primary text-sm'}
+                disabled={toggle.isPending}
+                onClick={() => {
+                  setSwitchTried(true)
+                  if (switchReason.trim().length < 10) return
+                  toggle.mutate({ enabled: !d.enabled, reason: switchReason.trim() })
+                }}
+              >
+                {toggle.isPending ? 'Saving…' : d.enabled ? 'Switch off' : 'Switch on'}
+              </button>
+            </div>
+            {toggle.isError && <p role="alert" className="text-[11px] text-s-red">{errText(toggle.error)}</p>}
+          </div>
+        )}
         <p className="text-xs text-s-muted">
           The rates change with each Finance Act — confirm them with your CA. A change applies to documents recorded from then on; what is already booked is not restated.
         </p>

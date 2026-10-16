@@ -256,10 +256,14 @@ export async function importBankStatement(input: {
         accountId: account.id,
         journalEntry: { entryDate: { gte: minDate, lte: maxDate } },
       },
-      include: { journalEntry: { select: { entryDate: true } } },
+      include: { journalEntry: { select: { id: true, entryDate: true, reference: true, description: true } } },
     // A Raast line (a shift's aggregated Raast debit, a write-off) is never a
     // generic match — Raast reconciles receipt by receipt.
     })).filter((c) => !(c.memo ?? '').startsWith(RAAST_RECEIPTS_MEMO))
+    // A reversed (dead) entry and the reversal itself never match a statement
+    // line: only the live posting (e.g. a re-post) is the bank's movement.
+    const dead = await deadEntryIds(tx, input.tenantId, candidates.map((c) => c.journalEntry))
+    const liveCandidates = candidates.filter((c) => !dead.has(c.journalEntry.id))
 
     // Lock out journal lines that ANY prior BankStatementLine already matched.
     // Without this, re-importing the same statement (or overlapping windows)
@@ -277,7 +281,7 @@ export async function importBankStatement(input: {
 
     // Index candidates by signed amount → list of (lineId, date)
     const byAmount = new Map<number, Array<{ id: string; date: Date }>>()
-    for (const c of candidates) {
+    for (const c of liveCandidates) {
       if (consumed.has(c.id)) continue   // already matched in a prior import
       // Map keys must be numbers (a bigint key never equals the parsed number).
       const amt = toCents(c.amountCents)
@@ -696,6 +700,158 @@ export async function unmatchStatementLine(lineId: string): Promise<{ before: { 
   })
 }
 
+// ─── Reversed entries are dead for bank matching ─────────────────────────────
+// A reversal (accounting/journal.ts reverseJournalEntry) leaves the original
+// '<sourceType>:<sourceId>' entry in place and adds
+// '<sourceType>.<suffix>:<sourceId>' (suffix 'reversal' by default, 'void' for
+// supplier documents), described 'Reversal of <original reference>: …'.
+// Neither is a bank movement any more: the import matcher, the manual match
+// and the night audit's sales_bank_unmatched skip both. Returns the dead
+// entry ids among `entries`.
+export const REVERSAL_SUFFIXES = ['reversal', 'void'] as const
+const REVERSAL_DESCRIPTION = 'Reversal of '
+/** '<type>:<id>' → its possible reversal references. */
+export function reversalRefsOf(reference: string): string[] {
+  const at = reference.indexOf(':')
+  if (at <= 0) return []
+  const type = reference.slice(0, at)
+  const id = reference.slice(at + 1)
+  return REVERSAL_SUFFIXES.map((sfx) => `${type}.${sfx}:${id}`)
+}
+const isReversalEntry = (e: { reference: string | null; description?: string | null }) =>
+  !!e.reference && /^[^:]+\.(reversal|void):/.test(e.reference) && (e.description ?? REVERSAL_DESCRIPTION).startsWith(REVERSAL_DESCRIPTION)
+export async function deadEntryIds(
+  db: Tx | typeof prisma, tenantId: string, entries: Array<{ id: string; reference: string | null; description?: string | null }>,
+): Promise<Set<string>> {
+  const dead = new Set<string>()
+  const live: Array<{ id: string; reference: string }> = []
+  for (const e of entries) {
+    if (isReversalEntry(e)) dead.add(e.id)
+    else if (e.reference) live.push({ id: e.id, reference: e.reference })
+  }
+  if (live.length === 0) return dead
+  const wanted = new Map<string, string[]>() // reversal ref → original refs
+  for (const e of live) for (const r of reversalRefsOf(e.reference)) wanted.set(r, [...(wanted.get(r) ?? []), e.reference])
+  if (wanted.size === 0) return dead
+  const found = await db.journalEntry.findMany({
+    where: { tenantId, reference: { in: [...wanted.keys()] }, description: { startsWith: REVERSAL_DESCRIPTION } },
+    select: { reference: true },
+  })
+  const reversed = new Set(found.flatMap((r) => wanted.get(r.reference!) ?? []))
+  for (const e of live) if (reversed.has(e.reference)) dead.add(e.id)
+  return dead
+}
+
+// ─── Manual match (owner, 2026-10-16: finance does the full bank reconciliation) ─
+//
+// A statement line the import's matcher did not pair (it cleared outside the
+// window, or two candidates were equal) is paired BY HAND with its existing
+// journal line — never by booking an adjustment, which would post it twice.
+// The journal line must be: the statement's company, on the statement's
+// ledger code, live (not reversed, not a reversal), not a Raast receipt line
+// (the Raast tab), not already matched by another statement line, and equal to
+// the line's signed amount (bank debit = money in). The claim is conditional
+// (the line still 'unmatched') under a per-journal-line advisory lock, so two
+// statement lines never take one journal line.
+
+const MANUAL_MATCH_LOCK = 'bankmatch:'
+
+export interface MatchCandidate {
+  journalLineId: string; entryId: string; entryDate: Date; reference: string | null; description: string; memo: string | null; amountCents: number
+}
+
+/** The live, free journal lines a statement line could be matched to (equal signed amount, ± `days`). */
+export async function manualMatchCandidates(lineId: string, days: number): Promise<MatchCandidate[]> {
+  const line = await prisma.bankStatementLine.findUnique({
+    where: { id: lineId },
+    select: { postedDate: true, amountCents: true, import: { select: { tenantId: true, accountCode: true } } },
+  })
+  if (!line) throw new NotFoundError('BankStatementLine', lineId)
+  const tenantId = line.import.tenantId
+  if (!tenantId) return []
+  const amount = toCents(line.amountCents)
+  const account = await prisma.account.findFirst({ where: { tenantId, code: line.import.accountCode }, select: { id: true } })
+  if (!account || amount === 0) return []
+  const span = days * 86_400_000
+  const rows = await prisma.journalLine.findMany({
+    where: {
+      accountId: account.id,
+      type: amount > 0 ? 'debit' : 'credit',
+      amountCents: Math.abs(amount),
+      journalEntry: { tenantId, entryDate: { gte: new Date(line.postedDate.getTime() - span), lte: new Date(line.postedDate.getTime() + span) } },
+    },
+    include: { journalEntry: { select: { id: true, entryDate: true, reference: true, description: true } } },
+    orderBy: { journalEntry: { entryDate: 'asc' } },
+    take: 200,
+  })
+  const usable = rows.filter((r) => !(r.memo ?? '').startsWith(RAAST_RECEIPTS_MEMO))
+  const dead = await deadEntryIds(prisma, tenantId, usable.map((r) => r.journalEntry))
+  const taken = new Set((await prisma.bankStatementLine.findMany({
+    where: { matchedJournalLineId: { in: usable.map((r) => r.id) } },
+    select: { matchedJournalLineId: true },
+  })).map((t) => t.matchedJournalLineId))
+  return usable
+    .filter((r) => !dead.has(r.journalEntry.id) && !taken.has(r.id))
+    .map((r) => ({
+      journalLineId: r.id, entryId: r.journalEntry.id, entryDate: r.journalEntry.entryDate, reference: r.journalEntry.reference,
+      description: r.journalEntry.description, memo: r.memo, amountCents: toCents(r.amountCents),
+    }))
+}
+
+export async function manualMatchStatementLine(lineId: string, journalLineId: string): Promise<{
+  tenantId: string; amountCents: number; journalEntryId: string; reference: string | null
+}> {
+  return prisma.$transaction(async (tx) => {
+    const line = await tx.bankStatementLine.findUnique({
+      where: { id: lineId },
+      select: {
+        id: true, matchStatus: true, amountCents: true, raastReceipt: { select: { id: true } },
+        import: { select: { tenantId: true, accountCode: true } },
+      },
+    })
+    if (!line) throw new NotFoundError('BankStatementLine', lineId)
+    const tenantId = line.import.tenantId
+    if (!tenantId) throw new AppError('NO_COMPANY', 'This statement has no company — it cannot be matched to a ledger', 422)
+    if (line.raastReceipt) {
+      throw new AppError('RAAST_MATCHED_LINE', 'This line is matched to a Raast payment — work it on the Raast tab', 409, { receiptId: line.raastReceipt.id })
+    }
+    if (line.matchStatus !== 'unmatched') throw new AppError('LINE_NOT_UNMATCHED', `Line is already ${line.matchStatus}`, 409)
+    // Another company's journal line is not there at all (404), never a hint it exists.
+    const jl = await tx.journalLine.findFirst({
+      where: { id: journalLineId, journalEntry: { tenantId } },
+      select: {
+        id: true, type: true, amountCents: true, memo: true,
+        account: { select: { code: true, tenantId: true } },
+        journalEntry: { select: { id: true, reference: true, description: true } },
+      },
+    })
+    if (!jl) throw new NotFoundError('JournalLine', journalLineId)
+    if (jl.account.tenantId !== tenantId || jl.account.code !== line.import.accountCode) {
+      throw new AppError('JOURNAL_LINE_NOT_ON_ACCOUNT', `That journal line is not on account ${line.import.accountCode}, the account this statement reconciles`, 422)
+    }
+    if ((jl.memo ?? '').startsWith(RAAST_RECEIPTS_MEMO)) {
+      throw new AppError('RAAST_JOURNAL_LINE', 'Raast takings are matched receipt by receipt on the Raast tab', 422)
+    }
+    const signed = jl.type === 'debit' ? toCents(jl.amountCents) : -toCents(jl.amountCents)
+    const amount = toCents(line.amountCents)
+    if (signed !== amount) {
+      throw new AppError('AMOUNT_MISMATCH', `The journal line (${signed}) does not equal the statement line (${amount}) — book the difference as an adjustment instead`, 422)
+    }
+    if ((await deadEntryIds(tx, tenantId, [jl.journalEntry])).has(jl.journalEntry.id)) {
+      throw new AppError('ENTRY_REVERSED', 'That entry was reversed (or is a reversal) — match the live entry instead', 422)
+    }
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${MANUAL_MATCH_LOCK}${jl.id}`}))`
+    const taken = await tx.bankStatementLine.findFirst({ where: { matchedJournalLineId: jl.id }, select: { id: true } })
+    if (taken) throw new AppError('JOURNAL_LINE_ALREADY_MATCHED', 'That journal line is already matched to another statement line', 409, { statementLineId: taken.id })
+    const claimed = await tx.bankStatementLine.updateMany({
+      where: { id: line.id, matchStatus: 'unmatched' },
+      data: { matchStatus: 'matched', matchedJournalLineId: jl.id },
+    })
+    if (claimed.count === 0) throw new AppError('LINE_NOT_UNMATCHED', 'Line was already cleared', 409)
+    return { tenantId, amountCents: amount, journalEntryId: jl.journalEntry.id, reference: jl.journalEntry.reference }
+  })
+}
+
 // ─── Night audit: the bank side of a sales day (owner, 2026-10-16) ──────────
 //
 // sales_bank_unmatched (nightAudit/checks.ts, settlement step). Lines on the
@@ -739,6 +895,16 @@ export async function salesBankUnmatchedBetween(
        AND a."tenantId" = ${tenantId}
        AND a.code = ANY(${codes}::text[])
        AND NOT EXISTS (SELECT 1 FROM bank_statement_lines s WHERE s."matchedJournalLineId" = l.id)
+       -- A reversed entry and its reversal are not bank movements (deadEntryIds):
+       -- a reversal is '<type>.reversal|void:<id>' described 'Reversal of …'.
+       AND NOT (COALESCE(e.reference, '') ~ '^[^:]+\\.(reversal|void):' AND e.description LIKE 'Reversal of %')
+       AND NOT EXISTS (
+             SELECT 1 FROM journal_entries r
+              WHERE r."tenantId" = e."tenantId"
+                AND r.description LIKE 'Reversal of %'
+                AND r.reference IN (
+                      split_part(e.reference, ':', 1) || '.reversal:' || substr(e.reference, strpos(e.reference, ':') + 1),
+                      split_part(e.reference, ':', 1) || '.void:' || substr(e.reference, strpos(e.reference, ':') + 1)))
        AND (
              (e."entryDate" >= ${from} AND e."entryDate" <= ${to}
               AND e.reference LIKE ANY(${patterns}::text[])

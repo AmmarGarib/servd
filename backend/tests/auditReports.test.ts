@@ -363,10 +363,9 @@ describe('bank statements — finance reconciles, big balances import, card sett
     const lines = (await call('fin', 'GET', `/reconciliation/bank/imports/${importId}/lines`)).json() as Array<{ id: string; description: string }>
     expect(lines).toHaveLength(3)
     const unknown = lines.find((l) => l.description === 'Unknown credit')!
-    expect((await call('fin', 'POST', `/reconciliation/bank/lines/${unknown.id}/ignore`, {})).statusCode).toBe(200)
-    // Booking an adjustment journal stays with the approvers.
+    expect((await call('fin', 'POST', `/reconciliation/bank/lines/${unknown.id}/ignore`, { reason: 'Duplicate statement row, already reconciled' })).statusCode).toBe(200)
+    // Booking an adjustment journal is finance's too since 2026-10-16 (finance with accounting) — booked below by the CEO.
     const fee = lines.find((l) => l.description === 'Bank charges')!
-    expect((await call('fin', 'POST', `/reconciliation/bank/lines/${fee.id}/adjust`, { contraAccountCode: '6081', memo: 'charges' })).statusCode).toBe(403)
     // Another company's finance sees none of it.
     expect(((await call('finB', 'GET', '/reconciliation/bank/imports')).json() as Array<{ id: string }>).some((i) => i.id === importId)).toBe(false)
     expect((await call('finB', 'GET', `/reconciliation/bank/imports/${importId}/lines`)).statusCode).toBe(404)

@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import type { FastifyRequest } from 'fastify'
+import { requireAuth, MANAGERS, FINANCE_TEAM } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
+import { AppError } from '../../lib/errors.js'
 import { requireCustomerAuth } from '../auth/middleware.js'
-import { findCustomerInScope, customerIdsInScope, tenantIdsOf } from '../crm/customerScope.js'
+import { findCustomerInScope, customerIdsInScope, tenantIdsOf, customerOfCompanies } from '../crm/customerScope.js'
 import { activeTenantId, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { zReceiptMethod, zPaymentRef, isBankMethod, assertPaymentReference } from '../../lib/bankAccounts.js'
@@ -16,7 +19,7 @@ import { topUpWallet, walletBalancesOf, balanceInView, TOPUP_TENDERS, type TopUp
 
 const topUpKind = z.object({
   // goodwill = a manager's credit (Dr 6060 Marketing & Promo); paid = the
-  // customer paid for it (Dr 1010 cash / 1030 card / the bank account of the
+  // customer paid for it (Dr 1010 cash / the bank account of the
   // ACTIVE company it was received into — lib/bankAccounts.ts moneyAccountCode).
   kind: z.enum(['goodwill', 'paid']).default('goodwill'),
   // RECEIPT_METHODS (owner, 2026-10-14: + bank deposit, cheque). The old
@@ -30,9 +33,27 @@ const topUpKind = z.object({
   // company's or an unlinked one → 422.
   bankAccountId: z.string().min(1).nullable().optional(),
 })
-  .refine((d) => d.kind !== 'paid' || !!d.tender, { message: 'a paid top-up needs its tender (cash, card, bank transfer, bank deposit or cheque)', path: ['tender'] })
+  .refine((d) => d.kind !== 'paid' || !!d.tender, { message: 'a paid top-up needs its tender (cash, bank transfer, bank deposit or cheque)', path: ['tender'] })
   .refine((d) => !d.bankAccountId || (d.kind === 'paid' && isBankMethod(d.tender)), { message: 'a bank account goes with a top-up paid into a bank only (transfer, deposit or cheque)', path: ['bankAccountId'] })
   .refine((d) => d.kind === 'paid' || !d.paymentRef, { message: 'a goodwill credit has no payment reference', path: ['paymentRef'] })
+
+// Who records a top-up (owner, 2026-10-16: finance records paid wallet
+// top-ups — a back-office receipt like a gift-card sale). Managers record both
+// kinds; finance (with its 'accounting' module) records PAID top-ups only — a
+// goodwill credit is our own cost (Dr 6060) and stays a manager's call (403
+// GOODWILL_MANAGERS_ONLY). Every top-up is audited (wallet.topup /
+// wallet.bulk_topup) with the actor.
+const TOPUP_RECORDERS = FINANCE_TEAM
+const MANAGER_ROLES = new Set<string>(MANAGERS)
+const TOPUP_GUARD = [
+  requireAuth(...TOPUP_RECORDERS),
+  async (req: FastifyRequest) => { if (req.staffUser?.role === 'finance') await requireModule('accounting')(req) },
+]
+function assertMayCredit(req: FastifyRequest, kind: 'goodwill' | 'paid') {
+  if (kind === 'goodwill' && !MANAGER_ROLES.has(req.staffUser!.role)) {
+    throw new AppError('GOODWILL_MANAGERS_ONLY', 'A goodwill credit is a manager\'s call — finance records paid top-ups only', 403)
+  }
+}
 
 export async function walletRoutes(fastify: FastifyInstance) {
   // GET /wallet/me — customer: the wallet at ONE company (the company of
@@ -69,13 +90,14 @@ export async function walletRoutes(fastify: FastifyInstance) {
   //   201:  { newBalance, tenantId, transactionId, entryId, referenceUsedBefore }
   fastify.post<{ Body: { customerId: string; amountCents: number; description?: string; kind?: string; tender?: string; paymentRef?: string | null; bankAccountId?: string | null } }>(
     '/topup',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: TOPUP_GUARD },
     async (req, reply) => {
       const body = z.object({
         customerId: z.string().uuid(),
         amountCents: z.number().int().positive().max(100_000_000),
         description: z.string().max(300).optional(),
       }).and(topUpKind).parse(req.body)
+      assertMayCredit(req, body.kind)
 
       // Only a customer of the ACTIVE company (ordered or booked at one of its
       // brands); anyone else is a 404, so a foreign id is not confirmed.
@@ -113,13 +135,14 @@ export async function walletRoutes(fastify: FastifyInstance) {
   // batch (the batch's own rows are not a warning).
   fastify.post<{ Body: { customerIds: string[]; amountCents: number; description?: string; kind?: string; tender?: string; paymentRef?: string | null; bankAccountId?: string | null } }>(
     '/bulk-topup',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: TOPUP_GUARD },
     async (req) => {
       const body = z.object({
         customerIds: z.array(z.string().uuid()).min(1).max(500),
         amountCents: z.number().int().positive().max(100_000_000),
         description: z.string().max(300).optional(),
       }).and(topUpKind).parse(req.body)
+      assertMayCredit(req, body.kind)
 
       const tenantId = activeTenantId(req, 'a wallet top-up is booked in one company')
       // Customers the active company has never served are skipped, not credited.
@@ -165,11 +188,44 @@ export async function walletRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // GET /wallet/customers?q= — find the customer to top up (finance's Wallet
+  // top-ups page; finance holds no CRM module). Only customers of the ACTIVE
+  // company (the company a top-up is booked in); name, phone or email, at
+  // least 3 characters, 20 at most, with their wallet there.
+  fastify.get<{ Querystring: { q?: string } }>(
+    '/customers',
+    { preHandler: TOPUP_GUARD },
+    async (req) => {
+      const q = z.string().trim().min(3).max(100).parse(req.query.q ?? '')
+      const tenantId = activeTenantId(req, 'a wallet top-up is booked in one company')
+      const rows = await prisma.customer.findMany({
+        where: {
+          deletedAt: null,
+          ...customerOfCompanies({ tenantId }),
+          AND: [{ OR: [
+            { name: { contains: q, mode: 'insensitive' } },
+            { phone: { contains: q } },
+            { email: { contains: q, mode: 'insensitive' } },
+          ] }],
+        },
+        select: { id: true, name: true, phone: true, email: true },
+        orderBy: { name: 'asc' },
+        take: 20,
+      })
+      const balances = await walletBalancesOf(rows.map((r) => r.id), [tenantId])
+      return {
+        tenantId,
+        customers: rows.map((r) => ({ ...r, walletBalanceCents: balances.get(r.id)?.get(tenantId) ?? 0 })),
+      }
+    },
+  )
+
   // GET /wallet/customers/:id — staff: the customer's wallets at the companies
   // in view, and their history. Another company's wallet is not ours to show.
+  // Finance reads it too (the wallet liability 2050 is theirs to reconcile).
   fastify.get<{ Params: { id: string }; Querystring: { limit?: string } }>(
     '/customers/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: TOPUP_GUARD },
     async (req) => {
       const limit = Math.min(Math.max(1, parseInt(req.query.limit ?? '50', 10) || 50), 200)
       const found = await findCustomerInScope(req, req.params.id, 'read')

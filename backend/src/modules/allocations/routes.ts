@@ -8,6 +8,9 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { requireActiveCompany, assertConceptAttachable } from '../financePlanning/companyRefs.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { requireModule } from '../notifications/requireModule.js'
+import { parsePktStartOfDay, parsePktEndOfDay } from '../accounting/dates.js'
+import type { UserRole } from '@prisma/client'
 
 const ruleSchema = z.object({
   name: z.string().min(1),
@@ -21,10 +24,21 @@ const ruleSchema = z.object({
   })).min(1),
 })
 
+// Pakistan calendar days (YYYY-MM-DD). The run covers periodStart 00:00 PKT
+// through periodEnd 23:59:59.999 PKT — a bare date parsed as UTC midnight
+// (05:00 PKT) used to drop the last day's evening from every run and from
+// the next one too.
+const pktDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a YYYY-MM-DD date')
 const runSchema = z.object({
-  periodStart: z.string(),
-  periodEnd: z.string(),
+  periodStart: pktDay,
+  periodEnd: pktDay,
 })
+
+// Running an existing rule for a month is a month-end book-keeping job:
+// the CEO and finance (with the accounting module). Defining or deleting a
+// rule (how shared cost is split across brands) stays the CEO's. Postings
+// into closed / reopened months are refused by the journal's own guards.
+const ALLOCATION_RUNNERS = ['admin', 'finance'] as UserRole[]
 
 export async function allocationRoutes(fastify: FastifyInstance) {
   // Rules and runs belong to one company each (CostAllocationRule.tenantId,
@@ -138,7 +152,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/rules/:id/run',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: [requireAuth(...ALLOCATION_RUNNERS), requireModule('accounting')] },
     async (req, reply) => {
       const body = runSchema.parse(req.body)
       // Resolve the rule inside the operator's companies first; the run then
@@ -152,9 +166,15 @@ export async function allocationRoutes(fastify: FastifyInstance) {
       const result = await runAllocationRule({
         tenantId: rule.tenantId,
         ruleId: rule.id,
-        periodStart: new Date(body.periodStart),
-        periodEnd: new Date(body.periodEnd),
+        periodStart: parsePktStartOfDay(body.periodStart),
+        periodEnd: parsePktEndOfDay(body.periodEnd),
         postedById: req.staffUser!.id,
+      })
+      await audit({ category: 'accounting',
+        action: 'allocation.run', entity: 'CostAllocationRun', entityId: result.runId,
+        userId: req.staffUser!.id, tenantId: rule.tenantId, userEmail: req.staffUser!.email,
+        before: null, after: { ruleId: rule.id, periodStart: body.periodStart, periodEnd: body.periodEnd, totalAmountCents: result.totalAmountCents },
+        metadata: { ip: req.ip, actorRole: req.staffUser!.role },
       })
       return reply.status(201).send(result)
     },

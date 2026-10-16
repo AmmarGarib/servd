@@ -20,10 +20,10 @@
 //                           — the brand's authority, the same rule as a sale
 //                           (outputTaxCodeFor: 2032 SRB for a Sindh kitchen,
 //                           2032 SRB; 2030 FBR with no brand / province)
-//   receivable.payment      Dr the bank / cash / card account the money went
+//   receivable.payment      Dr the bank / cash account the money went
 //                           into (lib/bankAccounts.ts moneyAccountCode) / Cr 1110.
-//                           Method: RECEIPT_METHODS (cash, card, bank transfer,
-//                           bank deposit, cheque — the old 'bank' reads as bank
+//                           Method: RECEIPT_METHODS (cash, bank transfer,
+//                           bank deposit, cheque; never card — the old 'bank' reads as bank
 //                           transfer); the payment reference # is REQUIRED for
 //                           every method, cash included (owner, 2026-10-14) and
 //                           is written into the entry's description and the

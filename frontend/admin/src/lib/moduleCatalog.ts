@@ -166,6 +166,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     // /accounting/food-cost forwards there (next.config.js).
     { label: 'Sales quadrants', href: '/accounting/menu-engineering', sub: true },
     { label: 'AP aging', href: '/accounting/ap-aging', sub: true },
+    // Finance records supplier bills, credit notes and payments (owner,
+    // 2026-10-16): /procurement opens to accounting too and shows finance only
+    // Bills, Payments and Aging (procurement/page.tsx useApOnly).
+    { label: 'Supplier bills & payments', href: '/procurement?tab=bills', sub: true, hint: 'Record supplier bills, credit notes and payments (cash, bank, cheque, wallet)' },
     { label: 'Received, not billed', href: '/procurement/grni', sub: true },
     // H20: waste and count differences wait in 1290 until the CEO approves
     // them into cost of sales (API /accounting/stock-differences).
@@ -177,12 +181,18 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Receivables', href: '/accounting/receivables', sub: true },
     { label: 'On-account clients', href: '/accounting/receivables/clients', sub: true, hint: 'Corporate clients who pay monthly — credit limits, QR cards, statements' },
     { label: 'Sales tax return', href: '/accounting/sales-tax-return', sub: true },
+    // The register of tax invoices and credit notes issued (finance audit
+    // 2026-10-17 item 23) — finance ties the return to the numbers issued.
+    { label: 'Tax invoices', href: '/accounting/tax-invoices', sub: true, hint: 'Every tax invoice and credit note issued, by company — filter and download CSV' },
     { label: 'Statutory payments', href: '/accounting/statutory', sub: true },
     { label: 'Inter-company', href: '/accounting/intercompany', sub: true },
     { label: 'Fixed assets', href: '/accounting/fixed-assets', sub: true, hint: 'Register, smallwares pools, requests and reports; depreciation runs by itself each month' },
     { label: 'Petty cash', href: '/finance/petty-cash', sub: true },
-    { label: 'Cash requests', href: '/finance/cash-vouchers', sub: true, hint: 'Anyone asks for cash; HOD and director sign; the cashier pays (booked to its category); receipts kept for the file' },
+    { label: 'Cash requests', href: '/finance/cash-vouchers', sub: true, hint: 'Anyone asks for cash; finance approves, then the CEO; finance pays and books it once; supporting documents are checked after' },
     { label: 'Deposit drops', href: '/finance/deposit-drops', sub: true },
+    // Finance records PAID wallet top-ups (owner, 2026-10-16); goodwill
+    // credits stay with managers on Customers / CRM.
+    { label: 'Wallet top-ups', href: '/finance/wallet-topups', sub: true, hint: 'A customer paid to load their wallet — cash, bank transfer, bank deposit or cheque, with its reference #' },
     { label: 'Bank accounts', href: '/configuration/bank-accounts', sub: true },
   ],
   accounting_audit: [{ label: 'Accounting audit', href: '/accounting/audit-log', hint: 'Who moved the books — CEO and management only' }],
@@ -318,7 +328,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it. Rider COD not handed in sits on 1351 and blocks the month close until the CEO approves; writing off a rider debt is not built.',
   accounting: 'One ledger feed and one period-close checklist (only the CEO may close over an overridable block, with a reason; reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Bad debts are written off directly, each approved by the CEO; there is no doubtful-debt provision. On-account clients pay by QR card at the cash tax class and get monthly statements (not tax invoices). Head-office costs not recharged show as "Company overhead (unallocated)".',
   finance_pl: 'From the ledger. Shared cost reaches a brand only through allocation runs; the rest is one head-office line (decision 22).',
-  capital: 'A CapEx line names its supplier; a paid instalment is an advance on 1340, with income tax withheld at the supplier\'s filer rate and input tax by authority. Capitalising a delivered item onto the fixed-asset register needs the CEO\'s approval; Quick buy (bank only) buys, pays and asks for capitalisation in one step. Old capital-ledger rows are read-only history.',
+  capital: 'A CapEx line names its supplier; a paid instalment is an advance on 1340, with income tax withheld at the rate for the supplier\'s filer status (non-filer until confirmed) and input tax by authority. Capitalising a delivered item onto the fixed-asset register needs the CEO\'s approval; Quick buy (bank only) buys, pays and asks for capitalisation in one step. Old capital-ledger rows are read-only history.',
   reports: 'Food cost variance is its own module (food_cost), linked from Reports. The demand forecast predicts items, not covers, so it cannot drive a rota.',
   food_cost: 'Actual vs recipe at the FIFO price of the lots cooked, split food / drinks / packaging, with material cost by order type and brand. Per-outlet actual waits for per-outlet stock (the next build); periods before the FIFO cut-over have no lot data.',
   dispatch: 'A delivery is completed with the customer\'s code; the staff "Delivered" override is managers-only and only while the company\'s code-only switch is off.',

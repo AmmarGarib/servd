@@ -49,6 +49,8 @@ interface Client {
   termsDays: number; overdueGraceDays: number; requiresReference: boolean; notes: string | null
   brands: Array<{ id: string; name: string | null }>
   unbilledCents: number; invoicesDueCents: number; exposureCents: number; availableCents: number
+  /** Money owed back to the client (a refund after its statement was paid) — blocks closing. */
+  creditCents?: number
   overdue: { number: string; dueDate: string; balanceCents: number } | null
   pending: 'new_client' | 'limit_increase' | null; approveBlockedReason: string | null
   canApprove: boolean; canReject: boolean
@@ -249,6 +251,14 @@ export default function OnAccountClientPage() {
                 {c.canReject && <Btn danger onClick={() => setDialog({ kind: 'reject' })}>Reject</Btn>}
               </div>
             )}
+          </section>
+        )}
+
+        {(c.creditCents ?? 0) > 0 && (
+          <section role="status" className="rounded-2xl p-4 text-sm"
+            style={{ ...card, borderColor: 'color-mix(in srgb, var(--erp-warning) 40%, transparent)' }}>
+            <p className="font-black" style={{ color: 'var(--erp-warning)' }}>In credit · {fmtPkrWhole(c.creditCents ?? 0)}</p>
+            <p className="text-white/60 mt-1">A refund came after this client&apos;s statement was paid, so the company owes them this amount. Refund it to the client (Receivables → the statement → Refund) before closing the client.</p>
           </section>
         )}
 

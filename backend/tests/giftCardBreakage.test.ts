@@ -263,7 +263,7 @@ describe('held breakage', () => {
 
 describe('forfeit of a SOLD card is the CEO\'s', () => {
   it('a manager and an owner get 403 FORFEIT_NEEDS_CEO; B\'s admin gets 404; the CEO\'s forfeit posts Dr 2080 / Cr 4200', async () => {
-    const c = await issued('mgrA', { paymentMethod: 'card', conceptId: conceptA })
+    const c = await issued('mgrA', { paymentMethod: 'cash', conceptId: conceptA })
     for (const who of ['mgrA', 'ownerA']) {
       const r = await call(who, 'POST', `/gift-cards/${c.id}/void`, { reason: 'Keep the money', disposition: 'forfeit' })
       expect(r.statusCode).toBe(403)

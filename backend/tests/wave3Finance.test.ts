@@ -289,16 +289,17 @@ describe('UI-07 finance does the workspace\'s normal work, bound to its active c
   it('exceptions and statement lines: work A\'s, 404 on B\'s', async () => {
     expect((await call('finA', 'PATCH', `/crosschecks/exceptions/${ids.flagA}/acknowledge`, {})).statusCode).toBe(204)
     expect((await call('finA', 'PATCH', `/crosschecks/exceptions/${ids.flagB}/acknowledge`, {})).statusCode).toBe(404)
-    expect((await call('finA', 'POST', `/reconciliation/bank/lines/${ids.lineA}/ignore`, {})).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/reconciliation/bank/lines/${ids.lineA}/ignore`, { reason: 'Duplicate statement row, already reconciled' })).statusCode).toBe(200)
     expect((await call('finA', 'POST', `/reconciliation/bank/lines/${ids.lineB}/ignore`, {})).statusCode).toBe(404)
   })
 
   it('approvals, CEO postings and governance stay where they were', async () => {
     const refused: Array<[string, 'POST' | 'DELETE', string, unknown]> = [
-      ['adjust a statement line (journal)', 'POST', `/reconciliation/bank/lines/${ids.lineA}/adjust`, { memo: 'x', contraAccountCode: '6080' }],
       ['post old capex instalments', 'POST', `/finance/capex/${ids.pA}/post-payments`, {}],
       ['post old opex payments', 'POST', '/opex/payments/post-unposted', {}],
-      ['void a customer\'s gift card', 'POST', `/gift-cards/${ids.gA}/void`, { reason: 'test' }],
+      // Finance settles voided / expired cards only (owner, 2026-10-16) — a
+      // LIVE card is still a manager's (403 VOID_NEEDS_MANAGER).
+      ['void a customer\'s live gift card', 'POST', `/gift-cards/${ids.gA}/void`, { reason: 'test', disposition: 'refund', refundMethod: 'cash' }],
       ['post a tip pool', 'POST', `/tip-pools/${ids.tpA}/post`, {}],
       ['dismiss an exception', 'DELETE', `/crosschecks/exceptions/${ids.flagA}`, undefined],
       ['set headcount', 'POST', '/positions', { title: 'Barista', monthlySalaryCents: 1 }],
@@ -331,14 +332,12 @@ describe('UI-07 finance reads the payables (AP) — and only reads them', () => 
     expect(list).not.toContain(ids.supB)
   })
 
-  it('finance raises, approves, bills and pays nothing here', async () => {
-    const refused: Array<[string, unknown]> = [
-      ['/procurement/bills', { supplierId: ids.supA, billNumber: 'X1', billDate: '2026-10-01', lines: [{ description: 'Flour', quantity: 1, unitCostCents: 100 }] }],
-      ['/procurement/payments', { supplierId: ids.supA, paymentDate: '2026-10-01', method: 'cash', amountCents: 100 }],
-      ['/procurement/purchase-orders', { supplierId: ids.supA, lines: [{ inventoryItemId: ids.supA, quantityOrdered: 1, unitCostCents: 1 }] }],
-      [`/procurement/bills/${ids.billA}/void`, { reason: 'x' }],
-    ]
-    for (const [url, body] of refused) expect((await call('finAp', 'POST', url, body)).statusCode, url).toBe(403)
+  // Owner, 2026-10-16: finance bills and pays (procurement AP_WRITERS; the
+  // full cover is apFinanceFinal.test.ts) — it still raises no PO.
+  it('finance raises no PO; bills and payments are no longer refused by role', async () => {
+    expect((await call('finAp', 'POST', '/procurement/purchase-orders', { supplierId: ids.supA, lines: [{ inventoryItemId: ids.supA, quantityOrdered: 1, unitCostCents: 1 }] })).statusCode).toBe(403)
+    const bill = await call('finAp', 'POST', '/procurement/bills', { supplierId: ids.supA, billNumber: 'X1', billDate: '2026-10-01', lines: [{ description: 'Flour', quantity: 1, unitCostCents: 100 }] })
+    expect(bill.statusCode).not.toBe(403)
   })
 })
 

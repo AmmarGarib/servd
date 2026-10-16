@@ -3,6 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../lib/money'
+import { useAuthStore } from '../../store/auth'
+import { usePermissions } from '../../hooks/useCan'
+
+/** A stored instant as its Karachi calendar day (a run covers whole PKT days). */
+const pktDay = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(0, 10)
 
 interface Rule {
   id: string; name: string; sourceAccountCode: string; driver: 'fixed_pct'|'revenue_share'; isActive: boolean
@@ -20,6 +25,12 @@ export default function AllocationsPage() {
   const [to,   setTo]   = useState(todayPktIso())
   const [running, setRunning] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
+  // Running a rule is the CEO's and finance's (with the accounting module) —
+  // the API refuses everyone else, so the button is not shown to them.
+  const isAdmin = useAuthStore((s) => s.isRole('admin'))
+  const isFinance = useAuthStore((s) => s.isRole('finance'))
+  const { data: perms } = usePermissions()
+  const canRun = isAdmin || (isFinance && !!perms?.modules.includes('accounting'))
 
   const { data: rules } = useQuery({
     queryKey: ['allocation-rules'],
@@ -32,8 +43,11 @@ export default function AllocationsPage() {
 
   const runRule = useMutation({
     mutationFn: (ruleId: string) => api.post(`/allocations/rules/${ruleId}/run`, { periodStart: from, periodEnd: to }),
-    onSuccess: (_d, ruleId) => {
-      setFeedback(`Rule ${ruleId.slice(0,8)} ran successfully`)
+    onSuccess: (d, ruleId) => {
+      const r = d as { totalAmountCents?: number; brandTaggedCents?: number }
+      const name = rules?.find((x) => x.id === ruleId)?.name ?? 'Rule'
+      setFeedback(`${name} ran: ${fmtPkr(r.totalAmountCents ?? 0)} of shared cost allocated`
+        + (r.brandTaggedCents ? ` (${fmtPkr(r.brandTaggedCents)} already booked to brands was left with them)` : ''))
       void qc.invalidateQueries({ queryKey: ['allocation-runs'] })
     },
     onError: (err: { message?: string }) => setFeedback(err.message ?? 'Run failed'),
@@ -44,7 +58,7 @@ export default function AllocationsPage() {
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
         <h1 className="text-xl font-bold text-s-text">Cost Allocation</h1>
-        <p className="text-xs text-s-muted">Split shared expenses across concepts</p>
+        <p className="text-xs text-s-muted">Split shared expenses across brands. Only cost not already booked to a brand is split; a run covers whole Pakistan days.</p>
       </header>
 
       <div className="p-6 max-w-5xl mx-auto space-y-4">
@@ -86,18 +100,18 @@ export default function AllocationsPage() {
                   </td>
                   <td className="px-4 py-2"><span className={r.isActive ? 's-badge-teal' : 's-badge-muted'}>{r.isActive ? 'active' : 'inactive'}</span></td>
                   <td className="px-4 py-2 text-right">
-                    <button
+                    {canRun && <button
                       onClick={() => { setRunning(r.id); setFeedback(null); runRule.mutate(r.id) }}
                       disabled={!r.isActive || running === r.id}
                       className="s-btn-secondary text-xs"
                     >
                       {running === r.id ? 'Running…' : 'Run for period'}
-                    </button>
+                    </button>}
                   </td>
                 </tr>
               ))}
               {(!rules || rules.length === 0) && (
-                <tr><td colSpan={6} className="px-4 py-3 text-xs text-s-muted">No rules configured. Create them via the API: POST /allocations/rules</td></tr>
+                <tr><td colSpan={6} className="px-4 py-3 text-xs text-s-muted">No rules configured. Rules are set by the CEO.</td></tr>
               )}
             </tbody>
           </table>
@@ -121,7 +135,7 @@ export default function AllocationsPage() {
                 <tr key={r.id} className="border-t border-s-border">
                   <td className="px-4 py-2 text-xs text-s-muted">{new Date(r.postedAt).toLocaleString()}</td>
                   <td className="px-4 py-2 text-s-text">{r.rule.name} <span className="font-mono text-xs text-s-muted">({r.rule.sourceAccountCode})</span></td>
-                  <td className="px-4 py-2 text-xs text-s-text">{r.periodStart.slice(0,10)} → {r.periodEnd.slice(0,10)}</td>
+                  <td className="px-4 py-2 text-xs text-s-text">{pktDay(r.periodStart)} → {pktDay(r.periodEnd)}</td>
                   <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.totalAmountCents)}</td>
                 </tr>
               ))}

@@ -4,9 +4,13 @@
 // ITO 2001 Third Schedule, written-down value per asset, per income-tax year
 // (1 July – 30 June, named by the year it ends in — accounting/fiscalYear.ts
 // taxYearOf is the ONE year definition):
-//   • year of first use: initial allowance (class taxInitialAllowanceBp, 25% on
-//     eligible plant) on the cost, then the full year's depreciation at the
-//     class rate on what is left;
+//   • year of first use: initial allowance on the cost IF the asset is ticked
+//     "eligible for initial allowance" (FixedAsset.initialAllowanceEligible —
+//     Hasnain H42, 2026-10-16: decided per asset by finance; it starts ticked
+//     for kitchen and power equipment, unticked for office, IT and the rest),
+//     at the class's taxInitialAllowanceBp, or the statutory 25% when the class
+//     carries 0; then the full year's depreciation at the class rate on what
+//     is left;
 //   • later years: rate × opening WDV;
 //   • year of disposal: no depreciation; the proceeds come off the WDV;
 //   • a year the CEO froze (FixedAssetTaxYear rows) is used exactly as frozen,
@@ -90,6 +94,37 @@ function addTo(t: TaxTotals, r: TaxTotals): void {
 
 const bp = (cents: number, rateBp: number) => Math.round((cents * rateBp) / 10_000)
 
+/** ITO 2001 Third Schedule Part II: the initial allowance on eligible plant and machinery. */
+export const STATUTORY_INITIAL_ALLOWANCE_BP = 2500
+
+/** The classes whose assets START ticked for the initial allowance (H42). Every other class starts unticked. */
+export const INITIAL_ALLOWANCE_DEFAULT_CLASSES: ReadonlySet<string> = new Set(['kitchen_equipment', 'power_equipment'])
+
+/** The tick an asset of class `classKey` gets at capitalisation (and that a NULL row reads as). */
+export function defaultInitialAllowanceEligible(classKey: string): boolean {
+  return INITIAL_ALLOWANCE_DEFAULT_CLASSES.has(classKey)
+}
+
+/** Is `a` ticked for the initial allowance (NULL = the class rule). */
+export function initialAllowanceEligibleOf(a: Pick<FixedAsset, 'category' | 'initialAllowanceEligible'>): boolean {
+  return a.initialAllowanceEligible ?? defaultInitialAllowanceEligible(a.category)
+}
+
+/**
+ * The initial-allowance rate (bp) the tax view uses for `a`: 0 when unticked or
+ * pooled (smallwares are deducted in full, H35) or not depreciable; otherwise
+ * the class's rate, or the statutory 25% when the class carries 0.
+ */
+export function initialAllowanceBpOf(
+  a: Pick<FixedAsset, 'category' | 'initialAllowanceEligible'>,
+  cls: Pick<FixedAssetClass, 'pooled' | 'depreciable' | 'taxInitialAllowanceBp'> | undefined,
+): number {
+  if (!initialAllowanceEligibleOf(a)) return 0
+  if (cls?.pooled || cls?.depreciable === false) return 0
+  const classBp = cls?.taxInitialAllowanceBp ?? 0
+  return classBp > 0 ? classBp : STATUTORY_INITIAL_ALLOWANCE_BP
+}
+
 /** Is the asset in this company's tax WDV at all (voided / split-off layers are not). */
 function inTaxBase(a: FixedAsset): boolean {
   return a.status !== 'voided' && !a.splitFromAssetId
@@ -115,7 +150,7 @@ function walkAsset(
   // H35: a pooled class (smallwares) is deducted 100% in the year bought.
   const pooled = !!cls?.pooled
   const rateBp = pooled ? 10_000 : cls?.taxRateBp ?? 0
-  const iaBp = pooled ? 0 : cls?.taxInitialAllowanceBp ?? 0
+  const iaBp = initialAllowanceBpOf(a, cls)
   const cost = toCents(a.originalCostCents) > 0 ? toCents(a.originalCostCents) : toCents(a.costCents)
   let wdv = 0
   let row: TaxAssetRow | null = null
@@ -166,7 +201,7 @@ export async function taxSchedule(tenantId: string, taxYear: number, db: Db = se
     const m = frozenByAsset.get(f.assetId) ?? new Map<number, TaxAssetRow>()
     m.set(f.taxYear, {
       assetId: f.assetId, assetTag: a?.assetTag ?? null, name: a?.name ?? '', classKey: a?.category ?? '',
-      rateBp: f.rateBp, initialAllowanceBp: clsByKey.get(a?.category ?? '')?.taxInitialAllowanceBp ?? 0,
+      rateBp: f.rateBp, initialAllowanceBp: a ? initialAllowanceBpOf(a, clsByKey.get(a.category)) : 0,
       openingWdvCents: toCents(f.openingWdvCents), additionsCents: toCents(f.additionsCents),
       initialAllowanceCents: toCents(f.initialAllowanceCents), depreciationCents: toCents(f.depreciationCents),
       disposalProceedsCents: toCents(f.disposalProceedsCents), closingWdvCents: toCents(f.closingWdvCents), frozen: true,
@@ -285,4 +320,54 @@ export async function deferredTax(tenantId: string, taxYear: number, db: Db = se
     { nbvCents: 0, taxWdvCents: 0, differenceCents: 0, deferredTaxCents: 0 },
   )
   return { tenantId, taxYear, asOf: end, rateBp: policy.deferredTaxRateBp, byClass, totals }
+}
+
+/**
+ * Finance or the CEO ticks / unticks "eligible for initial allowance" on one
+ * asset (H42). Tax view only — book depreciation never reads it. The initial
+ * allowance only ever falls in the asset's tax year of first use and carries
+ * through the WDV of every later year, so once the CEO has frozen THAT year or
+ * any later one (for the asset's company) the tick is final: 409
+ * TAX_YEAR_FROZEN (applying it "from next year" would change nothing, and
+ * silently restating a frozen year is never allowed). Smallwares (deducted in full, H35), non-depreciable
+ * classes (land), voided assets and split-off pool layers: 422
+ * INITIAL_ALLOWANCE_NOT_APPLICABLE. Takes the freeze's advisory lock for every
+ * year from the first to now, so a freeze running at the same moment sees one
+ * state or the other. Setting the same effective tick is a no-op (no write).
+ * Returns the before / after tick (the caller audits).
+ */
+export async function setInitialAllowanceEligible(
+  tenantId: string,
+  assetId: string,
+  eligible: boolean,
+): Promise<{ before: boolean; after: boolean; taxYear: number; changed: boolean }> {
+  return serviceClient.$transaction(async (tx) => {
+    const a = await tx.fixedAsset.findFirst({ where: { id: assetId, tenantId } })
+    if (!a) throw new AppError('NOT_FOUND', 'Fixed asset not found', 404)
+    const classes = await getAssetClasses(tenantId, tx)
+    const cls = classes.find((c) => c.key === a.category)
+    if (cls?.pooled || cls?.depreciable === false || a.status === 'voided' || a.splitFromAssetId) {
+      throw new AppError('INITIAL_ALLOWANCE_NOT_APPLICABLE', cls?.pooled
+        ? 'Smallwares are deducted in full in the year bought — no initial allowance'
+        : 'This asset gets no initial allowance (not depreciated, voided or a split-off pool layer)', 422)
+    }
+    const taxYear = taxYearOf(a.inServiceAt ?? a.acquiredAt).taxYear
+    const before = initialAllowanceEligibleOf(a)
+    // Same effective tick: nothing to change (and no 409 for a no-op).
+    if (before === eligible) return { before, after: eligible, taxYear, changed: false }
+    // The allowance falls in the first year but flows through the WDV of every
+    // later year, so a freeze of the first year OR any later year makes the
+    // tick final. Take the freeze's lock for every year from the first to now
+    // (ascending; a freeze holds one year's lock only, so no deadlock).
+    const lastYear = Math.min(Math.max(taxYearOf(new Date()).taxYear, taxYear), taxYear + 50)
+    for (let y = taxYear; y <= lastYear; y++) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fixed_asset_tax_year:${tenantId}:${y}`}))`
+    }
+    const frozen = await tx.fixedAssetTaxYear.findFirst({ where: { tenantId, taxYear: { gte: taxYear } }, orderBy: { taxYear: 'asc' }, select: { taxYear: true } })
+    if (frozen) {
+      throw new AppError('TAX_YEAR_FROZEN', `Tax year ${frozen.taxYear} is frozen and already carries this asset's initial allowance (first year ${taxYear}) — the tick can no longer change`, 409, { taxYear, frozenTaxYear: frozen.taxYear })
+    }
+    await tx.fixedAsset.update({ where: { id: a.id }, data: { initialAllowanceEligible: eligible } })
+    return { before, after: eligible, taxYear, changed: true }
+  }, { timeout: 30_000, maxWait: 30_000 })
 }

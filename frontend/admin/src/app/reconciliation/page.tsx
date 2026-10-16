@@ -12,6 +12,7 @@ import { CardPayouts, CardPayoutChip, CardPayoutSuggest, cardPayoutErrorText, us
 import { OpenTicketsCloseConfirm } from '../../components/pos/OpenTicketsCloseConfirm'
 import { closeDrawer, isOpenTicketsError, type ZReportExtras } from '../../components/pos/tillApi'
 import { useAuthStore } from '../../store/auth'
+import { usePermissions } from '../../hooks/useCan'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '../../components/ui/Modal'
 import { MoneyInput } from '../../components/ui/MoneyInput'
@@ -24,11 +25,20 @@ import { dateBounds } from '../finance/cash-vouchers/ui'
 // API would refuse (wave 3: finance reads and works reconciliation, but a
 // red 403 behind a button it was shown is the bug we are removing).
 //   Closing a drawer is the till's close (POST /pos/shifts/:id/close, CASHIERS).
-//   Booking an adjustment journal is the approvers' (CEO + co-owners).
-//   Undoing a generic statement match is the approvers' too (S3).
+//   Booking an adjustment, matching a line by hand and undoing a match: the
+//   CEO, co-owners and finance holding the accounting module (owner,
+//   2026-10-16: finance does the full bank reconciliation). Ignore needs a
+//   reason; an ignored line can be brought back.
 const DRAWER_CLOSERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager', 'cashier', 'foh']
-const ADJUSTMENT_BOOKERS = ['admin', 'owner']
-const LINE_UNMATCHERS = ['admin', 'owner']
+const BANK_BOOKERS = ['admin', 'owner']
+
+/** The API's BANK_BOOKERS: the CEO, co-owners, and finance with the accounting module. */
+function useCanBookBank(): boolean {
+  const isBooker = useAuthStore((s) => s.isRole(...BANK_BOOKERS))
+  const isFinance = useAuthStore((s) => s.isRole('finance'))
+  const { data: perms } = usePermissions()
+  return isBooker || (isFinance && (perms?.modules ?? []).includes('accounting'))
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -442,8 +452,8 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
 // or SPLIT across several (BOOKS-11): a Keenu settlement that lands net of its
 // MDR books Dr bank (the line) + Dr 6080 fee / Cr 1030 gross, so the card
 // receivable clears in full. The split must balance against the line; the
-// API refuses it otherwise. Booking is for the CEO and co-owners; finance
-// ignores lines and leaves the booking to them.
+// API refuses it otherwise. Booking is for the CEO, co-owners and finance
+// with the accounting module.
 
 interface SplitRow { code: string; type: 'debit' | 'credit'; amount: string }
 
@@ -540,6 +550,69 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
   )
 }
 
+// Ignore needs a reason (≥ 10 characters, audited); it can be undone with "Bring back".
+function IgnoreForm({ busy, onCancel, onSubmit }: { busy: boolean; onCancel: () => void; onSubmit: (reason: string) => void }) {
+  const [reason, setReason] = useState('')
+  const ok = reason.trim().length >= 10
+  return (
+    <div className="px-4 py-3 flex flex-wrap items-center gap-2 text-xs">
+      <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} aria-label="Why ignore this line"
+        placeholder="Why is this line ignored? (at least 10 characters)" className="bg-s-card border border-s-border rounded px-1.5 py-0.5 text-s-text flex-1 min-w-[14rem]" />
+      <button disabled={!ok || busy} onClick={() => onSubmit(reason.trim())} className="text-primary-ink font-semibold disabled:opacity-40">{busy ? 'Saving…' : 'Ignore line'}</button>
+      <button onClick={onCancel} className="text-s-muted">Cancel</button>
+    </div>
+  )
+}
+
+interface MatchCandidate {
+  journalLineId: string; entryId: string; entryDate: string; reference: string | null; description: string; memo: string | null; amountCents: number
+}
+
+// Pair the line with the journal line that already booked it (a payment that
+// cleared late, outside the import's window). Never an adjustment — that
+// would book the money twice. The API lists only live, free lines of the
+// same amount on this statement's account.
+function ManualMatch({ line, onCancel, onDone }: { line: StatementLine; onCancel: () => void; onDone: () => void }) {
+  const [days, setDays] = useState(45)
+  const { data: cands = [], isLoading, error } = useQuery<MatchCandidate[]>({
+    queryKey: ['bank-line-candidates', line.id, days],
+    queryFn: () => api.get(`/reconciliation/bank/lines/${line.id}/candidates?days=${days}`),
+  })
+  const match = useMutation({
+    mutationFn: (journalLineId: string) => api.post(`/reconciliation/bank/lines/${line.id}/match`, { journalLineId }),
+    onSuccess: onDone,
+  })
+  return (
+    <div className="px-4 py-3 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-s-muted">Journal lines of {fmtPkr(line.amountCents)} within</span>
+        <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))} className="bg-s-card border border-s-border rounded px-1.5 py-0.5 text-s-text">
+          {[15, 45, 90, 180, 400].map((d) => <option key={d} value={d}>{d} days</option>)}
+        </Select>
+        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+      </div>
+      {isLoading && <p className="text-s-muted">Looking…</p>}
+      {error && <p role="alert" className="text-s-red">{(error as Error).message}</p>}
+      {!isLoading && !error && cands.length === 0 && (
+        <p className="text-s-muted">No free journal line of this amount on this account — book an adjustment if the money was never booked.</p>
+      )}
+      {cands.length > 0 && (
+        <ul className="space-y-1">
+          {cands.map((c) => (
+            <li key={c.journalLineId} className="flex flex-wrap items-center gap-3">
+              <span className="text-s-muted whitespace-nowrap">{c.entryDate.slice(0, 10)}</span>
+              <span className="text-s-text flex-1 min-w-[12rem]">{c.description}{c.reference && <span className="text-s-muted"> · {c.reference}</span>}</span>
+              <span className="font-mono">{fmtPkr(c.amountCents)}</span>
+              <button disabled={match.isPending} onClick={() => match.mutate(c.journalLineId)} className="text-primary-ink font-semibold disabled:opacity-40">Match</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {match.error && <p role="alert" className="text-s-red">{(match.error as Error).message}</p>}
+    </div>
+  )
+}
+
 function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpenCards }: {
   importId: string
   raastAccount: boolean
@@ -552,21 +625,27 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
   const confirm = useConfirm()
   const [adjusting, setAdjusting] = useState<string | null>(null)
   const [cardLine, setCardLine] = useState<string | null>(null)
-  const canBook = useAuthStore((s) => s.isRole(...ADJUSTMENT_BOOKERS))
-  const canUnmatch = useAuthStore((s) => s.isRole(...LINE_UNMATCHERS))
+  const canBook = useCanBookBank()
+  const canUnmatch = canBook
+  const [matching, setMatching] = useState<string | null>(null)
+  const [ignoring, setIgnoring] = useState<string | null>(null)
   const { data: lines = [], isLoading } = useQuery<StatementLine[]>({
     queryKey: ['bank-lines', importId],
     queryFn: () => api.get(`/reconciliation/bank/imports/${importId}/lines`),
   })
   const refresh = () => void qc.invalidateQueries({ queryKey: ['bank-lines', importId] })
-  const ignore = useMutation({ mutationFn: (id: string) => api.post(`/reconciliation/bank/lines/${id}/ignore`, {}), onSuccess: refresh })
+  const ignore = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.post(`/reconciliation/bank/lines/${id}/ignore`, { reason }),
+    onSuccess: () => { setIgnoring(null); refresh() },
+  })
+  const unignore = useMutation({ mutationFn: (id: string) => api.post(`/reconciliation/bank/lines/${id}/unignore`, {}), onSuccess: refresh })
   // S3: undo a GENERIC match (the matcher paired the line with the wrong
   // journal line). A line matched to a Raast payment is unmatched on the Raast tab.
   const unmatch = useMutation({
     mutationFn: (id: string) => api.post(`/reconciliation/bank/lines/${id}/unmatch`, {}),
     onSuccess: () => { refresh(); void qc.invalidateQueries({ queryKey: ['raast-receipts'] }) },
   })
-  const lineError = ignore.error ?? unmatch.error
+  const lineError = ignore.error ?? unmatch.error ?? unignore.error
 
   if (isLoading) return <p className="px-4 py-3 text-xs text-s-muted">Loading lines…</p>
   return (
@@ -606,19 +685,29 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
                       <button onClick={async () => { if (await confirm({ title: `Undo the match on ${fmtPkr(l.amountCents)}?`, body: `${l.description || 'This statement line'} goes back to unmatched and its journal line is free again.`, confirmLabel: 'Undo match', danger: true })) unmatch.mutate(l.id) }}
                         disabled={unmatch.isPending} className="text-s-muted underline hover:text-s-text">Unmatch</button>
                     </span>
+                  ) : l.matchStatus === 'ignored' ? (
+                    <span className="inline-flex gap-3">
+                      <span className="text-s-muted" title={l.notes ?? undefined}>ignored</span>
+                      <button onClick={() => unignore.mutate(l.id)} disabled={unignore.isPending} className="text-s-muted underline hover:text-s-text">Bring back</button>
+                    </span>
                   ) : l.matchStatus !== 'unmatched' ? (
                     <span className="text-s-muted">{l.matchStatus}</span>
                   ) : adjusting === l.id ? (
                     <span className="text-s-muted">booking…</span>
                   ) : cardLine === l.id ? (
                     <span className="text-s-muted">card payout…</span>
+                  ) : matching === l.id ? (
+                    <span className="text-s-muted">matching…</span>
+                  ) : ignoring === l.id ? (
+                    <span className="text-s-muted">ignoring…</span>
                   ) : (
                     <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
                       {payoutBank && l.amountCents > 0 && (
                         <button onClick={() => { setAdjusting(null); setCardLine(l.id) }} className="text-primary-ink font-semibold">Card payout?</button>
                       )}
-                      {canBook && <button onClick={() => { setCardLine(null); setAdjusting(l.id) }} className="text-primary-ink">Book adjustment</button>}
-                      <button onClick={() => ignore.mutate(l.id)} className="text-s-muted hover:text-s-text">Ignore</button>
+                      {canBook && <button onClick={() => { setCardLine(null); setAdjusting(null); setIgnoring(null); setMatching(l.id) }} className="text-primary-ink font-semibold">Match by hand</button>}
+                      {canBook && <button onClick={() => { setCardLine(null); setMatching(null); setIgnoring(null); setAdjusting(l.id) }} className="text-primary-ink">Book adjustment</button>}
+                      <button onClick={() => { setCardLine(null); setMatching(null); setAdjusting(null); setIgnoring(l.id) }} className="text-s-muted hover:text-s-text">Ignore</button>
                     </span>
                   )}
                 </td>
@@ -627,6 +716,20 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
                 <tr className="border-t border-s-border/50">
                   <td colSpan={4} className="p-0">
                     <AdjustForm line={l} raastAccount={raastAccount} onCancel={() => setAdjusting(null)} onDone={() => { setAdjusting(null); refresh() }} />
+                  </td>
+                </tr>
+              )}
+              {matching === l.id && l.matchStatus === 'unmatched' && (
+                <tr className="border-t border-s-border/50">
+                  <td colSpan={4} className="p-0">
+                    <ManualMatch line={l} onCancel={() => setMatching(null)} onDone={() => { setMatching(null); refresh() }} />
+                  </td>
+                </tr>
+              )}
+              {ignoring === l.id && l.matchStatus === 'unmatched' && (
+                <tr className="border-t border-s-border/50">
+                  <td colSpan={4} className="p-0">
+                    <IgnoreForm busy={ignore.isPending} onCancel={() => setIgnoring(null)} onSubmit={(reason) => ignore.mutate({ id: l.id, reason })} />
                   </td>
                 </tr>
               )}

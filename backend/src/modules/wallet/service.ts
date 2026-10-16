@@ -12,11 +12,11 @@
 //   - topUpWallet:     credit the TOP-UP's company and post it there in the
 //                      same transaction — Dr 6060 Marketing & Promo (a
 //                      manager's goodwill credit) or Dr the account the money
-//                      went into (a paid top-up: 1010 cash / 1030 card / the
+//                      went into (a paid top-up: 1010 cash / the
 //                      company's bank account it was received into —
 //                      lib/bankAccounts.ts moneyAccountCode) / Cr 2050. Never
 //                      a top-up without its entry. A paid top-up is a
-//                      back-office receipt (owner, 2026-10-14): cash, card,
+//                      back-office receipt (owner, 2026-10-14): cash,
 //                      bank transfer, bank deposit or cheque (RECEIPT_METHODS)
 //                      with its payment reference # — required on every
 //                      method, stored on the WalletTransaction (method +
@@ -42,7 +42,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry } from '../accounting/journal.js'
-import { moneyAccountCode, RECEIPT_METHODS, assertPaymentReference, receiptText, type ReceiptMethod } from '../../lib/bankAccounts.js'
+import { moneyAccountCode, RECEIPT_METHODS, assertPaymentReference, assertReceiptMethod, receiptText, type ReceiptMethod } from '../../lib/bankAccounts.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -52,8 +52,8 @@ export const WALLET_GOODWILL_EXPENSE = '6060'
 /**
  * How the customer paid for a PAID top-up — the one back-office receipt list
  * (lib/bankAccounts.ts RECEIPT_METHODS). The debit side is the account the
- * money went into (moneyAccountCode): cash → 1010, card → 1030 (awaiting
- * settlement), bank transfer / bank deposit / cheque → the wallet company's
+ * money went into (moneyAccountCode): cash → 1010 (no card since
+ * 2026-10-16 — the till's only), bank transfer / bank deposit / cheque → the wallet company's
  * bank account it was received into (the named one; else the company's only
  * bank; 1020 with none; 422 BANK_ACCOUNT_REQUIRED when it has two or more
  * and none is named). The route still reads the old 'bank' as bank_transfer.
@@ -218,8 +218,10 @@ export interface TopUpInput {
  */
 export async function topUpWallet(input: TopUpInput): Promise<{ transactionId: string; balanceAfter: number; entryId: string | null }> {
   if (input.kind === 'paid' && !input.tender) {
-    throw new AppError('TENDER_REQUIRED', 'Say how the customer paid for the top-up (cash, card, bank transfer, bank deposit or cheque)', 422)
+    throw new AppError('TENDER_REQUIRED', 'Say how the customer paid for the top-up (cash, bank transfer, bank deposit or cheque)', 422)
   }
+  // Back-office receipts take no card (owner, 2026-10-16) — 422 CARD_NOT_A_RECEIPT.
+  if (input.kind === 'paid') assertReceiptMethod(input.tender)
   if (input.kind === 'goodwill' && input.bankAccountId) {
     throw new AppError('BANK_ACCOUNT_ON_GOODWILL', 'A goodwill credit is our own cost — no money came in, so it has no bank account', 422)
   }

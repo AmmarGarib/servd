@@ -15,6 +15,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId, resolveTenantScope } from '../../lib/tenantScope.js'
 import { zReceiptMethod, zPaymentRef } from '../../lib/bankAccounts.js'
 import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
@@ -57,6 +58,13 @@ const GIFT_CARD_READERS = FINANCE_TEAM
 // warning, never a block: the response carries `referenceUsedBefore`
 // (lib/paymentRefs.ts — this company's rows only).
 const GIFT_CARD_SELLERS = FINANCE_TEAM
+// Who reaches POST /:id/void: managers (void any card) and finance (settle
+// value on voided / expired cards only — books.ts voidGiftCard settleOnly).
+const GIFT_CARD_SETTLERS = FINANCE_TEAM
+const LIVE_CARD_VOIDERS = new Set<string>(MANAGERS)
+const financeNeedsAccounting = async (req: FastifyRequest) => {
+  if (req.staffUser?.role === 'finance') await requireModule('accounting')(req)
+}
 const PROMO_ISSUERS = new Set<string>(MANAGERS)
 
 // A card's code is a bearer credential: whoever holds it can spend the
@@ -354,9 +362,17 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
   // (Dr 2080 / Cr 4200, H11): the CEO (role admin) only — any other manager
   // gets 403 FORFEIT_NEEDS_CEO (after the card is found in their companies, so
   // another company's card is still 404).
+  //
+  // Finance settles (owner, 2026-10-16): finance with its 'accounting' module
+  // may run this on a card that is ALREADY voided or expired and still holds
+  // value (the books check's "voided or expired cards holding value") —
+  // refund it or settle it as payment not received. Voiding a LIVE card stays
+  // with managers (403 VOID_NEEDS_MANAGER, under the card lock); forfeiting a
+  // sold card stays the CEO's. Every settle is audited (giftcard.void, with
+  // the actor's role).
   fastify.post<{ Params: { id: string } }>(
     '/:id/void',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: [requireAuth(...GIFT_CARD_SETTLERS), financeNeedsAccounting] },
     async (req) => {
       const body = z.object({
         reason:        z.string().trim().min(3).max(300),
@@ -374,13 +390,14 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         bankAccountId: body.bankAccountId ?? null,
         postedBy: req.staffUser?.id ?? 'system',
         canForfeitSold: (ADMIN_ONLY as string[]).includes(req.staffUser!.role),
+        settleOnly: !LIVE_CARD_VOIDERS.has(req.staffUser!.role),
       })
       await audit({ category: 'identity',
         action: 'giftcard.void', entity: 'GiftCard', entityId: r.card.id,
         userId: req.staffUser?.id ?? null, tenantId: r.card.tenantId, userEmail: req.staffUser?.email ?? null,
         before: { status: r.before.status, balance: r.before.balanceCents },
         after:  { status: 'voided', disposition: body.disposition, creditCode: r.creditCode, postedCents: r.postedCents },
-        metadata: { reason: body.reason, refundMethod: body.refundMethod ?? null, entryId: r.entryId },
+        metadata: { reason: body.reason, refundMethod: body.refundMethod ?? null, entryId: r.entryId, actorRole: req.staffUser!.role, settle: r.before.status !== 'active' },
       })
       return { ...r.card, postedCents: r.postedCents, creditCode: r.creditCode, entryId: r.entryId, unpaidSpentCents: r.unpaidSpentCents }
     },

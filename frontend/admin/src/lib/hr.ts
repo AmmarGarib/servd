@@ -141,6 +141,10 @@ export const ROLE_LABEL: Record<string, string> = { hod: 'Reporting manager', hr
 // PAYROLL_APPROVERS). Screens use them only to hide what would be refused.
 export const HR_ADMIN_ROLES = ['admin', 'owner', 'management', 'hr']
 export const PAYROLL_APPROVER_ROLES = ['admin', 'owner', 'management']
+/** Who marks a locked payroll or an approved full & final paid — the approvers
+ *  and finance (owner, 2026-10-16; API hr/routes.ts PAYROLL_PAYERS). Nobody
+ *  pays a run or a settlement carrying their own pay (403 OWN_PAY_IN_RUN). */
+export const PAYROLL_PAYER_ROLES = [...PAYROLL_APPROVER_ROLES, 'finance']
 
 /** Today in the browser's own calendar, YYYY-MM-DD — not the UTC date, which
  *  is still yesterday in Karachi until 05:00. */

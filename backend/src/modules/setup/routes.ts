@@ -551,6 +551,12 @@ export async function setupRoutes(fastify: FastifyInstance) {
     const { linkBankLedgerAccount } = await import('../../lib/bankAccounts.js')
     const accountCode = await linkBankLedgerAccount(tenantId, body.name, body.accountCode)
     const created = await prisma.bankAccount.create({ data: { ...body, accountCode, tenantId } })
+    await audit({
+      category: 'accounting', action: 'bank_account.create', entity: 'BankAccount', entityId: created.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+      after: { name: created.name, bankName: created.bankName, accountCode },
+      metadata: { actorRole: req.staffUser!.role },
+    })
     return reply.status(201).send(created)
   })
   fastify.patch<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
@@ -570,17 +576,40 @@ export async function setupRoutes(fastify: FastifyInstance) {
       // this is the company's default receiving account (one per company).
       raastId:             z.string().trim().max(40).nullable().optional().transform((v) => (v === '' ? null : v)),
       raastDefault:        z.boolean().optional(),
+      // Re-pointing a bank whose old code still holds a balance (or has open
+      // statement lines) strands that money on the old code: the CEO only, with
+      // a reason (409 BANK_CODE_HAS_BALANCE otherwise).
+      repointReason:       z.string().trim().min(10).max(500).optional(),
     }).parse(req.body)
     const existing = await prisma.bankAccount.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!existing) throw new NotFoundError('BankAccount', req.params.id)
-    if (body.accountCode) {
+    const { repointReason, ...rest } = body
+    let repoint: { from: string | null; to: string; balanceCents: number; openLines: number } | null = null
+    if (rest.accountCode) {
       if (!existing.tenantId) throw new AppError('NO_COMPANY', 'This bank account has no company — it cannot link to a chart', 422)
-      const { linkBankLedgerAccount } = await import('../../lib/bankAccounts.js')
-      await linkBankLedgerAccount(existing.tenantId, body.name ?? existing.name, body.accountCode)
+      const { linkBankLedgerAccount, ledgerBalancesByCode } = await import('../../lib/bankAccounts.js')
+      await linkBankLedgerAccount(existing.tenantId, rest.name ?? existing.name, rest.accountCode, { bankAccountId: existing.id })
+      if (rest.accountCode !== existing.accountCode) {
+        const balanceCents = existing.accountCode
+          ? (await ledgerBalancesByCode(existing.tenantId, [existing.accountCode])).get(existing.accountCode) ?? 0
+          : 0
+        const openLines = await prisma.bankStatementLine.count({
+          where: { matchStatus: 'unmatched', import: { tenantId: existing.tenantId, OR: [{ bankAccountId: existing.id }, ...(existing.accountCode ? [{ accountCode: existing.accountCode }] : [])] } },
+        })
+        if ((balanceCents !== 0 || openLines > 0) && !(req.staffUser!.role === 'admin' && repointReason)) {
+          throw new AppError(
+            'BANK_CODE_HAS_BALANCE',
+            `Code ${existing.accountCode} still holds this bank's balance (${balanceCents} paisa) or ${openLines} open statement line(s) — move or clear them first, or the CEO re-points it with a reason`,
+            409,
+            { balanceCents, openLines },
+          )
+        }
+        repoint = { from: existing.accountCode, to: rest.accountCode, balanceCents, openLines }
+      }
     }
-    const { raastDefault, ...fields } = body
+    const { raastDefault, ...fields } = rest
     const raastTouched = raastDefault !== undefined || body.raastId !== undefined
     const after = { ...existing, ...fields, raastDefault: raastDefault ?? existing.raastDefault }
     // Still (or now) a Raast receiving account once saved: the company default,
@@ -612,6 +641,15 @@ export async function setupRoutes(fastify: FastifyInstance) {
       }
       return tx.bankAccount.update({ where: { id: existing.id }, data: { ...fields, ...(raastDefault !== undefined && { raastDefault }) } })
     })
+    if (repoint) {
+      await audit({
+        category: 'accounting', action: 'bank_account.relink', entity: 'BankAccount', entityId: existing.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: existing.tenantId,
+        before: { accountCode: repoint.from },
+        after: { accountCode: repoint.to },
+        metadata: { actorRole: req.staffUser!.role, oldCodeBalanceCents: repoint.balanceCents, openLines: repoint.openLines, reason: repointReason ?? null },
+      })
+    }
     if (raastTouched) {
       await audit({
         category: 'accounting', action: 'raast.accounts.update', entity: 'BankAccount', entityId: existing.id,
@@ -1125,6 +1163,16 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // finance (with the accounting module, so the CEO's untick closes it).
   // Switching an account off or back on — the chart's "delete" — is theirs
   // too (owner, 2026-10-16); the books' own guards below still refuse it.
+  const RESERVED_ACCOUNT_RANGES: ReadonlyArray<readonly [number, number]> = [
+    [1400, 1599], [2012, 2012], [2100, 2199], [6200, 6249], [6990, 6999],
+  ]
+  // The leading 4-digit code ('1555', '1555.01', '1555-A') decides the range.
+  const isReservedAccountCode = (code: string): boolean => {
+    const m = /^\s*(\d{4})(?!\d)/.exec(code)
+    if (!m) return false
+    const n = Number(m[1])
+    return RESERVED_ACCOUNT_RANGES.some(([lo, hi]) => n >= lo && n <= hi)
+  }
   const CHART_EDITORS = ['admin', 'finance'] as UserRole[]
   const chartEditorGate = [requireAuth(...CHART_EDITORS), requireModule('accounting')]
   fastify.post('/chart-of-accounts', { preHandler: chartEditorGate }, async (req, reply) => {
@@ -1134,6 +1182,17 @@ export async function setupRoutes(fastify: FastifyInstance) {
       type:        z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
       description: z.string().max(500).nullable().optional(),
     }).parse(req.body)
+    // Ranges a module owns (finance audit 2026-10-16): the fixed-asset
+    // register 1500–1599 and 2012, the inter-company / head-office pair
+    // accounts 1400–1499 and 2100–2199, the head-office charge accounts
+    // 6200–6249 and the group recharge accounts 6990–6999. Those accounts are
+    // created by their module (chart template, ensurePairAccounts, head
+    // offices) with controlledBy set — a hand-made one would have no control
+    // and take hand journals the register / pair never sees.
+    if (isReservedAccountCode(body.code)) {
+      throw new AppError('ACCOUNT_CODE_RESERVED',
+        `Code ${body.code} is in a range servd's modules create themselves (fixed assets 1500–1599 and 2012, inter-company 1400–1499 / 2100–2199, head-office charges 6200–6249, group recharges 6990–6999). Pick another code.`, 422)
+    }
     const tenantId = activeTenantId(req)
     const created = await prisma.account.create({ data: { ...body, tenantId } }).catch((err: unknown) => {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {

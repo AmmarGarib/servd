@@ -113,6 +113,7 @@ const ERROR_TEXT: Record<string, string> = {
   PROMO_CARD_NOT_PAID: 'A promotional card is given away — it takes no payment method or bank account.',
   REASON_REQUIRED: 'Say why this promotional card is being given.',
   EXPIRY_IN_PAST: 'The expiry date must be in the future.',
+  VOID_NEEDS_MANAGER: 'This card is still live — only a manager voids a live card. Finance settles value left on voided or expired cards.',
   ...PAYMENT_REFERENCE_ERROR_TEXT,
 }
 const errText = (e: unknown) => {
@@ -129,6 +130,9 @@ export default function GiftCardsPage() {
   const financeTeam = useManagerRoles('finance')
   const isManager = managers.has(role)
   const canSell = financeTeam.has(role)
+  // Finance settles value left on voided / expired cards (owner, 2026-10-16);
+  // voiding a LIVE card stays with managers (API 403 VOID_NEEDS_MANAGER).
+  const canSettleValue = isManager || role === 'finance'
   // The books' audit trail is the CEO's and management's (accounting_audit);
   // everyone else reads a card's history in the row below instead.
   const canReadBooksTrail = useAuthStore((s) => s.isRole('admin', 'management'))
@@ -198,7 +202,7 @@ export default function GiftCardsPage() {
 
         <BooksCheckPanel
           canBook={canSell}
-          canSettle={isManager}
+          canSettle={canSettleValue}
           onSettle={(t) => setVoiding(t)}
           onChanged={refresh}
         />
@@ -283,7 +287,7 @@ export default function GiftCardsPage() {
                     {openId === c.id && (
                       <tr className="border-t border-s-border/50">
                         <td colSpan={6} className="p-0">
-                          <CardHistoryPanel id={c.id} row={c} canVoid={isManager} onVoid={(t) => setVoiding(t)} />
+                          <CardHistoryPanel id={c.id} row={c} canVoid={isManager || (canSettleValue && (c.status === 'voided' || c.status === 'expired'))} onVoid={(t) => setVoiding(t)} />
                         </td>
                       </tr>
                     )}
@@ -438,7 +442,7 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
       {c.voidedHoldingValue.count > 0 && (
         <div>
           <p className="font-bold text-s-text mt-2">Voided cards holding money ({c.voidedHoldingValue.count} · {fmtPkr(c.voidedHoldingValue.cents)})</p>
-          <p className="text-s-muted mb-1">A refund put value back on a card that had been voided (or it was voided before voids moved the money). Nobody can spend it — a manager pays it out.</p>
+          <p className="text-s-muted mb-1">A refund put value back on a card that had been voided (or it was voided before voids moved the money). Nobody can spend it — a manager or finance pays it out.</p>
           {c.voidedHoldingValue.items.map((i) => (
             <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 border-t border-s-border/50">
               <span className="font-mono">{i.code}</span>
@@ -456,7 +460,7 @@ function CompanyCheck({ c, showName, canBook, canSettle, onSettle, onChanged }: 
       {c.expiredHoldingValue && c.expiredHoldingValue.count > 0 && (
         <div>
           <p className="font-bold text-s-text mt-2">Expired cards holding money ({c.expiredHoldingValue.count} · {fmtPkr(c.expiredHoldingValue.cents)})</p>
-          <p className="text-s-muted mb-1">A refund put value back on a card after its breakage was booked. Breakage is taken once, so nobody can spend this — a manager settles it.</p>
+          <p className="text-s-muted mb-1">A refund put value back on a card after its breakage was booked. Breakage is taken once, so nobody can spend this — a manager or finance settles it.</p>
           {c.expiredHoldingValue.items.map((i) => (
             <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 border-t border-s-border/50">
               <span className="font-mono">{i.code}</span>

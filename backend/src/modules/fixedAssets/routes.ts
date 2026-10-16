@@ -14,6 +14,7 @@
 //   POST   /depreciate           "charge now / catch up" for the ACTIVE company (service.ts chargeThrough)
 //   GET    /:id                  one asset: schedule (posted + to come), events, tax, CapEx link, journal refs
 //   PATCH  /:id                  descriptive fields only (audited)
+//   PUT    /:id/initial-allowance  finance or the CEO ticks "eligible for initial allowance" (H42; tax view only, audited)
 //   + requests.ts (requests and the CEO's decisions), pools.routes.ts (smallwares), reports.ts (/reports/*)
 //
 // Depreciation is AUTOMATIC (workers/depreciation.ts, 03:20 PKT daily, the
@@ -42,7 +43,7 @@ import { chargeThrough, loadAssetStates, type AssetState } from './service.js'
 import {
   FA_WRITER_ROLES, FA_COUNT_ROLES, FA_APPROVER_ROLE, DISPOSAL_KINDS, WRITE_OFF_CAUSES,
 } from './events.js'
-import { taxSchedule } from './tax.js'
+import { taxSchedule, initialAllowanceEligibleOf, setInitialAllowanceEligible } from './tax.js'
 import { fixedAssetRequestRoutes, shapeEvents, actorOf, ASSET_REQUEST_KINDS, REQUEST_KIND_LABELS } from './requests.js'
 import { fixedAssetPoolRoutes } from './pools.routes.js'
 import {
@@ -52,6 +53,8 @@ import {
 const READERS = FINANCIALS_VIEWERS
 const FA_WRITERS = [...FA_WRITER_ROLES] as UserRole[]
 const APPROVER = ADMIN_ONLY as UserRole[]
+// H42: who ticks an asset's initial-allowance eligibility — finance and the CEO.
+const IA_EDITORS = ['finance', 'admin'] as UserRole[]
 
 const DISPOSAL_KIND_LABELS: Record<string, string> = { sale: 'Sold', scrap: 'Scrapped', lost: 'Lost', stolen: 'Stolen' }
 const WRITE_OFF_CAUSE_LABELS: Record<string, string> = { breakage: 'Breakage', loss: 'Lost', theft: 'Stolen', worn_out: 'Worn out' }
@@ -133,6 +136,7 @@ function assetRow(
     disposedAt: a.disposedAt ? pktDay(a.disposedAt) : null,
     disposalKind: a.disposalKind,
     method: a.method,
+    initialAllowanceEligible: initialAllowanceEligibleOf(a),
     usefulLifeMonths: a.usefulLifeMonths,
     leaseEndsAt: a.leaseEndsAt ? pktDay(a.leaseEndsAt) : null,
     originalCostCents: toCents(a.originalCostCents) || toCents(a.costCents),
@@ -177,6 +181,7 @@ const NOT_PATCHABLE: Record<string, string> = {
   poolId: 'move units between pools',
   quantity: 'write units off or move them from the pool',
   capexLineId: 'the CapEx link is set by capitalisation',
+  initialAllowanceEligible: 'use PUT /:id/initial-allowance (finance or the CEO)',
   status: 'raise a disposal, void or undo request',
   disposedAt: 'raise a disposal request',
   assetTag: 'tags are issued in sequence',
@@ -240,7 +245,7 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     const pendingOf = new Map(pending.map((p) => [p.assetId, p._count._all]))
     let assets = data.assets.map((a) => assetRow(data, names, a, asOf, facts.get(a.id), pendingOf.get(a.id) ?? 0))
     if (q.uncharged === '1') assets = assets.filter((a) => a.unchargedMonths > 0)
-    if (q.format === 'csv') return sendCsv(reply, `fixed-assets-${pktDay(asOf)}`, assets)
+    if (q.format === 'csv') return sendCsv(reply, `fixed-assets-${pktDay(asOf)}`, assets.map((r) => ({ ...r, initialAllowanceEligible: String(r.initialAllowanceEligible) })))
 
     const totalsByCompany = tenantIds.map((t) => {
       const mine = assets.filter((a) => a.tenantId === t)
@@ -311,6 +316,7 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
         canWrite: FA_WRITER_ROLES.includes(role),
         canCount: FA_COUNT_ROLES.includes(role),
         canApprove: role === FA_APPROVER_ROLE,
+        canSetInitialAllowance: IA_EDITORS.includes(role),
       },
     }
   })
@@ -504,9 +510,14 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
 
     // Tax (H23; smallwares deducted in full in the year bought, H35).
     const cls = classOfAsset(data, a)
-    const tax: { toConfirm: boolean; note: string | null; years: unknown[] } = { toConfirm: false, note: cls?.pooled ? SMALLWARES_TAX_NOTE : null, years: [] }
+    const tax: { toConfirm: boolean; note: string | null; years: unknown[]; initialAllowance: { applicable: boolean; frozenTaxYear: number | null } } = {
+      toConfirm: false, note: cls?.pooled ? SMALLWARES_TAX_NOTE : null, years: [], initialAllowance: { applicable: false, frozenTaxYear: null },
+    }
     if (a.status !== 'voided' && !a.splitFromAssetId) {
       const first = taxYearOf(a.inServiceAt ?? a.acquiredAt).taxYear
+      // H42: the same rule PUT /:id/initial-allowance applies (tax.ts setInitialAllowanceEligible).
+      const frozenIa = await prisma.fixedAssetTaxYear.findFirst({ where: { tenantId: a.tenantId, taxYear: { gte: first } }, orderBy: { taxYear: 'asc' }, select: { taxYear: true } })
+      tax.initialAllowance = { applicable: !cls?.pooled && cls?.depreciable !== false, frozenTaxYear: frozenIa?.taxYear ?? null }
       const lastYear = Math.min(taxYearOf(now).taxYear, first + 20)
       for (let y = first; y <= lastYear; y++) {
         const row = (await taxSchedule(a.tenantId, y, prisma)).rows.find((r) => r.assetId === a.id)
@@ -536,6 +547,27 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
       documentUrls: a.documentUrls,
       photoUrls: a.photoUrls,
     }
+  })
+
+  // PUT /:id/initial-allowance — H42 (Hasnain, 2026-10-16): finance (role
+  // finance, which already holds the register's writer rights through the
+  // accounting module) or the CEO ticks / unticks the asset's eligibility for
+  // the initial allowance. Changes the TAX view only. 409 TAX_YEAR_FROZEN once
+  // the asset's first tax year is frozen (the year the allowance falls in).
+  fastify.put<{ Params: { id: string } }>('/:id/initial-allowance', { preHandler: requireAuth(...IA_EDITORS) }, async (req) => {
+    const body = z.object({ eligible: z.boolean(), reason: z.string().trim().max(500).optional() }).strict().parse(req.body ?? {})
+    const found = await prisma.fixedAsset.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true, tenantId: true } })
+    if (!found) throw new NotFoundError('FixedAsset', req.params.id)
+    const r = await setInitialAllowanceEligible(found.tenantId, found.id, body.eligible)
+    if (r.changed) {
+      await audit({
+        category: 'accounting', action: 'fixed_asset.initial_allowance', entity: 'FixedAsset', entityId: found.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: found.tenantId,
+        before: { initialAllowanceEligible: r.before }, after: { initialAllowanceEligible: r.after },
+        metadata: { taxYear: r.taxYear, actorRole: req.staffUser!.role, ...(body.reason ? { reason: body.reason } : {}) },
+      })
+    }
+    return { assetId: found.id, initialAllowanceEligible: r.after, taxYear: r.taxYear, changed: r.changed }
   })
 
   // PATCH /:id — descriptive fields only; what drives the books goes through a request.

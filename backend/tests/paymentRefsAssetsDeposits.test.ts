@@ -126,8 +126,9 @@ afterAll(async () => {
 describe('asset sale proceeds: payment reference # and Bank deposit', () => {
   it('no reference → 422 on every method (cash too), on both routes; nothing is raised', async () => {
     const chiller = await mkAsset(A, 'Chiller')
-    for (const method of ['cash', 'card', 'bank_transfer', 'bank_deposit', 'cheque', 'bank', 'online']) {
-      const bank = method === 'cash' || method === 'card' ? {} : { bankAccountId: A.mcb }
+    // No card (owner, 2026-10-16: back-office receipts take no card).
+    for (const method of ['cash', 'bank_transfer', 'bank_deposit', 'cheque', 'bank', 'online']) {
+      const bank = method === 'cash' ? {} : { bankAccountId: A.mcb }
       for (const reference of [undefined, '', '   ']) {
         const r = await call('finA', 'POST', `${FA}/${chiller.id}/requests`, {
           kind: 'disposal', reason: 'Sold to a second-hand dealer', effectiveDate: today(),

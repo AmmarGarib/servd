@@ -71,10 +71,22 @@ const HR_BACK_OFFICE = [requireAuth(...HR_ADMIN), requireModule('staff_hr')]
  *  and status — never pay): HR and the managers who run Workforce. */
 const PEOPLE_READERS = Array.from(new Set([...HR_ADMIN, ...MANAGERS])) as UserRole[]
 const PAYROLL_APPROVERS = ['admin', 'owner', 'management'] as UserRole[]
+/** Who may MARK PAID a locked payroll run or an approved full & final, and
+ *  book approved settlements that never reached the books (owner, 2026-10-16:
+ *  finance pays): the approvers plus finance — finance with its 'accounting'
+ *  module. Approving, locking and reopening stay with PAYROLL_APPROVERS.
+ *  Nobody marks paid a run (or a settlement) that carries their own pay
+ *  (403 OWN_PAY_IN_RUN). */
+const PAYROLL_PAYERS = [...PAYROLL_APPROVERS, 'finance'] as UserRole[]
+const financeNeedsAccounting = async (req: FastifyRequest) => {
+  if (req.staffUser?.role === 'finance') await requireModule('accounting')(req)
+}
+const PAYROLL_PAYER_GUARD = [requireAuth(...PAYROLL_PAYERS), financeNeedsAccounting]
 /** Who may READ the payroll register (runs, payslips, the bank file): HR,
  *  and finance, who pay it and reconcile Wages Payable (audit BOOKS-02).
- *  Narrowed by module: /hr/payroll needs staff_hr or payroll. Preparing,
- *  approving and paying stay with HR_ADMIN / PAYROLL_APPROVERS. */
+ *  Narrowed by module: /hr/payroll needs staff_hr or payroll. Preparing
+ *  and approving stay with HR_ADMIN / PAYROLL_APPROVERS; paying is
+ *  PAYROLL_PAYERS (finance included). */
 const PAYROLL_READERS = [...HR_ADMIN, 'finance'] as UserRole[]
 /** Who may edit the Employee Master record linked to their own login. */
 const SELF_EDITORS = ['admin', 'owner'] as UserRole[]
@@ -1934,7 +1946,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // 422 otherwise), the company's only bank, or the safe; dated paidOn
   // (default today, never in the future; a closed day is 422). Booked first if
   // its approval was not. A second call is 409, never a second entry.
-  fastify.post<{ Params: { id: string } }>('/final-settlement/:id/paid', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
+  fastify.post<{ Params: { id: string } }>('/final-settlement/:id/paid', { preHandler: PAYROLL_PAYER_GUARD }, async (req) => {
     const body = z.object({
       cash: z.boolean().optional(),
       bankAccountId: z.string().min(1).max(64).nullable().optional(),
@@ -1942,6 +1954,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }).parse(req.body ?? {})
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: 'final_settlement', ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('Full & final settlement', req.params.id)
+    // Separation of duties (owner, 2026-10-16): nobody marks their own
+    // settlement paid — the CEO included.
+    if (rec.employeeId && await prisma.hrEmployee.count({ where: { id: rec.employeeId, userId: req.staffUser!.id } })) {
+      throw new AppError('OWN_PAY_IN_RUN', 'This is your own settlement — someone else marks it paid', 403)
+    }
     // The move refuses anyone with an approved settlement (hr/transfer.ts), so
     // this only catches data from before that rule — never pay it from here.
     await assertNotTransferred(prisma, rec.tenantId, rec.employeeId)
@@ -1964,7 +1981,27 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // settlements approved before approval booked them, dated today. One at a
   // time: a settlement the ledger refuses is listed with the reason and the
   // rest still post.
-  fastify.post('/final-settlement/post-unposted', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
+  // GET /hr/final-settlement/to-pay — approved settlements of the companies
+  // in view that are not marked paid yet (finance's "to pay" list on the
+  // Payroll page; finance cannot open the HR back office).
+  fastify.get('/final-settlement/to-pay', { preHandler: PAYROLL_PAYER_GUARD }, async (req) => {
+    const recs = await prisma.hrRecord.findMany({
+      where: { section: 'final_settlement', status: 'approved', ...inTenants(req) },
+      include: { employee: { select: { id: true, fullName: true, employeeCode: true, userId: true } } },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    })
+    const me = req.staffUser!.id
+    return recs
+      .filter((r) => !((r.data ?? {}) as Record<string, unknown>)['_paidAt'])
+      .map(({ employee, ...r }) => ({
+        ...r,
+        employee: employee ? { id: employee.id, fullName: employee.fullName, employeeCode: employee.employeeCode } : null,
+        ownPay: employee?.userId === me,
+      }))
+  })
+
+  fastify.post('/final-settlement/post-unposted', { preHandler: PAYROLL_PAYER_GUARD }, async (req) => {
     const tenantId = activeTenant(req)
     const recs = await prisma.hrRecord.findMany({
       where: { tenantId, section: 'final_settlement', status: 'approved' },
@@ -2111,7 +2148,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // otherwise), else the company's only bank; dated paidOn (default today,
   // never in the future; a closed day is 422). The old {from: bank|cash}
   // still pays the whole run from one place.
-  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/paid', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/paid', { preHandler: PAYROLL_PAYER_GUARD }, async (req) => {
     const body = z.object({
       from: z.enum(['bank', 'cash']).optional(),
       bankAccountId: z.string().min(1).max(64).nullable().optional(),
@@ -2120,6 +2157,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }).parse(req.body ?? {})
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
+    // Separation of duties (owner, 2026-10-16): nobody pays a payroll run
+    // that carries their own pay — the CEO included.
+    if (await prisma.hrPayslip.count({ where: { runId: run.id, employee: { userId: req.staffUser!.id } } })) {
+      throw new AppError('OWN_PAY_IN_RUN', 'Your own pay is on this payroll — someone else marks it paid', 403)
+    }
     const paidOn = paidOnOf(body.paidOn)
     const from: PayrollPayFrom = body.from && body.cashCode === undefined && body.bankAccountId === undefined
       ? { mode: 'all', method: body.from }

@@ -574,6 +574,10 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   { prefix: '/hr/sections',         anyOf: ['staff_hr'] },
   { prefix: '/hr/dashboard',        anyOf: ['staff_hr'] },
   { prefix: '/hr/due',              anyOf: ['staff_hr'] },
+  // Finance marks approved settlements paid, books unposted ones and reads
+  // the "to pay" list (owner, 2026-10-16) — with its 'accounting' module; the
+  // routes' own guard (hr/routes.ts PAYROLL_PAYERS) decides the role.
+  { prefix: '/hr/final-settlement/to-pay|post-unposted|:id/paid', anyOf: ['staff_hr', 'accounting'], pattern: /^\/hr\/final-settlement\/(?:to-pay|post-unposted|[^/]+\/paid)\/?$/ },
   { prefix: '/hr/final-settlement', anyOf: ['staff_hr'] },
   { prefix: '/hr/org/units',        anyOf: ['staff_hr'] },
   { prefix: '/hr/org/departments',  anyOf: ['staff_hr'] },

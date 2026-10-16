@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { forgetReopened, rememberReopened } from './closedBooks.js'
+import { forgetReopened, rememberReopened, reopenedThrough } from './closedBooks.js'
 import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
@@ -226,13 +226,21 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     assertNoRegisterOverride(req, body.registerOverride)
     const found = await prisma.journalEntry.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true, tenantId: true },
+      select: { id: true, tenantId: true, entryDate: true },
     })
     if (!found || !found.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
     const tenantId = found.tenantId
+    // The reversal half is dated on the ORIGINAL's day, so the month that
+    // carried the wrong entry is the month that loses it (an edit on 2 Oct of
+    // a 10 Sept entry nets September, not October). Only when that day is in
+    // a closed month (nothing posts there) does it fall back to today. A
+    // reopened month stays the CEO's (closedBooks.ts, checked by the posting).
+    const lock = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+    const reversalDate = lock && found.entryDate <= lock.lockedThrough ? new Date() : found.entryDate
     const result = await serviceClient.$transaction(async (tx) => {
       const { reversal, original, sideEffects: reversedFx } = await reverseManualJournal(tx, {
         tenantId, entryId: found.id, reason: `Edited: ${body.reason}`, actorId: req.staffUser!.id,
+        entryDate: reversalDate,
         actor: { email: req.staffUser!.email, ip: req.ip },
       })
       const { entry, sideEffects: postedFx } = await postManualJournal(tx, {
@@ -939,9 +947,13 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       orderBy: { lockedThrough: 'desc' },
       select: { lockedThrough: true, lockedAt: true, lockedBy: true, note: true, overrides: true, overrideReason: true },
     }) : null
+    // The month(s) the CEO reopened and has not closed again — only the CEO
+    // posts, edits or cancels there (closedBooks.ts); the journal page warns.
+    const reopened = tenantId ? await reopenedThrough(prisma, tenantId) : null
     const base = {
       lockedThrough: lock?.lockedThrough ?? null, lockedAt: lock?.lockedAt ?? null, lockedBy: lock?.lockedBy ?? null,
       note: lock?.note ?? null, overrides: lock?.overrides ?? null, overrideReason: lock?.overrideReason ?? null,
+      reopenedThrough: reopened,
     }
     if (!tenantId) {
       return { ...base, tenantId: null, closesFiscalYear: null, raastUnmatched: { count: 0, cents: 0, through: null }, through: null, checks: [], months: [], isYearEnd: false, fiscalYear: null, ready: false }

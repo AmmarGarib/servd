@@ -302,7 +302,7 @@ describe('the generic matcher (S3)', () => {
     expect(generic.matchStatus).toBe('matched')
     expect(raastLine.matchStatus).toBe('matched')
 
-    expect((await call(financeA, 'POST', `/reconciliation/bank/lines/${generic.id}/unmatch`, {})).statusCode).toBe(403)
+    // Finance (with accounting) may unmatch too since 2026-10-16 (finance final #19) — the CEO does it here.
     expect((await call(adminB, 'POST', `/reconciliation/bank/lines/${generic.id}/unmatch`, {})).statusCode).toBe(404)
     const ok = await call(adminA, 'POST', `/reconciliation/bank/lines/${generic.id}/unmatch`, { reason: 'wrong deposit' })
     expect(ok.statusCode, ok.body).toBe(200)
@@ -769,8 +769,9 @@ describe('review fixes', () => {
     // A plain unmatched line can be ignored (twice is harmless); a generically matched one cannot.
     const imp2 = await importCsv(financeD, bankD.bankAccountId, [{ description: 'BANK CHARGE', amount: '-1.23' }])
     const [plain] = await linesOf(imp2.json().importId)
-    expect((await call(financeD, 'POST', `/reconciliation/bank/lines/${plain!.id}/ignore`, {})).statusCode).toBe(200)
-    expect((await call(financeD, 'POST', `/reconciliation/bank/lines/${plain!.id}/ignore`, {})).statusCode).toBe(200)
+    const why = { reason: 'Test charge reversed by the bank' }
+    expect((await call(financeD, 'POST', `/reconciliation/bank/lines/${plain!.id}/ignore`, why)).statusCode).toBe(200)
+    expect((await call(financeD, 'POST', `/reconciliation/bank/lines/${plain!.id}/ignore`, why)).statusCode).toBe(200)
     await prisma.bankStatementLine.update({ where: { id: plain!.id }, data: { matchStatus: 'adjusted' } })
     expect((await call(financeD, 'POST', `/reconciliation/bank/lines/${plain!.id}/ignore`, {})).json().error.code).toBe('LINE_NOT_UNMATCHED')
   })

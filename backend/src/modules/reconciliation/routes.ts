@@ -1,4 +1,5 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCE_TEAM, APPROVERS, ADMIN_ONLY } from '../auth/middleware.js'
@@ -6,7 +7,10 @@ import {
   importBankStatement,
   adjustStatementLine,
   unmatchStatementLine,
+  manualMatchStatementLine,
+  manualMatchCandidates,
 } from './service.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { raastReconciliationRoutes, raastPaidCents } from './raastRoutes.js'
 import cardPayoutRoutes from './cardPayoutRoutes.js'
 import { cardSettlementChips } from './cardPayouts.js'
@@ -23,9 +27,22 @@ import { zMoneyCents } from '../../lib/money.js'
 // finance role, which holds the `reconciliation` module by default
 // (lib/moduleAccess.ts) — the auth middleware's module gate on the
 // /reconciliation prefix is what narrows it per role or per person. Booking an
-// adjustment journal stays with the APPROVERS (CEO and co-owners); the
-// backfill stays CEO-only.
+// adjustment journal, matching by hand and undoing a match are BANK_BOOKERS
+// (below); the backfill stays CEO-only.
 const RECONCILERS = FINANCE_TEAM
+
+// Who books, matches by hand and undoes a match (owner, 2026-10-16: finance does
+// the full bank reconciliation — "match by hand, bank fees, undo, un-ignore"):
+// the CEO, the co-owners (APPROVERS, as before) and finance holding the
+// `accounting` module — the same people who post manual journals
+// (accounting/routes.ts JOURNAL_POSTERS). Every action is audited. Closed
+// months stay the CEO's: the posting engine refuses a dated-in-closed-books
+// adjustment for anyone else (closedBooks.ts).
+const BANK_BOOKER_ROLES = [...APPROVERS, 'finance'] as UserRole[]
+const financeHoldsAccounting = async (req: FastifyRequest) => {
+  if (req.staffUser?.role === 'finance') await requireModule('accounting')(req)
+}
+const BANK_BOOKERS = [requireAuth(...BANK_BOOKER_ROLES), financeHoldsAccounting]
 
 // Statement balances are BIGINT columns (BOOKS-06) and come back as JS
 // numbers through lib/money.ts. One balance ≤ MAX_MONEY_CENTS (PKR 900bn),
@@ -158,15 +175,19 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/bank/lines/:id/adjust',
-    { preHandler: requireAuth(...APPROVERS) },
+    { preHandler: BANK_BOOKERS },
     async (req) => {
       const body = adjustLineSchema.parse(req.body)
       const line = await prisma.bankStatementLine.findFirst({
         where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
-        select: { id: true },
+        select: { id: true, amountCents: true, import: { select: { tenantId: true } } },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
-      return adjustStatementLine({
+      // Register-account overrides stay the CEO's (as on manual journals).
+      if (body.registerOverride && req.staffUser!.role !== 'admin') {
+        throw new AppError('REGISTER_OVERRIDE_CEO_ONLY', 'Only the CEO can post to the fixed-asset register accounts by hand.', 403)
+      }
+      const result = await adjustStatementLine({
         lineId: line.id,
         contraAccountCode: body.contraAccountCode,
         lines: body.lines,
@@ -178,6 +199,61 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         actorEmail: req.staffUser!.email ?? null,
         actorTenantId: req.staffUser!.tenantId ?? null,
       })
+      await audit({
+        category: 'accounting', action: 'reconciliation.line.adjust', entity: 'BankStatementLine', entityId: line.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: line.import.tenantId ?? null,
+        before: { matchStatus: 'unmatched' },
+        after: { matchStatus: 'adjusted', memo: body.memo, contraAccountCode: body.contraAccountCode ?? null, lines: body.lines ?? null },
+        metadata: { actorRole: req.staffUser!.role, amountCents: Number(line.amountCents), cardSettlementId: result.cardSettlementId ?? null },
+      })
+      return result
+    },
+  )
+
+  // GET /bank/lines/:id/candidates?days=45 — the live, free journal lines on
+  // the statement's account equal to the line's signed amount (± days, ≤ 400),
+  // for the manual match picker. Another company's line → 404.
+  fastify.get<{ Params: { id: string }; Querystring: { days?: string } }>(
+    '/bank/lines/:id/candidates',
+    { preHandler: BANK_BOOKERS },
+    async (req) => {
+      const days = z.coerce.number().int().min(1).max(400).default(45).parse(req.query.days ?? undefined)
+      const line = await prisma.bankStatementLine.findFirst({
+        where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
+        select: { id: true },
+      })
+      if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      return manualMatchCandidates(line.id, days)
+    },
+  )
+
+  // POST /bank/lines/:id/match {journalLineId} — pair an unmatched statement
+  // line with its existing journal line BY HAND (service.ts
+  // manualMatchStatementLine: same company, the statement's account, live,
+  // free, equal signed amount; conditional claim). Audited. Posts nothing.
+  fastify.post<{ Params: { id: string } }>(
+    '/bank/lines/:id/match',
+    { preHandler: BANK_BOOKERS },
+    async (req) => {
+      const body = z.object({
+        journalLineId: z.string().min(1).max(64),
+        note: z.string().trim().max(500).optional(),
+      }).parse(req.body ?? {})
+      const line = await prisma.bankStatementLine.findFirst({
+        where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
+        select: { id: true },
+      })
+      if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      const res = await manualMatchStatementLine(line.id, body.journalLineId)
+      await audit({
+        category: 'accounting', action: 'reconciliation.line.match', entity: 'BankStatementLine', entityId: line.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: res.tenantId,
+        before: { matchStatus: 'unmatched', matchedJournalLineId: null },
+        after: { matchStatus: 'matched', matchedJournalLineId: body.journalLineId },
+        metadata: { actorRole: req.staffUser!.role, amountCents: res.amountCents, journalEntryId: res.journalEntryId, reference: res.reference, note: body.note ?? null },
+      })
+      import('../nightAudit/service.js').then((m) => m.nudgeNightAudit(res.tenantId)).catch(() => undefined)
+      return prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })
     },
   )
 
@@ -185,9 +261,11 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     '/bank/lines/:id/ignore',
     { preHandler: requireAuth(...RECONCILERS) },
     async (req) => {
+      // A reason is required (owner, 2026-10-16) and the ignore is audited; it
+      // is kept on the line's notes and can be undone with /unignore.
       const line = await prisma.bankStatementLine.findFirst({
         where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
-        select: { id: true, matchStatus: true, raastReceipt: { select: { id: true } } },
+        select: { id: true, matchStatus: true, notes: true, amountCents: true, raastReceipt: { select: { id: true } }, import: { select: { tenantId: true } } },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
       // RV-FIN-3: only an UNMATCHED line can be ignored. A line matched to a
@@ -197,21 +275,60 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         throw new AppError('RAAST_MATCHED_LINE', 'This line is matched to a Raast payment — unmatch it on the Raast tab first', 409, { receiptId: line.raastReceipt.id })
       }
       if (line.matchStatus === 'ignored') return prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })
+      if (line.matchStatus !== 'unmatched') throw new AppError('LINE_NOT_UNMATCHED', `Line is already ${line.matchStatus}`, 409)
+      const body = z.object({ reason: z.string().trim().min(10, 'Say why this line is ignored (at least 10 characters)').max(500) }).parse(req.body ?? {})
       const claimed = await prisma.bankStatementLine.updateMany({
         where: { id: line.id, matchStatus: 'unmatched' },
-        data: { matchStatus: 'ignored' },
+        data: { matchStatus: 'ignored', notes: `Ignored: ${body.reason}`.slice(0, 520) },
       })
       if (claimed.count === 0) throw new AppError('LINE_NOT_UNMATCHED', `Line is already ${line.matchStatus}`, 409)
+      await audit({
+        category: 'accounting', action: 'reconciliation.line.ignore', entity: 'BankStatementLine', entityId: line.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: line.import.tenantId ?? null,
+        before: { matchStatus: 'unmatched', notes: line.notes },
+        after: { matchStatus: 'ignored' },
+        metadata: { actorRole: req.staffUser!.role, reason: body.reason, amountCents: Number(line.amountCents) },
+      })
       return prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })
     },
   )
 
-  // POST /bank/lines/:id/unmatch — undo a GENERIC match (S3, APPROVERS,
-  // audited): the line goes back to unmatched and its journal line is free.
+  // POST /bank/lines/:id/unignore — bring an ignored line back to unmatched
+  // (conditional on it still being 'ignored'), audited. Whoever may ignore may
+  // undo it (RECONCILERS — finance included).
+  fastify.post<{ Params: { id: string } }>(
+    '/bank/lines/:id/unignore',
+    { preHandler: requireAuth(...RECONCILERS) },
+    async (req) => {
+      const body = z.object({ reason: z.string().trim().max(500).optional() }).parse(req.body ?? {})
+      const line = await prisma.bankStatementLine.findFirst({
+        where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
+        select: { id: true, matchStatus: true, notes: true, import: { select: { tenantId: true } } },
+      })
+      if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      const claimed = await prisma.bankStatementLine.updateMany({
+        where: { id: line.id, matchStatus: 'ignored' },
+        data: { matchStatus: 'unmatched', notes: null },
+      })
+      if (claimed.count === 0) throw new AppError('LINE_NOT_IGNORED', `Line is ${line.matchStatus}, not ignored`, 409)
+      await audit({
+        category: 'accounting', action: 'reconciliation.line.unignore', entity: 'BankStatementLine', entityId: line.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: line.import.tenantId ?? null,
+        before: { matchStatus: 'ignored', notes: line.notes },
+        after: { matchStatus: 'unmatched' },
+        metadata: { actorRole: req.staffUser!.role, reason: body.reason ?? null },
+      })
+      return prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })
+    },
+  )
+
+  // POST /bank/lines/:id/unmatch — undo a GENERIC match (S3; BANK_BOOKERS —
+  // the CEO, co-owners and finance with accounting; audited): the line goes
+  // back to unmatched and its journal line is free.
   // A line matched to a Raast payment is undone on the Raast tab (409).
   fastify.post<{ Params: { id: string } }>(
     '/bank/lines/:id/unmatch',
-    { preHandler: requireAuth(...APPROVERS) },
+    { preHandler: BANK_BOOKERS },
     async (req) => {
       const body = z.object({ reason: z.string().trim().min(3).max(500).optional() }).parse(req.body ?? {})
       const line = await prisma.bankStatementLine.findFirst({
@@ -227,10 +344,10 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         entityId: line.id,
         userId: req.staffUser!.id,
         userEmail: req.staffUser!.email,
-        tenantId: req.staffUser!.tenantId ?? null,
+        tenantId: line.import.tenantId ?? req.staffUser!.tenantId ?? null,
         before,
         after: { matchStatus: 'unmatched', matchedJournalLineId: null },
-        metadata: { lineTenantId: line.import.tenantId, reason: body.reason ?? null },
+        metadata: { lineTenantId: line.import.tenantId, reason: body.reason ?? null, actorRole: req.staffUser!.role },
       })
       return { ok: true }
     },
@@ -335,17 +452,35 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     },
   )
 
+  const BACKFILL_RUNNERS = ['admin', 'finance'] as UserRole[]
+
   // POST /reconciliation/backfill-unposted — owner decision 6. Closed shifts
   // that never reached the books (closed through the old /reconciliation
   // close, or refused as unbalanced) post into their own month while it is
   // open, otherwise into the CURRENT open month with a memo naming the
-  // shift's original close date. A locked month is never reopened. Admin
-  // only; dry run unless { dryRun: false }. The companies in view (the
-  // portfolio header expands). Idempotent — a shift posts once.
-  fastify.post('/backfill-unposted', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+  // shift's original close date. A locked month is never reopened. The CEO
+  // and finance (owner, 2026-10-16: finance re-posts refused postings in
+  // OPEN months; the reconciliation module gates /reconciliation); dry run
+  // unless { dryRun: false }. Closed months are never posted into (the run
+  // moves those to the current month). While the CEO has a month REOPENED
+  // in a company in view, a real run is the CEO's (409
+  // REOPENED_BOOKS_CEO_ONLY): its own-day postings would land in that
+  // month. The companies in view (the portfolio header expands).
+  // Idempotent — a shift posts once.
+  fastify.post('/backfill-unposted', { preHandler: [requireAuth(...BACKFILL_RUNNERS), requireModule('reconciliation', 'accounting')] }, async (req) => {
     const body = z.object({ dryRun: z.boolean().default(true) }).parse(req.body ?? {})
     const scope = await resolveTenantScope(req)
     if (scope.tenantIds.length === 0) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
+    if (!body.dryRun && req.staffUser!.role !== 'admin') {
+      const { reopenedThrough } = await import('../accounting/closedBooks.js')
+      for (const tid of scope.tenantIds) {
+        const re = await reopenedThrough(prisma, tid)
+        if (re) {
+          throw new AppError('REOPENED_BOOKS_CEO_ONLY',
+            'The CEO has reopened closed books in this company, so re-posting could land in them — only the CEO can run it until those months are closed again.', 409)
+        }
+      }
+    }
     const { backfillUnpostedShifts } = await import('../accounting/shiftPosting.js')
     const { backfillUnpostedOrders, withBackfillSlot, BackfillRunningError } = await import('./backfillOrders.js')
     const runAll = async () => {
@@ -382,6 +517,8 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
           shiftIds: result.rows.filter((r) => r.outcome.startsWith('posted')).map((r) => r.shiftId),
           posted: orders.rows.filter((r) => r.outcome === 'posted' || r.outcome === 'posted_into_current_month').map((r) => `${r.kind}:${r.id}`),
           flagged: orders.rows.filter((r) => r.outcome === 'flagged').map((r) => `${r.kind}:${r.id}`),
+          actorRole: req.staffUser!.role,
+          tenantIds: scope.tenantIds,
         },
       })
     }

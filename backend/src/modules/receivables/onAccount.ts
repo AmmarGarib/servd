@@ -103,6 +103,14 @@ export interface Exposure {
   /** Σ max(0, balance) of the client's open / part-paid invoices and statements. */
   invoicesDueCents: number
   exposureCents: number
+  /**
+   * What the company owes the CLIENT: Σ −balance of its settled statements /
+   * invoices that a later refund pushed below zero (a refund of a charge on a
+   * statement already paid), plus a negative unbilled net. Never netted
+   * against exposure — the client must be paid back (or the credit used)
+   * before it can be closed (409 CLIENT_IN_CREDIT).
+   */
+  creditCents: number
   /** The earliest-due bill past its due day + the client's grace days, or null. */
   overdue: OverdueBill | null
 }
@@ -123,7 +131,7 @@ export async function exposureOfTx(db: Db, accountId: string, now: Date = new Da
     where: { id: accountId },
     select: { tenantId: true, overdueGraceDays: true },
   })
-  const [unbilled, bills] = await Promise.all([
+  const [unbilled, bills, settled] = await Promise.all([
     db.customerAccountCharge.aggregate({
       where: { tenantId: account.tenantId, accountId, statementInvoiceId: null },
       _sum: { amountCents: true, refundedCents: true },
@@ -132,13 +140,21 @@ export async function exposureOfTx(db: Db, accountId: string, now: Date = new Da
       where: { tenantId: account.tenantId, customerAccountId: accountId, kind: { in: [...LIVE_KINDS] }, status: { in: ['open', 'partial'] } },
       orderBy: [{ dueDate: 'asc' }, { number: 'asc' }],
     }),
+    // Settled bills can go below zero (a refund credited after payment):
+    // that is money owed back to the client.
+    db.receivableInvoice.findMany({
+      where: { tenantId: account.tenantId, customerAccountId: accountId, kind: { in: [...LIVE_KINDS] }, status: { notIn: ['open', 'partial', 'void'] } },
+    }),
   ])
   const unbilledCents = (unbilled._sum.amountCents ?? 0) - (unbilled._sum.refundedCents ?? 0)
+  let creditCents = Math.max(0, -unbilledCents)
+  for (const b of settled) creditCents += Math.max(0, -balanceOf(b))
   const today = karachiDay(now)
   let invoicesDueCents = 0
   let overdue: OverdueBill | null = null
   for (const b of bills) {
     const balance = balanceOf(b)
+    if (balance < 0) creditCents += -balance
     if (balance <= 0) continue
     invoicesDueCents += balance
     const due = karachiDay(b.dueDate)
@@ -146,7 +162,7 @@ export async function exposureOfTx(db: Db, accountId: string, now: Date = new Da
       overdue = { invoiceId: b.id, number: b.number, kind: b.kind, dueDate: due, balanceCents: balance }
     }
   }
-  return { unbilledCents, invoicesDueCents, exposureCents: unbilledCents + invoicesDueCents, overdue }
+  return { unbilledCents, invoicesDueCents, exposureCents: unbilledCents + invoicesDueCents, creditCents, overdue }
 }
 
 /**

@@ -261,6 +261,8 @@ async function shapeRows(accounts: CustomerAccount[], me: Caller, now = new Date
       unbilledCents: exposure.unbilledCents,
       invoicesDueCents: exposure.invoicesDueCents,
       exposureCents: exposure.exposureCents,
+      /** Money owed back to the client (shown as "In credit"; blocks closing). */
+      creditCents: exposure.creditCents,
       availableCents: a.status === 'active' ? Math.max(0, limitCents - exposure.exposureCents) : 0,
       overdue: exposure.overdue,
       cardsActive: cardsOf.get(a.id) ?? 0,
@@ -584,6 +586,14 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
           actions.push('reactivated')
         } else if (target === 'closed') {
           const exposure = await exposureOfTx(tx, a.id)
+          // In credit (a refund after the statement was paid): pay the
+          // client back (Receivables → refund) before closing — 1110 still
+          // carries what the company owes them.
+          if (exposure.creditCents > 0) {
+            throw new AppError('CLIENT_IN_CREDIT', `This client is in credit by ${pkr(exposure.creditCents)} — refund it to the client before closing`, 409, {
+              creditCents: exposure.creditCents,
+            })
+          }
           if (exposure.exposureCents !== 0) {
             throw new AppError('CLIENT_HAS_BALANCE', `This client still owes ${pkr(exposure.exposureCents)} — settle it before closing`, 409, {
               exposureCents: exposure.exposureCents,

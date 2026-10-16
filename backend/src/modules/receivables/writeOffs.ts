@@ -505,7 +505,7 @@ export async function writeOffRoutes(fastify: FastifyInstance) {
 
   // POST /accounting/receivables/write-offs/:id/recover — money received on
   // a written-off amount. {amountCents ≤ amount − recovered, receivedAt,
-  // method cash|card|bank_transfer|bank_deposit|cheque (old 'bank' =
+  // method cash|bank_transfer|bank_deposit|cheque (no card) (old 'bank' =
   // bank_transfer), bankAccountId? (a bank of the INVOICE's company; another
   // company's → 422), reference (the payment reference # — required for every
   // method: 422 PAYMENT_REFERENCE_REQUIRED)}. One transaction: the counters,

@@ -36,6 +36,8 @@ interface ClientRow {
   id: string; tenantId: string; companyName: string | null; number: string; legalName: string; tradeName: string | null
   status: ClientStatus; creditLimitCents: number; requestedCreditLimitCents: number | null
   unbilledCents: number; invoicesDueCents: number; exposureCents: number; availableCents: number
+  /** Money owed back to the client (a refund after its statement was paid) — blocks closing. */
+  creditCents?: number
   overdue: Overdue | null; cardsActive: number; pending: 'new_client' | 'limit_increase' | null
   brands: Array<{ id: string; name: string | null }>
 }
@@ -405,6 +407,12 @@ export default function OnAccountClientsPage() {
                     <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
                       style={{ background: 'color-mix(in srgb, var(--erp-danger) 16%, transparent)', color: 'var(--erp-danger)' }}>
                       Overdue · {r.overdue.number}
+                    </span>
+                  )}
+                  {(r.creditCents ?? 0) > 0 && (
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+                      style={{ background: 'color-mix(in srgb, var(--erp-warning) 16%, transparent)', color: 'var(--erp-warning)' }}>
+                      In credit · {fmtPkrWhole(r.creditCents ?? 0)}
                     </span>
                   )}
                   {r.companyName && <span className="ml-auto text-xs text-white/40">{r.companyName}</span>}

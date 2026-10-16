@@ -433,7 +433,7 @@ export const WITHHOLDING: Array<{ key: WithholdingKey; authority: string; name: 
   { key: 'stwh', authority: 'STWH', name: 'Sales tax withheld (as withholding agent)', account: ACCT.STWH_PAYABLE },
 ]
 
-/** The payment authorities the return lists: the five sales-tax authorities and the two withholdings — never statutory challans. */
+/** The payment authorities the return lists: the two sales-tax authorities (FBR, SRB) and the two withholdings — never statutory challans. */
 export const RETURN_PAYMENT_KEYS: ReadonlyArray<AuthorityKey | WithholdingKey> = [...TAX_AUTHORITY_KEYS, ...WITHHOLDING.map((w) => w.key)]
 
 export interface AuthorityReturn {

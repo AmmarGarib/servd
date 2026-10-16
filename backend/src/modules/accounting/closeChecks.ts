@@ -18,7 +18,8 @@
 //   posting_failed   block   open posting_failed flags whose DOCUMENT date is on or before the lock
 //                            (or unknown) and that the backfill dry run does not already list
 //   trial_balance    block   the company's trial balance does not balance — NEVER overridable
-//   bank_unmatched   warn    bank statement lines up to the lock still unmatched
+//   bank_unmatched   warn    bank statement lines up to the lock still unmatched (+ lines ignored in the period,
+//                            counted separately)
 //   vouchers_awaiting_docs warn  cash vouchers paid on or before the lock whose supporting documents
 //                            finance has not checked yet — only the documents: the expense is booked
 //                            at pay (1357 retired, owner 2026-10-16; a voucher still held there is
@@ -405,23 +406,35 @@ const bankUnmatchedCheck: CloseCheck = {
   severity: 'warn',
   overridable: false,
   async run(ctx) {
-    const rows = await ctx.db.$queryRaw<Array<{ n: number; cents: bigint | number | null }>>`
-      SELECT count(*)::int AS n, COALESCE(sum(abs(l."amountCents")), 0)::bigint AS cents
+    // Ignored lines (a reason is required and audited) are told apart: those in the months being closed are
+    // listed separately so an Ignore clicked by mistake is still seen at the close.
+    const since = ctx.prevLock ?? new Date(0)
+    const rows = await ctx.db.$queryRaw<Array<{ n: number; cents: bigint | number | null; ign: number; ign_cents: bigint | number | null }>>`
+      SELECT count(*) FILTER (WHERE l."matchStatus" = 'unmatched')::int AS n,
+             COALESCE(sum(abs(l."amountCents")) FILTER (WHERE l."matchStatus" = 'unmatched'), 0)::bigint AS cents,
+             count(*) FILTER (WHERE l."matchStatus" = 'ignored' AND l."postedDate" > ${since})::int AS ign,
+             COALESCE(sum(abs(l."amountCents")) FILTER (WHERE l."matchStatus" = 'ignored' AND l."postedDate" > ${since}), 0)::bigint AS ign_cents
         FROM bank_statement_lines l
         JOIN bank_statement_imports i ON i.id = l."importId"
        WHERE i."tenantId" = ${ctx.tenantId}
-         AND l."matchStatus" = 'unmatched'
+         AND l."matchStatus" IN ('unmatched', 'ignored')
          AND l."postedDate" <= ${ctx.newLock}`
     const n = rows[0]?.n ?? 0
-    if (n === 0) return null
+    const ignored = rows[0]?.ign ?? 0
+    if (n === 0 && ignored === 0) return null
     const cents = sumCents(rows[0]?.cents ?? 0)
+    const ignoredCents = sumCents(rows[0]?.ign_cents ?? 0)
+    const parts = [
+      ...(n > 0 ? [`${plural(n, 'bank statement line')} up to ${fmtPktDate(ctx.newLock)} (${pkr(cents)} in and out) ${n === 1 ? 'is' : 'are'} not matched to the books yet.`] : []),
+      ...(ignored > 0 ? [`${plural(ignored, 'line')} in this period (${pkr(ignoredCents)}) ${ignored === 1 ? 'was' : 'were'} ignored — check each reason on Reconciliation → Bank.`] : []),
+    ]
     return {
       key: 'bank_unmatched',
       severity: 'warn',
-      title: 'Bank lines not matched',
-      detail: `${plural(n, 'bank statement line')} up to ${fmtPktDate(ctx.newLock)} (${pkr(cents)} in and out) ${n === 1 ? 'is' : 'are'} not matched to the books yet.`,
-      count: n,
-      cents,
+      title: n > 0 ? 'Bank lines not matched' : 'Bank lines ignored',
+      detail: parts.join(' '),
+      count: n + ignored,
+      cents: cents + ignoredCents,
       link: '/reconciliation?tab=bank',
       overridable: false,
     }
@@ -548,8 +561,11 @@ export const CHECK_FAILED_PREFIX = 'check_failed:'
  * that says so, and every 'check_failed:<key>'. trial_balance never.
  */
 export function isOverridableKey(key: string): boolean {
-  if (key.startsWith(CHECK_FAILED_PREFIX)) return true
-  const c = CLOSE_CHECKS.find((x) => x.key === key)
+  // A check that could not run inherits its own rule: a never-overridable
+  // block (trial_balance) that failed to run cannot be closed over either —
+  // nobody has seen the books balance.
+  const base = key.startsWith(CHECK_FAILED_PREFIX) ? key.slice(CHECK_FAILED_PREFIX.length) : key
+  const c = CLOSE_CHECKS.find((x) => x.key === base)
   return !c || c.severity !== 'block' || c.overridable
 }
 
@@ -589,14 +605,18 @@ export async function runChecks<C extends { tenantId: string }>(
       continue
     }
     console.error(`[${opts.tag}] check ${check.key} failed for ${ctx.tenantId}:`, result.error.message)
+    // Never-overridable block checks (trial_balance) stay never-overridable
+    // when they cannot run.
+    const declared = check as { severity?: string; overridable?: boolean }
+    const failOverridable = !(declared.severity === 'block' && declared.overridable === false)
     problems.push({
       key: `${CHECK_FAILED_PREFIX}${check.key}`,
       severity: 'block',
       title: `Check could not run: ${check.key.replace(/_/g, ' ')}`,
-      detail: `The '${check.key}' check failed (${result.error.message.slice(0, 200)}), so servd cannot tell whether it is clear. Try again; going past it needs the CEO's reason.`,
+      detail: `The '${check.key}' check failed (${result.error.message.slice(0, 200)}), so servd cannot tell whether it is clear. Try again; ${failOverridable ? "going past it needs the CEO's reason" : 'this check cannot be overridden — the books cannot close until it runs'}.`,
       count: 1,
       link: opts.failLink,
-      overridable: true,
+      overridable: failOverridable,
     })
   }
   return problems

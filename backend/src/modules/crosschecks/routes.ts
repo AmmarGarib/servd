@@ -15,7 +15,9 @@ import type { Prisma, UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY, FINANCE_TEAM, PROCUREMENT_TEAM } from '../auth/middleware.js'
-import { flagException, acknowledgeException, resolveException, kindsMatching } from '../../lib/exceptions.js'
+import { flagException, acknowledgeException, resolveException, kindsMatching, LEDGER_FLAG_KINDS, NO_SELF_RESOLVE_KINDS } from '../../lib/exceptions.js'
+import { requireModule } from '../notifications/requireModule.js'
+import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { receiveGoods } from '../procurement/receiving.js'
 import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
@@ -567,8 +569,10 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     return { open, acknowledged: ack, last24h, byKind: byKind.map((b) => ({ kind: b.kind, count: b._count._all })) }
   })
 
+  // Writes need the Exceptions module (the inbox's own module) — floor and
+  // ops managers who do not hold it are refused, not just hidden.
   fastify.patch<{ Params: { id: string } }>('/exceptions/:id/acknowledge',
-    { preHandler: requireAuth(...FINANCE_TEAM) },
+    { preHandler: [requireAuth(...FINANCE_TEAM), requireModule('exceptions')] },
     async (req, reply) => {
       const ok = await acknowledgeException(req.params.id, req.staffUser!.id, await scopeTenantWhere(req, 'write'))
       if (!ok) throw new NotFoundError('ExceptionFlag', req.params.id)
@@ -576,12 +580,59 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // Resolve. Rules (finance audit 2026-10-16):
+  //  - only an open / acknowledged flag (409 FLAG_NOT_OPEN), with a note of
+  //    at least 10 characters;
+  //  - a flag about the books (LEDGER_FLAG_KINDS) — the CEO, or finance with
+  //    the accounting module (403 LEDGER_FLAG_FINANCE_ONLY);
+  //  - a review flag about the caller's OWN action (a manual journal, a
+  //    register posting) is never resolved by that person — the CEO excepted
+  //    (403 SELF_APPROVAL_BLOCKED);
+  //  - posting_failed: only once its posting IS on the books (re-post it from
+  //    Reconciliation → Backfill unposted), or by the CEO (409
+  //    POSTING_NOT_ON_BOOKS) — resolving it otherwise would drop a close
+  //    block while the posting is still missing.
   fastify.patch<{ Params: { id: string } }>('/exceptions/:id/resolve',
-    { preHandler: requireAuth(...FINANCE_TEAM) },
+    { preHandler: [requireAuth(...FINANCE_TEAM), requireModule('exceptions')] },
     async (req, reply) => {
-      const body = z.object({ resolution: z.string().min(1).max(500) }).parse(req.body)
-      const ok = await resolveException(req.params.id, req.staffUser!.id, body.resolution, await scopeTenantWhere(req, 'write'))
-      if (!ok) throw new NotFoundError('ExceptionFlag', req.params.id)
+      const body = z.object({ resolution: z.string().trim().min(10, 'Say what was done (10 characters or more)').max(500) }).parse(req.body)
+      const scope = await scopeTenantWhere(req, 'write')
+      const flag = await prisma.exceptionFlag.findFirst({
+        where: { id: req.params.id, ...scope },
+        select: { id: true, kind: true, status: true, actorId: true, tenantId: true, entityType: true, entityId: true, metadata: true },
+      })
+      if (!flag) throw new NotFoundError('ExceptionFlag', req.params.id)
+      if (flag.status !== 'open' && flag.status !== 'acknowledged') {
+        throw new AppError('FLAG_NOT_OPEN', `This flag is already ${flag.status}`, 409)
+      }
+      const me = req.staffUser!
+      const isCeo = me.role === 'admin'
+      if (LEDGER_FLAG_KINDS.has(flag.kind) && !isCeo) {
+        let allowed = false
+        if (me.role === 'finance') {
+          const u = await prisma.user.findUnique({ where: { id: me.id }, select: { moduleAllow: true, moduleDeny: true } })
+          const modules = await effectiveModulesForUser({ role: me.role as UserRole, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+          allowed = modules.has('accounting')
+        }
+        if (!allowed) throw new AppError('LEDGER_FLAG_FINANCE_ONLY', 'Only finance (with the accounting module) or the CEO can resolve a flag about the books', 403)
+      }
+      if (NO_SELF_RESOLVE_KINDS.has(flag.kind) && !isCeo && flag.actorId === me.id) {
+        throw new AppError('SELF_APPROVAL_BLOCKED', 'This flag reviews your own action — someone else (the CEO) must resolve it', 403)
+      }
+      if (flag.kind === 'posting_failed' && !isCeo) {
+        const md = (flag.metadata ?? {}) as { sourceType?: unknown; sourceId?: unknown; source?: unknown }
+        const ref = typeof md.sourceType === 'string' && typeof md.sourceId === 'string'
+          ? `${md.sourceType}:${md.sourceId}`
+          : typeof md.source === 'string' ? md.source : null
+        const posted = ref && flag.tenantId
+          ? await prisma.journalEntry.findFirst({ where: { tenantId: flag.tenantId, reference: ref }, select: { id: true } })
+          : null
+        if (!posted) {
+          throw new AppError('POSTING_NOT_ON_BOOKS', 'This posting is still not on the books — re-post it from Reconciliation → Backfill unposted (the flag then closes itself), or ask the CEO', 409)
+        }
+      }
+      const ok = await resolveException(flag.id, me.id, body.resolution, scope)
+      if (!ok) throw new AppError('FLAG_NOT_OPEN', 'This flag was resolved or dismissed meanwhile', 409)
       return reply.status(204).send()
     },
   )

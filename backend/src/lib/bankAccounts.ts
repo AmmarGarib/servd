@@ -21,25 +21,52 @@ export const OPERATING_BANK_CODE = '1020'
 const CHILD_BANK_CODES = ['1021', '1022', '1023', '1024', '1025', '1026', '1027', '1028', '1029']
 
 /**
+ * Codes that are never a bank's balance: cash on hand, petty cash, the till
+ * drawer, card receivable, customer receivable, till clearing, rider COD,
+ * cash advances, the director's account and the retired voucher hold. A bank
+ * linked to one of them would make every bank payment move cash (or a
+ * receivable) instead.
+ */
+export const NOT_BANK_CODES: readonly string[] = ['1010', '1011', '1015', '1030', '1110', '1115', '1351', '1355', '1356', '1357']
+/** A bank's code lives in the cash-and-bank band 1000–1099 (receivables, stock, prepayments, inter-company and fixed assets never). */
+const BANK_CODE_BAND = /^10\d\d$/
+
+/**
  * The chart code a new bank account of `tenantId` should hang off.
  *
  * With `requestedCode`: it must be an active ASSET account in the company's
- * own chart (422 otherwise). Without: 1020 when no live bank account uses it
- * yet, else a new child account on the next free 102x code, named after the
- * bank.
+ * own chart (422 otherwise), in the cash-and-bank band 1000–1099, not one of
+ * NOT_BANK_CODES and not a register-controlled account (422
+ * NOT_A_BANK_CODE / ACCOUNT_CONTROLLED), and not the code of another live bank
+ * of the company (409 BANK_CODE_IN_USE; `opts.bankAccountId` = the row being
+ * edited, which may keep its own code). Without: 1020 when no live bank
+ * account uses it yet, else a new child account on the next free 102x code,
+ * named after the bank.
  */
 export async function linkBankLedgerAccount(
   tenantId: string,
   bankName: string,
   requestedCode?: string | null,
+  opts: { bankAccountId?: string } = {},
 ): Promise<string> {
   if (requestedCode) {
     const account = await prisma.account.findFirst({
       where: { tenantId, code: requestedCode, isActive: true },
-      select: { type: true },
+      select: { type: true, controlledBy: true },
     })
     if (!account) throw new AppError('ACCOUNT_NOT_IN_CHART', `Code ${requestedCode} is not an active account in this company's chart of accounts`, 422)
     if (account.type !== 'asset') throw new AppError('NOT_AN_ASSET_ACCOUNT', `Code ${requestedCode} is not an asset account — a bank balance is an asset`, 422)
+    if (NOT_BANK_CODES.includes(requestedCode) || !BANK_CODE_BAND.test(requestedCode)) {
+      throw new AppError('NOT_A_BANK_CODE', `Code ${requestedCode} is not a bank balance — link a bank to a bank code (1020–1029, or another 10xx bank account you added)`, 422)
+    }
+    if (account.controlledBy) {
+      throw new AppError('ACCOUNT_CONTROLLED', `Code ${requestedCode} is kept by ${account.controlledBy.replace(/_/g, ' ')} — it cannot be a bank`, 422)
+    }
+    const other = await prisma.bankAccount.findFirst({
+      where: { tenantId, deletedAt: null, accountCode: requestedCode, ...(opts.bankAccountId && { id: { not: opts.bankAccountId } }) },
+      select: { name: true },
+    })
+    if (other) throw new AppError('BANK_CODE_IN_USE', `Code ${requestedCode} is already the ledger of ${other.name} — each bank has its own code`, 409)
     return requestedCode
   }
 
@@ -176,7 +203,8 @@ export async function moneyAccountCode(
 // Every back-office screen that records money coming IN (gift-card sales,
 // wallet top-ups, receivable receipts and write-off recoveries, asset-sale
 // proceeds, CapEx deposit returns, inter-company settlements) offers THESE
-// methods and asks for a payment reference # on EVERY method, cash included
+// methods (cash, bank transfer, bank deposit, cheque — never card) and asks
+// for a payment reference # on EVERY method, cash included
 // (owner: "required for every method"). A reference used before is a
 // warning, never a block (one transfer can pay several invoices) — see
 // lib/paymentRefs.ts. The till keeps its own tenders (lib/tenders.ts). The
@@ -186,8 +214,15 @@ export async function moneyAccountCode(
 // is optional, goes into the posting's description and memos, and still
 // warns when used before (lib/paymentRefs.ts).
 
-/** THE list of ways money can come in on a back-office screen. */
-export const RECEIPT_METHODS = ['cash', 'card', 'bank_transfer', 'bank_deposit', 'cheque'] as const
+/**
+ * THE list of ways money can come in on a back-office screen. No card (owner,
+ * 2026-10-16: "Back-office receipts take bank, bank deposit, cash or cheque
+ * only. Tills keep card as today."): a back-office card receipt debited 1030
+ * but Keenu payout matching counts only till card payments, so it was never
+ * cleared. Rows already stored with 'card' still read (RECEIPT_METHOD_LABEL)
+ * and refund the way they were paid (moneyAccountCode still maps card → 1030).
+ */
+export const RECEIPT_METHODS = ['cash', 'bank_transfer', 'bank_deposit', 'cheque'] as const
 export type ReceiptMethod = typeof RECEIPT_METHODS[number]
 
 /** Words for every method value servd has stored (old rows say 'bank' / 'online'). */
@@ -205,6 +240,21 @@ export const RECEIPT_METHOD_LABEL: Record<string, string> = {
 /** True when the money lands in (or leaves) a bank account — the form shows the bank picker. */
 export function isBankMethod(method: string | null | undefined): boolean {
   return BANK_METHODS.has((method ?? '').trim())
+}
+
+/**
+ * A back-office receipt's method must be one of RECEIPT_METHODS — card is the
+ * till's only (422 CARD_NOT_A_RECEIPT; anything else 422 BAD_PAYMENT_METHOD).
+ * The services call it too, so a caller that skips the route's zod still
+ * cannot debit 1030 from the back office.
+ */
+export function assertReceiptMethod(method: string | null | undefined): ReceiptMethod {
+  const m = (method ?? '').trim()
+  if ((RECEIPT_METHODS as readonly string[]).includes(m)) return m as ReceiptMethod
+  if (m === 'card') {
+    throw new AppError('CARD_NOT_A_RECEIPT', 'Card is taken at the till only — record this as a bank transfer, bank deposit, cash or cheque', 422)
+  }
+  throw new AppError('BAD_PAYMENT_METHOD', `Unknown payment method "${m}" — use cash, bank transfer, bank deposit or cheque`, 422)
 }
 
 /** zod: one of `allowed` (default RECEIPT_METHODS). */

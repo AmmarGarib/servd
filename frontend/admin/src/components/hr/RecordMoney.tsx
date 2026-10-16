@@ -98,9 +98,9 @@ function MoneyPanel({ record, onChanged }: { record: HrRecord; onChanged: () => 
   )
 }
 
-function MarkSettlementPaid({ record, onChanged }: { record: HrRecord; onChanged: () => void }) {
+export function MarkSettlementPaid({ record, onChanged }: { record: HrRecord; onChanged: () => void }) {
   const qc = useQueryClient()
-  const { isPayrollApprover } = useHrAccess()
+  const { isPayrollPayer } = useHrAccess()
   const [open, setOpen] = useState(false)
   const [method, setMethod] = useState<'bank' | 'cash'>('bank')
   const [bankAccountId, setBankAccountId] = useState('')
@@ -114,7 +114,7 @@ function MarkSettlementPaid({ record, onChanged }: { record: HrRecord; onChanged
     onSuccess: () => { setErr(''); setOpen(false); void qc.invalidateQueries(); onChanged() },
     onError: (e: Error) => setErr(e.message),
   })
-  if (!isPayrollApprover) return <p className="text-[11px] text-white/40">The CEO, a co-owner or management marks it paid.</p>
+  if (!isPayrollPayer) return <p className="text-[11px] text-white/40">Finance, the CEO, a co-owner or management marks it paid.</p>
   if (!open) return <button className={btn} onClick={() => setOpen(true)}>Mark paid</button>
   return (
     <div className="space-y-3 pt-1">

@@ -1,6 +1,6 @@
 'use client'
 // Closed shifts that never reached the books (owner decision 6): POST
-// /reconciliation/backfill-unposted. Admin only. Preview first (dry run),
+// /reconciliation/backfill-unposted. The CEO and finance. Preview first (dry run),
 // then post — a shift whose month is still open posts into its own month; a
 // shift in a closed month posts into the CURRENT open month with a memo naming
 // its original close date. A locked month is never reopened for it.
@@ -142,16 +142,20 @@ function refOf(r: OrderRow): string {
 
 export function BackfillUnposted() {
   const isAdmin = useAuthStore((s) => s.isRole('admin'))
+  // Finance re-posts refused postings too (owner, 2026-10-16) — open months
+  // only: while the CEO has a month reopened the API answers 409
+  // REOPENED_BOOKS_CEO_ONLY. The petty-cash history run stays the CEO's.
+  const isFinance = useAuthStore((s) => s.isRole('finance'))
   const [result, setResult] = useState<Result | null>(null)
   const run = useMutation({
     mutationFn: (dryRun: boolean) => api.post<Result>('/reconciliation/backfill-unposted', { dryRun }),
     onSuccess: setResult,
   })
-  if (!isAdmin) return null
+  if (!isAdmin && !isFinance) return null
   return (
     <>
       <UnpostedSection result={result} run={run} />
-      <PettyCashHistory />
+      {isAdmin && <PettyCashHistory />}
     </>
   )
 }
@@ -256,7 +260,8 @@ function UnpostedSection({ result, run }: {
 const BACKFILL_ERROR_TEXT: Record<string, string> = {
   BACKFILL_RUNNING: 'Another backfill is running for this company — wait for it to finish, then try again.',
   NO_ACTIVE_COMPANY: 'Pick a company first.',
-  FORBIDDEN: 'Only the CEO runs the backfills.',
+  FORBIDDEN: 'Your account cannot run this backfill — the CEO and finance (with Reconciliation) can.',
+  REOPENED_BOOKS_CEO_ONLY: 'The CEO has reopened closed months in this company — only the CEO can post the backfill until they are closed again. Preview still works.',
 }
 function backfillErrorText(e: unknown): string {
   const x = e as { code?: string; message?: string } | null

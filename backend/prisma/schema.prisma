@@ -6396,6 +6396,10 @@ model FixedAsset {
   disposalReason          String?
   voidedAt                DateTime?
   voidReason              String?
+  // H42 (Hasnain, 2026-10-16): finance ticks "eligible for the 25% initial allowance" per asset (tax view only —
+  // never the books). Set at capitalisation by the class rule (kitchen + power true, every other class false);
+  // existing rows backfilled the same way (migration 20261017090000). NULL (a row inserted without it) = that rule.
+  initialAllowanceEligible Boolean?
 
   depreciation   FixedAssetDepreciation[]
   concept        Concept?                 @relation("FixedAssetConcept", fields: [conceptId], references: [id], onDelete: SetNull)
@@ -6694,7 +6698,8 @@ model SalesTaxPayment {
   id                          String   @id @default(uuid())
   tenantId                    String
   // fbr | pra | srb | kpra | bra | wht | stwh | salary_tax | eobi | sessi (wave B statutory challans, H7:
-  // Dr 2042/2043/2044 / Cr money). @@unique([tenantId, authority, periodFrom]) = one challan per scheme per month.
+  // Dr 2042/2043/2044 / Cr money). Several challans per scheme and month (a top-up, finance audit 2026-10-17
+  // item 22): one row per CPR number in the period; every payment after the period's first needs a CPR.
   authority                   String
   periodFrom                  DateTime
   periodTo                    DateTime
@@ -6712,7 +6717,8 @@ model SalesTaxPayment {
   // Sales tax withheld by customers (1335, H13) set off against this authority's output in this payment.
   customerWithheldSetOffCents BigInt   @default(0)
 
-  @@unique([tenantId, authority, periodFrom])
+  @@unique([tenantId, authority, periodFrom, cprNumber])
+  @@index([tenantId, authority, periodFrom])
   @@index([tenantId, paidAt])
   @@map("sales_tax_payments")
 }

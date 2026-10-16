@@ -30,7 +30,7 @@ import { JournalRequests, type JournalRequest } from './JournalRequests'
 
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
 interface Brand { id: string; name: string; tenantId: string | null }
-interface CurrentLock { lockedThrough: string | null }
+interface CurrentLock { tenantId?: string | null; lockedThrough: string | null; reopenedThrough?: string | null }
 interface LedgerLine { id: string; accountId?: string; conceptId?: string | null; type: 'debit' | 'credit'; amountCents: number; memo: string | null; account: { code: string; name: string } }
 interface LedgerEntry {
   id: string
@@ -145,6 +145,12 @@ export default function JournalEntryPage() {
   const difference = debitTotal - creditTotal
   const lockedThrough = lock?.lockedThrough ? pktDate(lock.lockedThrough) : null
   const dateLocked = !!lockedThrough && companyIds.length === 1 && date <= lockedThrough
+  // A month the CEO reopened: only the CEO posts there (closedBooks.ts).
+  const reopenedThrough = lock?.reopenedThrough ? pktDate(lock.reopenedThrough) : null
+  const dateReopened = !dateLocked && !!reopenedThrough && companyIds.length === 1 && date <= reopenedThrough
+  // The latest closed-or-reopened day of the active company: an entry dated
+  // on or before it is the CEO's to edit or cancel.
+  const closedBooksThrough = [lockedThrough, reopenedThrough].filter((d): d is string => !!d).sort().pop() ?? null
 
   const blockers: string[] = []
   if (!company) blockers.push('Pick the company whose books this is')
@@ -155,6 +161,7 @@ export default function JournalEntryPage() {
   if (debitTotal === 0) blockers.push('Enter the amounts')
   else if (difference !== 0) blockers.push(`Debits and credits differ by ${fmtPkr(Math.abs(difference))}`)
   if (dateLocked) blockers.push(`Books are closed through ${lockedThrough} — pick a later date`)
+  if (dateReopened && !isAdmin) blockers.push(`${date} is in a month the CEO reopened (through ${reopenedThrough}) — only the CEO can post there; pick a later date`)
   if (!date || date < dateBounds().min || date > dateBounds().max) blockers.push(`Pick a date between ${dateBounds().min} and ${dateBounds().max}`)
 
   const post = useMutation({
@@ -226,9 +233,12 @@ export default function JournalEntryPage() {
     setAmending(e)
     setAmendReason('')
     if (e.tenantId) setPickedCompany(e.tenantId)
+    // The operator's own reference travels in the description (" · ref X",
+    // manualJournal.ts) — bring it back into its own field, not lost.
+    const refMatch = e.description.match(/ · ref (.*)$/)
     setDescription(e.description.replace(/ · ref .*$/, ''))
-    setReference('')
-    setDate(pktDate(e.entryDate) < dateBounds().min ? todayPktIso() : pktDate(e.entryDate))
+    setReference(refMatch?.[1] ?? '')
+    setDate(pktDate(e.entryDate))
     setLines(e.lines.map((l) => ({
       key: ++lineSeq, accountId: l.accountId ?? '', memo: l.memo ?? '', conceptId: l.conceptId ?? '',
       debit: l.type === 'debit' ? (l.amountCents / 100).toFixed(2) : '',
@@ -341,6 +351,12 @@ export default function JournalEntryPage() {
                   aria-invalid={dateLocked || !date || date < dateBounds().min || date > dateBounds().max ? true : undefined}
                   aria-describedby={dateLocked ? 'journal-date-note' : undefined} />
                 {dateLocked && <span id="journal-date-note" role="alert" className="block text-[11px] text-s-red mt-1">Books are closed through {lockedThrough} — pick a later date.</span>}
+                {dateReopened && <span role={isAdmin ? 'status' : 'alert'} className={`block text-[11px] mt-1 ${isAdmin ? 'text-s-muted' : 'text-s-red'}`}>
+                  {isAdmin ? `This month is reopened (through ${reopenedThrough}) — only you can post into it.` : `The CEO reopened the books through ${reopenedThrough} — only the CEO can post there. Pick a later date.`}
+                </span>}
+                {!dateLocked && !dateReopened && reopenedThrough && companyIds.length === 1 && (
+                  <span className="block text-[11px] text-s-muted mt-1">Reopened by the CEO through {reopenedThrough} (CEO only).</span>
+                )}
                 {!dateLocked && date && (date < dateBounds().min || date > dateBounds().max) && <span role="alert" className="block text-[11px] text-s-red mt-1">Pick a date between {dateBounds().min} and {dateBounds().max}.</span>}
               </label>
               <label className="block sm:col-span-2">
@@ -464,13 +480,16 @@ export default function JournalEntryPage() {
           </section>
         )}
 
-        <RecentManualEntries isAdmin={canPost} canRequest={canPrepare} companyName={companyName} multiCompany={companyIds.length > 1} onEdit={canPost ? editEntry : undefined} />
+        <RecentManualEntries isAdmin={canPost} isCeo={isAdmin} canRequest={canPrepare} companyName={companyName} multiCompany={companyIds.length > 1} onEdit={canPost ? editEntry : undefined}
+          closedBooks={lock?.tenantId && closedBooksThrough ? { tenantId: lock.tenantId, through: closedBooksThrough } : null} />
       </div>
     </div>
   )
 }
 
-function RecentManualEntries({ isAdmin, canRequest, companyName, multiCompany, onEdit }: { isAdmin: boolean; canRequest: boolean; companyName: (id: string | null) => string; multiCompany: boolean; onEdit?: (e: LedgerEntry) => void }) {
+type ClosedBooks = { tenantId: string; through: string } | null
+
+function RecentManualEntries({ isAdmin, isCeo, canRequest, companyName, multiCompany, onEdit, closedBooks }: { isAdmin: boolean; isCeo: boolean; canRequest: boolean; companyName: (id: string | null) => string; multiCompany: boolean; onEdit?: (e: LedgerEntry) => void; closedBooks: ClosedBooks }) {
   const from = daysAgoPkt(90)
   const to = todayPktIso()
   const { data, isLoading, error } = useQuery<LedgerPage>({
@@ -490,13 +509,18 @@ function RecentManualEntries({ isAdmin, canRequest, companyName, multiCompany, o
       {!isLoading && !error && entries.length === 0 && (
         <p className="px-4 py-6 text-sm text-s-muted text-center">No manual entries in the last 90 days.</p>
       )}
-      {entries.map((e) => <ManualEntryRow key={e.id} e={e} isAdmin={isAdmin} canRequest={canRequest} company={multiCompany ? companyName(e.tenantId) : null} onEdit={onEdit} />)}
+      {entries.map((e) => {
+        // Dated in closed or reopened books: cancelling or editing it is the CEO's (403 CEO_ONLY_CLOSED_BOOKS).
+        const ceoOnly = !isCeo && !!closedBooks && e.tenantId === closedBooks.tenantId && pktDate(e.entryDate) <= closedBooks.through
+        // There a non-CEO may still ASK for the reversal (a journal request the CEO approves).
+        return <ManualEntryRow key={e.id} e={e} isAdmin={isAdmin && !ceoOnly} canRequest={canRequest} company={multiCompany ? companyName(e.tenantId) : null} onEdit={ceoOnly ? undefined : onEdit} ceoOnly={ceoOnly} />
+      })}
       {data?.hasMore && <p className="px-4 py-3 text-xs text-s-muted">Showing the latest 100 — older entries are in the ledger.</p>}
     </section>
   )
 }
 
-function ManualEntryRow({ e, isAdmin, canRequest, company, onEdit }: { e: LedgerEntry; isAdmin: boolean; canRequest: boolean; company: string | null; onEdit?: (e: LedgerEntry) => void }) {
+function ManualEntryRow({ e, isAdmin, canRequest, company, onEdit, ceoOnly }: { e: LedgerEntry; isAdmin: boolean; canRequest: boolean; company: string | null; onEdit?: (e: LedgerEntry) => void; ceoOnly: boolean }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState('')
@@ -546,6 +570,9 @@ function ManualEntryRow({ e, isAdmin, canRequest, company, onEdit }: { e: Ledger
         {isReversal && <span className="s-badge-muted shrink-0">Reversal</span>}
         {e.reversedBy && <span className="s-badge-amber shrink-0">Reversed {pktDate(e.reversedBy.entryDate)}</span>}
         {asked && <span className="s-badge-amber shrink-0">Reversal requested</span>}
+        {ceoOnly && !isReversal && !e.reversedBy && (
+          <span className="s-badge-muted shrink-0" title="Dated in closed books — only the CEO can edit or cancel it; you can ask for the reversal">Closed books — CEO only</span>
+        )}
         {(isAdmin || canRequest) && !isReversal && !e.reversedBy && !open && !asked && (
           <button type="button" onClick={() => setOpen(true)} className="s-btn-secondary text-xs px-3 py-1 shrink-0">{isAdmin ? 'Cancel (reverse)' : 'Request reversal'}</button>
         )}

@@ -47,7 +47,7 @@ export default function PayrollRunPage() {
   const [editing, setEditing] = useState<Slip | null>(null)
   const [paying, setPaying] = useState(false)
   const [err, setErr] = useState('')
-  const { userId, role, isPayrollApprover } = useHrAccess()
+  const { userId, role, isPayrollApprover, isPayrollPayer } = useHrAccess()
   const confirm = useConfirm()
   const { data, error: loadErr, isLoading } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
   const act = useMutation({
@@ -107,7 +107,7 @@ export default function PayrollRunPage() {
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
               <button className={btn} disabled={act.isPending} onClick={() => void ask('lock')}>Lock</button>
             </>}
-            {run.status === 'locked' && !run.paidAt && isPayrollApprover && (
+            {run.status === 'locked' && !run.paidAt && isPayrollPayer && (
               <button className={btn} onClick={() => { setErr(''); setPaying(true) }}>Mark paid</button>
             )}
             {run.paidAt && (

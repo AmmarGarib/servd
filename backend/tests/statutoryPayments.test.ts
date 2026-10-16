@@ -167,14 +167,16 @@ describe('a statutory challan is a tax payment', () => {
     expect(amt((await entry(tenantB, `salestax.payment:${inB.json().id}`))!, '2043', 'debit')).toBe(100)
   })
 
-  it('B voiding A\'s challan is 404; a second for the month is 409; input set-off is 422', async () => {
+  it('B voiding A\'s challan is 404; a second for the month without its own CPR is 422; input set-off is 422', async () => {
     const voidIt = await call('adminB', 'POST', `/accounting/sales-tax-return/payments/${eobiA}/void`, { reason: 'not ours at all' })
     expect(voidIt.statusCode).toBe(404)
     expect(await prisma.salesTaxPayment.count({ where: { id: eobiA } })).toBe(1)
 
     const again = await call('finA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'eobi', period: M1, paidCents: 10, paidAt: `${M2}-01`, bankAccountId: bankA })
-    expect(again.statusCode).toBe(409)
-    expect(again.json().error.code).toBe('TAX_PAYMENT_EXISTS')
+    // A month may take a top-up challan (finance audit 2026-10-17 item 22),
+    // but only with its own CPR number — a bare second payment is refused.
+    expect(again.statusCode).toBe(422)
+    expect(again.json().error.code).toBe('CPR_REQUIRED_FOR_TOP_UP')
 
     const input = await call('finA', 'POST', '/accounting/sales-tax-return/payments', { authority: 'sessi', period: M1, paidCents: 10, inputSetOffCents: 5, paidAt: `${M2}-01`, bankAccountId: bankA })
     expect(input.statusCode).toBe(422)

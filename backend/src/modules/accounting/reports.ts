@@ -250,6 +250,9 @@ export async function trialBalance(tenantIds: string[], asOf: Date, opts: { basi
       .filter((r) => r.debitCents !== 0 || r.creditCents !== 0)
     for (const y of years) {
       const net = pnlResultCents(before.filter((b) => b.tenantId === y.tenantId))
+      // A company in its first fiscal year has nothing brought forward: no
+      // zero row (accounts at zero are not listed).
+      if (net === 0) continue
       virtualRows.push({
         tenantId: y.tenantId,
         companyName: nameOf.get(y.tenantId) ?? null,

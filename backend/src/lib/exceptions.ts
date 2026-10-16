@@ -203,17 +203,31 @@ export async function flagException(input: FlagInput): Promise<{ id: string } | 
 // is not touched and the call returns false (the route answers 404).
 export async function acknowledgeException(id: string, userId: string, scope: TenantIdWhere): Promise<boolean> {
   const r = await prisma.exceptionFlag.updateMany({
-    where: { id, ...scope },
+    where: { id, status: { in: ['open', 'acknowledged'] }, ...scope },
     data: { status: 'acknowledged', acknowledgedById: userId, acknowledgedAt: new Date() },
   })
   return r.count > 0
 }
 
+/**
+ * Flags about the BOOKS. Resolving one takes it off the period close (a
+ * posting_failed flag is a close block), so only the CEO and finance with the
+ * accounting module may resolve them (PATCH /crosschecks/exceptions/:id/resolve).
+ */
+export const LEDGER_FLAG_KINDS: ReadonlySet<string> = new Set([
+  'posting_failed', 'manual_journal', 'fixed_asset_gl_mismatch', 'cash_voucher_hold_unconverted',
+  'depreciation_failed', 'intercompany_mismatch',
+])
+/** Review flags about a person's own action: never resolved by that person (the CEO excepted). */
+export const NO_SELF_RESOLVE_KINDS: ReadonlySet<string> = new Set(['manual_journal', 'fixed_asset_gl_mismatch'])
+
 // Resolve — flag closed with a resolution note. The flag stays in the DB
 // for audit; status filter excludes it from the open inbox. Scoped as above.
+// Only an open or acknowledged flag is resolved (a dismissed or already
+// resolved one is left as it is — the call returns false).
 export async function resolveException(id: string, userId: string, resolution: string, scope: TenantIdWhere): Promise<boolean> {
   const r = await prisma.exceptionFlag.updateMany({
-    where: { id, ...scope },
+    where: { id, status: { in: ['open', 'acknowledged'] }, ...scope },
     data: { status: 'resolved', resolvedById: userId, resolvedAt: new Date(), resolution },
   })
   return r.count > 0

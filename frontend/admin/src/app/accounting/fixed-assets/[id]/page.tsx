@@ -32,7 +32,7 @@ interface AssetDetail {
   asset: FaAsset
   schedule: { posted: PostedMonth[]; upcoming: UpcomingMonth[]; nextChargeCents: number }
   events: FaRequest[]
-  tax: { toConfirm: boolean; note: string | null; years: TaxYear[] }
+  tax: { toConfirm: boolean; note: string | null; years: TaxYear[]; initialAllowance?: { applicable: boolean; frozenTaxYear: number | null } }
   capex: { lineId: string; item: string; status: string; quantity: number; actualDeliveryDate: string | null; projectId: string; projectName: string; unit: number | null } | null
   journal: Array<{ id: string; reference: string | null; entryDate: string; description: string | null }>
   documentUrls: DocLink[] | null
@@ -222,6 +222,13 @@ export default function FixedAssetPage() {
           {/* Tax view */}
           <section className="rounded-2xl p-4" style={card}>
             <p className="text-sm font-black text-white/90">Tax depreciation</p>
+            <InitialAllowanceTick
+              asset={a!}
+              canEdit={!!lookups?.capabilities.canSetInitialAllowance}
+              applicable={!!data.tax.initialAllowance?.applicable}
+              firstYearFrozen={data.tax.initialAllowance?.frozenTaxYear != null}
+              onSaved={refresh}
+            />
             {data.tax.note && !data.tax.toConfirm && <p className="text-xs text-white/50 mt-1">{data.tax.note}</p>}
             {data.tax.toConfirm ? (
               <p className="text-sm text-white/60 mt-2">Tax treatment to confirm. {data.tax.note}</p>
@@ -289,6 +296,40 @@ export default function FixedAssetPage() {
           onSaved={() => { setEditing(false); setNotice({ tone: 'ok', text: 'Details saved.' }); refresh() }} />
       )}
     </FaFrame>
+  )
+}
+
+// ─── H42: eligible for the 25% initial allowance (tax view only) ────────────
+
+function InitialAllowanceTick({ asset, canEdit, applicable, firstYearFrozen, onSaved }: {
+  asset: FaAsset; canEdit: boolean; applicable: boolean; firstYearFrozen: boolean; onSaved: () => void
+}) {
+  const checked = !!asset.initialAllowanceEligible
+  const save = useMutation({
+    mutationFn: (eligible: boolean) => api.put(`${FA_BASE}/${asset.id}/initial-allowance`, { eligible }, { tenantId: asset.tenantId }),
+    onSuccess: onSaved,
+  })
+  if (!applicable) return null
+  const locked = !canEdit || firstYearFrozen || save.isPending
+  return (
+    <div className="mt-2">
+      <label className={`flex items-center gap-2 text-sm ${locked ? 'text-white/50' : 'text-white/80 cursor-pointer'}`}>
+        <input
+          type="checkbox"
+          checked={save.isPending ? !!save.variables : checked}
+          disabled={locked}
+          onChange={(e) => save.mutate(e.target.checked)}
+        />
+        Eligible for 25% initial allowance (tax)
+      </label>
+      <p className="text-[11px] text-white/45 mt-0.5 ml-6">
+        {firstYearFrozen
+          ? 'A tax year carrying its initial allowance is frozen, so this can no longer change.'
+          : 'Plant and machinery only (accountant, H42). Changes the tax view, never the books.'}
+        {!canEdit && !firstYearFrozen ? ' Finance or the CEO sets it.' : ''}
+      </p>
+      <ErrorLine error={save.error} />
+    </div>
   )
 }
 

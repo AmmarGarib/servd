@@ -186,12 +186,12 @@ describe('a tax payment is first-class and never lowers the output of a return',
     expect(await outputTaxCollectedCents([tenantA], M2_FROM, M2_TO)).toBe(900)
   })
 
-  it('a second payment for the same authority and period is refused', async () => {
+  it('a second payment for the same authority and period without its own CPR is refused', async () => {
     const res = await call('finA', 'POST', '/accounting/sales-tax-return/payments', {
       authority: 'srb', periodFrom: `${M1}-01`, periodTo: lastDay(M1), paidCents: 100, paidAt: `${M2}-01`, bankAccountId: bankA,
     })
-    expect(res.statusCode).toBe(409)
-    expect(res.json().error.code).toBe('TAX_PAYMENT_EXISTS')
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error.code).toBe('CPR_REQUIRED_FOR_TOP_UP')
   })
 
   it('FBR with input set off: Dr 2030 (paid + input) / Cr 1320 / Cr bank; the month paid in shows no negative input', async () => {

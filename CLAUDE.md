@@ -1128,7 +1128,16 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   refundable deposits (1360) only through CapEx. No deferred tax anywhere
   (H24). No sales tax on proceeds when used equipment is sold (H41). For
   TAX, smallwares are deducted in full in the year bought (H35) and the 25%
-  initial allowance is kitchen and power equipment only (H42; office and IT 0%).
+  initial allowance is decided PER ASSET (H42, Hasnain 2026-10-16): finance
+  ticks `FixedAsset.initialAllowanceEligible` ("Eligible for 25% initial
+  allowance (tax)" on the asset page; `PUT /accounting/fixed-assets/:id/
+  initial-allowance`, finance or the CEO, audited
+  `fixed_asset.initial_allowance`). It starts ticked for kitchen and power
+  equipment and unticked for office, IT and every other class (capitalisation
+  default; existing rows backfilled the same way). Ticked = the class rate, or
+  the statutory 25% when the class carries 0 (`tax.ts initialAllowanceBpOf`).
+  Tax view only, never the books; smallwares and land never. Once any tax year
+  from the asset's first is frozen the tick is final (409 `TAX_YEAR_FROZEN`).
 - **Tax:** `accounting/taxAuthorities.ts` is the one authority table; input
   tax is booked by authority (1320 FBR, 1322 SRB — the ONLY two: PRA, KPRA, BRA and their 1321/1323/1324 + 2031/2033/2034 were removed, owner 2026-10-15; brands cannot be set to Punjab, KP or Balochistan). Federal input
   on food, drink and packaging stock (H34) may be set off against SRB output (H8:

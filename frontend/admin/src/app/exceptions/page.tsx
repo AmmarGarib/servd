@@ -158,6 +158,7 @@ export default function ExceptionInboxPage() {
       api.patch(`/crosschecks/exceptions/${id}/resolve`, { resolution }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['exceptions'] }); setResolveFor(null) },
   })
+  const resolveError = (resolve.error as { message?: string } | null)?.message ?? null
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -258,7 +259,7 @@ export default function ExceptionInboxPage() {
         })}
       </div>
 
-      {resolveFor && <ResolveModal flag={resolveFor} onClose={() => setResolveFor(null)} onResolve={(res) => resolve.mutate({ id: resolveFor.id, resolution: res })} pending={resolve.isPending} />}
+      {resolveFor && <ResolveModal flag={resolveFor} onClose={() => { setResolveFor(null); resolve.reset() }} onResolve={(res) => resolve.mutate({ id: resolveFor.id, resolution: res })} pending={resolve.isPending} error={resolveError} />}
     </div>
   )
 }
@@ -273,8 +274,9 @@ function Stat({ value, label, accent }: { value: number; label: string; accent: 
   )
 }
 
-function ResolveModal({ flag, onClose, onResolve, pending }: { flag: ExceptionFlag; onClose: () => void; onResolve: (r: string) => void; pending: boolean }) {
+function ResolveModal({ flag, onClose, onResolve, pending, error }: { flag: ExceptionFlag; onClose: () => void; onResolve: (r: string) => void; pending: boolean; error: string | null }) {
   const [resolution, setResolution] = useState('')
+  const tooShort = resolution.trim().length < 10
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
@@ -287,10 +289,12 @@ function ResolveModal({ flag, onClose, onResolve, pending }: { flag: ExceptionFl
           <textarea value={resolution} onChange={(e) => setResolution(e.target.value)} rows={4}
             placeholder="Spoke with cashier. Reviewed footage. Counter-checked next shift's drawer. Variance traced to PKR 200 wrong-change incident; recovered."
             className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none" autoFocus />
+          <p className="text-[11px] text-white/45">At least 10 characters. A refused posting closes by itself once it is re-posted (Reconciliation → Backfill unposted).</p>
+          {error && <p role="alert" className="text-xs text-s-red">{error}</p>}
         </div>
         <div className="flex justify-between p-4 border-t border-white/[0.05] bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-          <button onClick={() => onResolve(resolution)} disabled={!resolution.trim() || pending}
+          <button onClick={() => onResolve(resolution.trim())} disabled={tooShort || pending}
             className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {pending ? 'Saving…' : 'Mark resolved'}
           </button>

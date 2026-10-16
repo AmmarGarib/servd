@@ -133,7 +133,7 @@ export interface WithholdingResult {
   filerStatus: string
   /** True when the supplier's exemption certificate covered the day. */
   exempt: boolean
-  /** The vendor's filer status is not known — the filer rate was used; check FBR's Active Taxpayers List. */
+  /** The vendor's filer status is not known — the NON-filer rate was used until it is confirmed (H33); check FBR's Active Taxpayers List. */
   needsAtlCheck: boolean
 }
 

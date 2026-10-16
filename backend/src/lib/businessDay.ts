@@ -30,8 +30,11 @@ const CUTOFF_MS = BUSINESS_DAY_CUTOFF_HOURS * 3_600_000
 export function shiftBusinessDay(shift: { openedAt: Date; closedAt: Date | null }): string | null {
   if (!shift.closedAt) return null
   const opened = fmtPktDate(shift.openedAt)
+  const closedDay = fmtPktDate(shift.closedAt)
   const closedLessCutoff = fmtPktDate(new Date(shift.closedAt.getTime() - CUTOFF_MS))
-  return closedLessCutoff > opened ? closedLessCutoff : opened
+  const day = closedLessCutoff > opened ? closedLessCutoff : opened
+  // Never after the close's own day (a row closed before it opened is bad data: its close day).
+  return day > closedDay ? closedDay : day
 }
 
 /**

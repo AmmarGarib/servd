@@ -110,7 +110,7 @@ export default function StatutoryPaymentsPage() {
   })
   const refresh = () => { void qc.invalidateQueries({ queryKey: ['statutory'] }) }
 
-  const [paying, setPaying] = useState<{ key: SchemeKey; month: string; owedCents: number } | null>(null)
+  const [paying, setPaying] = useState<{ key: SchemeKey; month: string; owedCents: number; topUp?: boolean } | null>(null)
   const [linking, setLinking] = useState<{ key: SchemeKey; month: string } | null>(null)
   const [voiding, setVoiding] = useState<{ label: string; payment: PaymentRef } | null>(null)
 
@@ -134,7 +134,7 @@ export default function StatutoryPaymentsPage() {
       <div className="px-4 sm:px-6 py-6 max-w-4xl mx-auto space-y-4">
         <p className="text-xs text-s-muted">
           What payroll and full &amp; final settlements accrued for salary tax, EOBI and SESSI / PESSI each month, and the challans paid for it.
-          Each month&apos;s challan is recorded once per scheme. Amounts payroll booked to 2090 / 2040 before these accounts existed show as
+          A month that still owes after its challan takes a top-up challan (its own CPR number). Amounts payroll booked to 2090 / 2040 before these accounts existed show as
           &quot;booked before the split&quot; until the one-time reclass below moves them.
         </p>
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
@@ -209,9 +209,9 @@ export default function StatutoryPaymentsPage() {
                           </td>
                           {data.canPay && (
                             <td className="px-4 py-2 text-right whitespace-nowrap">
-                              {c.payments.length === 0 && (
-                                <button type="button" className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setPaying({ key, month: m.month, owedCents: Math.max(0, c.owedCents) })}>
-                                  Record payment
+                              {(c.payments.length === 0 || c.owedCents > 0) && (
+                                <button type="button" className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setPaying({ key, month: m.month, owedCents: Math.max(0, c.owedCents), topUp: c.payments.length > 0 })}>
+                                  {c.payments.length > 0 ? 'Record top-up' : 'Record payment'}
                                 </button>
                               )}
                             </td>
@@ -283,7 +283,7 @@ export default function StatutoryPaymentsPage() {
 
 function PayModal({ tenantId, target, label, onClose, onDone }: {
   tenantId: string
-  target: { key: SchemeKey; month: string; owedCents: number }
+  target: { key: SchemeKey; month: string; owedCents: number; topUp?: boolean }
   label: string
   onClose: () => void
   onDone: () => void
@@ -311,10 +311,16 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
   return (
     <Modal title={`Record payment — ${label}`} onClose={onClose} dirty={!go.isPending && (f.paid !== rupees(target.owedCents) || !!f.cprNumber.trim() || !!f.notes.trim())}>
       <DialogForm busy={go.isPending} onSubmit={() => go.mutate()}
-        missing={!f.month ? 'Pick the month the payment is for.' : toPaisa(f.paid) <= 0 ? 'Enter the amount paid.' : !f.paidAt ? 'Pick the day it was paid.' : null}>
+        missing={!f.month ? 'Pick the month the payment is for.' : toPaisa(f.paid) <= 0 ? 'Enter the amount paid.' : !f.paidAt ? 'Pick the day it was paid.' : target.topUp && !f.cprNumber.trim() ? 'A top-up challan needs its own CPR / challan number.' : null}>
       <p className="text-xs text-s-muted mb-3">
         Posts the challan in the books on the day it was paid: the payable is cleared and the money leaves the bank (or cash).
+        {target.topUp && ' This month already has a challan — this is a top-up for what is still owed, with its own CPR number.'}
       </p>
+      {target.month === f.month && toPaisa(f.paid) > target.owedCents && (
+        <p role="status" className="text-xs text-s-amber mb-3">
+          This is more than the {fmtPkr(target.owedCents)} still owed for {target.month} — the month will show as overpaid.
+        </p>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="For the month"><input type="month" className="s-input" min="2000-01" value={f.month} onChange={set('month')} aria-invalid={!f.month ? true : undefined} /></Field>
         <Field label="Paid (PKR)"><RupeeField label="Paid (PKR)" value={f.paid} onChange={(v) => setF((p) => ({ ...p, paid: v }))} invalid={toPaisa(f.paid) <= 0} /></Field>
@@ -332,7 +338,7 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
             <BankAccountSelect tenantId={tenantId} value={f.bankAccountId} onChange={(v) => setF((p) => ({ ...p, bankAccountId: v }))} className="s-input" label="Paid from" />
           </div>
         )}
-        <Field label="CPR / challan number"><input className="s-input" value={f.cprNumber} onChange={set('cprNumber')} /></Field>
+        <Field label={target.topUp ? 'CPR / challan number *' : 'CPR / challan number'}><input className="s-input" value={f.cprNumber} onChange={set('cprNumber')} aria-invalid={target.topUp && !f.cprNumber.trim() ? true : undefined} /></Field>
         <Field label="Notes"><input className="s-input" value={f.notes} onChange={set('notes')} /></Field>
       </div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}

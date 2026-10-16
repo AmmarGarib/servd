@@ -14,6 +14,10 @@
 // attachment instead of URL for supporting docs"): up to 5 photos / PDFs per
 // drop, on the form or attached later per row ("Attach slip"), viewed in the
 // browser or downloaded. Old rows may still carry a receipt link.
+// One bag may be split across several tills (owner, 2026-10-16: "One deposit
+// can be split across several shifts"): "Split across tills" takes each
+// till's share; the shares make up the amount. Each bag is compared with what
+// is still to bank from its tills, and the night audit compares amounts.
 
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -54,6 +58,8 @@ async function pickSlips(list: FileList | null, room: number): Promise<PickedSli
 interface Drop {
   id: string
   shiftId: string | null
+  /** Each till's share (a split bag; a legacy drop has only shiftId). */
+  allocations?: Array<{ shiftId: string; amountCents: number }>
   amountCents: number
   expectedCents: number
   varianceCents: number
@@ -119,8 +125,13 @@ export default function DepositDropsPage() {
                   )}
                 </div>
                 <p className="text-xs text-white/45 mt-1">
-                  Expected from shift (drops + count − float): {pkr(d.expectedCents)} · {new Date(d.droppedAt).toLocaleString()}
+                  Still to bank from {(d.allocations?.length ?? 0) > 1 ? `${d.allocations!.length} tills` : 'the shift'} (drops + count − float, less earlier deposits): {pkr(d.expectedCents)} · {new Date(d.droppedAt).toLocaleString()}
                 </p>
+                {(d.allocations?.length ?? 0) > 1 && (
+                  <p className="text-xs text-white/55 mt-1">
+                    Split: {d.allocations!.map((a) => `${a.shiftId.slice(-8).toUpperCase()} ${pkr(a.amountCents)}`).join(' · ')}
+                  </p>
+                )}
                 <p className="text-xs mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
                   <span>
                     <span className="text-white/45">Deposit slip #: </span>
@@ -156,6 +167,12 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   const shifts = recent?.shifts ?? []
   const [shiftId, setShiftId] = useState('')
   const [amountCents, setAmountCents] = useState(0)
+  // A bag split across several tills: each till's share; the amount is their total.
+  const [splitMode, setSplitMode] = useState(false)
+  const [shares, setShares] = useState<Array<{ shiftId: string; amountCents: number }>>([{ shiftId: '', amountCents: 0 }, { shiftId: '', amountCents: 0 }])
+  const shareTotal = shares.reduce((t, x) => t + x.amountCents, 0)
+  const sharesComplete = shares.every((x) => x.shiftId && x.amountCents > 0) && new Set(shares.map((x) => x.shiftId)).size === shares.length
+  const depositCents = splitMode ? shareTotal : amountCents
   const [bankAccountId, setBankAccountId] = useState('')
   const [bagSerial, setBagSerial] = useState('')
   const [slipNumber, setSlipNumber] = useState('')
@@ -178,9 +195,9 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 
   const save = useMutation({
     mutationFn: () => api.post<{ posted?: boolean; postingError?: string | null; referenceUsedBefore?: PaymentRefUse[] }>('/trustops/deposit-drops', {
-      shiftId: shiftId || null,
+      ...(splitMode ? { shifts: shares } : { shiftId: shiftId || null }),
       bankAccountId: bankAccountId || null,
-      amountCents,
+      amountCents: depositCents,
       bagSerial: bagSerial || null,
       slipNumber: slipNumber.trim() || null,
       notes: notes || null,
@@ -198,12 +215,13 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   const [tried, setTried] = useState(false)
   const submit = useSubmitOnce(save.isPending)(() => {
     setTried(true)
-    if (amountCents <= 0) { focusField('dd-amount'); return false }
+    if (splitMode && !sharesComplete) { focusField('dd-share-0'); return false }
+    if (depositCents <= 0) { focusField(splitMode ? 'dd-share-0' : 'dd-amount'); return false }
     if (preparing) return false
     save.mutate()
     return true
   })
-  return <Modal title="Record bank deposit" onClose={close} dirty={!done && !save.isPending && (amountCents > 0 || !!slipNumber.trim() || !!bagSerial.trim() || !!notes.trim() || slips.length > 0)}
+  return <Modal title="Record bank deposit" onClose={close} dirty={!done && !save.isPending && (depositCents > 0 || !!slipNumber.trim() || !!bagSerial.trim() || !!notes.trim() || slips.length > 0)}
     footer={
       <div className="flex justify-between gap-3">
         {done ? (
@@ -217,23 +235,58 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
       </div>
     }>
     <form id="dd-form" onSubmit={submit} className="space-y-3" noValidate>
-      <Field label="Shift (optional — for the variance check)">
-        {shifts.length > 0 ? (
-          <Select id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} className={fieldCls}>
-            <option value="">— not from one shift —</option>
-            {shifts.map((s) => (
-              <option key={s.shiftId} value={s.shiftId}>
-                {s.cashier} · {new Date(s.openedAt).toLocaleString()}{s.status === 'open' ? ' (open)' : ''}
-              </option>
+      <label className="flex items-center gap-2 text-sm text-white/70">
+        <input type="checkbox" checked={splitMode} onChange={(e) => setSplitMode(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
+        One bag for several tills — split it across them
+      </label>
+      {!splitMode ? (
+        <>
+          <Field label="Shift (optional — for the variance check)">
+            {shifts.length > 0 ? (
+              <Select id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} className={fieldCls}>
+                <option value="">— not from one shift —</option>
+                {shifts.map((s) => (
+                  <option key={s.shiftId} value={s.shiftId}>
+                    {s.cashier} · {new Date(s.openedAt).toLocaleString()}{s.status === 'open' ? ' (open)' : ''}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <input id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
+            )}
+          </Field>
+          <Field label="Amount counted at drop (PKR) *" error={tried && amountCents <= 0 ? 'Enter the amount counted.' : ''}>
+            <MoneyInput id="dd-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
+          </Field>
+        </>
+      ) : (
+        <Field label="Each till's share (PKR) *" hint={`Bag total: PKR ${(shareTotal / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`}
+          error={tried && !sharesComplete ? 'Pick a different till and an amount on every line.' : ''}>
+          <div className="space-y-2">
+            {shares.map((x, i) => (
+              <div key={i} className="grid grid-cols-[1fr_8rem_auto] gap-2 items-center">
+                {shifts.length > 0 ? (
+                  <Select id={`dd-share-${i}`} value={x.shiftId} onChange={(e) => setShares((all) => all.map((y, j) => (j === i ? { ...y, shiftId: e.target.value } : y)))} className={fieldCls} aria-label={`Till ${i + 1}`}>
+                    <option value="">— pick a till —</option>
+                    {shifts.map((s) => (
+                      <option key={s.shiftId} value={s.shiftId}>
+                        {s.cashier} · {new Date(s.openedAt).toLocaleString()}{s.status === 'open' ? ' (open)' : ''}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <input id={`dd-share-${i}`} value={x.shiftId} onChange={(e) => setShares((all) => all.map((y, j) => (j === i ? { ...y, shiftId: e.target.value } : y)))} placeholder="Shift UUID" className={fieldCls} aria-label={`Till ${i + 1}`} />
+                )}
+                <MoneyInput value={x.amountCents} onChange={(v) => setShares((all) => all.map((y, j) => (j === i ? { ...y, amountCents: v } : y)))} className={fieldCls} ariaLabel={`Till ${i + 1} share in rupees`} />
+                <button type="button" disabled={shares.length <= 1} onClick={() => setShares((all) => all.filter((_, j) => j !== i))}
+                  className="text-xs font-bold text-s-red disabled:opacity-40">Remove</button>
+              </div>
             ))}
-          </Select>
-        ) : (
-          <input id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
-        )}
-      </Field>
-      <Field label="Amount counted at drop (PKR) *" error={tried && amountCents <= 0 ? 'Enter the amount counted.' : ''}>
-        <MoneyInput id="dd-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
-      </Field>
+            <button type="button" disabled={shares.length >= 20} onClick={() => setShares((all) => [...all, { shiftId: '', amountCents: 0 }])}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-white/65 hover:text-white hover:border-primary disabled:opacity-50">+ Add a till</button>
+          </div>
+        </Field>
+      )}
       <BankAccountSelect tenantId={company?.id} value={bankAccountId} onChange={setBankAccountId} id="deposit-bank" label="Bank account" className={fieldCls} />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Deposit slip #"><input value={slipNumber} onChange={(e) => setSlipNumber(e.target.value)} maxLength={100} placeholder="From the bank's stamped slip" autoComplete="off" className={fieldCls + ' font-mono'} /></Field>

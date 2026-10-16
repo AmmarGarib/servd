@@ -27,9 +27,10 @@ import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
-type Act = 'confirm-received' | 'send-back' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
+type Act = 'confirm-received' | 'confirm-received-on-behalf' | 'send-back' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
 const ACT_DONE: Record<Act, string> = {
   'confirm-received': 'Cash received confirmed — finance can now verify the documents.',
+  'confirm-received-on-behalf': 'Cash received recorded on the holder\'s behalf — the documents can now be checked.',
   'send-back': 'Sent back — the requester attaches the missing documents.',
   'finance-approve': 'Approved by finance — now waiting for the CEO.',
   approve: 'Approved — the cashier can pay it.',
@@ -55,6 +56,7 @@ export function VoucherDetail({ id }: { id: string }) {
   const [editing, setEditing] = useState(false)
   const [noteFor, setNoteFor] = useState<NoteAct | null>(null)
   const [note, setNote] = useState('')
+  const [onBehalfReason, setOnBehalfReason] = useState('')
   const [exportErr, setExportErr] = useState<string | null>(null)
 
   function refresh() {
@@ -68,7 +70,7 @@ export function VoucherDetail({ id }: { id: string }) {
       // Pinned to the voucher's company, so the "All companies" view never asks.
       api.post<CashVoucher>(`${CV_BASE}/${id}/${kind}`, body, v?.tenantId ? { tenantId: v.tenantId } : undefined),
     meta: { inlineErrors: true },
-    onSuccess: (_r, { kind }) => { toast.success(ACT_DONE[kind]); setNoteFor(null); setNote(''); refresh() },
+    onSuccess: (_r, { kind }) => { toast.success(ACT_DONE[kind]); setNoteFor(null); setNote(''); setOnBehalfReason(''); refresh() },
   })
 
   if (isLoading) return <p className="px-7 py-10 text-sm text-white/40">Loading…</p>
@@ -246,6 +248,22 @@ export function VoucherDetail({ id }: { id: string }) {
           <p className="rounded-2xl p-4 text-xs font-bold text-white/70" style={card}>
             Waiting for {v.receiverName ?? holder} to confirm cash received — finance verifies the documents after that.
           </p>
+        )}
+        {v.canConfirmReceivedOnBehalf && (
+          <div className="rounded-2xl p-5 space-y-2" style={card}>
+            <p className="text-sm font-black text-white/90">Record cash received for {v.receiverName ?? holder}</p>
+            <p className="text-xs text-white/55">Use this only when the holder cannot confirm (for example they have left). Your name goes in the Received by box and the reason is kept in the history.</p>
+            <textarea value={onBehalfReason} onChange={(e) => setOnBehalfReason(e.target.value)} rows={2} maxLength={500}
+              placeholder="Why the holder cannot confirm (at least 10 characters)" className={fieldCls} />
+            <button disabled={act.isPending || onBehalfReason.trim().length < 10} className={secondaryBtn}
+              onClick={async () => {
+                if (await confirm({ title: `Record cash received for ${v.number}?`, body: `This records that PKR ${formatPkr(v.amountCents)} reached the holder, on their behalf.`, confirmLabel: 'Record it' })) {
+                  run('confirm-received-on-behalf', { reason: onBehalfReason.trim() })
+                }
+              }}>
+              {act.isPending ? 'Saving…' : 'Record cash received on their behalf'}
+            </button>
+          </div>
         )}
         {v.canNameHolder && <NameHolder v={v} onDone={refresh} />}
         {v.canPay && <PayPanel v={v} onDone={refresh} />}

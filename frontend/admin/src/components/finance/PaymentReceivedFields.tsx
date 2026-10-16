@@ -21,7 +21,10 @@ import { fmtPkrWhole } from '../../lib/money'
 import { useSubmitOnce } from '../../app/finance/cash-vouchers/ui'
 import { Select } from '@/components/ui/Select'
 
-export const RECEIPT_METHODS = ['cash', 'card', 'bank_transfer', 'bank_deposit', 'cheque'] as const
+// No card (owner, 2026-10-16): back-office receipts take bank transfer, bank
+// deposit, cash or cheque only — card is the till's. Old 'card' rows still
+// read (RECEIPT_METHOD_LABEL).
+export const RECEIPT_METHODS = ['cash', 'bank_transfer', 'bank_deposit', 'cheque'] as const
 export type ReceiptMethod = typeof RECEIPT_METHODS[number]
 
 export const RECEIPT_METHOD_LABEL: Record<string, string> = {
@@ -54,7 +57,6 @@ export function referenceRequired(_method: string | null | undefined): boolean {
 
 const REF_PLACEHOLDER: Record<string, string> = {
   cash: 'Cash receipt / voucher no.',
-  card: 'Card slip / approval no.',
   bank_transfer: 'Transfer / IBFT reference',
   bank_deposit: 'Deposit slip no.',
   cheque: 'Cheque no.',
@@ -69,6 +71,7 @@ export function receiptFieldsValid(v: { method: string; reference: string }): bo
 export const PAYMENT_REFERENCE_ERROR_TEXT: Record<string, string> = {
   PAYMENT_REFERENCE_REQUIRED: 'Enter the payment reference # — the receipt, slip, transfer or cheque number.',
   PAYMENT_REFERENCE_TOO_LONG: 'The payment reference # is at most 100 characters.',
+  CARD_NOT_A_RECEIPT: 'Card is taken at the till only — record this as a bank transfer, bank deposit, cash or cheque.',
 }
 
 export function PaymentReceivedFields({

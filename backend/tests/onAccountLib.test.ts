@@ -143,7 +143,9 @@ describe('exposure', () => {
     // An ordinary invoice linked to the client counts too.
     await mkBill(tenantA, acct.id, { total: 4_000, due: '2099-01-01', kind: 'invoice' })
     const e = await exposureOfTx(prisma, acct.id)
-    expect(e).toEqual({ unbilledCents: 4_500, invoicesDueCents: 6_000 + 4_000, exposureCents: 14_500, overdue: null })
+    // …but the in-credit row is money owed BACK to the client (500): creditCents,
+    // never netted against exposure (closing refuses it — CLIENT_IN_CREDIT).
+    expect(e).toEqual({ unbilledCents: 4_500, invoicesDueCents: 6_000 + 4_000, exposureCents: 14_500, creditCents: 500, overdue: null })
   })
 
   it('two companies: B rows carrying A client id never count', async () => {
@@ -153,7 +155,7 @@ describe('exposure', () => {
       data: { tenantId: tenantB, accountId: acct.id, orderId: `x-${RUN}-1`, paymentId: `x-${RUN}-1`, conceptId: conceptB, amountCents: 9_999, chargedById: userA },
     })
     const e = await exposureOfTx(prisma, acct.id)
-    expect(e).toEqual({ unbilledCents: 0, invoicesDueCents: 0, exposureCents: 0, overdue: null })
+    expect(e).toEqual({ unbilledCents: 0, invoicesDueCents: 0, exposureCents: 0, creditCents: 0, overdue: null })
   })
 
   it('overdue by Karachi day with grace', async () => {

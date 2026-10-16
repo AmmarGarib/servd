@@ -23,7 +23,7 @@ export default function HrSectionPage() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [csvErr, setCsvErr] = useState('')
   const [backfillMsg, setBackfillMsg] = useState('')
-  const { isPayrollApprover } = useHrAccess()
+  const { isPayrollPayer } = useHrAccess()
   const { data: sections } = useHrSections()
   // GET /hr/sections: a section whose work moved elsewhere (eobi_challan →
   // Accounting → Statutory payments) says where; its rows stay readable.
@@ -60,7 +60,7 @@ export default function HrSectionPage() {
       subtitle={[info ? `Spec §${info.specNo}.` : '', info?.effect ?? ''].filter(Boolean).join(' ')}
       actions={<>
         <button className={btnGhost} onClick={() => { setCsvErr(''); api.download(`/hr/records/${section}/export.csv`, `hr-${section}.csv`).catch((e: Error) => setCsvErr(e.message)) }}>Export CSV</button>
-        {section === 'final_settlement' && isPayrollApprover && (
+        {section === 'final_settlement' && isPayrollPayer && (
           <button className={btnGhost} disabled={backfill.isPending} onClick={() => { setBackfillMsg(''); backfill.mutate() }}>
             {backfill.isPending ? 'Booking…' : 'Post approved settlements'}
           </button>

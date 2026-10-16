@@ -194,6 +194,7 @@ function Modal({ account, onClose, onSaved }: { account: Bank | null; onClose: (
   const [currency, setCurrency] = useState(account?.currency ?? 'PKR')
   const [accountCode, setAccountCode] = useState(account?.accountCode ?? '')
   const [notes, setNotes] = useState(account?.notes ?? '')
+  const [repointReason, setRepointReason] = useState('')
   const [raastId, setRaastId] = useState(account?.raastId ?? '')
   const [raastDefault, setRaastDefault] = useState(!!account?.raastDefault)
   // Set when the account was created but its Raast details were refused (the account itself stays).
@@ -208,7 +209,10 @@ function Modal({ account, onClose, onSaved }: { account: Bank | null; onClose: (
         ...(raastDefault !== !!account?.raastDefault && { raastDefault }),
       }
       if (account) {
-        return api.patch(`/setup/bank-accounts/${account.id}`, { ...payload, ...(code && code !== account.accountCode && { accountCode: code }), ...raast })
+        const repoint = !!code && code !== account.accountCode
+        return api.patch(`/setup/bank-accounts/${account.id}`, {
+          ...payload, ...(repoint && { accountCode: code }), ...(repoint && repointReason.trim().length >= 10 && { repointReason: repointReason.trim() }), ...raast,
+        })
       }
       // A new account: created first (the Raast fields are set on the saved row).
       const id = createdId ?? (await api.post<{ id: string }>('/setup/bank-accounts', { ...payload, currency, ...(code && { accountCode: code }) })).id
@@ -242,8 +246,14 @@ function Modal({ account, onClose, onSaved }: { account: Bank | null; onClose: (
           <Field label="IBAN"><input value={iban} onChange={(e) => setIban(e.target.value.toUpperCase())} placeholder="PK36SCBL0000001123456702" className={fieldCls} /></Field>
           <Field label="Ledger account code">
             <input value={accountCode} onChange={(e) => setAccountCode(e.target.value)} placeholder={account ? '' : 'Leave blank — 1020, or a new 102x for a further bank'} className={fieldCls + ' font-mono'} />
-            <p className="text-[10px] text-white/30 mt-1">An asset account in this company's chart of accounts. Its ledger balance is this bank's balance.</p>
+            <p className="text-[10px] text-white/30 mt-1">A bank code in this company&apos;s chart (1020–1029, or another 10xx bank account) that no other bank uses. Never cash, petty cash, the till, card or customer receivables. Its ledger balance is this bank&apos;s balance.</p>
           </Field>
+          {account && accountCode.trim() && accountCode.trim() !== (account.accountCode ?? '') && (
+            <Field label="Why re-point it? (only the CEO, when the old code still holds money)">
+              <input value={repointReason} onChange={(e) => setRepointReason(e.target.value)} maxLength={500} placeholder="At least 10 characters" className={fieldCls} />
+              <p className="text-[10px] text-white/30 mt-1">While the old code still holds this bank&apos;s balance or open statement lines, the change is refused unless the CEO gives a reason. Move the balance with a journal first where you can.</p>
+            </Field>
+          )}
           <div className="rounded-xl p-3 space-y-3" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <p className="text-xs font-bold text-white/70">Raast QR</p>
             <Field label="Raast ID / alias">

@@ -3,7 +3,8 @@
 //
 //   POST /gift-cards, POST /gift-cards/:id/book-issue, POST /wallet/topup,
 //   POST /wallet/bulk-topup:
-//     • methods are cash · card · bank transfer · BANK DEPOSIT · cheque;
+//     • methods are cash · bank transfer · BANK DEPOSIT · cheque (card is
+//       the till's only since 2026-10-16 — 400 at the route);
 //       a bank deposit lands in the named bank of the DOCUMENT's company
 //       (the card's / the wallet's), another company's bank is 422;
 //     • the payment reference # is REQUIRED on every method, cash included
@@ -155,8 +156,8 @@ describe('gift card sale: bank deposit + payment reference #', () => {
     expect(await prisma.giftCard.count({ where: { tenantId: tenantA } })).toBe(before)
   })
 
-  it('every receipt method sells a card with its reference (cheque into a bank, card to 1030, cash to 1010)', async () => {
-    const expectCode: Record<string, string> = { cash: '1010', card: '1030', bank_transfer: '1020', bank_deposit: '1020', cheque: '1020' }
+  it('every receipt method sells a card with its reference (cheque into a bank, cash to 1010)', async () => {
+    const expectCode: Record<string, string> = { cash: '1010', bank_transfer: '1020', bank_deposit: '1020', cheque: '1020' }
     for (const method of RECEIPT_METHODS) {
       const bank = ['bank_transfer', 'bank_deposit', 'cheque'].includes(method) ? { bankAccountId: bankA1 } : {}
       const ref = uniq(method.toUpperCase())
@@ -183,7 +184,7 @@ describe('gift card sale: bank deposit + payment reference #', () => {
     expect(a1.json().referenceUsedBefore).toEqual([])
 
     // A again (any case): saved, and warned about A's first card only.
-    const a2 = await call('finA', 'POST', '/gift-cards', { issuedAmountCents: 20_000, paymentMethod: 'card', paymentRef: ref.toLowerCase() })
+    const a2 = await call('finA', 'POST', '/gift-cards', { issuedAmountCents: 20_000, paymentMethod: 'cheque', bankAccountId: bankA1, paymentRef: ref.toLowerCase() })
     expect(a2.statusCode, a2.body).toBe(201)
     const uses = a2.json().referenceUsedBefore as Array<{ kind: string; id: string; label: string }>
     expect(uses.map((u) => [u.kind, u.id])).toEqual([['gift_card', a1.json().id]])

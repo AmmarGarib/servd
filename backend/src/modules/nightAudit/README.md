@@ -51,12 +51,24 @@ sources only), `raast_open_night` (Q1), `cod_pending`, `tenders_unresolved`
 included; an `unverified` / `manual_resolved` charge alone is a warn).
 
 Settlement (audited → closed): `card_unsettled_day` (or `card_matching_off`),
-`raast_unmatched_day`, `cash_not_banked` (Q2), `sales_bank_unmatched` (bank
-lines of sales sources dated that day + the deposit drops of that day's tills,
-whenever dropped). A throwing check is `check_failed:<key>`.
+`raast_unmatched_day`, `cash_not_banked` (Q2 — AMOUNTS per till: Σ every
+deposit drop's share for the till vs its cash to bank (drops + counted close −
+float kept); nothing banked blocks, a part banked blocks beyond the cash
+tolerance; one bag may be split across several tills, `deposit_drop_shifts`
+read through `depositPosting.ts dropAllocations`), `sales_bank_unmatched` (bank
+lines of sales sources dated that day + the deposit drops with a share of that
+day's tills, whenever dropped). A throwing check is `check_failed:<key>`.
+`cod_pending` links to Reconciliation → Cash on delivery only while the
+company's code-only delivery switch is on; otherwise to the till's pay-in list
+(`reconciliation/codCloseCheck.ts codPendingLink`).
+
+Tills belong to their BUSINESS day (`lib/businessDay.ts`, owner 2026-10-16):
+a till closing before 05:00 PKT is on the day it opened — its close posting
+is dated 23:59:59.999 PKT of that day, and the shift checks, the daily report
+and the activity days place it there.
 
 Active day (`activity.ts`): orders placed / completed / scheduled, tills
-opened / closed, payments created — nothing else.
+opened / closed (a close on its business day), payments created — nothing else.
 
 ## Run rules (in order)
 

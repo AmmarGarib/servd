@@ -33,7 +33,7 @@ import { Modal } from '@/components/ui/Modal'
 //
 // A wallet top-up is either a goodwill credit (our cost, no money in, no
 // reference) or one the customer paid for — a back-office receipt (owner,
-// 2026-10-14): cash, card, bank transfer, bank deposit or cheque with its
+// 2026-10-14): cash, bank transfer, bank deposit or cheque (no card) with its
 // payment reference # (required on every method), through the shared
 // <PaymentReceivedFields>. A reference used before is a notice, never a block.
 

@@ -338,7 +338,7 @@ describe('chart of accounts — one API, one starting chart', () => {
   })
 
   it('creating and editing an account goes on the accounting trail', async () => {
-    const created = await call('ceo', 'POST', '/setup/chart-of-accounts', { code: '6210', name: 'Marketing software', type: 'expense' }, tenantA)
+    const created = await call('ceo', 'POST', '/setup/chart-of-accounts', { code: '6310', name: 'Marketing software', type: 'expense' }, tenantA)
     expect(created.statusCode).toBe(201)
     const id = (created.json() as { id: string }).id
     const edited = await call('ceo', 'PATCH', `/setup/chart-of-accounts/${id}`, { isActive: false }, tenantA)

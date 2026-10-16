@@ -229,6 +229,7 @@ export interface CashVoucher {
   canSendBack?: boolean
   canEditDiscount?: boolean
   canConfirmReceived?: boolean
+  canConfirmReceivedOnBehalf?: boolean
   canResubmit?: boolean
   canRecordSpend?: boolean
   canExport?: boolean

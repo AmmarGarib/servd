@@ -751,9 +751,11 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     const photoThreshold = ops?.photoRequiredAboveCents ?? 50000
     const amount = body.amountCents
 
-    // Receipt photo enforcement on spend
+    // Receipt photo enforcement on spend: only receipts UPLOADED for this box (receiptIds — the box's company's own
+    // record-files, unclaimed; checked by assertReceiptsFree below) count. A `receiptUrl` is legacy metadata kept on
+    // the movement and never satisfies the threshold (no client sends one; any URL could be typed).
     const receiptIds = [...new Set(body.receiptIds ?? [])]
-    if (body.type === 'spend' && amount >= photoThreshold && receiptIds.length === 0 && !body.receiptUrl) {
+    if (body.type === 'spend' && amount >= photoThreshold && receiptIds.length === 0) {
       throw new AppError(
         'PHOTO_REQUIRED',
         `Spend above PKR ${(photoThreshold / 100).toFixed(0)} requires a receipt photo.`,

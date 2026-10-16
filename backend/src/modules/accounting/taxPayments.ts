@@ -5,7 +5,7 @@
 //
 //   • recordTaxPayment — a payment of one authority's tax for a period, in the
 //     company's books:
-//       sales tax (fbr, pra, srb, kpra, bra — the table in taxAuthorities.ts):
+//       sales tax (fbr, srb — the table in taxAuthorities.ts):
 //         Dr the authority's output account (paid + input set off + withheld
 //            set off)
 //         Cr its input account 132x (input set off — that authority's only, H8)
@@ -25,7 +25,9 @@
 //         (Dr 2040 / Cr bank), 'stwh' sales tax withheld as a withholding
 //         agent (Dr 2041 / Cr bank);
 //       statutory payroll challans (H7): 'salary_tax' (Dr 2042), 'eobi'
-//         (Dr 2043), 'sessi' (Dr 2044) / Cr bank — one per scheme and month.
+//         (Dr 2043), 'sessi' (Dr 2044) / Cr bank. A period may take several
+//         payments: every one after the first is a top-up with its own CPR
+//         (assertPeriodPaymentAllowed, finance audit 2026-10-17 item 22).
 //     Withholding and statutory payments take no input and no withheld set
 //     off. Reference 'salestax.payment:<id>', dated the day it was paid; a
 //     closed period refuses it (422 PERIOD_LOCKED) and nothing is saved. One
@@ -167,12 +169,44 @@ function isUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
 }
 
-function alreadyPaid(label: string, periodFrom: Date): AppError {
+function alreadyPaid(label: string, periodFrom: Date, cprNumber?: string | null): AppError {
   return new AppError(
     'TAX_PAYMENT_EXISTS',
-    `A ${label} payment for the period starting ${fmtPktDate(periodFrom)} is already recorded — void it first to record it again.`,
+    `A ${label} payment${cprNumber ? ` with CPR ${cprNumber}` : ''} for the period starting ${fmtPktDate(periodFrom)} is already recorded — void it first to record it again.`,
     409,
   )
+}
+
+/**
+ * A period may take several payments (finance audit 2026-10-17 item 22: a
+ * top-up challan after a late F&F or adjustment, a supplementary sales-tax
+ * payment). The first payment of a (company, authority, period) needs no CPR;
+ * every later one is a top-up and must carry its own CPR / challan number
+ * (422 CPR_REQUIRED_FOR_TOP_UP), never one already recorded for the period
+ * (409 TAX_PAYMENT_EXISTS) — so a double click never books a payment twice.
+ * Serialised per period by an advisory lock; the unique index on
+ * (tenantId, authority, periodFrom, cprNumber) backs it.
+ */
+async function assertPeriodPaymentAllowed(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  authority: string,
+  periodFrom: Date,
+  cprNumber: string | null | undefined,
+  label: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text), hashtext(${`salestax.period:${authority}:${periodFrom.toISOString()}`}::text))`
+  const earlier = await tx.salesTaxPayment.findMany({ where: { tenantId, authority, periodFrom }, select: { cprNumber: true } })
+  if (earlier.length === 0) return
+  const cpr = (cprNumber ?? '').trim()
+  if (!cpr) {
+    throw new AppError(
+      'CPR_REQUIRED_FOR_TOP_UP',
+      `A ${label} payment for the period starting ${fmtPktDate(periodFrom)} is already recorded — a further (top-up) payment needs its own CPR / challan number`,
+      422,
+    )
+  }
+  if (earlier.some((e) => (e.cprNumber ?? '').trim() === cpr)) throw alreadyPaid(label, periodFrom, cpr)
 }
 
 // ─── Record a payment ──────────────────────────────────────────────────────
@@ -316,14 +350,11 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
   const outputSetOffCents = input.paidCents + input.inputSetOffCents + withheldCents + crossCents
   assertMoneyFits(outputSetOffCents, 'This payment')
 
-  const existing = await prisma.salesTaxPayment.findFirst({
-    where: { tenantId: input.tenantId, authority: input.authority, periodFrom },
-    select: { id: true },
-  })
-  if (existing) throw alreadyPaid(acc.label, periodFrom)
-
   try {
     return await prisma.$transaction(async (tx) => {
+      // One more payment of a period already paid is a top-up: it needs its
+      // own CPR (item 22). First, before any other lock.
+      await assertPeriodPaymentAllowed(tx, input.tenantId, input.authority, periodFrom, input.cprNumber, acc.label)
       // The accounts this payment moves must be the template's, live, in THIS
       // company's chart: an operator's own account on 2042–2044 / 1335 / 132x
       // is a clear 422 (and nothing is saved), never a posting onto it.
@@ -415,7 +446,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
       return tx.salesTaxPayment.update({ where: { id: row.id }, data: { journalEntryId: posted.entryId } })
     })
   } catch (err) {
-    if (isUniqueViolation(err)) throw alreadyPaid(acc.label, periodFrom)
+    if (isUniqueViolation(err)) throw alreadyPaid(acc.label, periodFrom, input.cprNumber)
     throw err
   }
 }
@@ -505,11 +536,7 @@ export async function linkTaxPayment(input: LinkTaxPaymentInput) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.tenantId}::text), hashtext(${`salestax.link:${s.entry.id}`}::text))`
       const taken = await tx.salesTaxPayment.findFirst({ where: { tenantId: input.tenantId, journalEntryId: s.entry.id }, select: { authority: true } })
       if (taken) throw new AppError('ALREADY_LINKED', `This entry is already recorded as a ${taken.authority.toUpperCase()} payment`, 409)
-      const existing = await tx.salesTaxPayment.findFirst({
-        where: { tenantId: input.tenantId, authority: input.authority, periodFrom },
-        select: { id: true },
-      })
-      if (existing) throw alreadyPaid(s.acc.label, periodFrom)
+      await assertPeriodPaymentAllowed(tx, input.tenantId, input.authority, periodFrom, input.cprNumber, s.acc.label)
       // The entry's Cr 1320 is already posted (so it is in 1320's balance):
       // held to the pool without the ledger cap, so it is never claimed twice.
       // 1320 before the withheld lock — the order recordTaxPayment takes them.
@@ -545,7 +572,7 @@ export async function linkTaxPayment(input: LinkTaxPaymentInput) {
       })
     })
   } catch (err) {
-    if (isUniqueViolation(err)) throw alreadyPaid(s.acc.label, periodFrom)
+    if (isUniqueViolation(err)) throw alreadyPaid(s.acc.label, periodFrom, input.cprNumber)
     throw err
   }
 }

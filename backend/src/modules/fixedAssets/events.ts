@@ -43,6 +43,7 @@ import {
 import { syncSourcePosting } from '../accounting/sourcePosting.js'
 import { inputTaxCodeFor, isAuthorityKey, INPUT_TAX_ACCOUNTS } from '../accounting/taxAuthorities.js'
 import { classOf, type Db } from './classes.js'
+import { defaultInitialAllowanceEligible } from './tax.js'
 import {
   addMonths, lastCompletedPeriodPkt, periodIndex, periodOfPkt,
 } from './schedule.js'
@@ -994,7 +995,8 @@ async function applyPoolTransfer(tx: Tx, event: FixedAssetEvent, payload: Record
         acquisitionCreditCode: src.acquisitionCreditCode, kind: 'pool_layer', poolId: dest.id,
         quantity: al.units, originalQuantity: al.units, method: src.method,
         carriedAccumulatedCents: accumOut, splitFromAssetId: src.id, leaseEndsAt: src.leaseEndsAt,
-        inputTaxCode: src.inputTaxCode, notes: `Transferred from ${source.label}`.slice(0, 1000), createdById: actorId,
+        inputTaxCode: src.inputTaxCode, initialAllowanceEligible: src.initialAllowanceEligible,
+        notes: `Transferred from ${source.label}`.slice(0, 1000), createdById: actorId,
       },
       select: { id: true },
     })
@@ -1183,6 +1185,8 @@ async function applyCapitalise(tx: Tx, event: FixedAssetEvent, payload: Record<s
         method: cls.depreciable ? 'straight_line' : 'none',
         capexLineId: lineId, capexLineUnit: units > 1 ? i + 1 : 0,
         inputTaxCents: taxParts[i]!, inputTaxCode, leaseEndsAt,
+        // H42: starts ticked for kitchen / power equipment only; finance changes it on the asset page.
+        initialAllowanceEligible: !cls.pooled && cls.depreciable && defaultInitialAllowanceEligible(cls.key),
         documentUrls: line.documentUrls ?? undefined, photoUrls: line.photoUrls ?? undefined,
         warrantyUntil: line.warrantyMonths && line.actualDeliveryDate
           ? new Date(line.actualDeliveryDate.getTime() + line.warrantyMonths * 30.44 * 86_400_000) : null,

@@ -142,9 +142,11 @@ describe('issue: the card and its entry together, in the right accounts', () => 
     expect(await entry(tenantB, `giftcard.issue:${c.id}`)).toBeNull()
   })
 
-  it('sold by card: Dr 1030', async () => {
-    const c = await issued('finA', { paymentMethod: 'card' })
-    expect(amt((await entry(tenantA, `giftcard.issue:${c.id}`))!, '1030', 'debit')).toBe(50_000)
+  it('sold by card: refused — card is the till\'s only (owner, 2026-10-16); no card, no entry', async () => {
+    const before = await prisma.giftCard.count({ where: { tenantId: tenantA } })
+    const r = await issue('finA', { paymentMethod: 'card' })
+    expect(r.statusCode).toBe(400)
+    expect(await prisma.giftCard.count({ where: { tenantId: tenantA } })).toBe(before)
   })
 
   it('bank transfer debits the named bank of the company (not 1030); another company\'s bank is 422 and no card', async () => {
@@ -214,7 +216,7 @@ describe('void: the balance leaves 2080 the way the disposition says', () => {
   })
 
   it('refund in cash: Dr 2080 / Cr 1010 for what is left; the card is voided at zero; a second void is 409', async () => {
-    const c = await issued('mgrA', { paymentMethod: 'card' })
+    const c = await issued('mgrA', { paymentMethod: 'cheque', bankAccountId: ids.bankA })
     await spendOnBookedSale(c.code, 20_000)
     const r = await call('mgrA', 'POST', `/gift-cards/${c.id}/void`, { reason: 'Customer asked for the rest back', disposition: 'refund', refundMethod: 'cash' })
     expect(r.statusCode, r.body).toBe(200)

@@ -6,8 +6,9 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { api } from '../../../lib/api'
-import { card, btn, rs, human, STATUS_COLOR } from '../../../lib/hr'
-import { HrShell } from '../../../components/hr/HrShell'
+import { card, btn, btnGhost, rs, human, STATUS_COLOR, type HrRecord } from '../../../lib/hr'
+import { HrShell, useHrAccess } from '../../../components/hr/HrShell'
+import { MarkSettlementPaid } from '../../../components/hr/RecordMoney'
 import { Select } from '@/components/ui/Select'
 
 interface Run { id: string; period: string; status: string; totals: { employees?: number; netCents?: number; grossCents?: number; warnings?: string[] }; createdAt: string }
@@ -80,6 +81,56 @@ export default function PayrollRunsPage() {
           </Link>
         ))}
       </div>
+      <SettlementsToPay />
     </HrShell>
+  )
+}
+
+type SettlementToPay = HrRecord & { ownPay?: boolean }
+
+/** Approved full & final settlements not marked paid yet — finance pays them
+ *  here (owner, 2026-10-16), as the CEO, a co-owner or management can. A
+ *  settlement carrying your own pay is someone else's to mark paid. */
+function SettlementsToPay() {
+  const qc = useQueryClient()
+  const { isPayrollPayer } = useHrAccess()
+  const [msg, setMsg] = useState('')
+  const { data = [], error } = useQuery({
+    queryKey: ['hr-fnf-to-pay'],
+    queryFn: () => api.get<SettlementToPay[]>('/hr/final-settlement/to-pay'),
+    enabled: isPayrollPayer,
+    retry: false,
+  })
+  const backfill = useMutation({
+    mutationFn: () => api.post<{ posted: string[]; alreadyPosted: number; failed: Array<{ employee: string | null; reason: string }> }>('/hr/final-settlement/post-unposted', {}),
+    onSuccess: (r) => {
+      setMsg([`${r.posted.length} booked`, r.alreadyPosted ? `${r.alreadyPosted} already on the books` : '', ...r.failed.map((f) => `${f.employee ?? 'A settlement'}: ${f.reason}`)].filter(Boolean).join(' · '))
+      void qc.invalidateQueries({ queryKey: ['hr-fnf-to-pay'] })
+    },
+    onError: (e: Error) => setMsg(e.message),
+  })
+  if (!isPayrollPayer) return null
+  return (
+    <div className="rounded-2xl p-4 mt-5 space-y-3" style={card}>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm font-bold text-white/85">Full &amp; final settlements to pay</p>
+        <button className={`${btnGhost} ml-auto`} disabled={backfill.isPending} onClick={() => { setMsg(''); backfill.mutate() }}>
+          {backfill.isPending ? 'Booking…' : 'Post approved settlements'}
+        </button>
+      </div>
+      {msg && <p className="text-xs text-white/60" role="status">{msg}</p>}
+      {error && <p className="text-xs text-red-700" role="alert">{(error as Error).message}</p>}
+      {!error && data.length === 0 && <p className="text-xs text-white/40">Nothing waiting — every approved settlement is paid.</p>}
+      {data.map((r) => (
+        <div key={r.id} className="border-t border-white/[0.05] pt-3 space-y-2">
+          <p className="text-sm text-white/80">
+            <strong className="text-white/90">{r.employee ? `${r.employee.fullName} (${r.employee.employeeCode})` : 'Settlement'}</strong> · net {rs(r.amountCents)}
+          </p>
+          {r.ownPay
+            ? <p className="text-[11px] text-white/40">This is your own settlement — someone else marks it paid.</p>
+            : <MarkSettlementPaid record={r} onChanged={() => void qc.invalidateQueries({ queryKey: ['hr-fnf-to-pay'] })} />}
+        </div>
+      ))}
+    </div>
   )
 }

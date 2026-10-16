@@ -5,7 +5,10 @@
 // applied, by days past due date; unapplied payments and unapplied credit
 // notes are credits; "Owed" ties to ledger AP 2010. Opening balances sit in
 // their own column; suppliers with no company are never in a company's books
-// and are listed apart.
+// and are listed apart (to the CEO only). "As at" (?asOf=YYYY-MM-DD) rebuilds
+// the aging as it stood at the end of that day, so a month-end aging run
+// later still ties to AP 2010 in that day's trial balance.
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
@@ -93,17 +96,40 @@ function AgingTable({ rows, total, empty }: { rows: ApAgingRow[]; total: ApAging
 }
 
 export function ApAging() {
+  // '' = today (the documents as they stand); a date = as at the end of that day.
+  const [asOf, setAsOf] = useState('')
   const { data, isLoading, error } = useQuery({
-    queryKey: ['ap-aging'],
-    queryFn: () => api.get<ApAgingReport>('/procurement/ap-aging'),
+    queryKey: ['ap-aging', asOf],
+    queryFn: () => api.get<ApAgingReport>(`/procurement/ap-aging${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ''}`),
   })
 
-  if (isLoading) return <p className="text-s-muted text-sm">Loading…</p>
-  if (error) return <p className="text-s-red text-sm">{(error as Error).message}</p>
+  const picker = (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="text-xs text-s-muted">
+        <span className="block mb-0.5">As at (end of day)</span>
+        <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
+          className="rounded-lg border border-s-border bg-s-surface px-3 py-1.5 text-sm text-s-text" />
+      </label>
+      {asOf && (
+        <button type="button" onClick={() => setAsOf('')} className="text-xs font-semibold underline" style={{ color: 'var(--erp-primary)' }}>
+          Back to today
+        </button>
+      )}
+      <p className="text-[11px] text-s-muted basis-full">
+        {asOf
+          ? 'Bills, credit notes and payments dated on or before this day, as they stood then — ties to AP 2010 in that day\'s trial balance.'
+          : 'Today, from the documents as they stand. Pick a date (e.g. a month end) to see the aging as it was then.'}
+      </p>
+    </div>
+  )
+
+  if (isLoading) return <div className="space-y-3">{picker}<p className="text-s-muted text-sm">Loading…</p></div>
+  if (error) return <div className="space-y-3">{picker}<p className="text-s-red text-sm">{(error as Error).message}</p></div>
   if (!data) return null
 
   return (
     <div className="space-y-4">
+      {picker}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {BUCKETS.map((b) => (
           <div key={b.k} className="s-card p-3">

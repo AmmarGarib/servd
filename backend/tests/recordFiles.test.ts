@@ -233,10 +233,10 @@ describe('record files: each module keeps its own rule', () => {
     expect((await call('cashierA', 'GET', `/record-files/opex_payment/${id}`)).statusCode).toBe(403)
   })
 
-  it('supplier_bill: finance reads (AP reader) but cannot attach (bills are entered by managers); a cook is refused', async () => {
+  it('supplier_bill: finance reads and attaches (finance records bills, owner 2026-10-16); a cook is refused', async () => {
     const id = A.ids.supplier_bill!
     expect((await call('finA', 'GET', `/record-files/supplier_bill/${id}`)).statusCode).toBe(200)
-    expect((await call('finA', 'POST', `/record-files/supplier_bill/${id}`, { files: [png()] })).statusCode).toBe(403)
+    expect((await call('finA', 'POST', `/record-files/supplier_bill/${id}`, { files: [png()] })).statusCode).toBe(201)
     expect((await call('cookA', 'GET', `/record-files/supplier_bill/${id}`)).statusCode).toBe(403)
   })
 

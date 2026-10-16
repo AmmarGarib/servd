@@ -8,9 +8,10 @@ import { fmtPkr, fmtPkrShort } from '../../lib/money'
 import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
 import { Select } from '@/components/ui/Select'
+import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 
 interface PoolSummary {
-  id: string; name: string
+  id: string; tenantId: string; name: string
   periodStart: string; periodEnd: string
   totalTipsCents: number
   status: 'draft' | 'posted' | 'paid'
@@ -93,9 +94,14 @@ export default function TipPoolsPage() {
       : {}),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['tip-pools'] }); void qc.invalidateQueries({ queryKey: ['tip-pool', openId] }) },
   })
+  // Paid from (finance audit 2026-10-17 item 7): cash from the safe, or a
+  // bank of the pool's company — the API resolves the account
+  // (lib/bankAccounts.ts moneyAccountCode), never a silent 1020.
+  const [payMethod, setPayMethod] = useState<'bank_transfer' | 'cash'>('bank_transfer')
+  const [payBank, setPayBank] = useState('')
   const pay = useMutation({
-    mutationFn: (id: string) => api.post(`/tip-pools/${id}/pay`, {}),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['tip-pools'] }); void qc.invalidateQueries({ queryKey: ['tip-pool', openId] }) },
+    mutationFn: (id: string) => api.post(`/tip-pools/${id}/pay`, payMethod === 'cash' ? { method: 'cash' } : { method: 'bank_transfer', ...(payBank && { bankAccountId: payBank }) }),
+    onSuccess: () => { setPayBank(''); void qc.invalidateQueries({ queryKey: ['tip-pools'] }); void qc.invalidateQueries({ queryKey: ['tip-pool', openId] }) },
   })
   // A draft can be thrown away and computed again (a tip is pooled once, so a
   // second pool over the same hours is refused while the draft exists).
@@ -272,9 +278,23 @@ export default function TipPoolsPage() {
                   </>
                 )}
                 {detail.data.status === 'posted' && (canApprove ? (
-                  <button onClick={() => pay.mutate(detail.data.id)} disabled={pay.isPending} className="s-btn-primary text-xs flex-1">
-                    {pay.isPending ? 'Paying…' : 'Mark paid (post JE)'}
-                  </button>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex gap-2" role="radiogroup" aria-label="Paid from">
+                      {(['bank_transfer', 'cash'] as const).map((m) => (
+                        <button key={m} type="button" role="radio" aria-checked={payMethod === m} onClick={() => setPayMethod(m)}
+                          className={`rounded-full px-3 py-1 text-xs font-bold border ${payMethod === m ? 'bg-primary text-primary-on border-primary' : 'border-s-border text-s-muted'}`}>
+                          {m === 'cash' ? 'Cash (the safe)' : 'By bank'}
+                        </button>
+                      ))}
+                    </div>
+                    {payMethod === 'bank_transfer' && (
+                      <BankAccountSelect id={`tip-bank-${detail.data.id}`} tenantId={detail.data.tenantId} value={payBank} onChange={setPayBank}
+                        className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-xs" />
+                    )}
+                    <button onClick={() => pay.mutate(detail.data.id)} disabled={pay.isPending} className="s-btn-primary text-xs w-full">
+                      {pay.isPending ? 'Paying…' : 'Mark paid (post JE)'}
+                    </button>
+                  </div>
                 ) : (
                   <span className="text-xs text-s-muted w-full text-center">Posted — the CEO or an owner marks it paid.</span>
                 ))}

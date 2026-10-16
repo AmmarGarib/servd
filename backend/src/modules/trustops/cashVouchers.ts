@@ -280,6 +280,9 @@ export interface CashRequestCaps {
   canResolveByJournal: boolean
   /** The holder confirms they received the cash (POST /:id/confirm-received). */
   canConfirmReceived: boolean
+  /** Finance (not the raiser / holder) or the CEO records receipt for a holder who cannot (e.g. has left), with a
+   *  reason (POST /:id/confirm-received-on-behalf). */
+  canConfirmReceivedOnBehalf: boolean
   canExport: boolean
   // Legacy H3 rows (expenseOnVerify false), paid before 2026-10-15:
   canUploadReceipts: boolean
@@ -333,6 +336,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
       && viewer.financeApprover && !own,
     canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt
       && (s === 'disbursed' || s === 'posted' || s === 'settled' || s === 'converted'),
+    canConfirmReceivedOnBehalf: v.kind === 'request' && !v.cashReceivedAt && newPaid && viewer.financeApprover && !own,
     canExport: true, // every stage; stamped NOT APPROVED / VOID until the CEO approves (owner, 2026-10-16)
     canUploadReceipts,
     canSettle: canUploadReceipts && remaining > 0,
@@ -1393,6 +1397,39 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     return detailOf(v.id, viewer)
   })
 
+  // POST /:id/confirm-received-on-behalf {reason ≥10} — finance (role finance with the accounting module) or the
+  // CEO records "cash received" for a holder who never confirmed (left, offboarded, unreachable), so the documents
+  // check is not blocked for good (422 CASH_RECEIPT_NOT_CONFIRMED). Never the raiser or the holder (409
+  // SELF_APPROVE); only a paid request of the 2026-10-15 flow still waiting (409 ALREADY_CONFIRMED / VOUCHER_NOT_PAID);
+  // conditional on cashReceivedAt still null. Received by = the actor; audited 'confirm_received' with
+  // via 'finance_on_behalf' and the reason. Books nothing.
+  fastify.post<{ Params: { id: string } }>('/:id/confirm-received-on-behalf', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const body = z.object({ reason: z.string().trim().min(10, 'Say why (at least 10 characters)').max(500) }).parse(req.body ?? {})
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (!viewer.financeApprover) {
+      throw new AppError('NOT_FINANCE', 'Only finance or the CEO records cash received on the holder\'s behalf', 403)
+    }
+    if (v.kind !== 'request') throw new AppError('NOT_A_REQUEST', 'A payee voucher records its receipt when it is paid', 422)
+    if (isOwn(viewer, v)) {
+      throw new AppError('SELF_APPROVE', 'You raised or hold this voucher — another finance person or the CEO records it', 409)
+    }
+    if (v.status !== 'disbursed' || !v.expenseOnVerify) {
+      throw wrongStatus('VOUCHER_NOT_PAID', v, 'receipt is recorded on behalf only for a paid voucher waiting for its documents check')
+    }
+    if (v.cashReceivedAt) throw new AppError('ALREADY_CONFIRMED', `Cash received for ${v.number} is already confirmed`, 409)
+    const now = new Date()
+    const res = await prisma.cashVoucher.updateMany({
+      where: { id: v.id, tenantId: v.tenantId, status: 'disbursed', cashReceivedAt: null },
+      data: { cashReceivedById: viewer.id, cashReceivedAt: now },
+    })
+    if (res.count === 0) throw new AppError('ALREADY_CONFIRMED', `Cash received for ${v.number} is already confirmed`, 409)
+    await auditVoucher(req, 'confirm_received', v, {
+      cashReceivedAt: now.toISOString(), via: 'finance_on_behalf', reason: body.reason, holderUserId: v.payeeUserId,
+    })
+    return detailOf(v.id, viewer)
+  })
+
   // GET /:id/pay-sources — what this viewer may pay an approved voucher from
   // (the Pay panel's one grouped picker): petty-cash boxes (the custodian's
   // own open boxes of the voucher's company; finance and managers — cash
@@ -1532,7 +1569,13 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         ? await moneyAccountCode(tx, v.tenantId, { method: body.source === 'cash_on_hand' ? 'cash' : 'bank_transfer', bankAccountId: body.bankAccountId ?? null })
         : null
       const claimed = await tx.cashVoucher.updateMany({
-        where: { id: v.id, tenantId: v.tenantId, status: 'approved' },
+        // The pay books what was read above (expense account, equipment check, pay line, brand, holder, amount):
+        // a concurrent PATCH of any of them makes the claim miss → 409 VOUCHER_CHANGED (pay again).
+        where: {
+          id: v.id, tenantId: v.tenantId, status: 'approved',
+          category: v.category, conceptId: v.conceptId, payeeUserId: v.payeeUserId,
+          amountCents: v.amountCents, purpose: v.purpose, payeeName: v.payeeName,
+        },
         data: {
           status: 'disbursed', disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true, bookedAtPay: true,
           ...(box
@@ -1545,6 +1588,9 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       if (claimed.count === 0) {
         const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true } })
         if (PAID_STATUSES.includes(cur.status)) throw new AppError('ALREADY_PAID', `Cash request ${v.number} has already been paid`, 409)
+        if (cur.status === 'approved') {
+          throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed while it was being paid — reload and pay again`, 409)
+        }
         throw wrongStatus('VOUCHER_NOT_APPROVED', { number: v.number, status: cur.status }, 'only a voucher the CEO has approved can be paid')
       }
       if (!box) {

@@ -1,7 +1,7 @@
 // Money received outside the till (owner, 2026-10-14) — the shared rules in
 // lib/bankAccounts.ts that every back-office receiving screen uses:
 //
-//   RECEIPT_METHODS  cash · card · bank transfer · BANK DEPOSIT · cheque.
+//   RECEIPT_METHODS  cash · bank transfer · BANK DEPOSIT · cheque (no card since 2026-10-16).
 //   moneyAccountCode 'bank_deposit' lands in a bank like a transfer: the named
 //                    live, linked bank of the DOCUMENT's company; else that
 //                    company's only bank; 1020 with none; 422
@@ -20,7 +20,7 @@ import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import {
   moneyAccountCode, linkBankLedgerAccount, RECEIPT_METHODS, RECEIPT_METHOD_LABEL, isBankMethod,
-  zReceiptMethod, zPaymentRef, assertPaymentReference, receiptText,
+  zReceiptMethod, zPaymentRef, assertPaymentReference, assertReceiptMethod, receiptText,
 } from '../src/lib/bankAccounts.js'
 
 const RUN = Date.now().toString(36)
@@ -59,10 +59,11 @@ beforeAll(async () => {
 }, 60_000)
 
 describe('the receipt method list', () => {
-  it('is cash, card, bank transfer, bank deposit, cheque — each with its words', () => {
-    expect([...RECEIPT_METHODS]).toEqual(['cash', 'card', 'bank_transfer', 'bank_deposit', 'cheque'])
-    expect(RECEIPT_METHODS.map((m) => RECEIPT_METHOD_LABEL[m])).toEqual(['Cash', 'Card', 'Bank transfer', 'Bank deposit', 'Cheque'])
-    // Old stored spellings still read.
+  it('is cash, bank transfer, bank deposit, cheque — each with its words (no card)', () => {
+    expect([...RECEIPT_METHODS]).toEqual(['cash', 'bank_transfer', 'bank_deposit', 'cheque'])
+    expect(RECEIPT_METHODS.map((m) => RECEIPT_METHOD_LABEL[m])).toEqual(['Cash', 'Bank transfer', 'Bank deposit', 'Cheque'])
+    // Old stored spellings still read (an old back-office card row too).
+    expect(RECEIPT_METHOD_LABEL['card']).toBe('Card')
     expect(RECEIPT_METHOD_LABEL['bank']).toBe('Bank transfer')
     expect(RECEIPT_METHOD_LABEL['online']).toBe('Online payment')
   })
@@ -78,9 +79,17 @@ describe('the receipt method list', () => {
     for (const m of RECEIPT_METHODS) expect(zReceiptMethod().parse(m)).toBe(m)
     expect(zReceiptMethod().safeParse('wallet').success).toBe(false)
     expect(zReceiptMethod().safeParse('online').success).toBe(false)
+    expect(zReceiptMethod().safeParse('card').success).toBe(false)
     const refundOnly = zReceiptMethod(['cash', 'card', 'bank_transfer'] as const)
     expect(refundOnly.safeParse('bank_deposit').success).toBe(false)
     expect(refundOnly.parse('bank_transfer')).toBe('bank_transfer')
+  })
+
+  it('assertReceiptMethod: card is the till\'s only (422 CARD_NOT_A_RECEIPT); the four methods pass', () => {
+    for (const m of RECEIPT_METHODS) expect(assertReceiptMethod(m)).toBe(m)
+    expect(() => assertReceiptMethod('card')).toThrow(expect.objectContaining({ code: 'CARD_NOT_A_RECEIPT', statusCode: 422 }))
+    expect(() => assertReceiptMethod('online')).toThrow(expect.objectContaining({ code: 'BAD_PAYMENT_METHOD', statusCode: 422 }))
+    expect(() => assertReceiptMethod(null)).toThrow(expect.objectContaining({ code: 'BAD_PAYMENT_METHOD' }))
   })
 
   it('zPaymentRef trims and caps at 100 characters', () => {

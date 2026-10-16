@@ -64,6 +64,7 @@ import { getFormat } from '../hr/service.js'
 import { rotaFor, toMinutes, ymd } from '../hr/rota.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
+import { moneyAccountCode } from '../../lib/bankAccounts.js'
 
 // The rules are the company's, set in /configuration/operations
 // (OperationsConfig): whether pooling is on, how it is split, and the weight
@@ -534,14 +535,31 @@ async function tillsHoldingTips(conceptId: string, periodStart: Date, periodEnd:
 const PAYOUT_CASH_CODES = new Set<string>([ACCT.CASH_ON_HAND, ACCT.CASH_DRAWER, ACCT.BANK, '1021', '1022', '1023', '1024', '1025', '1026', '1027', '1028', '1029'])
 
 /**
- * The account a tip payout is paid from (audit PPL-R2-03): the operating bank
- * when none is named, else an active cash/bank ASSET account in the pool's
+ * The account a tip payout is paid from (audit PPL-R2-03; finance audit
+ * 2026-10-17 item 7): with no code named, `moneyAccountCode` of the pool's
+ * company for the chosen method (cash, or a bank); with a code (legacy
+ * `paidFromAccountCode`), an active cash/bank ASSET account in the pool's
  * own company's chart. Anything else — a revenue code, another company's
  * code, a code not in the chart — is 422, never a 500 or a posting that books
  * paid-out tips as revenue.
  */
-async function payingAccount(tenantId: string, requested: string | undefined): Promise<string> {
-  const code = (requested ?? '').trim() || ACCT.BANK
+async function payingAccount(
+  tenantId: string,
+  input: { paidFromAccountCode?: string; method?: string; bankAccountId?: string | null },
+): Promise<string> {
+  const requested = (input.paidFromAccountCode ?? '').trim()
+  // No code named: THE money-account rule (lib/bankAccounts.ts
+  // moneyAccountCode) in the pool's company — cash → 1010, a bank → the named
+  // live linked bank, else the company's only bank, 1020 when it has none,
+  // 422 BANK_ACCOUNT_REQUIRED when it has two or more. Never a silent 1020.
+  if (!requested) {
+    const method = (input.method ?? '').trim() || 'bank_transfer'
+    if (method !== 'cash' && !['bank', 'bank_transfer', 'bank_deposit', 'cheque'].includes(method)) {
+      throw new AppError('BAD_PAYMENT_METHOD', 'Tips are paid in cash or from a bank account', 422)
+    }
+    return (await moneyAccountCode(prisma, tenantId, { method, bankAccountId: input.bankAccountId ?? null })).code
+  }
+  const code = requested
   const [account, bank] = await Promise.all([
     prisma.account.findFirst({ where: { tenantId, code }, select: { type: true, isActive: true, name: true } }),
     PAYOUT_CASH_CODES.has(code) ? Promise.resolve(null) : prisma.bankAccount.findFirst({ where: { tenantId, accountCode: code, deletedAt: null, isActive: true }, select: { id: true } }),
@@ -1132,18 +1150,22 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
   // under the brand's lock: the same tips are never paid twice, by a double
   // click or by a second pool. Each member's share (login holder or employee)
   // is already on their member row from posting; the entry is the pool's.
-  fastify.post<{ Params: { id: string }; Body: { paidFromAccountCode?: string } }>(
+  fastify.post<{ Params: { id: string }; Body: { paidFromAccountCode?: string; method?: string; bankAccountId?: string | null } }>(
     '/:id/pay',
     // D3: APPROVERS of the pool's company, or a Finance hand-over — assertCanApprove decides.
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const body = z.object({ paidFromAccountCode: z.string().optional() }).parse(req.body ?? {})
+      const body = z.object({
+        paidFromAccountCode: z.string().optional(),
+        method: z.enum(['cash', 'bank', 'bank_transfer', 'bank_deposit', 'cheque']).optional(),
+        bankAccountId: z.string().min(1).nullish(),
+      }).parse(req.body ?? {})
       const { pool, grant } = await poolDecision(req, req.params.id, 'pay')
       if (pool.status !== 'posted') throw new AppError('NOT_POSTABLE', `Pool is ${pool.status}`, 422)
 
       // The money leaves a cash or bank account of the pool's own company —
       // never a revenue or liability code (audit PPL-R2-03).
-      const cashAccount = await payingAccount(pool.tenantId, body.paidFromAccountCode)
+      const cashAccount = await payingAccount(pool.tenantId, body)
       // Tips in a till whose close is not on the books — still open, or
       // closed with its posting refused or not run yet — are not in Tips
       // Payable (PPL-R2-04, RV-P-01).

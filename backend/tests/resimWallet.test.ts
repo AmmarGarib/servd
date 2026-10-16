@@ -290,7 +290,7 @@ describe('ONL-R2-01: 2050 never goes to a debit balance', () => {
 
     // A grants 200k goodwill, B takes 120k cash for a paid top-up.
     expect((await asStaff('mgrA', 'POST', '/wallet/topup', { customerId: c, amountCents: 200_000 })).statusCode).toBe(201)
-    expect((await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 120_000, kind: 'paid', tender: 'card', paymentRef: `RW-${RUN}-card` })).statusCode).toBe(201)
+    expect((await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 120_000, kind: 'paid', tender: 'cash', paymentRef: `RW-${RUN}-cash` })).statusCode).toBe(201)
 
     // Spend at A (wallet as method, 108k at the card rate) and complete it.
     const oA = await asCustomer(c, 'POST', '/storefront/orders', { conceptSlug: slugA, type: 'pickup', paymentGateway: 'wallet', items: basket(clubA) })
@@ -621,7 +621,7 @@ describe('finance gaps #9: a paid bank top-up is booked to the bank it was recei
     expect(await walletAt(tenantC, c)).toBe(10_000)
   })
 
-  it('a one-bank company uses its only bank without a pick; cash and card stay 1010 / 1030 with no bank', async () => {
+  it('a one-bank company uses its only bank without a pick; card is refused (till only)', async () => {
     // B has exactly one bank (created above).
     const ofB = (await prisma.bankAccount.findFirstOrThrow({ where: { tenantId: tenantB, deletedAt: null } })).id
     const c = await mkCustomer([conceptB])
@@ -633,7 +633,6 @@ describe('finance gaps #9: a paid bank top-up is booked to the bank it was recei
     expect(je!.lines.map((l) => [l.type, l.account.code, l.amountCents]).sort()).toEqual([['credit', '2050', 7_000], ['debit', '1020', 7_000]])
     expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: r.json().transactionId } })).bankAccountId).toBe(ofB)
     const card = await asStaff('mgrB', 'POST', '/wallet/topup', { customerId: c, amountCents: 3_000, kind: 'paid', tender: 'card', paymentRef: `RW-${RUN}-slip` })
-    expect((await prisma.walletTransaction.findUniqueOrThrow({ where: { id: card.json().transactionId } })).bankAccountId).toBeNull()
-    expect((await entryLines(tenantB, `wallet.topup:${card.json().transactionId}`))!.lines.some((l) => l.account.code === '1030' && l.type === 'debit')).toBe(true)
+    expect(card.statusCode).toBe(400)
   })
 })

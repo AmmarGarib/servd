@@ -273,7 +273,7 @@ describe('merges the books cannot absorb are refused (422), nothing written', ()
 //   - open posting_failed flags follow their documents, so the target's backfill
 //     re-posts them;
 //   - tax payments move; a challan for the same authority and month in both is
-//     refused (MERGE_TAX_PAYMENT_CLASH);
+//     refused (MERGE_TAX_PAYMENT_CLASH — the same CPR in the same month);
 //   - deposit drops, gift cards, loyalty and wallets (a customer with one in
 //     each keeps the target's, balances added), HR employees (a colliding code
 //     gets '-<source slug>') move; a payroll month both ran is refused
@@ -321,15 +321,18 @@ describe('final gate: money, tax, flags and HR move; clashes are refused', () =>
     expect(je.tenantId).toBe(D.id)
   })
 
-  it('tax payments move; the same authority and month in both → MERGE_TAX_PAYMENT_CLASH', async () => {
+  it('tax payments move; the same challan (authority, month, CPR) in both → MERGE_TAX_PAYMENT_CLASH', async () => {
     const S = await company('TaxSource')
     const D = await company('TaxTarget')
-    const pay = (co: Co, authority: string, from: string) => prisma.salesTaxPayment.create({
-      data: { tenantId: co.id, authority, periodFrom: new Date(from), periodTo: new Date(new Date(from).getTime() + 30 * 86_400_000), paidAt: new Date(), paidCents: 1_000 },
+    const pay = (co: Co, authority: string, from: string, cprNumber: string | null = null) => prisma.salesTaxPayment.create({
+      data: { tenantId: co.id, authority, periodFrom: new Date(from), periodTo: new Date(new Date(from).getTime() + 30 * 86_400_000), paidAt: new Date(), paidCents: 1_000, cprNumber },
     })
     const sOnly = await pay(S, 'fbr', '2026-07-31T19:00:00Z')        // August
-    await pay(S, 'srb', '2026-08-31T19:00:00Z')                       // September, both
-    await pay(D, 'srb', '2026-08-31T19:00:00Z')
+    await pay(S, 'srb', '2026-08-31T19:00:00Z', 'CPR-SAME')           // September, the same challan in both
+    await pay(D, 'srb', '2026-08-31T19:00:00Z', 'CPR-SAME')
+    // A month may hold several challans (top-ups, item 22): different CPRs never clash.
+    const topUp = await pay(S, 'eobi', '2026-08-31T19:00:00Z', 'CPR-S2')
+    await pay(D, 'eobi', '2026-08-31T19:00:00Z', 'CPR-D1')
     const refused = await merge(ceo, S.id, D.id)
     expect(refused.statusCode).toBe(422)
     expect(refused.json().error.code).toBe('MERGE_TAX_PAYMENT_CLASH')
@@ -339,6 +342,7 @@ describe('final gate: money, tax, flags and HR move; clashes are refused', () =>
     const ok = await merge(ceo, S.id, D.id)
     expect(ok.statusCode, ok.body).toBe(200)
     expect((await prisma.salesTaxPayment.findUniqueOrThrow({ where: { id: sOnly.id } })).tenantId).toBe(D.id)
+    expect((await prisma.salesTaxPayment.findUniqueOrThrow({ where: { id: topUp.id } })).tenantId).toBe(D.id)
   })
 
   it('deposit drops, gift cards, loyalty, wallets and HR move; balances of one customer combine', async () => {

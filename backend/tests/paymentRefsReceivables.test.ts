@@ -11,7 +11,7 @@
 //     the dedupe key (sourceType:sourceId);
 //   - a reference used before SAVES and comes back as referenceUsedBefore
 //     (case-insensitive); company B's references never appear in A's warning;
-//   - a write-off recovery by card or bank deposit works and carries its
+//   - a write-off recovery by cash or bank deposit works (card is refused) and carries its
 //     reference;
 //   - inter-company: a bank deposit is the paying company's CASH into the
 //     receiving company's named bank (a payer bank → 422); the reference is
@@ -120,13 +120,12 @@ describe('a receivable payment needs a payment reference #', () => {
     const i = await raise('admA')
     const cases: Array<Record<string, unknown>> = [
       { method: 'cash' },
-      { method: 'card' },
       { method: 'bank_transfer', bankAccountId: bankA1 },
       { method: 'bank_deposit', bankAccountId: bankA1 },
       { method: 'cheque', bankAccountId: bankA2 },
       { method: 'bank', bankAccountId: bankA1 },
       { method: 'cash', reference: '   ' },
-      { method: 'card', reference: null },
+      { method: 'cheque', bankAccountId: bankA1, reference: null },
     ]
     for (const c of cases) {
       const r = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 10_000, receivedAt: today(), ...c })
@@ -176,11 +175,12 @@ describe('a receivable payment needs a payment reference #', () => {
     expect(old.json().method).toBe('bank_transfer')
     expect((await entry(tenantA, `receivable.payment:${old.json().id}`))!.description).toContain('bank transfer, ref IBFT-12')
 
-    // Card → 1030, cash → 1010, each with its reference.
+    // No card in the back office (owner, 2026-10-16): refused, nothing saved.
+    const before = await prisma.receivablePayment.count({ where: { invoiceId: i.id } })
     const card = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 5_000, receivedAt: today(), method: 'card', reference: 'APPR-9' })
-    expect(card.statusCode, card.body).toBe(201)
-    const ce = (await entry(tenantA, `receivable.payment:${card.json().id}`))!
-    expect(line(ce.lines, '1030', 'debit')!.memo).toBe(`${i.number}: card, ref APPR-9`)
+    expect(card.statusCode, card.body).toBe(400)
+    expect(await prisma.receivablePayment.count({ where: { invoiceId: i.id } })).toBe(before)
+    // Cash → 1010 with its reference.
     const cash = await call('admA', 'POST', `${AR}/${i.id}/payments`, { amountCents: 5_000, receivedAt: today(), method: 'cash', reference: 'RV-001' })
     expect(cash.statusCode, cash.body).toBe(201)
     expect(line((await entry(tenantA, `receivable.payment:${cash.json().id}`))!.lines, '1010', 'debit')!.memo).toBe(`${i.number}: cash, ref RV-001`)
@@ -228,7 +228,7 @@ describe('a receivable payment needs a payment reference #', () => {
 // ─── Write-off recovery ─────────────────────────────────────────────────────
 
 describe('a recovery on a written-off invoice', () => {
-  it('needs a reference; works by card and by bank deposit; carries the reference into both entries', async () => {
+  it('needs a reference; works by cash and by bank deposit (card refused); carries the reference into both entries', async () => {
     const i = await raise('admA')
     // The CEO's own request applies at once.
     const w = await call('admA', 'POST', WO, {
@@ -248,16 +248,19 @@ describe('a recovery on a written-off invoice', () => {
     expect(await prisma.receivablePayment.count({ where: { invoiceId: i.id } })).toBe(0)
     expect(Number((await prisma.receivableWriteOff.findUniqueOrThrow({ where: { id: wid } })).recoveredCents)).toBe(0)
 
-    const card = await call('admA', 'POST', `${WO}/${wid}/recover`, { amountCents: 40_000, receivedAt: today(), method: 'card', reference: 'SLIP-1' })
+    // Card is the till's only (owner, 2026-10-16) — refused here.
+    const byCard = await call('admA', 'POST', `${WO}/${wid}/recover`, { amountCents: 40_000, receivedAt: today(), method: 'card', reference: 'SLIP-0' })
+    expect(byCard.statusCode, byCard.body).toBe(400)
+    const card = await call('admA', 'POST', `${WO}/${wid}/recover`, { amountCents: 40_000, receivedAt: today(), method: 'cash', reference: 'SLIP-1' })
     expect(card.statusCode, card.body).toBe(201)
-    expect(card.json().payment).toMatchObject({ method: 'card', reference: 'SLIP-1', writeOffId: wid, bankAccountId: null })
+    expect(card.json().payment).toMatchObject({ method: 'cash', reference: 'SLIP-1', writeOffId: wid, bankAccountId: null })
     expect(card.json().referenceUsedBefore).toEqual([])
     const pid = card.json().payment.id as string
     const pay = (await entry(tenantA, `receivable.payment:${pid}`))!
-    expect(pay.description).toContain('card, ref SLIP-1')
-    expect(line(pay.lines, '1030', 'debit')).toMatchObject({ amount: 40_000, memo: `${i.number}: card, ref SLIP-1` })
+    expect(pay.description).toContain('cash, ref SLIP-1')
+    expect(line(pay.lines, '1010', 'debit')).toMatchObject({ amount: 40_000, memo: `${i.number}: cash, ref SLIP-1` })
     const rec = (await entry(tenantA, `receivable.write_off_recovery:${pid}`))!
-    expect(rec.description).toContain('card, ref SLIP-1')
+    expect(rec.description).toContain('cash, ref SLIP-1')
     expect(line(rec.lines, '6160', 'credit')!.amount).toBe(40_000)
 
     const dep = await call('admA', 'POST', `${WO}/${wid}/recover`, { amountCents: 75_000, receivedAt: today(), method: 'bank_deposit', bankAccountId: bankA2, reference: 'DSLIP-88' })

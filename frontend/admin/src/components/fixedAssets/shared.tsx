@@ -52,7 +52,7 @@ export interface FaLookups {
   requestKinds: Array<{ key: string; label: string }>
   lastCompletedPeriod: string
   currentPeriod: string
-  capabilities: { canWrite: boolean; canCount: boolean; canApprove: boolean }
+  capabilities: { canWrite: boolean; canCount: boolean; canApprove: boolean; canSetInitialAllowance?: boolean }
 }
 
 export interface FaAsset {
@@ -78,6 +78,8 @@ export interface FaAsset {
   disposedAt: string | null
   disposalKind: string | null
   method: string | null
+  /** H42: ticked for the 25% initial allowance in the tax view (finance / the CEO set it). */
+  initialAllowanceEligible?: boolean
   usefulLifeMonths: number | null
   leaseEndsAt: string | null
   originalCostCents: number
