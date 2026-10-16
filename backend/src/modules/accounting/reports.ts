@@ -187,9 +187,10 @@ const fiscalYearOut = (y: CompanyFiscalYear): ReportFiscalYear => ({
 })
 
 // ─── Trial balance ──────────────────────────────────────────────────────────
-// Lists every account with activity in the range and shows total debits vs
-// credits. The Δ column at the bottom MUST be zero — that's what proves the
-// books are balanced.
+// Lists every account with a balance at asOf — ONE net figure per account, in
+// the Debit column (debits exceed credits) or the Credit column, never both;
+// accounts at zero are left out. The Δ at the bottom MUST be zero — that's
+// what proves the books are balanced.
 //
 // basis 'inception' (the API default): every account since the first entry.
 // basis 'year' (the admin page's default): balance-sheet accounts since
@@ -264,12 +265,24 @@ export async function trialBalance(tenantIds: string[], asOf: Date, opts: { basi
   // One row per (company, account) — account rows are already per company,
   // so "All companies" lists GS Foods' 2030 and GSX Viva's 2030 separately,
   // each labelled, never two indistinguishable rows.
+  // ONE net balance per account (owner, 2026-10-16): debits − credits in the
+  // Debit column when positive, in the Credit column when negative — never
+  // both — and an account whose balance is zero is not listed (a cleared
+  // account such as 1357 drops off). Σ debit − Σ credit is unchanged, so the
+  // totals still balance. The computed b/f rows are already one-sided.
   const rows: TrialBalanceRow[] = [
-    ...accountRows.map((r) => ({
-      tenantId: r.tenantId,
-      companyName: r.tenantId ? (nameOf.get(r.tenantId) ?? null) : null,
-      code: r.code, name: r.name, type: r.type, debitCents: r.debitCents, creditCents: r.creditCents,
-    })),
+    ...accountRows
+      .map((r) => {
+        const net = r.debitCents - r.creditCents
+        return {
+          tenantId: r.tenantId,
+          companyName: r.tenantId ? (nameOf.get(r.tenantId) ?? null) : null,
+          code: r.code, name: r.name, type: r.type,
+          debitCents: net > 0 ? net : 0,
+          creditCents: net < 0 ? -net : 0,
+        }
+      })
+      .filter((r) => r.debitCents !== 0 || r.creditCents !== 0),
     ...virtualRows,
   ].sort(byCompanyThenCode)
   const totals = rows.reduce(

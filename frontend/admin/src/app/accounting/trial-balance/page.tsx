@@ -68,6 +68,9 @@ export default function TrialBalancePage() {
                 ; earlier profit is the computed retained earnings b/f row.
               </p>
             )}
+            <p className="text-xs text-s-muted mb-3">
+              Each account shows its net balance, in the Debit or the Credit column; accounts with a zero balance are not listed.
+            </p>
             <div className="s-card p-4 mb-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
