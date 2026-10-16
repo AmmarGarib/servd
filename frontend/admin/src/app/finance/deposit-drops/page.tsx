@@ -10,8 +10,12 @@
 // The bank's deposit slip # (owner, 2026-10-14) sits next to the bag serial:
 // it goes into the posting so the statement line can be found by it, and a
 // slip # already used in the company is a warning, never a refusal.
+// The slip itself is a FILE, not a URL (owner, 2026-10-16: "it should ask for
+// attachment instead of URL for supporting docs"): up to 5 photos / PDFs per
+// drop, on the form or attached later per row ("Attach slip"), viewed in the
+// browser or downloaded. Old rows may still carry a receipt link.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -22,6 +26,30 @@ import { useActiveCompany } from '../../../lib/connectorsApi'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '../../../components/ui/Modal'
 import { Field, focusField, useSubmitOnce } from '../cash-vouchers/ui'
+import { prepareReceiptFile, kb } from '../../../lib/photoPrep'
+
+/** One deposit slip as stored (metadata only — the bytes are fetched on View / Download). */
+interface SlipFile { id: string; fileName: string | null; mime: string; sizeBytes: number; createdAt: string }
+/** A chosen file, ready to send. */
+interface PickedSlip { fileName: string; mime: string; dataBase64: string; bytes: number }
+const SLIP_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf'
+const MAX_SLIPS = 5
+const slipPath = (dropId: string, fileId: string) => `/trustops/deposit-drops/${dropId}/files/${fileId}`
+
+/** Photos are compressed (JPEG, like cash-voucher receipts); PDFs go up as they are (≤ 3 MB). */
+async function pickSlips(list: FileList | null, room: number): Promise<PickedSlip[]> {
+  const files = Array.from(list ?? [])
+  if (files.length > room) throw new Error(room <= 0 ? `A deposit takes at most ${MAX_SLIPS} files.` : `You can add ${room} more file${room === 1 ? '' : 's'} (at most ${MAX_SLIPS} per deposit).`)
+  const out: PickedSlip[] = []
+  for (const f of files) {
+    if (f.type !== 'application/pdf' && !f.type.startsWith('image/')) throw new Error(`${f.name}: pick a photo or a PDF of the slip.`)
+    const p = await prepareReceiptFile(f)
+    if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
+    const base = f.name.replace(/\.[^.]+$/, '') || 'deposit-slip'
+    out.push({ fileName: p.mime === 'application/pdf' ? f.name : `${base}.jpg`, mime: p.mime, dataBase64: p.base64, bytes: p.bytes })
+  }
+  return out
+}
 
 interface Drop {
   id: string
@@ -32,6 +60,7 @@ interface Drop {
   bagSerial: string | null
   slipNumber: string | null
   receiptUrl: string | null
+  files?: SlipFile[]
   droppedById: string
   droppedAt: string
   notes: string | null
@@ -53,7 +82,7 @@ export default function DepositDropsPage() {
           <div className="min-w-0">
             <h1 className="text-2xl font-black text-white/90">Bank deposit drops</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Record every cash drop to the bank. It posts to the bank's ledger account, and a variance against the shift (drops + counted close − float kept) auto-flags. Snap a teller-receipt photo to make the drop reconcilable on the bank statement.
+              Record every cash drop to the bank. It posts to the bank's ledger account, and a variance against the shift (drops + counted close − float kept) auto-flags. Attach the stamped deposit slip (photo or PDF) to make the drop reconcilable on the bank statement.
             </p>
           </div>
           <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ Record drop</button>
@@ -85,8 +114,8 @@ export default function DepositDropsPage() {
                       {d.varianceCents >= 0 ? '+' : ''}{pkr(d.varianceCents)}
                     </span>
                   )}
-                  {!d.receiptUrl && d.amountCents >= 100000 && (
-                    <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--erp-warning)' }}>No receipt</span>
+                  {!d.receiptUrl && !(d.files?.length) && d.amountCents >= 100000 && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--erp-warning)' }}>No deposit slip</span>
                   )}
                 </div>
                 <p className="text-xs text-white/45 mt-1">
@@ -103,8 +132,9 @@ export default function DepositDropsPage() {
                 </p>
                 {d.notes && <p className="text-xs text-white/55 mt-1">{d.notes}</p>}
               </div>
-              {d.receiptUrl && <a href={d.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-ink hover:underline">View receipt ↗</a>}
+              {d.receiptUrl && <a href={d.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-ink hover:underline">View receipt link ↗</a>}
             </div>
+            <DropSlips drop={d} />
           </div>
         ))}
       </div>
@@ -129,7 +159,16 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   const [bankAccountId, setBankAccountId] = useState('')
   const [bagSerial, setBagSerial] = useState('')
   const [slipNumber, setSlipNumber] = useState('')
-  const [receiptUrl, setReceiptUrl] = useState('')
+  const [slips, setSlips] = useState<PickedSlip[]>([])
+  const [slipError, setSlipError] = useState<string | null>(null)
+  const [preparing, setPreparing] = useState(false)
+  const slipInput = useRef<HTMLInputElement>(null)
+  async function addSlips(list: FileList | null) {
+    setSlipError(null); setPreparing(true)
+    try { const more = await pickSlips(list, MAX_SLIPS - slips.length); setSlips((s) => [...s, ...more]) }
+    catch (e) { setSlipError((e as Error).message) }
+    finally { setPreparing(false); if (slipInput.current) slipInput.current.value = '' }
+  }
   const [notes, setNotes] = useState('')
   // Saved but the ledger refused the posting (e.g. a closed period): the drop
   // stands and finance is flagged to re-post it — say so before closing.
@@ -144,8 +183,8 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
       amountCents,
       bagSerial: bagSerial || null,
       slipNumber: slipNumber.trim() || null,
-      receiptUrl: receiptUrl || null,
       notes: notes || null,
+      files: slips.map(({ fileName, mime, dataBase64 }) => ({ fileName, mime, dataBase64 })),
     }),
     onSuccess: (r) => {
       const uses = r?.referenceUsedBefore?.length ? r.referenceUsedBefore : null
@@ -160,10 +199,11 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   const submit = useSubmitOnce(save.isPending)(() => {
     setTried(true)
     if (amountCents <= 0) { focusField('dd-amount'); return false }
+    if (preparing) return false
     save.mutate()
     return true
   })
-  return <Modal title="Record bank deposit" onClose={close} dirty={!done && !save.isPending && (amountCents > 0 || !!slipNumber.trim() || !!bagSerial.trim() || !!notes.trim())}
+  return <Modal title="Record bank deposit" onClose={close} dirty={!done && !save.isPending && (amountCents > 0 || !!slipNumber.trim() || !!bagSerial.trim() || !!notes.trim() || slips.length > 0)}
     footer={
       <div className="flex justify-between gap-3">
         {done ? (
@@ -171,7 +211,7 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
         ) : (
           <>
             <button type="button" onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-            <button type="submit" form="dd-form" disabled={save.isPending} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Saving…' : 'Record drop'}</button>
+            <button type="submit" form="dd-form" disabled={save.isPending || preparing} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">{save.isPending ? 'Saving…' : 'Record drop'}</button>
           </>
         )}
       </div>
@@ -199,7 +239,25 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
         <Field label="Deposit slip #"><input value={slipNumber} onChange={(e) => setSlipNumber(e.target.value)} maxLength={100} placeholder="From the bank's stamped slip" autoComplete="off" className={fieldCls + ' font-mono'} /></Field>
         <Field label="Tamper-bag serial"><input value={bagSerial} onChange={(e) => setBagSerial(e.target.value)} className={fieldCls + ' font-mono'} /></Field>
       </div>
-      <Field label="Receipt photo URL"><input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://…" className={fieldCls} /></Field>
+      <Field label="Deposit slip / receipt" hint={`Photo or PDF of the bank's stamped slip — up to ${MAX_SLIPS} files.`} error={slipError ?? undefined}>
+        <input ref={slipInput} id="dd-slips" type="file" multiple accept={SLIP_ACCEPT} className="hidden" onChange={(e) => void addSlips(e.target.files)} />
+        <div className="space-y-2">
+          {slips.length > 0 && (
+            <ul className="space-y-1">
+              {slips.map((f, i) => (
+                <li key={`${f.fileName}-${i}`} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+                  <span className="min-w-0 break-all"><span className="font-bold text-white/85">{f.fileName}</span><span className="text-white/45"> · {kb(f.bytes)}</span></span>
+                  <button type="button" onClick={() => setSlips((s) => s.filter((_, j) => j !== i))} className="shrink-0 font-bold text-s-red">Remove</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button type="button" onClick={() => slipInput.current?.click()} disabled={preparing || slips.length >= MAX_SLIPS}
+            className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-white/65 hover:text-white hover:border-primary disabled:opacity-50">
+            {preparing ? 'Preparing…' : slips.length ? '+ Attach another file' : '+ Attach slip'}
+          </button>
+        </div>
+      </Field>
       <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
     </form>
       {save.error && <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ color: 'var(--erp-danger)', background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{(save.error as Error).message}</div>}
@@ -213,3 +271,78 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 }
 
 const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
+
+/** A drop's slip files: View (photos / PDFs in the browser, no download), Download, and "Attach slip" for one that arrives later. */
+function DropSlips({ drop }: { drop: Drop }) {
+  const qc = useQueryClient()
+  const files = drop.files ?? []
+  const input = useRef<HTMLInputElement>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [viewing, setViewing] = useState<{ name: string; url: string; kind: 'image' | 'pdf' } | null>(null)
+  const nameOf = (f: SlipFile) => f.fileName || `Deposit slip ${f.id.slice(0, 6)}`
+
+  async function attach(list: FileList | null) {
+    setError(null); setBusy(true)
+    try {
+      const picked = await pickSlips(list, MAX_SLIPS - files.length)
+      if (picked.length) {
+        await api.post(`/trustops/deposit-drops/${drop.id}/files`, { files: picked.map(({ fileName, mime, dataBase64 }) => ({ fileName, mime, dataBase64 })) })
+        await qc.invalidateQueries({ queryKey: ['deposit-drops'] })
+        void qc.invalidateQueries({ queryKey: ['exceptions'] })
+      }
+    } catch (e) { setError((e as Error).message) }
+    finally { setBusy(false); if (input.current) input.current.value = '' }
+  }
+  async function view(f: SlipFile) {
+    try {
+      const blob = await api.fetchBlob(slipPath(drop.id, f.id))
+      setViewing({ name: nameOf(f), url: URL.createObjectURL(new Blob([blob], { type: f.mime })), kind: f.mime === 'application/pdf' ? 'pdf' : 'image' })
+    } catch (e) { setError((e as Error).message) }
+  }
+  function closeViewer() {
+    if (viewing) URL.revokeObjectURL(viewing.url)
+    setViewing(null)
+  }
+  async function download(f: SlipFile) {
+    try { await api.download(slipPath(drop.id, f.id), nameOf(f)) }
+    catch (e) { setError((e as Error).message) }
+  }
+
+  return (
+    <div className="mt-3 pt-3 space-y-2" style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+      {files.length > 0 && (
+        <ul className="space-y-1">
+          {files.map((f) => (
+            <li key={f.id} className="flex items-center justify-between gap-3 flex-wrap text-xs">
+              <span className="min-w-0 break-all"><span className="font-bold text-white/85">{nameOf(f)}</span><span className="text-white/45"> · {kb(f.sizeBytes)}</span></span>
+              <span className="flex items-center gap-3 shrink-0">
+                <button type="button" onClick={() => void view(f)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>View</button>
+                <button type="button" onClick={() => void download(f)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>Download</button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {files.length < MAX_SLIPS && (
+        <>
+          <input ref={input} type="file" multiple accept={SLIP_ACCEPT} className="hidden" onChange={(e) => void attach(e.target.files)} />
+          <button type="button" onClick={() => input.current?.click()} disabled={busy} className="text-xs font-bold disabled:opacity-50" style={{ color: 'var(--erp-primary)' }}>
+            {busy ? 'Uploading…' : files.length ? '+ Attach another file' : '+ Attach slip'}
+          </button>
+        </>
+      )}
+      {error && <p role="alert" className="text-xs" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+      {viewing && (
+        <Modal title={viewing.name} onClose={closeViewer} wide>
+          {viewing.kind === 'pdf' ? (
+            <iframe src={viewing.url} title={viewing.name} className="w-full rounded-lg" style={{ height: '75vh', border: '1px solid var(--border)' }} />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={viewing.url} alt={viewing.name} className="mx-auto max-h-[75vh] max-w-full rounded-lg object-contain" />
+          )}
+        </Modal>
+      )}
+    </div>
+  )
+}

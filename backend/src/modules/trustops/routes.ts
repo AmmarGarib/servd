@@ -20,7 +20,7 @@ import {
 import { postPettyCashMovementTx, pettyCashTieOut, type SpendLineInput } from '../accounting/pettyCashPosting.js'
 import { EXPENSE_PAYOUT_CATEGORIES } from '../accounting/expenseCategories.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
-import { decodeEvidenceFile, sendEvidence } from '../../lib/evidenceFile.js'
+import { decodeEvidenceFile, sendEvidence, safeFileName, EVIDENCE_EXT } from '../../lib/evidenceFile.js'
 import { zInt4Cents } from '../../lib/money.js'
 import { moneyAccountCode, zPaymentRef } from '../../lib/bankAccounts.js'
 import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
@@ -176,6 +176,28 @@ const SPEND_LINE = z.object({
 /** 403 unless the signed-in user passes CASH_GUARD (for routes that also admit a custodian elsewhere). */
 async function requireCashKeeper(req: FastifyRequest): Promise<void> {
   if (!(await passesCashGuard(req))) throw new ForbiddenError('Only a manager or finance can see the petty-cash boxes')
+}
+
+// ── Deposit slips (owner, 2026-10-16): files, not a URL. Stored in the one
+//    evidence store (CashVoucherAttachment kind 'deposit_slip', depositDropId).
+const DEPOSIT_SLIP_KIND = 'deposit_slip'
+const DEPOSIT_SLIP_MAX_FILES = 5
+/** 5 files × 3 MB, base64 (+⅓) and JSON overhead. */
+const DEPOSIT_SLIP_BODY_LIMIT = 22 * 1024 * 1024
+const DEPOSIT_NO_SLIP_TITLE = 'Deposit drop without a deposit slip'
+/** The title flags raised before 2026-10-16 carry — still resolved by an attach. */
+const DEPOSIT_NO_SLIP_LEGACY_TITLE = 'Deposit drop without bank receipt'
+const zDepositSlipFile = z.object({
+  fileName:   z.string().max(200).optional(),
+  mime:       z.string().min(1).max(100),
+  dataBase64: z.string().min(1),
+})
+/** Decode every slip (JPEG / PNG / WebP / PDF, ≤ 3 MB, magic bytes) — throws 400 on the first bad one. */
+function decodeDepositSlips(files: Array<z.infer<typeof zDepositSlipFile>>) {
+  return files.map((f, i) => {
+    const d = decodeEvidenceFile(f.dataBase64, f.mime, { allowPdf: true })
+    return { ...d, fileName: safeFileName(f.fileName ?? '', `deposit-slip-${i + 1}.${EVIDENCE_EXT[d.mime]}`) }
+  })
 }
 
 /**
@@ -1045,6 +1067,14 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       },
       orderBy: { droppedAt: 'desc' },
       take: 100,
+      // The slip files' metadata only — the bytes are NEVER listed.
+      include: {
+        attachments: {
+          where: { kind: DEPOSIT_SLIP_KIND },
+          select: { id: true, fileName: true, mime: true, sizeBytes: true, createdAt: true },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
     })
     // Each drop is judged by its own company's cash tolerance — clients show
     // `withinTolerance` instead of hard-coding a threshold.
@@ -1053,7 +1083,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     for (const r of rows) {
       if (!limits.has(r.tenantId)) limits.set(r.tenantId, await cashVarianceLimitCents(r.tenantId))
       const varianceLimitCents = limits.get(r.tenantId)!
-      out.push({ ...r, varianceLimitCents, withinTolerance: Math.abs(r.varianceCents) <= varianceLimitCents })
+      const { attachments, ...drop } = r
+      out.push({ ...drop, files: attachments, varianceLimitCents, withinTolerance: Math.abs(r.varianceCents) <= varianceLimitCents })
     }
     return out
   })
@@ -1078,8 +1109,16 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // `referenceUsedBefore` — a warning, never a refusal (lib/paymentRefs.ts).
   // A drop has no separate "banked" step, so the slip # is optional here; the
   // list shows it next to the bag serial and flags a drop without one.
-  fastify.post('/deposit-drops', { preHandler: CASH_GUARD }, async (req, reply) => {
-    const body = z.object({
+  //
+  // Deposit slips are FILES (owner, 2026-10-16: "it should ask for attachment
+  // instead of URL for supporting docs"): `files` (0–5, JPEG / PNG / WebP /
+  // PDF, ≤ 3 MB each, lib/evidenceFile.ts) are all checked BEFORE anything is
+  // written and saved with the drop in ONE transaction, in the drop's company
+  // (CashVoucherAttachment kind 'deposit_slip'). `receiptUrl` is still
+  // accepted from old clients; the admin no longer sends it.
+  fastify.post('/deposit-drops', { preHandler: CASH_GUARD, bodyLimit: DEPOSIT_SLIP_BODY_LIMIT }, async (req, reply) => {
+    const { files: rawFiles, ...body } = z.object({
+      files:         z.array(zDepositSlipFile).max(DEPOSIT_SLIP_MAX_FILES, `At most ${DEPOSIT_SLIP_MAX_FILES} files per deposit`).optional(),
       shiftId:       z.string().uuid().nullable().optional(),
       conceptId:     z.string().uuid().nullable().optional(),
       bankAccountId: z.string().min(1).nullable().optional(),
@@ -1099,27 +1138,40 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     if (body.shiftId) await assertShiftOf(tenantId, body.shiftId, false)
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
     const bank = await moneyAccountCode(prisma, tenantId, { method: 'bank', bankAccountId: body.bankAccountId ?? null })
+    // Every file is checked before anything is written: a bad one is 400 and no drop is saved.
+    const files = decodeDepositSlips(rawFiles ?? [])
 
     const { expectedShiftDeposit, postDepositDrop } = await import('../accounting/depositPosting.js')
     const expected = body.shiftId ? (await expectedShiftDeposit(body.shiftId)).expectedCents : 0
     const variance = body.amountCents - expected
 
-    const drop = await prisma.depositDrop.create({
-      data: {
-        ...body,
-        tenantId,
-        shiftId: body.shiftId ?? null,
-        conceptId: body.conceptId ?? null,
-        bankAccountId: bank.bankAccountId,
-        bagSerial: body.bagSerial ?? null,
-        slipNumber: body.slipNumber || null,
-        receiptUrl: body.receiptUrl ?? null,
-        witnessedById: body.witnessedById ?? null,
-        notes: body.notes ?? null,
-        expectedCents: expected,
-        varianceCents: variance,
-        droppedById: req.staffUser!.id,
-      },
+    const drop = await prisma.$transaction(async (tx) => {
+      const created = await tx.depositDrop.create({
+        data: {
+          ...body,
+          tenantId,
+          shiftId: body.shiftId ?? null,
+          conceptId: body.conceptId ?? null,
+          bankAccountId: bank.bankAccountId,
+          bagSerial: body.bagSerial ?? null,
+          slipNumber: body.slipNumber || null,
+          receiptUrl: body.receiptUrl ?? null,
+          witnessedById: body.witnessedById ?? null,
+          notes: body.notes ?? null,
+          expectedCents: expected,
+          varianceCents: variance,
+          droppedById: req.staffUser!.id,
+        },
+      })
+      if (files.length) {
+        await tx.cashVoucherAttachment.createMany({
+          data: files.map((f) => ({
+            tenantId, depositDropId: created.id, kind: DEPOSIT_SLIP_KIND, mime: f.mime, fileName: f.fileName,
+            sizeBytes: f.sizeBytes, data: f.bytes, uploadedById: req.staffUser!.id,
+          })),
+        })
+      }
+      return created
     })
 
     // Awaited; a refusal is flagged, never swallowed. no_amount (a PKR 0
@@ -1168,15 +1220,17 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       })
     }
 
-    // Also flag when receipt photo missing on a meaningful drop
-    if (body.amountCents >= 100000 && !body.receiptUrl) {
+    // Also flag a meaningful drop (≥ PKR 1,000) with no deposit slip — no
+    // file and no legacy receipt link. Attaching a slip later
+    // (POST /deposit-drops/:id/files) resolves this flag.
+    if (body.amountCents >= 100000 && files.length === 0 && !body.receiptUrl) {
       await flagException({
         tenantId,
         conceptId: body.conceptId ?? null,
         kind: 'cash_variance',
         severity: 'medium',
-        title: `Deposit drop without bank receipt`,
-        description: `PKR ${(body.amountCents / 100).toFixed(0)} dropped to bank but no teller-receipt photo attached. Without proof we can't reconcile this drop on the bank statement.`,
+        title: DEPOSIT_NO_SLIP_TITLE,
+        description: `PKR ${(body.amountCents / 100).toFixed(0)} dropped to bank but no deposit slip attached. Without proof we can't reconcile this drop on the bank statement — attach the slip on Finance → Deposit drops.`,
         entityType: 'DepositDrop',
         entityId: drop.id,
         actorId: req.staffUser!.id,
@@ -1185,7 +1239,80 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }
 
     const referenceUsedBefore = await findPaymentReferenceUses(prisma, tenantId, drop.slipNumber, { exclude: { kind: 'deposit_drop', id: drop.id } })
-    return reply.status(201).send({ ...drop, posted, postingError, referenceUsedBefore })
+    const savedFiles = await prisma.cashVoucherAttachment.findMany({
+      where: { depositDropId: drop.id, tenantId, kind: DEPOSIT_SLIP_KIND },
+      select: { id: true, fileName: true, mime: true, sizeBytes: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    })
+    return reply.status(201).send({ ...drop, files: savedFiles, posted, postingError, referenceUsedBefore })
+  })
+
+  // POST /trustops/deposit-drops/:id/files — attach the slip later (the bank's
+  // receipt often arrives after the drop). The drop must be in the caller's
+  // companies (404); at most 5 files per drop (409 TOO_MANY_FILES); rows are
+  // stamped with the DROP's company. Resolves that drop's open "no deposit
+  // slip" flag.
+  fastify.post<{ Params: { id: string } }>('/deposit-drops/:id/files', { preHandler: CASH_GUARD, bodyLimit: DEPOSIT_SLIP_BODY_LIMIT }, async (req, reply) => {
+    const body = z.object({
+      files: z.array(zDepositSlipFile).min(1, 'Choose a file').max(DEPOSIT_SLIP_MAX_FILES, `At most ${DEPOSIT_SLIP_MAX_FILES} files per deposit`),
+    }).parse(req.body)
+    const drop = await prisma.depositDrop.findFirst({
+      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+      select: { id: true, tenantId: true },
+    })
+    if (!drop || !drop.tenantId) throw new NotFoundError('Deposit drop', req.params.id)
+    const dropTenantId = drop.tenantId
+    const files = decodeDepositSlips(body.files)
+    const saved = await prisma.$transaction(async (tx) => {
+      // Lock the drop so two uploads never pass the cap together.
+      await tx.$queryRaw`SELECT id FROM deposit_drops WHERE id = ${drop.id} FOR UPDATE`
+      const have = await tx.cashVoucherAttachment.count({ where: { depositDropId: drop.id, kind: DEPOSIT_SLIP_KIND } })
+      if (have + files.length > DEPOSIT_SLIP_MAX_FILES) {
+        throw new AppError('TOO_MANY_FILES', `A deposit takes at most ${DEPOSIT_SLIP_MAX_FILES} files (${have} already attached)`, 409)
+      }
+      const out = []
+      for (const f of files) {
+        out.push(await tx.cashVoucherAttachment.create({
+          data: {
+            tenantId: dropTenantId, depositDropId: drop.id, kind: DEPOSIT_SLIP_KIND, mime: f.mime, fileName: f.fileName,
+            sizeBytes: f.sizeBytes, data: f.bytes, uploadedById: req.staffUser!.id,
+          },
+          select: { id: true, fileName: true, mime: true, sizeBytes: true, createdAt: true },
+        }))
+      }
+      return out
+    })
+    // The slip is now on file: close THIS drop's open "no deposit slip" flag(s).
+    await prisma.exceptionFlag.updateMany({
+      where: {
+        tenantId: dropTenantId, entityType: 'DepositDrop', entityId: drop.id,
+        kind: 'cash_variance', title: { in: [DEPOSIT_NO_SLIP_TITLE, DEPOSIT_NO_SLIP_LEGACY_TITLE] },
+        status: { in: ['open', 'acknowledged'] },
+      },
+      data: { status: 'resolved', resolvedById: req.staffUser!.id, resolvedAt: new Date(), resolution: 'Deposit slip attached' },
+    })
+    await audit({
+      category: 'accounting', action: 'deposit_drop.slip_attach', entity: 'DepositDrop', entityId: drop.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: dropTenantId,
+      before: null, after: { files: saved.map((f) => ({ id: f.id, fileName: f.fileName, sizeBytes: f.sizeBytes })) },
+    })
+    return reply.status(201).send({ files: saved })
+  })
+
+  // GET /trustops/deposit-drops/:id/files/:fileId — the bytes, inline
+  // (private, no-store, nosniff). Another company's drop or file is 404.
+  fastify.get<{ Params: { id: string; fileId: string } }>('/deposit-drops/:id/files/:fileId', { preHandler: CASH_GUARD }, async (req, reply) => {
+    const drop = await prisma.depositDrop.findFirst({
+      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
+      select: { id: true, tenantId: true },
+    })
+    if (!drop || !drop.tenantId) throw new NotFoundError('Deposit drop', req.params.id)
+    const file = await prisma.cashVoucherAttachment.findFirst({
+      where: { id: req.params.fileId, depositDropId: drop.id, tenantId: drop.tenantId, kind: DEPOSIT_SLIP_KIND },
+      select: { mime: true, data: true, fileName: true },
+    })
+    if (!file) throw new NotFoundError('File', req.params.fileId)
+    return sendEvidence(reply, file, file.fileName ?? `deposit-slip-${req.params.fileId.slice(0, 8)}`)
   })
 
   // ════════════════════════════════════════════════════════════════════════

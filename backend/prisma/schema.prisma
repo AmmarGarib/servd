@@ -5962,7 +5962,10 @@ model DepositDrop {
   droppedAt     DateTime @default(now())
   notes         String?
 
-  tenant Tenant? @relation("TenantDepositDrops", fields: [tenantId], references: [id])
+  tenant      Tenant?                 @relation("TenantDepositDrops", fields: [tenantId], references: [id])
+  // Deposit slips / bank receipts uploaded as files (owner, 2026-10-16: "it
+  // should ask for attachment instead of URL") — kind 'deposit_slip'.
+  attachments CashVoucherAttachment[]
 
   @@index([conceptId, droppedAt])
   @@index([shiftId])
@@ -7845,32 +7848,35 @@ model CashVoucher {
 /// THE store for petty-cash paper (wave B): the photo of a signed paper voucher (legacy), or a receipt attached to a
 /// cash request's settlement, a direct box spend (movementId) or a box (boxId; company = the box's). Stored in the
 /// database (file storage is not configured on every server); the admin compresses it first. Bytes are NEVER
-/// selected in lists. CHECK cash_voucher_attachments_owner_chk (voucherId, boxId or movementId set) is SQL only.
+/// selected in lists. CHECK cash_voucher_attachments_owner_chk (voucherId, boxId, movementId or depositDropId set) is SQL only.
 model CashVoucherAttachment {
-  id           String   @id @default(cuid())
-  tenantId     String
-  voucherId    String? // WAS required (before wave B)
-  kind         String   @default("signed_voucher") // 'signed_voucher' (legacy paper photo) | 'receipt' | 'supporting' (expense voucher document)
-  mime         String // image/jpeg | image/png | image/webp (receipts may also be application/pdf, lib/evidenceFile.ts); 'supporting' also takes Excel / Word / CSV / text
-  fileName     String? // the uploaded file's name (supporting documents), shown and used on download
-  sizeBytes    Int
-  data         Bytes
-  uploadedById String
-  createdAt    DateTime @default(now())
-  settlementId String?
-  movementId   String?
-  boxId        String? // a direct box-spend receipt (company = the box's)
+  id            String   @id @default(cuid())
+  tenantId      String
+  voucherId     String? // WAS required (before wave B)
+  kind          String   @default("signed_voucher") // 'signed_voucher' (legacy paper photo) | 'receipt' | 'supporting' (expense voucher document)
+  mime          String // image/jpeg | image/png | image/webp (receipts may also be application/pdf, lib/evidenceFile.ts); 'supporting' also takes Excel / Word / CSV / text
+  fileName      String? // the uploaded file's name (supporting documents), shown and used on download
+  sizeBytes     Int
+  data          Bytes
+  uploadedById  String
+  createdAt     DateTime @default(now())
+  settlementId  String?
+  movementId    String?
+  boxId         String? // a direct box-spend receipt (company = the box's)
+  depositDropId String? // kind 'deposit_slip': the bank deposit slip of a deposit drop (company = the drop's)
 
-  tenant     Tenant                 @relation("TenantCashVoucherAttachments", fields: [tenantId], references: [id])
-  voucher    CashVoucher?           @relation(fields: [voucherId], references: [id], onDelete: Restrict) // Restrict kept from the original required relation
-  settlement CashVoucherSettlement? @relation(fields: [settlementId], references: [id])
-  movement   PettyCashMovement?     @relation(fields: [movementId], references: [id])
+  tenant      Tenant                 @relation("TenantCashVoucherAttachments", fields: [tenantId], references: [id])
+  voucher     CashVoucher?           @relation(fields: [voucherId], references: [id], onDelete: Restrict) // Restrict kept from the original required relation
+  settlement  CashVoucherSettlement? @relation(fields: [settlementId], references: [id])
+  movement    PettyCashMovement?     @relation(fields: [movementId], references: [id])
+  depositDrop DepositDrop?           @relation(fields: [depositDropId], references: [id], onDelete: Restrict)
 
   @@index([voucherId])
   @@index([tenantId])
   @@index([settlementId])
   @@index([movementId])
   @@index([boxId])
+  @@index([depositDropId])
   @@map("cash_voucher_attachments")
 }
 
