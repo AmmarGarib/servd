@@ -16,7 +16,7 @@
 // change and are not refused here — they keep their own rules.
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { AppError } from '../../lib/errors.js'
-import { fmtPktDate } from './dates.js'
+import { fmtPktDate, pktToday } from './dates.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -32,8 +32,12 @@ export async function reopenedThrough(db: Db, tenantId: string): Promise<Date | 
 
 /** Remember a reopened window (the later of the stored one and `through`). */
 export async function rememberReopened(db: Db, tenantId: string, through: Date): Promise<void> {
+  // Never today or later: an old lock "through today" (the retired daily
+  // close) must not take today's open trading away from finance.
+  const endOfYesterday = new Date(pktToday().from.getTime() - 1)
+  const capped = through > endOfYesterday ? endOfYesterday : through
   const cur = await reopenedThrough(db, tenantId)
-  const value = (cur && cur > through ? cur : through).toISOString()
+  const value = (cur && cur > capped ? cur : capped).toISOString()
   await db.setting.upsert({ where: { key: reopenedThroughKey(tenantId) }, create: { key: reopenedThroughKey(tenantId), value }, update: { value } })
 }
 
