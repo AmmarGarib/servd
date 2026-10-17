@@ -14,64 +14,15 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Delete, LogIn, LogOut, MapPin } from 'lucide-react'
+import { Check, Delete, MapPin } from 'lucide-react'
 import { api } from '../../lib/api'
-import { useAuthStore } from '../../store/auth'
+import MyTimeClockCard, { attendanceLine, whereLine, TZ, cameraProblem, locationProblem, type PunchResult } from '../../components/hr/MyTimeClockCard'
 
 type Mode = 'me' | 'kiosk'
 type Stage = 'idle' | 'working' | 'success' | 'error'
 
 interface PresignedUpload { uploadUrl: string; publicUrl: string }
-interface Status { punchedIn: boolean; shift?: { clockInAt: string; clockOutAt: string | null; geofenceOk: boolean }; missedClockOut?: { since: string } | null }
-interface PunchResult {
-  alreadyClockedIn?: boolean
-  notClockedIn?: boolean
-  /** A clock-in left open from an earlier day: flagged for HR, no hours. */
-  missedClockOut?: { since: string; note: string }
-  location?: string | null
-  /** Where the punch was taken; outOfArea = outside every work location (recorded and flagged, never refused). */
-  where?: { location?: string | null; outOfArea?: boolean; matched?: boolean | null; distanceM?: number | null; flagged?: boolean } | null
-  hrLinked?: boolean
-  attendance?: { status: string | null; lateMinutes: number | null } | null
-  action?: 'in' | 'out'
-  employee?: { fullName: string }
-}
-
-const attendanceLine = (r: PunchResult) => {
-  const a = r.attendance
-  if (!a) return r.hrLinked === false ? ' (no HR record — attendance is not kept for this login)' : ''
-  if (a.status === 'late') return ` Marked late by ${a.lateMinutes} min.`
-  return ''
-}
-
-/** The line under a punch: where it was taken. Outside is allowed but flagged. */
-const whereLine = (r: PunchResult) => {
-  const w = r.where
-  if (!w) return ''
-  if (w.outOfArea) return ' Outside your work location — recorded and flagged for HR.'
-  if (w.matched) return ` At ${w.location ?? r.location ?? 'your work location'}.`
-  return ''
-}
-
-const TZ = 'Asia/Karachi'
-const clockTime = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: TZ })
-const clockStamp = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ })
-
-/** Plain words for why the camera did not start. */
-function cameraProblem(err: unknown): string {
-  const name = (err as { name?: string } | null)?.name
-  if (name === 'NotAllowedError' || name === 'SecurityError') return 'Camera is blocked. Allow the camera for this site in the browser settings, then press Retry.'
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No camera was found on this device.'
-  if (name === 'NotReadableError') return 'The camera is in use by another app. Close it, then press Retry.'
-  return 'The camera did not start. Press Retry.'
-}
-function locationProblem(err: GeolocationPositionError | null): string {
-  if (!err) return 'Location is not available on this device.'
-  if (err.code === err.PERMISSION_DENIED) return 'Location is blocked. Allow location for this site in the browser settings, then press Retry.'
-  if (err.code === err.TIMEOUT) return 'Finding your location took too long. Press Retry.'
-  return 'Your location could not be found. Press Retry.'
-}
-
+interface PresignedUpload { uploadUrl: string; publicUrl: string }
 /** Live clock for the top of the screen: Karachi time, ticking each second. */
 function useNow() {
   const [now, setNow] = useState<Date | null>(null)
@@ -85,7 +36,6 @@ function useNow() {
 
 export default function TimeClockPage() {
   const qc = useQueryClient()
-  const user = useAuthStore((s) => s.user)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -116,8 +66,6 @@ export default function TimeClockPage() {
     staleTime: 30_000,
   })
   const companyName = company.data?.find((t) => t.isActive)?.name ?? ''
-
-  const status = useQuery({ queryKey: ['time-clock-status'], queryFn: () => api.get<Status>('/time-clock/status'), enabled: mode === 'me' })
 
   // Camera and location are asked for on the first punch, not on page load.
   useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); if (resetTimer.current) clearTimeout(resetTimer.current) }, [])
@@ -207,21 +155,6 @@ export default function TimeClockPage() {
 
   const where = () => ({ ...(coordsRef.current && { lat: coordsRef.current.lat, lng: coordsRef.current.lng }) })
 
-  const punchMe = (dir: 'in' | 'out') => run(async () => {
-    setStep(dir === 'in' ? 'Starting camera and location…' : 'Finding your location…')
-    await ensureMedia(dir === 'in')
-    const selfie = dir === 'in' ? await selfieUrl() : undefined
-    setStep('Recording…')
-    const r = await api.post<PunchResult>(`/time-clock/punch-${dir}`, { ...where(), ...(dir === 'in' && { selfieUrl: selfie }) })
-    if (r.where?.location ?? r.location) setBranch((r.where?.location ?? r.location)!)
-    if (r.alreadyClockedIn) return 'You are already clocked in.'
-    const missed = r.missedClockOut ? ` ${r.missedClockOut.note}` : ''
-    if (r.notClockedIn) return `You were not clocked in.${missed}`
-    return dir === 'in'
-      ? `Clocked in, ${user?.name ?? ''}.${whereLine(r)}${attendanceLine(r)}${missed}`
-      : `Clocked out. Have a good night.${whereLine(r)}`
-  })
-
   const canPunch = code.trim().length > 0 && pin.length >= 4
   const punchKiosk = () => {
     if (!canPunch || inFlight.current) return
@@ -276,8 +209,6 @@ export default function TimeClockPage() {
     if (m === 'kiosk' && !window.matchMedia?.('(pointer: coarse)').matches) setTimeout(() => idRef.current?.focus(), 0)
   }
 
-  const punchedIn = status.data?.punchedIn ?? false
-
   return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg)' }}>
       <div className="w-full max-w-md p-6">
@@ -309,39 +240,29 @@ export default function TimeClockPage() {
           ))}
         </div>
 
-        <div className="aspect-[4/3] max-h-[35vh] w-full rounded-2xl overflow-hidden mb-4 relative" style={{ background: 'var(--surface)', border: '1px solid var(--elevated)' }}>
-          <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-          <canvas ref={canvasRef} className="hidden" />
-          {!asked && <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-white/50">The camera and your location are asked for when you clock in.</p>}
-          {asked && (
-            <div className="absolute top-3 right-3 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full"
-              style={{ background: coords ? 'rgb(var(--erp-accent-rgb) / 0.22)' : 'color-mix(in srgb, var(--erp-danger) 18%, transparent)', color: coords ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
-              <MapPin size={10} aria-hidden="true" className="mr-1 inline-block align-[-1px]" />{coords ? 'located' : mediaNote ? 'no location' : 'locating…'}
-            </div>
-          )}
-        </div>
+        {mode === 'me' && (
+          <MyTimeClockCard variant="full" onBranch={setBranch} heading={<>
+            <h1 className="text-2xl font-black text-white text-center mb-1">Time clock</h1>
+            <p className="text-xs text-white/50 text-center mb-6">Your punch writes your attendance for today. Selfie and location are kept with it.</p>
+          </>} />
+        )}
 
-        <h1 className="text-2xl font-black text-white text-center mb-1">Time clock</h1>
-        <p className="text-xs text-white/50 text-center mb-6">
-          {mode === 'me'
-            ? 'Your punch writes your attendance for today. Selfie and location are kept with it.'
-            : 'Type your employee ID, then the kiosk PIN HR gave you. Punching again clocks you out.'}
-        </p>
-
-        {mode === 'me' && stage !== 'working' && (
-          <div className="space-y-3">
-            <p className={`text-center text-sm ${punchedIn ? 'text-success' : 'text-white/70'}`}>
-              {status.isLoading ? '…' : punchedIn ? `On shift since ${clockTime(status.data!.shift!.clockInAt)}` : 'Not clocked in'}
-              {!punchedIn && status.data?.missedClockOut && (
-                <span className="block text-xs text-white/50 mt-1">
-                  Your clock-in of {clockStamp(status.data.missedClockOut.since)} was never clocked out — HR will correct that day.
-                </span>
+        {mode === 'kiosk' && (
+          <>
+            <div className="aspect-[4/3] max-h-[35vh] w-full rounded-2xl overflow-hidden mb-4 relative" style={{ background: 'var(--surface)', border: '1px solid var(--elevated)' }}>
+              <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+              <canvas ref={canvasRef} className="hidden" />
+              {!asked && <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-white/50">The camera and your location are asked for when you clock in.</p>}
+              {asked && (
+                <div className="absolute top-3 right-3 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full"
+                  style={{ background: coords ? 'rgb(var(--erp-accent-rgb) / 0.22)' : 'color-mix(in srgb, var(--erp-danger) 18%, transparent)', color: coords ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
+                  <MapPin size={10} aria-hidden="true" className="mr-1 inline-block align-[-1px]" />{coords ? 'located' : mediaNote ? 'no location' : 'locating…'}
+                </div>
               )}
-            </p>
-            {punchedIn
-              ? <button type="button" onClick={() => void punchMe('out')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'color-mix(in srgb, var(--erp-danger) 15%, transparent)', color: 'var(--erp-danger)', border: '1px solid color-mix(in srgb, var(--erp-danger) 35%, transparent)' }}><span className="inline-flex items-center justify-center gap-2"><LogOut size={22} aria-hidden="true" />Clock out</span></button>
-              : <button type="button" onClick={() => void punchMe('in')} className="w-full rounded-2xl py-4 text-lg font-black" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}><span className="inline-flex items-center justify-center gap-2"><LogIn size={22} aria-hidden="true" />Clock in</span></button>}
-          </div>
+            </div>
+            <h1 className="text-2xl font-black text-white text-center mb-1">Time clock</h1>
+            <p className="text-xs text-white/50 text-center mb-6">Type your employee ID, then the kiosk PIN HR gave you. Punching again clocks you out.</p>
+          </>
         )}
 
         {mode === 'kiosk' && stage !== 'working' && (
@@ -369,7 +290,7 @@ export default function TimeClockPage() {
           </>
         )}
 
-        <div role="status" aria-live="polite">
+        {mode === 'kiosk' && <div role="status" aria-live="polite">
           {stage === 'working' && <p className="text-center py-6 text-sm text-white/85 animate-pulse">{step || 'Recording…'}</p>}
           {feedback && (
             <div className="rounded-xl px-4 py-4 text-center mt-2"
@@ -383,7 +304,7 @@ export default function TimeClockPage() {
               <button type="button" className="mt-2 rounded-lg px-4 min-h-11 font-bold text-white/85 border border-white/15" onClick={() => void ensureMedia(true)}>Retry</button>
             </div>
           )}
-        </div>
+        </div>}
       </div>
     </div>
   )

@@ -9,6 +9,7 @@ import { useParams } from 'next/navigation'
 import { usePermissions } from '../../../hooks/useCan'
 import { useMyWorkspaces, useWorkspaceDefs } from '../../../hooks/useWorkspaces'
 import { useTeam, isInToday } from '../../../hooks/useTeam'
+import MyTimeClockCard from '../../../components/hr/MyTimeClockCard'
 import { roleLabel } from '../../../lib/appRoles'
 import { pagesForModules, isParkedSection } from '../../../lib/moduleCatalog'
 
@@ -46,6 +47,7 @@ export default function WorkspaceHomePage() {
 
   return (
     <Shell>
+      <MyTimeClockCard />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-wider text-success">Workspace</p>

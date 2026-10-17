@@ -42,6 +42,9 @@ export interface HrField {
   type: FieldType
   required?: boolean
   options?: string[]
+  /** Choices no longer offered but still accepted on save, so a record that
+   *  already holds one is never blocked (e.g. a dependent's 'other'). */
+  retiredOptions?: string[]
   ref?: string
   bind?: RecordSlot | `employee.${string}`
   group?: string
@@ -132,7 +135,8 @@ export const EMPLOYEE_MASTER_FIELDS: HrField[] = [
     group: 'Family / dependents',
     columns: [
       t('name', 'Dependent name'),
-      sel('relationship', 'Relationship', ['spouse', 'son', 'daughter', 'father', 'mother', 'other']),
+      // Danish (HR), 2026-10-17: no 'Other' — Brother and Sister instead.
+      sel('relationship', 'Relationship', ['spouse', 'son', 'daughter', 'father', 'mother', 'brother', 'sister'], { retiredOptions: ['other'] }),
       f('dateOfBirth', 'Date of birth', 'date'),
       sel('gender', 'Gender', ['male', 'female', 'other']),
       t('cnicBForm', 'CNIC / B-Form number'),
@@ -769,7 +773,7 @@ function coerce(field: HrField, raw: unknown): { value: unknown; error?: string 
     case 'boolean':
       return { value: raw === true || raw === 'true' || raw === 1 || raw === 'yes' }
     case 'select':
-      if (field.options && !field.options.includes(String(raw))) return { value: null, error: `must be one of: ${field.options.join(', ')}` }
+      if (field.options && !field.options.includes(String(raw)) && !(field.retiredOptions ?? []).includes(String(raw))) return { value: null, error: `must be one of: ${field.options.join(', ')}` }
       return { value: String(raw) }
     case 'multiselect': case 'employees': {
       const arr = Array.isArray(raw) ? raw.map(String) : String(raw).split(',').map((s) => s.trim()).filter(Boolean)
