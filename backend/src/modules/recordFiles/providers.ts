@@ -21,6 +21,7 @@
 //   prep_batch      PrepBatch        ALL_STAFF                    the cook who logged it, or a manager   none (as /crosschecks/prep-batches)
 //   hr_document     HrDocument       HR_ADMIN                     HR_ADMIN                       /hr/documents (staff_hr)
 //   fixed_asset     FixedAsset       FINANCIALS_VIEWERS           FA_WRITER_ROLES                /accounting/fixed-assets (accounting)
+//   capex_quote     CapexQuote       CAPITAL_READERS              CAPITAL_WRITERS (POST /capex/lines/:id/quotes)   /finance (capital)
 //
 // The Purchase-order screen's "Attachment URL" is the SUPPLIER BILL form's
 // (POST /procurement/bills stores attachmentUrl on SupplierBill), hence
@@ -40,6 +41,7 @@ import { AP_READERS, AP_WRITERS, requireApWriterModule } from '../procurement/ro
 import { supplierScopeWhere } from '../procurement/scope.js'
 import { HR_ADMIN } from '../hr/routes.js'
 import { FA_WRITER_ROLES } from '../fixedAssets/events.js'
+import { CAPITAL_READERS, CAPITAL_WRITERS } from '../financePlanning/routes.js'
 
 export const RECORD_OWNER = {
   opex_payment: 'opex_payment',
@@ -48,6 +50,7 @@ export const RECORD_OWNER = {
   prep_batch: 'prep_batch',
   hr_document: 'hr_document',
   fixed_asset: 'fixed_asset',
+  capex_quote: 'capex_quote',
 } as const
 
 /** 403 unless the caller's role is in the module's array for this mode. */
@@ -190,5 +193,24 @@ const fixedAsset: RecordFileProvider = {
   },
 }
 
+const capexQuote: RecordFileProvider = {
+  ownerType: RECORD_OWNER.capex_quote,
+  label: 'CapEx quote',
+  allowOffice: true,
+  auditCategory: 'accounting',
+  fileStem: 'capex-quote',
+  async resolve(req, ownerId, mode) {
+    assertRole(req, mode === 'read' ? CAPITAL_READERS : CAPITAL_WRITERS, this.label)
+    await gateAs(req, '/finance/capex/quotes', mode)
+    const q = await prisma.capexQuote.findFirst({
+      where: { id: ownerId, line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, scopeMode(mode))) } } },
+      select: { line: { select: { project: { select: { tenantId: true } } } } },
+    })
+    const tenantId = q?.line.project.tenantId
+    if (!tenantId) throw new NotFoundError('CapexQuote', ownerId)
+    return { tenantId }
+  },
+}
+
 /** Registered once, at import (routes.ts imports this file). */
-for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset]) registerRecordFileProvider(p)
+for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote]) registerRecordFileProvider(p)

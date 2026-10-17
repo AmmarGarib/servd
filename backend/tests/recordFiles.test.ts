@@ -71,9 +71,13 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
   const emp = await prisma.hrEmployee.create({ data: { tenantId, employeeCode: `E-${tag}-${RUN}`, fullName: `Person ${tag}` } })
   const doc = await prisma.hrDocument.create({ data: { tenantId, employeeId: emp.id, docType: 'cnic_front' } })
   const asset = await prisma.fixedAsset.create({ data: { tenantId, name: 'Oven', category: 'kitchen_equipment', acquiredAt: new Date('2026-01-01'), costCents: 500_000, usefulLifeMonths: 60 } })
+  const proj = await prisma.capexProject.create({ data: { tenantId, name: `Buildout ${tag}` } })
+  const cline = await prisma.capexLine.create({ data: { projectId: proj.id, scope: 'Equipment', item: 'Oven', unitCostCents: 100_000 } })
+  const quote = await prisma.capexQuote.create({ data: { lineId: cline.id, vendor: `Vendor ${tag}`, totalCents: 100_000 } })
   return {
     tenantId,
     ids: {
+      [RECORD_OWNER.capex_quote]: quote.id,
       [RECORD_OWNER.opex_payment]: pay.id, [RECORD_OWNER.supplier_bill]: bill.id, [RECORD_OWNER.goods_receipt]: grn.id,
       [RECORD_OWNER.prep_batch]: prep.id, [RECORD_OWNER.hr_document]: doc.id, [RECORD_OWNER.fixed_asset]: asset.id,
     },
@@ -94,6 +98,7 @@ const ACTOR: Record<string, [string, string]> = {
   [RECORD_OWNER.prep_batch]:    ['cookA', 'cookB'],
   [RECORD_OWNER.hr_document]:   ['hrA', 'hrB'],
   [RECORD_OWNER.fixed_asset]:   ['finA', 'finB'],
+  [RECORD_OWNER.capex_quote]:   ['finA', 'finB'],
 }
 
 beforeAll(async () => {
@@ -134,7 +139,7 @@ beforeAll(async () => {
 afterAll(async () => { invalidateSetupCache(); await app?.close() })
 
 describe('record files: every owner type, two companies', () => {
-  it('registers exactly the six owner types', () => {
+  it('registers exactly the seven owner types', () => {
     expect(recordFileOwnerTypes()).toEqual(Object.values(RECORD_OWNER).sort())
   })
 
@@ -265,6 +270,19 @@ describe('record files: each module keeps its own rule', () => {
 
   it('goods_receipt: a cook cannot attach dock photos (managers receive)', async () => {
     expect((await call('cookA', 'POST', `/record-files/goods_receipt/${A.ids.goods_receipt!}`, { files: [png()] })).statusCode).toBe(403)
+  })
+})
+
+describe('record files: capex_quote keeps the CapEx rule', () => {
+  it('finance without the capital module and a cashier are refused (403); the upload binds to the quote\'s company', async () => {
+    const id = A.ids.capex_quote!
+    expect((await call('finNoCapitalA', 'GET', `/record-files/capex_quote/${id}`)).statusCode).toBe(403)
+    expect((await call('finNoCapitalA', 'POST', `/record-files/capex_quote/${id}`, { files: [png()] })).statusCode).toBe(403)
+    expect((await call('cashierA', 'GET', `/record-files/capex_quote/${id}`)).statusCode).toBe(403)
+    const idB = B.ids.capex_quote!
+    const up = await call('finBothA', 'POST', `/record-files/capex_quote/${idB}`, { files: [png(9)] })
+    expect(up.statusCode, up.body).toBe(201)
+    expect((await filesOf('capex_quote', idB)).every((r) => r.tenantId === B.tenantId)).toBe(true)
   })
 })
 

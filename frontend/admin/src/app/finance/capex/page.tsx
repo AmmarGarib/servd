@@ -25,6 +25,9 @@ import { Select } from '@/components/ui/Select'
 import { toast } from 'sonner'
 import { useTrashPrefill } from '../../../lib/trash'
 import { unwrapPrefill, pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
+import { RecordFiles } from '../../../components/files/RecordFiles'
+import { PendingFilesPicker } from '../../../components/files/PendingFilesPicker'
+import { uploadRecordFiles, type PickedFile } from '../../../components/files/recordFiles'
 import { NumberField } from '../../../components/ui/NumberField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import {
@@ -1423,7 +1426,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
     </form>
 
     {/* Quote comparison shopping — only shown when editing an existing line (outside the line's form: it has its own forms) */}
-    {line && <QuotePanel line={line} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
+    {line && <QuotePanel line={line} tenantId={tenantId} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
 
     {/* Payment schedule */}
     {line && <PaymentPanel project={project} line={line} tenantId={tenantId} fill={instalmentFill} onChange={() => qc.invalidateQueries({ queryKey: ['capex-projects'] })} />}
@@ -1445,22 +1448,31 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
   </ModalShell>
 }
 
-function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
+function QuotePanel({ line, tenantId, onChange }: { line: Line; tenantId: string | null; onChange: () => void }) {
   const [adding, setAdding] = useState(false)
   const [vendor, setVendor] = useState('')
   const [totalCents, setTotalCents] = useState(0)
   const [leadTimeDays, setLeadTimeDays] = useState<number | ''>('')
   const [contactName, setContactName] = useState('')
-  const [fileUrl, setFileUrl] = useState('')
+  // Quote documents are uploaded files (the one record-file store), sent once the quote exists.
+  const [files, setFiles] = useState<PickedFile[]>([])
+  const [uploadProblem, setUploadProblem] = useState<string | null>(null)
 
   const add = useMutation({
-    mutationFn: () => api.post(`/finance/capex/lines/${line.id}/quotes`, {
-      vendor, totalCents,
-      ...(leadTimeDays !== '' && { leadTimeDays: +leadTimeDays }),
-      ...(contactName && { contactName }),
-      ...(fileUrl && { fileUrl }),
-    }),
-    onSuccess: () => { setAdding(false); setVendor(''); setTotalCents(0); setLeadTimeDays(''); setContactName(''); setFileUrl(''); onChange() },
+    mutationFn: async () => {
+      const created = await api.post<{ id: string }>(`/finance/capex/lines/${line.id}/quotes`, {
+        vendor, totalCents,
+        ...(leadTimeDays !== '' && { leadTimeDays: +leadTimeDays }),
+        ...(contactName && { contactName }),
+      })
+      setUploadProblem(null)
+      if (files.length) {
+        try { await uploadRecordFiles('capex_quote', created.id, files, { tenantId: tenantId ?? undefined }) }
+        catch (e) { setUploadProblem(`The quote was saved but its file did not upload (${(e as Error).message}). Attach it from the quote's Files link.`) }
+      }
+      return created
+    },
+    onSuccess: () => { setAdding(false); setVendor(''); setTotalCents(0); setLeadTimeDays(''); setContactName(''); setFiles([]); onChange() },
   })
   const [quoteProblem, setQuoteProblem] = useState<string | null>(null)
   const submitQuote = useSubmitOnce(add.isPending)(() => {
@@ -1489,6 +1501,7 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
           <div>
             <p className="text-sm font-bold text-white/85">{q.vendor}</p>
             {q.contactName && <p className="text-[11px] text-white/45">{q.contactName}</p>}
+            {q.fileUrl && <a href={q.fileUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] underline" style={{ color: 'var(--erp-primary)' }}>Old quote link</a>}
           </div>
           <span className="text-sm font-mono text-white/85">{PKR(q.totalCents)}</span>
           <span className="text-xs text-white/45">{q.leadTimeDays ? `${q.leadTimeDays}d` : '—'}</span>
@@ -1498,10 +1511,14 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
             <button onClick={() => setWinner.mutate(q.id)} className="text-[11px] text-white/55 hover:text-white">Pick</button>
           )}
           <button onClick={() => removeQuote.mutate(q.id)} className="text-white/30 hover:text-s-red">✕</button>
+          <div className="col-span-full">
+            <RecordFiles ownerType="capex_quote" ownerId={q.id} tenantId={tenantId ?? undefined} canUpload title="Quote files" compact lazy />
+          </div>
         </div>
       ))}
     </div>
 
+    {uploadProblem && <p role="alert" className="text-[11px] font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{uploadProblem}</p>}
     {adding ? (
       <form onSubmit={submitQuote} noValidate className="rounded-xl p-3 mt-2"
         style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
@@ -1509,10 +1526,12 @@ function QuotePanel({ line, onChange }: { line: Line; onChange: () => void }) {
           <input id="q-vendor" aria-label="Vendor name" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor name" className={fieldCls} autoFocus />
           <MoneyInput id="q-total" ariaLabel="Quote total (PKR)" value={totalCents} onChange={setTotalCents} placeholder="Total (PKR)" className={fieldCls} />
         </div>
-        <div className="grid grid-cols-3 gap-2 mt-2">
+        <div className="grid grid-cols-2 gap-2 mt-2">
           <input aria-label="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" className={fieldCls} />
           <NumberField aria-label="Lead days" min={0} value={leadTimeDays === '' ? null : leadTimeDays} onValueChange={(n) => setLeadTimeDays(n == null ? '' : n)} placeholder="Lead days" className={fieldCls} />
-          <input aria-label="Quote file URL" value={fileUrl} onChange={(e) => setFileUrl(e.target.value)} placeholder="Quote file URL (optional)" className={fieldCls} />
+        </div>
+        <div className="mt-2">
+          <PendingFilesPicker ownerType="capex_quote" label="Quote files (optional)" value={files} onChange={setFiles} />
         </div>
         {quoteProblem && <p role="alert" className="text-[11px] font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{quoteProblem}</p>}
         {add.error && <ErrorBanner error={add.error} />}
