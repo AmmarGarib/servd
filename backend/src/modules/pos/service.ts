@@ -13,7 +13,7 @@ import { shiftTenantId, assertShiftOf, shiftOfCompany } from '../../lib/tenantSc
 import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, raastTotalCents, TENDER_ROUNDING_CENTS } from '../accounting/shiftPosting.js'
 import {
   postRefundPayment, refundDueCents, isShiftReceipt, isVoidedRaast, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf, onAccountOf,
-  raastLedgerCodeOf, GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX,
+  raastLedgerCodeOf, GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX, CREDIT_NOTE_SOURCE, creditNotePayoutOf,
 } from '../accounting/orderPosting.js'
 import { postJournalEntry, ACCT, TILL_CLEARING_CODES, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
 import { tillClearingCodeTx } from '../accounting/tillClearingCode.js'
@@ -2688,7 +2688,7 @@ async function approveRaastRefund(
  *   - ONL-16: a refund goes back the way the money came, up to what came that
  *     way — choosing 'card' on a cash sale booked a card refund nobody got.
  */
-function refundableOf(payments: Array<Pick<Payment, 'method' | 'status' | 'amountCents' | 'processedAt' | 'createdAt'>>, source: string) {
+export function refundableOf(payments: Array<Pick<Payment, 'method' | 'status' | 'amountCents' | 'processedAt' | 'createdAt'>>, source: string) {
   const receipts = payments.filter((p) => p.status === 'paid' && p.amountCents > 0 && REFUNDABLE_TENDERS.has(p.method))
   const pendingDigital = payments.filter((p) => p.status === 'pending' && p.amountCents > 0 && DIGITAL_TENDERS.has(p.method))
   const uncollectedCash = payments.filter((p) => p.status === 'pending' && p.amountCents > 0 && p.method === 'cash')
@@ -2820,6 +2820,11 @@ async function writeRefundTx(tx: Tx, r: {
    * the line's own GST). Only with voidedItemId.
    */
   voidSplit?: VoidRefundSplit
+  /**
+   * S-1: a pay-out of what this credit note left owed back — gatewayMeta.refund.creditNoteId;
+   * postRefundPayment books it as a hand-back (Dr till clearing / Cr the money account).
+   */
+  creditNoteId?: string
   /** How the row is booked; default postRefundPayment. (A cancelled ticket's hand-back: bookCancelledHandBackTx.) */
   post?: (tx: Tx, refundPaymentId: string) => Promise<{ entryId: string | null; reason?: string }>
   /** Card machine refunds: the gateway, its reference and the refund charge. */
@@ -2850,6 +2855,7 @@ async function writeRefundTx(tx: Tx, r: {
         refund: {
           reason: r.reason, approverId: r.approverId, actorId: r.actorId,
           ...(r.voidedItemId && { voidedItemId: r.voidedItemId, ...(r.voidSplit && { split: r.voidSplit }) }),
+          ...(r.creditNoteId && { creditNoteId: r.creditNoteId }),
         },
         ...(r.terminalChargeId && { terminalChargeId: r.terminalChargeId }),
         ...(r.raast && { raast: { receiptId: r.raast.receiptId, bankAccountId: r.raast.bankAccountId, ledgerCode: r.raast.ledgerCode } }),
@@ -3164,7 +3170,7 @@ const CANCELLED_BOOKS_SELECT = {
   id: true, status: true, source: true, conceptId: true,
   totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
   promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
-  concept: { select: { id: true, slug: true, province: true, srbPosId: true, tenantId: true } },
+  concept: { select: { id: true, slug: true, province: true, srbPosId: true, tenantId: true, revenueAccountCode: true } },
   payments: {
     select: {
       id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true,
@@ -3274,7 +3280,14 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
         select: { account: { select: { code: true } } },
       })
       const taxAccount = await refundTaxAccountFor(tx as typeof prisma, tenantId, order, taxLine?.account.code ?? b.taxAccountCode, b.taxCents)
-      add(revenueCodeForConcept(concept.slug), b.revenueCents)
+      // Revenue goes back to the sales account the close credited for the brand
+      // (4090 for a close booked before the brand had its own account, 2026-10-17).
+      const revLine = await tx.journalLine.findFirst({
+        where: { journalEntryId: close.id, type: 'credit', conceptId: order.conceptId, account: { tenantId, code: { startsWith: '40' } } },
+        orderBy: { amountCents: 'desc' },
+        select: { account: { select: { code: true } } },
+      })
+      add(revLine?.account.code ?? revenueCodeForConcept(concept), b.revenueCents)
       add(ACCT.SERVICE_CHARGE_REVENUE, b.serviceChargeCents)
       add(ACCT.TIPS_PAYABLE, b.tipCents)
       add(ACCT.DELIVERY_FEE_REVENUE, b.deliveryFeeCents)    // the close credited 4110 (its GST is in taxCents)
@@ -3567,6 +3580,145 @@ async function refundDueOnCancelledTicket(
   return { ...refundPayment, entryId, orderRefunded: false, fiscalRefund, srbReturnInvoiceNo: null, refundDueLeftCents }
 }
 
+// ─── S-1: paying out what a credit note left owed back ──────────────────────
+//
+// A credit note on a bill no refund was behind (invoices/service.ts, owner
+// 2026-10-17 "Allow it, owed back") returned the sale in its own entry
+// ('order.credit_note:<cnId>': revenue and tax back, Cr till clearing — REFUND
+// DUE) and filed the fiscal return; the order is 'refunded'. Handing the money
+// to the customer is a refund row on THIS engine (same caps, manager PIN,
+// drawer and Raast rules as any refund), marked gatewayMeta.refund.creditNoteId
+// and booked by postRefundPayment as Dr till clearing / Cr the drawer, card or
+// bank — never revenue or tax, and no fiscal document (the credit note filed
+// the return). Up to what is still owed: the credit note entry's till-clearing
+// credit less earlier pay-outs for it, by the tender the bill was paid with.
+
+/** The live credit note owed-back of an order, or null (no credit note, no owed-back entry, or it was reversed). */
+async function creditNoteOwedTx(db: Tx | typeof prisma, tenantId: string, orderId: string): Promise<{ creditNoteId: string; invoiceNumber: string; owedCents: number } | null> {
+  const cn = await db.taxInvoice.findFirst({ where: { orderId, tenantId, type: 'credit_note' }, select: { id: true, invoiceNumber: true } })
+  if (!cn) return null
+  const ref = `${CREDIT_NOTE_SOURCE}:${cn.id}`
+  const entry = await db.journalEntry.findFirst({
+    where: { tenantId, reference: ref },
+    select: { id: true, lines: { where: { type: 'credit', account: { tenantId, code: { in: TILL_CLEARING_CODES } } }, select: { amountCents: true } } },
+  })
+  if (!entry) return null
+  const reversed = await db.journalEntry.findFirst({
+    where: { tenantId, reference: { in: [`${CREDIT_NOTE_SOURCE}.reversal:${cn.id}`, `${CREDIT_NOTE_SOURCE}.void:${cn.id}`] } },
+    select: { id: true },
+  })
+  if (reversed) return null
+  const owedCents = entry.lines.reduce((t, l) => t + toCents(l.amountCents), 0)
+  return owedCents > 0 ? { creditNoteId: cn.id, invoiceNumber: cn.invoiceNumber, owedCents } : null
+}
+
+/** What a credit note still owes back, in total and by the tender the bill was paid with. */
+function creditNoteDueOf(
+  payments: Array<Pick<Payment, 'method' | 'status' | 'amountCents' | 'processedAt' | 'createdAt' | 'gatewayMeta'>>,
+  source: string,
+  owed: { creditNoteId: string; owedCents: number },
+) {
+  const paidOut = payments.filter((p) => p.status === 'refunded' && p.amountCents < 0 && creditNotePayoutOf(p) === owed.creditNoteId)
+  const paidOutCents = paidOut.reduce((t, p) => t + Math.abs(p.amountCents), 0)
+  // Per tender: what the bill took that way less every refund row that way (sale
+  // refunds before the credit note, pay-outs after) — the money goes back the way it came.
+  const state = refundableOf(payments, source)
+  return {
+    due: owed.owedCents - paidOutCents,
+    paidOutCents,
+    byMethod: state.byMethod,
+    tenders: state.tenders.filter((m) => m !== 'on_account'),
+    latestMethod: state.latestMethod,
+  }
+}
+
+function assertCreditNoteDue(state: ReturnType<typeof creditNoteDueOf>, amountCents: number, method: RefundMethod): void {
+  if (state.due <= 0) throw new AppError('NOTHING_TO_REFUND', 'Everything this credit note owed back has been paid out', 422)
+  if (amountCents > state.due) {
+    throw new AppError('REFUND_EXCEEDS_DUE', `Pay-out of ${amountCents} exceeds the ${state.due} still owed back on this credit note`, 422)
+  }
+  if (!(state.tenders as string[]).includes(method)) {
+    throw new AppError(
+      'REFUND_METHOD_NOT_TENDERED',
+      `This bill was paid by ${state.tenders.join(' + ') || 'nothing refundable'} — pay it out the same way, not by ${method}`,
+      422,
+    )
+  }
+  const left = state.byMethod.get(method) ?? 0
+  if (amountCents > left) throw new AppError('REFUND_EXCEEDS_TENDER', `Only ${Math.max(0, left)} paid by ${method} is still owed back`, 400)
+}
+
+async function payOutCreditNote(
+  input: RefundInput,
+  order: Order & { payments: Payment[] },
+  tenantId: string,
+) {
+  const pre = await creditNoteOwedTx(prisma, tenantId, input.orderId)
+  if (!pre) throw new AppError('ALREADY_REFUNDED', 'This order has been refunded in full', 409)
+  const preState = creditNoteDueOf(order.payments, order.source, pre)
+  const method: RefundMethod = input.method ?? preState.latestMethod ?? 'cash'
+  // Fast refusals before anyone is asked for a PIN; re-checked under the lock.
+  assertCreditNoteDue(preState, input.amountCents, method)
+  const isRaast = method === 'raast'
+  const raastOut = isRaast
+    ? cleanRaastRef(input.gatewayRef, { orderId: input.orderId, rule: await raastRefRule(tenantId), missing: raastRefundRefRequired })
+    : null
+  const policy = await getRefundPolicy(tenantId)
+  const { approverId } = isRaast
+    ? await approveRaastRefund(input, tenantId, policy)
+    : await ensureCapOrManagerOverride(
+        input.amountCents,
+        policy.cashierRefundLimitCents,
+        policy.managerRefundLimitCents,
+        policy,
+        input.reason,
+        input.photoUrl,
+        input.actorRole,
+        input.managerOverridePin,
+        'refund',
+        tenantId,
+        { actorId: input.actorId, orderId: input.orderId },
+      )
+  const shiftId = await refundDrawerOf(input, tenantId, method)
+
+  const { refundPayment, entryId, state, owed } = await prisma.$transaction(async (tx) => {
+    if (isRaast) await lockRaastTx(tx, tenantId)
+    await lockOrderTx(tx, input.orderId)
+    const owed = await creditNoteOwedTx(tx, tenantId, input.orderId)
+    if (!owed) throw new AppError('ALREADY_REFUNDED', 'This order has been refunded in full', 409)
+    const current = await tx.order.findUniqueOrThrow({ where: { id: input.orderId }, select: { source: true, payments: true } })
+    const state = creditNoteDueOf(current.payments, current.source, owed)
+    assertCreditNoteDue(state, input.amountCents, method)
+    const raastSource = isRaast ? await chooseRaastRefundSourceTx(tx, input.orderId, input.amountCents) : null
+    const { payment: refundPayment, entryId } = await writeRefundTx(tx, {
+      orderId: input.orderId, shiftId, method, amountCents: input.amountCents, reason: input.reason, approverId, actorId: input.actorId,
+      creditNoteId: owed.creditNoteId,
+      gateway: input.gateway, gatewayRef: refundRowRef(input, raastOut), terminalChargeId: input.terminalChargeId,
+      raast: raastSource,
+    })
+    // No fiscal document: the credit note filed the sale's return.
+    return { refundPayment, entryId, state, owed }
+  }, { maxWait: 10_000, timeout: 15_000 })
+
+  const owedBackLeftCents = state.due - input.amountCents
+  await audit({ category: 'identity',
+    action: 'order_credit_note_payout',
+    entity: 'Order',
+    entityId: input.orderId,
+    userId: input.actorId,
+    tenantId,
+    before: { status: order.status, owedBackCents: state.due },
+    after: { status: order.status, owedBackCents: owedBackLeftCents },
+    metadata: {
+      amountCents: input.amountCents, method, shiftId, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, entryId,
+      creditNoteId: owed.creditNoteId, invoiceNumber: owed.invoiceNumber,
+      ...(raastOut && { raast: { outgoingRef: raastOut.ref, ...raastMetaOf(refundPayment.gatewayMeta) } }),
+    },
+  })
+  await notifyOwnerIfThreshold(input.amountCents, policy, 'refund', input.orderId, input.reason, input.actorId, tenantId)
+  return { ...refundPayment, entryId, orderRefunded: false, fiscalRefund: null, srbReturnInvoiceNo: null, owedBackLeftCents }
+}
+
 export async function refundOrder(input: RefundInput) {
   assertAmountsFit(input.amountCents)
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Refund amount must be positive', 400)
@@ -3583,6 +3735,12 @@ export async function refundOrder(input: RefundInput) {
   if (order.status === 'cancelled' || order.status === 'rejected') {
     if (!tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)
     return refundDueOnCancelledTicket(input, order, tenantId)
+  }
+  // S-1: a bill credited in full by a credit note with no money handed over —
+  // what it left owed back is paid out here (never a second sale refund).
+  if (order.status === 'refunded' && tenantId) {
+    const owed = await creditNoteOwedTx(prisma, tenantId, order.id)
+    if (owed) return payOutCreditNote(input, order, tenantId)
   }
   assertRefundableStatus(order.status)
   if (!tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)

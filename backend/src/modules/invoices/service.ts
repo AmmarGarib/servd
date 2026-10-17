@@ -40,6 +40,7 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { CREDIT_NOTE_SOURCE } from '../accounting/orderPosting.js'
 
 const COUNTER_PAD = 5  // STX-2026-00001, plenty of room for years of activity
 
@@ -262,8 +263,34 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
   }, ISSUE_TX)
 }
 
-// Credit note for a refunded order — references the original invoice and
-// belongs to the original's company, in that company's credit-note series.
+// Credit note — references the original invoice and belongs to the original's
+// company, in that company's credit-note series.
+//
+// S-1 (owner, 2026-10-17: "Allow it, owed back"). A credit note always credits
+// the WHOLE bill. On a bill that is still COMPLETED (never refunded in full),
+// it is a sales return with no money handed over yet, so in the credit note's
+// own transaction (under the order lock):
+//   • ledger — ONE entry 'order.credit_note:<creditNoteId>': the same reversal
+//     a refund of the money still refundable would book (orderPosting
+//     refundShareOf / shareDebitLines: the brand's revenue, service charge,
+//     tip, delivery fee and the output tax back to the account the sale
+//     credited — refundTaxAccountFor), but the money side is Cr till clearing
+//     (1110, or 1115 after the company's cut-over), memo REFUND DUE — owed
+//     back to the customer, never cash / card / bank. Its slice is the LAST
+//     one of the order's value, so the wallet and gift-card restores that the
+//     'refunded' transition books (postOrderRefund, priced after the tender
+//     refunds) tile the bill exactly with it;
+//   • fiscal POS — the sale's return as ONE refund document ('void:<orderId>',
+//     enqueueFiscalRefundTx): the sale's filed value less every return already
+//     queued for it. Never sent from here directly; the outbox files it;
+//   • then the order goes to 'refunded' through the state machine (as a refund
+//     in full does): points, wallet and gift cards are restored there, and the
+//     refund engine refuses any further refund (ALREADY_REFUNDED) — the money
+//     owed back is paid out against till clearing, never booked twice.
+// A refused posting rolls the credit note back (422). A cancelled / rejected /
+// refunded order books nothing here (the cancel unwind or the refunds already
+// did). The staff route answers 409 CREDIT_NOTE_EXISTS for a second one; the
+// automatic credit note of a cancel / refund returns the existing one.
 /**
  * `gate` (the staff route only): a credit note on a bill of an earlier sales
  * day is the CEO's, with a reason (night audit, nightAudit/backdate.ts —
@@ -279,25 +306,81 @@ export async function issueCreditNoteForOrder(orderId: string, reason: string, g
     const order = await prisma.order.findUnique({ where: { id: orderId }, select: { ...SALES_DAY_ORDER_SELECT, concept: { select: { tenantId: true } } } })
     if (order) {
       gateTenantId = order.concept.tenantId
-      // Only a NEW credit note is gated — a replay returns the one already issued.
+      // A second credit note is refused (409, below) before anyone is asked for a reason.
       const already = await prisma.taxInvoice.findFirst({ where: { orderId, type: 'credit_note' }, select: { id: true } })
-      if (!already) {
-        backdated = await assertBackdatedSalesUndoAllowed(prisma, {
-          tenantId: gateTenantId, order, action: 'credit_note', actor: gate.actor, reason: gate.backdatedReason,
-        })
+      if (already) {
+        await finishCreditNoteTransition(orderId)
+        throw creditNoteExists()
       }
+      backdated = await assertBackdatedSalesUndoAllowed(prisma, {
+        tenantId: gateTenantId, order, action: 'credit_note', actor: gate.actor, reason: gate.backdatedReason,
+      })
     }
   }
-  const cn = await issueCreditNoteTx(orderId, reason)
+  const out = await issueCreditNoteTx(orderId, reason, { refuseExisting: !!gate, actorId: gate?.actor.id ?? 'system' })
+  const cn = out.creditNote
+  if (out.fiscalDoc?.status === 'pending') {
+    const { kickFiscal } = await import('../../connectors/fiscal/outbox.js')
+    void kickFiscal(out.fiscalDoc.id)
+  }
+  if (out.returned) {
+    await finishCreditNoteTransition(orderId)
+    const { audit } = await import('../../lib/audit.js')
+    await audit({
+      category: 'accounting',
+      action: 'credit_note.owed_back',
+      entity: 'Order',
+      entityId: orderId,
+      userId: gate?.actor.id ?? null,
+      userEmail: gate?.actor.email ?? null,
+      tenantId: cn.tenantId,
+      before: { status: 'completed' },
+      after: { status: 'refunded', owedBackCents: out.owedBackCents },
+      metadata: { creditNoteId: cn.id, invoiceNumber: cn.invoiceNumber, reason, entryId: out.entryId, fiscalRefund: out.fiscalDoc ? { documentId: out.fiscalDoc.id, status: out.fiscalDoc.status } : null },
+    })
+  }
   if (gate && backdated.backdated) {
     const { auditBackdatedSalesUndo } = await import('../nightAudit/backdate.js')
     await auditBackdatedSalesUndo({ tenantId: gateTenantId, orderId, action: 'credit_note', gate: backdated, actorId: gate.actor.id, actorEmail: gate.actor.email ?? null, amountCents: Math.abs(cn.totalCents) })
   }
-  return cn
+  return { ...cn, owedBackCents: out.owedBackCents, entryId: out.entryId }
 }
 
-async function issueCreditNoteTx(orderId: string, reason: string) {
+function creditNoteExists(): AppError {
+  return new AppError('CREDIT_NOTE_EXISTS', 'This bill already has a credit note — a bill is credited once, in full', 409)
+}
+
+/** The ledger source of a credit note's sales return (sales source: 'order.' — night audit). One definition: orderPosting.ts. */
+export { CREDIT_NOTE_SOURCE }
+
+/**
+ * A credit-noted bill still 'completed' (its credit note's return committed but
+ * the transition failed): move it to 'refunded' now. Never throws.
+ */
+async function finishCreditNoteTransition(orderId: string): Promise<void> {
+  try {
+    const order = await prisma.order.findUnique({ where: { id: orderId }, select: { status: true, concept: { select: { tenantId: true } } } })
+    if (order?.status !== 'completed' || !order.concept.tenantId) return
+    const cn = await prisma.taxInvoice.findFirst({ where: { orderId, type: 'credit_note' }, select: { id: true } })
+    if (!cn) return
+    const fiscal = await prisma.fiscalDocument.findFirst({ where: { tenantId: order.concept.tenantId, idempotencyKey: `void:${orderId}` }, select: { id: true } })
+    const entry = await prisma.journalEntry.findFirst({ where: { tenantId: order.concept.tenantId, reference: `${CREDIT_NOTE_SOURCE}:${cn.id}` }, select: { id: true } })
+    // Only a credit note issued under the S-1 rule (it booked a return or queued one).
+    if (!fiscal && !entry) return
+    const { updateOrderStatus } = await import('../orders/service.js')
+    await updateOrderStatus(orderId, 'refunded')
+  } catch (err) {
+    console.error(`[invoice] credit note: status → refunded failed for ${orderId}:`, (err as Error).message)
+  }
+}
+
+async function issueCreditNoteTx(orderId: string, reason: string, opts: { refuseExisting: boolean; actorId: string }) {
   return prisma.$transaction(async (tx) => {
+    // The order lock first (the refund engine's lock), so a refund and a
+    // credit note of one bill never both count the same money.
+    const { lockOrderTx } = await import('../pos/service.js')
+    await lockOrderTx(tx, orderId)
+
     const original = await tx.taxInvoice.findFirst({
       where: { orderId, type: 'invoice' },
       include: { lines: true },
@@ -314,11 +397,17 @@ async function issueCreditNoteTx(orderId: string, reason: string) {
       where: { originalInvoiceId: original.id, type: 'credit_note' },
       include: { lines: true },
     })
-    if (existing) return existing
+    if (existing) {
+      if (opts.refuseExisting) throw creditNoteExists()
+      return { creditNote: existing, returned: false, owedBackCents: 0, entryId: null, fiscalDoc: null }
+    }
+
+    // A bill still standing as a sale: what the credit note returns (S-1).
+    const ret = await creditNoteReturnPlanTx(tx, orderId)
 
     const invoiceNumber = await nextNumber(tx, series)
 
-    return tx.taxInvoice.create({
+    const creditNote = await tx.taxInvoice.create({
       data: {
         tenantId: original.tenantId,
         invoiceNumber,
@@ -354,7 +443,107 @@ async function issueCreditNoteTx(orderId: string, reason: string) {
       },
       include: { lines: true },
     })
+    if (!ret) return { creditNote, returned: false, owedBackCents: 0, entryId: null, fiscalDoc: null }
+    const booked = await bookCreditNoteReturnTx(tx, ret, creditNote, reason, opts.actorId)
+    return { creditNote, returned: true, ...booked }
   }, ISSUE_TX)
+}
+
+const CREDIT_NOTE_ORDER_SELECT = {
+  id: true, status: true, source: true, conceptId: true, totalCents: true, walletAmountCents: true, taxCents: true,
+  discountCents: true, promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
+  concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true } },
+  payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, processedAt: true, createdAt: true } },
+  giftCardRedemptions: { select: { amountCents: true } },
+} as const
+type CreditNoteOrder = Prisma.OrderGetPayload<{ select: typeof CREDIT_NOTE_ORDER_SELECT }>
+
+/**
+ * What a credit note on this bill returns, or null when the bill no longer
+ * stands as a sale (cancelled, rejected, refunded — nothing to book here).
+ * The money owed back is what the refund engine would still refund
+ * (pos/service refundableOf: tenders received less refunds, less card refunds
+ * in flight on the machine). Refused like a refund: cash still with a rider
+ * (422 CASH_NOT_PAID_IN); an on-account bill goes back to the client's account
+ * through the refund route (422 ON_ACCOUNT_USE_REFUND).
+ */
+async function creditNoteReturnPlanTx(tx: Tx, orderId: string): Promise<{ order: CreditNoteOrder; tenantId: string; owedBackCents: number } | null> {
+  const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: CREDIT_NOTE_ORDER_SELECT })
+  if (order.status !== 'completed') return null
+  const tenantId = order.concept.tenantId
+  if (!tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)
+  const { refundableOf, inFlightTerminalRefundCents } = await import('../pos/service.js')
+  const state = refundableOf(order.payments, order.source)
+  if (state.uncollectedCashCents > 0) {
+    throw new AppError('CASH_NOT_PAID_IN', 'The cash for this order has not been paid into a drawer yet — pay it in (POS → cash due) first, then credit it', 422)
+  }
+  if ((state.byMethod.get('on_account') ?? 0) > 0) {
+    throw new AppError('ON_ACCOUNT_USE_REFUND', "This bill was charged to an on-account client — refund it back to the client's account (the credit note follows the refund in full)", 422)
+  }
+  const inFlight = await inFlightTerminalRefundCents(tx, orderId)
+  return { order, tenantId, owedBackCents: Math.max(0, state.refundable - inFlight) }
+}
+
+/** The credit note's ledger return (owed back on till clearing) and its fiscal refund document, in the caller's transaction. */
+async function bookCreditNoteReturnTx(
+  tx: Tx,
+  ret: { order: CreditNoteOrder; tenantId: string; owedBackCents: number },
+  creditNote: { id: string; invoiceNumber: string },
+  reason: string,
+  actorId: string,
+): Promise<{ owedBackCents: number; entryId: string | null; fiscalDoc: { id: string; status: string } | null }> {
+  const { order, tenantId, owedBackCents } = ret
+  const { orderRefOf } = await import('../../lib/orderRef.js')
+  let entryId: string | null = null
+  if (owedBackCents > 0) {
+    const op = await import('../accounting/orderPosting.js')
+    const { postJournalEntry } = await import('../accounting/journal.js')
+    const { tillClearingCodeTx } = await import('../accounting/tillClearingCode.js')
+    const db = tx as unknown as typeof prisma
+    // Valued as the refund engine values a refund (postRefundPayment): the sale
+    // as it was booked, net of exact void refunds.
+    const booking = await op.saleBookingOf(db, tenantId, order)
+    const refundRows = order.payments.filter((p) => p.status === 'refunded')
+    const giftCard = booking.legacyGiftCard ? 0 : op.giftCardAppliedOf(order.giftCardRedemptions)
+    const valued = { ...op.netOfVoidRefunds(order, refundRows), giftCardAppliedCents: giftCard }
+    const value = valued.totalCents + (valued.walletAmountCents ?? 0) + Math.max(0, giftCard)
+    // The last slice of the bill: the tender refunds came first, and the wallet
+    // and gift-card restores (postOrderRefund) take the slices right after them.
+    const share = op.refundShareOf(valued, Math.max(0, value - owedBackCents), owedBackCents)
+    const taxAccount = await op.refundTaxAccountFor(db, tenantId, valued, booking.saleTaxAccount, share.taxCents)
+    const memo = `Credit note ${creditNote.invoiceNumber} on ${order.concept.slug} #${orderRefOf(order.id)}`
+    const tillClearing = await tillClearingCodeTx(db, tenantId)
+    const res = await postJournalEntry({
+      tenantId,
+      sourceType: CREDIT_NOTE_SOURCE,
+      sourceId: creditNote.id,
+      description: `Credit note ${creditNote.invoiceNumber}: sale ${orderRefOf(order.id)} returned (${order.concept.slug} / ${order.source}), PKR ${(owedBackCents / 100).toFixed(0)} owed back to the customer`,
+      entryDate: new Date(),
+      postedBy: actorId,
+      lines: [
+        ...op.shareDebitLines(valued, share, memo, taxAccount, op.refundRevenueAccountFor(valued, booking)),
+        {
+          accountCode: tillClearing, type: 'credit', amountCents: owedBackCents, conceptId: order.conceptId,
+          memo: `${op.REFUND_DUE_PREFIX} — credit note ${creditNote.invoiceNumber} on order ${order.id}, owed back to the customer`,
+        },
+      ],
+    }, { tx })
+    if (!res.entryId) throw new AppError('CREDIT_NOTE_NOT_POSTED', 'The credit note could not be booked', 422)
+    entryId = res.entryId
+  }
+
+  // The fiscal return: the sale's filed value less every return already queued
+  // for it — one document, keyed 'void:<orderId>' (the refund-in-full key, so
+  // the 'refunded' transition adds no second one).
+  const { enqueueFiscalRefundTx } = await import('../../connectors/fiscal/outbox.js')
+  const docs = await tx.fiscalDocument.findMany({ where: { orderId: order.id, tenantId }, select: { kind: true, amountCents: true } })
+  const sale = docs.find((d) => d.kind === 'sale')
+  const returned = docs.filter((d) => d.kind === 'refund').reduce((t, d) => t + d.amountCents, 0)
+  const remainder = (sale?.amountCents ?? order.totalCents) - returned
+  const fiscalDoc = remainder > 0
+    ? await enqueueFiscalRefundTx(tx, { orderId: order.id, tenantId, refundPaymentId: null, amountCents: remainder, reason: `Credit note ${creditNote.invoiceNumber}: ${reason}`.slice(0, 200) })
+    : null
+  return { owedBackCents, entryId, fiscalDoc: fiscalDoc ? { id: fiscalDoc.id, status: fiscalDoc.status } : null }
 }
 
 // HTML render — kept minimal and printable. Operators can pdf-it via the

@@ -66,8 +66,9 @@
 // side, drink, dessert; coordinates set for delivery quotes):
 //   A: Simmer ('simmer', SRB / province SD) + Flipd ('flipd', FBR / ICT)
 //   B: Stackd ('stackd', SRB / SD) + Viva Grill ('viva-grill', FBR / ICT)
-// (The revenue account is chosen by slug — simmer 4001, stackd 4002, flipd
-// 4004; viva-grill is unknown to the map and books to 4090.)
+// (One sales account per brand, 2026-10-17: simmer 4001, stackd 4002, flipd
+// 4004 keep their legacy codes; viva-grill gets "Sales — Viva Grill" 4010 in
+// B's chart, as the brand create / boot step gives it.)
 // Through the API, as the people who do it in real life:
 //   - finance: two bank accounts (POST /setup/bank-accounts → 1020 and a new
 //     102x), the Raast receiving account per brand (PUT /setup/raast-accounts,
@@ -504,9 +505,9 @@ async function buildWorld(prisma: PrismaClient, as: Sim['as']): Promise<{ A: Sim
     const k = key.toLowerCase()
     const locationId = (await prisma.location.create({ data: { slug: `sim-outlet-${k}`, name: `${name} Clifton`, tenantId, latitude: 24.8138, longitude: 67.0300 } })).id
     const mkBrand = async (authority: 'srb' | 'fbr', bname: string, prices: [number, number, number, number]): Promise<SimBrand> => {
-      // Real brand slugs where servd has them: the brand's revenue account is chosen by slug
+      // Real brand slugs where servd has them: the legacy brands keep their codes
       // (accounting/journal.ts CONCEPT_REVENUE_CODE — simmer 4001, stackd 4002, flipd 4004);
-      // 'viva-grill' is a brand the map does not know (its sales land on 4090).
+      // 'viva-grill' gets its own "Sales — Viva Grill" account (brandRevenueAccount.ts).
       const slug = bname.toLowerCase().replace(/[^a-z0-9]+/g, '-')
       const province = authority === 'srb' ? 'SD' : 'ICT'
       const concept = await prisma.concept.create({
@@ -517,6 +518,9 @@ async function buildWorld(prisma: PrismaClient, as: Sim['as']): Promise<{ A: Sim
           serviceVessel: 'plate', isActive: true, latitude: 24.8138, longitude: 67.0300,
         },
       })
+      // One sales account per brand (2026-10-17) — what POST /concepts and the boot step do.
+      const { ensureBrandRevenueAccount } = await import('../../src/modules/accounting/brandRevenueAccount.js')
+      await ensureBrandRevenueAccount(concept.id)
       await prisma.conceptLocation.create({ data: { conceptId: concept.id, locationId, isPrimary: true } })
       const cat = await prisma.category.create({ data: { conceptId: concept.id, name: 'Menu' } })
       const item = async (n: string, priceCents: number): Promise<SimItem> =>

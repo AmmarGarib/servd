@@ -18,7 +18,8 @@ type Db = Prisma.TransactionClient | PrismaClient
 
 // ─── Revenue groups (one definition for every report) ───────────────────────
 //
-//   40xx  brand sales (CONCEPT_REVENUE_CODE, 4090 fallback) — the sales KPIs
+//   40xx  brand sales (each brand's own account — Concept.revenueAccountCode:
+//         legacy 4001–4007, new brands 4010–4089; 4090 fallback) — the sales KPIs
 //   4100  service charge, 4110 delivery fees — still sales (operating revenue)
 //   42xx  OTHER INCOME (4200 gift-card breakage, H11) — shown below operating
 //         revenue and kept out of every sales KPI (revenue cards, food-cost
@@ -639,7 +640,7 @@ export async function pnlByConcept(tenantIds: string[], dateFrom: Date, dateTo: 
 // P&L below, the management dashboards and the food-cost variance report import
 // these — never a second copy):
 //
-//   brandSalesRevenueCents = brand sales 40xx (CONCEPT_REVENUE_CODE) net of
+//   brandSalesRevenueCents = brand sales 40xx (every brand's own account) net of
 //     7010 discounts and 7020 loyalty redemptions. 4100 service charge, 4110
 //     delivery fees and 42xx other income are NOT brand sales.
 //   costOfSalesSplit = { food, drinks, packaging }:

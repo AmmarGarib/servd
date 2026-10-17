@@ -18,7 +18,7 @@ import {
 import { parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import { closedShiftsOfBusinessDays } from '../../lib/businessDay.js'
 import { toCents } from '../../lib/money.js'
-import { codPendingLink, codPendingRows } from '../reconciliation/codCloseCheck.js'
+import { codBookedDebtIds, codPendingLink, codPendingRows } from '../reconciliation/codCloseCheck.js'
 import { raastNightOpenBetween, raastOpenBetween } from '../reconciliation/raast.js'
 import { raastConnectorTx } from '../../connectors/raast/match.js'
 import { cardDayGrossTx, cardSettlementSettings, dayNum, unsettledCardDays } from '../reconciliation/cardPayouts.js'
@@ -192,14 +192,32 @@ export const NIGHT_CHECKS: NightCheck[] = [
       `${plural(r.count, 'Raast payment')} of ${ctx.day} (${pkr(r.cents)}) ${isAre(r.count)} still awaiting the customer, need attention${enabled ? ', or have no bank SMS' : ''}. Settle them at the till or on Reconciliation → Raast.`,
       r.count, '/reconciliation?tab=raast', r.cents)
   }),
+  // A COD whose rider debt finance has booked (live 1351 entry, or the fleet
+  // 'cod' transfer) no longer blocks the night run — it shows as "rider owes —
+  // booked" (owner, 2026-10-17). Unbooked COD still blocks; a reversed booking
+  // blocks again. The month close (cod_with_rider) is unchanged.
   night('cod_pending', async (ctx) => {
     const rows = await codPendingRows(ctx.db, ctx.tenantId, ctx.from, ctx.to)
     if (rows.length === 0) return null
-    const cents = rows.reduce((t, p) => t + toCents(p.amountCents), 0)
+    const bookedIds = await codBookedDebtIds(ctx.db, ctx.tenantId, rows)
+    const open = rows.filter((p) => !bookedIds.has(p.id))
+    const booked = rows.filter((p) => bookedIds.has(p.id))
+    const bookedCents = booked.reduce((t, p) => t + toCents(p.amountCents), 0)
+    const bookedNote = booked.length > 0
+      ? `${plural(booked.length, 'cash-on-delivery payment')} (${pkr(bookedCents)}): rider owes — booked.`
+      : ''
     const go = await codPendingLink(ctx.db, ctx.tenantId)
+    if (open.length === 0) {
+      return {
+        key: 'cod_pending', severity: 'warn', title: 'Cash on delivery: rider owes — booked',
+        detail: `${bookedNote} Finance booked ${booked.length === 1 ? 'it' : 'them'} as owed by the rider; the cash is still to be handed in. ${go.where}`,
+        count: booked.length, ...(bookedCents > 0 ? { cents: bookedCents } : {}), link: go.link, overridable: false,
+      }
+    }
+    const cents = open.reduce((t, p) => t + toCents(p.amountCents), 0)
     return block('cod_pending', 'Cash on delivery not handed in',
-      `${plural(rows.length, 'cash-on-delivery payment')} of ${ctx.day} (${pkr(cents)}) ${rows.length === 1 ? 'has' : 'have'} not been paid into a drawer. ${go.where}`,
-      rows.length, go.link, cents)
+      `${plural(open.length, 'cash-on-delivery payment')} of ${ctx.day} (${pkr(cents)}) ${open.length === 1 ? 'has' : 'have'} not been paid into a drawer. ${go.where}${bookedNote ? ` Also ${bookedNote}` : ''}`,
+      open.length, go.link, cents)
   }),
   {
     key: 'tenders_unresolved', phase: 'night', severity: 'block', overridable: true,

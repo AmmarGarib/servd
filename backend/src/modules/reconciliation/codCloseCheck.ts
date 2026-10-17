@@ -26,6 +26,59 @@ import { codDueWhere, codStatusOf, type CodStatus } from '../../lib/cod.js'
 import { toCents } from '../../lib/money.js'
 import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
 
+/** accounting/codPosting.ts's keys (COD_DEBT_SOURCE / COD_TRANSFER_SOURCE_REF) — kept literal here so this check never imports the posting module (pos/service). */
+const COD_DEBT_REF = (paymentId: string) => `cod.rider_debt:${paymentId}`
+const COD_TRANSFER_REF = (paymentId: string) => `cod:${paymentId}`
+
+/**
+ * Of `rows` (COD payments of `tenantId`'s orders), the ids whose rider debt
+ * finance has booked AND that booking is still live — the markers
+ * accounting/codPosting.ts bookCodRiderDebt writes:
+ *   • own rider: Payment.codRiderDebtEntryId → the entry
+ *     'cod.rider_debt:<paymentId>' in the order's company, not reversed
+ *     (deadEntryIds: no '.reversal' / '.void' of it);
+ *   • fleet rider: Payment.codRiderDebtTransferId → the inter-company transfer
+ *     sourceRef 'cod:<paymentId>' with this company as the creditor, status
+ *     'posted' (not reversed).
+ * codRiderDebtAt alone (a claim with no entry / transfer) is NOT booked.
+ * Used by the night audit's cod_pending only (owner, 2026-10-17): the month
+ * close (cod_with_rider) still blocks on every pending COD.
+ */
+export async function codBookedDebtIds(
+  db: CloseCheckDb,
+  tenantId: string,
+  rows: Array<{ id: string; codRiderDebtAt: Date | null; codRiderDebtEntryId: string | null; codRiderDebtTransferId: string | null }>,
+): Promise<Set<string>> {
+  const booked = new Set<string>()
+  const claimed = rows.filter((r) => r.codRiderDebtAt)
+  const entryIds = claimed.map((r) => r.codRiderDebtEntryId).filter((x): x is string => !!x)
+  if (entryIds.length > 0) {
+    const entries = await db.journalEntry.findMany({
+      where: { id: { in: entryIds }, tenantId },
+      select: { id: true, reference: true, description: true },
+    })
+    // Loaded lazily: service.ts reaches accounting/closeChecks.ts, which imports this file.
+    const { deadEntryIds } = await import('./service.js')
+    const dead = await deadEntryIds(db, tenantId, entries)
+    const live = new Map(entries.filter((e) => !dead.has(e.id)).map((e) => [e.id, e.reference]))
+    for (const r of claimed) {
+      if (r.codRiderDebtEntryId && live.get(r.codRiderDebtEntryId) === COD_DEBT_REF(r.id)) booked.add(r.id)
+    }
+  }
+  const transferIds = claimed.map((r) => r.codRiderDebtTransferId).filter((x): x is string => !!x)
+  if (transferIds.length > 0) {
+    const transfers = await db.intercompanyTransfer.findMany({
+      where: { id: { in: transferIds }, counterpartyTenantId: tenantId, source: 'cod', status: 'posted' },
+      select: { id: true, sourceRef: true },
+    })
+    const live = new Map(transfers.map((t) => [t.id, t.sourceRef]))
+    for (const r of claimed) {
+      if (r.codRiderDebtTransferId && live.get(r.codRiderDebtTransferId) === COD_TRANSFER_REF(r.id)) booked.add(r.id)
+    }
+  }
+  return booked
+}
+
 const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
@@ -57,7 +110,8 @@ export async function codPendingRows(db: CloseCheckDb, tenantId: string, from: D
       },
     },
     select: {
-      amountCents: true, createdAt: true, codRiderDebtAt: true,
+      id: true, amountCents: true, createdAt: true,
+      codRiderDebtAt: true, codRiderDebtEntryId: true, codRiderDebtTransferId: true,
       order: { select: { fulfilmentType: true, riderId: true, deliveredAt: true, completedAt: true } },
     },
   })

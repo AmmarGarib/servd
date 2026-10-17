@@ -34,7 +34,7 @@
 //            (and once before — not counted); Danish absent every day.
 //   1 Nov    HR calculates October (gross ÷ 31 × paid days); HR cannot approve;
 //            management approves and locks → the accrual.
-//   2 Nov    a tip pool for Flipd's October tips, posted and paid by the CEO
+//   2 Nov    a tip pool for Flipd's October tips, posted by the CEO, paid by finance
 //            from the main bank (two banks: none named → 422).
 //   5 Nov    finance pays payroll — cash slips from the safe, bank slips from
 //            the main bank (none named → 422); the CEO, whose pay is on it, is
@@ -469,7 +469,7 @@ describe('the October payroll (31 Oct – 1 Nov)', () => {
 // ─── 2 November: the tip pool ───────────────────────────────────────────────
 
 describe('the tip pool (2 Nov)', () => {
-  it('Flipd\'s October tips are pooled, posted and paid from the main bank (two banks: none named → 422)', async () => {
+  it('Flipd\'s October tips are pooled, posted by the CEO and paid by finance from the main bank (two banks: none named → 422)', async () => {
     const { A } = sim
     sim.clock.at('2026-11-02', '11:00')
     const fin = sim.as(A.finance, A)
@@ -484,10 +484,12 @@ describe('the tip pool (2 Nov)', () => {
     const ceo = sim.as(sim.ceo, A)
     const posted = ok(await ceo.post(`/tip-pools/${pool.id}/post`, {}), 200)
     expect((posted.members as Array<{ shareCents: number }>).reduce((t, m) => t + m.shareCents, 0)).toBe(sales.A.tips)
-    const none = await ceo.post(`/tip-pools/${pool.id}/pay`, {})
+    // Finance pays once the CEO has posted it (owner, 2026-10-17).
+    expect(posted.postedById).toBe(sim.ceo.id)
+    const none = await fin.post(`/tip-pools/${pool.id}/pay`, {})
     expect(none.statusCode, none.body).toBe(422)
     expect(errCode(none)).toBe('BANK_ACCOUNT_REQUIRED')
-    ok(await ceo.post(`/tip-pools/${pool.id}/pay`, { method: 'bank_transfer', bankAccountId: A.banks.main.id }), 200)
+    ok(await fin.post(`/tip-pools/${pool.id}/pay`, { method: 'bank_transfer', bankAccountId: A.banks.main.id }), 200)
     const [e] = await sim.ledger.entriesBySource(A, `tippool.payout:${pool.id}`)
     expect(e!.lines.map((l) => [l.type, l.code, l.cents]).sort()).toEqual([['credit', A.banks.main.code, sales.A.tips], ['debit', '2095', sales.A.tips]])
   })

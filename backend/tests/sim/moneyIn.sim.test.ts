@@ -42,8 +42,9 @@
 //
 // Defects: MI-3 FIXED in this change (workers/loyaltyExpiration.ts expired points
 // already spent — FIFO now; the 31 Oct step is its regression). Open, at the
-// end of the file (it.fails): MI-1 (no revaluation of 2060 when the point value
-// changes), MI-4 (wallet tie-out ignores wallet spent on open orders).
+// end of the file (it.fails): MI-4 (wallet tie-out ignores wallet spent on open
+// orders). MI-1 (no revaluation of 2060 when the point value changes) is FIXED
+// (owner, 2026-10-17 — loyalty/revaluation.ts); its check is at the end.
 // Observation MI-2 (owner decision): wallet / gift-card paid bills earn no points.
 // Runtime ≈ 30 s. Requires a disposable database ("test" in DATABASE_URL).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -590,20 +591,11 @@ describe('month end — the money-in accounts tie', () => {
 // ─── Known defects (open) ───────────────────────────────────────────────────
 
 describe('known defects found by the simulation (open)', () => {
-  // DEFECT MI-1 (open, needs an owner / CA word on the revaluation account):
-  // H48 keeps loyalty points at TODAY's value, and every posting does use the
-  // value of its day (checked above) — but nothing revalues the points already
-  // outstanding when the value changes (PATCH /loyalty/settings writes the
-  // setting only; modules/loyalty/settings.ts saveCompanyLoyaltySettings). So
-  // after the 15 Oct change from PKR 0.10 to 0.20, 2060 holds the points earned
-  // before at 0.10 while the tie-out (intercompany/legacy.ts controlTieOut,
-  // loyaltySubledgerAt = points × today's value) and every later redemption use
-  // 0.20: 2060 is short by (points outstanding at the change) × 0.10, the
-  // tie-out row 2060 is not clean, and redemptions of old points push 2060
-  // toward a debit. Fix: on a point-value change, post one revaluation entry
-  // per company (Dr 6060 / Cr 2060 on a rise, the reverse on a fall) for the
-  // points outstanding at that instant, under a lock against concurrent
-  // earns / redemptions. When fixed, drop `.fails`.
+  // MI-1 FIXED (owner, 2026-10-17: "Yes to loyalty revaluation"): a point-value
+  // change posts ONE 'loyalty.revalue' entry in the company's books for the
+  // points in 2060 × (new − old) — Dr 6060 / Cr 2060 on a rise, the reverse on
+  // a fall (modules/loyalty/revaluation.ts) — so after the 15 Oct change from
+  // PKR 0.10 to 0.20, 2060 = outstanding points × today's value.
   // DEFECT MI-4 (open): the wallet tie-out (intercompany/legacy.ts walletSubledgerAt, used by
   // GET /accounting/intercompany/tie-out and the month-close check control_tieout) compares 2050
   // with the wallet balances only. A wallet is debited at checkout but 2050 comes down when the
@@ -619,7 +611,7 @@ describe('known defects found by the simulation (open)', () => {
     expect(row.differenceCents, JSON.stringify(row)).toBe(0)
   })
 
-  it.fails('MI-1: 2060 = outstanding points × today\'s point value (the tie-out is clean)', async () => {
+  it('MI-1: 2060 = outstanding points × today\'s point value (the tie-out is clean)', async () => {
     const { A } = sim
     const r = ok(await sim.as(A.finance, A).get('/accounting/intercompany/tie-out?asOf=2026-10-31'), 200)
     const row = (r.companies as Array<{ tenantId: string; tieOut: { rows: Array<{ code: string; differenceCents: number; ledgerCents: number; subledgerCents: number }> } }>)

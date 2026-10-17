@@ -373,9 +373,16 @@ async function nightRun(co: SimCompany, day: string, i: number) {
   // The blocks this day is built to have.
   const want: string[] = []
   if (i === 0 || i === 1) want.push('cash_variance_open')
-  if (i === 1 && co.key === 'A') want.push('cod_pending')
+  // A's COD of day 2 is booked as the rider's debt (1351): since the owner's
+  // 2026-10-17 decision it no longer blocks the night — a warn "rider owes — booked".
+  const codDay = i === 1 && co.key === 'A'
   if (i === 3) want.push('open_orders')
   expect(blocks, `${co.key} ${day} night blocks: ${JSON.stringify(d.checks?.blocks)}`).toEqual(want.sort())
+  if (codDay) {
+    const w = (d.checks?.warnings ?? []).find((x: { key: string }) => x.key === 'cod_pending')
+    expect(w, `${co.key} ${day} booked COD shows as a warning`).toMatchObject({ severity: 'warn', count: 1 })
+    expect(w.detail).toContain('rider owes — booked')
+  }
 
   if (want.length > 0) {
     // Finance runs with the blocks open: refused, and cannot push past them.
@@ -391,10 +398,10 @@ async function nightRun(co: SimCompany, day: string, i: number) {
     expect(flags.length).toBe(1)
     for (const f of flags) ok(await fin.patch(`/crosschecks/exceptions/${f.id}/acknowledge`, { note: 'Counted again with the cashier; difference explained' }), [200, 204])
   }
-  if (want.includes('cod_pending')) {
-    // The rider's debt is booked (1351), but the cash is not in a drawer: cod_pending still blocks
-    // the night (codPendingRows does not look at codRiderDebtAt). The rider hands the cash in at a
-    // till first thing — the manager's early till of the next business day.
+  if (codDay) {
+    // The rider's debt is booked (1351) and the cash is not in a drawer yet: not a night block any
+    // more, but the rider still hands the cash in at a till first thing — the manager's early till
+    // of the next business day (the month close still blocks on pending COD).
     const cod = state[co.key].cod!
     const early = await openTill(co, co.manager, 0)
     ok(await sim.as(co.manager, co).post(`/pos/payments/${cod.paymentId}/settle`, { shiftId: early, tenderedCents: cod.totalCents }), [200, 201])
@@ -431,8 +438,8 @@ async function nightRun(co: SimCompany, day: string, i: number) {
   // Back-dated undo of yesterday's paid bill (nightAudit/backdate.ts). A paid till bill is
   // completed, so a line void is ORDER_PAID before any day rule; the gated undos of a completed
   // sale are the cancel and the tax-invoice credit note: the manager is refused both
-  // (CEO_ONLY_BACKDATED); the CEO is asked for a reason. (The CEO's credit note itself is the
-  // known defect at the end of this file.)
+  // (CEO_ONLY_BACKDATED); the CEO is asked for a reason. (The CEO's credit note itself —
+  // allowed, money owed back — is S-1 at the end of this file.)
   const bd = state[co.key].backdateOrder!
   const mgrCancel = await sim.as(co.manager, co).post(`/orders/${bd.id}/cancel`, { reason: 'Guest returned it' })
   expect(errCode(mgrCancel), mgrCancel.body).toBe('CEO_ONLY_BACKDATED')
@@ -626,7 +633,7 @@ describe('month end — the sales accounts of each company', () => {
       expect(-(await sim.ledger.balanceOf(co, '2032')) - -(await sim.ledger.balanceOf(co, '2030'))).not.toBeNaN()
     })
 
-    it(`${key}: each brand's sales on its own revenue account (by slug); service charge on 4100`, async () => {
+    it(`${key}: each brand's sales on its own revenue account; service charge on 4100`, async () => {
       const co = sim[key]
       const { revenueCodeForConcept } = await import('../../src/modules/accounting/journal.js')
       for (const b of [co.brands.srb, co.brands.fbr]) {
@@ -634,12 +641,21 @@ describe('month end — the sales accounts of each company', () => {
           SELECT a.code, SUM(CASE WHEN l.type = 'credit' THEN l."amountCents" ELSE -l."amountCents" END)::bigint AS c
             FROM journal_lines l JOIN journal_entries e ON e.id = l."journalEntryId" JOIN accounts a ON a.id = l."accountId"
            WHERE e."tenantId" = ${co.tenantId} AND l."conceptId" = ${b.id} AND a.code LIKE '40%' GROUP BY a.code`
-        expect(rows.map((r) => r.code), `${b.name}'s sales accounts`).toEqual([revenueCodeForConcept(b.slug)])
+        const c = await sim.prisma.concept.findUniqueOrThrow({ where: { id: b.id }, select: { slug: true, revenueAccountCode: true } })
+        expect(rows.map((r) => r.code), `${b.name}'s sales accounts`).toEqual([revenueCodeForConcept(c)])
         expect(Number(rows[0]!.c)).toBeGreaterThan(0)
       }
-      // OBSERVATION O-1: a brand servd's slug map does not know (B's 'viva-grill') books its sales to
-      // 4090 "Revenue — Other / Catering" — there is no per-brand revenue account for a new brand.
-      if (key === 'B') expect(revenueCodeForConcept(co.brands.fbr.slug)).toBe('4090')
+      // One sales account per brand (owner, 2026-10-17; was OBSERVATION O-1): a brand servd's slug
+      // map does not know (B's 'viva-grill') gets its own "Sales — Viva Grill" account in B's chart
+      // (4010) — never 4090.
+      if (key === 'B') {
+        const viva = await sim.prisma.concept.findUniqueOrThrow({ where: { id: co.brands.fbr.id }, select: { slug: true, revenueAccountCode: true } })
+        expect(viva.revenueAccountCode).toBe('4010')
+        expect(revenueCodeForConcept(viva)).toBe('4010')
+        const acct = await sim.prisma.account.findFirst({ where: { tenantId: co.tenantId, code: '4010' }, select: { name: true, type: true } })
+        expect(acct).toEqual({ name: 'Sales — Viva Grill', type: 'revenue' })
+        expect(await sim.prisma.account.count({ where: { tenantId: sim.A.tenantId, code: '4010' } }), "B's brand account is not in A's chart").toBe(0)
+      }
       const sc = await sim.prisma.order.aggregate({ where: { concept: { tenantId: co.tenantId }, status: 'completed', source: 'pos' }, _sum: { serviceChargeCents: true } })
       expect(sc._sum.serviceChargeCents ?? 0, 'the 5% service charge is charged on till bills').toBeGreaterThan(0)
       expect(-(await sim.ledger.balanceOf(co, '4100')), '4100 = the service charge of the completed till bills').toBe(sc._sum.serviceChargeCents)
@@ -724,19 +740,37 @@ describe('company separation — B never reaches A', () => {
 // ─── Known defects (open) ───────────────────────────────────────────────────
 
 describe('known defects found by the simulation (open — see the list at the top of the report)', () => {
-  // DEFECT S-1 (open): POST /invoices/orders/:orderId/credit-note issues a FULL credit note on a
-  // completed bill that was never refunded — no money back, no ledger reversal, no fiscal refund.
-  // The tax-invoice register then shows the bill credited (its output tax negative) while 2030 /
-  // 2032 and the fiscal POS still carry the sale. The back-dated gate only decides WHO may do it
-  // (the CEO, with a reason). Expected: refuse a credit note for a bill with no refund / cancel
-  // behind it (or tie it to one). Needs an owner / CA decision on what a stand-alone credit note
-  // means, so it is not fixed here.
-  it.fails('S-1: a credit note on an unrefunded, completed bill is refused', async () => {
+  // S-1 (FIXED, owner 2026-10-17: "Allow it, owed back"): a credit note on a completed bill
+  // that was never refunded is a sales return with the money still owed to the customer. In the
+  // credit note's own transaction: ONE 'order.credit_note:<cnId>' entry (Dr the brand's revenue /
+  // output tax back to the account the sale credited / Cr till clearing — REFUND DUE, never cash
+  // or card) and ONE fiscal refund document ('void:<orderId>'); the order goes to 'refunded'.
+  // The back-dated gate still decides WHO (the CEO, with a reason).
+  it('S-1: a credit note on an unrefunded, completed bill is issued with the money owed back', async () => {
     const co = sim.A
     const bill = state.A.backdateOrder!.id // a completed day-6 bill, never refunded
     sim.clock.tick(60_000)
     const r = await sim.as(sim.ceo, co).post(`/invoices/orders/${bill}/credit-note`, { reason: 'Stand-alone credit note', backdatedReason: 'CEO issues a credit note without a refund' })
-    // Today: 201, a credit note is issued. When fixed (refused), drop `.fails`.
-    expect(r.statusCode, r.body).not.toBe(201)
+    expect(r.statusCode, r.body).toBe(201)
+    const cn = r.json() as { id: string; owedBackCents: number; totalCents: number; fbrTaxCents: number; provincialTaxCents: number }
+    const order = await sim.prisma.order.findUniqueOrThrow({ where: { id: bill }, select: { status: true, totalCents: true, taxCents: true } })
+    expect(cn.owedBackCents).toBe(order.totalCents)
+    expect(order.status).toBe('refunded')
+    const entry = await sim.prisma.journalEntry.findFirstOrThrow({
+      where: { tenantId: co.tenantId, reference: `order.credit_note:${cn.id}` },
+      select: { lines: { select: { type: true, amountCents: true, memo: true, account: { select: { code: true } } } } },
+    })
+    const credits = entry.lines.filter((l) => l.type === 'credit')
+    expect(credits.map((l) => l.account.code).every((c) => c === '1110' || c === '1115'), JSON.stringify(credits)).toBe(true)
+    expect(credits.reduce((t, l) => t + Number(l.amountCents), 0)).toBe(order.totalCents)
+    expect(credits[0]!.memo).toMatch(/^REFUND DUE/)
+    const taxBack = entry.lines.filter((l) => l.type === 'debit' && ['2030', '2031', '2032', '2033', '2034'].includes(l.account.code)).reduce((t, l) => t + Number(l.amountCents), 0)
+    expect(taxBack).toBe(order.taxCents)
+    expect(-(cn.fbrTaxCents + cn.provincialTaxCents)).toBe(taxBack)
+    expect(await sim.prisma.fiscalDocument.count({ where: { orderId: bill, kind: 'refund' } })).toBe(1)
+    await sim.ledger.assertBalanced(co)
+    // a second credit note is refused
+    const again = await sim.as(sim.ceo, co).post(`/invoices/orders/${bill}/credit-note`, { reason: 'Second credit note', backdatedReason: 'CEO tries a second credit note' })
+    expect(again.statusCode, again.body).toBe(409)
   })
 })

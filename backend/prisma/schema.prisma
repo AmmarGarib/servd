@@ -355,6 +355,13 @@ model Concept {
   // Owner 2026-10-13 (FINAL packaging rule). There is no plateWearPct: Recipe.qFactorPct is the one plate allowance.
   serviceVessel String @default("plate")
 
+  // The brand's own sales account in its company's chart (owner 2026-10-17: "One sales
+  // account per brand"). 40xx: the legacy brands keep 4001–4007 (CONCEPT_REVENUE_CODE);
+  // every other brand gets "Sales — <brand>" at the first free code in 4010–4089 at
+  // create / boot (accounting/brandRevenueAccount.ts). NULL = posts to the 4090 fallback.
+  // Read through accounting/journal.ts revenueCodeForConcept, never directly.
+  revenueAccountCode String?
+
   // Fixed assets v2 (2026-10-14)
   fixedAssets     FixedAsset[]     @relation("FixedAssetConcept")
   fixedAssetPools FixedAssetPool[] @relation("FixedAssetPoolConcept")

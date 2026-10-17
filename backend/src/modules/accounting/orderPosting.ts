@@ -487,7 +487,8 @@ function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsLines: J
   // ── Credits: revenue + tax + service charge + tip ──────────────────────
   if (sa.grossRevenueCents > 0) {
     lines.push({
-      accountCode: revenueCodeForConcept(order.concept.slug),
+      // The brand's own sales account (owner, 2026-10-17: one per brand).
+      accountCode: revenueCodeForConcept(order.concept),
       type: 'credit',
       amountCents: sa.grossRevenueCents,
       memo: conceptMemo,
@@ -718,30 +719,37 @@ export function netOfVoidRefunds<T extends SaleOrderFields>(
 /**
  * The debit side of a refund of `amountCents`, tagged with the brand. The tax
  * share is debited to `taxAccountCode` — the account the sale credited
- * (refundTaxAccountFor); omitted, the brand's authority today.
+ * (refundTaxAccountFor); omitted, the brand's authority today. The revenue
+ * share is debited to `revenueAccountCode` — the sales account the sale
+ * credited (saleBookingOf → refundRevenueAccountFor); omitted, the brand's
+ * sales account today.
  */
 export function refundDebitLines(
-  order: SaleOrderFields & { conceptId: string; concept: { slug: string } & TaxJurisdiction; id: string },
+  order: SaleOrderFields & { conceptId: string; concept: RevenueConcept & TaxJurisdiction; id: string },
   priorCents: number,
   amountCents: number,
   memo: string,
   taxAccountCode?: string,
+  revenueAccountCode?: string,
 ): JournalLineInput[] {
-  return shareDebitLines(order, refundShareOf(order, priorCents, amountCents), memo, taxAccountCode)
+  return shareDebitLines(order, refundShareOf(order, priorCents, amountCents), memo, taxAccountCode, revenueAccountCode)
 }
+
+type RevenueConcept = { slug: string; revenueAccountCode?: string | null }
 
 /** The debit lines of one refund split (refundShareOf, or a void's exact split), tagged with the brand. */
 export function shareDebitLines(
-  order: { conceptId: string; concept: { slug: string } & TaxJurisdiction },
+  order: { conceptId: string; concept: RevenueConcept & TaxJurisdiction },
   sh: RefundShare,
   memo: string,
   taxAccountCode?: string,
+  revenueAccountCode?: string,
 ): JournalLineInput[] {
   const lines: JournalLineInput[] = []
   if (sh.revenueCents !== 0) {
     // A refund can never be mostly tax, but guard the sign anyway: a negative
     // revenue share would be a credit.
-    lines.push({ accountCode: revenueCodeForConcept(order.concept.slug), type: sh.revenueCents > 0 ? 'debit' : 'credit', amountCents: Math.abs(sh.revenueCents), memo })
+    lines.push({ accountCode: revenueAccountCode ?? revenueCodeForConcept(order.concept), type: sh.revenueCents > 0 ? 'debit' : 'credit', amountCents: Math.abs(sh.revenueCents), memo })
   }
   if (sh.serviceChargeCents > 0) lines.push({ accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'debit', amountCents: sh.serviceChargeCents, memo: `Service charge — ${memo}` })
   if (sh.tipCents > 0)           lines.push({ accountCode: ACCT.TIPS_PAYABLE,           type: 'debit', amountCents: sh.tipCents,           memo: `Tip — ${memo}` })
@@ -776,6 +784,12 @@ export interface SaleBooking {
   saleTaxAccount: string | null
   /** A shift close held money taken on the (cancelled) order as a refund due: Cr 1110 naming the order. */
   refundDue: boolean
+  /**
+   * The brand-sales (40xx) account the sale credited for the order's brand, if
+   * any. A sale booked before the brand got its own account (owner,
+   * 2026-10-17) credited 4090; its refunds reverse 4090, never the new account.
+   */
+  saleRevenueAccount?: string | null
 }
 
 type Db = typeof prisma
@@ -807,7 +821,7 @@ export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrde
   ])
   const refundDue = !!dueLine
   const booked = !refundDue && entries.length > 0
-  if (!booked) return { booked: false, legacyGiftCard: false, saleTaxAccount: null, refundDue }
+  if (!booked) return { booked: false, legacyGiftCard: false, saleTaxAccount: null, refundDue, saleRevenueAccount: null }
 
   // The tax the sale credited for this brand. An order's own entry is all
   // this order; a shift close carries one tax line per brand.
@@ -818,6 +832,19 @@ export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrde
       conceptId: order.conceptId,
       account: { tenantId, code: { in: [...OUTPUT_TAX_ACCOUNTS] } },
     },
+    select: { account: { select: { code: true } } },
+  })
+
+  // The sales account the sale credited for this brand (one per brand since
+  // 2026-10-17; 4090 before). Brand-tagged, like the tax line.
+  const revenueLine = await db.journalLine.findFirst({
+    where: {
+      journalEntryId: { in: entries.map((e) => e.id) },
+      type: 'credit',
+      conceptId: order.conceptId,
+      account: { tenantId, code: { startsWith: '40' } },
+    },
+    orderBy: { amountCents: 'desc' },
     select: { account: { select: { code: true } } },
   })
 
@@ -832,7 +859,20 @@ export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrde
     })
     legacyGiftCard = !cardLine
   }
-  return { booked, legacyGiftCard, saleTaxAccount: taxLine?.account.code ?? null, refundDue }
+  return { booked, legacyGiftCard, saleTaxAccount: taxLine?.account.code ?? null, refundDue, saleRevenueAccount: revenueLine?.account.code ?? null }
+}
+
+/**
+ * The sales account a refund's revenue share is debited to: the account the
+ * sale credited (saleBookingOf), so a sale booked on 4090 before its brand got
+ * its own account is reversed on 4090; a sale not booked yet → the brand's
+ * account today (revenueCodeForConcept), where it will be booked.
+ */
+export function refundRevenueAccountFor(
+  order: { concept: RevenueConcept },
+  booking: Pick<SaleBooking, 'saleRevenueAccount'> | null | undefined,
+): string {
+  return booking?.saleRevenueAccount ?? revenueCodeForConcept(order.concept)
 }
 
 /**
@@ -884,6 +924,26 @@ export function refundCreditAccount(p: { id?: string; method: string; shiftId: s
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
+/** The ledger source of a credit note's sales return (invoices/service.ts — S-1). */
+export const CREDIT_NOTE_SOURCE = 'order.credit_note'
+
+/**
+ * A pay-out of money a credit note left owed back to the customer (S-1:
+ * pos/service refundOrder on a credit-noted, refunded bill) — the credit
+ * note's id from gatewayMeta.refund.creditNoteId, else null. Such a row is a
+ * HAND-BACK of what the credit note parked on till clearing, never a sale
+ * refund: its entry is Dr till clearing / Cr the money account, and it is
+ * never part of another refund's `prior`.
+ */
+export function creditNotePayoutOf(p: { gatewayMeta?: unknown }): string | null {
+  const meta = p.gatewayMeta
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null
+  const refund = (meta as { refund?: unknown }).refund
+  if (!refund || typeof refund !== 'object' || Array.isArray(refund)) return null
+  const id = (refund as { creditNoteId?: unknown }).creditNoteId
+  return typeof id === 'string' && id ? id : null
+}
+
 /**
  * Post the journal entry for ONE refund payment row. Idempotent on the refund
  * payment id. Throws JOURNAL_UNBALANCED rather than posting a lopsided entry.
@@ -900,7 +960,7 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
         select: {
           id: true, status: true, conceptId: true, source: true, totalCents: true, walletAmountCents: true, taxCents: true,
           discountCents: true, promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
-          concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true } },
+          concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true } },
           // gatewayMeta: a TILL-R3 void refund's exact split (voidSplitOf).
           payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
           giftCardRedemptions: { select: { amountCents: true } },
@@ -925,6 +985,35 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
   // Night audit (sales only): a refund retried after its own sales day was
   // night-audited posts today with a note naming its date (never DAY_AUDITED).
   const placed = await salesPostingDate(db, tenantId, payment.processedAt ?? new Date())
+
+  // S-1: paying out what a credit note left owed back. The credit note's own
+  // entry already reversed the sale into till clearing (REFUND DUE); this
+  // clears that — Dr till clearing / Cr the money account — and never touches
+  // revenue or tax (a repost or backfill can never reverse the sale twice).
+  const creditNoteId = creditNotePayoutOf(payment)
+  if (creditNoteId) {
+    const cnEntry = await db.journalEntry.findFirst({ where: { tenantId, reference: `${CREDIT_NOTE_SOURCE}:${creditNoteId}` }, select: { id: true } })
+    if (!cnEntry) return { posted: false, entryId: null, reason: 'credit_note_not_booked' }
+    const dueMemo = `Refund due handed back — credit note on order ${order.id}`
+    const handBack = withLateNote(
+      `Money owed back on credit-noted order ${orderRefOf(order.id)} paid out (${order.concept.slug}, ${payment.method}) — the sale was returned by the credit note`,
+      [
+        { accountCode: await tillClearingCodeTx(db, tenantId), type: 'debit', amountCents: amount, memo: dueMemo, conceptId: order.conceptId },
+        { ...creditLine, memo: dueMemo },
+      ],
+      placed.memoNote,
+    )
+    const result = await postJournalEntry({
+      tenantId,
+      sourceType: 'order.refund',
+      sourceId: payment.id,
+      description: handBack.description,
+      entryDate: placed.entryDate,
+      postedBy: options.postedBy ?? 'system',
+      lines: handBack.lines,
+    }, { tx: options.tx })
+    return { posted: result.posted, entryId: result.entryId }
+  }
 
   // LEDGER-R5: money taken on a cancelled / rejected ticket was never a sale.
   // The shift close holds it as a refund due (Cr 1110); handing it back clears
@@ -970,7 +1059,8 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
     const before = (r: { id: string; createdAt: Date }) =>
       r.createdAt.getTime() < payment.createdAt.getTime() ||
       (r.createdAt.getTime() === payment.createdAt.getTime() && r.id < payment.id)
-    const others = order.payments.filter((r) => r.status === 'refunded' && r.id !== payment.id)
+    // A credit note's pay-out is a hand-back, not a sale refund: never part of `prior`.
+    const others = order.payments.filter((r) => r.status === 'refunded' && r.id !== payment.id && !creditNotePayoutOf(r))
     const prior = others
       .filter((r) => before(r) && !isSplitVoidRefund(r))
       .reduce((t, r) => t + Math.abs(r.amountCents), 0)
@@ -979,7 +1069,7 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
   const taxAccount = await refundTaxAccountFor(db, tenantId, order, booking.saleTaxAccount, share.taxCents)
   const refund = withLateNote(
     `Refund of PKR ${(amount / 100).toFixed(0)} on order ${orderRefOf(order.id)} (${order.concept.slug} / ${order.source}, ${payment.method})`,
-    [...shareDebitLines(order, share, memo, taxAccount), creditLine],
+    [...shareDebitLines(order, share, memo, taxAccount, refundRevenueAccountFor(order, booking)), creditLine],
     placed.memoNote,
   )
   const result = await postJournalEntry({
@@ -1047,7 +1137,7 @@ export async function postOrderRefund(
       conceptId: true,
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
       promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
-      concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true } },
+      concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true } },
       payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
       loyaltyTxs: {
         where: { type: { in: ['earn', 'redeem'] } },
@@ -1077,10 +1167,11 @@ export async function postOrderRefund(
   const restoreLines = async (priorCents: number, amountCents: number, memo: string) => {
     const share = refundShareOf(valued, priorCents, amountCents)
     const taxAccount = await refundTaxAccountFor(prisma, tenantId!, valued, booking?.saleTaxAccount ?? null, share.taxCents)
-    return refundDebitLines(valued, priorCents, amountCents, memo, taxAccount)
+    return refundDebitLines(valued, priorCents, amountCents, memo, taxAccount, refundRevenueAccountFor(valued, booking))
   }
   const tenderRefundedCents = refundRows
-    .filter((p) => !isSplitVoidRefund(p))
+    // A credit note's pay-out (S-1) hands back what the credit note already returned — not a sale refund.
+    .filter((p) => !isSplitVoidRefund(p) && !creditNotePayoutOf(p))
     .reduce((t, p) => t + Math.abs(p.amountCents), 0)
   const fail = (what: string, err: unknown) => {
     const msg = (err as Error).message

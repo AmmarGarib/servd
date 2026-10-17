@@ -87,7 +87,7 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, resolvePostingFailed, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, resolvePostingFailed, revenueCodeForConcept, revenueCodesForConcepts, type JournalLineInput } from './journal.js'
 import { tillClearingCodeTx } from './tillClearingCode.js'
 import {
   computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, isVoidedRaast, outputTaxCodeFor, withTenderTips,
@@ -629,9 +629,11 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   }
 
   // ── Credits per brand: revenue, service charge, tips, GST output ────────
+  // Each brand's own sales account (owner, 2026-10-17: one per brand).
+  const revenueCodes = await revenueCodesForConcepts(prisma, [...sales.byConcept.keys()])
   for (const b of sales.byConcept.values()) {
     if (b.revenueCents > 0) {
-      lines.push({ accountCode: revenueCodeForConcept(b.conceptSlug), type: 'credit', amountCents: b.revenueCents, memo: `Revenue @ ${b.conceptSlug}`, conceptId: b.conceptId })
+      lines.push({ accountCode: revenueCodes.get(b.conceptId) ?? revenueCodeForConcept(b.conceptSlug), type: 'credit', amountCents: b.revenueCents, memo: `Revenue @ ${b.conceptSlug}`, conceptId: b.conceptId })
     }
     if (b.serviceChargeCents > 0) {
       lines.push({ accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'credit', amountCents: b.serviceChargeCents, memo: `Service charge @ ${b.conceptSlug}`, conceptId: b.conceptId })

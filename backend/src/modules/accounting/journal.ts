@@ -63,9 +63,14 @@ export interface PostJournalEntryResult {
   posted: boolean            // false = idempotent no-op (already posted)
 }
 
-// Per-concept revenue mapping. Source of truth for which 4xxx account each
-// concept's sales hit. Adding a concept means adding its slug here AND seeding
-// the matching Account row.
+// One sales account per brand (owner, 2026-10-17). A brand's sales are
+// credited to `Concept.revenueAccountCode`, an account in its OWN company's
+// chart. The legacy brands below keep their fixed codes (backfilled onto the
+// column by migration 20261017160000); every other brand gets "Sales —
+// <brand>" at the first free code in 4010–4089 of its company
+// (brandRevenueAccount.ts: at brand create and once at boot). This map is the
+// fallback for a brand loaded without the column, and 4090 for a brand with
+// neither. Do not add slugs here — new brands get their own account.
 export const CONCEPT_REVENUE_CODE: Record<string, string> = {
   'simmer':          '4001',
   'stackd':          '4002',
@@ -77,8 +82,29 @@ export const CONCEPT_REVENUE_CODE: Record<string, string> = {
   'bukhari':         '4007',
 }
 
-export function revenueCodeForConcept(slug: string): string {
-  return CONCEPT_REVENUE_CODE[slug] ?? '4090' // Other/Catering fallback
+export const REVENUE_FALLBACK_CODE = '4090'
+
+/**
+ * The account a brand's sales are credited to TODAY: its stored
+ * `revenueAccountCode`, else the legacy slug map, else 4090. A refund or
+ * reversal of a sale already booked never uses this — it reverses the account
+ * the sale credited (orderPosting.ts saleBookingOf / saleRevenueAccount).
+ */
+export function revenueCodeForConcept(concept: string | { slug: string; revenueAccountCode?: string | null }): string {
+  if (typeof concept !== 'string' && concept.revenueAccountCode) return concept.revenueAccountCode
+  const slug = typeof concept === 'string' ? concept : concept.slug
+  return CONCEPT_REVENUE_CODE[slug] ?? REVENUE_FALLBACK_CODE // Other/Catering fallback
+}
+
+/** revenueCodeForConcept for several brands by id (one read). Unknown ids are left out. */
+export async function revenueCodesForConcepts(
+  db: Pick<PrismaClient, 'concept'> | Prisma.TransactionClient,
+  conceptIds: string[],
+): Promise<Map<string, string>> {
+  const ids = Array.from(new Set(conceptIds.filter(Boolean)))
+  if (ids.length === 0) return new Map()
+  const rows = await db.concept.findMany({ where: { id: { in: ids } }, select: { id: true, slug: true, revenueAccountCode: true } })
+  return new Map(rows.map((r) => [r.id, revenueCodeForConcept(r)]))
 }
 
 // Stable account codes used throughout the posting modules. Imported via

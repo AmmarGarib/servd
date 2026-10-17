@@ -1,4 +1,5 @@
 import { UNREGISTERED_PROVINCES } from '../accounting/taxAuthorities.js'
+import { ensureBrandRevenueAccount } from '../accounting/brandRevenueAccount.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
@@ -494,7 +495,16 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     const concept = await prisma.concept.create({
       data: { ...body, tenantId: req.staffUser!.tenantId! },
     })
-    return reply.status(201).send(concept)
+    // One sales account per brand (owner, 2026-10-17): "Sales — <brand>" in
+    // its company's chart. Never blocks the create — on a failure the brand
+    // posts to 4090 until the boot step gives it its account.
+    let revenueAccountCode = concept.revenueAccountCode
+    try {
+      revenueAccountCode = (await ensureBrandRevenueAccount(concept.id)).code
+    } catch (err) {
+      req.log.error({ err, conceptId: concept.id }, '[concepts] brand sales account not created — the boot step retries')
+    }
+    return reply.status(201).send({ ...concept, revenueAccountCode })
   })
 
   // PATCH /concepts/:id — the Brand Editor (CEO → Brands): the CEO only

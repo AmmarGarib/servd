@@ -96,19 +96,20 @@ async function applyPointValueDecision(tenantId: string, rows: Array<{ key: stri
   return writes.length > 1
 }
 
-/** Write the keys present in `patch` for one company only. */
+/**
+ * Write the keys present in `patch` for one company only. A change of the
+ * point value revalues 2060 in the same transaction (./revaluation.ts — owner,
+ * 2026-10-17). Pass the actor for the audit row and the entry's postedBy.
+ */
 export async function saveCompanyLoyaltySettings(
   tenantId: string,
   patch: Partial<Record<LoyaltySettingKey, number | undefined>>,
+  actor: { userId?: string | null; userEmail?: string | null } = {},
 ): Promise<LoyaltyValues> {
   // Seed first so a partial PATCH keeps the inherited values of the other keys.
   await loadCompanyLoyaltySettings(tenantId)
   const writes = Object.entries(patch).filter((e): e is [LoyaltySettingKey, number] => typeof e[1] === 'number')
-  await prisma.$transaction(
-    writes.map(([k, value]) => {
-      const key = companyLoyaltyKey(k, tenantId)
-      return prisma.setting.upsert({ where: { key }, create: { key, value: String(value) }, update: { value: String(value) } })
-    }),
-  )
+  const { writeLoyaltySettingsWithRevaluation } = await import('./revaluation.js')
+  await writeLoyaltySettingsWithRevaluation(tenantId, writes, actor)
   return loadCompanyLoyaltySettings(tenantId)
 }

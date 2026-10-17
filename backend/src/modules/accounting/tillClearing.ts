@@ -73,11 +73,13 @@ export const TILL_SPLIT_ENTITY = 'Tenant'
 const LEGACY = ACCT.CUSTOMER_AR      // 1110
 const CLEARING = ACCT.TILL_CLEARING  // 1115
 
-/** Memo prefix of a cancelled ticket's hand-back lines (orderPosting.ts / pos/service.ts). */
+/** Memo prefix of a hand-back's till-clearing lines — a cancelled ticket's or a credit note's pay-out (orderPosting.ts / pos/service.ts). */
 export const REFUND_HANDBACK_MEMO = 'Refund due handed back'
 
 /** Till sources whose every (non-ON-ACCOUNT) 1110 line is till clearing. */
-const PLAIN_TILL_SOURCES = ['shift.close', 'order.cancel_unwind', 'pos.card_failed', 'raast.unreceived'] as const
+// 'order.credit_note': a credit note's owed-back credit (S-1, invoices/service.ts); its
+// pay-out is an 'order.refund' hand-back line (REFUND_HANDBACK_MEMO).
+const PLAIN_TILL_SOURCES = ['shift.close', 'order.cancel_unwind', 'pos.card_failed', 'raast.unreceived', 'order.credit_note'] as const
 /** 'order.refund' entries count only on lines memo'd REFUND_HANDBACK_MEMO. */
 const HANDBACK_SOURCE = 'order.refund'
 

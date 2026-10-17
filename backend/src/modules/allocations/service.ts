@@ -9,7 +9,8 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { postJournalEntry, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
+import { postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { brandSalesByAccount } from '../accounting/brandRevenueAccount.js'
 import { sumCents } from '../../lib/money.js'
 import { fmtPktDate } from '../accounting/dates.js'
 
@@ -72,26 +73,12 @@ interface RevenueByConcept { conceptId: string; revenueCents: number }
 async function revenueByConcept(tenantId: string, periodStart: Date, periodEnd: Date): Promise<RevenueByConcept[]> {
   // Only this company's brands and this company's revenue accounts — an
   // allocation must never spread one company's overhead over another's sales.
-  const concepts = await prisma.concept.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, slug: true } })
+  // Each brand's own sales account plus its 4090 sales from before it had one
+  // (owner, 2026-10-17); a shared account is never summed once per brand.
+  const concepts = await prisma.concept.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, slug: true, revenueAccountCode: true } })
   const out: RevenueByConcept[] = []
-  for (const c of concepts) {
-    const account = await prisma.account.findFirst({
-      where: { tenantId, code: revenueCodeForConcept(c.slug) },
-      select: { id: true },
-    })
-    if (!account) continue
-    const sums = await prisma.journalLine.groupBy({
-      by: ['type'],
-      _sum: { amountCents: true },
-      where: { accountId: account.id, journalEntry: { entryDate: { gte: periodStart, lte: periodEnd } } },
-    })
-    let debit = 0, credit = 0
-    for (const s of sums) {
-      if (s.type === 'debit') debit  = sumCents(s._sum.amountCents)
-      else                     credit = sumCents(s._sum.amountCents)
-    }
-    out.push({ conceptId: c.id, revenueCents: Math.max(0, credit - debit) })
-  }
+  const sales = await brandSalesByAccount(prisma, tenantId, concepts, { from: periodStart, to: periodEnd })
+  for (const c of concepts) out.push({ conceptId: c.id, revenueCents: Math.max(0, sales.byConcept.get(c.id) ?? 0) })
   return out
 }
 

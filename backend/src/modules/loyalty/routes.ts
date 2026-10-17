@@ -189,7 +189,8 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       ) as Record<typeof LOYALTY_SETTING_KEYS[number], z.ZodOptional<z.ZodNumber>>,
     ).parse(req.body)
 
-    const values = await saveCompanyLoyaltySettings(tenantId, body)
+    // A point-value change revalues 2060 in the same transaction (./revaluation.ts).
+    const values = await saveCompanyLoyaltySettings(tenantId, body, { userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null })
     invalidateLoyaltySettings()    // bust so next earn re-reads
     return { values }
   })

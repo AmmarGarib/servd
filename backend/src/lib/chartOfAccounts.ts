@@ -28,6 +28,9 @@
 //              the register / CapEx post to them (journal.ts).
 //   2100–2149  Reserved and unused (as 1400–1449)
 //   2150–2199  Due to <company> — inter-company pair accounts (lazy)
+//   4010–4089  "Sales — <brand>": one sales account per brand (owner,
+//              2026-10-17), created per company at brand create / boot
+//              (accounting/brandRevenueAccount.ts). Brand sales like 4001–4007.
 //   6200–6249  Head office charges — company books (created by headOffices, lazy)
 //   6990       Costs recharged to group companies (the provider / head-office
 //              side): a TEMPLATE account, the ONE recovery account shared by
@@ -131,7 +134,8 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '3020', name: 'Retained Earnings',                  type: 'equity' },
   { code: '3030', name: "Owner's Drawings",                   type: 'equity' },
 
-  // ── Revenue (per brand — see CONCEPT_REVENUE_CODE in accounting/journal.ts) ──
+  // ── Revenue (per brand — Concept.revenueAccountCode; the legacy brands' codes
+  // are below, every other brand gets its own 4010–4089 account) ──
   { code: '4001', name: 'Revenue — Simmer',                   type: 'revenue' },
   // Stax was renamed Stackd (2026-09-09). Existing charts are renamed by
   // migration 20261010150200 where the name was still the old default. 4006

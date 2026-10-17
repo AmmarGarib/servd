@@ -22,10 +22,12 @@
 // loyalty account is ONE company's (LoyaltyAccount.tenantId, ONL-04), so its
 // earns, redemptions, expiries and reversals all land in that company's 2060.
 
-import { calculatePointsValue } from '../../lib/loyaltySettings.js'
+import { loadLoyaltySettings } from '../../lib/loyaltySettings.js'
+import { lockLoyaltyValueTx, pointValueCentsTx } from '../loyalty/revaluation.js'
 import { prisma } from '../../lib/prisma.js'
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { ACCT, postJournalEntry, reverseJournalEntry, withLateNote, type RepostOptions } from './journal.js'
+import { ACCT, postJournalEntry, reverseJournalEntry, withLateNote, type RepostOptions, type JournalLineInput } from './journal.js'
+import { assertMayUndoEntry } from './closedBooks.js'
 import { primaryTenantId } from '../../lib/setup-config.js'
 
 // The company whose books carry a loyalty transaction: the company of the
@@ -71,26 +73,29 @@ export async function postLoyaltyEarn(loyaltyTxId: string, opts: RepostOptions =
   if (tx.reversedAt) return { posted: false, entryId: null, reason: 'reversed' }
 
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
-  // A point is worth what the company's loyalty setting says (owner decision 12).
-  const valueCents = await calculatePointsValue(tx.pointsDelta, tenantId)
-  if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
-
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
+  await loadLoyaltySettings(tenantId)   // seed the company's keys outside the transaction
 
-  // `opts`: the backfill moving it out of a sales day the night audit locked (note names the date).
-  const late = withLateNote(`Loyalty points earned (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`, [
-    { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'debit',  amountCents: valueCents, memo: `${tx.pointsDelta} pts issued` },
-    { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'credit', amountCents: valueCents, memo: 'Liability accrued' },
-  ], opts.memoNote)
-  return postUnlessReversed(loyaltyTxId, (db) => postJournalEntry({
-    tenantId,
-    sourceType: 'loyalty.earn',
-    sourceId: tx.id,
-    description: late.description,
-    entryDate: opts.entryDate ?? tx.createdAt,
-    postedBy: opts.postedBy ?? 'system',
-    lines: late.lines,
-  }, { tx: db }))
+  // A point is worth what the company's loyalty setting says (owner decision
+  // 12), read inside the point-value lock (loyalty/revaluation.ts).
+  return postUnlessReversed(loyaltyTxId, tenantId, async (db, pointValueCents) => {
+    const valueCents = tx.pointsDelta * pointValueCents
+    if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
+    // `opts`: the backfill moving it out of a sales day the night audit locked (note names the date).
+    const late = withLateNote(`Loyalty points earned (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`, [
+      { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'debit',  amountCents: valueCents, memo: `${tx.pointsDelta} pts issued` },
+      { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'credit', amountCents: valueCents, memo: 'Liability accrued' },
+    ], opts.memoNote)
+    return postJournalEntry({
+      tenantId,
+      sourceType: 'loyalty.earn',
+      sourceId: tx.id,
+      description: late.description,
+      entryDate: opts.entryDate ?? tx.createdAt,
+      postedBy: opts.postedBy ?? 'system',
+      lines: late.lines,
+    }, { tx: db })
+  })
 }
 
 /**
@@ -109,15 +114,19 @@ export async function postLoyaltyEarn(loyaltyTxId: string, opts: RepostOptions =
  */
 async function postUnlessReversed(
   loyaltyTxId: string,
-  post: (db: Prisma.TransactionClient) => Promise<{ posted: boolean; entryId: string | null }>,
+  tenantId: string,
+  post: (db: Prisma.TransactionClient, pointValueCents: number) => Promise<{ posted: boolean; entryId: string | null; reason?: string }>,
 ): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   return prisma.$transaction(async (db) => {
+    // Shared point-value lock (loyalty/revaluation.ts): a value change waits
+    // for this posting, or this posting reads the changed value.
+    await lockLoyaltyValueTx(db, tenantId, 'shared')
     const locked = await db.$queryRaw<Array<{ reversedAt: Date | null }>>`
       SELECT "reversedAt" FROM loyalty_transactions WHERE id = ${loyaltyTxId} FOR UPDATE`
     if (locked.length === 0) return { posted: false, entryId: null, reason: 'tx_not_found' }
     if (locked[0]!.reversedAt) return { posted: false, entryId: null, reason: 'reversed' }
-    const result = await post(db)
-    return { posted: result.posted, entryId: result.entryId }
+    const result = await post(db, await pointValueCentsTx(db, tenantId))
+    return { posted: result.posted, entryId: result.entryId, ...(result.reason && { reason: result.reason }) }
   })
 }
 
@@ -134,23 +143,27 @@ export async function postLoyaltyRedeem(loyaltyTxId: string, opts: RepostOptions
 
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
-  // A point is worth what the company's loyalty setting says (owner decision 12).
-  const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
-  if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
+  await loadLoyaltySettings(tenantId)   // seed the company's keys outside the transaction
 
-  const late = withLateNote(`Loyalty points redeemed (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`, [
-    { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'debit',  amountCents: valueCents, memo: `${Math.abs(tx.pointsDelta)} pts burned` },
-    { accountCode: ACCT.LOYALTY_REDEMPTIONS,  type: 'credit', amountCents: valueCents, memo: 'Discount applied' },
-  ], opts.memoNote)
-  return postUnlessReversed(loyaltyTxId, (db) => postJournalEntry({
-    tenantId,
-    sourceType: 'loyalty.redeem',
-    sourceId: tx.id,
-    description: late.description,
-    entryDate: opts.entryDate ?? tx.createdAt,
-    postedBy: opts.postedBy ?? 'system',
-    lines: late.lines,
-  }, { tx: db }))
+  // A point is worth what the company's loyalty setting says (owner decision
+  // 12), read inside the point-value lock (loyalty/revaluation.ts).
+  return postUnlessReversed(loyaltyTxId, tenantId, async (db, pointValueCents) => {
+    const valueCents = Math.abs(tx.pointsDelta) * pointValueCents
+    if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
+    const late = withLateNote(`Loyalty points redeemed (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`, [
+      { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'debit',  amountCents: valueCents, memo: `${Math.abs(tx.pointsDelta)} pts burned` },
+      { accountCode: ACCT.LOYALTY_REDEMPTIONS,  type: 'credit', amountCents: valueCents, memo: 'Discount applied' },
+    ], opts.memoNote)
+    return postJournalEntry({
+      tenantId,
+      sourceType: 'loyalty.redeem',
+      sourceId: tx.id,
+      description: late.description,
+      entryDate: opts.entryDate ?? tx.createdAt,
+      postedBy: opts.postedBy ?? 'system',
+      lines: late.lines,
+    }, { tx: db })
+  })
 }
 
 export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
@@ -163,23 +176,28 @@ export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: 
 
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
-  // A point is worth what the company's loyalty setting says (owner decision 12).
-  const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
-  if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
+  await loadLoyaltySettings(tenantId)   // seed the company's keys outside the transaction
 
-  const result = await postJournalEntry({
-    tenantId,
-    sourceType: 'loyalty.expire',
-    sourceId: tx.id,
-    description: `Loyalty points expired`,
-    entryDate: tx.createdAt,
-    postedBy: 'system',
-    lines: [
-      { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'debit',  amountCents: valueCents, memo: `${Math.abs(tx.pointsDelta)} pts expired` },
-      { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'credit', amountCents: valueCents, memo: 'Breakage recovered' },
-    ],
+  // A point is worth what the company's loyalty setting says (owner decision
+  // 12), read inside the shared point-value lock (loyalty/revaluation.ts).
+  return prisma.$transaction(async (db) => {
+    await lockLoyaltyValueTx(db, tenantId, 'shared')
+    const valueCents = Math.abs(tx.pointsDelta) * await pointValueCentsTx(db, tenantId)
+    if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
+    const result = await postJournalEntry({
+      tenantId,
+      sourceType: 'loyalty.expire',
+      sourceId: tx.id,
+      description: `Loyalty points expired`,
+      entryDate: tx.createdAt,
+      postedBy: 'system',
+      lines: [
+        { accountCode: ACCT.LOYALTY_LIABILITY,    type: 'debit',  amountCents: valueCents, memo: `${Math.abs(tx.pointsDelta)} pts expired` },
+        { accountCode: LOYALTY_MARKETING_ACCOUNT, type: 'credit', amountCents: valueCents, memo: 'Breakage recovered' },
+      ],
+    }, { tx: db })
+    return { posted: result.posted, entryId: result.entryId }
   })
-  return { posted: result.posted, entryId: result.entryId }
 }
 
 type Tx = Prisma.TransactionClient | PrismaClient
@@ -234,12 +252,56 @@ export async function postLoyaltyReversal(
   const what = orig.type === 'earn'
     ? `${orig.pointsDelta} pts clawed back`
     : `${Math.abs(orig.pointsDelta)} pts given back`
-  const result = await reverseJournalEntry(
-    tenantId,
-    sourceType,
-    orig.id,
-    `${what}${options.reason ? ` — ${options.reason}` : ''}`,
-    { tx: options.tx, postedBy: options.postedBy ?? 'system' },
-  )
+  const reason = `${what}${options.reason ? ` — ${options.reason}` : ''}`
+  const postedBy = options.postedBy ?? 'system'
+  await loadLoyaltySettings(tenantId)   // seed the company's keys outside the transaction
+
+  // 2060 moves at TODAY's point value (owner, 2026-10-17 — loyalty
+  // revaluation): a revaluation since the original re-measured those points,
+  // so a plain mirror would leave (new − old) × points in 2060. The 2060 line
+  // is points × today's value (read under the shared point-value lock); every
+  // other line mirrors the original exactly; the difference goes to 6060 in
+  // the same entry. Same value → the plain mirror.
+  const run = async (db: Prisma.TransactionClient) => {
+    await lockLoyaltyValueTx(db, tenantId, 'shared')
+    const original = await db.journalEntry.findFirst({
+      where: { tenantId, reference: `${sourceType}:${orig.id}` },
+      include: { lines: { include: { account: { select: { code: true } } } } },
+    })
+    const liabilityLines = original?.lines.filter((l) => l.account.code === ACCT.LOYALTY_LIABILITY) ?? []
+    const todayCents = Math.abs(orig.pointsDelta) * await pointValueCentsTx(db, tenantId)
+    if (!original || liabilityLines.length !== 1 || Number(liabilityLines[0]!.amountCents) === todayCents || todayCents <= 0) {
+      return reverseJournalEntry(tenantId, sourceType, orig.id, reason, { tx: db, postedBy })
+    }
+    await assertMayUndoEntry(db, tenantId, original.entryDate, postedBy)
+    const lines: JournalLineInput[] = original.lines.map((l) => ({
+      accountCode: l.account.code,
+      type: l.type === 'debit' ? 'credit' as const : 'debit' as const,
+      amountCents: l.account.code === ACCT.LOYALTY_LIABILITY ? todayCents : Number(l.amountCents),
+      memo: l.account.code === ACCT.LOYALTY_LIABILITY ? `${l.memo ?? 'Reversal'} — at today's point value` : (l.memo ?? `Reversal: ${reason}`),
+      conceptId: l.conceptId,
+    }))
+    const net = lines.reduce((t, l) => t + (l.type === 'debit' ? l.amountCents : -l.amountCents), 0)
+    if (net !== 0) {
+      lines.push({
+        accountCode: LOYALTY_MARKETING_ACCOUNT,
+        type: net > 0 ? 'credit' : 'debit',
+        amountCents: Math.abs(net),
+        memo: 'Point value changed since the original (loyalty revaluation)',
+      })
+    }
+    return postJournalEntry({
+      tenantId,
+      sourceType: `${sourceType}.reversal`,
+      sourceId: orig.id,
+      description: `Reversal of ${sourceType}:${orig.id}: ${reason}`,
+      postedBy,
+      reference: `reverses:${sourceType}:${orig.id}`,
+      lines,
+    }, { tx: db })
+  }
+  const result = options.tx
+    ? await run(options.tx as Prisma.TransactionClient)
+    : await prisma.$transaction((db) => run(db))
   return { posted: result.posted, entryId: result.entryId }
 }

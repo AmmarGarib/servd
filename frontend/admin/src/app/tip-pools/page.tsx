@@ -9,12 +9,15 @@ import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
 import { Select } from '@/components/ui/Select'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
+import { usePermissions } from '../../hooks/useCan'
 
 interface PoolSummary {
   id: string; tenantId: string; name: string
   periodStart: string; periodEnd: string
   totalTipsCents: number
   status: 'draft' | 'posted' | 'paid'
+  /** Posted by the CEO — the only pools finance may pay (owner, 2026-10-17). */
+  postedByCeo?: boolean
   _count: { members: number }
 }
 
@@ -128,6 +131,12 @@ export default function TipPoolsPage() {
   // the managers draft and review; they see who signs it off instead of a
   // button that would answer 403.
   const canApprove = useAuthStore((s) => s.isRole('admin', 'owner'))
+  // Finance (with Accounting) pays a pool once the CEO has posted it (owner,
+  // 2026-10-17: "finance can pay tip pools with CEO's approval"). The API
+  // checks it again (TIP_POOL_NEEDS_CEO_APPROVAL).
+  const isFinance = useAuthStore((s) => s.isRole('finance'))
+  const { data: perms } = usePermissions()
+  const financePays = isFinance && (perms?.modules ?? []).includes('accounting')
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -277,7 +286,7 @@ export default function TipPoolsPage() {
                     </button>
                   </>
                 )}
-                {detail.data.status === 'posted' && (canApprove ? (
+                {detail.data.status === 'posted' && (canApprove || (financePays && detail.data.postedByCeo) ? (
                   <div className="flex-1 space-y-2">
                     <div className="flex gap-2" role="radiogroup" aria-label="Paid from">
                       {(['bank_transfer', 'cash'] as const).map((m) => (
@@ -295,6 +304,8 @@ export default function TipPoolsPage() {
                       {pay.isPending ? 'Paying…' : 'Mark paid (post JE)'}
                     </button>
                   </div>
+                ) : financePays ? (
+                  <span className="text-xs text-s-muted w-full text-center">Waiting for the CEO&apos;s approval — finance pays only pools the CEO posted; the CEO or an owner marks this one paid.</span>
                 ) : (
                   <span className="text-xs text-s-muted w-full text-center">Posted — the CEO or an owner marks it paid.</span>
                 ))}

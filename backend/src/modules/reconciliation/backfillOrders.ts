@@ -72,6 +72,8 @@ export type RefusedPostingKind = 'deposit.drop' | 'inventory.waste' | 'inventory
   | 'ledger.till_clearing_split' | 'cod.rider_debt.reversal'
   // A supplier's opening balance (procurement/openingBalance.ts) the ledger refused.
   | 'supplier.opening'
+  // A loyalty point-value change's revaluation of 2060 (loyalty/revaluation.ts, owner 2026-10-17).
+  | 'loyalty.revalue'
 /** Step 5's kinds: a stock step of an order that failed ('stock_restore_failed', by metadata.phase). */
 export type StockRerunKind = 'stock.deplete' | 'stock.restore' | 'stock.remake'
 export type OrderBackfillKind = 'order.complete' | 'loyalty.earn' | 'loyalty.redeem' | 'order.refund' | RefusedPostingKind | StockRerunKind
@@ -430,6 +432,25 @@ function metaOf(v: Prisma.JsonValue): Record<string, unknown> {
 }
 
 const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
+  // A loyalty revaluation (owner, 2026-10-17): the STORED delta of that
+  // point-value change (its AuditLog record), never recomputed — dated at the
+  // change, or into the open month when that one is closed.
+  'loyalty.revalue': {
+    entityType: 'LoyaltyRevaluation',
+    title: 'Loyalty revaluation did not reach the ledger',
+    nothingToPost: new Set(['revaluation_not_found', 'zero_delta']),
+    load: async (id) => {
+      const { loadRevaluation, postStoredRevaluation } = await import('../loyalty/revaluation.js')
+      const rec = await loadRevaluation(id)
+      if (!rec) return null
+      return {
+        tenantId: rec.tenantId, date: new Date(rec.changedAt), orderId: null, amountCents: Math.abs(rec.deltaCents),
+        what: `Loyalty revaluation: ${rec.points} points × (${rec.newValueCents} − ${rec.oldValueCents}) paisa = ${pkr(rec.deltaCents)}`,
+        nothingOwed: rec.deltaCents === 0 ? 'The point value change moved nothing — nothing to post.' : undefined,
+        post: (o) => postStoredRevaluation(id, o),
+      }
+    },
+  },
   // A supplier's opening balance (finance final, item 4): posted as DELTAS
   // under 'supplier.opening:<supplierId>:<uuid>' (so multiPost), dated at its
   // opening date; the sync posts only what the ledger still lacks.

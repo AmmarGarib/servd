@@ -557,6 +557,13 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // modules read the capital ledger, projections and tip pools.
   { prefix: '/finance',       anyOf: ['capital'] },
   { prefix: '/projections',   anyOf: ['projections'] },
+  // Tip pool pay (owner, 2026-10-17: "finance can pay tip pools with CEO's
+  // approval"): the pay route admits 'accounting' too — the route itself
+  // holds finance to 'accounting' and a CEO-posted pool, and every other
+  // role to 'payroll' as before. Reading the pools stays 'payroll' (finance
+  // holds it by default): a readAnyOf 'accounting' would open them to every
+  // role with accounting (owner, management, fnb_manager — PPL-08).
+  { prefix: '/tip-pools/:id/pay', anyOf: ['payroll', 'accounting'], pattern: /^\/tip-pools\/[^/]+\/pay\/?$/ },
   { prefix: '/tip-pools',     anyOf: ['payroll'] },
   // HR back office — the HR_ADMIN surfaces (hr/routes.ts). Until now the
   // 'staff_hr' toggle only hid the sidebar link; per owner decision 34 module

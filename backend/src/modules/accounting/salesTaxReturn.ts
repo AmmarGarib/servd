@@ -82,7 +82,8 @@
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { ACCT, revenueCodeForConcept } from './journal.js'
+import { ACCT } from './journal.js'
+import { brandSalesByAccount } from './brandRevenueAccount.js'
 import { fmtPktDate } from './dates.js'
 import { homeShiftOf } from './orderPosting.js'
 import { sumCents, toCents } from '../../lib/money.js'
@@ -1204,7 +1205,7 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   // closed or removed mid-month still made taxable supplies in it.
   const concepts = await prisma.concept.findMany({
     where: { tenantId },
-    select: { id: true, slug: true, name: true, province: true, srbPosId: true, isActive: true, deletedAt: true },
+    select: { id: true, slug: true, name: true, province: true, srbPosId: true, isActive: true, deletedAt: true, revenueAccountCode: true },
     orderBy: { createdAt: 'asc' },
   })
 
@@ -1226,35 +1227,25 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
     }
   }
   const deliveryFeesCents = [...feeByConcept.values()].reduce((t, v) => t + v, 0)
-  // A brand with no entry in the code map falls back to 4090 (Other/Catering),
-  // and several brands can share it. The loop looked the account up per brand
-  // and summed it each time, so 4090's revenue was counted once per unmapped
-  // brand — over-declaring taxable sales, and therefore output GST, on a return
-  // filed with FBR/SRB. Count each account at most once.
-  const countedAccountIds = new Set<string>()
+  // Brand sales per brand (owner, 2026-10-17: one sales account per brand):
+  // each brand's own account plus 4090, where brands without one — and every
+  // brand before it got one — booked. Each line is counted ONCE (a shared 4090
+  // was once summed per unmapped brand, over-declaring taxable sales).
   const conceptIds = new Set(concepts.map((c) => c.id))
+  const brandSales = await brandSalesByAccount(prisma, tenantId, concepts, { from, to })
   for (const c of concepts) {
-    // Find the matching 4xxx account by code-mapping in journal.ts (revenueCodeForConcept)
-    const revAccount = revenueAccounts.find((a) => a.code === revenueCodeForConcept(c.slug))
-    let revenue = 0
-    if (revAccount && !countedAccountIds.has(revAccount.id)) {
-      countedAccountIds.add(revAccount.id)
-      const sums = await prisma.journalLine.groupBy({
-        by: ['type'], _sum: { amountCents: true },
-        where: { accountId: revAccount.id, journalEntry: { tenantId, entryDate: { gte: from, lte: to } } },
-      })
-      let debit = 0, credit = 0
-      for (const x of sums) {
-        if (x.type === 'debit') debit  = sumCents(x._sum.amountCents)
-        else                     credit = sumCents(x._sum.amountCents)
-      }
-      revenue = Math.max(0, credit - debit)
-    }
+    const revenue = Math.max(0, brandSales.byConcept.get(c.id) ?? 0)
     const deliveryFeeCents = feeByConcept.get(c.id) ?? 0
     if (revenue > 0 || deliveryFeeCents !== 0) {
       taxableByConcept.push({ conceptSlug: c.slug, conceptName: c.name, revenueCents: revenue, deliveryFeeCents })
       taxableSales += revenue + deliveryFeeCents
     }
+  }
+  // 4090 sales with no brand of this company's (catering, an untagged
+  // invoice) once no brand books to 4090: declared on a row of their own.
+  if (brandSales.otherCents > 0) {
+    taxableByConcept.push({ conceptSlug: '', conceptName: 'Other / Catering (no brand)', revenueCents: brandSales.otherCents, deliveryFeeCents: 0 })
+    taxableSales += brandSales.otherCents
   }
   // 4110 lines with no brand of this company's (should not happen — order
   // postings tag the brand): declared on a row of their own so the per-brand

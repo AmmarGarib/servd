@@ -60,7 +60,7 @@ lines of sales sources dated that day + the deposit drops with a share of that
 day's tills, whenever dropped). A throwing check is `check_failed:<key>`.
 `cod_pending` links to Reconciliation → Cash on delivery only while the
 company's code-only delivery switch is on; otherwise to the till's pay-in list
-(`reconciliation/codCloseCheck.ts codPendingLink`).
+(`reconciliation/codCloseCheck.ts codPendingLink`). A COD whose rider debt finance has booked (a live, un-reversed `cod.rider_debt:<paymentId>` entry, or the posted fleet `cod` transfer — `codBookedDebtIds`) does not block `cod_pending`: it is a warn "rider owes — booked" (owner, 2026-10-17); a reversed booking blocks again; the month close `cod_with_rider` still blocks on every pending COD.
 
 Tills belong to their BUSINESS day (`lib/businessDay.ts`, owner 2026-10-16):
 a till closing before 05:00 PKT is on the day it opened — its close posting

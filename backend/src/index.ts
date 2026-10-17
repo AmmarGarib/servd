@@ -1071,6 +1071,21 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)
   }
+  // One sales account per brand (owner, 2026-10-17): every live brand with a
+  // company and no sales account gets "Sales — <brand>" (4010–4089) in its
+  // company's chart. Idempotent — brands that have one are skipped — so it
+  // runs every boot and catches a brand created by any path. History stays
+  // where it was booked (4090 sales are refunded from 4090).
+  try {
+    const { ensureBrandRevenueAccounts } = await import('./modules/accounting/brandRevenueAccount.js')
+    const assigned = await ensureBrandRevenueAccounts()
+    for (const a of assigned) {
+      if (a.code) fastify.log.info(`[ledger] brand ${a.conceptId} sales account ${a.code}${a.created ? ' (created)' : ''}`)
+      else fastify.log.warn(`[ledger] brand ${a.conceptId} has no sales account (no free code in 4010–4089) — posting to 4090`)
+    }
+  } catch (err) {
+    fastify.log.error({ err }, '[ledger] brand sales accounts boot step failed')
+  }
   // Fixed assets v2 (wave B): each company's asset classes (adds only the
   // missing keys — the CEO's edits survive), then the one-time move of the
   // legacy accumulated depreciation off 1590 onto each class's 159x (H27; a

@@ -724,6 +724,16 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   finance): every pre-bill, flagged `ORPHANED` / `FINAL_LOWER` /
   `LINE_VOIDS_AFTER`. Only `/pre-bills` is module-gated — the till's
   `/pos/orders/:id/pre-bill` and `/pos/pre-bills/:id/html` never are.
+- **A credit note on a completed, unrefunded bill (owner, 2026-10-17: "Allow
+  it, owed back")** is a sales return: one entry `order.credit_note:<cnId>`
+  (revenue to the account the sale credited, service, tips, delivery fee and
+  output tax back) with the money OWED BACK on till clearing (1110 / 1115,
+  memo REFUND DUE) — never cash/card; one `void:<orderId>` fiscal refund; the
+  order goes `refunded`. The till pays it out through `refundOrder`
+  (`payOutCreditNote`: Dr till clearing / Cr the tender, no fiscal document,
+  rows marked `gatewayMeta.refund.creditNoteId`, never revenue). Not yet: a
+  card-machine payout of it. 422 `CASH_NOT_PAID_IN` (COD still with a rider),
+  `ON_ACCOUNT_USE_REFUND`; second credit note 409 `CREDIT_NOTE_EXISTS`.
 - **Manager-only voids:** every item void and every whole-order cancel/void
   of a rung-up order needs a manager — the manager's own login or a valid
   same-company manager PIN (`MANAGER_OVERRIDE_REQUIRED` /
@@ -1252,6 +1262,26 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (H11). Keenu card payouts are matched to card days (H12, BOOKS-11 reuse, no
   reposter; unsettled days block the close unless the CEO overrides). Sales
   tax a client withholds → 1335, netted in that authority's return (H13).
+- **Loyalty revaluation (owner, 2026-10-17: "Yes to loyalty revaluation";
+  H48 = today's point value):** 2060 always equals a company's outstanding
+  points × its CURRENT point value. A change of `loyalty.point_value_cents`
+  (`PATCH /loyalty/settings`, its existing rule) posts ONE entry in that
+  company's books in the SAME transaction as the setting
+  (`modules/loyalty/revaluation.ts`): points in 2060 × (new − old) — rise Dr
+  6060 / Cr 2060, fall Dr 2060 / Cr 6060; no change or no points → no entry.
+  Source `loyalty.revalue:<auditId>`: the AuditLog row (action
+  `loyalty.revalue`, category accounting) is the record — old / new value,
+  points, `deltaCents`. "Points in 2060" = balances − earns not yet booked +
+  redemptions / expiries not yet booked. A per-company advisory lock
+  (`lockLoyaltyValueTx`): the change takes it exclusive; every earn / redeem /
+  expiry posting takes it shared and reads the value inside it
+  (`pointValueCentsTx`, never the cache). A refused entry keeps the change,
+  is flagged posting_failed and REPOSTERS `loyalty.revalue` posts the STORED
+  delta (never recomputed). A reversal (`postLoyaltyReversal`: refund
+  clawback, redemption given back) moves 2060 at TODAY's value (points ×
+  current value, under the shared lock); every other line mirrors the
+  original exactly and the difference goes to 6060 in the same entry; same
+  value → the plain mirror.
 - **Withholding and statutory payables:** `lib/withholding.ts` is the one WHT
   resolver; `PUT /accounting/withholding/rates` the only writer of a
   company's rates (confirmed by the accountant, H32; withholding stays OFF per
@@ -1305,6 +1335,24 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   paths are gated `staff_hr | accounting` (a pattern rule before
   `/hr/final-settlement`); run paid stays under `/hr/payroll`
   (`staff_hr | payroll`). October payroll goes as is (H52).
+- **Tip pools: finance pays after the CEO's approval (owner, 2026-10-17).**
+  Posting stays with the approvers (`APPROVERS` = CEO, co-owners) and records
+  `TipPool.postedById` in the same write. Finance with `accounting` may pay a
+  pool only when a CEO login posted it (403 `TIP_POOL_NEEDS_CEO_APPROVAL`
+  otherwise, incl. pools posted before the column), re-checked in the claim;
+  audit `tippool.pay` via `finance_after_ceo_post`; finance gets a bell when
+  the CEO posts. Nobody — the CEO included — posts or pays a pool holding
+  their own tips (403 `OWN_TIPS_IN_POOL`). `/tip-pools/:id/pay` admits
+  `payroll | accounting`; reads stay on `payroll`.
+- **One sales account per brand (owner, 2026-10-17).** `Concept.revenueAccountCode`
+  (migration `20261017160000`): legacy brands keep 4001–4007; every other brand
+  gets the first free code in **4010–4089** ("Sales — <brand>") in ITS company's
+  chart, at brand create and by an idempotent boot step
+  (`accounting/brandRevenueAccount.ts`). `revenueCodeForConcept` reads the
+  stored code (4090 only as a fallback). Refunds and cancel-undos reverse the
+  account the SALE credited (`saleBookingOf.saleRevenueAccount`), never
+  today's mapping; past entries never move. The merge renumbers a clashing
+  brand account. Untagged 4090 revenue shows on its own tax-return row.
 - **Tip payouts** take `{method, bankAccountId}` through `moneyAccountCode` of
   the pool's company (`{}` = the only bank, 1020 if none, 422
   `BANK_ACCOUNT_REQUIRED` if two or more); legacy `paidFromAccountCode` still
@@ -1338,7 +1386,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   opening-balance sync), marker Setting
   `procurement.companylessSuppliersAssignedAt`. Target = the ONE `kind:
   'company'` named exactly `GS Foods`, else nothing changes and no marker
-  (`/health` `supplierCompanies`, counts only). Deleted suppliers move too. A
+  (`/health` `supplierCompanies`, counts only; owner, 2026-10-17: live has no exact
+  `GS Foods`, so the run flags each company-less supplier once for the CEO to
+  assign by hand and writes the marker). Deleted suppliers move too. A
   supplier with any record in ANOTHER company (or a system supplier GS Foods
   already has — incl. a receipt at another company's outlet, with its stock,
   lots, GRNI matches or petty-cash lines there) is skipped and flagged
@@ -1562,6 +1612,12 @@ Briefs: `.handoff/parked/2026-10-14/`.
   returned food as waste. Every action answers 409 `CODE_ONLY_OFF` while the
   order's company has the switch off. Thin shell: the rules live in
   `dispatch/service.ts` and `orders/returnedFood.ts`.
+- **A booked rider debt no longer blocks the night run (owner, 2026-10-17).**
+  `cod_pending` blocks only COD with no live booked debt (own rider: a
+  non-reversed `cod.rider_debt:<paymentId>` entry; fleet: a posted `cod`
+  transfer) — booked ones warn "rider owes — booked"
+  (`codCloseCheck.ts codBookedDebtIds`). The month close `cod_with_rider` is
+  unchanged: it still blocks on any pending COD.
 - **COD custody (H5):** `lib/cod.ts` is the ONE definition (a cash payment
   still `pending` on a completed non-till order; statuses `with_rider`,
   `overdue` after `COD_PAY_IN_HOURS` = 12, `rider_owes`, `at_counter`).

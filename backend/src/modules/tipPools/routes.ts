@@ -49,7 +49,7 @@ import { Prisma, type UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
-import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, delegatedTenantsByType } from '../../lib/approvalRights.js'
+import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, decideApproval, delegatedTenantsByType, type ApprovalGrant } from '../../lib/approvalRights.js'
 import { widenRls } from '../../lib/headOffice.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
@@ -65,6 +65,10 @@ import { rotaFor, toMinutes, ymd } from '../hr/rota.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { requireModule } from '../notifications/requireModule.js'
+import { serviceClient } from '../../lib/prisma.js'
+import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
+import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 
 // The rules are the company's, set in /configuration/operations
 // (OperationsConfig): whether pooling is on, how it is split, and the weight
@@ -77,7 +81,9 @@ import { moneyAccountCode } from '../../lib/bankAccounts.js'
 
 /** Who drafts and reviews pools. Narrowed by the 'payroll' module
  *  (lib/moduleAccess.ts gates /tip-pools): by default the CEO, owners,
- *  management, finance and HR. Posting and paying stay with APPROVERS. */
+ *  management, finance and HR. Posting stays with APPROVERS; paying is
+ *  APPROVERS, plus finance (with 'accounting') on a pool the CEO posted
+ *  (owner, 2026-10-17: "finance can pay tip pools with CEO's approval"). */
 export const POOL_TEAM = Array.from(new Set([...MANAGERS, 'finance', 'hr'])) as UserRole[]
 
 type Tx = Prisma.TransactionClient
@@ -677,6 +683,67 @@ async function poolDecision(req: FastifyRequest, id: string, action: 'post' | 'p
 }
 
 /**
+ * Nobody posts or pays a pool that holds their own tips — the CEO included
+ * (owner, 2026-10-17; the payroll twin is OWN_PAY_IN_RUN). A member is the
+ * caller when the member's login is theirs, or the member's HR record is
+ * linked to their login.
+ */
+async function assertNoOwnTips(db: Tx | typeof prisma, poolId: string, actorId: string | undefined, verb: 'posts' | 'pays') {
+  if (!actorId) return
+  const mine = await db.tipPoolMember.count({
+    where: { poolId, OR: [{ userId: actorId }, { employee: { userId: actorId } }] },
+  })
+  if (mine > 0) {
+    throw new AppError('OWN_TIPS_IN_POOL', `Your own tips are in this pool — someone else ${verb} it`, 403)
+  }
+}
+
+/**
+ * Finance pays a tip pool the CEO posted (owner, 2026-10-17). Finance must
+ * hold 'accounting'; the pool must be in one of the caller's companies (write
+ * scope — another company's pool is 404), still posted, and posted by a CEO
+ * login (role admin) — anything else, including a pool posted before
+ * `postedById` existed, is 403 TIP_POOL_NEEDS_CEO_APPROVAL. Finance never
+ * posts. Who computed the draft does not matter here: the CEO's post is the
+ * approval, and the own-tips guard still applies.
+ */
+async function financePayDecision(req: FastifyRequest, id: string) {
+  await requireModule('accounting')(req)
+  const pool = await poolInScope(req, id, 'write')
+  if (pool.status !== 'posted') throw new AppError('NOT_POSTABLE', `Pool is ${pool.status}`, 422)
+  if (!(await postedByCeo(pool.postedById))) {
+    throw new AppError('TIP_POOL_NEEDS_CEO_APPROVAL', "Finance pays a tip pool only once the CEO has approved (posted) it — this one was posted by someone else. The CEO or an owner pays it.", 403)
+  }
+  return pool
+}
+
+async function postedByCeo(postedById: string | null): Promise<boolean> {
+  if (!postedById) return false
+  return (await ceoIdsAmong([postedById])).has(postedById)
+}
+
+/** Which of these logins are the CEO (role admin). */
+async function ceoIdsAmong(ids: Array<string | null>): Promise<Set<string>> {
+  const want = [...new Set(ids.filter((x): x is string => !!x))]
+  if (!want.length) return new Set()
+  const rows = await serviceClient.user.findMany({ where: { id: { in: want }, role: 'admin' }, select: { id: true } })
+  return new Set(rows.map((r) => r.id))
+}
+
+/** Finance logins of the pool's company holding 'accounting' — told when the CEO posts a pool. */
+async function financePayers(tenantId: string): Promise<string[]> {
+  const rows = await serviceClient.user.findMany({
+    where: { role: 'finance', isActive: true, accountStatus: 'active', OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
+    select: { id: true, role: true, moduleAllow: true, moduleDeny: true },
+  })
+  const out: string[] = []
+  for (const u of rows) {
+    if ((await effectiveModulesForUser({ role: u.role, moduleAllow: u.moduleAllow, moduleDeny: u.moduleDeny })).has('accounting')) out.push(u.id)
+  }
+  return out
+}
+
+/**
  * Read scope for the pool screens: the companies in view, plus — for a
  * delegate — the companies a live Finance hand-over of tip pools covers
  * (whatever the view), so the delegate can review what they are asked to post.
@@ -719,7 +786,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         for (const c of theirs) if (!inScope.includes(c.id)) inScope.push(c.id)
       }
       const ids = req.query.conceptId ? inScope.filter((c) => c === req.query.conceptId) : inScope
-      return prisma.tipPool.findMany({
+      const pools = await prisma.tipPool.findMany({
         where: {
           AND: [
             await poolReadWhere(req),
@@ -730,6 +797,9 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         include: { _count: { select: { members: true } }, },
         take: 50,
       })
+      // postedByCeo: finance may pay only these (the admin shows Pay to finance on them).
+      const ceo = await ceoIdsAmong(pools.map((p) => p.postedById))
+      return pools.map((p) => ({ ...p, postedByCeo: !!p.postedById && ceo.has(p.postedById) }))
     },
   )
 
@@ -745,7 +815,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
       if (!pool) throw new NotFoundError('TipPool', req.params.id)
       // A draft shows what posting would refuse on: hours left out (and why),
       // anyone who worked since it was computed, and the tips as they stand.
-      return { ...pool, review: pool.status === 'draft' ? await reviewDraft(pool) : null }
+      return { ...pool, postedByCeo: await postedByCeo(pool.postedById), review: pool.status === 'draft' ? await reviewDraft(pool) : null }
     },
   )
 
@@ -1055,6 +1125,8 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         const pool = await tx.tipPool.findUniqueOrThrow({ where: { id: found.id }, include: { members: true } })
         if (pool.conceptId) await lockBrandPools(tx, pool.conceptId)
         if (pool.status !== 'draft') throw new AppError('ALREADY_POSTED', `Pool is ${pool.status}`, 422)
+        // Nobody posts a pool holding their own tips (the CEO included).
+        await assertNoOwnTips(tx, pool.id, req.staffUser?.id, 'posts')
         // The tips are added up again here, under the brand's lock: the total
         // posted is the window's tips as they stand, never a figure frozen
         // when the draft was computed.
@@ -1089,7 +1161,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
           allocated += share
           await tx.tipPoolMember.update({ where: { id: m.id }, data: { shareCents: share } })
         }
-        const n = await tx.tipPool.updateMany({ where: { id: pool.id, status: 'draft' }, data: { status: 'posted', postedAt: new Date() } })
+        const n = await tx.tipPool.updateMany({ where: { id: pool.id, status: 'draft' }, data: { status: 'posted', postedAt: new Date(), postedById: req.staffUser?.id ?? null } })
         if (n.count === 0) throw new AppError('ALREADY_POSTED', 'Pool is no longer a draft', 422)
         const updated = await tx.tipPool.findUniqueOrThrow({ where: { id: pool.id }, include: MEMBER_INCLUDE })
         return { pool, updated }
@@ -1105,6 +1177,21 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         ...(leftOut.length > 0 && { metadata: { staffLeftOut: leftOut, reason: leaveOut?.reason ?? null } }),
       })
       await auditApproval(req, { type: 'tip_pool', id: pool.id, tenantId: poolTenantId, decision: 'post', grant, entity: 'TipPool' })
+      // The bell: a pool the CEO posted is finance's to pay (owner,
+      // 2026-10-17). Queued after the commit; never fails the post.
+      if (req.staffUser?.role === 'admin' && pool.totalTipsCents > 0) {
+        const actorId = req.staffUser.id
+        queueStaffNotify(async () => {
+          const ids = (await financePayers(poolTenantId)).filter((id) => id !== actorId)
+          return notifyStaffMany(ids.map((userId) => ({
+            userId, tenantId: poolTenantId, actorId, kind: 'task.next' as const,
+            title: `Tip pool ready to pay: ${pool.name}`,
+            body: `The CEO approved PKR ${(pool.totalTipsCents / 100).toLocaleString('en-PK')} of tips. Pay it on Tip pools.`,
+            link: '/tip-pools', entityType: 'TipPool', entityId: pool.id,
+            dedupeKey: `task.next:tip_pool:${pool.id}:pay`,
+          })))
+        })
+      }
 
       // Per-member audit row so each individual share is independently
       // verifiable. Without this, a manager could quietly give themselves a
@@ -1160,8 +1247,29 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         method: z.enum(['cash', 'bank', 'bank_transfer', 'bank_deposit', 'cheque']).optional(),
         bankAccountId: z.string().min(1).nullish(),
       }).parse(req.body ?? {})
-      const { pool, grant } = await poolDecision(req, req.params.id, 'pay')
+      // APPROVERS (or a hand-over) pay as before. Finance — not on that
+      // path — pays only a pool the CEO posted (financePayDecision).
+      let pool: Awaited<ReturnType<typeof poolDecision>>['pool']
+      let grant: ApprovalGrant | null = null
+      if (req.staffUser?.role === 'finance') {
+        const s = await approvalSubject('tip_pool', req.params.id)
+        const d = s ? await decideApproval(req, approvalInputOf('tip_pool', req.params.id, s, { entity: 'TipPool', action: 'pay a tip pool' })) : null
+        if (d?.ok) {
+          ;({ pool, grant } = await poolDecision(req, req.params.id, 'pay'))
+        } else {
+          pool = await financePayDecision(req, req.params.id)
+        }
+      } else {
+        // The central gate admits 'accounting' on this path for finance's
+        // sake; everyone else still needs 'payroll', as before (the CEO
+        // passes requireModule).
+        await requireModule('payroll')(req)
+        ;({ pool, grant } = await poolDecision(req, req.params.id, 'pay'))
+      }
       if (pool.status !== 'posted') throw new AppError('NOT_POSTABLE', `Pool is ${pool.status}`, 422)
+      // Nobody pays a pool holding their own tips (the CEO included).
+      await assertNoOwnTips(prisma, pool.id, req.staffUser?.id, 'pays')
+      const viaCeoPost = grant === null
 
       // The money leaves a cash or bank account of the pool's own company —
       // never a revenue or liability code (audit PPL-R2-03).
@@ -1179,7 +1287,9 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
           const clash = await overlappingPool(tx, pool.conceptId, pool.periodStart, pool.periodEnd, { exceptId: pool.id, statuses: ['paid'] })
           if (clash) throw poolOverlap(clash, 'Not paid')
         }
-        const n = await tx.tipPool.updateMany({ where: { id: pool.id, status: 'posted' }, data: { status: 'paid', paidAt: new Date() } })
+        // Finance's pay re-checks, in the claim, that the pool is still the
+        // one the CEO posted.
+        const n = await tx.tipPool.updateMany({ where: { id: pool.id, status: 'posted', ...(viaCeoPost && { postedById: pool.postedById }) }, data: { status: 'paid', paidAt: new Date() } })
         if (n.count === 0) throw new AppError('NOT_POSTABLE', 'Pool is no longer posted — it may have just been paid', 422)
         if (pool.totalTipsCents > 0) {
           await postJournalEntry({
@@ -1197,7 +1307,15 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         }
         return tx.tipPool.findUniqueOrThrow({ where: { id: pool.id }, include: MEMBER_INCLUDE })
       })
-      await auditApproval(req, { type: 'tip_pool', id: pool.id, tenantId: pool.tenantId, decision: 'pay', grant, entity: 'TipPool' })
+      if (grant) {
+        await auditApproval(req, { type: 'tip_pool', id: pool.id, tenantId: pool.tenantId, decision: 'pay', grant, entity: 'TipPool' })
+      } else {
+        await audit({ category: 'accounting',
+          action: 'tippool.pay', entity: 'TipPool', entityId: pool.id,
+          userId: req.staffUser?.id ?? null, tenantId: pool.tenantId, userEmail: req.staffUser?.email ?? null,
+          after: { totalCents: pool.totalTipsCents }, metadata: { via: 'finance_after_ceo_post', actorRole: req.staffUser?.role, postedById: pool.postedById },
+        })
+      }
       return paid
     },
   )

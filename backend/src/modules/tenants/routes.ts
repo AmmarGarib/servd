@@ -1012,6 +1012,12 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       const { mergeNightAuditDaysTx } = await import('../nightAudit/service.js')
       const nightAudit = await mergeNightAuditDaysTx(tx, src, dst)
 
+      // One sales account per brand (2026-10-17): a source brand's own sales
+      // account whose code the target already uses is renumbered first, so the
+      // code-by-code account merge below never folds two brands' sales together.
+      const { renumberClashingBrandAccountsTx } = await import('../accounting/brandRevenueAccount.js')
+      const brandAccountsRenumbered = await renumberClashingBrandAccountsTx(tx, src, dst)
+
       const conceptsMoved = await tx.concept.updateMany({
         where: { tenantId: src }, data: { tenantId: dst },
       })
@@ -1197,7 +1203,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         where: { id: src },
         data: { deletedAt: new Date(), isActive: false },
       })
-      return { conceptsMoved: conceptsMoved.count, usersMoved: usersMoved.count, systemSuppliersAbsorbed, ...finance, ...money, ...delivery, ...requests, nightAuditDays: nightAudit }
+      return { conceptsMoved: conceptsMoved.count, brandAccountsRenumbered: brandAccountsRenumbered.length, usersMoved: usersMoved.count, systemSuppliersAbsorbed, ...finance, ...money, ...delivery, ...requests, nightAuditDays: nightAudit }
     }, {
       // Many sequential statements — the default 5s interactive-transaction
       // budget is too tight for a company with real history.
@@ -1419,6 +1425,13 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         return c
       })
 
+      // One sales account per brand (owner, 2026-10-17) — never blocks the create.
+      try {
+        const { ensureBrandRevenueAccount } = await import('../accounting/brandRevenueAccount.js')
+        await ensureBrandRevenueAccount(concept.id)
+      } catch (err) {
+        req.log.error({ err, conceptId: concept.id }, '[tenants] brand sales account not created — the boot step retries')
+      }
       return reply.status(201).send({ conceptId: concept.id, conceptSlug: concept.slug })
     },
   )
