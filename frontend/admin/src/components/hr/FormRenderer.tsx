@@ -7,7 +7,7 @@
 // type every render, and React would remount the inputs on each keystroke.
 
 import { useId } from 'react'
-import { human, inp, rs, type HrField, type Lookups, type OrgData } from '../../lib/hr'
+import { human, inp, rs, isReportingLineField, REPORTS_TO_CEO, type HrField, type Lookups, type OrgData } from '../../lib/hr'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
 import { Select } from '@/components/ui/Select'
 import { NumberField } from '@/components/ui/NumberField'
@@ -213,13 +213,32 @@ function FieldInput({ f, v, onSet, ctx, a11y }: { f: HrField; v: unknown; onSet:
       )
     case 'multiselect':
       return <ChipPicker options={(f.options ?? []).map((o) => ({ id: o, label: human(o) }))} value={(v as string[]) ?? []} onSet={onSet} disabled={dis} />
-    case 'employee':
+    case 'employee': {
+      const line = isReportingLineField(f) ? ctx.lookups?.reportingLine ?? [] : []
+      if (line.length) {
+        // Reporting line: the server's labels ("CEO", "<Designation> — <Name>").
+        // The CEO's own HR record shows as the CEO option; a manager who has
+        // left keeps their name so the saved value is still visible.
+        const ceo = line.find((o) => o.ceo)
+        const shown = v && ceo?.employeeId && v === ceo.employeeId ? REPORTS_TO_CEO : String(v ?? '')
+        const missing = shown && !line.some((o) => o.id === shown)
+          ? ctx.lookups?.employees.find((e) => e.id === shown)
+          : undefined
+        return (
+          <Select {...aria} className={inp} value={shown} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
+            <option value="">—</option>
+            {line.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            {missing && <option value={missing.id}>{missing.fullName} ({human(missing.status)})</option>}
+          </Select>
+        )
+      }
       return (
         <Select {...aria} className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value || null)}>
           <option value="">—</option>
           {(ctx.lookups?.employees ?? []).map((e) => <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>)}
         </Select>
       )
+    }
     case 'employees':
       return <ChipPicker options={(ctx.lookups?.employees ?? []).map((e) => ({ id: e.id, label: e.fullName }))} value={(v as string[]) ?? []} onSet={onSet} disabled={dis} />
     case 'location': case 'department': case 'orgunit': case 'record': {

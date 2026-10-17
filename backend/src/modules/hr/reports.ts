@@ -26,7 +26,7 @@ import type { HrEmployee, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { buildXlsx, colName, type XlsxCell } from '../../lib/xlsxWriter.js'
-import { employeeLabelsAcross, getSettings, leaveBalancesFor, payableEmployees, STANDING_ATTENDANCE } from './service.js'
+import { employeeLabelsAcross, managerLabelOf, getSettings, leaveBalancesFor, payableEmployees, STANDING_ATTENDANCE } from './service.js'
 import { attendanceInputs, inclusiveDays, periodOf, periodStart, periodEnd, pktToday, type HrSettings } from './logic.js'
 import type { HrField } from './forms.js'
 
@@ -169,7 +169,7 @@ async function employeeMaster(def: ReportDef, tenantIds: string[], q: ReportQuer
       return [
         e.employeeCode, e.fullName, e.fatherHusbandName, e.cnic, d10(e.dateOfBirth), e.gender, e.phone, e.personalEmail,
         branch(e), labelOf(e.departmentId), labelOf(e.designationId), employmentTypeLabel(e.employmentType), d10(e.joiningDate),
-        labelOf(e.managerId), label(STATUS, e.status), label(PAYMENT, e.paymentMethod), e.bankName, e.iban, accountTitle,
+        managerLabelOf(labelOf, e), label(STATUS, e.status), label(PAYMENT, e.paymentMethod), e.bankName, e.iban, accountTitle,
       ]
     }),
   }
@@ -375,11 +375,18 @@ async function payrollReport(def: ReportDef, tenantIds: string[], q: ReportQuery
   const [labelOf, att, costCentres] = await Promise.all([
     employeeLabelsAcross(emps),
     monthAttendance(emps, month),
-    // A cost centre is an HR org unit (kind cost_center) whose parent is the department.
-    prisma.hrOrgUnit.findMany({ where: { tenantId: { in: tenantIds }, kind: 'cost_center', isActive: true, parentId: { not: null } }, select: { tenantId: true, parentId: true, name: true }, orderBy: { name: 'asc' } }),
+    // A cost centre is an HR org unit (kind cost_center): the one set on the
+    // employee's profile (Cost center, data.costCenterId — 2026-10-17), else
+    // the one whose parent is their department.
+    prisma.hrOrgUnit.findMany({ where: { tenantId: { in: tenantIds }, kind: 'cost_center' }, select: { id: true, tenantId: true, parentId: true, name: true, isActive: true }, orderBy: { name: 'asc' } }),
   ])
   const branch = await branchNames(emps, tenantIds, labelOf)
-  const costCentreOf = (e: HrEmployee) => costCentres.find((c) => c.tenantId === e.tenantId && c.parentId === e.departmentId)?.name ?? 'General'
+  const costCentreOf = (e: HrEmployee) => {
+    const own = ((e.data ?? {}) as Record<string, unknown>)['costCenterId']
+    const set = typeof own === 'string' ? costCentres.find((c) => c.id === own && c.tenantId === e.tenantId) : undefined
+    if (set) return set.name
+    return costCentres.find((c) => c.isActive && c.parentId && c.tenantId === e.tenantId && c.parentId === e.departmentId)?.name ?? 'General'
+  }
 
   // Which loans are salary advances (loan records, category 'advance').
   const loanIds = new Set<string>()

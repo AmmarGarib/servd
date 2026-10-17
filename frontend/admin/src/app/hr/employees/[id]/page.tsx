@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, type HrRecord, type HrLogin } from '../../../../lib/hr'
+import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, isReportingLineField, REPORTS_TO_CEO, type HrRecord, type HrLogin } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
@@ -143,6 +143,8 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
   const initial = () => {
     const v: Record<string, unknown> = {}
     for (const f of form?.current.fields ?? []) v[f.key] = f.bind?.startsWith('employee.') ? p.employee[f.bind.slice(9)] : p.employee.data?.[f.key]
+    // Reporting line "CEO" with no person behind it (the CEO has no HR record).
+    for (const f of form?.current.fields ?? []) if (isReportingLineField(f) && !v[f.key] && p.employee.data?.reportsToCeo === true) v[f.key] = REPORTS_TO_CEO
     return v
   }
   const [value, setValue] = useState<Record<string, unknown> | null>(null)

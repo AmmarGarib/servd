@@ -107,6 +107,15 @@ const MGMT: WorkflowStep = { key: 'management', label: 'Management approval', ro
 
 export const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'temporary', 'intern']
 export const EMPLOYEE_STATUSES = ['active', 'on_leave', 'resigned', 'terminated', 'separated']
+/**
+ * The value the Reporting line picker sends for its "CEO" option. Saving it
+ * points managerId at the HR record of the company's CEO login when there is
+ * one; otherwise managerId stays null and the employee's data carries
+ * `reportsToCeo: true` (service.ts reportsToCeo) — no HR record is ever made
+ * for the CEO, since it would land on payroll.
+ */
+export const REPORTS_TO_CEO = 'ceo'
+
 export const ORG_UNIT_KINDS = ['business_unit', 'sub_department', 'designation', 'grade', 'cost_center'] as const
 
 export const DOCUMENT_TYPES = [
@@ -161,10 +170,18 @@ export const EMPLOYEE_MASTER_FIELDS: HrField[] = [
   // Employment
   f('joiningDate', 'Joining date', 'date', { group: 'Employment information', bind: 'employee.joiningDate' }),
   f('departmentId', 'Department', 'department', { group: 'Employment information', bind: 'employee.departmentId' }),
+  // Danish (HR), owner-approved 2026-10-17: Sub department and Cost center —
+  // HR org units of the employee's company (checkReferences), kept on the
+  // record's data (no column; reports.ts payroll reads costCenterId).
+  f('subDepartmentId', 'Sub department', 'orgunit', { ref: 'sub_department', group: 'Employment information' }),
+  f('costCenterId', 'Cost center', 'orgunit', { ref: 'cost_center', group: 'Employment information' }),
   f('designationId', 'Designation', 'orgunit', { ref: 'designation', group: 'Employment information', bind: 'employee.designationId' }),
   f('gradeId', 'Job grade / level', 'orgunit', { ref: 'grade', group: 'Employment information', bind: 'employee.gradeId' }),
   f('locationId', 'Branch', 'location', { group: 'Employment information', bind: 'employee.locationId' }),
-  f('managerId', 'Reporting manager', 'employee', { group: 'Employment information', bind: 'employee.managerId' }),
+  // Reporting line (owner, 2026-10-17): still a PERSON (managerId drives My
+  // team and HOD approvals); the picker reads "<Designation> — <Name>" with a
+  // "CEO" option first (GET /hr/lookups reportingLine; REPORTS_TO_CEO).
+  f('managerId', 'Reporting line', 'employee', { group: 'Employment information', bind: 'employee.managerId' }),
   sel('employmentType', 'Employment type', EMPLOYMENT_TYPES, { group: 'Employment information', bind: 'employee.employmentType' }),
   sel('status', 'Employee status', EMPLOYEE_STATUSES, { group: 'Employment information', bind: 'employee.status' }),
   f('probationStart', 'Probation start date', 'date', { group: 'Employment information' }),

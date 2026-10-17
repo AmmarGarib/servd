@@ -93,7 +93,23 @@ export interface HrRecord {
 export interface Lookups {
   employees: Array<{ id: string; fullName: string; employeeCode: string; status: string }>
   records: Record<string, Array<{ id: string; label: string }>>
+  /** The Reporting line picker, labelled by the server ("CEO" first, then
+   *  "<Designation> — <Name>"). Empty outside the HR back office. */
+  reportingLine?: ReportingLineOption[]
 }
+
+/** The value the Reporting line picker sends for "CEO" (backend hr/forms.ts REPORTS_TO_CEO). */
+export const REPORTS_TO_CEO = 'ceo'
+export interface ReportingLineOption {
+  /** REPORTS_TO_CEO for the CEO option, else the employee id. */
+  id: string
+  label: string
+  /** The HR record behind the option — for CEO, the CEO login's record, or null when the CEO has none. */
+  employeeId: string | null
+  ceo?: true
+}
+/** Is this the field that holds an employee's reporting line? */
+export const isReportingLineField = (f: HrField) => f.type === 'employee' && f.bind === 'employee.managerId'
 
 export interface Department { id: string; name: string; emoji?: string | null; isHeadOffice?: boolean; order?: number; archivedAt?: string | null }
 

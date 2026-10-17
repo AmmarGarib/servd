@@ -22,12 +22,12 @@ import { takeSnapshot } from '../trash/snapshot.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import {
   HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, withSystemFields, ORG_UNIT_KINDS, DOCUMENT_TYPES,
-  EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, transferTargetsOutsideCompany, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
+  EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, transferTargetsOutsideCompany, REPORTS_TO_CEO, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
 } from './forms.js'
 import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, settlementLoansOf,
-  calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder,
+  calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
 } from './service.js'
 import {
@@ -1123,8 +1123,31 @@ export async function hrRoutes(fastify: FastifyInstance) {
       : []
     const records: Record<string, Array<{ id: string; label: string }>> = {}
     for (const r of recs) (records[r.section] ??= []).push({ id: r.id, label: recordLabel(r, formats[r.section]?.fields ?? []) })
-    return { employees, records }
+    return { employees, records, reportingLine: isAdmin ? await reportingLineOptions(tenantId) : [] }
   })
+
+  /**
+   * The Reporting line picker (owner, 2026-10-17) — the ONE label rule, so the
+   * admin shows what the server sends: "CEO" first (value REPORTS_TO_CEO;
+   * `employeeId` is the CEO login's HR record in this company, or null when
+   * the CEO has none), then current staff as "<Designation> — <Name>"
+   * ("No designation — <Name>" last), sorted by designation then name.
+   */
+  async function reportingLineOptions(tenantId: string): Promise<Array<{ id: string; label: string; employeeId: string | null; ceo?: true }>> {
+    const [ceo, people] = await Promise.all([
+      companyCeo(tenantId),
+      prisma.hrEmployee.findMany({ where: { tenantId, status: { in: ['active', 'on_leave'] } }, select: { id: true, fullName: true, designationId: true } }),
+    ])
+    const desigIds = Array.from(new Set(people.map((p) => p.designationId).filter((d): d is string => !!d)))
+    const names = new Map((desigIds.length ? await prisma.hrOrgUnit.findMany({ where: { tenantId, id: { in: desigIds } }, select: { id: true, name: true } }) : []).map((u) => [u.id, u.name]))
+    const rows = people
+      .filter((p) => p.id !== ceo.employee?.id)
+      .map((p) => ({ id: p.id, employeeId: p.id, desig: p.designationId ? names.get(p.designationId) ?? null : null, name: p.fullName }))
+      .sort((a, b) => (a.desig === null ? 1 : 0) - (b.desig === null ? 1 : 0) || (a.desig ?? '').localeCompare(b.desig ?? '') || a.name.localeCompare(b.name))
+      .map((r) => ({ id: r.id, employeeId: r.employeeId, label: `${r.desig ?? 'No designation'} — ${r.name}` }))
+    const ceoOption = ceo.userIds.length ? [{ id: REPORTS_TO_CEO, label: 'CEO', employeeId: ceo.employee?.id ?? null, ceo: true as const }] : []
+    return [...ceoOption, ...rows]
+  }
 
   // ── Employees ─────────────────────────────────────────────────────────────
   fastify.get<{ Querystring: { status?: string; q?: string; departmentId?: string; locationId?: string } }>(
@@ -1148,7 +1171,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       return rows.map((e) => ({
         id: e.id, employeeCode: e.employeeCode, fullName: e.fullName, phone: e.phone, status: e.status,
         employmentType: e.employmentType, joiningDate: e.joiningDate, grossSalaryCents: e.grossSalaryCents,
-        department: label(e.departmentId), designation: label(e.designationId), branch: label(e.locationId), manager: label(e.managerId),
+        department: label(e.departmentId), designation: label(e.designationId), branch: label(e.locationId), manager: managerLabelOf(label, e),
         userId: e.userId, tenantId: e.tenantId,
       }))
     })
@@ -1174,7 +1197,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       .map((r) => ({ section: r.section, effectiveDate: r.effectiveDate, grossCents: r.amountCents, applied: !!r.appliedAt }))
     return {
       employee: fresh,
-      labels: { department: label(fresh.departmentId), designation: label(fresh.designationId), grade: label(fresh.gradeId), branch: label(fresh.locationId), manager: label(fresh.managerId) },
+      labels: { department: label(fresh.departmentId), designation: label(fresh.designationId), grade: label(fresh.gradeId), branch: label(fresh.locationId), manager: managerLabelOf(label, fresh) },
       documents: emp.documents, records, leaveBalances: balances, loans, salaryHistory, user, kioskPinSet,
     }
   })
@@ -1190,6 +1213,20 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (selfEdit && !SELF_EDITORS.includes(req.staffUser!.role)) throw new ForbiddenError('You cannot edit your own employee record — ask another HR user')
     const fmt = await getFormat(tenantId, 'employees')
     const body = z.object({ data: z.record(z.unknown()) }).parse(req.body)
+    // Reporting line "CEO" (forms.ts REPORTS_TO_CEO): the CEO login's HR record
+    // in this company when there is one; otherwise no person (managerId null)
+    // and `reportsToCeo` on the data. Any other choice clears the flag.
+    const mgrField = fmt.fields.find((fl) => fl.bind === 'employee.managerId')
+    let ceoFlag: boolean | undefined
+    if (mgrField && mgrField.key in body.data) {
+      ceoFlag = false
+      if (body.data[mgrField.key] === REPORTS_TO_CEO) {
+        const ceo = await companyCeo(tenantId)
+        if (ceo.employee) body.data[mgrField.key] = ceo.employee.id
+        else if (ceo.userIds.length) { body.data[mgrField.key] = null; ceoFlag = true }
+        else throw new AppError('NO_CEO', 'This company has no CEO login to report to — pick a person', 422)
+      }
+    }
     const v = validateAgainst(fmt.fields, body.data, { partial: !!id })
     if (v.errors.length) throw formErrors(v.errors)
     await checkReferences(tenantId, fmt.fields, v.data)
@@ -1210,6 +1247,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       if (basic > gross) throw new AppError('BASIC_OVER_GROSS', 'Basic salary cannot be more than gross salary', 400)
     }
     const extra = Object.fromEntries(Object.entries(v.data).filter(([k]) => !fmt.fields.find((f) => f.key === k)?.bind))
+    if (ceoFlag === true) extra['reportsToCeo'] = true
     if (!id) {
       // A format may leave the name optional; the record may not.
       if (typeof cols['fullName'] !== 'string' || !cols['fullName'].trim()) throw new AppError('VALIDATION_ERROR', 'Employee name is required', 400)
@@ -1230,6 +1268,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       return emp
     }
     const cur = await prisma.hrEmployee.findUniqueOrThrow({ where: { id } })
+    if (ceoFlag === false && (cur.data as Record<string, unknown> | null)?.['reportsToCeo'] === true) extra['reportsToCeo'] = false
     if (cols['employeeCode'] && cols['employeeCode'] !== cur.employeeCode &&
         await prisma.hrEmployee.findFirst({ where: { tenantId, employeeCode: String(cols['employeeCode']), NOT: { id } } })) {
       throw new AppError('DUPLICATE_CODE', `Employee ID ${cols['employeeCode']} is already used`, 409)
@@ -2391,14 +2430,23 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // 10. Each row: who they report to, how deep, today's attendance/leave and
   // their linked login. Never pay.
   fastify.get('/team', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const me = await ownEmployee(req)
+    const own = await ownEmployee(req)
     const pendingApprovals = (await approvalsWaitingOn(req)).length
+    // A CEO with no HR record of their own (none is ever made — it would land
+    // on payroll) still has the people whose Reporting line is "CEO"
+    // (reportsToCeo), in the active company.
+    const su = req.staffUser!
+    const ceoTenant = own?.tenantId ?? (su.role === 'admin' ? activeTenant(req) : null)
+    const asCeo = !!ceoTenant && su.role === 'admin' && (await companyCeo(ceoTenant)).userIds.includes(su.id)
+    const me: { id: string | null; fullName: string; tenantId: string } | null = own
+      ? { id: own.id, fullName: own.fullName, tenantId: own.tenantId }
+      : asCeo ? { id: null, fullName: su.name ?? 'CEO', tenantId: ceoTenant! } : null
     if (!me) return { me: null, team: [], pendingApprovals }
 
     // The reporting tree (service.ts teamUnder — the one walk; the cash
     // requests read it through teamUserIdsUnder).
     const team: Array<TeamMember & { todayStatus: 'present' | 'late' | 'absent' | 'on_leave' | 'off' | null }> =
-      (await teamUnder(me.tenantId, me.id)).map((t) => ({ ...t, todayStatus: null }))
+      (await teamUnder(me.tenantId, me.id, undefined, { asCeo })).map((t) => ({ ...t, todayStatus: null }))
 
     if (team.length) {
       const today = pktToday()
@@ -2446,7 +2494,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       tenantId: emp.tenantId,
       profile: {
         employeeCode: emp.employeeCode, fullName: emp.fullName, phone: emp.phone, personalEmail: emp.personalEmail,
-        department: label(emp.departmentId), designation: label(emp.designationId), branch: label(emp.locationId), manager: label(emp.managerId),
+        department: label(emp.departmentId), designation: label(emp.designationId), branch: label(emp.locationId), manager: managerLabelOf(label, emp),
         employmentType: emp.employmentType, status: emp.status, joiningDate: emp.joiningDate, probationEnd: emp.probationEnd,
       },
       leaveBalances: balances,

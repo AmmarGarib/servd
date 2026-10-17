@@ -24,7 +24,9 @@ export interface TeamMember {
 }
 
 export interface TeamResponse {
-  me: { id: string; fullName: string } | null
+  /** `id` is null for a CEO with no HR record of their own: the team is then
+   *  everyone whose Reporting line is "CEO". */
+  me: { id: string | null; fullName: string } | null
   team: TeamMember[]
   pendingApprovals?: number
 }

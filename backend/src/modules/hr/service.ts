@@ -148,10 +148,53 @@ export async function employeeLabelsAcross(emps: Array<Pick<HrEmployee, 'tenantI
  * request never gets stuck.
  */
 export async function managerUserIdOfEmployee(tenantId: string, employeeId: string, q: Db = prisma): Promise<string | null> {
-  const emp = await q.hrEmployee.findFirst({ where: { id: employeeId, tenantId }, select: { managerId: true } })
-  if (!emp?.managerId) return null
+  const emp = await q.hrEmployee.findFirst({ where: { id: employeeId, tenantId }, select: { managerId: true, data: true } })
+  if (!emp) return null
+  if (!emp.managerId) {
+    // Reports to the CEO, who has no HR record of their own: the CEO signs.
+    if (!reportsToCeo(emp)) return null
+    const ceo = await companyCeo(tenantId, q)
+    return ceo.employee?.userId ?? ceo.userIds[0] ?? null
+  }
   const mgr = await q.hrEmployee.findFirst({ where: { id: emp.managerId, tenantId }, select: { userId: true } })
   return mgr?.userId ?? null
+}
+
+/**
+ * "Reports to the CEO" without a person behind it (owner, 2026-10-17): the
+ * Reporting line was set to CEO while the company's CEO has no HR record
+ * (forms.ts REPORTS_TO_CEO). Only counts while managerId is empty — choosing a
+ * person (or a transfer's new manager) supersedes it.
+ */
+export function reportsToCeo(e: { managerId: string | null; data?: unknown }): boolean {
+  return !e.managerId && ((e.data ?? {}) as Record<string, unknown>)['reportsToCeo'] === true
+}
+
+/** The manager's display name, or "CEO" for reportsToCeo. */
+export function managerLabelOf(label: (id: string | null | undefined) => string | null, e: { managerId: string | null; data?: unknown }): string | null {
+  return label(e.managerId) ?? (reportsToCeo(e) ? 'CEO' : null)
+}
+
+/**
+ * The company's CEO: its active `admin` logins that belong to it (primary
+ * company or a TenantMember row), oldest first, and the HR record linked to
+ * one of them in this company (current staff first), if any. No HR record is
+ * ever created for it.
+ */
+export async function companyCeo(tenantId: string, q: Db = prisma): Promise<{ userIds: string[]; employee: { id: string; fullName: string; userId: string | null; designationId: string | null } | null }> {
+  const users = await q.user.findMany({
+    where: { role: 'admin', isActive: true, accountStatus: 'active', OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
+    select: { id: true }, orderBy: { createdAt: 'asc' },
+  })
+  const userIds = users.map((u) => u.id)
+  if (!userIds.length) return { userIds, employee: null }
+  const rows = await q.hrEmployee.findMany({
+    where: { tenantId, userId: { in: userIds } },
+    select: { id: true, fullName: true, userId: true, designationId: true, status: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  const pick = rows.find((r) => ['active', 'on_leave'].includes(r.status)) ?? null
+  return { userIds, employee: pick && { id: pick.id, fullName: pick.fullName, userId: pick.userId, designationId: pick.designationId } }
 }
 
 /**
@@ -180,14 +223,20 @@ export interface TeamMember {
  * Cycle-safe (a manager loop in the data stops at the first repeat) and capped
  * at depth 10. Names and status only, never pay.
  */
-export async function teamUnder(tenantId: string, managerEmployeeId: string, q: Db = prisma): Promise<TeamMember[]> {
+export async function teamUnder(tenantId: string, managerEmployeeId: string | null, q: Db = prisma, opts: { asCeo?: boolean } = {}): Promise<TeamMember[]> {
   const MAX_DEPTH = 10
-  const seen = new Set<string>([managerEmployeeId])
+  const seen = new Set<string>(managerEmployeeId ? [managerEmployeeId] : [])
   const team: TeamMember[] = []
-  let frontier = [managerEmployeeId]
-  for (let depth = 1; depth <= MAX_DEPTH && frontier.length; depth++) {
+  let frontier = managerEmployeeId ? [managerEmployeeId] : []
+  // The CEO's direct reports also include everyone set to "CEO" with no
+  // person behind it (reportsToCeo) — the CEO may have no HR record at all.
+  const ceoDirect: Prisma.HrEmployeeWhereInput = { managerId: null, data: { path: ['reportsToCeo'], equals: true } }
+  for (let depth = 1; depth <= MAX_DEPTH && (frontier.length || (depth === 1 && opts.asCeo)); depth++) {
     const rows = await q.hrEmployee.findMany({
-      where: { tenantId, managerId: { in: frontier }, status: { in: ['active', 'on_leave'] } },
+      where: {
+        tenantId, status: { in: ['active', 'on_leave'] },
+        OR: [...(frontier.length ? [{ managerId: { in: frontier } }] : []), ...(depth === 1 && opts.asCeo ? [ceoDirect] : [])],
+      },
       select: { id: true, fullName: true, employeeCode: true, status: true, phone: true, employmentType: true, probationEnd: true, managerId: true, userId: true },
       orderBy: { fullName: 'asc' },
     })
@@ -211,8 +260,9 @@ export async function teamUnder(tenantId: string, managerEmployeeId: string, q: 
  */
 export async function teamUserIdsUnder(tenantId: string, managerUserId: string, q: Db = prisma): Promise<string[]> {
   const me = await q.hrEmployee.findFirst({ where: { tenantId, userId: managerUserId }, select: { id: true } })
-  if (!me) return []
-  const team = await teamUnder(tenantId, me.id, q)
+  const asCeo = (await companyCeo(tenantId, q)).userIds.includes(managerUserId)
+  if (!me && !asCeo) return []
+  const team = await teamUnder(tenantId, me?.id ?? null, q, { asCeo })
   return Array.from(new Set(team.map((t) => t.userId).filter((u): u is string => !!u && u !== managerUserId)))
 }
 

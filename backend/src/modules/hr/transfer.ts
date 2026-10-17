@@ -476,7 +476,20 @@ async function twinDepartment(tx: Tx, hoId: string, sourceId: string | null, cac
   return id
 }
 
-async function twinOrgUnit(tx: Tx, hoId: string, sourceId: string | null, kind: 'designation' | 'grade', cache: Map<string, string | null>): Promise<string | null> {
+/** The employee's profile data for the head-office record: the profile's
+ *  Sub department / Cost center become the head office's twin units (never the
+ *  company's ids), and "reports to the CEO" is not carried — the head office
+ *  sets its own reporting line, as it does for managerId. */
+async function headOfficeData(tx: Tx, hoId: string, data: Record<string, unknown>, transferredFrom: unknown, cache: Map<string, string | null>): Promise<Prisma.InputJsonValue> {
+  const out: Record<string, unknown> = { ...data, transferredFrom }
+  delete out['reportsToCeo']
+  for (const [key, kind] of [['subDepartmentId', 'sub_department'], ['costCenterId', 'cost_center']] as const) {
+    if (typeof out[key] === 'string') out[key] = await twinOrgUnit(tx, hoId, out[key] as string, kind, cache)
+  }
+  return out as Prisma.InputJsonValue
+}
+
+async function twinOrgUnit(tx: Tx, hoId: string, sourceId: string | null, kind: 'designation' | 'grade' | 'sub_department' | 'cost_center', cache: Map<string, string | null>): Promise<string | null> {
   if (!sourceId) return null
   if (cache.has(sourceId)) return cache.get(sourceId)!
   const src = await tx.hrOrgUnit.findUnique({ where: { id: sourceId }, select: { name: true, code: true, kind: true } })
@@ -606,7 +619,7 @@ export async function transferEmployeesToHeadOffice(input: TransferInput, actor:
           eobiNo: e.eobiNo, sessiNo: e.sessiNo, ntn: e.ntn, photoUrl: e.photoUrl,
           // The kiosk PIN belongs to the company's branch tablets — not carried.
           kioskPinHash: null,
-          data: { ...((e.data ?? {}) as Record<string, unknown>), transferredFrom } as Prisma.InputJsonValue,
+          data: await headOfficeData(tx, hoId, (e.data ?? {}) as Record<string, unknown>, transferredFrom, unitCache),
           createdById: actor.id,
         },
         select: { id: true, employeeCode: true },
