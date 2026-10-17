@@ -92,13 +92,19 @@ describe('the target company must be exactly one', () => {
     expect(await prisma.setting.findUnique({ where: { key: `${MARKER}.none` } })).toBeNull()
   })
 
-  it('two companies named \'GS Foods\' (the real name) → nothing changes, no marker', async () => {
+  it('two companies named \'GS Foods\' (the real name) → nothing moves; each is flagged once for the CEO and the run stops (owner 2026-10-17)', async () => {
     for (const n of [1, 2]) gsTwins.push((await prisma.tenant.create({ data: { name: 'GS Foods', slug: `${P}-gs${n}` } })).id)
-    const r = await assignCompanylessSuppliers({ markerKey: `${MARKER}.two`, supplierIds: ours() })
+    const orphan = (await prisma.supplier.create({ data: { name: `${P} orphan` } })).id
+    const r = await assignCompanylessSuppliers({ markerKey: `${MARKER}.two`, supplierIds: [orphan], homeTenantId: V })
     expect(r.status).toBe('no_target')
     expect(r.targetCount).toBeGreaterThanOrEqual(2)
-    expect(await prisma.supplier.count({ where: { id: { in: ours() }, tenantId: null } })).toBe(6)
-    expect(await prisma.setting.findUnique({ where: { key: `${MARKER}.two` } })).toBeNull()
+    expect((await prisma.supplier.findUniqueOrThrow({ where: { id: orphan } })).tenantId).toBeNull()
+    expect(await prisma.setting.findUnique({ where: { key: `${MARKER}.two` } })).not.toBeNull()
+    const flags = await prisma.exceptionFlag.findMany({ where: { kind: SUPPLIER_UNASSIGNED_KIND, entityId: orphan } })
+    expect(flags.map((f) => [f.tenantId, f.status])).toEqual([[V, 'open']])
+    // The marker stops later boots: no second flag.
+    expect((await assignCompanylessSuppliers({ markerKey: `${MARKER}.two`, supplierIds: [orphan], homeTenantId: V })).status).toBe('already')
+    expect(await prisma.exceptionFlag.count({ where: { kind: SUPPLIER_UNASSIGNED_KIND, entityId: orphan } })).toBe(1)
   })
 
   it('a head office of the same name does not count as a second target', async () => {

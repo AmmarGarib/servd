@@ -57,6 +57,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
 import { flagException } from '../../lib/exceptions.js'
 import { syncOpeningBalanceOrFlag } from './openingBalance.js'
+import { primaryTenantId } from '../../lib/setup-config.js'
 
 export const COMPANYLESS_SUPPLIERS_MARKER = 'procurement.companylessSuppliersAssignedAt'
 export const COMPANYLESS_SUPPLIERS_TARGET = 'GS Foods'
@@ -173,7 +174,7 @@ async function otherCompanies(tx: Tx, supplierId: string, target: string, doc: D
  * The one-time assignment. `opts` exist for tests only (an isolated target
  * name / marker / supplier set in a shared test database); boot passes none.
  */
-export async function assignCompanylessSuppliers(opts: { targetName?: string; markerKey?: string; supplierIds?: string[] } = {}): Promise<AssignResult> {
+export async function assignCompanylessSuppliers(opts: { targetName?: string; markerKey?: string; supplierIds?: string[]; homeTenantId?: string } = {}): Promise<AssignResult> {
   const markerKey = opts.markerKey ?? COMPANYLESS_SUPPLIERS_MARKER
   const targetName = opts.targetName ?? COMPANYLESS_SUPPLIERS_TARGET
   if (await prisma.setting.findUnique({ where: { key: markerKey } })) return { status: 'already', assigned: [], skipped: [] }
@@ -183,7 +184,38 @@ export async function assignCompanylessSuppliers(opts: { targetName?: string; ma
     select: { id: true },
   })
   if (targets.length !== 1) {
-    console.warn(`[suppliers] company-less supplier assignment not run: ${targets.length} target companies found (expected exactly one) — nothing changed`)
+    // No exact 'GS Foods' (owner, 2026-10-17: "Mark that supplier as flagged,
+    // will assign the details myself"): nothing moves; each company-less
+    // supplier is flagged once for the CEO (in the primary company — the CEO
+    // sees every company's flags), and the marker is written so later boots
+    // leave it alone. The supplier editor resolves the flag on assignment.
+    console.warn(`[suppliers] company-less supplier assignment not run: ${targets.length} target companies found (expected exactly one) — flagged for the CEO`)
+    const home = opts.homeTenantId ?? (opts.targetName ? null : await primaryTenantId())
+    if (!home) return { status: 'no_target', targetCount: targets.length, assigned: [], skipped: [] }
+    const left = await prisma.supplier.findMany({
+      where: { tenantId: null, ...(opts.supplierIds ? { id: { in: opts.supplierIds } } : {}) },
+      select: { id: true, name: true },
+    })
+    for (const s of left) {
+      const open = await prisma.exceptionFlag.findFirst({
+        where: { kind: SUPPLIER_UNASSIGNED_KIND, entityType: 'Supplier', entityId: s.id, status: { in: ['open', 'acknowledged'] } },
+        select: { id: true },
+      })
+      if (open) continue
+      await prisma.exceptionFlag.create({
+        data: {
+          tenantId: home,
+          kind: SUPPLIER_UNASSIGNED_KIND,
+          severity: 'medium',
+          title: `Supplier ${s.name} still has no company`,
+          description: 'The CEO assigns its company by hand in Procurement → Suppliers (owner, 2026-10-17).',
+          entityType: 'Supplier',
+          entityId: s.id,
+          metadata: { reason: 'no_target' },
+        },
+      })
+    }
+    await prisma.setting.upsert({ where: { key: markerKey }, create: { key: markerKey, value: new Date().toISOString() }, update: {} })
     return { status: 'no_target', targetCount: targets.length, assigned: [], skipped: [] }
   }
   const target = targets[0]!.id
