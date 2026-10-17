@@ -1979,6 +1979,11 @@ model TipPool {
   totalTipsCents Int           @default(0)
   status         TipPoolStatus @default(draft)
   postedAt       DateTime?
+  // Who posted (approved) the pool — set in the same write that flips it to
+  // 'posted' (migration 20261017150000). Finance may pay a pool only when the
+  // CEO (role admin) posted it (owner, 2026-10-17). Null on pools posted
+  // before the column existed: finance is refused, the approvers pay.
+  postedById     String?
   paidAt         DateTime?
   createdById    String?
   createdAt      DateTime      @default(now())
