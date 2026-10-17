@@ -242,15 +242,16 @@ function NavLinks({
     return g.sections.some((s) => s.items.some((i) => isActive(pathname, i.href) || i.children?.some((c) => isActive(pathname, c.href))))
   }
   const activeGroupId = groups.find(groupHasActive)?.id
-  const openId = picked && groups.some((g) => g.id === picked) ? picked : (activeGroupId ?? groups[0]?.id)
+  // picked '' = the user closed the open section (owner 2026-10-17: a click on
+  // an open section closes it; nothing has to be opened to close another).
+  const openId = picked === '' ? null : picked && groups.some((g) => g.id === picked) ? picked : (activeGroupId ?? groups[0]?.id)
   useEffect(() => { if (activeGroupId) setPicked(null) }, [pathname, activeGroupId])
   function isOpen(g: NavGroup, _index: number): boolean {
     return g.id === openId
   }
   function toggleGroup(g: NavGroup, _index: number) {
-    // Clicking the open section keeps it open (an accordion always has one);
-    // clicking another one switches.
-    setPicked(g.id)
+    // Clicking the open section closes it; clicking another one switches.
+    setPicked(g.id === openId ? '' : g.id)
   }
 
   // Expanded parents (child reveal) — also persisted
@@ -398,7 +399,7 @@ function NavLinks({
               <div className="flex items-center gap-1 px-2.5 pb-1">
                 <button onClick={() => toggleGroup(g, index)}
                   className="flex items-center gap-1.5 flex-1 min-w-0 rounded-md px-1.5 py-1 text-left hover:bg-white/[0.03]"
-                  title={open ? `${g.title} is open` : `Open ${g.title}`} aria-expanded={open}>
+                  title={open ? `Close ${g.title}` : `Open ${g.title}`} aria-expanded={open}>
                   <span className="transition-transform duration-150"
                     style={{ color: 'rgb(var(--fg-rgb) / 0.3)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
                   <span className="text-[10.5px] font-black uppercase tracking-[0.2em] truncate"

@@ -59,6 +59,14 @@ export function readLensTenant(): string | null {
 
 let _refreshing: Promise<string | null> | null = null
 
+/** The refresh could not be TRIED (rate limit, server restarting, network) —
+ *  the session may well be fine, so the caller must not sign anyone out. */
+export class RefreshUnavailableError extends ApiError {
+  constructor(status: number) {
+    super(status, 'SESSION_CHECK_UNAVAILABLE', 'servd is busy — please try again in a moment.')
+  }
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   if (_refreshing) return _refreshing
   _refreshing = (async () => {
@@ -66,13 +74,23 @@ async function refreshAccessToken(): Promise<string | null> {
       // refreshToken may be null after a reload (we no longer persist it) — the
       // httpOnly refresh cookie carries it, so always attempt the refresh.
       const refreshToken = getRefreshToken()
-      const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
-      })
-      if (!res.ok) return null
+      let res: Response
+      try {
+        res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+        })
+      } catch {
+        throw new RefreshUnavailableError(0)   // offline / network blip
+      }
+      // Only "your session is over" (401 / 403) signs the person out. A 429,
+      // a 5xx during a release or a proxy error says nothing about the
+      // session (owner 2026-10-17: staff were being sent to sign in while
+      // moving between pages).
+      if (res.status === 401 || res.status === 403) return null
+      if (!res.ok) throw new RefreshUnavailableError(res.status)
       const data = (await res.json()) as { accessToken?: string }
       // Mirror the rotated token into memory for the WS handshake. The cookie is
       // the real credential; return a sentinel so the request retries even when

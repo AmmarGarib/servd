@@ -9,6 +9,7 @@ import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
+import { rateLimitSubject } from './lib/rateLimitKey.js'
 import { isInternalRequest } from './lib/internalRequest.js'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
@@ -305,12 +306,22 @@ async function build() {
     // The storefront's server-side renders (private network, no forwarding
     // headers) are not visitors; see lib/internalRequest.ts.
     allowList: (req) => isInternalRequest(req),
+    // This runs at onRequest, BEFORE requireAuth sets req.staffUser — so the
+    // per-person key above never applied and a whole office behind one
+    // internet connection shared 200/min. A page opens with 15–20 calls, a few
+    // staff navigating used it up, /auth/refresh got a 429 and the admin signed
+    // everyone out (owner, 2026-10-17). The key now comes from the caller's own
+    // token (Bearer, else the session / refresh cookie), signature VERIFIED —
+    // an unsigned or forged token can never pick someone else's bucket.
+    // Expiry is ignored for bucketing only (an expired access token still names
+    // its own person on the way to /auth/refresh); auth itself is unchanged.
     keyGenerator: (req) => {
       const staffId = req.staffUser?.id
       const customerId = req.customer?.id
       if (staffId) return `staff:${staffId}`
       if (customerId) return `customer:${customerId}`
-      return `ip:${req.ip}`
+      const sub = rateLimitSubject(req)
+      return sub ? `sub:${sub}` : `ip:${req.ip}`
     },
   })
 
