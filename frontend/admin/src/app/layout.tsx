@@ -41,7 +41,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             standard mobile-web-app-capable too. Adding it here suppresses
             the console warning without removing Apple's variant. */}
         <meta name="mobile-web-app-capable" content="yes" />
-        <script dangerouslySetInnerHTML={{ __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}` }} />
+        {/* The old address (owner 2026-10-17: the API refuses it, so every
+            call failed as "couldn't reach the API"). middleware.ts redirects it
+            too, but only when the tunnel passes the original host; this runs
+            in the browser whatever the server saw. Exact host only — the
+            practice copy (servd-practice.garibsons.app) stays where it is. */}
+        <script dangerouslySetInnerHTML={{ __html: `if(location.hostname==='admin.garibsons.app'){location.replace('https://admin.servd.pk'+location.pathname+location.search+location.hash)}else if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}` }} />
       </head>
       <body className="bg-s-bg text-s-text antialiased">
         <NextIntlClientProvider locale={locale} messages={MESSAGES[locale]}>
