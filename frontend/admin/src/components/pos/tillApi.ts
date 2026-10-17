@@ -732,7 +732,8 @@ export function cancelledCardRefundOffer(input: {
   terminalEnabled: boolean
 }): CardRefundOffer | null {
   if (!input.terminalEnabled) return null
-  if (input.status !== 'cancelled' && input.status !== 'rejected') return null
+  // A cancelled / rejected ticket's hand-back, or a credit-noted ('refunded') bill's owed-back pay-out (S-1).
+  if (input.status !== 'cancelled' && input.status !== 'rejected' && input.status !== 'refunded') return null
   const receipts = input.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && p.method !== 'comp'
     && (p.status === 'paid' || (p.status === 'pending' && (p.method === 'card' || p.method === 'keenu_qr') && !!p.gatewayRef)))
   const refunds = input.payments.filter((p) => p.status === 'refunded' && p.amountCents < 0)

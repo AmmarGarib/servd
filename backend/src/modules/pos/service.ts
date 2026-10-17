@@ -2964,11 +2964,17 @@ export async function assertRefundAllowed(input: {
   // Card refunds in flight on the machine (inFlightTerminalRefundCents) — the
   // caller counts them under its order lock and passes them in.
   const inFlight = Math.max(0, input.extraInFlightCents ?? 0)
+  const owed = order.status === 'refunded' ? await creditNoteOwedTx(prisma, input.tenantId, order.id) : null
   if (order.status === 'cancelled' || order.status === 'rejected') {
     // LEDGER-R5: a cancelled / rejected ticket was never a sale — what may go
     // back is what it still owes back (refundDueOnCancelledTicket's own check),
     // by the tender that took it, less what is already on its way back.
     assertRefundDue(withInFlightDue(refundDueOf(order), inFlight), input.amountCents, input.method)
+  } else if (owed) {
+    // S-1: a credit-noted bill — what its credit note still owes back (less
+    // pay-outs made and card refunds on their way back), by the bill's tender
+    // (payOutCreditNote's own check).
+    assertCreditNoteDue(creditNoteDueOf(order.payments, order.source, owed, inFlight), input.amountCents, input.method)
   } else {
     assertRefundableStatus(order.status)
     assertRefundable(withInFlight(refundableOf(order.payments, order.source), inFlight), input.amountCents, input.method)
@@ -3617,23 +3623,28 @@ function creditNoteDueOf(
   payments: Array<Pick<Payment, 'method' | 'status' | 'amountCents' | 'processedAt' | 'createdAt' | 'gatewayMeta'>>,
   source: string,
   owed: { creditNoteId: string; owedCents: number },
+  /** Card refunds on their way back through the card machine, not booked yet (inFlightTerminalRefundCents). */
+  inFlightCardCents = 0,
 ) {
   const paidOut = payments.filter((p) => p.status === 'refunded' && p.amountCents < 0 && creditNotePayoutOf(p) === owed.creditNoteId)
   const paidOutCents = paidOut.reduce((t, p) => t + Math.abs(p.amountCents), 0)
   // Per tender: what the bill took that way less every refund row that way (sale
   // refunds before the credit note, pay-outs after) — the money goes back the way it came.
   const state = refundableOf(payments, source)
+  const inFlight = Math.max(0, inFlightCardCents)
+  const byMethod = new Map(state.byMethod)
+  if (inFlight > 0) byMethod.set('card', (byMethod.get('card') ?? 0) - inFlight)
   return {
-    due: owed.owedCents - paidOutCents,
+    due: owed.owedCents - paidOutCents - inFlight,
     paidOutCents,
-    byMethod: state.byMethod,
+    byMethod,
     tenders: state.tenders.filter((m) => m !== 'on_account'),
     latestMethod: state.latestMethod,
   }
 }
 
 function assertCreditNoteDue(state: ReturnType<typeof creditNoteDueOf>, amountCents: number, method: RefundMethod): void {
-  if (state.due <= 0) throw new AppError('NOTHING_TO_REFUND', 'Everything this credit note owed back has been paid out', 422)
+  if (state.due <= 0) throw new AppError('NOTHING_TO_REFUND', 'Everything this credit note owed back has been paid out (or is on its way back to the card)', 422)
   if (amountCents > state.due) {
     throw new AppError('REFUND_EXCEEDS_DUE', `Pay-out of ${amountCents} exceeds the ${state.due} still owed back on this credit note`, 422)
   }
@@ -3655,10 +3666,16 @@ async function payOutCreditNote(
 ) {
   const pre = await creditNoteOwedTx(prisma, tenantId, input.orderId)
   if (!pre) throw new AppError('ALREADY_REFUNDED', 'This order has been refunded in full', 409)
-  const preState = creditNoteDueOf(order.payments, order.source, pre)
+  // A card refund on its way back through the card machine (not booked yet) is
+  // money already promised back; the machine refund being booked right now
+  // (input.terminalChargeId) is not counted against itself.
+  const preState = creditNoteDueOf(order.payments, order.source, pre,
+    await inFlightTerminalRefundCents(prisma, input.orderId, { exceptChargeId: input.terminalChargeId }))
   const method: RefundMethod = input.method ?? preState.latestMethod ?? 'cash'
   // Fast refusals before anyone is asked for a PIN; re-checked under the lock.
-  assertCreditNoteDue(preState, input.amountCents, method)
+  // (A machine refund being booked was checked before the machine moved the
+  // money — assertRefundAllowed; its own replay is answered under the lock.)
+  if (!input.terminalChargeId) assertCreditNoteDue(preState, input.amountCents, method)
   const isRaast = method === 'raast'
   const raastOut = isRaast
     ? cleanRaastRef(input.gatewayRef, { orderId: input.orderId, rule: await raastRefRule(tenantId), missing: raastRefundRefRequired })
@@ -3681,13 +3698,22 @@ async function payOutCreditNote(
       )
   const shiftId = await refundDrawerOf(input, tenantId, method)
 
-  const { refundPayment, entryId, state, owed } = await prisma.$transaction(async (tx) => {
+  const booked = await prisma.$transaction(async (tx) => {
     if (isRaast) await lockRaastTx(tx, tenantId)
     await lockOrderTx(tx, input.orderId)
     const owed = await creditNoteOwedTx(tx, tenantId, input.orderId)
     if (!owed) throw new AppError('ALREADY_REFUNDED', 'This order has been refunded in full', 409)
     const current = await tx.order.findUniqueOrThrow({ where: { id: input.orderId }, select: { source: true, payments: true } })
-    const state = creditNoteDueOf(current.payments, current.source, owed)
+    // Exactly once per machine refund: a second booking of the same card
+    // refund (a duplicate confirmation, a lease that lapsed mid-commit) finds
+    // the first one's row and returns it — never a second pay-out.
+    if (input.terminalChargeId) {
+      const already = current.payments.find((p) => p.status === 'refunded' && p.amountCents < 0
+        && (p.gatewayMeta as { terminalChargeId?: unknown } | null)?.terminalChargeId === input.terminalChargeId)
+      if (already) return { replay: already, owed, state: creditNoteDueOf(current.payments, current.source, owed) }
+    }
+    const inFlight = await inFlightTerminalRefundCents(tx, input.orderId, { exceptChargeId: input.terminalChargeId })
+    const state = creditNoteDueOf(current.payments, current.source, owed, inFlight)
     assertCreditNoteDue(state, input.amountCents, method)
     const raastSource = isRaast ? await chooseRaastRefundSourceTx(tx, input.orderId, input.amountCents) : null
     const { payment: refundPayment, entryId } = await writeRefundTx(tx, {
@@ -3697,9 +3723,15 @@ async function payOutCreditNote(
       raast: raastSource,
     })
     // No fiscal document: the credit note filed the sale's return.
-    return { refundPayment, entryId, state, owed }
+    return { replay: null, refundPayment, entryId, state, owed }
   }, { maxWait: 10_000, timeout: 15_000 })
 
+  if (booked.replay) {
+    // The machine refund was booked already: the same row, nothing new.
+    const entry = await prisma.journalEntry.findFirst({ where: { tenantId, reference: `order.refund:${booked.replay.id}` }, select: { id: true } })
+    return { ...booked.replay, entryId: entry?.id ?? null, orderRefunded: false, fiscalRefund: null, srbReturnInvoiceNo: null, owedBackLeftCents: Math.max(0, booked.state.due) }
+  }
+  const { refundPayment, entryId, state, owed } = booked
   const owedBackLeftCents = state.due - input.amountCents
   await audit({ category: 'identity',
     action: 'order_credit_note_payout',
@@ -3712,6 +3744,7 @@ async function payOutCreditNote(
     metadata: {
       amountCents: input.amountCents, method, shiftId, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, entryId,
       creditNoteId: owed.creditNoteId, invoiceNumber: owed.invoiceNumber,
+      ...(input.terminalChargeId && { terminalChargeId: input.terminalChargeId }),
       ...(raastOut && { raast: { outgoingRef: raastOut.ref, ...raastMetaOf(refundPayment.gatewayMeta) } }),
     },
   })

@@ -731,8 +731,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   memo REFUND DUE) — never cash/card; one `void:<orderId>` fiscal refund; the
   order goes `refunded`. The till pays it out through `refundOrder`
   (`payOutCreditNote`: Dr till clearing / Cr the tender, no fiscal document,
-  rows marked `gatewayMeta.refund.creditNoteId`, never revenue). Not yet: a
-  card-machine payout of it. 422 `CASH_NOT_PAID_IN` (COD still with a rider),
+  rows marked `gatewayMeta.refund.creditNoteId`, never revenue) or on the
+  card machine (`POST /pos/terminal/refunds`; `assertRefundAllowed` admits a
+  `refunded` order only while its credit note still owes back — minus pay-outs
+  and in-flight machine refunds; booked on confirmation as the same hand-back
+  Dr till clearing / Cr 1030, once per `terminalChargeId`). 422 `CASH_NOT_PAID_IN` (COD still with a rider),
   `ON_ACCOUNT_USE_REFUND`; second credit note 409 `CREDIT_NOTE_EXISTS`.
 - **Manager-only voids:** every item void and every whole-order cancel/void
   of a rung-up order needs a manager — the manager's own login or a valid

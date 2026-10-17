@@ -259,8 +259,16 @@ function isDrawerReceipt(p: OrderPayment): boolean {
   return p.status === 'paid' || (p.status === 'pending' && (p.method === 'card' || p.method === 'keenu_qr') && !!p.gatewayRef)
 }
 
+// A bill credited in full by a credit note with no money handed over (S-1,
+// owner 2026-10-17: "Allow it, owed back") is 'refunded' while the guest is
+// still owed the money: the same rule — drawer receipts less what was handed
+// back — gives what is still owed. The server pays it out against the credit
+// note (pos/service payOutCreditNote: Dr till clearing / Cr the tender, card
+// machine included) and re-checks it under the order lock.
+const OWED_BACK_STATUSES = new Set(['cancelled', 'rejected', 'refunded'])
+
 function moneyTakenOf(order: OrderDetail): { dueCents: number; byTender: Array<{ method: HandBackTender; leftCents: number }>; latest: HandBackTender | null } {
-  if (!ENDED.has(order.status)) return { dueCents: 0, byTender: [], latest: null }
+  if (!OWED_BACK_STATUSES.has(order.status)) return { dueCents: 0, byTender: [], latest: null }
   const receipts = order.payments.filter(isDrawerReceipt)
   const refunds = order.payments.filter((p) => p.status === 'refunded' && p.amountCents < 0)
   const taken = receipts.reduce((t, p) => t + p.amountCents, 0)
@@ -443,7 +451,8 @@ function MoneyTakenModal({
       if (charge.status === 'needs_attention') setMachineStuck(true)
       if (charge.status !== 'recorded') return // declined / not completed / needs attention: the progress line says why
       const left = Math.max(0, taken.dueCents - charge.amountCents)
-      onDone(`Refunded ${fmtPkr(charge.amountCents)} to the card on ${charge.terminalLabel} and booked — nothing goes to the fiscal POS, the ticket was never a sale. ${left > 0 ? `${fmtPkr(left)} is still owed back on this ticket.` : 'Nothing more is owed back on this ticket.'}`)
+      const why = order.status === 'refunded' ? 'the credit note already filed the return' : 'the ticket was never a sale'
+      onDone(`Refunded ${fmtPkr(charge.amountCents)} to the card on ${charge.terminalLabel} and booked — nothing goes to the fiscal POS, ${why}. ${left > 0 ? `${fmtPkr(left)} is still owed back on this ticket.` : 'Nothing more is owed back on this ticket.'}`)
       onClose()
     },
     onSettled: () => {
@@ -497,8 +506,11 @@ function MoneyTakenModal({
       <form id="due-refund-form" className="space-y-4" onSubmit={(e) => { e.preventDefault(); submitHandBack() }}>
         <div>
           <p className="text-xs text-s-muted">
-            This ticket was {order.status} after the till took {fmtPkr(taken.dueCents)}. It was never a sale: the refund is booked
-            against the money held for it, and nothing goes to the fiscal POS.
+            {order.status === 'refunded'
+              ? <>This bill was credited in full by a credit note and the guest is still owed {fmtPkr(taken.dueCents)}. The refund is booked
+                against the amount the credit note holds for the guest; the credit note already filed the return, so nothing more goes to the fiscal POS.</>
+              : <>This ticket was {order.status} after the till took {fmtPkr(taken.dueCents)}. It was never a sale: the refund is booked
+                against the money held for it, and nothing goes to the fiscal POS.</>}
           </p>
         </div>
 
@@ -1042,7 +1054,7 @@ export default function OrderDetailPage() {
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-s-amber/40 bg-s-amber-dim px-3 py-2 text-sm" role="status">
             <span className="text-s-text">
               Money taken: <strong className="font-mono">{fmtPkr(moneyTaken.dueCents)}</strong>
-              <span className="text-s-muted"> — this ticket was {order.status}; the guest is owed it back.</span>
+              <span className="text-s-muted"> — {order.status === 'refunded' ? 'credited by a credit note' : `this ticket was ${order.status}`}; the guest is owed it back.</span>
             </span>
             <button onClick={() => setHandBackOpen(true)}
               className="ml-auto rounded-lg border border-s-red/40 bg-s-red/10 px-3 py-1.5 text-xs font-semibold text-s-red hover:bg-s-red/20">

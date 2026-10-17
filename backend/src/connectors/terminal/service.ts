@@ -946,9 +946,15 @@ export interface StartRefundInput { paymentId: string; amountCents: number; term
  * cancelled / rejected after the till took the card (LEDGER-R5: only up to
  * what it still owes back, booked as the hand-back — never a sale refund, and
  * nothing goes to the fiscal POS, since a ticket cancelled before the full &
- * final bill never filed a sale). Anything else is refused NOT_REFUNDABLE.
+ * final bill never filed a sale), and a bill credited in full by a credit note
+ * with the money still owed back (S-1, owner 2026-10-17: "add card machine
+ * payout for credit notes"): assertRefundAllowed admits a 'refunded' order
+ * only while its credit note still owes back by card (else ALREADY_REFUNDED),
+ * and the booking is the credit note's pay-out (pos/service payOutCreditNote:
+ * Dr till clearing / Cr 1030, no fiscal document). Anything else is refused
+ * NOT_REFUNDABLE.
  */
-const CARD_REFUNDABLE_ORDER: ReadonlySet<string> = new Set(['completed', 'cancelled', 'rejected'])
+const CARD_REFUNDABLE_ORDER: ReadonlySet<string> = new Set(['completed', 'cancelled', 'rejected', 'refunded'])
 function assertCardRefundableOrder(status: string): void {
   if (!CARD_REFUNDABLE_ORDER.has(status)) throw new AppError('NOT_REFUNDABLE', `A ${status} order cannot be refunded`, 409)
 }
