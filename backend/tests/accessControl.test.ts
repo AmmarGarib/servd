@@ -222,8 +222,10 @@ describe('module defaults after the CEO section (D2) and the approvals inbox (D3
 // ── One role list ────────────────────────────────────────────────────────────
 
 describe('role list (lib/roles.ts)', () => {
-  it('every enum role can still sign in — ALL_STAFF is the enum', () => {
-    expect([...ALL_STAFF].sort()).toEqual([...roles.ALL_ROLES].sort())
+  it('every enum role can still sign in — ALL_STAFF is the enum minus director (owner, 2026-10-18)', () => {
+    // A director login is admitted only where a route names it (directorRole.test.ts).
+    expect([...ALL_STAFF].sort()).toEqual(roles.ALL_ROLES.filter((r) => r !== 'director').sort())
+    expect(ALL_STAFF).not.toContain('director')
     for (const r of ['admin', 'owner', 'manager', 'fnb_manager', 'brand_manager', 'hr', 'cashier']) {
       expect(ALL_STAFF).toContain(r)
     }

@@ -94,6 +94,7 @@ import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
 import foodCostRoutes from './modules/reports/foodCostRoutes.js'
+import { directorRoutes } from './modules/director/routes.js'
 import { managementRoutes } from './modules/management/routes.js'
 import { trackingRoutes } from './modules/tracking/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
@@ -426,6 +427,8 @@ async function build() {
       // food_cost (accounting may read it) in moduleAccess.ts.
       await api.register(foodCostRoutes, { prefix: '/reports/food-cost' })
       await api.register(reportRoutes, { prefix: '/reports' })
+      // Director logins (owner, 2026-10-18): the read-only brand view.
+      await api.register(directorRoutes, { prefix: '/director' })
       await api.register(managementRoutes, { prefix: '/management' })
       await api.register(accountingRoutes, { prefix: '/accounting' })
       // Finance wave B (2026-10-14), all under the '/accounting' module gate:

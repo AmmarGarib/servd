@@ -62,6 +62,8 @@ interface StaffUser {
   payroll?: { employeeId: string; status: string; tenantId: string } | null
   // Floor roles sign in with a code to their phone, not a password (server's list).
   usesCodeLogin?: boolean
+  // Director logins (owner, 2026-10-18): the brands they may see, read-only.
+  directorConceptIds?: string[]
 }
 
 // Categories whose roles sign in with a code sent to their phone — so a new
@@ -147,7 +149,60 @@ const CATEGORIES: Category[] = [
     blurb: 'IT / developer — integrations, the user audit log, notifications, help.',
     roles: ['it'],
   },
+  // Owner, 2026-10-18: brand partners (Yusuf and Ali, Flipd) — read-only
+  // figures for the brands picked on their login. Only the CEO adds them.
+  {
+    key: 'directors',
+    label: 'Directors',
+    emoji: '',
+    blurb: 'Brand partners — see how their brand is doing (sales, P&L, food cost, reviews), read-only. CEO only.',
+    roles: ['director'],
+  },
 ]
+
+/**
+ * The brands a director login may be given: every live brand of the CEO's
+ * companies (GET /director/brands answers the CEO with exactly that list).
+ */
+function DirectorBrandPicker({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
+  const { data, isLoading } = useQuery<{ brands: Array<{ id: string; name: string }> }>({
+    queryKey: ['director', 'brands'],
+    queryFn: () => api.get('/director/brands'),
+    staleTime: 60_000,
+  })
+  const brands = data?.brands ?? []
+  function toggle(id: string) {
+    onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id])
+  }
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
+          Brands they may see <span className="text-red-700">*</span>
+        </span>
+        <span className="text-[10px] text-s-muted/70">Read-only. Nothing about any other brand.</span>
+      </div>
+      <div className="flex flex-wrap gap-2 rounded-lg border border-s-border bg-s-bg p-2">
+        {isLoading && <span className="text-xs text-s-muted">Loading brands…</span>}
+        {!isLoading && brands.length === 0 && <span className="text-xs text-s-muted">No brands in your companies.</span>}
+        {brands.map((b) => {
+          const checked = value.includes(b.id)
+          return (
+            <button key={b.id} type="button" onClick={() => toggle(b.id)} aria-pressed={checked}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
+                checked
+                  ? 'bg-accent-dim text-success border border-accent'
+                  : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
+              }`}>
+              <span>{checked ? '✓' : '+'}</span>
+              <span>{b.name}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: string; bg: string }> = {
   active:    { label: 'Active',    color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.18)' },
@@ -702,6 +757,11 @@ function InlineEditor({
   // assign stations to anyone (not just kitchen) so an FOH manager can
   // open Kitchen view scoped to one brand's stations if they want.
   const [stationIds, setStationIds] = useState<string[]>(user.stationIds ?? [])
+  // Director logins (owner, 2026-10-18): the brands they may see. Their
+  // companies follow the brands (the API sets them), so the company, PIN and
+  // station pickers are not shown for a director.
+  const [directorBrands, setDirectorBrands] = useState<string[]>(user.directorConceptIds ?? [])
+  const isDirectorRow = role === 'director'
 
   function toggleTenant(id: string) {
     setTenantIds((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id])
@@ -754,17 +814,23 @@ function InlineEditor({
       if (phone.trim() !== (user.phone ?? '')) patch.phone = phone.trim()
       if (jobTitle.trim() !== (user.jobTitle ?? '')) patch.jobTitle = jobTitle.trim()
       if (role !== user.role) patch.role = role
-      if (tenantId && tenantId !== (user.tenantId ?? '')) patch.tenantId = tenantId
-      const existingIds = (user.tenants ?? []).map((t) => t.id).sort().join(',')
-      const nextIds = [...tenantIds].sort().join(',')
-      if (existingIds !== nextIds) patch.tenantIds = tenantIds
-      if (pin.trim()) patch.pin = pin.trim()
+      if (isDirectorRow) {
+        if (directorBrands.length === 0) throw new Error('Pick at least one brand this director may see.')
+        const before = (user.directorConceptIds ?? []).slice().sort().join(',')
+        if (role !== user.role || before !== directorBrands.slice().sort().join(',')) patch.directorConceptIds = directorBrands
+      } else {
+        if (tenantId && tenantId !== (user.tenantId ?? '')) patch.tenantId = tenantId
+        const existingIds = (user.tenants ?? []).map((t) => t.id).sort().join(',')
+        const nextIds = [...tenantIds].sort().join(',')
+        if (existingIds !== nextIds) patch.tenantIds = tenantIds
+        if (pin.trim()) patch.pin = pin.trim()
+      }
 
       // Station assignments — full replacement. Compare sorted-joined strings
       // so order-only diffs don't trigger a no-op PATCH.
       const existingStations = (user.stationIds ?? []).slice().sort().join(',')
       const nextStations     = stationIds.slice().sort().join(',')
-      if (existingStations !== nextStations) patch.stationIds = stationIds
+      if (!isDirectorRow && existingStations !== nextStations) patch.stationIds = stationIds
 
       if (Object.keys(patch).length > 0) {
         await api.patch(`/auth/users/${user.id}`, patch)
@@ -902,6 +968,11 @@ function InlineEditor({
             discount, void, comp, refund, petty-cash top-up or staff meal. Only
             the management tiers can approve with it. It is never derived from
             the phone number — the last four digits of a phone are public. */}
+        {isDirectorRow ? (
+          <div className="md:col-span-2">
+            <DirectorBrandPicker value={directorBrands} onChange={setDirectorBrands} />
+          </div>
+        ) : (<>
         <Field label="Override PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : '4–8 digits, not guessable.'}>
           <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
             maxLength={8} inputMode="numeric" autoComplete="off" name="override-pin" placeholder={user.hasPin ? '• • • •' : '4–8 digit PIN'}
@@ -952,6 +1023,7 @@ function InlineEditor({
             )}
           </div>
         )}
+        </>)}
       </div>
 
       {/* ── Station assignments ──────────────────────────────────────────
@@ -960,7 +1032,7 @@ function InlineEditor({
           the stations this cook actually works (Grill, Tandoor) so they
           land on a focused dashboard. Stations are grouped by concept so
           duplicate names across brands stay distinguishable. */}
-      {stationsByConcept.length > 0 && (
+      {!isDirectorRow && stationsByConcept.length > 0 && (
         <div className="rounded-lg border border-s-border bg-s-bg/60 p-3 space-y-2">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
@@ -1139,6 +1211,10 @@ function AddStaffModal({
     viewAll ? [] : (tenants[0] ? [tenants[0].id] : [])
   )
   const [err, setErr] = useState<string | null>(null)
+  // Director logins (owner, 2026-10-18): the CEO picks the brands; the API
+  // derives the director's companies from them.
+  const [directorBrands, setDirectorBrands] = useState<string[]>([])
+  const addingDirector = category === 'directors'
   /** HR: what happened to the login it just added. */
   const [hrDone, setHrDone] = useState<string | null>(null)
 
@@ -1183,8 +1259,12 @@ function AddStaffModal({
       ...(!practice && phone.trim() ? { phone: phone.trim() } : {}),
       role: primaryRole,
       ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
-      ...(primaryTenantId ? { tenantId: primaryTenantId } : {}),
-      ...(tenantIds.length > 0 ? { tenantIds } : {}),
+      ...(addingDirector
+        ? { directorConceptIds: directorBrands }
+        : {
+            ...(primaryTenantId ? { tenantId: primaryTenantId } : {}),
+            ...(tenantIds.length > 0 ? { tenantIds } : {}),
+          }),
     }),
     onSuccess: (created) => {
       // Hold the modal open on the password. Closing straight to the list —
@@ -1225,7 +1305,9 @@ function AddStaffModal({
       return setErr('Add their mobile number — till and kitchen staff sign in with a code sent to it.')
     }
     }
-    if (tenants.length > 0 && tenantIds.length === 0) return setErr('Pick at least one company this hire works for.')
+    if (addingDirector) {
+      if (directorBrands.length === 0) return setErr('Pick at least one brand this director may see.')
+    } else if (tenants.length > 0 && tenantIds.length === 0) return setErr('Pick at least one company this hire works for.')
     create.mutate()
   }
 
@@ -1308,7 +1390,10 @@ function AddStaffModal({
           {/* Multi-tenant picker. Head-office staff (procurement, finance,
               HR, marketing) typically work for every company — pick more than
               one and the first becomes their primary. */}
-          {!asHr && tenants.length > 1 && (
+          {!asHr && addingDirector && (
+            <DirectorBrandPicker value={directorBrands} onChange={setDirectorBrands} />
+          )}
+          {!asHr && !addingDirector && tenants.length > 1 && (
             <div>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
@@ -1343,7 +1428,7 @@ function AddStaffModal({
           )}
           <Field label={practice ? 'Role' : 'Category'}>
             <Select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-              {assignableCategories(assignable).filter((c) => !asHr || c.key !== 'owners').map((c) => (
+              {assignableCategories(assignable).filter((c) => !asHr || (c.key !== 'owners' && c.key !== 'directors')).map((c) => (
                 <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
               ))}
             </Select>

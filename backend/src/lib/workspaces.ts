@@ -16,7 +16,7 @@ import { ASSIGNABLE_ROLES, ASSIGNABLE_ROLES_WITH_ADMIN } from './roles.js'
 
 export interface WorkspaceSection { key: string; title: string; modules: string[] }
 export interface WorkspaceDef {
-  id: 'ceo' | 'operations' | 'finance' | 'marketing' | 'hr' | 'dev'
+  id: 'ceo' | 'operations' | 'finance' | 'marketing' | 'hr' | 'dev' | 'director'
   title: string
   /** Roles that OWN the workspace (run it, add people to it). */
   ownerRoles: UserRole[]
@@ -144,6 +144,20 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       { key: 'help',    title: 'Help',    modules: ['help'] },
     ],
   },
+  // Director (owner, 2026-10-18: "a new category of login, 'Director'. For
+  // Yusuf and Ali, partners in Flipd, to be able to see how business is
+  // doing"). A director's whole servd: their own brand(s), read-only. Owned by
+  // the CEO, who alone creates director logins and picks their brands
+  // (POST / PATCH /auth/users) and may preview the page.
+  {
+    id: 'director',
+    title: 'Director',
+    ownerRoles: ['admin'],
+    memberRoles: ['director'],
+    sections: [
+      { key: 'brand', title: 'Brand performance', modules: ['director_view'] },
+    ],
+  },
 ]
 
 /** Module ids deliberately in no workspace: retired, kept only so old rows parse. */
@@ -165,8 +179,13 @@ export const WORKSPACE_OF_MODULE: ReadonlyMap<string, WorkspaceDef['id']> = new 
 // manager / office logins wait for the CEO (auth/offboarding.ts activeAtOnce).
 const OPS_FLOOR: UserRole[] = ['foh', 'boh', 'kitchen', 'expediter', 'cashier', 'procurement']
 
+// Director logins (owner, 2026-10-18) are never INVITED — by anyone, the CEO
+// included: the CEO creates them on Workforce (POST /auth/users) with the
+// brands they may see, which an invite cannot carry.
+const NOT_INVITED: readonly UserRole[] = ['director']
+
 export const CHILD_ROLES: Readonly<Record<UserRole, readonly UserRole[]>> = {
-  admin:          ASSIGNABLE_ROLES_WITH_ADMIN,
+  admin:          ASSIGNABLE_ROLES_WITH_ADMIN.filter((r) => !NOT_INVITED.includes(r)),
   owner:          [],
   management:     ['fnb_manager', 'foh_management', 'boh_management', ...OPS_FLOOR],
   fnb_manager:    ['foh_management', 'boh_management', ...OPS_FLOOR],
@@ -174,10 +193,11 @@ export const CHILD_ROLES: Readonly<Record<UserRole, readonly UserRole[]>> = {
   foh_management: ['foh', 'cashier'],
   manager:        ['foh', 'cashier'],
   finance:        ['finance'],
-  hr:             ASSIGNABLE_ROLES.filter((r) => r !== 'owner'),
+  hr:             ASSIGNABLE_ROLES.filter((r) => r !== 'owner' && !NOT_INVITED.includes(r)),
   marketing:      ['marketing'],
   brand_manager:  ['marketing'],
   it:             [],
+  director:       [],
   foh: [], boh: [], kitchen: [], expediter: [], cashier: [], procurement: [],
 }
 

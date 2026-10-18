@@ -56,6 +56,7 @@ export function PersonModules({ userId }: { userId: string }) {
   if (isLoading) return <p className="text-xs text-s-muted">Loading what they can open…</p>
   if (error) return <p className="text-xs text-s-muted">{(error as Error).message}</p>
   if (!data) return null
+  if (data.locked && data.role === 'director') return <p className="text-xs text-s-muted">A director opens only the Director page, read-only, for the brands below — this cannot be changed.</p>
   if (data.locked) return <p className="text-xs text-s-muted">The CEO always has every module — this cannot be changed per person.</p>
 
   const changed = data.modules.filter((m) => !m.ceoOnly && ticks.has(m.id) !== preset.has(m.id)).length

@@ -114,11 +114,12 @@ describe('the registry (APPROVAL_RIGHTS is the one copy)', () => {
   })
 
   it('section ids derive from WORKSPACES: every workspace id, plus procurement (the buying module in Operations)', () => {
-    const workspaceIds = WORKSPACES.map((w) => w.id as string).sort()
+    // The Director workspace (owner, 2026-10-18) is read-only: no approvals.
+    const workspaceIds = WORKSPACES.map((w) => w.id as string).filter((id) => id !== 'director').sort()
     expect(R.APPROVAL_SECTIONS.filter((s) => s !== 'procurement').sort()).toEqual(workspaceIds)
     expect(WORKSPACE_OF_MODULE.get('procurement')).toBe('operations')
     expect(R.APPROVAL_SECTION_TITLES.procurement).toBe('Procurement')
-    for (const w of WORKSPACES) expect(R.APPROVAL_SECTION_TITLES[w.id as 'hr']).toBe(w.title)
+    for (const w of WORKSPACES.filter((x) => x.id !== 'director')) expect(R.APPROVAL_SECTION_TITLES[w.id as 'hr']).toBe(w.title)
     expect(R.DELEGABLE_SECTIONS).not.toContain('ceo')
   })
 

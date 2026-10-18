@@ -12,7 +12,8 @@ import { useTeam } from '../../hooks/useTeam'
 import { useMyWorkspaces, useHeadOfficeMe } from '../../hooks/useWorkspaces'
 import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
-import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath } from '../../lib/moduleCatalog'
+import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath, isDirector } from '../../lib/moduleCatalog'
+import { DirectorShell } from './DirectorShell'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { useDialog } from './Modal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
@@ -87,7 +88,7 @@ const UNGUARDED_PREFIXES = ['/login', '/kds/login', '/supplier', '/reset-passwor
 
 /** A workspace's home page: the CEO section has its own (/ceo, decision D2). */
 function wsHome(id: string): string {
-  return id === 'ceo' ? '/ceo' : `/w/${id}`
+  return id === 'ceo' ? '/ceo' : id === 'director' ? '/director' : `/w/${id}`
 }
 
 const PERSONAL_ICONS: Record<string, string> = {
@@ -689,6 +690,12 @@ function Shell({ children }: { children: React.ReactNode }) {
     } catch { /* ignore network errors — still sign out */ }
     clearAuth()
     router.replace('/login')
+  }
+
+  // Director logins (owner, 2026-10-18) get their own minimal shell: the
+  // Director page and their password, nothing else (lib/moduleCatalog.ts).
+  if (isDirector(user?.role) && !UNGUARDED_PREFIXES.some((p) => pathname.startsWith(p))) {
+    return <DirectorShell pathname={pathname}>{children}</DirectorShell>
   }
 
   const isFullScreen = FULL_SCREEN_PREFIXES.some((p) => pathname.startsWith(p))

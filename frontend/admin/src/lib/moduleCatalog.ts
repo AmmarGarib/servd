@@ -286,6 +286,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   audit_log:      [{ label: 'User audit log', href: '/configuration/audit-log', hint: 'Sign-ins and what each user did' }],
   notifications:  [{ label: 'Notifications', href: '/notifications', icon: 'bell' }],
   help:           [{ label: 'Help & support', href: '/help', icon: 'help' }],
+
+  // ── Director (owner, 2026-10-18): a brand partner's read-only view. Held by
+  // director logins (who see nothing else) and the CEO (who previews it).
+  director_view:  [{ label: 'Brand performance', href: '/director', icon: 'chart', hint: "A brand's sales, P&L, food cost, menu, reviews and complaints — read-only" }],
 }
 
 /** Pages open to every login, whatever their modules (the API scopes them). */
@@ -398,6 +402,14 @@ export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
   ...PERSONAL_PAGES.map((p) => p.href),
 ]
 
+/** The only pages a director login opens (owner, 2026-10-18). */
+export const DIRECTOR_OPEN_PREFIXES: readonly string[] = ['/director', '/account/password', '/login', '/reset-password']
+
+/** True for a director login (owner, 2026-10-18). */
+export function isDirector(role: string | null | undefined): boolean {
+  return role === 'director'
+}
+
 function underPrefix(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + '/')
 }
@@ -439,6 +451,9 @@ export function modulesForPath(pathname: string): ModuleId[] {
  */
 export function canOpenPath(pathname: string, role: string | undefined, modules: readonly string[]): boolean {
   if (role === 'admin') return true
+  // A director login opens the Director page and its own account page — never
+  // anything else, whatever is "always open" to staff (the API refuses it too).
+  if (role === 'director') return DIRECTOR_OPEN_PREFIXES.some((p) => underPrefix(pathname, p))
   if (ALWAYS_OPEN_PREFIXES.some((p) => underPrefix(pathname, p))) return true
   const need = modulesForPath(pathname)
   if (need.length === 0) return true

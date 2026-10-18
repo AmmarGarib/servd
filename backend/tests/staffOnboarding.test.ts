@@ -117,10 +117,12 @@ afterAll(async () => {
 })
 
 describe('HR onboards', () => {
-  it('HR may add every assignable role except the CEO and co-owner seats', () => {
-    expect([...CHILD_ROLES.hr].sort()).toEqual(ASSIGNABLE_ROLES.filter((r) => r !== 'owner').sort())
+  it('HR may add every assignable role except the CEO and co-owner seats and directors', () => {
+    // Directors are the CEO's only, made on Workforce with their brands (owner, 2026-10-18).
+    expect([...CHILD_ROLES.hr].sort()).toEqual(ASSIGNABLE_ROLES.filter((r) => r !== 'owner' && r !== 'director').sort())
     expect(CHILD_ROLES.hr).not.toContain('admin')
     expect(CHILD_ROLES.hr).not.toContain('owner')
+    expect(CHILD_ROLES.hr).not.toContain('director')
   })
 
   it('a cashier HR adds is active at once and linked to the employee (no CEO step)', async () => {

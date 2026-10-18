@@ -227,6 +227,12 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
       if (!u || u.deletedAt || !u.isActive || u.accountStatus !== 'active') {
         return next(new Error('UNAUTHORIZED'))
       }
+      // Director logins (owner, 2026-10-18) read their brand's figures through
+      // GET /director/* only — never the live company feeds (tenant, concept,
+      // station, till or reservation rooms). Refused at the handshake.
+      if (u.role === 'director') {
+        return next(new Error('UNAUTHORIZED'))
+      }
 
       const tenantIds = new Set<string>(memberships.map((m) => m.tenantId))
       if (u.tenantId) tenantIds.add(u.tenantId)

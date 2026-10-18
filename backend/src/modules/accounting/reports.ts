@@ -1046,6 +1046,11 @@ function brandRow(conceptId: string | null, name: string, m: BrandMeasure): Bran
   }
 }
 
+/** A brand's P&L row with nothing booked — what brandPnl leaves out of `brands` (it drops all-zero rows). */
+export function emptyBrandPnlRow(conceptId: string, name: string): BrandPnlRow {
+  return brandRow(conceptId, name, { revenue: 0, contra: 0, cogs: 0, opex: 0, labour: 0, other: 0, sales: 0, split: zeroSplit() })
+}
+
 /**
  * Per-brand P&L for `brands` (the brands in view, with display names) over
  * the companies in `tenantIds`. Lines tagged with a brand outside `brands`

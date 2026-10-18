@@ -319,7 +319,9 @@ describe('each role sees only the types it can approve', () => {
   })
 
   it('every listed type is one the registry says the role approves (or an HR step it holds)', async () => {
-    for (const role of ALL_ROLES) {
+    // A director (owner, 2026-10-18) approves nothing and is refused the inbox.
+    expect((await inbox('director')).statusCode).toBe(403)
+    for (const role of ALL_ROLES.filter((r) => r !== 'director')) {
       const body = (await inbox(role)).json() as Inbox
       for (const t of body.types) {
         const p = APPROVAL_PROVIDERS.find((x) => x.type === t.type)!

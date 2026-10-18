@@ -37,6 +37,22 @@ export const ASSIGNABLE_ROLES: readonly UserRole[] = ALL_ROLES.filter(
   (r) => r !== 'admin' && !LEGACY_ROLES.includes(r),
 )
 
+/**
+ * Director logins (owner, 2026-10-18): "a new category of login, 'Director'.
+ * For Yusuf and Ali, partners in Flipd, to be able to see how business is
+ * doing." Read-only, and only the brands on their login
+ * (User.directorConceptIds), through GET /director/*. The role is SECURE BY
+ * DEFAULT: the auth middleware refuses it on every route outside a short
+ * allow-list (auth/middleware.ts DIRECTOR_ROUTES), it is not in ALL_STAFF,
+ * no workspace owner but the CEO may add one (lib/workspaces.ts CHILD_ROLES),
+ * and its modules are fixed (lib/moduleAccess.ts DIRECTOR_MODULES).
+ */
+export const DIRECTOR_ROLE = 'director' as UserRole
+
+export function isDirectorRole(role: string | null | undefined): boolean {
+  return role === DIRECTOR_ROLE
+}
+
 /** ASSIGNABLE_ROLES plus `admin` — for the CEO-only staff editor. */
 export const ASSIGNABLE_ROLES_WITH_ADMIN: readonly UserRole[] = ['admin', ...ASSIGNABLE_ROLES] as UserRole[]
 

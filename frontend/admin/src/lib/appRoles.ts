@@ -36,6 +36,10 @@ export type AppRole =
   | 'finance'
   | 'hr'
   | 'it'                // IT / developer — owns the Dev workspace
+  // Director (owner, 2026-10-18): a brand partner — read-only figures for the
+  // brands on their login, on /director only. Deliberately NOT in APP_ROLES
+  // below: it has no preset to edit and no "view as" (its modules are fixed).
+  | 'director'
 
 export interface RoleMeta {
   value: AppRole
@@ -71,6 +75,7 @@ export function roleLabel(role: string | undefined | null): string {
   if (!role) return ''
   const meta = APP_ROLES.find((r) => r.value === role)
   if (meta) return meta.label
+  if (role === 'director') return 'Director'
   // Fallback: title-case the raw value
   return role.charAt(0).toUpperCase() + role.slice(1)
 }
@@ -102,6 +107,8 @@ export type ModuleId =
   | 'settings'  | 'notifications' | 'help' | 'configuration' | 'onboarding' | 'integrations'
   // Dev → API: the two connectors (spec §10)
   | 'api_whatsapp' | 'api_pos'
+  // Director → Brand performance (owner, 2026-10-18): director logins + the CEO.
+  | 'director_view'
 
 export interface ModuleMeta {
   id: ModuleId

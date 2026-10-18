@@ -85,6 +85,10 @@ enum UserRole {
   finance // P&L, payroll, accounting, reconciliation
   hr // staff records, attendance, payroll, scheduling
   it // IT / developer — the Dev workspace: integrations, backups, webhooks, user audit log
+  // director — a brand partner (owner, 2026-10-18: Yusuf and Ali, partners in
+  // Flipd). READ-ONLY, and only the brands in User.directorConceptIds, through
+  // GET /director/* — every other route refuses the role (auth/middleware.ts).
+  director
 }
 
 // Self-signed-up staff start as `pending` until the CEO approves them. Only
@@ -900,6 +904,11 @@ model User {
   // Empty = "not station-restricted" → admin / management / expediter see
   // every station via the existing /kds/stations endpoint.
   stationIds          String[]      @default([])
+  // Director logins (owner, 2026-10-18): the brands this director may see,
+  // read-only, through GET /director/*. Empty = sees nothing (never "all").
+  // Set only by the CEO; each id is a brand of one of the CEO's companies.
+  // Deliberately NOT `conceptIds` above (decision 35: no longer read).
+  directorConceptIds  String[]      @default([])
   // ─── Per-user permission + module overrides ─────────────────────────
   // The role gives a baseline (set in /configuration/roles for actions and
   // /configuration/role-modules for sidebar visibility). These four arrays

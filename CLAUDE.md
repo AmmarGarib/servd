@@ -297,6 +297,43 @@ module id must be placed in a workspace in the same change.
   `auth.2fa_failed`, `auth.logout`. The books' trail
   (`/accounting/audit-log`) stays CEO + management only.
 
+## Director logins (owner, 2026-10-18)
+
+"A new category of login, 'Director'. For Yusuf and Ali, partners in Flipd, to
+be able to see how business is doing." A director sees ONLY the brands on its
+login (`User.directorConceptIds`), everything for those brands, strictly
+read-only (CSV downloads OK). Migration `20261018100000_director_role`.
+
+- **Secure by default:** the auth middleware refuses role `director` on EVERY
+  route outside `DIRECTOR_ROUTES` (`auth/middleware.ts`: GET `/director/*`,
+  `/permissions/me`, `/auth/account`, refresh / logout / change password /
+  2FA) with 403 `DIRECTOR_READ_ONLY` — whatever the route's own role list says
+  (a bare `requireAuth()` included). `ALL_STAFF` excludes director
+  (`EVERY_LOGIN` = all roles, only for a login's own session routes); sockets
+  refuse it at the handshake. Never add director to a role list; a new
+  director screen is a GET under `/director` and nothing else.
+- **ONE API:** `GET /director/*` (`modules/director/`, `requireAuth('director',
+  'admin')` — the CEO previews any brand of their companies). The brand list
+  comes from the LOGIN, read live (`director/access.ts`), never the client: a
+  conceptId outside it is 404; no brands = empty, never everything. Every
+  figure reuses the existing function with the brand filter (sales
+  `reports/service.ts`, P&L `brandPnl` → the brand's own row only, food cost
+  `foodCostSummary`, menu `getMenuEngineering`); reviews / complaints select no
+  customer and mask phones / emails in free text. Nothing names another brand
+  or a company total.
+- **Modules fixed:** a director holds exactly `director_view` (Director
+  workspace, `lib/workspaces.ts`); no preset row, per-person tick or
+  moduleAllow changes it (`DIRECTOR_PRESET_FIXED` / `DIRECTOR_MODULES_FIXED`
+  422; HR 403 `PRESET_CEO_ONLY`); nobody else but the CEO holds it.
+- **Only the CEO makes one:** `POST /auth/users` / `PATCH /auth/users/:id`
+  with `directorConceptIds` (≥1, each a live brand of a company the CEO is a
+  member of — 422 `DIRECTOR_NEEDS_BRAND` / `BRAND_NOT_IN_COMPANY`); the
+  director's companies are exactly its brands' companies. Never invited (no
+  `CHILD_ROLES` entry has it); HR cannot reissue its password or send it a
+  reset link. Admin: Workforce → Directors (brand picker); a director lands on
+  `/director` in its own shell (`components/ui/DirectorShell.tsx`) and every
+  other page is refused (`canOpenPath`). Tests: `tests/directorRole.test.ts`.
+
 ## Storefront content module (2026-09-28, owner decision 41)
 
 **Admin → Storefront (`/storefront`) is the ONLY place storefront content is

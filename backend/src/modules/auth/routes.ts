@@ -19,7 +19,8 @@ import {
 } from './staffAccounts.js'
 import { maskPhoneForLog } from '../../lib/notify.js'
 import { PRACTICE_NOTE, practiceCodeField, sandboxBlocks, refuseCodeRequestInPractice, isSandbox } from '../../lib/sandbox.js'
-import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover } from '../../lib/roles.js'
+import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover, isDirectorRole } from '../../lib/roles.js'
+import { validateDirectorBrands } from '../director/access.js'
 import type { UserRole } from '@prisma/client'
 import { sendText, whatsappSettingsView, saveWhatsappSettings } from '../../lib/whatsapp.js'
 import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
@@ -27,7 +28,7 @@ import { requireModule } from '../notifications/requireModule.js'
 import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
 import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
 import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
-import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, usesOtpLogin, OTP_LOGIN_ROLES } from './middleware.js'
+import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, EVERY_LOGIN, usesOtpLogin, OTP_LOGIN_ROLES } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -606,7 +607,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   // Every OTHER session dies with the old password (applyPasswordChange); this
   // device gets a fresh session in the response, so the person who just proved
   // the password is not thrown out mid-task.
-  fastify.post('/password/change-authed', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+  fastify.post('/password/change-authed', { preHandler: requireAuth(...EVERY_LOGIN) }, async (req, reply) => {
     const body = passwordChangeSchema.extend({
       currentPassword: z.string().min(1).max(200),
     }).parse(req.body)
@@ -670,8 +671,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       await assertHrBackOffice(req)
       if (req.staffUser!.role !== 'admin') {
         const t = await findManagedStaff(req, req.params.id, { id: true, role: true })
-        if (t.role === 'admin' || t.role === 'owner') {
-          throw new AppError('REISSUE_CEO_ONLY', "Only the CEO can issue a new password for the CEO's or a co-owner's login.", 403)
+        // A director login (owner, 2026-10-18) is the CEO's alone: a password
+        // HR could read would open a brand's P&L to HR.
+        if (t.role === 'admin' || t.role === 'owner' || t.role === 'director') {
+          throw new AppError('REISSUE_CEO_ONLY', "Only the CEO can issue a new password for the CEO's, a co-owner's or a director's login.", 403)
         }
         if (t.id === req.staffUser!.id) throw new AppError('REISSUE_SELF', 'Use "Change password" for your own login.', 403)
         if (usesOtpLogin(t.role)) throw new AppError('NOT_A_PASSWORD_LOGIN', 'This login signs in with a WhatsApp code, not a password.', 400)
@@ -798,7 +801,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   // POST /auth/logout — revoke the caller's session. JWTs are stateless, so we
   // add the presented token (and refresh token, if sent) to the Redis deny
   // list for the remainder of their life. Accepts PIN sessions too (KDS).
-  fastify.post('/logout', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+  fastify.post('/logout', { preHandler: requireAuth(...EVERY_LOGIN) }, async (req, reply) => {
     await revokeBearer(req.headers.authorization)
     // Manager web sends no Bearer — revoke whatever's in the cookies, then clear.
     const cookieAt = readCookie(req, ACCESS_COOKIE);  if (cookieAt) await revokeBearer(`Bearer ${cookieAt}`)
@@ -1376,8 +1379,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       await assertHrBackOffice(req)
       const isCeo = req.staffUser!.role === 'admin'
       const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true })
-      if (!isCeo && (target.role === 'admin' || target.role === 'owner')) {
-        throw new AppError('RESET_LINK_CEO_ONLY', "Only the CEO can send a reset link to the CEO's or a co-owner's login.", 403)
+      if (!isCeo && (target.role === 'admin' || target.role === 'owner' || target.role === 'director')) {
+        throw new AppError('RESET_LINK_CEO_ONLY', "Only the CEO can send a reset link to the CEO's, a co-owner's or a director's login.", 403)
       }
       // Floor logins sign in with a WhatsApp code; a password would never be
       // accepted for them on live (USE_CODE_LOGIN), so a link is pointless.
@@ -1938,6 +1941,8 @@ export async function authRoutes(fastify: FastifyInstance) {
         permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
         // Station roster — drives Kitchen view (/kds) scoping.
         stationIds: true,
+        // Director logins (owner, 2026-10-18): the brands they may see.
+        directorConceptIds: true,
         // Include the primary tenant relation in portfolio mode so the
         // frontend can render the indigo chip on each row.
         ...(scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : {}),
@@ -2029,7 +2034,22 @@ export async function authRoutes(fastify: FastifyInstance) {
       // pattern: one procurement officer servicing both restaurants).
       // Backed by TenantMember rows. Primary tenantId is auto-included.
       tenantIds: z.array(z.string().min(1)).optional(),
+      // Director logins only (owner, 2026-10-18): the brands they may see —
+      // at least one, each a brand of one of the CEO's companies.
+      directorConceptIds: z.array(z.string().min(1)).max(50).optional(),
     }).parse(req.body)
+
+    // Director logins (owner, 2026-10-18): the brands decide the companies.
+    // A director belongs to exactly the companies of the brands it may see
+    // (the first brand's company is its primary) — body.tenantId / tenantIds
+    // are not used for one. Brands are given ONLY with the director role.
+    let director: { conceptIds: string[]; tenantIds: string[] } | null = null
+    if (isDirectorRole(body.role)) {
+      director = await validateDirectorBrands(req, body.directorConceptIds ?? [])
+      if (body.pin) throw new AppError('DIRECTOR_NO_PIN', 'A director login has no manager PIN.', 422)
+    } else if ((body.directorConceptIds ?? []).length > 0) {
+      throw new AppError('NOT_A_DIRECTOR', 'Brands are given only to a director login.', 422)
+    }
 
     // Password not used for login (PIN-only) — store a random unusable hash
     // The generated password. This is the account's ONLY credential under
@@ -2057,11 +2077,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     // any admin create logins in ANY company, so another company's CEO could
     // put people into GS Foods. The group owner belongs to every company, so
     // they still can.
-    const tenantId = body.tenantId ?? req.staffUser!.tenantId
+    const tenantId = director ? director.tenantIds[0]! : body.tenantId ?? req.staffUser!.tenantId
     if (!tenantId) {
       throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a new login belongs to a company.', 422)
     }
-    const extraIds = (body.tenantIds ?? []).filter((id) => id !== tenantId)
+    const extraIds = (director ? director.tenantIds : body.tenantIds ?? []).filter((id) => id !== tenantId)
     assertCompaniesInScope(req, [tenantId, ...extraIds])
 
     // Email is now mandatory and must be on the company domain: it is the ONLY
@@ -2104,6 +2124,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           pinMustReset: false,
           tenantId,
           role: body.role,
+          ...(director ? { directorConceptIds: director.conceptIds } : {}),
           // Mirror the primary tenant as a membership row too — keeps "is this
           // user a member of tenant X?" queries simple (just check TenantMember,
           // no UNION with User.tenantId needed).
@@ -2125,6 +2146,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
           isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
           permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
+          directorConceptIds: true,
           tenant: { select: { id: true, name: true, slug: true } },
           tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
         },
@@ -2140,7 +2162,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       userId: req.staffUser?.id ?? null,
       userEmail: req.staffUser?.email ?? null,
       tenantId: user.tenantId,
-      after: { name: user.name, email: user.email, role: user.role, tenantId: user.tenantId },
+      after: {
+        name: user.name, email: user.email, role: user.role, tenantId: user.tenantId,
+        ...(director ? { directorConceptIds: director.conceptIds } : {}),
+      },
       metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
     })
     return reply.status(201).send({
@@ -2196,6 +2221,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         // station). The CRUD-only guarantees on /stations stay; assigning
         // a station here just gates *visibility* on /kds.
         stationIds:      z.array(z.string().min(1)).optional(),
+        // Director logins only (owner, 2026-10-18): full replacement of the
+        // brands they may see (at least one).
+        directorConceptIds: z.array(z.string().min(1)).max(50).optional(),
       }).parse(req.body)
 
       // Company scope (staffAccounts.ts findManagedStaff), admins included: the
@@ -2211,6 +2239,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         // a role change is only meaningful in the log if you can see what it
         // moved FROM. phone for the floor-login rules below.
         role: true, isActive: true, accountStatus: true, email: true, phone: true,
+        directorConceptIds: true,
       })
 
       // "The only person I can't fire is me" (owner, 2026-10-15): the CEO
@@ -2225,6 +2254,32 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       // Moving or adding companies: only ones the operator belongs to (422).
       assertCompaniesInScope(req, [...(body.tenantId ? [body.tenantId] : []), ...(body.tenantIds ?? [])])
+
+      // Director logins (owner, 2026-10-18). A login that IS (or becomes) a
+      // director: its brands are validated (at least one, each a live brand of
+      // one of the CEO's companies) and its companies are exactly those
+      // brands' companies — body.tenantId / tenantIds are replaced by them.
+      // A login that stops being a director loses its brands. Brands are
+      // never given to any other role.
+      const willBeDirector = isDirectorRole(body.role ?? existing.role)
+      let director: { conceptIds: string[]; tenantIds: string[] } | null = null
+      if (willBeDirector) {
+        const becoming = !isDirectorRole(existing.role)
+        if (body.directorConceptIds != null || becoming) {
+          director = await validateDirectorBrands(req, body.directorConceptIds ?? existing.directorConceptIds)
+        }
+        if (body.pin) throw new AppError('DIRECTOR_NO_PIN', 'A director login has no manager PIN.', 422)
+        if (!director && (body.tenantId != null || body.tenantIds != null)) {
+          throw new AppError('DIRECTOR_COMPANIES_FROM_BRANDS', "A director's companies follow its brands — change the brands instead.", 422)
+        }
+        if (director) {
+          body.tenantId = director.tenantIds[0]
+          body.tenantIds = director.tenantIds
+        }
+      } else if ((body.directorConceptIds ?? []).length > 0) {
+        throw new AppError('NOT_A_DIRECTOR', 'Brands are given only to a director login.', 422)
+      }
+      const leavingDirector = isDirectorRole(existing.role) && !willBeDirector
 
       // Resolve final primary tenantId — explicit tenantId wins; otherwise
       // first entry of tenantIds; otherwise leave existing value alone.
@@ -2324,6 +2379,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.moduleAllow     != null) data.moduleAllow     = withoutCeoOnlyModules(body.moduleAllow)
       if (body.moduleDeny      != null) data.moduleDeny      = body.moduleDeny
       if (body.stationIds      != null) data.stationIds      = body.stationIds
+      if (director)                      data.directorConceptIds = director.conceptIds
+      else if (leavingDirector)          data.directorConceptIds = []
 
       const user = await withStaffPhoneLock(checkPhoneFree ? finalPhone : null, async (tx) => {
         // Under the per-number lock, so the check and this write cannot
@@ -2362,7 +2419,7 @@ export async function authRoutes(fastify: FastifyInstance) {
             id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
             isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
             permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
-            stationIds: true,
+            stationIds: true, directorConceptIds: true,
             tenant: { select: { id: true, name: true, slug: true } },
             tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
           },
@@ -2371,7 +2428,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
       // Kill outstanding sessions when an access-affecting field changes — a
       // deactivated / demoted / re-PINned user must not keep a live token.
-      if (body.isActive === false || body.role != null || body.pin != null) {
+      const brandsChanged = director != null
+        && director.conceptIds.slice().sort().join(',') !== existing.directorConceptIds.slice().sort().join(',')
+      if (body.isActive === false || body.role != null || body.pin != null || brandsChanged) {
         await revokeAllForSubject(req.params.id)
       }
       // Role assignment is the most consequential edit on this screen — it is
@@ -2398,6 +2457,14 @@ export async function authRoutes(fastify: FastifyInstance) {
           action: 'user.role_change',
           before: { role: existing.role },
           after: { role: body.role, targetEmail: existing.email },
+        })
+      }
+      if (brandsChanged || leavingDirector) {
+        await audit({
+          ...trail,
+          action: 'user.director_brands',
+          before: { directorConceptIds: existing.directorConceptIds },
+          after: { directorConceptIds: director?.conceptIds ?? [], targetEmail: existing.email },
         })
       }
       if (body.isActive != null && (accountStateOf(existing) === 'suspended') === body.isActive) {
@@ -2578,7 +2645,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   // GET /auth/account — the signed-in person's own sign-in settings, for the
   // admin's /account/password page: whether their password was issued by
   // someone else, and whether they hold (or may hold) a manager-override PIN.
-  fastify.get('/account', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+  fastify.get('/account', { preHandler: requireAuth(...EVERY_LOGIN) }, async (req) => {
     const me = await prisma.user.findUnique({
       where: { id: req.staffUser!.id },
       select: { id: true, name: true, email: true, role: true, pin: true, mustChangePassword: true },

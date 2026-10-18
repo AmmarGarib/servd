@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ADMIN_ONLY, ALL_STAFF, CASHIERS, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, ADMIN_ONLY, ALL_STAFF, EVERY_LOGIN, CASHIERS, MANAGERS } from '../auth/middleware.js'
 import {
   DEFAULT_MODULE_ACCESS,
   MODULE_IDS,
@@ -42,8 +42,9 @@ import { findManagedStaff, auditCompanyOf } from '../auth/staffAccounts.js'
 // The role_permissions table and the permissionAllow/permissionDeny columns
 // are kept (history); nothing reads them.
 
-/** Roles whose module list the CEO may edit: every role except the CEO seat. */
-const EDITABLE_ROLES = ALL_ROLES.filter((r) => r !== 'admin')
+/** Roles whose module list the CEO may edit: every role except the CEO seat
+ *  and the director, whose modules are fixed (lib/moduleAccess.ts DIRECTOR_MODULES). */
+const EDITABLE_ROLES = ALL_ROLES.filter((r) => r !== 'admin' && r !== 'director')
 
 export async function permissionRoutes(fastify: FastifyInstance) {
   // GET /permissions/me — who am I and which modules do I have.
@@ -52,7 +53,7 @@ export async function permissionRoutes(fastify: FastifyInstance) {
   // enforces with (role override ?? role default, plus this user's
   // moduleAllow, minus moduleDeny). The sidebar should render from this for
   // the real user instead of recomputing from a browser-side copy.
-  fastify.get('/me', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+  fastify.get('/me', { preHandler: requireAuth(...EVERY_LOGIN) }, async (req) => {
     const me = await prisma.user.findUnique({
       where:  { id: req.staffUser!.id },
       select: { role: true, moduleAllow: true, moduleDeny: true },
@@ -169,6 +170,11 @@ export async function permissionRoutes(fastify: FastifyInstance) {
     if (body.role === 'admin') {
       return reply.status(400).send({ error: { code: 'ADMIN_IMMUTABLE', message: 'The CEO role always has every module — it cannot be edited.' } })
     }
+    // Director logins (owner, 2026-10-18) hold exactly the Director page —
+    // read-only on their own brands. Not a preset anyone edits, the CEO included.
+    if (body.role === 'director') {
+      return reply.status(422).send({ error: { code: 'DIRECTOR_PRESET_FIXED', message: 'A director sees only the Director page for their own brands — that cannot be changed.' } })
+    }
     let modules: string[] | null = null
     if (body.modules) {
       // Retired ids (from rows saved before they were removed) are dropped
@@ -271,7 +277,7 @@ async function personModulesView(target: { role: UserRole; moduleAllow: string[]
   const presetSet = new Set(rolePreset)
   return {
     role: target.role,
-    locked: target.role === 'admin',
+    locked: target.role === 'admin' || target.role === 'director',
     rolePreset,
     effective: Array.from(effective),
     allow: knownModulesOnly(target.moduleAllow).filter((m) => !presetSet.has(m)),
@@ -291,6 +297,9 @@ export async function personModuleRoutes(fastify: FastifyInstance) {
     const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, role: true, moduleAllow: true, moduleDeny: true })
     if (target.id === req.staffUser!.id || target.role === 'admin') {
       throw new AppError('CEO_HOLDS_EVERY_MODULE', 'The CEO always has every module — it cannot be changed per person.', 403)
+    }
+    if (target.role === 'director') {
+      throw new AppError('DIRECTOR_MODULES_FIXED', 'A director sees only the Director page for their own brands — pick their brands on Workforce instead.', 422)
     }
     let allow: string[] = []
     let deny: string[] = []

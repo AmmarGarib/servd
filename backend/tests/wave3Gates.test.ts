@@ -252,7 +252,9 @@ describe('UI-12 live-operations reads are module-gated', () => {
 
 describe('UI-13 the brand picker works for every role, inside its own companies', () => {
   it('every staff role reads its own companies\' active brands with ?view=picker', async () => {
-    for (const role of ALL_ROLES) {
+    // A director (owner, 2026-10-18) reads only GET /director/* — refused here.
+    expect((await get('director', '/concepts?view=picker')).statusCode).toBe(403)
+    for (const role of ALL_ROLES.filter((r) => r !== 'director')) {
       const r = await get(role, '/concepts?view=picker')
       expect(r.statusCode, role).toBe(200)
       const rows = r.json() as Array<Record<string, unknown>>
@@ -380,12 +382,18 @@ describe('W3E-RV the page guard opens every page a role\'s work needs', () => {
   })
 
   it('RV-1: /time-clock (the one punch screen, ALL_STAFF API) opens for every login, and its API answers', async () => {
-    for (const role of ALL_ROLES) {
+    // A director (owner, 2026-10-18) opens /director and its password only.
+    expect(open('director', '/time-clock')).toBe(false)
+    expect((await get('director', '/time-clock/status')).statusCode).toBe(403)
+    for (const p of ['/hr/me', '/team', '/ceo/approvals', '/help', '/w/operations']) expect(open('director', p), p).toBe(false)
+    expect(open('director', '/director')).toBe(true)
+    expect(open('director', '/account/password')).toBe(true)
+    for (const role of ALL_ROLES.filter((r) => r !== 'director')) {
       expect(open(role, '/time-clock'), `${role} page`).toBe(true)
       expect((await get(role, '/time-clock/status')).statusCode, `${role} status`).toBe(200)
     }
     // The other personal / always-open pages, likewise.
-    for (const role of ALL_ROLES) {
+    for (const role of ALL_ROLES.filter((r) => r !== 'director')) {
       for (const path of ['/hr/me', '/team', '/ceo/approvals', '/account/password', '/help', '/w/operations']) {
         expect(open(role, path), `${role} ${path}`).toBe(true)
       }

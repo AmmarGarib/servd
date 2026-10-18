@@ -97,7 +97,7 @@ afterAll(async () => {
 describe('Role presets are HR\'s (owner, 2026-10-16)', () => {
   it('HR holds role_modules by default; the limits are one definition', () => {
     expect(DEFAULT_MODULE_ACCESS.hr).toContain('role_modules')
-    expect([...PRESET_LIMITS.ceoOnlyRoles].sort()).toEqual(['admin', 'hr', 'owner'])
+    expect([...PRESET_LIMITS.ceoOnlyRoles].sort()).toEqual(['admin', 'director', 'hr', 'owner'])
     expect([...PRESET_LIMITS.governanceModules].sort()).toEqual(['accounting_audit', 'role_management', 'role_modules', 'tenants'])
   })
 

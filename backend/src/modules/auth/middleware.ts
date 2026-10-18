@@ -11,7 +11,7 @@ import { isRevoked } from '../../lib/tokenRevocation.js'
 import { readCookie, ACCESS_COOKIE } from '../../lib/cookies.js'
 import { enforceModuleAccess } from '../../lib/moduleAccess.js'
 import { isAccountActive } from './accountStatus.js'
-import { ALL_ROLES } from '../../lib/roles.js'
+import { ALL_ROLES, DIRECTOR_ROLE } from '../../lib/roles.js'
 import { testTenantIds } from '../../lib/testCompany.js'
 import { headOfficeReach, rememberReach, routePatternOf, isHoSubmitRoute, isHoPassthrough } from '../../lib/headOffice.js'
 import { AppError } from '../../lib/errors.js'
@@ -91,6 +91,13 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   const liveRole = (u?.role ?? payload.role) as UserRole
   if (allowedRoles.length > 0 && !allowedRoles.includes(liveRole)) {
     throw new ForbiddenError(`Role '${liveRole}' is not allowed for this resource`)
+  }
+  // Director logins (owner, 2026-10-18) are refused on EVERY route outside
+  // DIRECTOR_ROUTES — whatever the route's own role list says (a bare
+  // requireAuth(), a catch-all list, the refresh gate). Secure by default: a
+  // route added tomorrow is closed to directors without anyone remembering.
+  if (liveRole === DIRECTOR_ROLE && !isDirectorRoute(req)) {
+    throw new AppError('DIRECTOR_READ_ONLY', 'A director login opens only the Director pages.', 403)
   }
 
   // Revocation-on-deactivation: a JWT outlives its user's employment unless we
@@ -246,6 +253,40 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   setRlsContext({ tenantIds: rlsTenantIds, staffUserId: payload.sub })
 }
 
+// ─── Director logins (owner, 2026-10-18) ────────────────────────────────────
+// The ONLY routes a director login reaches: the read-only Director API
+// (modules/director — GET only) and the login's own session and password.
+// Route PATTERNS (routeOptions.url without /api/v1), method-exact; a `/*`
+// entry covers the path and everything under it. Nothing else — not the bell,
+// not the time clock, not /hr/me, not any list a catch-all role array admits.
+export const DIRECTOR_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
+  { method: 'GET',  path: '/director/*' },
+  { method: 'HEAD', path: '/director/*' },
+  { method: 'GET',  path: '/permissions/me' },
+  { method: 'GET',  path: '/auth/account' },
+  { method: 'POST', path: '/auth/refresh' },
+  { method: 'POST', path: '/auth/logout' },
+  { method: 'POST', path: '/auth/password/change-authed' },
+  { method: 'GET',  path: '/auth/2fa/status' },
+  { method: 'POST', path: '/auth/2fa/start' },
+  { method: 'POST', path: '/auth/2fa/enable' },
+  { method: 'POST', path: '/auth/2fa/disable' },
+]
+
+function isDirectorRoute(req: FastifyRequest): boolean {
+  const path = routePatternOf(req)
+  if (!path) return false
+  const method = (req.method ?? 'GET').toUpperCase()
+  return DIRECTOR_ROUTES.some((e) => {
+    if (e.method !== method) return false
+    if (e.path.endsWith('/*')) {
+      const base = e.path.slice(0, -2)
+      return path === base || path.startsWith(base + '/')
+    }
+    return path === e.path
+  })
+}
+
 // 403 HEAD_OFFICE_SUBMIT_ONLY for a write through the lens that is not a
 // head-office submit route. Names the company and head office (one query, on
 // the refusal path only).
@@ -383,8 +424,14 @@ export function usesOtpLogin(role: UserRole | string | null | undefined): boolea
 }
 
 // Every staff role — derived from the Prisma enum (lib/roles.ts), so a role
-// added to the schema can sign in without anyone remembering this list.
-export const ALL_STAFF = [...ALL_ROLES] as UserRole[]
+// added to the schema can sign in without anyone remembering this list —
+// EXCEPT `director` (owner, 2026-10-18): a director is read-only on its own
+// brands and is admitted only where a route names it (and DIRECTOR_ROUTES
+// above lists it). A catch-all list must never let a director in.
+export const ALL_STAFF = ALL_ROLES.filter((r) => r !== DIRECTOR_ROLE) as UserRole[]
+// Every login, directors included — only for the login's OWN session and
+// password routes (each also in DIRECTOR_ROUTES).
+export const EVERY_LOGIN = [...ALL_ROLES] as UserRole[]
 
 // The owner-escalation / separation-of-duties rule lives in ONE place:
 // lib/separation-of-duties.ts assertNotSelfApproval (CEO exempt, flags every

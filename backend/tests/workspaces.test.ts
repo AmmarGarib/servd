@@ -152,7 +152,7 @@ describe('workspace definitions (lib/workspaces.ts)', () => {
 
     const all = await app.inject({ method: 'GET', url: '/api/v1/permissions/workspaces', headers: auth(it_) })
     expect(all.statusCode).toBe(200)
-    expect(all.json().map((w: { id: string }) => w.id)).toEqual(['ceo', 'operations', 'finance', 'marketing', 'hr', 'dev'])
+    expect(all.json().map((w: { id: string }) => w.id)).toEqual(['ceo', 'operations', 'finance', 'marketing', 'hr', 'dev', 'director'])
   })
 })
 
@@ -203,8 +203,9 @@ describe('D2: the CEO section and Operations for the F&B manager (2026-10-11)', 
 
     const ceo = await makeUser('admin', tenantA)
     const meCeo = (await app.inject({ method: 'GET', url: '/api/v1/permissions/me', headers: auth(ceo) })).json()
-    // The CEO still sees everything: the CEO section first, Operations too.
-    expect(meCeo.workspaces.map((w: { id: string }) => w.id)).toEqual(['ceo', 'operations', 'finance', 'marketing', 'hr', 'dev'])
+    // The CEO still sees everything: the CEO section first, Operations too,
+    // and the Director page last (a preview; owner, 2026-10-18).
+    expect(meCeo.workspaces.map((w: { id: string }) => w.id)).toEqual(['ceo', 'operations', 'finance', 'marketing', 'hr', 'dev', 'director'])
     expect(meCeo.workspaces.find((w: { id: string }) => w.id === 'ceo').owner).toBe(true)
     expect(meCeo.workspaces.find((w: { id: string }) => w.id === 'operations').owner).toBe(false)
   })

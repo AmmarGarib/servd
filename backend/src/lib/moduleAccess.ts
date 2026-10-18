@@ -73,6 +73,10 @@ export const MODULE_IDS = [
   'settings', 'notifications', 'help', 'configuration', 'onboarding', 'integrations',
   // Dev → API (spec D13): Hasham's WhatsApp connector and the POS connector.
   'api_whatsapp', 'api_pos',
+  // Director → Brand performance (owner, 2026-10-18): the read-only Director
+  // page (/director, API GET /director/*). Held ONLY by the director role (and
+  // the CEO, who previews it) — DIRECTOR_ONLY_MODULES below.
+  'director_view',
 ] as const
 const MODULE_ID_SET = new Set<string>(MODULE_IDS)
 const ALL_MODULES = [...MODULE_IDS] as string[]
@@ -122,9 +126,21 @@ const API_CONNECTORS = ['api_whatsapp', 'api_pos']
 //     stuff is not marketing related"). PATCH /concepts is admin-only.
 export const CEO_ONLY_MODULES: readonly string[] = ['brands']
 const CEO_ONLY_SET = new Set<string>(CEO_ONLY_MODULES)
-/** Drop the CEO-only modules from a non-admin module list. */
+
+// DIRECTOR modules (owner, 2026-10-18). A director login holds EXACTLY these —
+// fixed: no preset row, no per-person tick and no moduleAllow widens or
+// narrows it (effectiveModulesForUser). And no role but the director and the
+// CEO holds them: the Director API admits only those two roles, so a tick on
+// anyone else would be a sidebar link the server refuses.
+export const DIRECTOR_MODULES: readonly string[] = ['director_view']
+const DIRECTOR_ONLY_SET = new Set<string>(DIRECTOR_MODULES)
+
+/**
+ * Drop the modules a non-admin, non-director list may never carry: the
+ * CEO-only modules (Brands) and the director-only modules.
+ */
 export function withoutCeoOnlyModules(modules: readonly string[]): string[] {
-  return modules.filter((m) => !CEO_ONLY_SET.has(m))
+  return modules.filter((m) => !CEO_ONLY_SET.has(m) && !DIRECTOR_ONLY_SET.has(m))
 }
 
 // ── Role presets: what HR may and may not change (owner, 2026-10-16) ────────
@@ -139,11 +155,13 @@ export function withoutCeoOnlyModules(modules: readonly string[]): string[] {
 //                       the books' audit trail.
 // Per-person module access (/permissions/users/:id/modules) stays CEO only.
 export const PRESET_LIMITS = {
-  ceoOnlyRoles: ['admin', 'owner', 'hr'] as readonly UserRole[],
+  // director (owner, 2026-10-18): its modules are fixed (DIRECTOR_MODULES) —
+  // HR never touches it; the CEO's save is refused too (DIRECTOR_PRESET_FIXED).
+  ceoOnlyRoles: ['admin', 'owner', 'hr', 'director'] as readonly UserRole[],
   governanceModules: ['role_management', 'role_modules', 'tenants', 'accounting_audit'] as readonly string[],
 } as const
 
-const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m) && !CEO_ONLY_SET.has(m))
+const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m) && !CEO_ONLY_SET.has(m) && !DIRECTOR_ONLY_SET.has(m))
 // 'manager' mirrors 'management' for everything EXCEPT the accounting trail,
 // the API connectors, the Finance pre-bill register (none of whose routes
 // admit the legacy role) and Emergency overrides.
@@ -159,7 +177,7 @@ const MANAGER_MODULES = MANAGEMENT_MODULES.filter(
 // — the routes do not admit owner, so neither does the sidebar. Emergency
 // overrides are an on-shift tool (see above), not the co-owner's.
 const OWNER_MODULES = ALL_MODULES.filter(
-  (m) => !['role_management', 'role_modules', 'accounting_audit', 'emergency_overrides'].includes(m) && !API_CONNECTORS.includes(m) && !CEO_ONLY_SET.has(m),
+  (m) => !['role_management', 'role_modules', 'accounting_audit', 'emergency_overrides'].includes(m) && !API_CONNECTORS.includes(m) && !CEO_ONLY_SET.has(m) && !DIRECTOR_ONLY_SET.has(m),
 )
 // The books' own audit trail — period closes, manual journals, wage rates,
 // tip-pool postings. Per the owner: the CEO and the exec (management) only.
@@ -242,6 +260,9 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   // IT / developer — owns the Dev workspace (decision 47, lib/workspaces.ts).
   // The API section (WhatsApp + POS connector) is theirs with the CEO.
   it: ['api_whatsapp', 'api_pos', 'integrations', 'audit_log', 'notifications', 'help'],
+  // Director (owner, 2026-10-18): the read-only Director page and nothing
+  // else — fixed (DIRECTOR_MODULES).
+  director: [...DIRECTOR_MODULES],
 }
 
 export function isKnownModuleId(id: string): boolean { return MODULE_ID_SET.has(id) }
@@ -433,6 +454,7 @@ async function roleOverrides(): Promise<Map<UserRole, string[]>> {
  */
 export async function rolePresetModules(role: UserRole): Promise<string[]> {
   if (role === 'admin') return [...ALL_MODULES]
+  if (role === 'director') return [...DIRECTOR_MODULES]
   const overrides = await roleOverrides()
   return withoutCeoOnlyModules(knownModulesOnly(overrides.get(role) ?? DEFAULT_MODULE_ACCESS[role] ?? []))
 }
@@ -444,11 +466,15 @@ export async function effectiveModulesForUser(user: {
   moduleDeny?: string[]
 }): Promise<Set<string>> {
   if (user.role === 'admin') return new Set(ALL_MODULES)
+  // A director holds exactly the director modules — never a saved row, never
+  // a per-person allow (owner, 2026-10-18: strictly read-only, own brands).
+  if (user.role === 'director') return new Set(DIRECTOR_MODULES)
   const overrides = await roleOverrides()
   const base = new Set(knownModulesOnly(overrides.get(user.role) ?? DEFAULT_MODULE_ACCESS[user.role] ?? []))
   for (const m of knownModulesOnly(user.moduleAllow ?? [])) base.add(m)
   for (const m of user.moduleDeny ?? []) base.delete(m)
   for (const m of CEO_ONLY_MODULES) base.delete(m)   // never through a row or an allow
+  for (const m of DIRECTOR_MODULES) base.delete(m)   // the director's alone (and the CEO's)
   return base
 }
 
@@ -674,6 +700,9 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // /complaints — the Complaints page only. Ban appeals carry the customer's
   // phone, email and strikes, so the role arrays alone (ALL_STAFF) are too wide.
   { prefix: '/complaints',             anyOf: ['complaints'] },
+  // Director → Brand performance (owner, 2026-10-18). The routes admit only
+  // director + admin; this keeps the module the one switch on top.
+  { prefix: '/director',               anyOf: ['director_view'] },
 ]
 
 /**
