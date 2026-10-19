@@ -7884,6 +7884,27 @@ model CashVoucher {
   // expenseOnVerify stays true on these rows (the documents flow and its CLOSED state). false = every row paid
   // before this (a 1357 hold still clears at verification; legacy H3 unchanged).
   bookedAtPay          Boolean         @default(false)
+  // Equipment on a finance payee voucher (owner, 2026-10-19; kind 'expense' only): the fixed-asset class (a
+  // FixedAssetClass of the voucher's company) instead of an expense account (`category` null). Finance's pay books
+  // it through the CapEx Quick-buy engine (financePlanning/capexPosting.ts recordEquipmentPurchaseTx): a capital line
+  // on the outlet's standing project, its payment Dr 1340 / Cr the source, and the capitalisation request the CEO
+  // approves (Dr class cost / Cr 1340 → register → depreciation). assetLocationId = the outlet (required when the
+  // voucher has no brand: shared equipment). capexLineId / capitaliseEventId are stamped at pay. Plain ids, no
+  // relations (like pettyCashMovementId).
+  assetClassId         String?
+  assetLocationId      String?
+  capexLineId          String?         @unique
+  capitaliseEventId    String?
+  // "To pay from" on a finance payee voucher (owner, 2026-10-19): chosen at raise — 'cash' | 'bank' (+
+  // plannedBankAccountId) | 'credit' (+ supplierId, a supplier of the voucher's company). Cash / bank prefill finance's
+  // pay; credit = no cash leaves: finance's pay books a SUPPLIER BILL (procurement createBill's engine, bill number =
+  // the voucher number) — or, for equipment, the CapEx line on that supplier with its capitalisation request
+  // (Dr class cost / Cr 2012 on the CEO's approval) — and paySource becomes 'credit'. supplierBillId = the bill.
+  // CHECK cash_vouchers_planned_pay_chk (SQL only, migration 20261019110000).
+  plannedPaySource     String?
+  plannedBankAccountId String?
+  supplierId           String?
+  supplierBillId       String?         @unique
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).

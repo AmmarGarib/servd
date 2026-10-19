@@ -855,8 +855,10 @@ export const CASH_VOUCHER_CHANGE_ENTRY = 'cashvoucher.change'
 export const CASH_VOUCHER_OVERSPEND_ENTRY = 'cashvoucher.overspend'
 
 /** Words for where a voucher's cash came from (detail, print, export). */
-export function paidFromLabel(v: { paySource: string; disbursedAt: Date | null }, names: { boxName?: string | null; bankName?: string | null }): string | null {
+export function paidFromLabel(v: { paySource: string; disbursedAt: Date | null }, names: { boxName?: string | null; bankName?: string | null; supplierName?: string | null }): string | null {
   if (!v.disbursedAt) return null
+  // A payee voucher booked on credit (owner, 2026-10-19): no cash left — the supplier is owed (its bill).
+  if (v.paySource === 'credit') return names.supplierName ? `On credit — ${names.supplierName}` : 'On credit'
   if (v.paySource === 'cash_on_hand') return 'Cash on hand'
   if (v.paySource === 'bank') return names.bankName ?? 'Bank'
   return names.boxName ?? null

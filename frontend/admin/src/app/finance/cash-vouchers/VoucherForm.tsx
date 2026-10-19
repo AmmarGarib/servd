@@ -8,17 +8,24 @@
 //     date, particulars, expense account, amount, discount (total = amount −
 //     discount, with the words live), sent to the CEO
 //     (default) or to finance.
+//     Equipment (owner, 2026-10-19): the account picker also offers the
+//     company's fixed-asset classes — booked to CapEx advances at payment, the
+//     CEO approves the capitalisation, then it depreciates monthly (an outlet
+//     is picked when there is no brand: shared equipment). "To pay from":
+//     cash, a bank, or credit from a supplier (finance's pay books a supplier
+//     bill instead of handing cash over).
 //   • Edit — the same fields on an existing voucher (after it is returned, or
 //     while it still waits for finance); the detail page then resubmits.
 
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import { api } from '../../../lib/api'
 import { pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { amountInWords, formatPkr } from './amountInWords'
 import {
-  CV_BASE, dateInput, errorWords, todayKarachi, useCategories, usePettyBoxes, type CashVoucher,
+  CV_BASE, CV_ROOT, dateInput, errorWords, todayKarachi, useCategories, usePettyBoxes, useRaiseOptions, type CashVoucher,
 } from './data'
 import { ErrorBanner, Field, Footer, Modal, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
@@ -53,7 +60,15 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
   const [grossCents, setGrossCents] = useState(startGross)
   const [discountCents, setDiscountCents] = useState(voucher?.discountCents ?? (expense ? pNum(pf, 'discountCents') ?? 0 : 0))
   const [purpose, setPurpose] = useState(voucher?.purpose ?? pStr(pf, 'purpose') ?? '')
-  const [category, setCategory] = useState(voucher?.category ?? pStr(pf, 'category', 'categoryKey', 'accountCode') ?? '')
+  // The account picker: a PAYOUT key, a 6xxx code, or 'asset:<classId>' (equipment, payee vouchers only).
+  const [category, setCategory] = useState(voucher?.assetClassId ? `asset:${voucher.assetClassId}` : (voucher?.category ?? pStr(pf, 'category', 'categoryKey', 'accountCode') ?? ''))
+  const [assetLocationId, setAssetLocationId] = useState(voucher?.assetLocationId ?? '')
+  const [payFrom, setPayFrom] = useState<'cash' | 'bank' | 'credit'>(voucher?.payFrom ?? 'cash')
+  const [payFromBankAccountId, setPayFromBankAccountId] = useState(voucher?.payFromBankAccountId ?? '')
+  const [supplierId, setSupplierId] = useState(voucher?.supplierId ?? '')
+  const [newSupplier, setNewSupplier] = useState('')
+  const { data: opts } = useRaiseOptions(expense)
+  const qc = useQueryClient()
   const [voucherDate, setVoucherDate] = useState(voucher ? dateInput(voucher.voucherDate) : todayKarachi())
   const [payeeName, setPayeeName] = useState(expense ? (voucher?.payeeName ?? pStr(pf, 'payeeName') ?? '') : '')
   const [sendTo, setSendTo] = useState<'ceo' | 'finance'>('ceo')
@@ -61,6 +76,10 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
   const tenantId = voucher?.tenantId ?? null
   const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
   const isCode = /^\d{4}$/.test(category)
+  const assetClassId = category.startsWith('asset:') ? category.slice(6) : ''
+  const assetClass = opts?.classes.find((c) => c.id === assetClassId) ?? null
+  // Shared equipment (no brand on the voucher) names its outlet.
+  const needsOutlet = !!assetClassId && !voucher?.conceptId
   const totalCents = Math.max(0, grossCents - discountCents)
   const discountOk = discountCents >= 0 && discountCents < grossCents
   const bounds = dateBounds()
@@ -75,19 +94,28 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
       : !expense && !editing && voucherDate < todayKarachi() ? 'Needed-on date cannot be in the past.' : '',
     ...(expense ? { 'cv-discount': discountOk ? '' : 'The discount must be less than the amount.' } : {}),
     'cv-purpose': purpose.trim() ? '' : (expense ? 'Describe the particulars.' : 'Say what the cash is for.'),
-    'cv-category': category ? '' : (expense ? 'Pick an expense account.' : 'Pick an expense category.'),
+    'cv-category': category ? '' : (expense ? 'Pick an expense account or a fixed asset.' : 'Pick an expense category.'),
+    ...(needsOutlet ? { 'cv-outlet': assetLocationId ? '' : 'Pick the outlet the equipment is at.' } : {}),
+    ...(expense && payFrom === 'credit' ? { 'cv-supplier': supplierId ? '' : 'Pick the supplier.' } : {}),
   }
   const shown = (k: string) => (tried ? errs[k] : '')
 
   const save = useMutation({
     mutationFn: () => {
-      const cat = isCode ? { categoryKey: null, accountCode: category } : { categoryKey: category, accountCode: null }
+      const cat = assetClassId
+        ? { assetClassId, assetLocationId: assetLocationId || null }
+        : isCode ? { categoryKey: null, accountCode: category } : { categoryKey: category, accountCode: null }
       const body: Record<string, unknown> = {
         voucherDate,
         purpose: purpose.trim(),
         ...cat,
         ...(expense
-          ? { payeeName: payeeName.trim(), grossCents, discountCents, ...(editing ? {} : { kind: 'expense', sendTo }) }
+          ? {
+            payeeName: payeeName.trim(), grossCents, discountCents, ...(editing ? {} : { kind: 'expense', sendTo }),
+            payFrom,
+            payFromBankAccountId: payFrom === 'bank' && payFromBankAccountId ? payFromBankAccountId : null,
+            supplierId: payFrom === 'credit' ? supplierId : null,
+          }
           : { amountCents: grossCents }),
       }
       const extra = tenantId ? { tenantId } : undefined
@@ -105,6 +133,16 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
     if (bad) { focusField(bad); return false }
     save.reset(); save.mutate()
     return true
+  })
+  // "Add supplier" — the existing supplier route (POST /procurement/suppliers; the supplier master's own rule
+  // decides who may add one — the server refuses anyone else and the message is shown).
+  const addSupplier = useMutation({
+    mutationFn: () => api.post<{ id: string; name: string }>('/procurement/suppliers', { name: newSupplier.trim() }),
+    meta: { inlineErrors: true },
+    onSuccess: (sup) => {
+      setSupplierId(sup.id); setNewSupplier('')
+      void qc.invalidateQueries({ queryKey: [CV_ROOT, 'raise-options'] })
+    },
   })
   const title = editing ? `Edit ${voucher!.number}` : expense ? 'New payee voucher' : 'Request cash'
   return (
@@ -155,17 +193,76 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
       </Field>
 
       <Field label={expense ? 'Expense account *' : 'Expense category *'}
-        hint="The expense is booked here when finance verifies the documents." error={shown('cv-category')}>
+        hint={assetClassId ? undefined : 'The expense is booked here when finance pays it.'} error={shown('cv-category')}>
         <Select id="cv-category" value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
           <option value="">— pick {expense ? 'an account' : 'a category'} —</option>
-          {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
-          {isKeeper && expenseAccounts.length > 0 && (
+          {expense ? (
+            <optgroup label="Expense accounts">
+              {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
+              {isKeeper && expenseAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+            </optgroup>
+          ) : categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
+          {!expense && isKeeper && expenseAccounts.length > 0 && (
             <optgroup label="Another expense account">
               {expenseAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
             </optgroup>
           )}
+          {expense && (opts?.classes.length ?? 0) > 0 && (
+            <optgroup label="Fixed assets (capitalised, then depreciated)">
+              {opts!.classes.map((c) => <option key={c.id} value={`asset:${c.id}`}>Fixed asset — {c.label}</option>)}
+            </optgroup>
+          )}
         </Select>
       </Field>
+      {assetClassId && (
+        <p className="-mt-1 text-[11px] text-white/55">
+          {assetClass?.label ?? 'Equipment'}: booked to CapEx advances at payment; the CEO approves the capitalisation, then it depreciates monthly.
+        </p>
+      )}
+      {assetClassId && needsOutlet && (
+        <Field label="Outlet *" hint="Shared equipment (no brand) says where it is." error={shown('cv-outlet')}>
+          <Select id="cv-outlet" value={assetLocationId} onChange={(e) => setAssetLocationId(e.target.value)} className={fieldCls}>
+            <option value="">— pick the outlet —</option>
+            {(opts?.locations ?? []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </Select>
+        </Field>
+      )}
+
+      {expense && (
+        <Field label="To pay from *" hint={payFrom === 'credit'
+          ? 'No cash is handed over: when finance books it, a supplier bill is raised (paid later through Supplier payments).'
+          : 'Finance may still pick another source when paying.'}>
+          <Select id="cv-pay-from" value={payFrom} onChange={(e) => setPayFrom(e.target.value as 'cash' | 'bank' | 'credit')} className={fieldCls}>
+            <option value="cash">Cash</option>
+            <option value="bank">Bank</option>
+            <option value="credit">Credit (supplier bill)</option>
+          </Select>
+        </Field>
+      )}
+      {expense && payFrom === 'bank' && (
+        <BankAccountSelect tenantId={tenantId ?? opts?.tenantId ?? null} value={payFromBankAccountId} onChange={setPayFromBankAccountId}
+          id="cv-bank" className={fieldCls} />
+      )}
+      {expense && payFrom === 'credit' && (
+        <Field label="Supplier *" error={shown('cv-supplier')}>
+          <Select id="cv-supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls}>
+            <option value="">— pick the supplier —</option>
+            {voucher?.supplierId && !opts?.suppliers.some((x) => x.id === voucher.supplierId) && (
+              <option value={voucher.supplierId}>{voucher.supplierName ?? 'Current supplier'}</option>
+            )}
+            {(opts?.suppliers ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </Select>
+          <div className="mt-2 flex gap-2">
+            <input value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} maxLength={120} placeholder="New supplier name"
+              aria-label="New supplier name" className={fieldCls} />
+            <button type="button" disabled={!newSupplier.trim() || addSupplier.isPending} className={primaryBtn}
+              onClick={() => { addSupplier.reset(); addSupplier.mutate() }}>
+              {addSupplier.isPending ? 'Adding…' : 'Add supplier'}
+            </button>
+          </div>
+          {addSupplier.error && <ErrorBanner message={errorWords(addSupplier.error)} />}
+        </Field>
+      )}
 
       {expense && !editing && (
         <Field label="Send to">

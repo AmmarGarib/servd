@@ -69,7 +69,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { CashVoucherStatus, type Prisma } from '@prisma/client'
+import { CashVoucherStatus, type FixedAssetClass, type Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
 import { audit } from '../../lib/audit.js'
@@ -88,7 +88,11 @@ import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { passesCashGuard, recordPettyCashSpendTx } from './pettyCash.js'
 import { cashRequestSettleRoutes, flagOverrides } from './cashRequestSettle.js'
-import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
+import { assertNotEquipmentLine, getAssetClasses } from '../fixedAssets/classes.js'
+import { assertSharedHasLocation } from '../fixedAssets/events.js'
+import { recordEquipmentPurchaseTx } from '../financePlanning/capexPosting.js'
+import { prepareBill, insertBillTx, afterBillCreated } from '../procurement/service.js'
+import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
 
 // ─── Files ───────────────────────────────────────────────────────────────────
@@ -390,16 +394,23 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
     tenantIds.add(v.tenantId)
   }
   // Names only, for ids these vouchers (already in scope) point at.
-  const [users, concepts, tenants] = await Promise.all([
+  const locationIds = [...new Set(rows.map((v) => v.assetLocationId).filter((x): x is string => !!x))]
+  const supplierIds = [...new Set(rows.map((v) => v.supplierId).filter((x): x is string => !!x))]
+  const [users, concepts, tenants, assetLabels, locations, suppliers] = await Promise.all([
     userIds.size ? prisma.user.findMany({ where: { id: { in: [...userIds] } }, select: { id: true, name: true } }) : [],
     conceptIds.size ? prisma.concept.findMany({ where: { id: { in: [...conceptIds] } }, select: { id: true, name: true } }) : [],
     tenantIds.size ? prisma.tenant.findMany({ where: { id: { in: [...tenantIds] } }, select: { id: true, name: true } }) : [],
+    assetClassLabels(rows),
+    locationIds.length ? prisma.location.findMany({ where: { id: { in: locationIds }, tenantId: { in: [...tenantIds] } }, select: { id: true, name: true } }) : [],
+    supplierIds.length ? prisma.supplier.findMany({ where: { id: { in: supplierIds }, tenantId: { in: [...tenantIds] } }, select: { id: true, name: true } }) : [],
   ])
+  const supplierName = new Map(suppliers.map((x) => [x.id, x.name]))
+  const locationName = new Map(locations.map((l) => [l.id, l.name]))
   const userName = new Map(users.map((u) => [u.id, u.name]))
   const conceptName = new Map(concepts.map((c) => [c.id, c.name]))
   const tenantName = new Map(tenants.map((t) => [t.id, t.name]))
   const nameOf = (id: string | null) => (id ? (userName.get(id) ?? null) : null)
-  const bankIds = [...new Set(rows.map((v) => v.payBankAccountId).filter((x): x is string => !!x))]
+  const bankIds = [...new Set(rows.flatMap((v) => [v.payBankAccountId, v.plannedBankAccountId]).filter((x): x is string => !!x))]
   const bankRows = bankIds.length
     ? await prisma.bankAccount.findMany({ where: { id: { in: bankIds }, tenantId: { in: [...tenantIds] } }, select: { id: true, name: true, tenantId: true } })
     : []
@@ -427,6 +438,14 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       amountInWords: amountInWords(v.amountCents),
       categoryKey: ref.categoryKey,
       categoryAccountCode: ref.accountCode,
+      /** Equipment (owner, 2026-10-19): the fixed-asset class's label — booked to CapEx advances (1340) at pay. */
+      assetClassLabel: v.assetClassId ? (assetLabels.get(v.assetClassId) ?? null) : null,
+      assetLocationName: v.assetLocationId ? (locationName.get(v.assetLocationId) ?? null) : null,
+      /** "To pay from" (2026-10-19): the plan set at raise, the supplier (credit) and the planned bank's name. */
+      payFrom: v.plannedPaySource,
+      payFromBankAccountId: v.plannedBankAccountId,
+      payFromBankName: v.plannedBankAccountId ? (bankRows.find((b) => b.id === v.plannedBankAccountId && b.tenantId === v.tenantId)?.name ?? null) : null,
+      supplierName: v.supplierId ? (supplierName.get(v.supplierId) ?? null) : null,
       holderUserId: v.payeeUserId,
       holderName: nameOf(v.payeeUserId),
       remainingCents,
@@ -448,6 +467,7 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       paidFrom: paidFromLabel(v, {
         boxName: box?.name ?? null,
         bankName: bankRows.find((b) => b.id === v.payBankAccountId && b.tenantId === v.tenantId)?.name ?? null,
+        supplierName: v.supplierId ? (supplierName.get(v.supplierId) ?? null) : null,
       }),
       custodianId: box?.custodianId ?? null,
       custodianName: box ? nameOf(box.custodianId) : null,
@@ -490,7 +510,12 @@ export async function detailOf(id: string, viewer: Viewer) {
       : null,
   ])
   let paidAccountCode: string | null = null
-  if (v.pettyCashMovementId || v.payJournalEntryId) {
+  if (v.supplierBillId) {
+    paidAccountCode = '2010'   // on credit: the supplier is owed (its bill)
+  } else if (v.capexLineId) {
+    // equipment: CapEx advances until the CEO capitalises it; on credit nothing is booked until then (→ 2012)
+    paidAccountCode = v.paySource === 'credit' ? null : '1340'
+  } else if (v.pettyCashMovementId || v.payJournalEntryId) {
     try { paidAccountCode = await cashRequestPaidAccountTx(prisma, v.id) } catch { paidAccountCode = null }
   }
   const submitters = [...new Set(settlements.map((s) => s.submittedById))]
@@ -509,6 +534,20 @@ export async function detailOf(id: string, viewer: Viewer) {
      * to one entry — voucherHoldConversion.ts — its 'cashvoucher.hold_convert:<id>', stamped as postedJournalEntryId).
      */
     payEntryId: (v.bookedAtPay ? v.postedJournalEntryId : null) ?? v.payJournalEntryId ?? payMovement?.journalEntryId ?? null,
+    /** On credit: the supplier bill finance's pay booked (paid later through Supplier payments). */
+    supplierBill: v.supplierBillId
+      ? await prisma.supplierBill.findFirst({
+        where: { id: v.supplierBillId, supplier: { tenantId: v.tenantId } },
+        select: { id: true, billNumber: true, status: true, dueDate: true, totalCents: true, whtCents: true, paidCents: true },
+      })
+      : null,
+    /** Equipment: the CEO's capitalisation request raised at pay (pending → posted, or rejected: the cost stays on 1340). */
+    capitalisation: v.capitaliseEventId
+      ? await prisma.fixedAssetEvent.findFirst({
+        where: { id: v.capitaliseEventId, tenantId: v.tenantId },
+        select: { id: true, status: true, decidedAt: true, decisionNote: true },
+      })
+      : null,
     settlements: settlements.map((s) => ({ ...s, submittedByName: names.find((n) => n.id === s.submittedById)?.name ?? null })),
     spend: hold ? {
       lines: spendLines,
@@ -548,6 +587,20 @@ const fields = {
   payeeName: z.string().trim().min(1).max(120).optional(),
   /** Keepers only. Otherwise the custodian picks the box at pay. */
   boxId: z.string().min(1).max(64).nullable().optional(),
+  /**
+   * Equipment on a finance payee voucher (owner, 2026-10-19): a fixed-asset class of the voucher's company INSTEAD
+   * of an expense account (kind 'expense' only — 422 ASSET_ONLY_ON_PAYEE_VOUCHER). null clears it.
+   */
+  assetClassId: z.string().min(1).max(64).nullable().optional(),
+  /** The outlet the equipment is at (required when the voucher has no brand: shared equipment). */
+  assetLocationId: z.string().min(1).max(64).nullable().optional(),
+  /**
+   * "To pay from" on a payee voucher (owner, 2026-10-19): cash / bank (+ payFromBankAccountId) prefill finance's pay;
+   * credit (+ supplierId) books a supplier bill at finance's pay instead of handing cash over. Kind 'expense' only.
+   */
+  payFrom: z.enum(['cash', 'bank', 'credit']).nullable().optional(),
+  payFromBankAccountId: z.string().min(1).max(64).nullable().optional(),
+  supplierId: z.string().min(1).max(64).nullable().optional(),
 }
 const CreateBody = z.object({
   ...fields,
@@ -585,6 +638,82 @@ async function openBoxOf(tenantId: string, boxId: string) {
 async function categoryOf(tenantId: string, body: Pick<PatchInput, 'categoryKey' | 'accountCode'>, keeper: boolean): Promise<string> {
   const acct = await resolveSpendAccount(prisma, tenantId, { categoryKey: body.categoryKey, accountCode: body.accountCode }, { allowExplicit: keeper })
   return acct.categoryKey ?? acct.code
+}
+
+/**
+ * Equipment on a payee voucher (owner, 2026-10-19). The class must be an
+ * active, non-pooled FixedAssetClass of the VOUCHER's company (422
+ * ASSET_CLASS_NOT_IN_COMPANY / CLASS_INACTIVE / POOLED_CLASS_USE_QUICK_BUY —
+ * smallwares need a pool type: CapEx Quick buy), only on kind 'expense' (422
+ * ASSET_ONLY_ON_PAYEE_VOUCHER), the outlet one of that company's (422
+ * LOCATION_NOT_IN_COMPANY), and shared equipment (no brand) names its outlet
+ * (422 LOCATION_REQUIRED_FOR_SHARED). Returns the class, or null when the
+ * voucher names none (an outlet without a class: 400 LOCATION_ONLY_FOR_ASSET).
+ */
+export async function assetTargetOf(
+  db: Prisma.TransactionClient | typeof prisma,
+  tenantId: string,
+  a: { kind: string; assetClassId: string | null; assetLocationId: string | null; conceptId: string | null },
+): Promise<FixedAssetClass | null> {
+  if (!a.assetClassId) {
+    if (a.assetLocationId) throw new AppError('LOCATION_ONLY_FOR_ASSET', 'An outlet is only named for equipment (a fixed-asset class)', 400)
+    return null
+  }
+  if (a.kind !== 'expense') {
+    throw new AppError('ASSET_ONLY_ON_PAYEE_VOUCHER', 'Equipment (a fixed-asset class) is bought on a finance payee voucher — a cash request books an expense account', 422)
+  }
+  const cls = await db.fixedAssetClass.findFirst({ where: { id: a.assetClassId, tenantId } })
+  if (!cls) throw new AppError('ASSET_CLASS_NOT_IN_COMPANY', 'That fixed-asset class is not one of this voucher\'s company\'s', 422)
+  if (!cls.isActive) throw new AppError('CLASS_INACTIVE', `${cls.label} is switched off for this company`, 422)
+  if (cls.pooled) {
+    throw new AppError('POOLED_CLASS_USE_QUICK_BUY', `${cls.label} are pooled by type and outlet — buy them through CapEx Quick buy`, 422)
+  }
+  if (a.assetLocationId) {
+    const l = await db.location.findFirst({ where: { id: a.assetLocationId, tenantId, deletedAt: null }, select: { id: true } })
+    if (!l) throw new AppError('LOCATION_NOT_IN_COMPANY', 'That outlet is not one of this voucher\'s company\'s', 422)
+  }
+  assertSharedHasLocation(a.conceptId, a.assetLocationId)
+  return cls
+}
+
+/** "Fixed asset — Kitchen equipment" for screens, the inbox and the printout (null for an expense voucher). */
+export async function assetClassLabels(rows: Array<{ assetClassId: string | null; tenantId: string }>): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map((r) => r.assetClassId).filter((x): x is string => !!x))]
+  if (ids.length === 0) return new Map()
+  const cls = await prisma.fixedAssetClass.findMany({ where: { id: { in: ids }, tenantId: { in: [...new Set(rows.map((r) => r.tenantId))] } }, select: { id: true, label: true } })
+  return new Map(cls.map((c) => [c.id, c.label]))
+}
+
+/**
+ * "To pay from" (owner, 2026-10-19), checked in the VOUCHER's company: kind
+ * 'expense' only (422 PAY_FROM_ONLY_ON_PAYEE_VOUCHER); a bank of that company
+ * (moneyAccountCode: 422 for another company's); credit names a live supplier
+ * of that company (422 SUPPLIER_REQUIRED / SUPPLIER_NOT_IN_COMPANY). A bank
+ * without 'bank' or a supplier without 'credit' is 400.
+ */
+export async function payPlanOf(
+  tenantId: string,
+  a: { kind: string; payFrom: string | null; bankAccountId: string | null; supplierId: string | null },
+): Promise<{ plannedPaySource: string | null; plannedBankAccountId: string | null; supplierId: string | null; supplierName: string | null }> {
+  if (!a.payFrom && !a.bankAccountId && !a.supplierId) return { plannedPaySource: null, plannedBankAccountId: null, supplierId: null, supplierName: null }
+  if (a.kind !== 'expense') {
+    throw new AppError('PAY_FROM_ONLY_ON_PAYEE_VOUCHER', '"To pay from" is set on a finance payee voucher — a cash request is paid in cash', 422)
+  }
+  if (a.bankAccountId && a.payFrom !== 'bank') throw new AppError('BANK_NOT_FOR_SOURCE', 'A bank account is only named when it is paid from a bank', 400)
+  if (a.supplierId && a.payFrom !== 'credit') throw new AppError('SUPPLIER_ONLY_ON_CREDIT', 'A supplier is only named when it is bought on credit', 400)
+  if (!a.payFrom) throw new AppError('PAY_FROM_REQUIRED', 'Say how it is paid: cash, bank or credit', 400)
+  if (a.payFrom === 'bank' && a.bankAccountId) await moneyAccountCode(prisma, tenantId, { method: 'bank_transfer', bankAccountId: a.bankAccountId })
+  let supplierName: string | null = null
+  if (a.payFrom === 'credit') supplierName = (await creditSupplierOf(tenantId, a.supplierId)).name
+  return { plannedPaySource: a.payFrom, plannedBankAccountId: a.bankAccountId, supplierId: a.payFrom === 'credit' ? a.supplierId : null, supplierName }
+}
+
+/** A live, billable supplier of `tenantId` (422 SUPPLIER_REQUIRED / SUPPLIER_NOT_IN_COMPANY). */
+async function creditSupplierOf(tenantId: string, supplierId: string | null | undefined): Promise<{ id: string; name: string }> {
+  if (!supplierId) throw new AppError('SUPPLIER_REQUIRED', 'Pick the supplier this is bought on credit from', 422)
+  const sup = await prisma.supplier.findFirst({ where: { id: supplierId, tenantId, deletedAt: null, systemKind: null }, select: { id: true, name: true } })
+  if (!sup) throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'That supplier is not one of this voucher\'s company\'s', 422)
+  return sup
 }
 
 /**
@@ -778,6 +907,10 @@ const VIEWS = [
 ] as const
 
 const PKT_OFFSET_MS = 5 * 3600_000
+/** The Karachi day of `d`, 'YYYY-MM-DD'. */
+function pktDay(d: Date): string {
+  return new Date(d.getTime() + PKT_OFFSET_MS).toISOString().slice(0, 10)
+}
 /** 00:00 PKT on the first day of the current Karachi month. */
 function pktMonthStart(now = new Date()): Date {
   const p = new Date(now.getTime() + PKT_OFFSET_MS)
@@ -886,6 +1019,26 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   //   postedThisMonth (verified and booked this Karachi month).
   // missingDocs counts every paid voucher that is not CLOSED (no document, or
   // sent back); awaitingVerification every closed one whose books are pending.
+  // GET /raise-options — what a finance payee voucher may name (owner, 2026-10-19), in the ACTIVE company: its
+  // active, non-pooled fixed-asset classes and outlets (equipment instead of an expense account), and its live
+  // suppliers ("To pay from: Credit"). Finance approvers only (403).
+  fastify.get('/raise-options', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const viewer = await viewerOf(req)
+    if (!viewer.financeApprover) throw new AppError('ASSET_FINANCE_ONLY', 'Only finance raises a payee voucher', 403)
+    const tenantId = activeTenantId(req, 'a voucher belongs to one company')
+    const [classes, locations, suppliers] = await Promise.all([
+      getAssetClasses(tenantId, prisma),
+      prisma.location.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      prisma.supplier.findMany({ where: { tenantId, deletedAt: null, systemKind: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    ])
+    return {
+      tenantId,
+      classes: classes.filter((c) => c.isActive && !c.pooled).map((c) => ({ id: c.id, key: c.key, label: c.label, costAccountCode: c.costAccountCode })),
+      locations,
+      suppliers,
+    }
+  })
+
   fastify.get('/dashboard', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const viewer = await viewerOf(req)
     const scope = await scopeTenantWhere(req, 'read')
@@ -1002,7 +1155,17 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       payeeName = body.payeeName ?? holder.name.slice(0, 120)
     }
     const money = voucherMoney(null, body)
-    const category = await categoryOf(tenantId, body, keeper)
+    // Equipment (owner, 2026-10-19): a fixed-asset class instead of an expense account — finance's payee voucher only.
+    if (body.assetClassId && (body.categoryKey || body.accountCode)) {
+      throw new AppError('ASSET_OR_EXPENSE', 'Pick an expense account OR a fixed-asset class, not both', 400)
+    }
+    const assetCls = await assetTargetOf(prisma, tenantId, {
+      kind: body.kind, assetClassId: body.assetClassId ?? null, assetLocationId: body.assetLocationId ?? null, conceptId: body.conceptId ?? null,
+    })
+    const category = assetCls ? null : await categoryOf(tenantId, body, keeper)
+    const plan = await payPlanOf(tenantId, {
+      kind: body.kind, payFrom: body.payFrom ?? null, bankAccountId: body.payFromBankAccountId ?? null, supplierId: body.supplierId ?? null,
+    })
     const now = new Date()
     const toCeo = body.kind === 'expense' && body.sendTo !== 'finance' && !viewer.isAdmin
     const created = await prisma.$transaction(async (tx) => {
@@ -1022,6 +1185,11 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
           payeeUserId: holder?.id ?? null,
           purpose: body.purpose,
           category,
+          assetClassId: assetCls?.id ?? null,
+          assetLocationId: assetCls ? (body.assetLocationId ?? null) : null,
+          plannedPaySource: plan.plannedPaySource,
+          plannedBankAccountId: plan.plannedBankAccountId,
+          supplierId: plan.supplierId,
           conceptId: body.conceptId ?? null,
           department: body.department ?? null,
           amountCents: money.amountCents,
@@ -1039,6 +1207,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     })
     await auditVoucher(req, 'create', created, {
       kind: body.kind, status: created.status, ...money, holderUserId: holder?.id ?? null, payeeName, purpose: body.purpose, category, boxId: body.boxId ?? null,
+      ...(assetCls && { assetClassId: assetCls.id, assetClassKey: assetCls.key, assetLocationId: body.assetLocationId ?? null }),
+      ...(plan.plannedPaySource && { payFrom: plan.plannedPaySource, payFromBankAccountId: plan.plannedBankAccountId, supplierId: plan.supplierId }),
     })
     // The bell (queued): finance's queue, or straight to the CEO for a finance-raised payee voucher.
     approvalWaiting(queueTypeOf(created.status), created.id, { round: 'r0', actorId: me })
@@ -1062,8 +1232,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const raiser = v.preparedById === viewer.id
     const sent = (Object.keys(body) as Array<keyof PatchInput>).filter((k) => body[k] !== undefined)
     const onlyHolder = sent.length === 1 && sent[0] === 'holderUserId'
-    const categoryOrBox = sent.every((k) => k === 'categoryKey' || k === 'accountCode' || k === 'boxId')
-    const financeFields = sent.every((k) => ['categoryKey', 'accountCode', 'boxId', 'discountCents', 'grossCents', 'conceptId', 'department'].includes(k))
+    const categoryOrBox = sent.every((k) => ['categoryKey', 'accountCode', 'boxId', 'assetClassId', 'assetLocationId'].includes(k))
+    const financeFields = sent.every((k) => ['categoryKey', 'accountCode', 'boxId', 'discountCents', 'grossCents', 'conceptId', 'department', 'assetClassId', 'assetLocationId', 'payFrom', 'payFromBankAccountId', 'supplierId'].includes(k))
     const wantsDiscount = body.discountCents !== undefined || body.grossCents !== undefined
     const heldFix = v.status === 'disbursed' && v.expenseOnVerify && !v.bookedAtPay && !v.postedAt && sent.length > 0
       && sent.every((k) => k === 'categoryKey' || k === 'accountCode')
@@ -1092,6 +1262,12 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       throw new AppError('BOX_PICK_KEEPERS_ONLY', 'Only finance or a manager picks the cash box — the cashier picks it when paying', 403)
     }
     if (wantsDiscount && !viewer.financeApprover) throw new AppError('DISCOUNT_FINANCE_ONLY', 'Only finance sets a discount', 403)
+    const touchesAsset = body.assetClassId !== undefined || body.assetLocationId !== undefined
+    if (touchesAsset && !viewer.financeApprover) {
+      throw new AppError('ASSET_FINANCE_ONLY', 'Only finance names a fixed-asset class on a voucher', 403)
+    }
+    const touchesPlan = body.payFrom !== undefined || body.payFromBankAccountId !== undefined || body.supplierId !== undefined
+    if (touchesPlan && !viewer.financeApprover) throw new AppError('PAY_FROM_FINANCE_ONLY', 'Only finance sets how a voucher is paid', 403)
     // Once finance has approved it, the money is never changed by whoever raised or holds it (separation of duties).
     if (!EDITABLE.includes(v.status) && (wantsDiscount || body.amountCents !== undefined) && isOwn(viewer, v)) throw selfApprove()
 
@@ -1107,7 +1283,31 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       data.payeeUserId = holder.id
       if (body.payeeName === undefined && EDITABLE.includes(v.status) && v.kind === 'request') data.payeeName = holder.name.slice(0, 120)
     }
-    if (body.categoryKey !== undefined || body.accountCode !== undefined) data.category = await categoryOf(v.tenantId, body, keeper)
+    // Equipment (owner, 2026-10-19): a fixed-asset class replaces the expense account and the other way round.
+    const touchesCategory = !!(body.categoryKey || body.accountCode)
+    if (body.assetClassId && touchesCategory) throw new AppError('ASSET_OR_EXPENSE', 'Pick an expense account OR a fixed-asset class, not both', 400)
+    const effClass = body.assetClassId !== undefined ? body.assetClassId : (touchesCategory ? null : v.assetClassId)
+    const effLoc = body.assetLocationId !== undefined ? body.assetLocationId : (effClass ? v.assetLocationId : null)
+    if (touchesAsset || touchesCategory || (body.conceptId !== undefined && v.assetClassId)) {
+      const cls = await assetTargetOf(prisma, v.tenantId, {
+        kind: v.kind, assetClassId: effClass, assetLocationId: effLoc, conceptId: body.conceptId !== undefined ? body.conceptId : v.conceptId,
+      })
+      data.assetClassId = cls?.id ?? null
+      data.assetLocationId = cls ? effLoc : null
+      if (cls) data.category = null
+    }
+    if ((body.categoryKey !== undefined || body.accountCode !== undefined) && !data.assetClassId) data.category = await categoryOf(v.tenantId, body, keeper)
+    if (touchesPlan) {
+      const payFrom = body.payFrom !== undefined ? body.payFrom : v.plannedPaySource
+      const plan = await payPlanOf(v.tenantId, {
+        kind: v.kind, payFrom,
+        bankAccountId: body.payFromBankAccountId !== undefined ? body.payFromBankAccountId : (payFrom === 'bank' ? v.plannedBankAccountId : null),
+        supplierId: body.supplierId !== undefined ? body.supplierId : (payFrom === 'credit' ? v.supplierId : null),
+      })
+      data.plannedPaySource = plan.plannedPaySource
+      data.plannedBankAccountId = plan.plannedBankAccountId
+      data.supplierId = plan.supplierId
+    }
     if (body.voucherDate !== undefined) data.voucherDate = body.voucherDate
     if (body.payeeName !== undefined) data.payeeName = body.payeeName
     if (body.purpose !== undefined) data.purpose = body.purpose
@@ -1151,6 +1351,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       grossCents: fields.grossCents,
       conceptId: fields.conceptId,
       department: fields.department,
+      assetClassId: fields.assetClassId,
+      assetLocationId: fields.assetLocationId,
       note: z.string().trim().max(500).optional(),
     }).parse(req.body ?? {})
     const v = await loadVoucher(req, req.params.id)
@@ -1165,12 +1367,27 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     }
     if (body.conceptId !== undefined) data.conceptId = body.conceptId
     if (body.department !== undefined) data.department = body.department
-    // The account: the one sent, else the stored one — it must resolve now.
-    const ref = body.categoryKey !== undefined || body.accountCode !== undefined
-      ? { categoryKey: body.categoryKey, accountCode: body.accountCode }
-      : categoryRefOf(v.category)
-    const category = await categoryOf(v.tenantId, ref, true)
-    if (category !== v.category) data.category = category
+    // Equipment (owner, 2026-10-19): a fixed-asset class (checked in the voucher's company) instead of an account.
+    const sentCategory = !!(body.categoryKey || body.accountCode)
+    if (body.assetClassId && sentCategory) throw new AppError('ASSET_OR_EXPENSE', 'Pick an expense account OR a fixed-asset class, not both', 400)
+    const effClass = body.assetClassId !== undefined ? body.assetClassId : (sentCategory ? null : v.assetClassId)
+    const effLoc = body.assetLocationId !== undefined ? body.assetLocationId : (effClass ? v.assetLocationId : null)
+    const assetCls = await assetTargetOf(prisma, v.tenantId, {
+      kind: v.kind, assetClassId: effClass, assetLocationId: effLoc, conceptId: body.conceptId !== undefined ? body.conceptId : v.conceptId,
+    })
+    if (assetCls) {
+      if (assetCls.id !== v.assetClassId) data.assetClassId = assetCls.id
+      if (effLoc !== v.assetLocationId) data.assetLocationId = effLoc
+      if (v.category !== null) data.category = null
+    } else {
+      if (v.assetClassId) { data.assetClassId = null; data.assetLocationId = null }
+      // The account: the one sent, else the stored one — it must resolve now.
+      const ref = body.categoryKey !== undefined || body.accountCode !== undefined
+        ? { categoryKey: body.categoryKey, accountCode: body.accountCode }
+        : categoryRefOf(v.category)
+      const category = await categoryOf(v.tenantId, ref, true)
+      if (category !== v.category) data.category = category
+    }
     if (body.discountCents !== undefined || body.grossCents !== undefined) {
       const m = voucherMoney(v, body)
       data.amountCents = m.amountCents
@@ -1495,9 +1712,13 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   // 422 PERIOD_LOCKED (and every other refused posting) rolls it all back.
   fastify.post<{ Params: { id: string } }>('/:id/pay', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const body = z.object({
-      source: z.enum(['box', 'cash_on_hand', 'bank']).default('box'),
+      // Omitted: the voucher's "To pay from" (cash → cash on hand, bank → its bank, credit), else the box.
+      source: z.enum(['box', 'cash_on_hand', 'bank', 'credit']).optional(),
       boxId: z.string().min(1).max(64).optional(),
       bankAccountId: z.string().min(1).max(64).optional(),
+      /** source 'credit': the supplier (default the voucher's) and the bill's due date (default today, Karachi). */
+      supplierId: z.string().min(1).max(64).optional(),
+      billDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-31').optional(),
       // The pay books the expense, so the equipment check runs here (it used to run at verification): a voucher
       // whose purpose looks like equipment is 422 USE_CAPEX unless finance says it is not, with a reason.
       notEquipment: z.boolean().optional(),
@@ -1511,7 +1732,18 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (!viewer.payer) throw new AppError('PAY_FINANCE_ONLY', 'Only finance pays a cash voucher', 403)
     if (PAID_STATUSES.includes(v.status)) throw new AppError('ALREADY_PAID', `Cash request ${v.number} has already been paid`, 409)
     if (v.status !== 'approved') throw wrongStatus('VOUCHER_NOT_APPROVED', v, 'only a voucher the CEO has approved can be paid')
-    const direct = body.source !== 'box'
+    const source: 'box' | 'cash_on_hand' | 'bank' | 'credit' = body.source
+      ?? (v.plannedPaySource === 'credit' ? 'credit' : v.plannedPaySource === 'bank' ? 'bank' : v.plannedPaySource === 'cash' ? 'cash_on_hand' : 'box')
+    const bankAccountIdIn = body.bankAccountId ?? (source === 'bank' && v.plannedBankAccountId ? v.plannedBankAccountId : undefined)
+    const credit = source === 'credit'
+    if (credit) {
+      // Bought on credit (owner, 2026-10-19): no cash leaves — the pay books a supplier bill. A payee voucher only.
+      if (v.kind !== 'expense') throw new AppError('PAY_FROM_ONLY_ON_PAYEE_VOUCHER', 'Only a payee voucher is booked on credit', 422)
+      if (body.bankAccountId) throw new AppError('BANK_NOT_FOR_SOURCE', 'A bank account is only picked when paying from a bank', 422)
+    } else if (body.supplierId || body.billDueDate) {
+      throw new AppError('SUPPLIER_ONLY_ON_CREDIT', 'A supplier and a due date are only given when it is booked on credit', 422)
+    }
+    const direct = source !== 'box'
     if (direct) {
       if (!viewer.financeApprover) {
         throw new AppError('PAY_SOURCE_FINANCE_ONLY', 'Only finance or the CEO pays a voucher from cash on hand or a bank account', 403)
@@ -1520,6 +1752,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     } else if (body.bankAccountId) {
       throw new AppError('BANK_NOT_FOR_SOURCE', 'A bank account is only picked when paying from a bank', 422)
     }
+    const supplier = credit ? await creditSupplierOf(v.tenantId, body.supplierId ?? v.supplierId) : null
 
     let box: { id: string; tenantId: string | null; isActive: boolean; custodianId: string; name: string } | null = null
     if (!direct) {
@@ -1548,16 +1781,38 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (v.kind === 'request' && !v.payeeUserId) {
       throw new AppError('HOLDER_REQUIRED', `Cash request ${v.number} names nobody to take the cash — finance names the holder first`, 422)
     }
-    // The expense account is booked by this pay: it must be usable before any
-    // cash leaves (finance fixes it with PATCH otherwise).
-    const expense = await resolveSpendAccount(prisma, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })
+    // Equipment (owner, 2026-10-19): a payee voucher naming a fixed-asset class goes through the CapEx Quick-buy
+    // engine — checked (class, outlet, shared → outlet) BEFORE any cash leaves; the class satisfies the equipment
+    // check. Otherwise the expense account is booked by this pay: it must be usable before any cash leaves
+    // (finance fixes it with PATCH otherwise).
+    const assetCls = await assetTargetOf(prisma, v.tenantId, {
+      kind: v.kind, assetClassId: v.assetClassId, assetLocationId: v.assetLocationId, conceptId: v.conceptId,
+    })
+    const expense = assetCls ? null : await resolveSpendAccount(prisma, v.tenantId, categoryRefOf(v.category), { allowExplicit: true })
     // Equipment belongs on the register through CapEx: refused BEFORE any cash leaves (finance overrides with a
     // reason, flagged below). The description is the pay line's own (cashRequestPayLine).
     const payLineDescription = `${v.number}: ${v.purpose}`.slice(0, 200)
-    const eq = assertNotEquipmentLine({
-      description: payLineDescription, expenseAccountCode: expense.code,
-      notEquipment: body.notEquipment, notEquipmentReason: body.notEquipmentReason ?? null,
-    }, { role: viewer.role })
+    const eq = expense
+      ? assertNotEquipmentLine({
+        description: payLineDescription, expenseAccountCode: expense.code,
+        notEquipment: body.notEquipment, notEquipmentReason: body.notEquipmentReason ?? null,
+      }, { role: viewer.role })
+      : { overridden: false }
+    // On credit, an expense becomes a supplier bill through procurement's own engine (createBill = prepareBill +
+    // insertBillTx): the bill's checks (company, INT4 non-stock line limit, equipment, expense code, withholding) run
+    // here, before the claim; the company's FIFO cut-over runs before the transaction, as createBill's does.
+    const billPrep = credit && expense
+      ? await prepareBill({
+        supplierId: supplier!.id, billNumber: v.number, billDate: pktDay(new Date()), dueDate: body.billDueDate ?? pktDay(new Date()),
+        notes: `Cash voucher ${v.number}: ${v.purpose} (payee ${v.payeeName})`.slice(0, 1000),
+        lines: [{
+          expenseAccountCode: expense.code, description: payLineDescription, quantity: 1, unitCostCents: v.amountCents,
+          notEquipment: body.notEquipment, notEquipmentReason: body.notEquipmentReason ?? null,
+        }],
+        createdBy: me, actorRole: viewer.role, actorEmail: req.staffUser!.email,
+      })
+      : null
+    if (billPrep) await ensureFifoReady(v.tenantId)
 
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
     const settleDays = (await getOperationsConfig(v.tenantId))?.cashAdvanceSettleDays ?? 30
@@ -1570,8 +1825,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
 
     const result = await prisma.$transaction(async (tx) => {
       // Cash on hand / bank: THE resolver, for the VOUCHER's company, inside the transaction.
-      const account = direct
-        ? await moneyAccountCode(tx, v.tenantId, { method: body.source === 'cash_on_hand' ? 'cash' : 'bank_transfer', bankAccountId: body.bankAccountId ?? null })
+      const account = direct && !credit
+        ? await moneyAccountCode(tx, v.tenantId, { method: source === 'cash_on_hand' ? 'cash' : 'bank_transfer', bankAccountId: bankAccountIdIn ?? null })
         : null
       const claimed = await tx.cashVoucher.updateMany({
         // The pay books what was read above (expense account, equipment check, pay line, brand, holder, amount):
@@ -1580,12 +1835,15 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
           id: v.id, tenantId: v.tenantId, status: 'approved',
           category: v.category, conceptId: v.conceptId, payeeUserId: v.payeeUserId,
           amountCents: v.amountCents, purpose: v.purpose, payeeName: v.payeeName,
+          assetClassId: v.assetClassId, assetLocationId: v.assetLocationId, supplierId: v.supplierId, plannedPaySource: v.plannedPaySource,
         },
         data: {
           status: 'disbursed', disbursedAt: now, disbursedById: me, cashierName, dueBy, expenseOnVerify: true, bookedAtPay: true,
           ...(box
             ? { boxId: box.id, paySource: 'box', payAccountCode: null, payBankAccountId: null }
-            : { boxId: null, paySource: body.source, payAccountCode: account!.code, payBankAccountId: account!.bankAccountId }),
+            : credit
+              ? { boxId: null, paySource: 'credit', payAccountCode: null, payBankAccountId: null, supplierId: supplier!.id }
+              : { boxId: null, paySource: source, payAccountCode: account!.code, payBankAccountId: account!.bankAccountId }),
           // An outside payee has no login: the payer's record of the hand-over is the receipt (kind expense).
           ...(v.kind === 'expense' && { cashReceivedById: me, cashReceivedAt: now }),
         },
@@ -1598,11 +1856,71 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         }
         throw wrongStatus('VOUCHER_NOT_APPROVED', { number: v.number, status: cur.status }, 'only a voucher the CEO has approved can be paid')
       }
+      if (assetCls) {
+        // Equipment: the CapEx Quick-buy engine (financePlanning/capexPosting.ts recordEquipmentPurchaseTx) — a capital
+        // line on the outlet's standing project, its payment Dr 1340 / Cr the source ('capex.payment:<id>' — from a box
+        // through the one spend path: its capex line, Cr 1011, the float drops), and the capitalisation request the
+        // CEO approves (Dr class cost / Cr 1340 → the register → monthly depreciation). Nothing else posts.
+        let movement: Awaited<ReturnType<typeof recordPettyCashSpendTx>> | null = null
+        const bought = await recordEquipmentPurchaseTx(tx, {
+          tenantId: v.tenantId, locationId: v.assetLocationId, item: v.purpose.slice(0, 200), cls: assetCls,
+          quantity: 1, unitCostCents: v.amountCents, paidAt: now, vendor: (supplier?.name ?? v.payeeName).slice(0, 120),
+          notes: `Cash voucher ${v.number} — paid to ${v.payeeName}`.slice(0, 500),
+          supplierId: credit ? supplier!.id : null,
+          pay: credit ? { kind: 'credit' } : box
+            ? {
+              kind: 'cash_document',
+              record: async (lineId) => {
+                movement = await recordPettyCashSpendTx(tx, {
+                  box: { id: box!.id }, amountCents: v.amountCents, reason, vendorName: v.payeeName.slice(0, 120),
+                  approvedById: v.directorSignedById, createdById: me, nature: 'expense',
+                  lines: [{ kind: 'capex', capexLineId: lineId, amountCents: v.amountCents, conceptId: v.conceptId, description: payLineDescription }],
+                  allowExplicit: true, stockAllowed: false, equipmentCheck: false,
+                  cashVoucherId: v.id, conceptId: v.conceptId, actor: { id: me, role: viewer.role },
+                })
+                const line = await tx.pettyCashSpendLine.findFirst({ where: { movementId: movement.movement.id, tenantId: v.tenantId }, select: { capexPaymentId: true } })
+                if (!line?.capexPaymentId) throw new AppError('CAPEX_PAYMENT_MISSING', 'The box spend did not book its CapEx payment', 500)
+                return { capexPaymentId: line.capexPaymentId, entryId: movement.movement.journalEntryId }
+              },
+            }
+            : {
+              kind: 'instalment', payFrom: source === 'cash_on_hand' ? 'cash' : 'bank', bankAccountId: account!.bankAccountId,
+              paymentRef: v.number, notes: `Paid by cash voucher ${v.number}`,
+              // The voucher pays its amount in full: no income tax is withheld here (as on every cash voucher).
+              extra: { whtCents: 0, whtRateBps: 0 },
+            },
+          postedBy: me,
+          capitalise: {
+            input: { inServiceAt: pktDay(now), locationId: v.assetLocationId, conceptId: v.conceptId },
+            requestedById: me,
+            reason: (projectName) => `Cash voucher ${v.number}: ${v.purpose} — paid to ${v.payeeName} (${projectName})`,
+          },
+        })
+        const m = movement as Awaited<ReturnType<typeof recordPettyCashSpendTx>> | null
+        await tx.cashVoucher.update({
+          where: { id: v.id },
+          data: {
+            capexLineId: bought.lineId, capitaliseEventId: bought.eventId,
+            ...(m ? { pettyCashMovementId: m.movement.id } : bought.entryId ? { payJournalEntryId: bought.entryId } : {}),
+          },
+        })
+        return {
+          movement: m?.movement ?? null, newFloatCents: m?.newFloatCents ?? null, entryId: bought.entryId, account,
+          asset: { capexLineId: bought.lineId, capexPaymentId: bought.paymentId, projectId: bought.projectId, eventId: bought.eventId },
+          bill: null,
+        }
+      }
+      if (billPrep) {
+        // On credit: THE bill and its entry (Dr <6xxx> / Cr 2010, net of any withholding Cr 2040) — 'supplier.bill:<id>'.
+        const bill = await insertBillTx(tx, billPrep)
+        await tx.cashVoucher.update({ where: { id: v.id }, data: { supplierBillId: bill.id, payJournalEntryId: bill.journalEntryId } })
+        return { movement: null, newFloatCents: null, entryId: bill.journalEntryId, account: null, asset: null, bill: { id: bill.id, billNumber: bill.billNumber } }
+      }
       if (!box) {
         // THE one entry: Dr <the voucher's 6xxx> / Cr 1010 | the bank's code — 'cashvoucher.pay:<id>', in this transaction.
         const posted = await postCashVoucherSourceTx(tx, v.id, 'pay', v.amountCents, me)
         await tx.cashVoucher.update({ where: { id: v.id }, data: { payJournalEntryId: posted.entryId } })
-        return { movement: null, newFloatCents: null, entryId: posted.entryId, account }
+        return { movement: null, newFloatCents: null, entryId: posted.entryId, account, asset: null, bill: null }
       }
       // The one spend path (pettyCash.ts) — THE one entry, one expense line in the voucher's account (the H3
       // booking, cashRequestPayLine): Dr <6xxx> / Cr 1011, the float drops, in this transaction.
@@ -1623,25 +1941,41 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
         actor: { id: me, role: viewer.role },
       })
       await tx.cashVoucher.update({ where: { id: v.id }, data: { pettyCashMovementId: spent.movement.id } })
-      return { movement: spent.movement, newFloatCents: spent.newFloatCents, entryId: spent.movement.journalEntryId, account: null }
+      return { movement: spent.movement, newFloatCents: spent.newFloatCents, entryId: spent.movement.journalEntryId, account: null, asset: null, bill: null }
     }, { timeout: 20_000, maxWait: 10_000 })
 
     await auditVoucher(req, 'pay', v, {
       status: 'disbursed',
       amountCents: v.amountCents,
-      paySource: body.source,
+      paySource: source,
       boxId: box?.id ?? null,
+      ...(supplier && { supplierId: supplier.id, supplierName: supplier.name }),
+      ...(result.bill && { supplierBillId: result.bill.id, billNumber: result.bill.billNumber, journalEntryId: result.entryId }),
       ...(result.account && { payAccountCode: result.account.code, payBankAccountId: result.account.bankAccountId, journalEntryId: result.entryId }),
       ...(result.movement && { pettyCashMovementId: result.movement.id, newFloatCents: result.newFloatCents }),
       cashierName,
       dueBy: dueBy.toISOString(),
-      expenseAccountCode: expense.code,
+      expenseAccountCode: expense?.code ?? null,
+      ...(result.asset && { assetClassKey: assetCls!.key, assetLocationId: v.assetLocationId, ...result.asset }),
       bookedAtPay: true,
       ...(eq.overridden && { notEquipment: true, notEquipmentReason: (body.notEquipmentReason ?? '').trim() }),
     }, { status: v.status, boxId: v.boxId })
     voucherTaskNotice('paid', v.id, me)
-    if (eq.overridden) {
-      await flagOverrides(v, me, [{ accountCode: expense.code, amountCents: v.amountCents, description: payLineDescription, overrideReason: (body.notEquipmentReason ?? '').trim() }])
+    if (result.asset) {
+      // The CapEx side's own trail, and the bell: the capitalisation waits for the CEO (as a Quick buy's does).
+      await audit({
+        category: 'accounting', action: 'capex.voucher_buy', entity: 'CapexLine', entityId: result.asset.capexLineId,
+        userId: me, userEmail: req.staffUser!.email, tenantId: v.tenantId,
+        after: { voucherId: v.id, number: v.number, ...result.asset, entryId: result.entryId },
+        metadata: { classKey: assetCls!.key, totalCents: v.amountCents, locationId: v.assetLocationId, paySource: source },
+      })
+      if (result.asset.eventId) approvalWaiting('fixed_asset_request', result.asset.eventId, { round: `create:${result.asset.eventId}`, actorId: me })
+    }
+    if (billPrep && result.bill) {
+      // The bill's own after-commit step: its equipment override is audited and flagged as a bill's (high).
+      await afterBillCreated(billPrep, result.bill)
+    } else if (eq.overridden) {
+      await flagOverrides(v, me, [{ accountCode: expense!.code, amountCents: v.amountCents, description: payLineDescription, overrideReason: (body.notEquipmentReason ?? '').trim() }])
     }
 
     return {

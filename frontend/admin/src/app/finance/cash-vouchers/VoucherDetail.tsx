@@ -14,7 +14,7 @@ import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { amountInWords, formatPkr } from './amountInWords'
 import {
-  CV_BASE, CV_ROOT, categoryWords, errorWords, fmtDate, fmtDateTime, stageOf, useCategories, useHistory,
+  CV_BASE, CV_ROOT, accountWords, errorWords, fmtDate, fmtDateTime, stageOf, useCategories, useHistory,
   usePaySources, usePettyBoxes, useStaffNames, useVoucher, type CashVoucher, type HistoryRow,
 } from './data'
 import { PrintPortal, VoucherSheet } from './VoucherPrint'
@@ -84,7 +84,7 @@ export function VoucherDetail({ id }: { id: string }) {
   }
 
   const companyName = v.companyName ?? tenants.find((t) => t.id === v.tenantId)?.name ?? ''
-  const categoryLabel = categoryWords(v.category, categories)
+  const categoryLabel = accountWords(v, categories)
   const expense = v.kind === 'expense'
   const holder = expense ? v.payeeName : (v.holderName ?? v.payeeName)
   const run = (kind: Act, body: Record<string, unknown> = {}) => { act.reset(); act.mutate({ kind, body }) }
@@ -313,7 +313,19 @@ export function VoucherDetail({ id }: { id: string }) {
             )}
             <Fact label="In words" value={v.amountInWords || amountInWords(v.amountCents)} wide />
             <Fact label="Particulars" value={v.purpose} wide />
-            <Fact label="Expense account" value={categoryLabel} />
+            <Fact label={v.assetClassId ? 'Booked to' : 'Expense account'} value={categoryLabel} />
+            {v.assetClassId && <Fact label="Outlet" value={v.assetLocationName ?? (v.conceptName ? `— (brand ${v.conceptName})` : '—')} />}
+            {v.capitalisation && (
+              <Fact label="Capitalisation" value={v.capitalisation.status === 'posted' ? 'Approved by the CEO — on the fixed-asset register'
+                : v.capitalisation.status === 'rejected' ? `Rejected by the CEO — the cost stays on CapEx advances (1340)${v.capitalisation.decisionNote ? `: ${v.capitalisation.decisionNote}` : ''}`
+                : 'Waiting for the CEO'} />
+            )}
+            {expense && v.payFrom && (
+              <Fact label="To pay from" value={v.payFrom === 'credit' ? `Credit — ${v.supplierName ?? 'supplier'}` : v.payFrom === 'bank' ? `Bank${v.payFromBankName ? ` — ${v.payFromBankName}` : ''}` : 'Cash'} />
+            )}
+            {v.supplierBill && (
+              <Fact label="Supplier bill" value={`${v.supplierBill.billNumber} · ${v.supplierBill.status} · due ${fmtDate(v.supplierBill.dueDate)} — pay it in Supplier bills & payments`} />
+            )}
             <Fact label="Paid from" value={v.paidFrom ?? v.boxName ?? '—'} />
             <Fact label="Paid by" value={v.paidByName ?? '—'} />
             <Fact label="Received by" value={v.cashReceivedAt ? `${v.receiverName ?? holder} · confirmed ${fmtDateTime(v.cashReceivedAt)}` : `${v.receiverName ?? holder} · not confirmed yet`} />
@@ -417,10 +429,11 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
   const gross = v.grossOrAmountCents ?? v.grossCents ?? v.amountCents + (v.discountCents ?? 0)
   const isCode = /^\d{4}$/.test(category)
   const changed = category !== (v.category ?? '') || discountCents !== (v.discountCents ?? 0)
-  const ok = !!category && discountCents >= 0 && discountCents < gross
+  const asset = !!v.assetClassId
+  const ok = (asset || !!category) && discountCents >= 0 && discountCents < gross
   const approve = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/finance-approve`, {
-      ...(category !== (v.category ?? '') ? (isCode ? { accountCode: category } : { categoryKey: category }) : {}),
+      ...(!asset && category !== (v.category ?? '') ? (isCode ? { accountCode: category } : { categoryKey: category }) : {}),
       ...(discountCents !== (v.discountCents ?? 0) && v.canEditDiscount !== false ? { discountCents } : {}),
     }, { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
@@ -432,13 +445,15 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
       <p className="text-xs text-white/55">Check the expense account and set a discount if there is one, then send it to the CEO.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label htmlFor="fa-category" className="text-xs text-white/55">Expense account</label>
+          <label htmlFor="fa-category" className="text-xs text-white/55">{asset ? 'Booked to' : 'Expense account'}</label>
           <div className="mt-1">
-            <Select id="fa-category" value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
+            {asset ? (
+              <p id="fa-category" className="text-sm text-white/80">{accountWords(v, categories)} — change it with Edit.</p>
+            ) : <Select id="fa-category" value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
               {!categories.some((c) => c.key === category) && category && <option value={category}>{category}</option>}
               <option value="">— pick —</option>
               {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
-            </Select>
+            </Select>}
           </div>
         </div>
         <div>
@@ -504,17 +519,26 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const { data: src, isLoading } = usePaySources(v)
   const boxes = src?.boxes ?? []
   const banks = src?.banks ?? []
+  // A payee voucher may also be booked on credit (2026-10-19): a supplier bill, no cash handed over.
+  const creditOk = v.kind === 'expense' && !!v.supplierId
   const options: string[] = [
     ...boxes.map((b) => `box:${b.id}`),
     ...(src?.cashOnHand ? ['cash'] : []),
     ...banks.map((b) => `bank:${b.id}`),
+    ...(creditOk ? ['credit'] : []),
   ]
-  const preferred = v.boxId && boxes.some((b) => b.id === v.boxId) ? `box:${v.boxId}` : options.length === 1 ? options[0]! : ''
+  // "To pay from" chosen at raise prefills the pick (finance may change it).
+  const planned = v.payFrom === 'credit' && creditOk ? 'credit'
+    : v.payFrom === 'bank' && v.payFromBankAccountId && banks.some((b) => b.id === v.payFromBankAccountId) ? `bank:${v.payFromBankAccountId}`
+    : v.payFrom === 'bank' && banks.length === 1 ? `bank:${banks[0]!.id}`
+    : v.payFrom === 'cash' && src?.cashOnHand ? 'cash' : ''
+  const preferred = planned || (v.boxId && boxes.some((b) => b.id === v.boxId) ? `box:${v.boxId}` : options.length === 1 ? options[0]! : '')
   const [pick, setPick] = useState('')
   const chosen = pick || preferred
   const box = chosen.startsWith('box:') ? boxes.find((b) => `box:${b.id}` === chosen) ?? null : null
   const bank = chosen.startsWith('bank:') ? banks.find((b) => `bank:${b.id}` === chosen) ?? null : null
-  const fromWords = box ? box.name : bank ? bank.name : chosen === 'cash' ? 'cash on hand' : ''
+  const credit = chosen === 'credit'
+  const fromWords = box ? box.name : bank ? bank.name : chosen === 'cash' ? 'cash on hand' : credit ? `credit from ${v.supplierName ?? 'the supplier'}` : ''
   const holder = v.holderName ?? v.payeeName
   // The pay books the expense, so the server's equipment check runs here: a purpose that looks like equipment is
   // refused (USE_CAPEX) until finance says it is not equipment, with a reason (flagged for the CEO).
@@ -523,7 +547,7 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const pay = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/pay`,
       {
-        ...(box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : { source: 'cash_on_hand' }),
+        ...(box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : credit ? { source: 'credit' } : { source: 'cash_on_hand' }),
         ...(notEquipment && { notEquipment: true, notEquipmentReason: notEquipmentReason.trim() }),
       },
       { tenantId: v.tenantId }),
@@ -558,6 +582,11 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
             <option value="cash">Cash on hand (safe)</option>
           </optgroup>
         )}
+        {creditOk && (
+          <optgroup label="On credit">
+            <option value="credit">Credit — {v.supplierName ?? 'supplier'} (supplier bill)</option>
+          </optgroup>
+        )}
         {banks.length > 0 && (
           <optgroup label="Bank accounts">
             {banks.map((b) => (
@@ -590,8 +619,14 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
         </div>
       )}
       <button disabled={pay.isPending || !chosen || overrideIncomplete} className={primaryBtn}
-        onClick={async () => { if (await confirm({ title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} is paid from ${fromWords} and booked as expense now.`, confirmLabel: 'Cash handed over' })) { pay.reset(); pay.mutate() } }}>
-        {pay.isPending ? 'Paying…' : `Cash handed to ${holder}`}
+        onClick={async () => {
+          const what = v.assetClassId ? 'booked to CapEx advances (the CEO then approves the capitalisation)' : 'booked as expense now'
+          const ok = await confirm(credit
+            ? { title: `Book ${v.number} on credit?`, body: `PKR ${formatPkr(v.amountCents)} is owed to ${v.supplierName ?? 'the supplier'} — ${v.assetClassId ? 'the CapEx line and its capitalisation request are raised' : 'a supplier bill is raised'}; no cash is handed over.`, confirmLabel: 'Book on credit' }
+            : { title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} is paid from ${fromWords} and ${what}.`, confirmLabel: 'Cash handed over' })
+          if (ok) { pay.reset(); pay.mutate() }
+        }}>
+        {pay.isPending ? 'Paying…' : credit ? 'Book on credit' : `Cash handed to ${holder}`}
       </button>
     </div>
   )

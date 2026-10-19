@@ -25,6 +25,7 @@ import { audit } from '../../lib/audit.js'
 import {
   syncCapexPaymentPosting, capexLedgerState, capexTreatmentOf, recalcLinePaid, assertPaymentRemovable,
   prepareCapitalisation, checkCapitalisable, insertCapitaliseRequestTx, recordDepositReturn, reclassLegacyDeposit,
+  recordEquipmentPurchaseTx,
   findOrphanAdvances, pendingCapitalisation, CAPEX_TREATMENTS, CAPEX_SOURCE,
   DEPOSIT_RETURN_SOURCE, DEPOSIT_RECLASS_SOURCE, type CapexLineLedger,
 } from './capexPosting.js'
@@ -1026,49 +1027,25 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     const supplierName = body.supplierId ? (await prisma.supplier.findUnique({ where: { id: body.supplierId }, select: { name: true } }))?.name ?? null : null
 
     const out = await prisma.$transaction(async (tx) => {
-      // The outlet's standing project (one live per company + outlet).
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`capex_standing:${tenantId}:${body.locationId}`}))`
-      let project = await tx.capexProject.findFirst({ where: { tenantId, locationId: body.locationId, isStanding: true, deletedAt: null } })
-      if (!project) {
-        const location = await tx.location.findUniqueOrThrow({ where: { id: body.locationId }, select: { name: true } })
-        project = await tx.capexProject.create({
-          data: {
-            tenantId, locationId: body.locationId, isStanding: true, projectType: 'equipment_only',
-            name: `Equipment & smallwares — ${location.name}`.slice(0, 120), phase: 'live', status: 'in_progress',
+      // The one engine (capexPosting.ts recordEquipmentPurchaseTx) — a finance payee voucher for equipment uses it too.
+      const r = await recordEquipmentPurchaseTx(tx, {
+        tenantId, locationId: body.locationId, item: body.item, cls, quantity: body.quantity, unitCostCents: body.unitCostCents,
+        paidAt, supplierId: body.supplierId ?? null, vendor: body.vendor ?? supplierName,
+        inputTaxCents: body.inputTaxCents, inputTaxAuthority: body.inputTaxAuthority ?? null, whtSection: body.whtSection ?? null,
+        warrantyMonths: body.warrantyMonths ?? null, notes: body.notes ?? null,
+        pay: { kind: 'instalment', payFrom: 'bank', bankAccountId: body.bankAccountId ?? null, paymentRef: body.paymentRef ?? null, extra: override },
+        postedBy: actor.id,
+        capitalise: canCapitalise ? {
+          input: {
+            inServiceAt: body.paidAt.slice(0, 10),
+            usefulLifeMonths: body.usefulLifeMonths, salvageCents: body.salvageCents, locationId: body.locationId,
+            ...(cls.pooled && body.typeKey ? { pool: { typeKey: body.typeKey, conceptId: body.conceptId ?? null } } : {}),
           },
-        })
-      }
-      const line = await tx.capexLine.create({
-        data: {
-          projectId: project.id, scope: 'Equipment', category: cls.label, item: body.item, quantity: body.quantity,
-          unitCostCents: body.unitCostCents, negotiatedCents: total, status: 'delivered', actualDeliveryDate: paidAt,
-          vendor: body.vendor ?? supplierName, supplierId: body.supplierId ?? null, treatment: 'capital',
-          inputTaxCents: body.inputTaxCents, inputTaxAuthority: body.inputTaxAuthority ?? null, whtSection: body.whtSection ?? null,
-          warrantyMonths: body.warrantyMonths ?? null, notes: body.notes ?? null,
-        },
+          requestedById: actor.id,
+          reason: (projectName) => ((body.reason ?? '').length >= 10 ? body.reason! : `Quick buy: ${body.item} for ${projectName}`),
+        } : null,
       })
-      const payment = await tx.capexPayment.create({
-        data: {
-          lineId: line.id, label: 'balance', amountCents: total, paidAmountCents: total, paidAt,
-          paymentRef: body.paymentRef ?? null, bankAccountId: body.bankAccountId ?? null,
-          ...override,
-        },
-      })
-      const ledger = await syncCapexPaymentPosting(payment.id, { tx, postedBy: actor.id, payFrom: 'bank', bankAccountId: body.bankAccountId ?? null })
-      await recalcLinePaid(line.id, tx)
-      let eventId: string | null = null
-      if (canCapitalise) {
-        const { payload } = await checkCapitalisable(tx, {
-          lineId: line.id, tenantId, classKey: cls.key, inServiceAt: body.paidAt.slice(0, 10),
-          usefulLifeMonths: body.usefulLifeMonths, salvageCents: body.salvageCents, locationId: body.locationId,
-          ...(cls.pooled && body.typeKey ? { pool: { typeKey: body.typeKey, conceptId: body.conceptId ?? null } } : {}),
-        })
-        eventId = await insertCapitaliseRequestTx(tx, {
-          tenantId, lineId: line.id, payload, requestedById: actor.id, effectiveDate: paidAt,
-          reason: (body.reason ?? '').length >= 10 ? body.reason! : `Quick buy: ${body.item} for ${project.name}`,
-        })
-      }
-      return { projectId: project.id, lineId: line.id, paymentId: payment.id, eventId, ledger }
+      return { projectId: r.projectId, lineId: r.lineId, paymentId: r.paymentId, eventId: r.eventId, ledger: r.ledger! }
     }, { timeout: 60_000, maxWait: 15_000 })
 
     // The CEO's own Quick buy is applied at once, through the one approval

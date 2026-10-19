@@ -207,8 +207,24 @@ export interface CashVoucher {
   cancelledByName?: string | null
   disbursedByName?: string | null
   boxName?: string | null
-  /** Where the cash came from (2026-10-16): 'box' (petty cash), 'cash_on_hand' (1010) or 'bank'. */
-  paySource?: 'box' | 'cash_on_hand' | 'bank' | null
+  /** Where the cash came from (2026-10-16): 'box' (petty cash), 'cash_on_hand' (1010) or 'bank'; 'credit' = a supplier bill (2026-10-19). */
+  paySource?: 'box' | 'cash_on_hand' | 'bank' | 'credit' | null
+  /** Equipment (2026-10-19): a fixed-asset class instead of an expense account — CapEx advances at pay, then the CEO capitalises it. */
+  assetClassId?: string | null
+  assetClassLabel?: string | null
+  assetLocationId?: string | null
+  assetLocationName?: string | null
+  capexLineId?: string | null
+  capitaliseEventId?: string | null
+  capitalisation?: { id: string; status: string; decidedAt: string | null; decisionNote: string | null } | null
+  /** "To pay from" chosen at raise (2026-10-19): cash / bank / credit (a supplier bill at finance's pay). */
+  payFrom?: 'cash' | 'bank' | 'credit' | null
+  payFromBankAccountId?: string | null
+  payFromBankName?: string | null
+  supplierId?: string | null
+  supplierName?: string | null
+  supplierBillId?: string | null
+  supplierBill?: { id: string; billNumber: string; status: string; dueDate: string; totalCents: number; whtCents: number; paidCents: number } | null
   payAccountCode?: string | null
   payBankAccountId?: string | null
   /** Words for it once paid: the box's name, "Cash on hand" or the bank's name. */
@@ -346,6 +362,29 @@ export function usePaySources(v: { id: string; tenantId: string }, enabled = tru
     enabled,
     retry: false,
   })
+}
+
+/** What a finance payee voucher may name in the active company (2026-10-19): asset classes, outlets, suppliers. */
+export interface RaiseOptions {
+  tenantId: string
+  classes: Array<{ id: string; key: string; label: string; costAccountCode: string }>
+  locations: Array<{ id: string; name: string }>
+  suppliers: Array<{ id: string; name: string }>
+}
+export function useRaiseOptions(enabled = true) {
+  return useQuery<RaiseOptions>({
+    queryKey: [CV_ROOT, 'raise-options'],
+    queryFn: () => api.get(`${CV_BASE}/raise-options`),
+    enabled,
+    retry: false,
+    staleTime: 60_000,
+  })
+}
+
+/** "Fixed asset — Kitchen equipment" for an equipment voucher, else the expense account's words. */
+export function accountWords(v: Pick<CashVoucher, 'category' | 'assetClassLabel' | 'assetClassId'>, categories: SpendCategory[]): string {
+  if (v.assetClassId) return `Fixed asset — ${v.assetClassLabel ?? 'equipment'} (capitalised, then depreciated)`
+  return categoryWords(v.category, categories)
 }
 
 /** The boxes I hold (any login) — the custodian's box picker. */

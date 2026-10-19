@@ -732,6 +732,125 @@ export async function insertCapitaliseRequestTx(
   }
 }
 
+// ─── Quick buy — the ONE "bought equipment, paid on the day" engine ─────────
+
+/** How a Quick-buy-shaped purchase is paid. */
+export type EquipmentPurchasePay =
+  /** An instalment entered here, posted by syncCapexPaymentPosting: Dr 1340 / Cr cash 1010 | the bank (net) / Cr 2040 WHT. */
+  | {
+    kind: 'instalment'; payFrom: 'bank' | 'cash'; bankAccountId: string | null; paymentRef?: string | null; notes?: string | null
+    /** Payment fields fixed up front (Quick buy's WHT override; a cash voucher's "no withholding": whtCents 0 + whtRateBps 0). */
+    extra?: { whtCents?: number; whtOverrideReason?: string | null; whtRateBps?: number | null; whtSection?: string | null }
+  }
+  /**
+   * Paid by a cash document that books its own CapEx cash payment on the new
+   * line (a box spend's capex line → recordCapexPaymentFromCashTx, Dr 1340 /
+   * Cr 1011). `record` runs inside the same transaction and returns that payment.
+   */
+  | { kind: 'cash_document'; record: (lineId: string) => Promise<{ capexPaymentId: string; entryId: string | null }> }
+  /**
+   * Bought on credit (a payee voucher "To pay from: Credit"): no payment, nothing posts now. The CEO's approval of
+   * the capitalisation books Dr class cost / Cr 2012 Payables — capital suppliers (nothing was advanced), and the
+   * supplier is later paid through the line's own CapEx payment (Dr 2012 / Cr the money).
+   */
+  | { kind: 'credit' }
+
+/**
+ * Equipment bought and paid on the day — Quick buy's engine (POST
+ * /finance/capex/quick-buy) and a finance payee voucher for equipment
+ * (trustops/cashVouchers.ts pay, owner 2026-10-19). Inside the caller's
+ * transaction:
+ *   1. the outlet's standing "Equipment & smallwares" project (one live per
+ *      company + outlet; with no outlet, the company's one standing project
+ *      with no outlet — a branded item a payee voucher bought);
+ *   2. a capital line delivered on `paidAt`;
+ *   3. its payment (`pay`) — Dr 1340 / Cr the money;
+ *   4. when `capitalise` is given, the SAME capitalisation request the CEO
+ *      approves (checkCapitalisable + insertCapitaliseRequestTx): on approval
+ *      Dr class cost / Cr 1340, the register, then monthly depreciation.
+ * The caller resolved the company, class and ids (all of `tenantId`).
+ */
+export async function recordEquipmentPurchaseTx(tx: Tx, a: {
+  tenantId: string
+  locationId: string | null
+  item: string
+  cls: FixedAssetClass
+  quantity: number
+  unitCostCents: number
+  paidAt: Date
+  supplierId?: string | null
+  vendor?: string | null
+  inputTaxCents?: number
+  inputTaxAuthority?: string | null
+  whtSection?: string | null
+  warrantyMonths?: number | null
+  notes?: string | null
+  pay: EquipmentPurchasePay
+  postedBy: string
+  /** Fields passed to checkCapitalisable (lineId / tenantId / classKey are filled in); null = no request. */
+  capitalise: { input: Omit<CapitaliseInput, 'lineId' | 'tenantId' | 'classKey'>; requestedById: string; reason: (projectName: string) => string } | null
+}): Promise<{
+  projectId: string; projectName: string; lineId: string; paymentId: string | null; eventId: string | null
+  entryId: string | null; ledger: Awaited<ReturnType<typeof syncCapexPaymentPosting>> | null
+}> {
+  const total = a.unitCostCents * a.quantity
+  assertMoneyFits(total, 'This purchase (quantity × unit cost)')
+  const tenantId = a.tenantId
+  // The standing project (one live per company + outlet).
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`capex_standing:${tenantId}:${a.locationId ?? ''}`}))`
+  let project = await tx.capexProject.findFirst({ where: { tenantId, locationId: a.locationId, isStanding: true, deletedAt: null } })
+  if (!project) {
+    const where = a.locationId
+      ? (await tx.location.findUniqueOrThrow({ where: { id: a.locationId }, select: { name: true } })).name
+      : 'no outlet'
+    project = await tx.capexProject.create({
+      data: {
+        tenantId, locationId: a.locationId, isStanding: true, projectType: 'equipment_only',
+        name: `Equipment & smallwares — ${where}`.slice(0, 120), phase: 'live', status: 'in_progress',
+      },
+    })
+  }
+  const line = await tx.capexLine.create({
+    data: {
+      projectId: project.id, scope: 'Equipment', category: a.cls.label, item: a.item, quantity: a.quantity,
+      unitCostCents: a.unitCostCents, negotiatedCents: total, status: 'delivered', actualDeliveryDate: a.paidAt,
+      vendor: a.vendor ?? null, supplierId: a.supplierId ?? null, treatment: 'capital',
+      inputTaxCents: a.inputTaxCents ?? 0, inputTaxAuthority: a.inputTaxAuthority ?? null, whtSection: a.whtSection ?? null,
+      warrantyMonths: a.warrantyMonths ?? null, notes: a.notes ?? null,
+    },
+  })
+  let paymentId: string | null = null
+  let entryId: string | null = null
+  let ledger: Awaited<ReturnType<typeof syncCapexPaymentPosting>> | null = null
+  if (a.pay.kind === 'instalment') {
+    const payment = await tx.capexPayment.create({
+      data: {
+        lineId: line.id, label: 'balance', amountCents: total, paidAmountCents: total, paidAt: a.paidAt,
+        paymentRef: a.pay.paymentRef ?? null, bankAccountId: a.pay.payFrom === 'bank' ? a.pay.bankAccountId : null,
+        notes: a.pay.notes ?? null,
+        ...(a.pay.extra ?? {}),
+      },
+    })
+    ledger = await syncCapexPaymentPosting(payment.id, { tx, postedBy: a.postedBy, payFrom: a.pay.payFrom, bankAccountId: a.pay.payFrom === 'bank' ? a.pay.bankAccountId : null })
+    paymentId = payment.id
+    entryId = ledger.entryId
+  } else if (a.pay.kind === 'cash_document') {
+    const paid = await a.pay.record(line.id)
+    paymentId = paid.capexPaymentId
+    entryId = paid.entryId
+  }
+  await recalcLinePaid(line.id, tx)
+  let eventId: string | null = null
+  if (a.capitalise) {
+    const { payload } = await checkCapitalisable(tx, { ...a.capitalise.input, lineId: line.id, tenantId, classKey: a.cls.key })
+    eventId = await insertCapitaliseRequestTx(tx, {
+      tenantId, lineId: line.id, payload, requestedById: a.capitalise.requestedById, effectiveDate: a.paidAt,
+      reason: a.capitalise.reason(project.name),
+    })
+  }
+  return { projectId: project.id, projectName: project.name, lineId: line.id, paymentId, eventId, entryId, ledger }
+}
+
 // ─── Deposits (H25: refundable deposits on 1360) ────────────────────────────
 
 /** What a payment holds on 1360: its own live 1360 debit, or a legacy 1310 reclassed. */

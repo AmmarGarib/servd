@@ -143,6 +143,10 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Cash vouchers paid from cash on hand / a bank (2026-10-16): cash_vouchers_pay_source_chk.
   for (const statement of migrationSection('20261016160000_voucher_pay_source',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // "To pay from" (2026-10-19): the pay-source CHECK learns 'credit' — drop the old one, then the migration's.
+  await prisma.$executeRawUnsafe('ALTER TABLE "cash_vouchers" DROP CONSTRAINT IF EXISTS "cash_vouchers_pay_source_chk"')
+  for (const statement of migrationSection('20261019110000_voucher_pay_from',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
   // Deposit slips as files (2026-10-16): the attachment owner check takes a
   // deposit drop too — drop wave B's version, then the migration's.
   await prisma.$executeRawUnsafe('ALTER TABLE "cash_voucher_attachments" DROP CONSTRAINT IF EXISTS "cash_voucher_attachments_owner_chk"')

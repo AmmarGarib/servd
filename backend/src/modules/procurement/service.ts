@@ -500,6 +500,32 @@ export interface CreateBillInput {
 }
 
 export async function createBill(input: CreateBillInput) {
+  const prepared = await prepareBill(input)
+  // The stock goes into the books on FIFO lots: the company's one-time
+  // cut-over runs first if it has not (outside the transaction).
+  await ensureFifoReady(prepared.tenantId)
+
+  // The bill, its GRNI matches, its lot re-pricing and its ledger entry commit
+  // together (postSupplierBill in the same transaction): a bill dated in a
+  // closed month is PERIOD_LOCKED 422, quantity beyond what was received and
+  // ordered is OVER_BILLED 422 — nothing is saved.
+  const bill = await prisma.$transaction((tx) => insertBillTx(tx, prepared), { timeout: 30_000 })
+  await afterBillCreated(prepared, bill)
+  return bill
+}
+
+/** A bill checked and computed (prepareBill), ready to insert inside a transaction (insertBillTx). */
+export type PreparedBill = Awaited<ReturnType<typeof prepareBill>>
+
+/**
+ * Everything createBill checks and computes BEFORE its transaction: the
+ * supplier (its company), the lines, the money limits, the equipment check,
+ * the dates, the tax authority and the withholding. No write. A caller that
+ * books a bill inside its OWN transaction (a cash voucher booked on credit,
+ * trustops/cashVouchers.ts) runs this first, ensureFifoReady(tenantId) next,
+ * then insertBillTx in its transaction and afterBillCreated after the commit.
+ */
+export async function prepareBill(input: CreateBillInput) {
   if (input.lines.length === 0) throw new AppError('NO_LINES', 'A bill needs at least one line', 400)
 
   const supplier = await prisma.supplier.findUnique({ where: { id: input.supplierId } })
@@ -510,7 +536,6 @@ export async function createBill(input: CreateBillInput) {
   }
   const tenantId = supplier.tenantId
   const lines = await resolveBillLines(input, { id: supplier.id, name: supplier.name, tenantId })
-
   // Every line, the subtotal, the tax and the total must fit a money column
   // (and a ledger line — the bill posts in the same transaction): 422, never
   // a 500 at insert.
@@ -578,53 +603,47 @@ export async function createBill(input: CreateBillInput) {
     subtotalCents, section, at: billDate,
   })
 
-  // The stock goes into the books on FIFO lots: the company's one-time
-  // cut-over runs first if it has not (outside the transaction).
-  await ensureFifoReady(tenantId)
+  return { input, supplier, tenantId, lines, subtotalCents, taxCents, totalCents, billDate, dueDate, authority, section, sectionAsked, wht, overrides }
+}
 
-  // The bill, its GRNI matches, its lot re-pricing and its ledger entry commit
-  // together (postSupplierBill in the same transaction): a bill dated in a
-  // closed month is PERIOD_LOCKED 422, quantity beyond what was received and
-  // ordered is OVER_BILLED 422 — nothing is saved.
-  let bill
+/** The bill row and its ledger entry, inside the caller's transaction (409 DUPLICATE_BILL for a number the supplier has). */
+export async function insertBillTx(tx: Prisma.TransactionClient, p: PreparedBill) {
+  const { input } = p
+  let created
   try {
-    bill = await prisma.$transaction(async (tx) => {
-      const created = await tx.supplierBill.create({
-        data: {
-          supplierId:   input.supplierId,
-          poId:         input.poId      ?? null,
-          billNumber:   input.billNumber,
-          billDate,
-          dueDate,
-          subtotalCents,
-          taxCents,
-          totalCents,
-          whtCents:     wht.whtCents,
-          taxAuthority: authority,
-          whtSection:   section ?? (sectionAsked === 'none' ? 'none' : null),
-          whtRateBps:   wht.rateBps,
-          notes:        input.notes         ?? null,
-          attachmentUrl: input.attachmentUrl ?? null,
-          createdBy:    input.createdBy,
-          status:       'open',
-          lines: {
-            create: lines.map((l) => ({
-              inventoryItemId:    l.inventoryItemId,
-              poLineId:           l.poLineId,
-              receiptLineId:      l.receiptLineId,
-              expenseAccountCode: l.inventoryItemId ? null : (l.expenseAccountCode?.trim() || null),
-              description:        l.description,
-              quantity:           l.quantity,
-              unitCostCents:      l.unitCostCents,
-              lineTotalCents:     Math.round(l.unitCostCents * l.quantity),
-            })),
-          },
+    created = await tx.supplierBill.create({
+      data: {
+        supplierId:   input.supplierId,
+        poId:         input.poId      ?? null,
+        billNumber:   input.billNumber,
+        billDate:     p.billDate,
+        dueDate:      p.dueDate,
+        subtotalCents: p.subtotalCents,
+        taxCents:     p.taxCents,
+        totalCents:   p.totalCents,
+        whtCents:     p.wht.whtCents,
+        taxAuthority: p.authority,
+        whtSection:   p.section ?? (p.sectionAsked === 'none' ? 'none' : null),
+        whtRateBps:   p.wht.rateBps,
+        notes:        input.notes         ?? null,
+        attachmentUrl: input.attachmentUrl ?? null,
+        createdBy:    input.createdBy,
+        status:       'open',
+        lines: {
+          create: p.lines.map((l) => ({
+            inventoryItemId:    l.inventoryItemId,
+            poLineId:           l.poLineId,
+            receiptLineId:      l.receiptLineId,
+            expenseAccountCode: l.inventoryItemId ? null : (l.expenseAccountCode?.trim() || null),
+            description:        l.description,
+            quantity:           l.quantity,
+            unitCostCents:      l.unitCostCents,
+            lineTotalCents:     Math.round(l.unitCostCents * l.quantity),
+          })),
         },
-        include: { supplier: true, lines: true, po: true },
-      })
-      await postSupplierBill(created.id, { tx })
-      return created
-    }, { timeout: 30_000 })
+      },
+      include: { supplier: true, lines: true, po: true },
+    })
   } catch (err) {
     const e = err as Prisma.PrismaClientKnownRequestError
     if (e.code === 'P2002') {
@@ -632,10 +651,17 @@ export async function createBill(input: CreateBillInput) {
     }
     throw err
   }
+  const posted = await postSupplierBill(created.id, { tx })
+  return Object.assign(created, { journalEntryId: posted.entryId })
+}
 
-  // An equipment-looking line booked as an expense: audited and flagged
-  // (high) in the supplier's company — after commit, never undoing the bill.
-  for (const o of overrides) {
+/**
+ * After the commit: an equipment-looking line booked as an expense is
+ * audited and flagged (high) in the supplier's company — never undoing the bill.
+ */
+export async function afterBillCreated(p: PreparedBill, bill: { id: string; billNumber: string }) {
+  const { input, supplier, tenantId } = p
+  for (const o of p.overrides) {
     await audit({
       category: 'accounting', action: 'supplier_bill.not_equipment_override', entity: 'SupplierBill', entityId: bill.id,
       userId: input.createdBy, userEmail: input.actorEmail ?? null, tenantId,
@@ -649,7 +675,6 @@ export async function createBill(input: CreateBillInput) {
       metadata: { supplierId: supplier.id, line: o.line, reason: o.reason },
     })
   }
-  return bill
 }
 
 /**

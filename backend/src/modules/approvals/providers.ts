@@ -548,6 +548,7 @@ type CashRequestRow = {
   id: string; tenantId: string; number: string; voucherDate: string; payeeName: string; purpose: string
   kind?: 'request' | 'expense'; amountCents: number; grossCents?: number | null; discountCents?: number
   category: string | null; categoryKey: string | null; categoryAccountCode: string | null
+  assetClassLabel?: string | null
   department: string | null; conceptName: string | null; boxName: string | null
   holderName: string | null; preparedByName: string | null
   hodSignedById: string | null; hodSignedByName: string | null; hodSignedAt: string | null; createdAt: string
@@ -559,7 +560,7 @@ type CashRequestRow = {
 
 const cashRequestTitle = (r: CashRequestRow) => `${r.number} — ${r.holderName ?? r.payeeName} — ${pkr(r.amountCents)}`
 const cashRequestCategory = (r: CashRequestRow) =>
-  (r.categoryKey ? human(r.categoryKey) : null) ?? (r.categoryAccountCode ? `Account ${r.categoryAccountCode}` : null) ?? r.category
+  (r.assetClassLabel ? `Fixed asset — ${r.assetClassLabel} (capitalised, then depreciated)` : null) ?? (r.categoryKey ? human(r.categoryKey) : null) ?? (r.categoryAccountCode ? `Account ${r.categoryAccountCode}` : null) ?? r.category
 const cashRequestFacts = (r: CashRequestRow, extra: Array<[string, string | null | undefined]> = []) => facts([
   ['Voucher', r.number],
   [r.kind === 'expense' ? 'Payee' : 'Holder', r.holderName ?? r.payeeName],

@@ -101,6 +101,11 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
   } else if (ref.categoryKey) {
     account = ref.categoryKey
   }
+  if (v.assetClassId) {
+    // Equipment (2026-10-19): booked to CapEx advances, capitalised by the CEO.
+    const cls = await prisma.fixedAssetClass.findFirst({ where: { id: v.assetClassId, tenantId }, select: { label: true, costAccountCode: true } })
+    account = `Fixed asset — ${cls?.label ?? 'equipment'} (1340 CapEx advances → ${cls?.costAccountCode ?? '15xx'})`
+  }
 
   const discountCents = v.discountCents ?? 0
   const totalCents = v.amountCents

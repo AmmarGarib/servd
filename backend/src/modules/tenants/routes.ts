@@ -306,7 +306,12 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
   if (srcClasses.length > 0) {
     const dstKeys = new Set((await tx.fixedAssetClass.findMany({ where: { tenantId: dst }, select: { key: true } })).map((c) => c.key))
     for (const c of srcClasses) {
-      if (dstKeys.has(c.key)) await tx.fixedAssetClass.delete({ where: { id: c.id } })
+      if (dstKeys.has(c.key)) {
+        // A payee voucher naming the source's class (equipment, 2026-10-19) takes the target's twin of the same key.
+        const twin = await tx.fixedAssetClass.findFirst({ where: { tenantId: dst, key: c.key }, select: { id: true } })
+        if (twin) await tx.cashVoucher.updateMany({ where: { assetClassId: c.id }, data: { assetClassId: twin.id } })
+        await tx.fixedAssetClass.delete({ where: { id: c.id } })
+      }
       else await tx.fixedAssetClass.update({ where: { id: c.id }, data: { tenantId: dst } })
     }
   }

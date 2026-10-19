@@ -1084,6 +1084,41 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   never whoever paid it (409 `PAYER_CANNOT_CONFIRM`). Petty cash: only
   uploaded receipts (`receiptIds`) satisfy the photo rule; `receiptUrl` is
   metadata.
+- **Equipment on a payee voucher (owner, 2026-10-19).** A finance payee
+  voucher (kind `expense` only — a cash request is 422
+  `ASSET_ONLY_ON_PAYEE_VOUCHER`) may name a fixed-asset class
+  (`CashVoucher.assetClassId`, an active non-pooled class of the VOUCHER's
+  company — 422 `ASSET_CLASS_NOT_IN_COMPANY` / `POOLED_CLASS_USE_QUICK_BUY`)
+  instead of an expense account (`category` null; the class satisfies the
+  equipment check), plus `assetLocationId` (required with no brand: 422
+  `LOCATION_REQUIRED_FOR_SHARED`). Finance's pay goes through the ONE Quick-buy
+  engine (`financePlanning/capexPosting.ts recordEquipmentPurchaseTx`, which
+  `POST /finance/capex/quick-buy` also uses): a capital line on the outlet's
+  standing project, its payment `capex.payment:<id>` Dr 1340 / Cr 1010 | the
+  bank (no WHT) — from a box through `recordPettyCashSpendTx`'s capex line
+  (Cr 1011) — and the same `capitalise` request for the CEO
+  (`capexLineId` / `capitaliseEventId` on the voucher). Approved: Dr class cost
+  / Cr 1340 → register → monthly depreciation; rejected: the cost stays on 1340
+  as an advance (as a Quick buy's). The documents check books nothing. Options:
+  `GET /trustops/cash-vouchers/raise-options`. Tests:
+  `tests/cashVoucherAsset.test.ts`.
+- **"To pay from" on a payee voucher (owner, 2026-10-19).** Chosen at raise:
+  `payFrom` cash | bank (+ `payFromBankAccountId`) | credit (+ `supplierId`, a
+  live supplier of the voucher's company — 422 `SUPPLIER_NOT_IN_COMPANY`),
+  stored as `plannedPaySource` / `plannedBankAccountId` / `supplierId`. Cash and
+  bank only prefill finance's pay (source omitted → cash on hand / that bank;
+  finance may pick another). Credit (`POST /:id/pay {source:'credit'}`, same
+  people and gates as a pay) hands no cash over: an expense voucher becomes a
+  SUPPLIER BILL through procurement's own engine (`createBill` =
+  `prepareBill` + `insertBillTx` + `afterBillCreated`; bill number = the voucher
+  number, due today unless `billDueDate`; Dr the 6xxx / Cr 2010, WHT per the
+  supplier) — `supplierBillId`, `paySource 'credit'`, paid later through
+  Supplier payments, in AP aging; an equipment voucher on credit raises the
+  CapEx line on that supplier with no payment and the capitalisation request
+  (the CEO's approval books Dr class cost / Cr 2012). Never a direct 2010
+  journal. CHECKs `cash_vouchers_pay_source_credit_chk` /
+  `cash_vouchers_planned_pay_chk` (migration `20261019110000`). Tests:
+  `tests/cashVoucherPayFrom.test.ts`.
 - **Petty cash is on 1011** (H2): a top-up needs a source (Garibsons → 2210,
   H1; the safe 1010; a bank); a till top-up is a drawer payout keyed
   `pettycash.till_topup:<cashMovementId>`. **`recordPettyCashSpendTx`
