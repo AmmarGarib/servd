@@ -1480,10 +1480,10 @@ describe('HR through the API', () => {
       const master = (await portfolio('/reports/employee_master')).json()
       const at = (name: string) => master.rows.find((r: unknown[]) => r[1] === name)
       expect(at('Other Co Barista')[master.header.indexOf('Designation')]).toBe('Barista')
-      expect(at('Other Co Runner')[master.header.indexOf('Reporting Manager')]).toBe('Other Co Barista')
+      expect(at('Other Co Runner')[master.header.indexOf('Reporting Manager')]).toBe('Barista')
       expect(at('Line Cook')[master.header.indexOf('Reporting Manager')]).toBe('Head Chef')
       const list = (await portfolio('/employees')).json() as Array<{ fullName: string; designation: string | null; manager: string | null }>
-      expect(list.find((e) => e.fullName === 'Other Co Runner')).toMatchObject({ designation: 'Barista', manager: 'Other Co Barista' })
+      expect(list.find((e) => e.fullName === 'Other Co Runner')).toMatchObject({ designation: 'Barista', manager: 'Barista' })
     } finally {
       await b.cleanup()
     }

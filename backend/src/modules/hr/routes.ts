@@ -1130,23 +1130,30 @@ export async function hrRoutes(fastify: FastifyInstance) {
    * The Reporting line picker (owner, 2026-10-17) — the ONE label rule, so the
    * admin shows what the server sends: "CEO" first (value REPORTS_TO_CEO;
    * `employeeId` is the CEO login's HR record in this company, or null when
-   * the CEO has none), then current staff as "<Designation> — <Name>"
-   * ("No designation — <Name>" last), sorted by designation then name.
+   * the CEO has none), then current staff by DESIGNATION only (HR, 2026-10-19:
+   * "only designations should be displayed not employee names"). Two people
+   * sharing a designation, or one with none, are told apart by employee code —
+   * never by name. Sorted by designation then code.
    */
   async function reportingLineOptions(tenantId: string): Promise<Array<{ id: string; label: string; employeeId: string | null; ceo?: true }>> {
     const [ceo, people] = await Promise.all([
       companyCeo(tenantId),
-      prisma.hrEmployee.findMany({ where: { tenantId, status: { in: ['active', 'on_leave'] } }, select: { id: true, fullName: true, designationId: true } }),
+      prisma.hrEmployee.findMany({ where: { tenantId, status: { in: ['active', 'on_leave'] } }, select: { id: true, employeeCode: true, designationId: true } }),
     ])
     const desigIds = Array.from(new Set(people.map((p) => p.designationId).filter((d): d is string => !!d)))
     const names = new Map((desigIds.length ? await prisma.hrOrgUnit.findMany({ where: { tenantId, id: { in: desigIds } }, select: { id: true, name: true } }) : []).map((u) => [u.id, u.name]))
     const rows = people
       .filter((p) => p.id !== ceo.employee?.id)
-      .map((p) => ({ id: p.id, employeeId: p.id, desig: p.designationId ? names.get(p.designationId) ?? null : null, name: p.fullName }))
-      .sort((a, b) => (a.desig === null ? 1 : 0) - (b.desig === null ? 1 : 0) || (a.desig ?? '').localeCompare(b.desig ?? '') || a.name.localeCompare(b.name))
-      .map((r) => ({ id: r.id, employeeId: r.employeeId, label: `${r.desig ?? 'No designation'} — ${r.name}` }))
+      .map((p) => ({ id: p.id, employeeId: p.id, desig: p.designationId ? names.get(p.designationId) ?? null : null, code: p.employeeCode }))
+      .sort((a, b) => (a.desig === null ? 1 : 0) - (b.desig === null ? 1 : 0) || (a.desig ?? '').localeCompare(b.desig ?? '') || a.code.localeCompare(b.code))
+    const count = new Map<string, number>()
+    for (const r of rows) if (r.desig) count.set(r.desig, (count.get(r.desig) ?? 0) + 1)
+    const labelled = rows.map((r) => ({
+      id: r.id, employeeId: r.employeeId,
+      label: !r.desig ? `No designation (${r.code})` : (count.get(r.desig) ?? 0) > 1 ? `${r.desig} (${r.code})` : r.desig,
+    }))
     const ceoOption = ceo.userIds.length ? [{ id: REPORTS_TO_CEO, label: 'CEO', employeeId: ceo.employee?.id ?? null, ceo: true as const }] : []
-    return [...ceoOption, ...rows]
+    return [...ceoOption, ...labelled]
   }
 
   // ── Employees ─────────────────────────────────────────────────────────────

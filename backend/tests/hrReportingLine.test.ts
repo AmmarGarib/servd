@@ -128,23 +128,24 @@ describe('Reporting line', () => {
     await emp(tenantB, 'B Staff')
   })
 
-  it('the picker lists CEO first, then "<Designation> — <Name>" sorted by designation then name (company A only, current staff)', async () => {
+  it('the picker lists CEO first, then designations only — a shared or missing designation adds the employee code, never a name (company A only, current staff)', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/hr/lookups', headers: auth(hrA) })
     expect(res.statusCode).toBe(200)
     const line = res.json().reportingLine as Array<{ id: string; label: string; employeeId: string | null; ceo?: boolean }>
     expect(line[0]).toEqual({ id: 'ceo', label: 'CEO', employeeId: null, ceo: true })
+    const code = async (id: string) => (await prisma.hrEmployee.findUniqueOrThrow({ where: { id } })).employeeCode
     const people = line.slice(1).filter((o) => [amy, bob, zed, carl].includes(o.id))
-    expect(people.map((o) => o.label)).toEqual(['Barista — Zed', 'Chef — Amy', 'Chef — Bob', 'No designation — Carl'])
-    expect(line.slice(1).map((o) => o.label)).toEqual([...line.slice(1).map((o) => o.label)].sort((a, b) => {
-      const na = a.startsWith('No designation'), nb = b.startsWith('No designation')
-      return Number(na) - Number(nb) || a.localeCompare(b)
-    }))
-    expect(line.some((o) => o.label.endsWith('Gone') || o.label.endsWith('B Staff'))).toBe(false)
+    expect(people.map((o) => o.label)).toEqual(['Barista', `Chef (${await code(amy)})`, `Chef (${await code(bob)})`, `No designation (${await code(carl)})`])
+    expect(line.some((o) => /Amy|Bob|Zed|Carl|Gone|B Staff/.test(o.label))).toBe(false)
+    const gone = await prisma.hrEmployee.findMany({ where: { tenantId: tenantA, status: { notIn: ['active', 'on_leave'] } }, select: { id: true } })
+    expect(line.some((o) => gone.some((g) => g.id === o.id))).toBe(false)
 
     // Company B has no CEO login: no CEO option, and none of A's people.
     const b = (await app.inject({ method: 'GET', url: '/api/v1/hr/lookups', headers: auth(hrB) })).json().reportingLine as Array<{ id: string; label: string }>
     expect(b.some((o) => o.id === 'ceo')).toBe(false)
-    expect(b.map((o) => o.label)).toEqual(['No designation — B Staff'])
+    expect(b).toHaveLength(1)
+    expect(b[0]!.label.startsWith('No designation (')).toBe(true)
+    expect(b.some((o) => [amy, bob, zed, carl].includes(o.id))).toBe(false)
   })
 
   it('CEO with no HR record: managerId stays null, reportsToCeo is set, and the line walks to the CEO', async () => {
@@ -160,6 +161,9 @@ describe('Reporting line', () => {
 
     const detail = (await app.inject({ method: 'GET', url: `/api/v1/hr/employees/${amy}`, headers: auth(hrA) })).json()
     expect(detail.labels.manager).toBe('CEO')
+    // The Manager card shows the manager's designation, not their name.
+    const bobDetail = (await app.inject({ method: 'GET', url: `/api/v1/hr/employees/${bob}`, headers: auth(hrA) })).json()
+    expect(bobDetail.labels.manager).toBe('Chef')
     expect(await managerUserIdOfEmployee(tenantA, amy)).toBe(ceoA.id)
     expect(await managerUserIdOfEmployee(tenantA, zed)).toBeNull()
     expect(await teamUserIdsUnder(tenantA, ceoA.id)).toEqual([])

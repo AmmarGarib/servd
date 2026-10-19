@@ -106,13 +106,17 @@ export async function employeeLabels(tenantId: string, emps: Array<Pick<HrEmploy
     prisma.department.findMany({ where: { id: { in: ids('departmentId') } }, select: { id: true, name: true } }),
     prisma.hrOrgUnit.findMany({ where: { tenantId, id: { in: [...ids('designationId'), ...ids('gradeId')] } }, select: { id: true, name: true } }),
     prisma.location.findMany({ where: { id: { in: ids('locationId') } }, select: { id: true, name: true } }),
-    prisma.hrEmployee.findMany({ where: { tenantId, id: { in: ids('managerId') } }, select: { id: true, fullName: true } }),
+    prisma.hrEmployee.findMany({ where: { tenantId, id: { in: ids('managerId') } }, select: { id: true, fullName: true, designationId: true } }),
   ])
+  // The reporting line reads as designations (HR, 2026-10-19: "only designations should be displayed not
+  // employee names"): a manager is labelled by their designation, their name only when they have none.
+  const mgrDesigIds = Array.from(new Set(mgrs.map((e) => e.designationId).filter((d): d is string => !!d)))
+  const mgrDesigs = new Map((mgrDesigIds.length ? await prisma.hrOrgUnit.findMany({ where: { tenantId, id: { in: mgrDesigIds } }, select: { id: true, name: true } }) : []).map((u) => [u.id, u.name]))
   const m = new Map<string, string>()
   for (const d of depts) m.set(d.id, d.name)
   for (const u of units) m.set(u.id, u.name)
   for (const l of locs) m.set(l.id, l.name)
-  for (const e of mgrs) m.set(e.id, e.fullName)
+  for (const e of mgrs) m.set(e.id, (e.designationId && mgrDesigs.get(e.designationId)) || e.fullName)
   return (id: string | null | undefined) => (id ? m.get(id) ?? null : null)
 }
 
