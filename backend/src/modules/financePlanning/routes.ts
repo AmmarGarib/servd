@@ -38,6 +38,7 @@ import {
 } from './companyRefs.js'
 import { type DbMoney, assertMoneyFits, toCents, zMoneyCents } from '../../lib/money.js'
 import { moneyAccountCode, zReceiptMethod, zPaymentRef, assertPaymentReference } from '../../lib/bankAccounts.js'
+import { equipmentLocationsOf } from '../../lib/generalLocation.js'
 import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { WHT_SECTIONS } from '../../lib/withholding.js'
@@ -369,7 +370,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     const tenantId = requireActiveCompany(req)
     const [base, locations, brands, bankAccounts] = await Promise.all([
       companyLookups(tenantId),
-      prisma.location.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      equipmentLocationsOf(prisma, tenantId),
       prisma.concept.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true, slug: true }, orderBy: { name: 'asc' } }),
       prisma.bankAccount.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true, bankName: true, accountCode: true }, orderBy: { name: 'asc' } }),
     ])

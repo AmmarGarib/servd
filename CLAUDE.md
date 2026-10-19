@@ -1099,7 +1099,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (Cr 1011) — and the same `capitalise` request for the CEO
   (`capexLineId` / `capitaliseEventId` on the voucher). Approved: Dr class cost
   / Cr 1340 → register → monthly depreciation; rejected: the cost stays on 1340
-  as an advance (as a Quick buy's). The documents check books nothing. Options:
+  as an advance (as a Quick buy's). **"General — to be assigned"** (owner, 2026-10-19): ONE
+  inactive holding Location per company (`lib/generalLocation.ts`, slug
+  `general-<tenantId>`, created on first read of the outlet lists), listed first
+  in the voucher's and Quick buy's outlet pickers; equipment parked there is moved
+  to its outlet later with a normal asset transfer. The documents check books nothing. Options:
   `GET /trustops/cash-vouchers/raise-options`. Tests:
   `tests/cashVoucherAsset.test.ts`.
 - **"To pay from" on a payee voucher (owner, 2026-10-19).** Chosen at raise:

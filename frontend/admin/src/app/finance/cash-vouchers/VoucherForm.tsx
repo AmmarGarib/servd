@@ -220,7 +220,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
         </p>
       )}
       {assetClassId && needsOutlet && (
-        <Field label="Outlet *" hint="Shared equipment (no brand) says where it is." error={shown('cv-outlet')}>
+        <Field label="Outlet *" hint="Where the equipment is. Not decided yet? Pick “General — to be assigned” and move it to its outlet later from the asset register." error={shown('cv-outlet')}>
           <Select id="cv-outlet" value={assetLocationId} onChange={(e) => setAssetLocationId(e.target.value)} className={fieldCls}>
             <option value="">— pick the outlet —</option>
             {(opts?.locations ?? []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}

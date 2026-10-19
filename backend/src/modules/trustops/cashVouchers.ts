@@ -93,6 +93,7 @@ import { assertSharedHasLocation } from '../fixedAssets/events.js'
 import { recordEquipmentPurchaseTx } from '../financePlanning/capexPosting.js'
 import { prepareBill, insertBillTx, afterBillCreated } from '../procurement/service.js'
 import { ensureFifoReady } from '../../lib/stockLedger.js'
+import { equipmentLocationsOf } from '../../lib/generalLocation.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
 
 // ─── Files ───────────────────────────────────────────────────────────────────
@@ -1028,7 +1029,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const tenantId = activeTenantId(req, 'a voucher belongs to one company')
     const [classes, locations, suppliers] = await Promise.all([
       getAssetClasses(tenantId, prisma),
-      prisma.location.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      equipmentLocationsOf(prisma, tenantId),
       prisma.supplier.findMany({ where: { tenantId, deletedAt: null, systemKind: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
     ])
     return {

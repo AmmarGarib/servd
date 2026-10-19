@@ -127,8 +127,33 @@ describe('raising an asset voucher', () => {
     const o = r.json() as { classes: Array<{ id: string; key: string }>; locations: Array<{ id: string }> }
     expect(o.classes.map((c) => c.id)).toContain(cls['A'])
     expect(o.classes.some((c) => c.key === 'smallwares')).toBe(false)
-    expect(o.locations.map((l) => l.id)).toEqual([loc['A']])
+    const general = await prisma.location.findUniqueOrThrow({ where: { slug: `general-${T.A}` } })
+    expect(general).toMatchObject({ tenantId: T.A, isActive: false, name: 'General — to be assigned' })
+    // The General holding place first, then the company's outlets.
+    expect(o.locations.map((l) => l.id)).toEqual([general.id, loc['A']])
     expect((await call('cookA', 'GET', `${V}/raise-options`)).statusCode).toBe(403)
+  })
+
+  it('General — to be assigned: one per company, usable only by its own company, paid and capitalised there', async () => {
+    await call('finA', 'GET', `${V}/raise-options`)
+    const ob = (await call('finB', 'GET', `${V}/raise-options`)).json() as { locations: Array<{ id: string; general?: boolean }> }
+    const genA = (await prisma.location.findUniqueOrThrow({ where: { slug: `general-${T.A}` } })).id
+    const genB = (await prisma.location.findUniqueOrThrow({ where: { slug: `general-${T.B}` } })).id
+    expect(ob.locations[0]).toMatchObject({ id: genB, general: true })
+    expect(ob.locations.map((l) => l.id)).not.toContain(genA)
+    expect(await prisma.location.count({ where: { slug: { in: [`general-${T.A}`, `general-${T.B}`] } } })).toBe(2)
+    // Company A cannot park its equipment at company B's General.
+    const bad = await call('finA', 'POST', V, { kind: 'expense', payeeName: 'X Traders', purpose: 'Oven', amountCents: 10_000, assetClassId: cls['A'], assetLocationId: genB })
+    expect(bad.json().error.code).toBe('LOCATION_NOT_IN_COMPANY')
+    const v = await approvedAsset({ assetClassId: cls['A'], assetLocationId: genA })
+    const r = await call('finA', 'POST', `${V}/${v.id}/pay`, { source: 'bank', bankAccountId: bank['A'] })
+    expect(r.statusCode, r.body).toBe(200)
+    const paid = (r.json() as { voucher: Row }).voucher
+    const line = await prisma.capexLine.findUniqueOrThrow({ where: { id: paid.capexLineId! }, include: { project: true } })
+    expect(line.project).toMatchObject({ tenantId: T.A, locationId: genA })
+    await applyEvent(paid.capitaliseEventId!, U['ceoA']!.id)
+    const asset = await prisma.fixedAsset.findFirstOrThrow({ where: { tenantId: T.A, capexLineId: paid.capexLineId } })
+    expect(asset).toMatchObject({ locationId: genA, conceptId: null })
   })
 
   it('refuses another company\'s class, a cash request, shared with no outlet, pooled, class + account', async () => {
