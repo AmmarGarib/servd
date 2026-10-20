@@ -145,6 +145,15 @@ export const day = (iso: string | null | undefined) =>
 
 export const human = (s: string | null | undefined) => (s ? s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : '—')
 
+/** A day HR keyed or edited by hand (owner, 2026-10-20) — counts once the CEO approves it. */
+export function isManualEntry(r: { section?: string; data?: unknown }): boolean {
+  return r.section === 'attendance' && !!(r.data as Record<string, unknown> | null)?.['_manual']
+}
+/** The status words of a record; a manual attendance day waiting says who it waits for. */
+export function recordStatusText(r: { section?: string; status: string; data?: unknown }): string {
+  return isManualEntry(r) && r.status === 'submitted' ? 'Waiting for CEO' : human(r.status)
+}
+
 export const STATUS_COLOR: Record<string, string> = {
   draft: 'rgb(var(--fg-rgb) / 0.45)', submitted: 'var(--erp-warning)', approved: 'var(--erp-success)', rejected: 'var(--erp-danger)', cancelled: 'rgb(var(--fg-rgb) / 0.3)',
   active: 'var(--erp-success)', on_leave: 'var(--erp-primary-ink)', resigned: 'var(--erp-warning)', terminated: 'var(--erp-danger)', separated: 'rgb(var(--fg-rgb) / 0.4)',

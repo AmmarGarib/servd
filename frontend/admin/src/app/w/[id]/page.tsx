@@ -12,6 +12,7 @@ import { useTeam, isInToday } from '../../../hooks/useTeam'
 import MyTimeClockCard from '../../../components/hr/MyTimeClockCard'
 import { roleLabel } from '../../../lib/appRoles'
 import { pagesForModules, isParkedSection } from '../../../lib/moduleCatalog'
+import { useApprovalCounts } from '../../ceo/approvalsData'
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
 
@@ -45,9 +46,11 @@ export default function WorkspaceHomePage() {
   // The workspace's dashboard comes first, ahead of the sections.
   const lead = pagesForModules(ws.sections.flatMap((s) => s.modules)).filter((p) => p.lead)
 
+  // The CEO workspace (owner, 2026-10-20): no check-in card, Approvals first.
+  const ceoWs = ws.id === 'ceo'
   return (
     <Shell>
-      <MyTimeClockCard />
+      {!ceoWs && <MyTimeClockCard />}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-wider text-success">Workspace</p>
@@ -66,6 +69,8 @@ export default function WorkspaceHomePage() {
         )}
       </div>
 
+      {ceoWs && <ApprovalsFirst />}
+
       {lead.map((p) => (
         <Link key={p.href} href={p.href} className="mt-5 flex items-center rounded-2xl px-4 py-3 hover:bg-white/[0.04]" style={card}>
           <span className="text-sm font-black text-white/85">{p.label}</span>
@@ -78,7 +83,9 @@ export default function WorkspaceHomePage() {
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {ws.sections.map((s) => {
           if (isParkedSection(s.modules)) return null // parked by the owner — no page yet
+          if (ceoWs && s.key === 'approvals') return null // shown first, above
           const all = pagesForModules(s.modules)
+          if (all.length === 0 && s.modules.every((m) => m === 'trash')) return null // the Trash is its own left-menu link
           const pages = all.filter((p) => !p.lead)
           if (pages.length === 0 && all.length > 0) return null // only the dashboard, shown above
           return (
@@ -129,5 +136,33 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <div className="max-w-6xl mx-auto px-6 py-8">{children}</div>
     </div>
+  )
+}
+
+/** The CEO workspace's first section (owner, 2026-10-20): what is waiting on you, by type. */
+function ApprovalsFirst() {
+  const { data: counts } = useApprovalCounts()
+  const waiting = (counts?.types ?? []).filter((t) => t.count > 0)
+  const total = counts?.total ?? 0
+  return (
+    <Link href="/ceo/approvals" className="mt-5 block rounded-2xl px-4 py-4 hover:bg-white/[0.04]" style={card}>
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-black text-white/85">Approvals</span>
+        <span className="rounded-full px-2 py-0.5 text-[11px] font-black"
+          style={total > 0
+            ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
+            : { background: 'rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>
+          {total} waiting
+        </span>
+        <span className="ml-auto text-xs text-white/35">Open →</span>
+      </div>
+      {waiting.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
+          {waiting.map((t) => (
+            <span key={t.type} className="text-xs text-white/60"><b className="text-white/85">{t.count}</b> {t.label.toLowerCase()}</span>
+          ))}
+        </div>
+      )}
+    </Link>
   )
 }

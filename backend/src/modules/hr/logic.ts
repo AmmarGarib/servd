@@ -861,7 +861,7 @@ const MGMT_APPROVERS = ['admin', 'owner', 'management']
  * still do either, and that too is recorded as an override.
  */
 export function canActOnStep(
-  role: 'hod' | 'hr' | 'management',
+  role: 'hod' | 'hr' | 'management' | 'ceo',
   actor: { id: string; role: string },
   subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] },
 ): { ok: boolean; override: boolean; reason?: string } {
@@ -871,6 +871,8 @@ export function canActOnStep(
     if (actor.role === 'admin') return { ok: true, override: true }
     return { ok: false, override: false, reason: own ? 'You cannot approve your own request' : 'You have already signed off an earlier step of this request — another approver must take this one' }
   }
+  // A CEO step: the CEO only (owner, 2026-10-20 — a hand-keyed attendance day).
+  if (role === 'ceo') return actor.role === 'admin' ? { ok: true, override: false } : { ok: false, override: false, reason: 'This step needs the CEO' }
   if (role === 'hod') {
     if (subject.managerUserId && subject.managerUserId === actor.id) return { ok: true, override: false }
     if (!subject.managerUserId && HR_APPROVERS.includes(actor.role)) return { ok: true, override: false }
@@ -933,7 +935,7 @@ export interface DecideRecord {
 export async function decideRight(
   req: FastifyRequest,
   rec: DecideRecord,
-  step: { role: 'hod' | 'hr' | 'management' },
+  step: { role: 'hod' | 'hr' | 'management' | 'ceo' },
   isLast: boolean,
   ctx: {
     subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] }
@@ -950,6 +952,12 @@ export async function decideRight(
   const notFound: DecideRight = { ok: false, status: 404, code: 'NOT_FOUND', message: 'HR record not found' }
   if (!actor) return notFound
   const isAdmin = actor.role === 'admin'
+  // A CEO step is never reach, a lens or a hand-over: the CEO of the record's company only.
+  if (step.role === 'ceo' && !isAdmin) {
+    return (actor.memberTenantIds ?? []).includes(rec.tenantId)
+      ? { ok: false, status: 403, code: 'CEO_STEP', message: 'This step needs the CEO' }
+      : notFound
+  }
   const member = (actor.memberTenantIds ?? []).includes(rec.tenantId)
   const reachOnly = !member && (actor.reachTenantIds ?? []).includes(rec.tenantId)
   const s = ctx.subject

@@ -1024,8 +1024,12 @@ describe('HR through the API', () => {
     })
     const w = (await call('hr', 'POST', '/employees', { data: { fullName: 'Dish Washer', grossSalaryCents: RS(52000), joiningDate: '2025-01-01', employmentType: 'permanent' } })).json().id
     const unpaidType = (await call('hr', 'POST', '/records/leave_type', { data: { name: 'Unpaid', entitlementDays: 0, pay: 'unpaid' } })).json().id
-    const att = async (date: string, status: string, lateMinutes?: number) =>
-      (await call('hr', 'POST', '/records/attendance', { data: { employee: w, date, status, ...(lateMinutes != null && { lateMinutes }) } })).json()
+    // Keyed by hand: counts once the CEO approves it (owner, 2026-10-20).
+    const att = async (date: string, status: string, lateMinutes?: number) => {
+      const r = (await call('hr', 'POST', '/records/attendance', { data: { employee: w, date, status, ...(lateMinutes != null && { lateMinutes }) } })).json()
+      expect(r.status).toBe('submitted')
+      return (await call('ceo', 'POST', `/records/attendance/${r.id}/decide`, { decision: 'approved' })).json()
+    }
     // A mistaken absence, cancelled.
     const wrong = await att('2027-02-01', 'absent')
     expect((await call('hr', 'POST', `/records/attendance/${wrong.id}/cancel`)).json().status).toBe('cancelled')

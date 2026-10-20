@@ -413,7 +413,7 @@ async function nextStepLabel(type: ApprovalType, id: string): Promise<string | n
       const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
       const step = fmt.workflow[rec.currentStep]
       if (!step) return null
-      return step.role === 'hod' ? 'the reporting manager' : step.role === 'hr' ? 'HR' : 'management'
+      return step.role === 'hod' ? 'the reporting manager' : step.role === 'hr' ? 'HR' : step.role === 'ceo' ? 'the CEO' : 'management'
     })
   } catch {
     return null

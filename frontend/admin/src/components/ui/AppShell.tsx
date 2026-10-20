@@ -226,13 +226,18 @@ function NavLinks({
       '/team': hasTeam || addsLogins,
       '/ceo/approvals': !allowedModules.has('approvals') && (hasTeam || isDelegate || approvalsWaiting > 0 || (team?.pendingApprovals ?? 0) > 0),
       '/hr/me': Boolean(team?.me),
-      // The Trash: one link — in the CEO section for whoever holds `trash`.
-      '/trash': !allowedModules.has('trash'),
+      // The Trash is its own left-menu link for every login (owner, 2026-10-20).
     }
-    return PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
+    const items: NavItem[] = PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
       href: p.href, label: p.label, icon: PERSONAL_ICONS[p.href] ?? '',
       ...(p.href === '/ceo/approvals' && approvalsWaiting > 0 && { badge: String(approvalsWaiting) }),
     }))
+    // Hand-over (who approves what on your behalf) — the CEO's, its own link like the Trash (owner, 2026-10-20).
+    if (me?.role === 'admin') {
+      const at = items.findIndex((i) => i.href === '/trash')
+      items.splice(at >= 0 ? at + 1 : items.length, 0, { href: '/ceo/approvals/hand-over', label: 'Hand-over', icon: 'users' })
+    }
+    return items
   }, [team, me?.role, me?.childRoles, allowedModules, approvalsWaiting, isDelegate])
 
   // Workspace accordion (ERP-16, owner 2026-10-16): ONE workspace section is

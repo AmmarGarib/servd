@@ -206,6 +206,7 @@ describe('punches write attendance', () => {
   it('never overwrites a day HR keyed or edited by hand', async () => {
     const keyed = await call('hr', 'POST', '/hr/records/attendance', { data: { employee: emps['Prep'], date: '2026-09-24', status: 'absent' } })
     expect(keyed.statusCode).toBe(201)
+    expect(keyed.json()).toMatchObject({ status: 'submitted', data: { _manual: true, _source: 'hr' } })
     const r = await recordPunch({ tenantId, employeeId: emps['Prep']!, kind: 'in', at: pkt('2026-09-24', '17:00'), source: 'kiosk' })
     expect(r.skipped).toBe('hand_keyed')
     expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id: keyed.json().id } })).category).toBe('absent')
@@ -214,8 +215,12 @@ describe('punches write attendance', () => {
     const monday = await prisma.hrRecord.findFirstOrThrow({ where: { tenantId, section: 'attendance', employeeId: emps['Cook'], startDate: new Date('2026-09-21') } })
     const edit = await call('hr', 'PATCH', `/hr/records/attendance/${monday.id}`, { data: { remarks: 'Traffic' } })
     expect(edit.statusCode).toBe(200)
-    expect(edit.json().data).toMatchObject({ _source: 'hr', remarks: 'Traffic' })
+    expect(edit.json().data).toMatchObject({ _source: 'hr', _manual: true, remarks: 'Traffic' })
     expect((edit.json().data._punches as unknown[]).length).toBe(2)
+    // A hand edit waits for the CEO (owner, 2026-10-20): HR cannot approve it, the CEO can.
+    expect(edit.json().status).toBe('submitted')
+    expect((await call('hr', 'POST', `/hr/records/attendance/${monday.id}/decide`, { decision: 'approved' })).statusCode).toBe(403)
+    expect((await call('ceo', 'POST', `/hr/records/attendance/${monday.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
     const again = await recordPunch({ tenantId, employeeId: emps['Cook']!, kind: 'in', at: pkt('2026-09-21', '18:00'), source: 'clock' })
     expect(again.skipped).toBe('hand_keyed')
   })
@@ -231,6 +236,25 @@ describe('punches write attendance', () => {
     const day = await prisma.hrRecord.findFirstOrThrow({ where: { tenantId, section: 'attendance', employeeId: emps['Cook'], startDate: new Date('2026-09-22') }, orderBy: { createdAt: 'desc' } })
     expect(day.category).toBe('present')
     expect(day.data).toMatchObject({ checkIn: '09:05', checkOut: '17:00', _source: 'correction', _correctionId: id })
+  })
+
+  it('a day keyed by hand waits for the CEO: payroll ignores it until approved; HR and company B cannot approve it', async () => {
+    const day = '2026-09-28'
+    const keyed = await call('hr', 'POST', '/hr/records/attendance', { data: { employee: emps['Prep'], date: day, status: 'absent' } })
+    expect(keyed.json()).toMatchObject({ status: 'submitted', data: { _manual: true } })
+    const emp = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emps['Prep']! } })
+    expect((await prefillInputs(tenantId, emp, '2026-09')).absentDays).toBe(0)       // pending: not counted
+    // A punch on that day adds no second row beside the pending one.
+    const p = await recordPunch({ tenantId, employeeId: emps['Prep']!, kind: 'in', at: pkt(day, '09:00'), source: 'kiosk' })
+    expect(p.skipped).toBe('hand_keyed')
+    expect(await prisma.hrRecord.count({ where: { tenantId, section: 'attendance', employeeId: emps['Prep'], startDate: new Date(day) } })).toBe(1)
+    // HR may not approve its own manual entry; another company's CEO gets 404.
+    expect((await call('hr', 'POST', `/hr/records/attendance/${keyed.json().id}/decide`, { decision: 'approved' })).statusCode).toBe(403)
+    await mkUser('ceoOther', 'admin', otherTenantId)
+    expect((await call('ceoOther', 'POST', `/hr/records/attendance/${keyed.json().id}/decide`, { decision: 'approved' })).statusCode).toBe(404)
+    expect((await call('ceo', 'POST', `/hr/records/attendance/${keyed.json().id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
+    expect((await prefillInputs(tenantId, emp, '2026-09')).absentDays).toBe(1)       // approved: counted
+    await call('hr', 'POST', `/hr/records/attendance/${keyed.json().id}/cancel`)
   })
 
   it('feeds payroll: the late day counts, the corrected day does not', async () => {

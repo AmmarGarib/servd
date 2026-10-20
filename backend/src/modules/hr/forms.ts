@@ -60,7 +60,7 @@ export interface HrField {
   system?: boolean
 }
 
-export type ApproverRole = 'hod' | 'hr' | 'management'
+export type ApproverRole = 'hod' | 'hr' | 'management' | 'ceo'
 export interface WorkflowStep { key: string; label: string; role: ApproverRole }
 
 export interface HrSection {
@@ -104,6 +104,8 @@ const emp = (extra: Partial<HrField> = {}): HrField => ({ key: 'employee', label
 const HOD: WorkflowStep = { key: 'hod', label: 'HOD approval', role: 'hod' }
 const HR: WorkflowStep = { key: 'hr', label: 'HR approval', role: 'hr' }
 const MGMT: WorkflowStep = { key: 'management', label: 'Management approval', role: 'management' }
+/** The CEO only (role admin) — never HR, management or a hand-over delegate (owner, 2026-10-20). */
+export const CEO_STEP: WorkflowStep = { key: 'ceo', label: 'CEO approval', role: 'ceo' }
 
 export const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'temporary', 'intern']
 export const EMPLOYEE_STATUSES = ['active', 'on_leave', 'resigned', 'terminated', 'separated']
@@ -313,8 +315,13 @@ export const HR_SECTIONS: HrSection[] = [
       f('notes', 'Notes', 'textarea'),
     ] },
 
+  // A day HR keys or edits by hand is marked manual and waits for the CEO (owner, 2026-10-20: "hr need the ability
+  // to manually type in attendance … mark it as manually committed and go to ceo approval"). Enforced on every
+  // read of the format (service.ts enforcedWorkflow), so a saved format cannot drop the step. Punches are written
+  // approved by attendance.ts and never wait.
   { key: 'attendance', specNo: 9, title: 'Attendance', group: 'Time', kind: 'record', requires: ['employeeId', 'startDate', 'category'],
-    effect: 'Written automatically from clock-in punches (time clock, tablet or kiosk PIN): present or late against the rostered shift and the grace minutes in HR settings; a day with an in and no out becomes missing punch. HR keys only the exceptions, and a row HR keyed or edited is never overwritten by a punch.',
+    workflow: [CEO_STEP],
+    effect: 'Written automatically from clock-in punches (time clock, tablet or kiosk PIN): present or late against the rostered shift and the grace minutes in HR settings; a day with an in and no out becomes missing punch. A day HR keys or edits by hand is marked "Entered manually" and counts for payroll only once the CEO approves it; a punch never overwrites it.',
     fields: [
       emp(),
       f('date', 'Date', 'date', { required: true, bind: 'startDate' }),

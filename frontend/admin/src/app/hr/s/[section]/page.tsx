@@ -8,7 +8,7 @@ import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
-import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../../lib/hr'
+import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord, recordStatusText, isManualEntry } from '../../../../lib/hr'
 import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
@@ -120,7 +120,7 @@ export default function HrSectionPage() {
                   {fmt?.fields.some((f) => f.bind === 'employeeId') && <td className="px-4 py-3 text-white/85 font-bold">{r.employee?.fullName ?? '—'}</td>}
                   {cols.map((c) => <td key={c.key} className="px-4 py-3 text-white/70">{displayValue(c, r.data[c.key], lk)}</td>)}
                   {fmt && fmt.stages.length > 0 && <td className="px-4 py-3 text-white/60">{human(r.stage)}</td>}
-                  <td className="px-4 py-3"><span className="text-xs font-bold" style={{ color: STATUS_COLOR[r.status] }}>{human(r.status)}</span></td>
+                  <td className="px-4 py-3"><span className="text-xs font-bold" style={{ color: STATUS_COLOR[r.status] }}>{recordStatusText(r)}</span>{isManualEntry(r) && <span className="s-badge-amber ml-2 text-[10px]">Entered manually</span>}</td>
                 </tr>
               ))}
             </tbody>

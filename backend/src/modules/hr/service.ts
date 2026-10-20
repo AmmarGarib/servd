@@ -9,6 +9,7 @@ import { accountStateOf } from '../auth/accountStatus.js'
 import {
   HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS, withSystemFields, transferTargetsOutsideCompany,
   type HrField, type HrSection, type WorkflowStep,
+  CEO_STEP,
 } from './forms.js'
 import {
   mergeSettings, type HrSettings, type PayrollInputs, EMPTY_INPUTS,
@@ -63,6 +64,11 @@ export function defaultFormat(sec: HrSection): ActiveFormat {
   }
 }
 
+/** Steps a saved format may not change (owner, 2026-10-20): a hand-keyed attendance day always waits for the CEO. */
+function enforcedWorkflow(section: string, wf: WorkflowStep[]): WorkflowStep[] {
+  return section === 'attendance' ? [CEO_STEP] : wf
+}
+
 export async function getFormat(tenantId: string, section: string, version?: number): Promise<ActiveFormat> {
   const sec = sectionByKey(section)
   if (!sec) throw new AppError('UNKNOWN_SECTION', `No HR section "${section}"`, 404)
@@ -81,7 +87,7 @@ function savedFormat(sec: HrSection, row: { version: number; title: string; fiel
   return {
     section: sec.key, version: row.version, title: row.title,
     fields: withSystemFields(sec, row.fields as unknown as HrField[]),
-    workflow: row.workflow as unknown as WorkflowStep[],
+    workflow: enforcedWorkflow(sec.key, row.workflow as unknown as WorkflowStep[]),
     stages: row.stages as unknown as string[],
     isDefault: false,
   }
@@ -651,7 +657,12 @@ export async function loanStatement(tenantId: string, employeeId: string) {
 
 /** Attendance entries that stand. Draft, rejected and cancelled entries never
  *  reach payroll, a report or the dashboard. */
-export const STANDING_ATTENDANCE = { notIn: ['draft', 'rejected', 'cancelled'] }
+/** Attendance that counts (payroll, reports, the dashboard): punches and approved days. A day HR keyed or edited
+ *  by hand counts only once the CEO approves it (owner, 2026-10-20) — 'submitted' is waiting. */
+export const STANDING_ATTENDANCE = { notIn: ['draft', 'rejected', 'cancelled', 'submitted'] }
+/** A day that is TAKEN for the punch logic — counted or waiting for the CEO — so a punch never adds a second row
+ *  beside a hand-keyed day that is still pending. */
+export const ATTENDANCE_DAY_TAKEN = { notIn: ['draft', 'rejected', 'cancelled'] }
 
 /** Start of the company's first payroll month here, or `fallback` when there
  *  is none yet. Overtime worked before it was paid outside this system. */

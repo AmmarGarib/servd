@@ -19,7 +19,6 @@ const NAV: Array<{ href: string; label: string; staff?: boolean }> = [
   { href: '/hr/sections', label: 'All sections' },
   { href: '/hr/documents', label: 'Documents' },
   { href: '/hr/payroll', label: 'Payroll' },
-  { href: '/ceo/approvals?type=hr_request', label: 'Approvals (CEO inbox)', staff: true },
   { href: '/hr/letters', label: 'Letters' },
   { href: '/hr/reports', label: 'Reports' },
   { href: '/hr/formats', label: 'Formats' },

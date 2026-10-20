@@ -827,7 +827,8 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
         tenantId, section, formVersion: fmt.version, ...cols,
         status: hasWorkflow ? (opts.submit ? 'submitted' : 'draft') : 'approved',
         stage: fmt.stages[0] ?? null,
-        data: v.data as Prisma.InputJsonValue,
+        // A day keyed by hand (owner, 2026-10-20): marked manual, HR's (a punch never rewrites it), waits for the CEO.
+        data: (section === 'attendance' ? { ...v.data, _source: 'hr', _manual: true } : v.data) as Prisma.InputJsonValue,
         createdById: req.staffUser!.id,
         ...(opts.viaHeadOfficeId && { viaHeadOfficeId: opts.viaHeadOfficeId }),
       },
@@ -1611,7 +1612,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const approvals = rec.approvals as unknown as ApprovalEntry[]
     // Once an approver has acted, the content they approved is frozen. A
     // change after that is a new request, not an edit.
-    if (fmt.workflow.length && (rec.status === 'approved' || rec.status === 'rejected' || approvals.length > 0)) {
+    // An attendance day (a punch, or one the CEO already decided) edited by hand goes back to the CEO as a manual
+    // entry (owner, 2026-10-20) — it counts for payroll again only once approved.
+    const attendanceResubmit = rec.section === 'attendance' && (rec.status === 'approved' || rec.status === 'rejected')
+    if (!attendanceResubmit && fmt.workflow.length && (rec.status === 'approved' || rec.status === 'rejected' || approvals.length > 0)) {
       throw new AppError('LOCKED', 'This request has already been acted on and can no longer be edited', 409)
     }
     // An approved settlement is on the books with the figures it was approved
@@ -1630,13 +1634,26 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // keys start with a letter — so an edit keeps them. An attendance day HR
     // edits by hand is HR's from now on: a later punch will not rewrite it.
     const system = Object.fromEntries(Object.entries(stored).filter(([k2]) => k2.startsWith('_')))
-    if (rec.section === 'attendance') system['_source'] = 'hr'
+    if (rec.section === 'attendance') { system['_source'] = 'hr'; system['_manual'] = true }
     // The colleague accepted THIS swap — another colleague or another day
     // needs a new answer.
     if (rec.section === 'shift_swap' && (swapPartnerOf(v.data) !== swapPartnerOf(stored) || String(cols.startDate ?? '') !== String(rec.startDate ?? ''))) delete system['_partner']
     return prisma.$transaction(async (tx) => {
       await prepareRecord(tx, rec.tenantId, rec.section, fmt.fields, cols, v.data, rec.id)
-      return tx.hrRecord.update({ where: { id: rec.id }, data: { ...cols, data: { ...v.data, ...system } as Prisma.InputJsonValue, ...(via && { viaHeadOfficeId: via }) } })
+      const updated = await tx.hrRecord.update({
+        where: { id: rec.id },
+        data: {
+          ...cols, data: { ...v.data, ...system } as Prisma.InputJsonValue, ...(via && { viaHeadOfficeId: via }),
+          ...(rec.section === 'attendance' && rec.status !== 'draft' && { status: 'submitted', currentStep: 0, approvals: [] as unknown as Prisma.InputJsonValue }),
+        },
+      })
+      return updated
+    }).then((updated) => {
+      // The bell: a hand-edited attendance day waits on the CEO.
+      if (updated.section === 'attendance' && updated.status === 'submitted') {
+        approvalWaiting('hr_request', updated.id, { round: `step:0:${updated.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+      }
+      return updated
     })
   })
 

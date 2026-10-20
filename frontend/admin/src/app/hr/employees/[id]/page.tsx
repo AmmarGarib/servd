@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, isReportingLineField, REPORTS_TO_CEO, type HrRecord, type HrLogin } from '../../../../lib/hr'
+import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, isReportingLineField, REPORTS_TO_CEO, type HrRecord, type HrLogin, recordStatusText, isManualEntry } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
@@ -267,7 +267,7 @@ function RequestsTab({ p }: { p: Profile }) {
           <span className="font-bold text-white/85 w-48 shrink-0">{human(r.section)}</span>
           <span className="text-xs text-white/50">{day(r.startDate ?? r.effectiveDate ?? r.createdAt)}</span>
           {r.amountCents != null && <span className="text-xs text-white/60">{rs(r.amountCents)}</span>}
-          <span className="ml-auto text-xs font-bold" style={{ color: STATUS_COLOR[r.status] }}>{human(r.status)}</span>
+          <span className="ml-auto text-xs font-bold" style={{ color: STATUS_COLOR[r.status] }}>{recordStatusText(r)}</span>{isManualEntry(r) && <span className="s-badge-amber ml-2 text-[10px]">Entered manually</span>}
         </Link>
       ))}
     </div>

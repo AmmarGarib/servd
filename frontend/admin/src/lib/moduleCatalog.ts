@@ -44,12 +44,13 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // ── CEO (decision D2): approvals, companies, logins & access, company rules
   approvals:      [
     { label: 'Approvals', href: '/ceo/approvals', icon: 'check', hint: 'Everything waiting on you, from every module' },
-    { label: 'Hand-over', href: '/ceo/approvals/hand-over', sub: true, hint: 'Who approves what on your behalf' },
   ],
   // The Trash (owner, 2026-10-15). The module only puts the CEO-section link
   // in the sidebar; the page itself is also a personal page (below), and the
   // API lists per type from the caller's own modules and role.
-  trash:          [{ label: 'Trash', href: '/trash', icon: 'trash', hint: 'Restore deleted items, recover voided and cancelled ones' }],
+  // Trash and Hand-over are left-menu links of their own (owner, 2026-10-20), not CEO-workspace pages: Trash is a
+  // personal page (PERSONAL_PAGES) for every login; Hand-over is added for the CEO in AppShell.
+  trash:          [],
   business_info:  [
     { label: 'Locations', href: '/configuration/locations', icon: 'pin', hint: 'Kitchen address and map pin' },
     { label: 'Delivery zones', href: '/configuration/delivery-zones', sub: true, hint: 'Beyond the last zone, delivery is refused' },

@@ -21,7 +21,7 @@ import { AppError } from '../../lib/errors.js'
 import { requireTenantId } from '../../lib/tenantScope.js'
 import { recordPunch, attendanceKeys, closeMissedDays, isMissedClockOut, lastInOf, type PunchEntry, type PunchResult } from '../hr/attendance.js'
 import { verifyKioskPin } from '../hr/kioskPin.js'
-import { getFormat, STANDING_ATTENDANCE } from '../hr/service.js'
+import { getFormat, STANDING_ATTENDANCE, ATTENDANCE_DAY_TAKEN } from '../hr/service.js'
 import { pktToday } from '../hr/logic.js'
 import { enforceClockInPolicy, flagOutOfArea, type ClockInVerdict } from './policy.js'
 
@@ -145,7 +145,7 @@ async function openDayState(tenantId: string, employeeId: string, now = new Date
   const today = pktToday(now)
   const k = attendanceKeys((await getFormat(tenantId, 'attendance')).fields)
   const rows = await prisma.hrRecord.findMany({
-    where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: { in: [today, new Date(today.getTime() - 86_400_000)] } },
+    where: { tenantId, section: 'attendance', employeeId, status: ATTENDANCE_DAY_TAKEN, startDate: { in: [today, new Date(today.getTime() - 86_400_000)] } },
   })
   const open = rows.filter((r) => {
     const d = r.data as Record<string, unknown>

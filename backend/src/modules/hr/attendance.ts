@@ -29,7 +29,7 @@
 
 import type { Prisma, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
-import { getFormat, getSettings, STANDING_ATTENDANCE } from './service.js'
+import { getFormat, getSettings, STANDING_ATTENDANCE, ATTENDANCE_DAY_TAKEN } from './service.js'
 import { pktToday } from './logic.js'
 import { rotaDay, toMinutes, ymd, type RotaCell } from './rota.js'
 import type { HrField } from './forms.js'
@@ -161,7 +161,7 @@ function missedOutData(d: Record<string, unknown>, statusKey: string, lastIn: Da
 export async function closeMissedDays(tenantId: string, employeeId: string, at = new Date()): Promise<string[]> {
   const today = pktToday(at)
   const rows = await prisma.hrRecord.findMany({
-    where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: { gte: new Date(today.getTime() - 40 * 86_400_000), lte: today } },
+    where: { tenantId, section: 'attendance', employeeId, status: ATTENDANCE_DAY_TAKEN, startDate: { gte: new Date(today.getTime() - 40 * 86_400_000), lte: today } },
   })
   if (rows.length === 0) return []
   const k = attendanceKeys((await getFormat(tenantId, 'attendance')).fields)
@@ -186,7 +186,7 @@ async function lockDay(tx: Tx, employeeId: string, day: string) {
 /** The day's standing attendance record — the latest, which is the one payroll reads. */
 function dayRecord(tx: Tx, tenantId: string, employeeId: string, day: Date) {
   return tx.hrRecord.findFirst({
-    where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: day },
+    where: { tenantId, section: 'attendance', employeeId, status: ATTENDANCE_DAY_TAKEN, startDate: day },
     orderBy: { createdAt: 'desc' },
   })
 }
@@ -292,7 +292,7 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
     await lockDay(tx, emp.id, ymd(yesterday))
     await lockDay(tx, emp.id, ymd(today))
     const open = await tx.hrRecord.findMany({
-      where: { tenantId: p.tenantId, section: 'attendance', employeeId: emp.id, status: STANDING_ATTENDANCE, startDate: { in: [today, yesterday] } },
+      where: { tenantId: p.tenantId, section: 'attendance', employeeId: emp.id, status: ATTENDANCE_DAY_TAKEN, startDate: { in: [today, yesterday] } },
       orderBy: [{ startDate: 'desc' }, { createdAt: 'desc' }],
     })
     const cur = open.find((r) => isOpenDay(r, k.checkOut))
