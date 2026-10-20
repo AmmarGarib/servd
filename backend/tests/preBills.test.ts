@@ -268,13 +268,13 @@ describe('printing a pre-bill', () => {
 })
 
 describe('the printable pre-bill', () => {
-  it('prints KOT — NOT A TAX INVOICE, the KOT number, no fiscal block; a re-render is a COPY', async () => {
+  it('prints the brand and the KOT number (no banner), no fiscal block; a re-render is a COPY', async () => {
     const o = await ring('cashierA', conceptA, [NIHARI, KHEER])
     const pb = (await print('cashierA', o.id)).json().preBill
     const r = await call('cashierA', 'GET', `/pos/pre-bills/${pb.id}/html`)
     expect(r.statusCode).toBe(200)
     expect(r.headers['content-type']).toContain('text/html')
-    expect(r.body).toContain('KOT — NOT A TAX INVOICE')
+    expect(r.body).not.toContain('NOT A TAX INVOICE')   // owner, 2026-10-20: no header or footer line on the KOT
     expect(r.body).toContain(`KOT #: <strong>${pb.number}</strong>`)
     expect(r.body).toContain('If paid by card')
     expect(r.body).not.toMatch(/Fiscal invoice|SRB Invoice|FBR Invoice|FULL &amp; FINAL BILL<\/div>/)

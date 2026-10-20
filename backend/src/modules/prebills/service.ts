@@ -39,7 +39,8 @@ type Tx = Prisma.TransactionClient
 export type PreBillTender = 'cash' | 'card'
 
 /** The banner every pre-bill prints. A pre-bill must never look like a bill. */
-// Owner, 2026-10-20: the slip is a "KOT"; the brand fills the header, this line stays at the foot only.
+// Owner, 2026-10-20: the slip is a "KOT"; the brand fills the header and nothing is printed at the foot. The
+// banner stays on the receipt data (API / records), never on the paper.
 export const PRE_BILL_BANNER = 'KOT — NOT A TAX INVOICE' as const
 
 /** One line as printed (voided lines excluded). Stored in PreBill.lines. */
@@ -586,9 +587,6 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
     ${r.paidCents > 0 ? `<tr class="bold"><td>BALANCE DUE</td><td style="text-align:right">${fmtPkr(r.dueCents)}</td></tr>` : ''}
     ${r.cardTotalCents != null && r.cardTotalCents !== r.totalCents ? row('If paid by card / Raast QR', fmtPkr(r.cardTotalCents)) : ''}
   </table>
-  <div class="divider"></div>
-  <div class="center bold" style="font-size:11px">${esc(r.banner)}</div>
-  <div class="center" style="font-size:10px">Your full &amp; final bill is printed after payment.</div>
   <div class="divider"></div>
   <div class="center" style="font-size:10px;color:#555">Powered by servd</div>
   <script>window.onload = function(){ window.print() }</script>
