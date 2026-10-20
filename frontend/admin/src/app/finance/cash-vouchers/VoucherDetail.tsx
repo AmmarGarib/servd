@@ -6,7 +6,7 @@
 // approval) and the audit history.
 
 import { useState } from 'react'
-import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, CLASSIFICATION_LABEL, TAX_STATUS_LABEL, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import Link from 'next/link'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -324,6 +324,9 @@ export function VoucherDetail({ id }: { id: string }) {
             {expense && v.payFrom && (
               <Fact label="To pay from" value={v.payFrom === 'credit' ? `Credit — ${v.supplierName ?? 'supplier'}` : v.payFrom === 'bank' ? `Bank${v.payFromBankName ? ` — ${v.payFromBankName}` : ''}` : 'Cash'} />
             )}
+            {v.classification && (
+              <Fact label="Classification" value={`${CLASSIFICATION_LABEL[v.classification]}${v.taxStatus ? ` · tax ${TAX_STATUS_LABEL[v.taxStatus].toLowerCase()}` : ''}`} />
+            )}
             {v.supplierBill && (
               <Fact label="Supplier bill" value={`${v.supplierBill.billNumber} · ${v.supplierBill.status} · due ${fmtDate(v.supplierBill.dueDate)} — pay it in Supplier bills & payments`} />
             )}
@@ -546,7 +549,10 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const [notEquipment, setNotEquipment] = useState(false)
   const [notEquipmentReason, setNotEquipmentReason] = useState('')
   // Internal payment classification (2026-10-20): required on a payment; on credit no cash leaves (no payment).
-  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  // Chosen at raise (finance / the CEO) → prefilled here; finance may still change it.
+  const [cls, setCls] = useState<PaymentClassificationValue>(v.classification
+    ? { classification: v.classification, taxStatus: v.taxStatus ?? '', nonDeductionReason: v.nonDeductionReason ?? '' }
+    : EMPTY_PAYMENT_CLASSIFICATION)
   const clsError = credit ? null : paymentClassificationError(cls)
   const pay = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/pay`,

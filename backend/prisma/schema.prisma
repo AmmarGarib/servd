@@ -7970,6 +7970,12 @@ model CashVoucher {
   plannedBankAccountId String?
   supplierId           String?
   supplierBillId       String?         @unique
+  // Internal payment classification chosen when the voucher is raised (owner, 2026-10-20): finance / the CEO only;
+  // prefills the pay step, where it is stamped on the payment entry (accounting/paymentsRegister.ts). A label only.
+  // CHECK cash_vouchers_planned_classification_chk (SQL only, migration 20261020130000).
+  plannedClassification     String?
+  plannedTaxStatus          String?
+  plannedNonDeductionReason String?
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).

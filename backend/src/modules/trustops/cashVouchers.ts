@@ -95,7 +95,7 @@ import { prepareBill, insertBillTx, afterBillCreated } from '../procurement/serv
 import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { equipmentLocationsOf } from '../../lib/generalLocation.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
-import { classificationOf, classifyingTx } from '../accounting/paymentsRegister.js'
+import { classificationOf, classifyingTx, type ClassificationInput } from '../accounting/paymentsRegister.js'
 
 // ─── Files ───────────────────────────────────────────────────────────────────
 
@@ -448,6 +448,10 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       payFromBankAccountId: v.plannedBankAccountId,
       payFromBankName: v.plannedBankAccountId ? (bankRows.find((b) => b.id === v.plannedBankAccountId && b.tenantId === v.tenantId)?.name ?? null) : null,
       supplierName: v.supplierId ? (supplierName.get(v.supplierId) ?? null) : null,
+      /** Internal payment classification chosen at raise (2026-10-20) — prefills the pay step. */
+      classification: v.plannedClassification,
+      taxStatus: v.plannedTaxStatus,
+      nonDeductionReason: v.plannedNonDeductionReason,
       holderUserId: v.payeeUserId,
       holderName: nameOf(v.payeeUserId),
       remainingCents,
@@ -603,6 +607,14 @@ const fields = {
   payFrom: z.enum(['cash', 'bank', 'credit']).nullable().optional(),
   payFromBankAccountId: z.string().min(1).max(64).nullable().optional(),
   supplierId: z.string().min(1).max(64).nullable().optional(),
+  /**
+   * Internal payment classification (owner, 2026-10-20): Official / Unofficial / Unclassified + tax status, chosen
+   * when the voucher is raised (finance / the CEO only). Prefills finance's pay; a label only (paymentsRegister.ts).
+   * classification null clears it.
+   */
+  classification: z.enum(['official', 'unofficial', 'unclassified']).nullable().optional(),
+  taxStatus: z.enum(['deducted', 'not_deducted', 'not_applicable']).nullable().optional(),
+  nonDeductionReason: z.string().trim().max(500).nullable().optional(),
 }
 const CreateBody = z.object({
   ...fields,
@@ -613,6 +625,36 @@ const CreateBody = z.object({
 const PatchBody = z.object(fields).partial()
   .refine((b) => Object.values(b).some((v) => v !== undefined), 'Send at least one field to change')
 type PatchInput = z.infer<typeof PatchBody>
+
+/**
+ * The planned classification columns a create / patch body sets, or undefined when it names none. Finance / the CEO
+ * only (403 CLASSIFICATION_FINANCE_ONLY); validated by the register's own rule (reason ≥10 when tax not deducted).
+ */
+function plannedClassificationOf(viewer: { financeApprover: boolean }, body: Record<string, unknown>):
+  { plannedClassification: string | null; plannedTaxStatus: string | null; plannedNonDeductionReason: string | null } | undefined {
+  if (body['classification'] === undefined && body['taxStatus'] === undefined && body['nonDeductionReason'] === undefined) return undefined
+  if (!viewer.financeApprover) throw new AppError('CLASSIFICATION_FINANCE_ONLY', 'Only finance or the CEO classifies a payment', 403)
+  if (body['classification'] === undefined) throw new AppError('INVALID_CLASSIFICATION', 'Pick a classification: Official, Unofficial or Unclassified', 400)
+  if (body['classification'] === null) {
+    return { plannedClassification: null, plannedTaxStatus: null, plannedNonDeductionReason: null }
+  }
+  const c = classificationOf(body)!
+  return {
+    plannedClassification: c.classification,
+    plannedTaxStatus: c.taxStatus ?? null,
+    plannedNonDeductionReason: c.taxStatus === 'not_deducted' ? (c.nonDeductionReason ?? '').trim() : null,
+  }
+}
+
+/** The voucher's planned classification as a pay-time input (null = none planned). */
+function plannedClassificationInput(v: { plannedClassification: string | null; plannedTaxStatus: string | null; plannedNonDeductionReason: string | null }): ClassificationInput | null {
+  if (!v.plannedClassification) return null
+  return {
+    classification: v.plannedClassification as ClassificationInput['classification'],
+    taxStatus: (v.plannedTaxStatus ?? null) as ClassificationInput['taxStatus'],
+    nonDeductionReason: v.plannedNonDeductionReason,
+  }
+}
 
 const NoteBody = z.object({ note: z.string().trim().min(3, 'Say why (at least 3 characters)').max(500) })
 
@@ -1165,6 +1207,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       kind: body.kind, assetClassId: body.assetClassId ?? null, assetLocationId: body.assetLocationId ?? null, conceptId: body.conceptId ?? null,
     })
     const category = assetCls ? null : await categoryOf(tenantId, body, keeper)
+    const plannedCls = plannedClassificationOf(viewer, body)
     const plan = await payPlanOf(tenantId, {
       kind: body.kind, payFrom: body.payFrom ?? null, bankAccountId: body.payFromBankAccountId ?? null, supplierId: body.supplierId ?? null,
     })
@@ -1192,6 +1235,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
           plannedPaySource: plan.plannedPaySource,
           plannedBankAccountId: plan.plannedBankAccountId,
           supplierId: plan.supplierId,
+          ...(plannedCls ?? {}),
           conceptId: body.conceptId ?? null,
           department: body.department ?? null,
           amountCents: money.amountCents,
@@ -1211,6 +1255,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       kind: body.kind, status: created.status, ...money, holderUserId: holder?.id ?? null, payeeName, purpose: body.purpose, category, boxId: body.boxId ?? null,
       ...(assetCls && { assetClassId: assetCls.id, assetClassKey: assetCls.key, assetLocationId: body.assetLocationId ?? null }),
       ...(plan.plannedPaySource && { payFrom: plan.plannedPaySource, payFromBankAccountId: plan.plannedBankAccountId, supplierId: plan.supplierId }),
+      ...(plannedCls?.plannedClassification && { classification: plannedCls.plannedClassification, taxStatus: plannedCls.plannedTaxStatus }),
     })
     // The bell (queued): finance's queue, or straight to the CEO for a finance-raised payee voucher.
     approvalWaiting(queueTypeOf(created.status), created.id, { round: 'r0', actorId: me })
@@ -1310,6 +1355,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       data.plannedBankAccountId = plan.plannedBankAccountId
       data.supplierId = plan.supplierId
     }
+    const plannedCls = plannedClassificationOf(viewer, body)
+    if (plannedCls) Object.assign(data, plannedCls)
     if (body.voucherDate !== undefined) data.voucherDate = body.voucherDate
     if (body.payeeName !== undefined) data.payeeName = body.payeeName
     if (body.purpose !== undefined) data.purpose = body.purpose
@@ -1825,7 +1872,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const now = new Date()
     const dueBy = new Date(now.getTime() + settleDays * 86_400_000)
 
-    const result = await prisma.$transaction(classifyingTx(classificationOf(req.body), me, 'entryId', async (tx) => {
+    const result = await prisma.$transaction(classifyingTx(classificationOf(req.body) ?? plannedClassificationInput(v), me, 'entryId', async (tx) => {
       // Cash on hand / bank: THE resolver, for the VOUCHER's company, inside the transaction.
       const account = direct && !credit
         ? await moneyAccountCode(tx, v.tenantId, { method: source === 'cash_on_hand' ? 'cash' : 'bank_transfer', bankAccountId: bankAccountIdIn ?? null })

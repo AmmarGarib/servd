@@ -29,6 +29,10 @@ import { dateBounds } from '../../finance/cash-vouchers/ui'
 import { JournalRequests, type JournalRequest } from './JournalRequests'
 import { RecordFiles } from '@/components/files/RecordFiles'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import {
+  EMPTY_PAYMENT_CLASSIFICATION, PaymentClassificationFields, paymentClassificationBody, paymentClassificationError,
+  type PaymentClassificationValue,
+} from '@/components/finance/PaymentClassificationFields'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
@@ -87,6 +91,8 @@ export default function JournalEntryPage() {
   const [amendReason, setAmendReason] = useState('')
   // Supporting documents (owner, 2026-10-20): uploaded to the posted entry once it exists.
   const [files, setFiles] = useState<PickedFile[]>([])
+  // Official / Unofficial (owner, 2026-10-20): asked when the entry pays money out (a credit to cash or a bank).
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const [tab, setTab] = useState<PageTab>('entry')
   /** The request being edited in the form (a draft or returned one of mine). */
   const [editing, setEditing] = useState<JournalRequest | null>(null)
@@ -157,12 +163,21 @@ export default function JournalEntryPage() {
   // on or before it is the CEO's to edit or cancel.
   const closedBooksThrough = [lockedThrough, reopenedThrough].filter((d): d is string => !!d).sort().pop() ?? null
 
+  // A credit to a money account (cash 1010 / 1011, banks 10xx) = a payment: the register asks how it is classified.
+  // The server decides for good (paymentsRegister.ts) — a transfer between money accounts is not a payment there.
+  const codeOfAccount = (id: string) => accounts.find((a) => a.id === id)?.code ?? ''
+  const isMoneyCode = (c: string) => /^10\d\d$/.test(c) && c !== '1015' && c !== '1030'
+  const paysOut = !editing && used.some((p) => p.credit > 0 && isMoneyCode(codeOfAccount(p.line.accountId)))
+    && !used.every((p) => isMoneyCode(codeOfAccount(p.line.accountId)))
+  const clsError = paysOut && !(amending && !cls.classification) ? paymentClassificationError(cls) : null
+
   const blockers: string[] = []
   if (!company) blockers.push('Pick the company whose books this is')
   if (!description.trim()) blockers.push('Add a description')
   if (amending && amendReason.trim().length < 5) blockers.push('Say why you are editing it (5+ characters)')
   if (used.length < 2) blockers.push('At least two lines')
   if (used.some((p) => p.error)) blockers.push('Fix the lines marked below')
+  if (clsError) blockers.push(clsError)
   if (debitTotal === 0) blockers.push('Enter the amounts')
   else if (difference !== 0) blockers.push(`Debits and credits differ by ${fmtPkr(Math.abs(difference))}`)
   if (dateLocked) blockers.push(`Books are closed through ${lockedThrough} — pick a later date`)
@@ -177,6 +192,7 @@ export default function JournalEntryPage() {
       description: description.trim(),
       ...(reference.trim() && { reference: reference.trim() }),
       ...(entryInstant(date) && { entryDate: entryInstant(date) }),
+      ...(paysOut ? paymentClassificationBody(cls) : {}),
       lines: used.map((p) => ({
         accountId: p.line.accountId,
         type: p.debit > 0 ? 'debit' : 'credit',
@@ -198,7 +214,7 @@ export default function JournalEntryPage() {
         ? `Edited — the old entry is reversed and the corrected one is posted (${fmtPkr(debitTotal)} on ${date}).`
         : `Posted — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
       setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's Files below.` : done, entryId: entry.id })
-      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([])
+      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION)
       void qc.invalidateQueries({ queryKey: ['record-files'] })
       void qc.invalidateQueries({ queryKey: ['manual-journal'] })
       void qc.invalidateQueries({ queryKey: ['ledger'] })
@@ -471,6 +487,15 @@ export default function JournalEntryPage() {
                 {amending && (
                   <RecordFiles ownerType="journal_entry" ownerId={amending.id} tenantId={amending.tenantId ?? undefined} canUpload={false} compact
                     title="Documents on the original entry" emptyText="No documents on the original entry." />
+                )}
+                {paysOut && (
+                  <div>
+                    <PaymentClassificationFields value={cls} onChange={setCls} />
+                    <p className="mt-1 text-xs text-s-muted">
+                      This entry pays money out of cash or a bank, so it is listed in the Payments register.
+                      {amending ? ' Leave it blank to keep the original entry\'s classification.' : ''}
+                    </p>
+                  </div>
                 )}
                 <PendingFilesPicker ownerType="journal_entry" value={files} onChange={setFiles}
                   label={amending ? 'Supporting documents for the corrected entry' : 'Supporting documents'}

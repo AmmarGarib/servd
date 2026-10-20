@@ -224,6 +224,10 @@ export interface CashVoucher {
   supplierId?: string | null
   supplierName?: string | null
   supplierBillId?: string | null
+  /** Internal payment classification chosen at raise (2026-10-20; finance / the CEO) — prefills the pay step. */
+  classification?: 'official' | 'unofficial' | 'unclassified' | null
+  taxStatus?: 'deducted' | 'not_deducted' | 'not_applicable' | null
+  nonDeductionReason?: string | null
   supplierBill?: { id: string; billNumber: string; status: string; dueDate: string; totalCents: number; whtCents: number; paidCents: number } | null
   payAccountCode?: string | null
   payBankAccountId?: string | null

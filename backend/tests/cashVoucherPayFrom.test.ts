@@ -234,3 +234,35 @@ describe('credit: finance\'s pay books a supplier bill', () => {
     expect(lines).toEqual([['2012', 'credit', 500_000], [cost, 'debit', 500_000]].sort())
   })
 })
+
+describe('payment classification chosen at raise (2026-10-20)', () => {
+  const clsOf = async (entryRef: string) => {
+    const je = await prisma.journalEntry.findFirst({ where: { tenantId: T.A, reference: entryRef }, select: { id: true } })
+    return je ? prisma.paymentClassification.findUnique({ where: { journalEntryId: je.id } }) : null
+  }
+  it('finance sets it at raise; the pay stamps it on the payment entry in the voucher\'s company', async () => {
+    const v = await raise({ payFrom: 'cash', classification: 'unofficial', taxStatus: 'not_deducted', nonDeductionReason: 'Payee is an unregistered courier' })
+    expect(v).toMatchObject({ classification: 'unofficial', taxStatus: 'not_deducted' })
+    await approve(v.id)
+    const r = await call('finA', 'POST', `${V}/${v.id}/pay`, {})
+    expect(r.statusCode, r.body).toBe(200)
+    expect(await clsOf(`cashvoucher.pay:${v.id}`)).toMatchObject({ tenantId: T.A, classification: 'unofficial', taxStatus: 'not_deducted' })
+  })
+  it('a pick at pay overrides the planned one', async () => {
+    const v = await raise({ payFrom: 'cash', classification: 'unofficial' })
+    await approve(v.id)
+    const r = await call('finA', 'POST', `${V}/${v.id}/pay`, { classification: 'official', taxStatus: 'not_applicable' })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(await clsOf(`cashvoucher.pay:${v.id}`)).toMatchObject({ classification: 'official' })
+  })
+  it('only finance / the CEO set it; reason rule; company B 404', async () => {
+    expect((await call('cookA', 'POST', V, { purpose: 'Courier', categoryKey: 'transport', amountCents: 1_000, classification: 'official' })).json().error.code)
+      .toBe('CLASSIFICATION_FINANCE_ONLY')
+    expect((await call('finA', 'POST', V, { kind: 'expense', payeeName: 'X', purpose: 'Courier', categoryKey: 'transport', amountCents: 1_000, classification: 'official', taxStatus: 'not_deducted' })).statusCode).toBe(422)
+    const v = await raise({ classification: 'official', sendTo: 'finance' })
+    expect((await call('finB', 'PATCH', `${V}/${v.id}`, { classification: 'unofficial' })).statusCode).toBe(404)
+    const p = await call('finA', 'PATCH', `${V}/${v.id}`, { classification: null })
+    expect(p.statusCode, p.body).toBe(200)
+    expect(p.json()).toMatchObject({ classification: null, taxStatus: null })
+  })
+})

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { forgetReopened, rememberReopened, reopenedThrough } from './closedBooks.js'
-import { classificationOf } from './paymentsRegister.js'
+import { classificationOf, classifyingTx, classifyPaymentTx, type ClassificationInput } from './paymentsRegister.js'
 import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
@@ -191,7 +191,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
 
     // manualJournal.ts — the one path (journal requests post through it too).
-    const { entry } = await postManualJournal(prisma, {
+    // An entry that pays money out (a credit to cash / a bank) carries the
+    // internal payment classification picked on the form, in the posting's own
+    // transaction (paymentsRegister.ts — a label only; ignored when the entry
+    // is not a payment).
+    const { entry, sideEffects } = await serviceClient.$transaction(classifyingTx(classificationOf(req.body), req.staffUser!.id, 'entry.id', (tx) => postManualJournal(tx, {
       tenantId,
       description: body.description,
       reference: body.reference,
@@ -200,7 +204,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       postedBy: req.staffUser!.id,
       registerOverride: body.registerOverride ?? null,
       actor: { id: req.staffUser!.id, email: req.staffUser!.email, ip: req.ip },
-    })
+    })))
+    await sideEffects()
     return reply.status(201).send(entry)
   })
 
@@ -282,6 +287,12 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         registerOverride: body.registerOverride ?? null,
         actor: { id: req.staffUser!.id, email: req.staffUser!.email, ip: req.ip },
       })
+      // The corrected entry's payment classification: the one picked on the
+      // form, else the original's (an edit never silently drops the label).
+      const prior = await tx.paymentClassification.findUnique({ where: { journalEntryId: original.id } })
+      const picked = classificationOf(req.body)
+      const carried = picked ?? (prior ? { classification: prior.classification, taxStatus: prior.taxStatus, nonDeductionReason: prior.nonDeductionReason } as ClassificationInput : null)
+      await classifyPaymentTx(tx, { journalEntryId: entry.id, input: carried, setById: req.staffUser!.id, tenantId })
       return { reversal, original, entry, reversedFx, postedFx }
     })
     // Audit rows and Exceptions flags only after the commit (manualJournal.ts).

@@ -14,6 +14,10 @@
 //     is picked when there is no brand: shared equipment). "To pay from":
 //     cash, a bank, or credit from a supplier (finance's pay books a supplier
 //     bill instead of handing cash over).
+//     Official / Unofficial / Unclassified (+ tax status) is picked here too
+//     (owner, 2026-10-20) — a payee voucher is raised by finance or the CEO
+//     only; it prefills the pay step. A cash request is classified at pay,
+//     after the approvals.
 //   • Edit — the same fields on an existing voucher (after it is returned, or
 //     while it still waits for finance); the detail page then resubmits.
 
@@ -29,6 +33,10 @@ import {
 } from './data'
 import { ErrorBanner, Field, Footer, Modal, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
+import {
+  EMPTY_PAYMENT_CLASSIFICATION, PaymentClassificationFields, paymentClassificationBody, paymentClassificationError,
+  type PaymentClassificationValue,
+} from '@/components/finance/PaymentClassificationFields'
 
 export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSaved, prefill }: {
   /** Recovered from the Trash: purpose, category / account, amounts and payee. The date, approvals and attachments start fresh. */
@@ -72,6 +80,9 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
   const [voucherDate, setVoucherDate] = useState(voucher ? dateInput(voucher.voucherDate) : todayKarachi())
   const [payeeName, setPayeeName] = useState(expense ? (voucher?.payeeName ?? pStr(pf, 'payeeName') ?? '') : '')
   const [sendTo, setSendTo] = useState<'ceo' | 'finance'>('ceo')
+  const [cls, setCls] = useState<PaymentClassificationValue>(voucher?.classification
+    ? { classification: voucher.classification, taxStatus: voucher.taxStatus ?? '', nonDeductionReason: voucher.nonDeductionReason ?? '' }
+    : EMPTY_PAYMENT_CLASSIFICATION)
 
   const tenantId = voucher?.tenantId ?? null
   const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
@@ -97,6 +108,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
     'cv-category': category ? '' : (expense ? 'Pick an expense account or a fixed asset.' : 'Pick an expense category.'),
     ...(needsOutlet ? { 'cv-outlet': assetLocationId ? '' : 'Pick the outlet the equipment is at.' } : {}),
     ...(expense && payFrom === 'credit' ? { 'cv-supplier': supplierId ? '' : 'Pick the supplier.' } : {}),
+    ...(expense ? { 'cv-classification': paymentClassificationError(cls) ?? '' } : {}),
   }
   const shown = (k: string) => (tried ? errs[k] : '')
 
@@ -115,6 +127,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
             payFrom,
             payFromBankAccountId: payFrom === 'bank' && payFromBankAccountId ? payFromBankAccountId : null,
             supplierId: payFrom === 'credit' ? supplierId : null,
+            ...paymentClassificationBody(cls),
           }
           : { amountCents: grossCents }),
       }
@@ -262,6 +275,14 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
           </div>
           {addSupplier.error && <ErrorBanner message={errorWords(addSupplier.error)} />}
         </Field>
+      )}
+
+      {expense && (
+        <div id="cv-classification" tabIndex={-1}>
+          <PaymentClassificationFields value={cls} onChange={setCls} />
+          {shown('cv-classification') && <p className="mt-1 text-xs text-s-red">{shown('cv-classification')}</p>}
+          <p className="mt-1 text-xs text-s-muted">Carried to the payment when finance pays it (it can still be changed there).</p>
+        </div>
       )}
 
       {expense && !editing && (
