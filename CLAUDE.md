@@ -1878,6 +1878,10 @@ copies."
   list takes `lazy` (loads on "Files") — never one request per row (the API
   rate limit is 200/min). `/record-files` is excluded from the portfolio
   "which company?" prompt (`lib/api.ts`): the server stamps the record's company.
+- **Manual journal entries carry documents (owner, 2026-10-20):** provider
+  `journal_entry` (a `manual:` entry only; read = ledger readers, attach =
+  `JOURNAL_POSTERS` with `accounting`); the journal form uploads to the posted
+  (or corrected) entry, each listed entry has a lazy Files panel.
 - **A new screen with supporting documents = a provider + a two-company test**
   (`tests/recordFiles.test.ts`) in the same change — never a URL field, never
   a new file table.

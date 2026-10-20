@@ -27,6 +27,9 @@ import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { Select } from '@/components/ui/Select'
 import { dateBounds } from '../../finance/cash-vouchers/ui'
 import { JournalRequests, type JournalRequest } from './JournalRequests'
+import { RecordFiles } from '@/components/files/RecordFiles'
+import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
+import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
 interface Brand { id: string; name: string; tenantId: string | null }
@@ -82,6 +85,8 @@ export default function JournalEntryPage() {
   /** A posted manual entry being edited: posting reverses it and books the corrected one. */
   const [amending, setAmending] = useState<LedgerEntry | null>(null)
   const [amendReason, setAmendReason] = useState('')
+  // Supporting documents (owner, 2026-10-20): uploaded to the posted entry once it exists.
+  const [files, setFiles] = useState<PickedFile[]>([])
   const [tab, setTab] = useState<PageTab>('entry')
   /** The request being edited in the form (a draft or returned one of mine). */
   const [editing, setEditing] = useState<JournalRequest | null>(null)
@@ -165,7 +170,9 @@ export default function JournalEntryPage() {
   if (!date || date < dateBounds().min || date > dateBounds().max) blockers.push(`Pick a date between ${dateBounds().min} and ${dateBounds().max}`)
 
   const post = useMutation({
-    mutationFn: () => api.post<{ id: string }>(amending ? `/accounting/journal/${amending.id}/amend` : '/accounting/journal', {
+    mutationFn: async () => {
+      const pin = amending?.tenantId ?? company
+      const entry = await api.post<{ id: string }>(amending ? `/accounting/journal/${amending.id}/amend` : '/accounting/journal', {
       ...(amending && { reason: amendReason.trim() }),
       description: description.trim(),
       ...(reference.trim() && { reference: reference.trim() }),
@@ -177,12 +184,22 @@ export default function JournalEntryPage() {
         ...(p.line.memo.trim() && { memo: p.line.memo.trim() }),
         ...(p.line.conceptId && { conceptId: p.line.conceptId }),
       })),
-    }, { tenantId: amending?.tenantId ?? company }),
-    onSuccess: (entry) => {
-      setResult({ ok: true, msg: amending
+    }, { tenantId: pin })
+      // The entry is in the books; a file that fails to upload is attached from its row below.
+      let fileError: string | null = null
+      if (files.length) {
+        try { await uploadRecordFiles('journal_entry', entry.id, files, { tenantId: pin ?? undefined }) }
+        catch (x) { fileError = (x as Error).message }
+      }
+      return { entry, fileError }
+    },
+    onSuccess: ({ entry, fileError }) => {
+      const done = amending
         ? `Edited — the old entry is reversed and the corrected one is posted (${fmtPkr(debitTotal)} on ${date}).`
-        : `Posted — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`, entryId: entry.id })
-      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason('')
+        : `Posted — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
+      setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's Files below.` : done, entryId: entry.id })
+      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([])
+      void qc.invalidateQueries({ queryKey: ['record-files'] })
       void qc.invalidateQueries({ queryKey: ['manual-journal'] })
       void qc.invalidateQueries({ queryKey: ['ledger'] })
     },
@@ -449,13 +466,25 @@ export default function JournalEntryPage() {
               </table>
             </div>
 
+            {canPost && !editing && (
+              <div className="space-y-2">
+                {amending && (
+                  <RecordFiles ownerType="journal_entry" ownerId={amending.id} tenantId={amending.tenantId ?? undefined} canUpload={false} compact
+                    title="Documents on the original entry" emptyText="No documents on the original entry." />
+                )}
+                <PendingFilesPicker ownerType="journal_entry" value={files} onChange={setFiles}
+                  label={amending ? 'Supporting documents for the corrected entry' : 'Supporting documents'}
+                  hint="Invoices, bank advices, workings — PDF, photos, Excel or Word. Saved with the entry when it is posted." />
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center justify-between gap-3">
               <ul className="text-xs text-s-muted space-y-0.5">
                 {blockers.map((b) => <li key={b}>{b}</li>)}
               </ul>
               <div className="flex flex-wrap gap-2">
                 {amending && (
-                  <button type="button" onClick={() => { setAmending(null); setAmendReason(''); setDescription(''); setReference(''); setLines([blankLine(), blankLine()]) }}
+                  <button type="button" onClick={() => { setAmending(null); setAmendReason(''); setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setFiles([]) }}
                     className="s-btn-ghost text-sm">Stop editing</button>
                 )}
                 {canPost && !editing && (
@@ -513,14 +542,14 @@ function RecentManualEntries({ isAdmin, isCeo, canRequest, companyName, multiCom
         // Dated in closed or reopened books: cancelling or editing it is the CEO's (403 CEO_ONLY_CLOSED_BOOKS).
         const ceoOnly = !isCeo && !!closedBooks && e.tenantId === closedBooks.tenantId && pktDate(e.entryDate) <= closedBooks.through
         // There a non-CEO may still ASK for the reversal (a journal request the CEO approves).
-        return <ManualEntryRow key={e.id} e={e} isAdmin={isAdmin && !ceoOnly} canRequest={canRequest} company={multiCompany ? companyName(e.tenantId) : null} onEdit={ceoOnly ? undefined : onEdit} ceoOnly={ceoOnly} />
+        return <ManualEntryRow key={e.id} e={e} isAdmin={isAdmin && !ceoOnly} canAttach={isAdmin} canRequest={canRequest} company={multiCompany ? companyName(e.tenantId) : null} onEdit={ceoOnly ? undefined : onEdit} ceoOnly={ceoOnly} />
       })}
       {data?.hasMore && <p className="px-4 py-3 text-xs text-s-muted">Showing the latest 100 — older entries are in the ledger.</p>}
     </section>
   )
 }
 
-function ManualEntryRow({ e, isAdmin, canRequest, company, onEdit, ceoOnly }: { e: LedgerEntry; isAdmin: boolean; canRequest: boolean; company: string | null; onEdit?: (e: LedgerEntry) => void; ceoOnly: boolean }) {
+function ManualEntryRow({ e, isAdmin, canAttach, canRequest, company, onEdit, ceoOnly }: { e: LedgerEntry; isAdmin: boolean; canAttach: boolean; canRequest: boolean; company: string | null; onEdit?: (e: LedgerEntry) => void; ceoOnly: boolean }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState('')
@@ -580,6 +609,11 @@ function ManualEntryRow({ e, isAdmin, canRequest, company, onEdit, ceoOnly }: { 
           <button type="button" onClick={() => onEdit(e)} className="s-btn-secondary text-xs px-3 py-1 shrink-0">Edit</button>
         )}
       </div>
+      {!isReversal && (
+        // Supporting documents (owner, 2026-10-20): loaded on "Files" — one request per opened row, never per row.
+        <RecordFiles ownerType="journal_entry" ownerId={e.id} tenantId={e.tenantId ?? undefined} canUpload={canAttach} compact lazy
+          emptyText="No supporting documents yet." />
+      )}
       {open && (
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 items-end">
           <label className="block">

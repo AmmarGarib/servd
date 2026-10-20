@@ -85,6 +85,8 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
     ids: {
       [RECORD_OWNER.capex_quote]: quote.id,
       [RECORD_OWNER.payment]: paid.entryId,
+      // The same entry is a manual journal entry (reference 'manual:…'): its supporting documents (2026-10-20).
+      [RECORD_OWNER.journal_entry]: paid.entryId,
       [RECORD_OWNER.opex_payment]: pay.id, [RECORD_OWNER.supplier_bill]: bill.id, [RECORD_OWNER.goods_receipt]: grn.id,
       [RECORD_OWNER.prep_batch]: prep.id, [RECORD_OWNER.hr_document]: doc.id, [RECORD_OWNER.fixed_asset]: asset.id,
     },
@@ -107,6 +109,7 @@ const ACTOR: Record<string, [string, string]> = {
   [RECORD_OWNER.fixed_asset]:   ['finA', 'finB'],
   [RECORD_OWNER.capex_quote]:   ['finA', 'finB'],
   [RECORD_OWNER.payment]:       ['finA', 'finB'],
+  [RECORD_OWNER.journal_entry]: ['finA', 'finB'],
 }
 
 beforeAll(async () => {
@@ -147,7 +150,7 @@ beforeAll(async () => {
 afterAll(async () => { invalidateSetupCache(); await app?.close() })
 
 describe('record files: every owner type, two companies', () => {
-  it('registers exactly the eight owner types', () => {
+  it('registers exactly the nine owner types', () => {
     expect(recordFileOwnerTypes()).toEqual(Object.values(RECORD_OWNER).sort())
   })
 
@@ -293,6 +296,21 @@ describe('record files: payment keeps the payments-register rule (2026-10-20)', 
       lines: [{ accountCode: '6040', type: 'debit', amountCents: 1_000 }, { accountCode: '2010', type: 'credit', amountCents: 1_000 }],
     })
     expect((await call('finA', 'POST', `/record-files/payment/${accrual.entryId}`, { files: [pdf] })).statusCode).toBe(404)
+  })
+})
+
+describe('record files: journal_entry keeps the manual-journal rule (2026-10-20)', () => {
+  it('finance without accounting is refused (403); a kitchen manager is refused (403); a non-manual entry is 404', async () => {
+    const id = A.ids[RECORD_OWNER.journal_entry]!
+    expect((await call('finNoAcctA', 'POST', `/record-files/journal_entry/${id}`, { files: [pdf] })).statusCode).toBe(403)
+    expect((await call('mgrA', 'POST', `/record-files/journal_entry/${id}`, { files: [pdf] })).statusCode).toBe(403)
+    expect((await call('ceoA', 'GET', `/record-files/journal_entry/${id}`)).statusCode).toBe(200)
+    // A system posting is not a manual journal entry.
+    const sys = await postJournalEntry({
+      tenantId: A.tenantId, sourceType: 'opex.payment', sourceId: `sys-${RUN}`, description: 'System posting',
+      lines: [{ accountCode: '6040', type: 'debit', amountCents: 1_000 }, { accountCode: '1010', type: 'credit', amountCents: 1_000 }],
+    })
+    expect((await call('finA', 'POST', `/record-files/journal_entry/${sys.entryId}`, { files: [pdf] })).statusCode).toBe(404)
   })
 })
 

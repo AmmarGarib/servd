@@ -42,6 +42,10 @@ function sendCsv(reply: FastifyReply, filename: string, body: string) {
   return reply.send(body)
 }
 
+/** Who posts, edits and cancels manual journal entries (and attaches their supporting documents):
+ *  the CEO and finance with the accounting module (owner, 2026-10-16). */
+export const JOURNAL_POSTERS = ['admin', 'finance'] as UserRole[]
+
 export async function accountingRoutes(fastify: FastifyInstance) {
   // ─── Ledger / journal entry feed ─────────────────────────────────────────
 
@@ -144,7 +148,6 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // is a reversing entry, edit is a reversal plus the corrected entry. What
   // stays the CEO's: a register-account override, and anything dated in closed
   // or reopened books (closedBooks.ts, checked by the posting engine).
-  const JOURNAL_POSTERS = ['admin', 'finance'] as UserRole[]
   const journalGate = [requireAuth(...JOURNAL_POSTERS), requireModule('accounting')]
   const assertNoRegisterOverride = (req: { staffUser?: { role: string } }, override: unknown) => {
     if (override && req.staffUser?.role !== 'admin') {

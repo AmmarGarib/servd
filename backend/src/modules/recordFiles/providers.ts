@@ -24,6 +24,8 @@
 //   capex_quote     CapexQuote       CAPITAL_READERS              CAPITAL_WRITERS (POST /capex/lines/:id/quotes)   /finance (capital)
 //   payment         JournalEntry (a payment — accounting/paymentsRegister.ts)   PAYMENT_READERS   PAYMENT_CLASSIFIERS   /accounting/payments (accounting) + requireModule('accounting') on write
 //                   — the supporting documents of a payment's tax status / reason for non-deduction (2026-10-20)
+//   journal_entry   JournalEntry (a MANUAL entry, reference 'manual:…')   FINANCIALS_VIEWERS (GET /accounting/ledger)   JOURNAL_POSTERS   /accounting/ledger (read) · /accounting/journal (write)
+//                   — the supporting documents of a manual journal entry (owner, 2026-10-20)
 //
 // The Purchase-order screen's "Attachment URL" is the SUPPLIER BILL form's
 // (POST /procurement/bills stores attachmentUrl on SupplierBill), hence
@@ -46,6 +48,8 @@ import { FA_WRITER_ROLES } from '../fixedAssets/events.js'
 import { CAPITAL_READERS, CAPITAL_WRITERS } from '../financePlanning/routes.js'
 import { PAYMENT_READERS, PAYMENT_CLASSIFIERS } from '../accounting/paymentsRoutes.js'
 import { isPaymentEntry } from '../accounting/paymentsRegister.js'
+import { JOURNAL_POSTERS } from '../accounting/routes.js'
+import { MANUAL_PREFIX } from '../accounting/manualJournal.js'
 
 export const RECORD_OWNER = {
   opex_payment: 'opex_payment',
@@ -56,6 +60,7 @@ export const RECORD_OWNER = {
   fixed_asset: 'fixed_asset',
   capex_quote: 'capex_quote',
   payment: 'payment',
+  journal_entry: 'journal_entry',
 } as const
 
 /** 403 unless the caller's role is in the module's array for this mode. */
@@ -234,5 +239,25 @@ const payment: RecordFileProvider = {
   },
 }
 
+const journalEntry: RecordFileProvider = {
+  ownerType: RECORD_OWNER.journal_entry,
+  label: 'journal entry',
+  allowOffice: true,
+  auditCategory: 'accounting',
+  fileStem: 'journal-document',
+  async resolve(req, ownerId, mode) {
+    // Read as the ledger (GET /accounting/ledger); attach as the journal's own posters (POST /accounting/journal).
+    assertRole(req, mode === 'read' ? FINANCIALS_VIEWERS : JOURNAL_POSTERS, this.label)
+    await gateAs(req, mode === 'read' ? '/accounting/ledger' : '/accounting/journal', mode)
+    const ids = idsOf(await scopeTenantWhere(req, scopeMode(mode)))
+    const e = await prisma.journalEntry.findFirst({
+      where: { id: ownerId, tenantId: { in: ids }, reference: { startsWith: MANUAL_PREFIX } },
+      select: { tenantId: true },
+    })
+    if (!e?.tenantId) throw new NotFoundError('JournalEntry', ownerId)
+    return { tenantId: e.tenantId }
+  },
+}
+
 /** Registered once, at import (routes.ts imports this file). */
-for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment]) registerRecordFileProvider(p)
+for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment, journalEntry]) registerRecordFileProvider(p)
