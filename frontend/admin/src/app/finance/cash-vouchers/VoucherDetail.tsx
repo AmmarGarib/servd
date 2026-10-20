@@ -6,6 +6,7 @@
 // approval) and the audit history.
 
 import { useState } from 'react'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import Link from 'next/link'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -544,11 +545,15 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   // refused (USE_CAPEX) until finance says it is not equipment, with a reason (flagged for the CEO).
   const [notEquipment, setNotEquipment] = useState(false)
   const [notEquipmentReason, setNotEquipmentReason] = useState('')
+  // Internal payment classification (2026-10-20): required on a payment; on credit no cash leaves (no payment).
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  const clsError = credit ? null : paymentClassificationError(cls)
   const pay = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/pay`,
       {
         ...(box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : credit ? { source: 'credit' } : { source: 'cash_on_hand' }),
         ...(notEquipment && { notEquipment: true, notEquipmentReason: notEquipmentReason.trim() }),
+        ...(credit ? {} : paymentClassificationBody(cls)),
       },
       { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
@@ -618,7 +623,8 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
           )}
         </div>
       )}
-      <button disabled={pay.isPending || !chosen || overrideIncomplete} className={primaryBtn}
+      {!credit && <PaymentClassificationFields value={cls} onChange={setCls} compact />}
+      <button disabled={pay.isPending || !chosen || overrideIncomplete || !!clsError} title={clsError ?? undefined} className={primaryBtn}
         onClick={async () => {
           const what = v.assetClassId ? 'booked to CapEx advances (the CEO then approves the capitalisation)' : 'booked as expense now'
           const ok = await confirm(credit

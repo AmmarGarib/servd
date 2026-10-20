@@ -14,6 +14,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope } from '../../lib/tenantScope.js'
 import { assertConceptOfCompany, assertCapexProjectOfCompany, assertBankAccountOfCompany, assertSupplierOfCompany } from '../financePlanning/companyRefs.js'
 import { syncOpexPaymentPosting, OPEX_SOURCE, opexAmountsOf, liveOpexReleases } from './posting.js'
+import { classificationOf, classifyingTx, classificationsOfReferences } from '../accounting/paymentsRegister.js'
 import { assertCategoryAccount, suggestedCategoryAccount } from './categoryAccounts.js'
 import { liveRevisionsFor } from '../accounting/sourcePosting.js'
 import { isPayrollCategory, expenseCodeForCategoryName } from '../accounting/expenseCategories.js'
@@ -401,6 +402,8 @@ export async function opexRoutes(fastify: FastifyInstance) {
       const tenantIds = (await resolveTenantScope(req)).tenantIds
       const paymentIds = filtered.flatMap((c) => c.lines.flatMap((l) => l.payments.map((p) => p.id)))
       const live = await liveRevisionsFor(tenantIds, OPEX_SOURCE, paymentIds)
+      // Internal payment classification (2026-10-20) of each paid payment's entry — a reporting label.
+      const classes = await classificationsOfReferences(prisma, tenantIds, paymentIds.map((id) => `${OPEX_SOURCE}:${id}`))
 
       return filtered.map((c) => {
         const monthlyExpected = c.lines.reduce((s, l) => s + monthlyCents(toCents(l.amountCents), l.cadence), 0)
@@ -429,6 +432,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
                   // Booked to (expense) and paid from (cash / bank chart code).
                   accountCode: entry?.debitCode ?? null, creditCode: entry?.creditCode ?? null,
                 },
+                classification: entry ? (classes.get(`${OPEX_SOURCE}:${p.id}`)?.classification ?? 'unclassified') : null,
               }
             }),
           })),
@@ -746,7 +750,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       ...(inputTaxAuthority !== undefined && { inputTaxAuthority }),
       ...(whtSection !== undefined && { whtSection: whtSectionOrNull(whtSection) }),
     }
-    const { p, ledger } = await prisma.$transaction(async (tx) => {
+    const { p, ledger } = await prisma.$transaction(classifyingTx(classificationOf(req.body), req.staffUser!.id, 'ledger.entryId', async (tx) => {
       const p = await tx.opexPayment.create({
         data: {
           ...data,
@@ -760,7 +764,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       })
       const ledger = await syncOpexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id, expenseAccountCode, payFrom, bankAccountId })
       return { p, ledger }
-    })
+    }))
     const amounts = opexAmountsOf(p)
     if (ledger.status === 'posted') {
       await audit({
@@ -878,7 +882,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
         ...(whtSection !== undefined && { whtSection: whtSectionOrNull(whtSection) }),
       }
     }
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(classifyingTx(classificationOf(req.body), req.staffUser!.id, 'ledger.entryId', async (tx) => {
       const updated = await tx.opexPayment.update({
         where: { id: owned.id },
         data: {
@@ -890,7 +894,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       })
       const ledger = await syncOpexPaymentPosting(owned.id, { tx, postedBy: req.staffUser!.id, expenseAccountCode, payFrom, bankAccountId })
       return { ...updated, amounts: opexAmountsOf(updated), needsAtlCheck, ledger }
-    })
+    }))
     await audit({
       category: 'accounting', action: 'opex.payment.correct', entity: 'OpexPayment', entityId: owned.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: owned.line.category.tenantId ?? req.staffUser!.tenantId,

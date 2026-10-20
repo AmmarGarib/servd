@@ -7,6 +7,7 @@
 // CapEx.
 
 import { useState } from 'react'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
@@ -25,6 +26,8 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
   const [lines, setLines] = useState<SpendLine[]>([emptyLine()])
   const [receipts, setReceipts] = useState<UploadedReceipt[]>([])
   const [supplierBillId, setSupplierBillId] = useState('')
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const { data: bills = [] } = useQuery<OpenBill[]>({
     queryKey: ['procurement-bills-open'],
     queryFn: () => api.get('/procurement/bills'),
@@ -50,6 +53,7 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
       vendorName: vendorName.trim() || null,
       ...(mode === 'bill' ? { supplierBillId } : { lines: lines.map(lineBody) }),
       ...(receipts.length > 0 && { receiptIds: receipts.map((r) => r.id) }),
+      ...paymentClassificationBody(cls),
     }),
     onSuccess: () => onSaved(),
     onError: (e) => {
@@ -68,6 +72,7 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
     ...(mode === 'bill'
       ? { 'sp-bill': supplierBillId ? '' : 'Pick the supplier bill.' }
       : { 'sp-lines': linesReady(lines, amountCents) ? '' : 'Every line needs a category, and the lines must add up to the amount.' }),
+    'sp-cls': paymentClassificationError(cls) ?? '',
   }
   const shown = (k: string) => (tried ? errs[k] : '')
   const submit = useSubmitOnce(save.isPending)(() => {
@@ -123,6 +128,10 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
       max={5}
     />
     <p className="text-[10px] text-white/35">A receipt photo is required above your company&apos;s photo threshold (PKR 500 unless changed).</p>
+    <div id="sp-cls">
+      <PaymentClassificationFields value={cls} onChange={setCls} compact />
+      {shown('sp-cls') && <p className="text-[11px] mt-1" style={{ color: 'var(--erp-danger)' }}>{shown('sp-cls')}</p>}
+    </div>
     {save.error && <ErrorBanner error={save.error} />}
     <Footer onCancel={onClose} primary={
       <button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Record spend'}</button>

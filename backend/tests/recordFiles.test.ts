@@ -29,6 +29,7 @@ import { recordFileRoutes } from '../src/modules/recordFiles/routes.js'
 import { RECORD_OWNER } from '../src/modules/recordFiles/providers.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import { recordFileOwnerTypes, purgeRecordFilesTx, RECORD_FILE_KIND } from '../src/lib/recordFiles.js'
+import { postJournalEntry } from '../src/modules/accounting/journal.js'
 
 const RUN = Math.random().toString(36).slice(2, 8)
 let app: FastifyInstance
@@ -74,10 +75,16 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
   const proj = await prisma.capexProject.create({ data: { tenantId, name: `Buildout ${tag}` } })
   const cline = await prisma.capexLine.create({ data: { projectId: proj.id, scope: 'Equipment', item: 'Oven', unitCostCents: 100_000 } })
   const quote = await prisma.capexQuote.create({ data: { lineId: cline.id, vendor: `Vendor ${tag}`, totalCents: 100_000 } })
+  // A payment (money left 1010) — the supporting documents of its tax status (2026-10-20).
+  const paid = await postJournalEntry({
+    tenantId, sourceType: 'manual', sourceId: `pay-${tag}-${RUN}`, description: 'Courier paid in cash',
+    lines: [{ accountCode: '6040', type: 'debit', amountCents: 5_000 }, { accountCode: '1010', type: 'credit', amountCents: 5_000 }],
+  })
   return {
     tenantId,
     ids: {
       [RECORD_OWNER.capex_quote]: quote.id,
+      [RECORD_OWNER.payment]: paid.entryId,
       [RECORD_OWNER.opex_payment]: pay.id, [RECORD_OWNER.supplier_bill]: bill.id, [RECORD_OWNER.goods_receipt]: grn.id,
       [RECORD_OWNER.prep_batch]: prep.id, [RECORD_OWNER.hr_document]: doc.id, [RECORD_OWNER.fixed_asset]: asset.id,
     },
@@ -99,6 +106,7 @@ const ACTOR: Record<string, [string, string]> = {
   [RECORD_OWNER.hr_document]:   ['hrA', 'hrB'],
   [RECORD_OWNER.fixed_asset]:   ['finA', 'finB'],
   [RECORD_OWNER.capex_quote]:   ['finA', 'finB'],
+  [RECORD_OWNER.payment]:       ['finA', 'finB'],
 }
 
 beforeAll(async () => {
@@ -139,7 +147,7 @@ beforeAll(async () => {
 afterAll(async () => { invalidateSetupCache(); await app?.close() })
 
 describe('record files: every owner type, two companies', () => {
-  it('registers exactly the seven owner types', () => {
+  it('registers exactly the eight owner types', () => {
     expect(recordFileOwnerTypes()).toEqual(Object.values(RECORD_OWNER).sort())
   })
 
@@ -270,6 +278,21 @@ describe('record files: each module keeps its own rule', () => {
 
   it('goods_receipt: a cook cannot attach dock photos (managers receive)', async () => {
     expect((await call('cookA', 'POST', `/record-files/goods_receipt/${A.ids.goods_receipt!}`, { files: [png()] })).statusCode).toBe(403)
+  })
+})
+
+describe('record files: payment keeps the payments-register rule (2026-10-20)', () => {
+  it('finance without accounting and a kitchen manager are refused (403); a non-payment entry is 404', async () => {
+    const id = A.ids[RECORD_OWNER.payment]!
+    expect((await call('finNoAcctA', 'GET', `/record-files/payment/${id}`)).statusCode).toBe(403)
+    expect((await call('mgrA', 'GET', `/record-files/payment/${id}`)).statusCode).toBe(403)
+    expect((await call('ceoA', 'GET', `/record-files/payment/${id}`)).statusCode).toBe(200)
+    // An entry that moved no money out is not a payment.
+    const accrual = await postJournalEntry({
+      tenantId: A.tenantId, sourceType: 'manual', sourceId: `accrual-${RUN}`, description: 'Accrual',
+      lines: [{ accountCode: '6040', type: 'debit', amountCents: 1_000 }, { accountCode: '2010', type: 'credit', amountCents: 1_000 }],
+    })
+    expect((await call('finA', 'POST', `/record-files/payment/${accrual.entryId}`, { files: [pdf] })).statusCode).toBe(404)
   })
 })
 

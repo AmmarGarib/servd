@@ -17,6 +17,7 @@
 // rates (WithholdingRates.tsx) and the Withholding register
 // (WithholdingRegister.tsx). Every figure is the server's.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { useTrashPrefill } from '../../../lib/trash'
@@ -802,6 +803,8 @@ function PayModal({ report, target, onClose, prefill }: { report: STR; target: P
     paidAt: todayPktIso(), method: pStr(prefill ?? null, 'method') ?? 'bank_transfer', bankAccountId: '', cprNumber: '', notes: '',
   })
   const [err, setErr] = useState('')
+  // Internal payment classification (2026-10-20): required when money is paid, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((p) => ({ ...p, [k]: e.target.value }))
   const go = useMutation({
     mutationFn: () => api.post('/accounting/sales-tax-return/payments', {
@@ -818,6 +821,7 @@ function PayModal({ report, target, onClose, prefill }: { report: STR; target: P
       bankAccountId: f.method === 'cash' ? null : (f.bankAccountId || null),
       cprNumber: f.cprNumber || null,
       notes: f.notes || null,
+      ...(toPaisa(f.paid) > 0 ? paymentClassificationBody(cls) : {}),
     }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['sales-tax-return'] }); onClose() },
     onError: (e: Error) => setErr(errText(e)),
@@ -826,7 +830,7 @@ function PayModal({ report, target, onClose, prefill }: { report: STR; target: P
   return (
     <Modal title={`Record payment — ${PAY_LABEL[target.key]}`} onClose={onClose} dirty={!go.isPending && (f.paid !== rupees(target.paidCents) || f.input !== rupees(target.inputSetOffCents) || f.withheld !== '0' || f.cross !== '0' || !!f.cprNumber.trim() || !!f.notes.trim())}>
       <DialogForm busy={go.isPending} onSubmit={() => go.mutate()}
-        missing={settled <= 0 ? 'Enter an amount: what was paid, or what is set off.' : !f.paidAt ? 'Pick the day it was paid.' : !f.periodFrom || !f.periodTo ? 'Pick the period the payment covers.' : null}>
+        missing={settled <= 0 ? 'Enter an amount: what was paid, or what is set off.' : !f.paidAt ? 'Pick the day it was paid.' : !f.periodFrom || !f.periodTo ? 'Pick the period the payment covers.' : toPaisa(f.paid) > 0 ? paymentClassificationError(cls) : null}>
       <p className="text-xs text-s-muted mb-3">
         Posts the payment in the books on the day it was paid. It settles the tax owed; it never lowers the output of any period.
       </p>
@@ -890,6 +894,7 @@ function PayModal({ report, target, onClose, prefill }: { report: STR; target: P
         <Field label="CPR / challan number"><input className="s-input" value={f.cprNumber} onChange={set('cprNumber')} /></Field>
         <Field label="Notes"><input className="s-input" value={f.notes} onChange={set('notes')} /></Field>
       </div>
+      {toPaisa(f.paid) > 0 && <div className="mt-3"><PaymentClassificationFields value={cls} onChange={setCls} compact /></div>}
       <p className="text-sm text-s-muted mt-3">Settles <strong className="text-s-text">{fmtPkr(settled)}</strong> of tax owed.</p>
       {err && <p role="alert" className="text-xs text-s-red mt-2">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">

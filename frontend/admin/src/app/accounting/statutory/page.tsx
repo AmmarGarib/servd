@@ -13,6 +13,7 @@
 //     payables existed moves to them once (POST /accounting/statutory/reclass).
 // Who may record / post comes from the server (canPay / canPost).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -293,6 +294,8 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
     method: 'bank_transfer', bankAccountId: '', cprNumber: '', notes: '',
   })
   const [err, setErr] = useState('')
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((p) => ({ ...p, [k]: e.target.value }))
   const go = useMutation({
     mutationFn: () => api.post('/accounting/sales-tax-return/payments', {
@@ -304,6 +307,7 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
       bankAccountId: f.method === 'cash' ? null : (f.bankAccountId || null),
       cprNumber: f.cprNumber || null,
       notes: f.notes || null,
+      ...paymentClassificationBody(cls),
     }),
     onSuccess: () => { onDone(); onClose() },
     onError: (e: Error) => setErr(e.message),
@@ -311,7 +315,7 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
   return (
     <Modal title={`Record payment — ${label}`} onClose={onClose} dirty={!go.isPending && (f.paid !== rupees(target.owedCents) || !!f.cprNumber.trim() || !!f.notes.trim())}>
       <DialogForm busy={go.isPending} onSubmit={() => go.mutate()}
-        missing={!f.month ? 'Pick the month the payment is for.' : toPaisa(f.paid) <= 0 ? 'Enter the amount paid.' : !f.paidAt ? 'Pick the day it was paid.' : target.topUp && !f.cprNumber.trim() ? 'A top-up challan needs its own CPR / challan number.' : null}>
+        missing={!f.month ? 'Pick the month the payment is for.' : toPaisa(f.paid) <= 0 ? 'Enter the amount paid.' : !f.paidAt ? 'Pick the day it was paid.' : target.topUp && !f.cprNumber.trim() ? 'A top-up challan needs its own CPR / challan number.' : paymentClassificationError(cls)}>
       <p className="text-xs text-s-muted mb-3">
         Posts the challan in the books on the day it was paid: the payable is cleared and the money leaves the bank (or cash).
         {target.topUp && ' This month already has a challan — this is a top-up for what is still owed, with its own CPR number.'}
@@ -341,6 +345,7 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
         <Field label={target.topUp ? 'CPR / challan number *' : 'CPR / challan number'}><input className="s-input" value={f.cprNumber} onChange={set('cprNumber')} aria-invalid={target.topUp && !f.cprNumber.trim() ? true : undefined} /></Field>
         <Field label="Notes"><input className="s-input" value={f.notes} onChange={set('notes')} /></Field>
       </div>
+      <div className="mt-3"><PaymentClassificationFields value={cls} onChange={setCls} compact /></div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
         <button type="submit" className="s-btn-primary text-sm" disabled={go.isPending}>

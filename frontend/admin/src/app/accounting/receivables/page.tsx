@@ -46,6 +46,7 @@
 // money OUT and keeps its own methods.
 
 import { Suspense, useEffect, useRef, useState } from 'react'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { toast } from 'sonner'
 import { useTrashPrefill } from '../../../lib/trash'
 import { unwrapPrefill, pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
@@ -860,18 +861,21 @@ function Refund({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   const [bankAccountId, setBankAccountId] = useState('')
   const [reference, setReference] = useState('')
   const [err, setErr] = useState('')
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const usesBank = method === 'bank' || method === 'cheque'
   const go = useMutation({
     mutationFn: () => api.post(`/accounting/receivables/${inv.id}/refunds`, {
       amountCents: toPaisa(amount), date, method, reference: reference || undefined,
       bankAccountId: usesBank && bankAccountId ? bankAccountId : undefined,
+      ...paymentClassificationBody(cls),
     }),
     onSuccess: done,
     onError: (e: Error) => setErr(receivablesErrorMessage(e)),
   })
   return (
     <Modal title={`Refund ${inv.customerName}`} onClose={onClose} dirty={!go.isPending && (amount !== rupees(max) || !!reference.trim())}>
-      <Form busy={go.isPending} onSubmit={() => go.mutate()} missing={!Number(amount) ? 'Enter the amount to refund.' : null}>
+      <Form busy={go.isPending} onSubmit={() => go.mutate()} missing={!Number(amount) ? 'Enter the amount to refund.' : paymentClassificationError(cls)}>
       <p className="text-sm text-white/60">They are in credit by <strong className="text-white/90">{fmtPkrWhole(-inv.balanceCents)}</strong> on {inv.number}. You can refund up to {fmtPkrWhole(max)}.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <L t="Refund (PKR)"><RupeeField label="Refund (PKR)" value={amount} onChange={setAmount} invalid={!Number(amount)} /></L>
@@ -885,6 +889,7 @@ function Refund({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
           </div>
         )}
       </div>
+      <div className="mt-3"><PaymentClassificationFields value={cls} onChange={setCls} compact /></div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <Buttons busy={go.isPending} label="Record refund" busyLabel="Saving…" onClose={onClose} />
       </Form>

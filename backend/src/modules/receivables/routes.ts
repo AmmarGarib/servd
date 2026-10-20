@@ -73,6 +73,7 @@
 // client's exposure and statement of account.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { classificationOf, classifyPaymentTx } from '../accounting/paymentsRegister.js'
 import type { Prisma, ReceivableInvoice, ReceivablePayment } from '@prisma/client'
 import { z } from 'zod'
 import { serviceClient as prisma, prisma as appPrisma } from '../../lib/prisma.js'
@@ -798,7 +799,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       // Money OUT: its own rules (reference optional). Its reference, when
       // given, is in the description — journal_entries.reference is the
       // dedupe key.
-      await postJournalEntry({
+      const posted = await postJournalEntry({
         tenantId: inv.tenantId,
         sourceType: 'receivable.refund',
         sourceId: r.id,
@@ -810,6 +811,8 @@ export async function receivableRoutes(fastify: FastifyInstance) {
           { accountCode: money.code, type: 'credit', amountCents: body.amountCents },
         ],
       }, { tx })
+      // Internal payment classification (2026-10-20): a label on the entry, same transaction.
+      await classifyPaymentTx(tx, { journalEntryId: posted.entryId, input: classificationOf(req.body), setById: req.staffUser!.id })
       await restatus(tx, inv.id)
       return r
     })

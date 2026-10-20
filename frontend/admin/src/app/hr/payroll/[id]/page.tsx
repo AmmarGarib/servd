@@ -4,6 +4,7 @@
 // counts loan installments as recovered.
 
 import { useParams, useRouter } from 'next/navigation'
+import { PaymentClassificationFields, ClassificationChip, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue, type PaymentClassification } from '@/components/finance/PaymentClassificationFields'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../../lib/api'
@@ -33,7 +34,7 @@ interface RunPayment {
   bank: { code: string | null; bankAccountId: string | null; cents: number; staff: number }
   cash: { code: string; cents: number; staff: number }
 }
-interface Detail { run: { id: string; tenantId: string; period: string; status: string; paidAt: string | null; createdById: string | null; preparedByIds: string[]; totals: Record<string, number | string[] | RunPayment> }; payslips: Slip[] }
+interface Detail { run: { id: string; tenantId: string; period: string; status: string; paidAt: string | null; paymentClassification?: PaymentClassification | null; createdById: string | null; preparedByIds: string[]; totals: Record<string, number | string[] | RunPayment> }; payslips: Slip[] }
 
 /** Cash staff are paid from the safe; bank and cheque staff from the bank —
  *  by the method snapshotted when the month was calculated. */
@@ -122,6 +123,7 @@ export default function PayrollRunPage() {
                 Paid {day(payment?.paidOn ?? run.paidAt)}{payment ? ` — ${splitLine(payment.bank.cents, payment.bank.staff, payment.cash.cents, payment.cash.staff)}` : ''}
               </span>
             )}
+            {run.paidAt && run.paymentClassification && <span className="self-center"><ClassificationChip value={run.paymentClassification} /></span>}
             <span className="ml-auto flex flex-wrap gap-2">
               <button className={btnGhost} onClick={() => dl('register')}>Payroll register</button>
               <button className={btnGhost} onClick={() => dl('bank')}>Bank transfer sheet</button>
@@ -174,6 +176,9 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
   const cashCode = '1010' as const
   const [paidOn, setPaidOn] = useState(localDate())
   const [err, setErr] = useState('')
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  const clsError = paymentClassificationError(cls)
   const cash = slips.filter(isCashSlip)
   const bank = slips.filter((s) => !isCashSlip(s))
   const sum = (xs: Slip[]) => xs.reduce((a, s) => a + Math.max(0, s.netCents), 0)
@@ -181,6 +186,7 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
     mutationFn: () => api.post(`/hr/payroll/runs/${runId}/paid`, {
       ...(bank.length > 0 && bankAccountId && { bankAccountId }),
       cashCode, paidOn,
+      ...paymentClassificationBody(cls),
     }),
     onSuccess: () => { void qc.invalidateQueries(); onClose() },
     onError: (e: Error) => setErr(e.message),
@@ -201,10 +207,11 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
           <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">Paid on</span>
           <input type="date" className={inp} value={paidOn} max={localDate()} onChange={(e) => setPaidOn(e.target.value)} />
         </label>
+        <PaymentClassificationFields value={cls} onChange={setCls} compact />
         <p className="text-[11px] text-white/40">Clears Wages Payable for this month, dated the day the money left. A closed month is refused.</p>
         {err && <p className="text-xs text-s-red">{err}</p>}
         <div className="flex flex-wrap gap-2">
-          <button className={btn} disabled={pay.isPending || !paidOn} onClick={() => pay.mutate()}>{pay.isPending ? 'Saving…' : 'Confirm payment'}</button>
+          <button className={btn} disabled={pay.isPending || !paidOn || !!clsError} title={clsError ?? undefined} onClick={() => pay.mutate()}>{pay.isPending ? 'Saving…' : 'Confirm payment'}</button>
           <button className={btnGhost} onClick={onClose}>Cancel</button>
         </div>
       </div>

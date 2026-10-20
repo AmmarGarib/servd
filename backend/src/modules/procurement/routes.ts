@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { trashReasonOf } from '../../lib/trash.js'
+import { classificationOf, classificationsOfReferences } from '../accounting/paymentsRegister.js'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -111,13 +112,18 @@ async function assertApproverRoleOrDelegate(req: FastifyRequest, type: ApprovalT
 // Supplier payments and credit notes name the company bank account the money
 // used; lists show it by name. A payment's bank is always its supplier's
 // company's (createPaymentTx checks it), so the lookup needs no other scope.
-async function withBankNames<T extends { bankAccountId: string | null }>(rows: T[]) {
+async function withBankNames<T extends { id: string; bankAccountId: string | null }>(rows: T[]) {
   const ids = Array.from(new Set(rows.map((r) => r.bankAccountId).filter((x): x is string => !!x)))
   const banks = ids.length === 0 ? [] : await prisma.bankAccount.findMany({
     where:  { id: { in: ids } },
     select: { id: true, name: true, bankName: true, accountCode: true },
   })
-  return rows.map((r) => ({ ...r, bankAccount: banks.find((b) => b.id === r.bankAccountId) ?? null }))
+  // Internal payment classification (2026-10-20) of each payment's entry — a reporting label (vendor ledger column).
+  const classes = await classificationsOfReferences(prisma, null, rows.map((r) => `supplier.payment:${r.id}`))
+  return rows.map((r) => {
+    const c = classes.get(`supplier.payment:${r.id}`)
+    return { ...r, bankAccount: banks.find((b) => b.id === r.bankAccountId) ?? null, classification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }
+  })
 }
 
 // The original bill's number on each credit note (originalBillId is a plain column).
@@ -1014,7 +1020,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     await assertBillsInScope(req, (body.applications ?? []).map((a) => a.billId))
     // Posted in the same transaction (service.ts createPaymentTx): a payment
     // dated in a closed month is PERIOD_LOCKED 422 and is not saved.
-    const payment = await createPayment({ ...body, createdBy: req.staffUser!.id })
+    const payment = await createPayment({ ...body, createdBy: req.staffUser!.id }, { classification: classificationOf(req.body) })
     await auditMoney(req, 'supplier.payment.create', 'SupplierPayment', payment.id, supplier.tenantId, {
       supplierId: supplier.id, method: payment.method, bankAccountId: payment.bankAccountId,
       amountCents: toCents(payment.amountCents), appliedCents: toCents(payment.appliedCents),

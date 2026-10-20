@@ -59,6 +59,7 @@
 // payment's company. Foreign rows are 404.
 
 import { Prisma } from '@prisma/client'
+import { classifyPaymentTx, type ClassificationInput } from './paymentsRegister.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
@@ -214,6 +215,8 @@ async function assertPeriodPaymentAllowed(
 export interface RecordTaxPaymentInput {
   /** The ACTIVE company — the books the payment is in. */
   tenantId: string
+  /** Internal payment classification (2026-10-20) — a label on the entry only. */
+  classification?: ClassificationInput | null
   authority: TaxPaymentAuthority
   periodFrom: string
   periodTo: string
@@ -443,6 +446,7 @@ export async function recordTaxPayment(input: RecordTaxPaymentInput) {
         postedBy: input.userId,
         lines,
       }, { tx })
+      await classifyPaymentTx(tx, { journalEntryId: posted.entryId, input: input.classification ?? null, setById: input.userId })
       return tx.salesTaxPayment.update({ where: { id: row.id }, data: { journalEntryId: posted.entryId } })
     })
   } catch (err) {

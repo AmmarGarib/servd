@@ -1264,6 +1264,37 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   run's transaction). Closed books stay the CEO's through the ledger. Audited with
   `actorRole`. Tests: `tests/allocationsFinance.test.ts`.
 
+- **Internal payment classification (owner, 2026-10-20: "a SEPARATE REPORTING
+  DIMENSION inside the existing accounting system — no duplicate accounting
+  entries, no separate statutory books").** Every payment carries Official /
+  Unofficial / Unclassified (+ tax status `deducted | not_deducted |
+  not_applicable` and a reason ≥10 when not deducted, documents as record files
+  owner type `payment`). ONE table `payment_classifications` (migration
+  `20261020100000`; `tenantId` = the ENTRY's company, `journalEntryId` @unique,
+  RLS, in the merge repoint list); no row = Unclassified. **HARD RULE: it is a
+  label + reports only** — no posting, account, trial balance, tax return or
+  statutory / payroll / WHT report reads it; Unofficial payments stay in every
+  statutory report exactly as before (tested byte-identical). ONE definition in
+  `accounting/paymentsRegister.ts`: a payment = a live (not reversed / not a
+  reversal) entry whose lines net-CREDIT the company's money accounts (1010,
+  1011, 1020 and its bank codes); moves between money accounts net out; sales
+  and till sources (order*, pos.*, shift.close) are out of scope. Written only
+  by `classifyPaymentTx` (in the posting's own transaction; the pay routes take
+  optional `classification` / `taxStatus` / `nonDeductionReason` — cash voucher
+  pay, petty-cash spend, supplier payments, OpEx payments, CapEx pay + Quick
+  buy, payroll / F&F paid, loan disbursement at final approval, tip-pool pay,
+  tax payments, receivable refunds; the admin forms make it a REQUIRED pick)
+  and afterwards by `PUT /accounting/payments/:id/classification` or bulk
+  `POST /accounting/payments/classify` (≤200, all-or-nothing): CEO or finance
+  with `accounting` only, foreign 404, non-payment 422 `NOT_A_PAYMENT`, a
+  reason ≥10 to change a set value (always for bulk), audit
+  `payment.classification`. A re-posted revision (`<ref>@n`) inherits the
+  label until reclassified. Register `GET /accounting/payments` (+ `.csv`;
+  CEO, owner, management, finance; Finance → Payments register) with an
+  independent tie-out to the ledger's money credits. A new person-made payment
+  route takes the same body fields and calls `classifyPaymentTx` /
+  `classifyingTx` in its transaction. Tests: `tests/paymentClassification.test.ts`.
+
 ### Finance wave B (2026-10-14; Hasnain's answers H1–H31 + the owner's)
 
 - **Stock is FIFO lots, costed at the price paid.** `lib/stockLedger.ts` is

@@ -22,6 +22,8 @@
 //   hr_document     HrDocument       HR_ADMIN                     HR_ADMIN                       /hr/documents (staff_hr)
 //   fixed_asset     FixedAsset       FINANCIALS_VIEWERS           FA_WRITER_ROLES                /accounting/fixed-assets (accounting)
 //   capex_quote     CapexQuote       CAPITAL_READERS              CAPITAL_WRITERS (POST /capex/lines/:id/quotes)   /finance (capital)
+//   payment         JournalEntry (a payment — accounting/paymentsRegister.ts)   PAYMENT_READERS   PAYMENT_CLASSIFIERS   /accounting/payments (accounting) + requireModule('accounting') on write
+//                   — the supporting documents of a payment's tax status / reason for non-deduction (2026-10-20)
 //
 // The Purchase-order screen's "Attachment URL" is the SUPPLIER BILL form's
 // (POST /procurement/bills stores attachmentUrl on SupplierBill), hence
@@ -42,6 +44,8 @@ import { supplierScopeWhere } from '../procurement/scope.js'
 import { HR_ADMIN } from '../hr/routes.js'
 import { FA_WRITER_ROLES } from '../fixedAssets/events.js'
 import { CAPITAL_READERS, CAPITAL_WRITERS } from '../financePlanning/routes.js'
+import { PAYMENT_READERS, PAYMENT_CLASSIFIERS } from '../accounting/paymentsRoutes.js'
+import { isPaymentEntry } from '../accounting/paymentsRegister.js'
 
 export const RECORD_OWNER = {
   opex_payment: 'opex_payment',
@@ -51,6 +55,7 @@ export const RECORD_OWNER = {
   hr_document: 'hr_document',
   fixed_asset: 'fixed_asset',
   capex_quote: 'capex_quote',
+  payment: 'payment',
 } as const
 
 /** 403 unless the caller's role is in the module's array for this mode. */
@@ -212,5 +217,22 @@ const capexQuote: RecordFileProvider = {
   },
 }
 
+const payment: RecordFileProvider = {
+  ownerType: RECORD_OWNER.payment,
+  label: 'payment',
+  allowOffice: true,
+  auditCategory: 'accounting',
+  fileStem: 'payment-document',
+  async resolve(req, ownerId, mode) {
+    assertRole(req, mode === 'read' ? PAYMENT_READERS : PAYMENT_CLASSIFIERS, this.label)
+    // As PUT /accounting/payments/:id/classification: the 'accounting' module (the CEO always).
+    await gateAs(req, '/accounting/payments', mode)
+    const ids = idsOf(await scopeTenantWhere(req, scopeMode(mode)))
+    const e = await prisma.journalEntry.findFirst({ where: { id: ownerId, tenantId: { in: ids } }, select: { tenantId: true } })
+    if (!e?.tenantId || !(await isPaymentEntry(prisma, e.tenantId, ownerId))) throw new NotFoundError('Payment', ownerId)
+    return { tenantId: e.tenantId }
+  },
+}
+
 /** Registered once, at import (routes.ts imports this file). */
-for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote]) registerRecordFileProvider(p)
+for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment]) registerRecordFileProvider(p)

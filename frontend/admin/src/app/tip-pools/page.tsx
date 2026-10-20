@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useState } from 'react'
 import Link from 'next/link'
 import { api, ApiError, deleteWithUndo } from '../../lib/api'
@@ -102,8 +103,13 @@ export default function TipPoolsPage() {
   // (lib/bankAccounts.ts moneyAccountCode), never a silent 1020.
   const [payMethod, setPayMethod] = useState<'bank_transfer' | 'cash'>('bank_transfer')
   const [payBank, setPayBank] = useState('')
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [payCls, setPayCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const pay = useMutation({
-    mutationFn: (id: string) => api.post(`/tip-pools/${id}/pay`, payMethod === 'cash' ? { method: 'cash' } : { method: 'bank_transfer', ...(payBank && { bankAccountId: payBank }) }),
+    mutationFn: (id: string) => api.post(`/tip-pools/${id}/pay`, {
+      ...(payMethod === 'cash' ? { method: 'cash' } : { method: 'bank_transfer', ...(payBank && { bankAccountId: payBank }) }),
+      ...paymentClassificationBody(payCls),
+    }),
     onSuccess: () => { setPayBank(''); void qc.invalidateQueries({ queryKey: ['tip-pools'] }); void qc.invalidateQueries({ queryKey: ['tip-pool', openId] }) },
   })
   // A draft can be thrown away and computed again (a tip is pooled once, so a
@@ -300,7 +306,8 @@ export default function TipPoolsPage() {
                       <BankAccountSelect id={`tip-bank-${detail.data.id}`} tenantId={detail.data.tenantId} value={payBank} onChange={setPayBank}
                         className="w-full bg-s-surface border border-s-border rounded px-2 py-1 text-xs" />
                     )}
-                    <button onClick={() => pay.mutate(detail.data.id)} disabled={pay.isPending} className="s-btn-primary text-xs w-full">
+                    <PaymentClassificationFields value={payCls} onChange={setPayCls} compact />
+                    <button onClick={() => pay.mutate(detail.data.id)} disabled={pay.isPending || !!paymentClassificationError(payCls)} title={paymentClassificationError(payCls) ?? undefined} className="s-btn-primary text-xs w-full">
                       {pay.isPending ? 'Paying…' : 'Mark paid (post JE)'}
                     </button>
                   </div>

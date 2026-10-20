@@ -95,6 +95,7 @@ import { prepareBill, insertBillTx, afterBillCreated } from '../procurement/serv
 import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { equipmentLocationsOf } from '../../lib/generalLocation.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
+import { classificationOf, classifyingTx } from '../accounting/paymentsRegister.js'
 
 // ─── Files ───────────────────────────────────────────────────────────────────
 
@@ -1824,7 +1825,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const now = new Date()
     const dueBy = new Date(now.getTime() + settleDays * 86_400_000)
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(classifyingTx(classificationOf(req.body), me, 'entryId', async (tx) => {
       // Cash on hand / bank: THE resolver, for the VOUCHER's company, inside the transaction.
       const account = direct && !credit
         ? await moneyAccountCode(tx, v.tenantId, { method: source === 'cash_on_hand' ? 'cash' : 'bank_transfer', bankAccountId: bankAccountIdIn ?? null })
@@ -1943,7 +1944,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       })
       await tx.cashVoucher.update({ where: { id: v.id }, data: { pettyCashMovementId: spent.movement.id } })
       return { movement: spent.movement, newFloatCents: spent.newFloatCents, entryId: spent.movement.journalEntryId, account: null, asset: null, bill: null }
-    }, { timeout: 20_000, maxWait: 10_000 })
+    }), { timeout: 20_000, maxWait: 10_000 })
 
     await auditVoucher(req, 'pay', v, {
       status: 'disbursed',

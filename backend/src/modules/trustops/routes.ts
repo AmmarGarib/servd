@@ -38,6 +38,7 @@ import { generateDeliveryOtp, deliveryOtpMatches, DELIVERY_OTP_READERS, DELIVERY
 import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
 import type { Prisma, UserRole } from '@prisma/client'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { classificationOf, classifyingTx } from '../accounting/paymentsRegister.js'
 
 // The 4-digit hand-off code: generated with crypto.randomInt and compared in
 // constant time — the same helpers as the rider app (lib/deliveryOtp.ts).
@@ -804,7 +805,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // spend's transaction (it opens its own); the writer re-checks as a fallback.
     if (lines?.some((l) => l.kind === 'stock')) await (await import('../../lib/stockLedger.js')).ensureFifoReady(box.tenantId)
 
-    const { movement, supplierPaymentId, newFloatCents, overrides } = await prisma.$transaction(async (tx) => {
+    const { movement, supplierPaymentId, newFloatCents, overrides } = await prisma.$transaction(classifyingTx(classificationOf(req.body), me, 'movement.journalEntryId', async (tx) => {
       let supplierPaymentId: string | null = null
       if (bill) {
         const { createPaymentTx } = await import('../procurement/service.js')
@@ -853,7 +854,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         shiftId: body.shiftId ?? null,
       })
       return { movement: done.movement, supplierPaymentId, newFloatCents: done.newFloatCents, overrides: [] }
-    }, { timeout: 20_000, maxWait: 10_000 })
+    }), { timeout: 20_000, maxWait: 10_000 })
 
     await audit({ category: 'identity',
       action: `petty_cash.${body.type}`,

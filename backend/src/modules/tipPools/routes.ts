@@ -45,6 +45,7 @@
 // see the report.)
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { classificationOf, classifyPaymentTx } from '../accounting/paymentsRegister.js'
 import { Prisma, type UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -1292,7 +1293,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         const n = await tx.tipPool.updateMany({ where: { id: pool.id, status: 'posted', ...(viaCeoPost && { postedById: pool.postedById }) }, data: { status: 'paid', paidAt: new Date() } })
         if (n.count === 0) throw new AppError('NOT_POSTABLE', 'Pool is no longer posted — it may have just been paid', 422)
         if (pool.totalTipsCents > 0) {
-          await postJournalEntry({
+          const posted = await postJournalEntry({
             tenantId: pool.tenantId,
             sourceType: 'tippool.payout',
             sourceId: pool.id,
@@ -1304,6 +1305,8 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
               { accountCode: cashAccount,        type: 'credit', amountCents: pool.totalTipsCents, memo: 'Tips paid out' },
             ],
           }, { tx })
+          // Internal payment classification (2026-10-20): a label on the entry, same transaction.
+          await classifyPaymentTx(tx, { journalEntryId: posted.entryId, input: classificationOf(req.body), setById: req.staffUser?.id ?? null })
         }
         return tx.tipPool.findUniqueOrThrow({ where: { id: pool.id }, include: MEMBER_INCLUDE })
       })

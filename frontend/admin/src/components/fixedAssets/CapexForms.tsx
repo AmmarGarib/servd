@@ -11,6 +11,7 @@
 // decides whether a capitalisation waits for the CEO (202) or posts (201).
 
 import { useEffect, useMemo, useState } from 'react'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
@@ -449,6 +450,8 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   const [salvage, setSalvage] = useState(0)
   const [warranty, setWarranty] = useState('')
   const [notes, setNotes] = useState('')
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [payCls, setPayCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
 
   useEffect(() => { if (L0 && !classKey && L0.assetClasses[0]) setClassKey(L0.assetClasses[0].key) }, [L0, classKey])
   useEffect(() => { if (L0 && !locationId && L0.locations.length === 1) setLocationId(L0.locations[0]!.id) }, [L0, locationId])
@@ -482,6 +485,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
       ...(salvage > 0 ? { salvageCents: salvage } : {}),
       ...(warranty ? { warrantyMonths: Number(warranty) } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
+      ...paymentClassificationBody(payCls),
     }),
     onSuccess: onDone,
   })
@@ -499,6 +503,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   if (tax > 0 && !authority) problems.push(['qb-auth', 'Pick the authority that charged the sales tax.'])
   if (tax > 0 && tax >= total) problems.push(['qb-tax', 'The sales tax must be less than the total.'])
   if (override && !(overrideReason.trim().length >= 5 && overrideCents < total)) problems.push(['qb-why', 'Your own withholding figure needs a reason (5 characters or more) and must be below the total.'])
+  if (paymentClassificationError(payCls)) problems.push(['qb-cls', paymentClassificationError(payCls)!])
   const [problem, setProblem] = useState<string | null>(null)
   const submitBuy = (e: React.FormEvent) => {
     e.preventDefault()
@@ -604,6 +609,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
             </div>
           </details>
 
+          <div id="qb-cls"><PaymentClassificationFields value={payCls} onChange={setPayCls} compact /></div>
           {problem && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
           <ErrorLine error={send.error} />
           <div className="flex flex-wrap gap-2 pt-1">

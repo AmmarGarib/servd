@@ -27,6 +27,7 @@
 // F&F reverses exactly those lines (reverseJournalEntry flips the original).
 
 import type { HrRecord, Prisma } from '@prisma/client'
+import { classifyPaymentTx, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
@@ -151,7 +152,7 @@ export type PayrollPayFrom =
 
 const isCashPaid = (method: unknown) => method === 'cash'
 
-export async function postPayrollPayment(runId: string, paidBy: string, from: PayrollPayFrom, paidOn: Date = pktToday()) {
+export async function postPayrollPayment(runId: string, paidBy: string, from: PayrollPayFrom, paidOn: Date = pktToday(), classification: ClassificationInput | null = null) {
   return prisma.$transaction(async (tx) => {
     // The payment date is the run's paid date: the entry lands in the month
     // the money actually left (a payment recorded late is dated when it was
@@ -221,6 +222,8 @@ export async function postPayrollPayment(runId: string, paidBy: string, from: Pa
         lines,
       }, { tx })
       entryId = res.entryId
+      // Internal payment classification (2026-10-20): a label on the entry, same transaction.
+      await classifyPaymentTx(tx, { journalEntryId: entryId, input: classification, setById: paidBy })
     }
     // What was paid from where, for the payroll screen.
     const payment = {
@@ -426,7 +429,7 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
  */
 export async function postFinalSettlementPayment(
   recId: string, paidBy: string,
-  opts: { cash: boolean; bankAccountId?: string | null; paidOn: Date; dateKey?: string | null },
+  opts: { cash: boolean; bankAccountId?: string | null; paidOn: Date; dateKey?: string | null; classification?: ClassificationInput | null },
 ) {
   return prisma.$transaction(async (tx) => {
     await lockSettlement(tx, recId)
@@ -458,6 +461,7 @@ export async function postFinalSettlementPayment(
         ],
       }, { tx })
       entryId = res.entryId
+      await classifyPaymentTx(tx, { journalEntryId: entryId, input: opts.classification ?? null, setById: paidBy })
     }
     const d = (rec.data ?? {}) as Record<string, unknown>
     return tx.hrRecord.update({

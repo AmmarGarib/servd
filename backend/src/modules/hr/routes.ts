@@ -8,6 +8,7 @@
 // Neither can read anyone else's salary.
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import { classificationOf, classifyPaymentTx, classificationsOfReferences, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import type { Prisma, UserRole, HrEmployee, HrRecord } from '@prisma/client'
 import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -578,7 +579,7 @@ async function approvalSubject(rec: HrRecord) {
 /** Everything that happens when a record reaches 'approved' — whether the last
  *  approver got it there or its format has no approval steps at all. Effects
  *  (applyDueEffects) follow once the transaction commits. */
-async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: number | null; actorId?: string } = {}) {
+async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: number | null; actorId?: string; classification?: ClassificationInput | null } = {}) {
   // Checked again at approval (under the employee's lock): a move may have
   // landed since the record was raised.
   if (SEPARATION_SECTIONS.has(rec.section)) await assertNotTransferred(tx, rec.tenantId, rec.employeeId, true)
@@ -603,7 +604,11 @@ async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: num
   const by = extra.actorId ?? approvers[approvers.length - 1]?.byUserId ?? rec.createdById ?? 'system'
   // A loan is paid out when it is approved: it goes on the books as owed by
   // the employee, and payroll recovers it.
-  if (rec.section === 'loan') await postLoanDisbursement(tx, rec, by)
+  if (rec.section === 'loan') {
+    const paid = await postLoanDisbursement(tx, rec, by)
+    // Internal payment classification (2026-10-20), sent with the final approval: a label on the entry.
+    await classifyPaymentTx(tx, { journalEntryId: paid?.entryId ?? null, input: extra.classification ?? null, setById: by })
+  }
   // A full & final is booked when it is approved, and paid with "Mark paid".
   if (rec.section === 'final_settlement') await approveSettlement(tx, rec, by)
 }
@@ -1633,7 +1638,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
         : {}
       const claimed = await tx.hrRecord.updateMany({ where: { id: rec.id, status: 'draft' }, data: { status: approveNow ? 'approved' : 'submitted', ...leaveDays, ...(via && { viaHeadOfficeId: via }) } })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
-      if (approveNow) await finalApproval(tx, rec, { actorId: req.staffUser!.id })
+      if (approveNow) await finalApproval(tx, rec, { actorId: req.staffUser!.id, classification: classificationOf(req.body) })
     })
     if (approveNow) await applyDueEffects(rec.tenantId)
     const after = await prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
@@ -1720,7 +1725,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
       if (nextStatus === 'approved') {
-        await finalApproval(tx, { ...rec, data: data as Prisma.JsonValue, ...(hoursOnQuantity && { quantity: hours }) }, { approvedHours: hours, actorId: req.staffUser!.id })
+        await finalApproval(tx, { ...rec, data: data as Prisma.JsonValue, ...(hoursOnQuantity && { quantity: hours }) }, { approvedHours: hours, actorId: req.staffUser!.id, classification: classificationOf(req.body) })
       }
       return tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
     })
@@ -2018,6 +2023,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const updated = await postFinalSettlementPayment(rec.id, req.staffUser!.id, {
       cash: body.cash === true, bankAccountId: body.bankAccountId ?? null, paidOn,
       dateKey: fmt.fields.find((f) => f.bind === 'effectiveDate')?.key ?? null,
+      classification: classificationOf(req.body),
     })
     const d = (updated.data ?? {}) as Record<string, unknown>
     await audit({
@@ -2083,8 +2089,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // ── Payroll ───────────────────────────────────────────────────────────────
-  fastify.get('/payroll/runs', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req) =>
-    prisma.hrPayrollRun.findMany({ where: inTenants(req), orderBy: { period: 'desc' }, take: 60 }))
+  fastify.get('/payroll/runs', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req) => {
+    const runs = await prisma.hrPayrollRun.findMany({ where: inTenants(req), orderBy: { period: 'desc' }, take: 60 })
+    // Internal payment classification (2026-10-20) of each paid run's payment entry — a reporting label (salary report).
+    const classes = await classificationsOfReferences(prisma, [...new Set(runs.map((r) => r.tenantId))], runs.filter((r) => r.paidAt).map((r) => `hr.payroll.payment:${r.id}`))
+    return runs.map((r) => {
+      const c = classes.get(`hr.payroll.payment:${r.id}`)
+      return { ...r, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }
+    })
+  })
 
   fastify.post('/payroll/runs', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const tenantId = activeTenant(req)
@@ -2110,7 +2123,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...inTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
     const slips = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: { select: { fullName: true, employeeCode: true, bankName: true, iban: true, paymentMethod: true, eobiNo: true } } }, orderBy: { employee: { employeeCode: 'asc' } } })
-    return { run, payslips: slips }
+    const c = run.paidAt ? (await classificationsOfReferences(prisma, [run.tenantId], [`hr.payroll.payment:${run.id}`])).get(`hr.payroll.payment:${run.id}`) : undefined
+    return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips }
   })
 
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/recalculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -2217,7 +2231,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const from: PayrollPayFrom = body.from && body.cashCode === undefined && body.bankAccountId === undefined
       ? { mode: 'all', method: body.from }
       : { mode: 'split', bankAccountId: body.bankAccountId ?? null, cashCode: body.cashCode }
-    const paid = await postPayrollPayment(run.id, req.staffUser!.id, from, paidOn)
+    const paid = await postPayrollPayment(run.id, req.staffUser!.id, from, paidOn, classificationOf(req.body))
     await audit({
       category: 'identity', action: 'hr.payroll.paid', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
       after: { period: run.period, paidOn: paidOn.toISOString(), payment: ((paid.totals ?? {}) as Record<string, unknown>)['payment'] ?? null, ...(body.from && { from: body.from }) },

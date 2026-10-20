@@ -100,6 +100,7 @@ import { trackingRoutes } from './modules/tracking/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
 import { withholdingRoutes } from './modules/accounting/withholdingRoutes.js'
 import { statutoryRoutes } from './modules/accounting/statutoryRoutes.js'
+import { paymentsRoutes } from './modules/accounting/paymentsRoutes.js'
 import { nightAuditRoutes } from './modules/nightAudit/routes.js'
 import { intercompanyRoutes } from './modules/intercompany/routes.js'
 import { stockDifferenceRoutes } from './modules/stockDifferences/routes.js'
@@ -437,6 +438,8 @@ async function build() {
       // one-time reclass), inter-company pairs and the shared-fleet recharge.
       await api.register(withholdingRoutes, { prefix: '/accounting/withholding' })
       await api.register(statutoryRoutes, { prefix: '/accounting/statutory' })
+      // Payments register + the internal payment classification (owner, 2026-10-20): a reporting label only.
+      await api.register(paymentsRoutes, { prefix: '/accounting/payments' })
       // Night audit (owner, 2026-10-16; SALES module only): lock each sales day, close it when its money settles.
       await api.register(nightAuditRoutes, { prefix: '/accounting/night-audit' })
       await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })

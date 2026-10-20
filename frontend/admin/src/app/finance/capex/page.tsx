@@ -6,6 +6,7 @@
 // CapexLine for one-off items, OpexLine.projectId for recurring items.
 
 import { Suspense, useState, useEffect } from 'react'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -1718,8 +1719,11 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
   const termRequired = line.treatment === 'prepaid' || needsTerm
   const wht = preview({ grossCents: amount, inputTaxCents: taxShare, section: line.whtSection, supplier, paidOn, treatment: line.treatment })
 
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const pay = useMutation({
     mutationFn: () => api.patch(`/finance/capex/payments/${payment.id}`, {
+      ...paymentClassificationBody(cls),
       paidAt: new Date(`${paidOn}T12:00:00+05:00`).toISOString(),
       paidAmountCents: amount,
       ...(bankId && { bankAccountId: bankId }),
@@ -1740,6 +1744,7 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
       : !paidOn ? ['mp-paid', 'Pick the day it was paid.']
       : !termOk ? ['mp-months', 'A rent advance needs the month it starts and how many months it covers (1 to 240).']
       : !overrideOk ? ['mp-why', 'Your own withholding figure needs a reason (5 characters or more) and must be below the amount.']
+      : paymentClassificationError(cls) ? ['mp-cls', paymentClassificationError(cls)!]
       : null
     if (bad) { setProblem(bad[1]); focusField(bad[0]); return false }
     setProblem(null)
@@ -1777,6 +1782,7 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
         </div>
       )}
 
+      <div id="mp-cls"><PaymentClassificationFields value={cls} onChange={setCls} compact /></div>
       {problem && <p role="alert" className="text-[11px] font-bold" style={{ color: 'var(--erp-danger)' }}>{problem}</p>}
       {pay.error && <ErrorBanner error={pay.error} />}
       <div className="flex gap-2 justify-end">

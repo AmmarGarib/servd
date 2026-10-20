@@ -18,6 +18,7 @@
 // it goes through CapEx. Budgets compare the EXPENSE (invoice − input tax).
 
 import { useEffect, useState } from 'react'
+import { PaymentClassificationFields, ClassificationChip, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue, type PaymentClassification } from '@/components/finance/PaymentClassificationFields'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError, deleteWithUndo } from '../../../lib/api'
@@ -53,6 +54,8 @@ interface Payment {
   // The ledger is the actual (owner decision 23): a paid payment posts
   // Dr the category's expense account / Cr where the money came from.
   ledger?: { status: 'posted' | 'unposted' | 'payroll' | 'not_paid'; entryId: string | null; accountCode: string | null; creditCode?: string | null }
+  /** Internal payment classification of its entry (2026-10-20) — a reporting label (expense report). */
+  classification?: PaymentClassification | null
   // Wave B: the tax split (server-worked). actualCents is the CASH paid.
   whtCents?: number
   inputTaxCents?: number
@@ -1068,6 +1071,7 @@ function PaymentHistory({ line, category, onChange }: { line: Line; category: Ca
                   </p>
                 )}
               </div>
+              {posted && p.classification && <ClassificationChip value={p.classification} />}
               {p.paidAt && (
                 posted
                   ? <span className="text-[10px] font-black text-success">PAID · ON THE BOOKS</span>
@@ -1183,6 +1187,8 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   const [notEquipmentReason, setNotEquipmentReason] = useState('')
   const [paidOn, setPaidOn] = useState(initial.paidOn)
   const [paymentRef, setPaymentRef] = useState(initial.paymentRef)
+  // Internal payment classification (2026-10-20): required when this save PAYS it (not a payroll line).
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   // Receipts are files in the private record store (no URL). New payment: chosen
   // here, uploaded once the payment exists. Saved payment: <RecordFiles>.
   const [files, setFiles] = useState<PickedFile[]>([])
@@ -1259,6 +1265,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
           paymentRef: paymentRef.trim() || null,
           ...(cash ? { payFrom: 'cash' } : { payFrom: 'bank', ...(bankAccountId && { bankAccountId }) }),
           ...(expenseAccountCode && { expenseAccountCode }),
+          ...(payroll ? {} : paymentClassificationBody(cls)),
         })
         if (files.length) {
           try { await uploadRecordFiles('opex_payment', created.id, files, { tenantId: category.tenantId ?? undefined }) }
@@ -1286,6 +1293,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
         Object.assign(body, cash ? { payFrom: 'cash' } : { payFrom: 'bank', ...(bankAccountId && { bankAccountId }) })
       }
       if (expenseAccountCode) body.expenseAccountCode = expenseAccountCode
+      if (!payroll && !payment.paidAt) Object.assign(body, paymentClassificationBody(cls))
       return api.patch(`/opex/payments/${payment.id}`, body)
     },
     onSuccess: (r) => { if (!(r as { uploadFailed?: boolean } | null)?.uploadFailed) onDone() },
@@ -1323,6 +1331,9 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   ] as Array<[string, string]>)
   if (!overrideOk) problems.push([`ovr-${idp}`, 'Say why a different amount is withheld (10 characters or more).'])
   if (!notEquipmentOk) problems.push([`ne-${idp}`, 'Say why it is an expense (10 characters or more).'])
+  const paysNow = !payroll && (!payment || !payment.paidAt)
+  const clsProblem = paysNow ? paymentClassificationError(cls) : null
+  if (clsProblem) problems.push([`cls-${idp}`, clsProblem])
   const firstProblem = problems.find(([, m]) => m)
   const submit = useSubmitOnce(save.isPending || unpay.isPending)(() => {
     if (savedId) { onDone(); return false }
@@ -1455,6 +1466,11 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
           <label htmlFor={`ref-${idp}`} className="text-[11px] text-white/55">Reference (cheque / transfer no.)</label>
           <input id={`ref-${idp}`} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} maxLength={120} className={fieldCls} />
         </div>
+        {paysNow && (
+          <div id={`cls-${idp}`} className="sm:col-span-3">
+            <PaymentClassificationFields value={cls} onChange={setCls} compact />
+          </div>
+        )}
         <div>
           {payment || savedId ? (
             <RecordFiles ownerType="opex_payment" ownerId={(payment?.id ?? savedId)!} tenantId={category.tenantId ?? undefined} canUpload title="Receipts" />

@@ -1,5 +1,6 @@
 'use client'
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { PaymentClassificationFields, ClassificationChip, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue, type PaymentClassification } from '@/components/finance/PaymentClassificationFields'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -117,6 +118,8 @@ interface SupplierPayment {
   voidedAt?: string | null; voidReason?: string | null
   applications?: Array<{ billId: string; amountAppliedCents: number; bill?: { id: string; billNumber: string } | null }>
   supplier?: { name: string; tenantId?: string | null } | null
+  /** Internal payment classification of its entry (2026-10-20) — a reporting label. */
+  classification?: PaymentClassification | null
 }
 
 const PAYMENT_METHODS: Array<{ id: string; label: string }> = [
@@ -1825,6 +1828,7 @@ function PaymentsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; p
                 <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold">Supplier</th>
                 <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Paid from</th>
                 <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Ref</th>
+                <th className="text-left px-4 py-2.5 text-xs text-s-muted font-semibold hidden md:table-cell">Classification</th>
                 <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Amount</th>
                 <th className="text-right px-4 py-2.5 text-xs text-s-muted font-semibold">Unallocated</th>
                 <th className="px-4 py-2.5" />
@@ -1848,6 +1852,7 @@ function PaymentsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; p
                       {p.bankAccount && <p className="text-[11px]">{p.bankAccount.name}{p.bankAccount.accountCode ? ` (${p.bankAccount.accountCode})` : ''}</p>}
                     </td>
                     <td className="px-4 py-3 text-s-muted font-mono text-xs hidden md:table-cell">{p.reference ?? '—'}</td>
+                    <td className="px-4 py-3 hidden md:table-cell"><ClassificationChip value={p.classification} /></td>
                     <td className={`px-4 py-3 font-semibold text-right ${isVoid ? 'text-s-muted line-through' : 'text-s-text'}`}>{fmtPkrWhole(p.amountCents)}</td>
                     <td className={`px-4 py-3 text-right font-semibold ${unallocated > 0 ? 'text-s-amber' : 'text-s-muted'}`}>
                       {fmtPkrWhole(unallocated)}
@@ -1935,6 +1940,8 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
   // The bank list is the SUPPLIER's company's (the server checks the same).
   const supplierTenant = suppliers.find((s) => s.id === form.supplierId)?.tenantId ?? null
   const usesBank = form.method !== 'cash'
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
 
   const mut = useMutation({
     mutationFn: () => api.post('/procurement/payments', {
@@ -1943,6 +1950,7 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
       bankAccountId: usesBank && form.bankAccountId ? form.bankAccountId : null,
       amountCents: rupeesToPaisa(form.amountCents),
       notes: form.notes || null,
+      ...paymentClassificationBody(cls),
     }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['procurement'] })
@@ -1957,7 +1965,7 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
     : !form.paymentDate ? 'Pick the payment date.'
     : !(Number(form.amountCents) > 0) ? 'Enter the amount paid.'
     : walletMissing ? 'Choose the wallet account the payment came from.'
-    : null
+    : paymentClassificationError(cls)
 
   return (
     <form noValidate className="rounded-xl border border-primary bg-s-surface p-5 space-y-4"
@@ -2006,6 +2014,7 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
           <input enterKeyHint="done" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
       </div>
+      <PaymentClassificationFields value={cls} onChange={setCls} compact />
       <div className="flex gap-2 pt-2 border-t border-s-border">
         <button type="submit" disabled={mut.isPending}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
@@ -2216,6 +2225,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                   <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
                     <span className="text-s-muted">{fmt(p.paymentDate)}</span>
                     <span className="text-s-text">{p.bankAccount?.name ?? methodLabel(p.method)}</span>
+                    <ClassificationChip value={p.classification} />
                     <span className={p.voidedAt ? 'text-s-muted line-through' : 'text-success font-semibold'}>{fmtPkrWhole(p.amountCents)}</span>
                   </div>
                 ))}

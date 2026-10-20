@@ -728,6 +728,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     // Payments, references and the bank's own records.
     tx.raastReceipt, tx.terminalCharge, tx.bankSmsDevice, tx.bankSmsAlert, tx.depositDrop, tx.depositDropShift, tx.bankStatementImport,
     tx.supplierCreditApplication,
+    // Internal payment classification (2026-10-20): a label on the entry, follows the entry's company.
+    tx.paymentClassification,
     // Customer money.
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
     // HR back office.

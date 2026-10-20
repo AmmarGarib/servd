@@ -6,6 +6,7 @@
 // paid. Loans are paid out on approval from the place on the loan.
 
 import { useState } from 'react'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { btn, btnGhost, day, inp, localDate, rs, type HrFormat, type HrRecord } from '../../lib/hr'
@@ -106,10 +107,14 @@ export function MarkSettlementPaid({ record, onChanged }: { record: HrRecord; on
   const [bankAccountId, setBankAccountId] = useState('')
   const [paidOn, setPaidOn] = useState(localDate())
   const [err, setErr] = useState('')
+  // Internal payment classification (2026-10-20): required, a reporting label only.
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  const clsError = paymentClassificationError(cls)
   const pay = useMutation({
     mutationFn: () => api.post(`/hr/final-settlement/${record.id}/paid`, {
       ...(method === 'cash' ? { cash: true } : bankAccountId ? { bankAccountId } : {}),
       paidOn,
+      ...paymentClassificationBody(cls),
     }),
     onSuccess: () => { setErr(''); setOpen(false); void qc.invalidateQueries(); onChanged() },
     onError: (e: Error) => setErr(e.message),
@@ -135,10 +140,11 @@ export function MarkSettlementPaid({ record, onChanged }: { record: HrRecord; on
           <input type="date" className={inp} value={paidOn} max={localDate()} onChange={(e) => setPaidOn(e.target.value)} />
         </label>
       </div>
+      <PaymentClassificationFields value={cls} onChange={setCls} compact />
       <p className="text-xs text-white/55">Clears {rs(record.amountCents)} from Wages Payable, dated the day it was paid.</p>
       {err && <p className="text-xs text-s-red">{err}</p>}
       <div className="flex gap-2">
-        <button className={btn} disabled={pay.isPending || !paidOn} onClick={() => pay.mutate()}>{pay.isPending ? 'Saving…' : 'Confirm payment'}</button>
+        <button className={btn} disabled={pay.isPending || !paidOn || !!clsError} title={clsError ?? undefined} onClick={() => pay.mutate()}>{pay.isPending ? 'Saving…' : 'Confirm payment'}</button>
         <button className={btnGhost} onClick={() => { setOpen(false); setErr('') }}>Cancel</button>
       </div>
     </div>

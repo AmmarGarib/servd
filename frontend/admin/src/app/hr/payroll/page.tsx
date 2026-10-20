@@ -2,6 +2,7 @@
 // Payroll runs — spec §14.
 
 import Link from 'next/link'
+import { ClassificationChip, type PaymentClassification } from '@/components/finance/PaymentClassificationFields'
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
@@ -11,7 +12,7 @@ import { HrShell, useHrAccess } from '../../../components/hr/HrShell'
 import { MarkSettlementPaid } from '../../../components/hr/RecordMoney'
 import { Select } from '@/components/ui/Select'
 
-interface Run { id: string; period: string; status: string; totals: { employees?: number; netCents?: number; grossCents?: number; warnings?: string[] }; createdAt: string }
+interface Run { id: string; period: string; status: string; paymentClassification?: PaymentClassification | null; totals: { employees?: number; netCents?: number; grossCents?: number; warnings?: string[] }; createdAt: string }
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -77,6 +78,7 @@ export default function PayrollRunsPage() {
             <span className="text-white/60">{r.totals.employees ?? 0} employees</span>
             <span className="text-white/80">Net {rs(r.totals.netCents ?? 0)}</span>
             {(r.totals.warnings?.length ?? 0) > 0 && <span className="text-xs text-s-amber">{r.totals.warnings!.length} warning(s)</span>}
+            {r.paymentClassification && <ClassificationChip value={r.paymentClassification} />}
             <span className="ml-auto text-xs font-bold" style={{ color: STATUS_COLOR[r.status] ?? 'var(--erp-warning)' }}>{human(r.status)}</span>
           </Link>
         ))}

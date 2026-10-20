@@ -19,6 +19,7 @@
 // subledger: SupplierBill rows of kind 'credit_note').
 
 import { isBelowPar } from '../../lib/recipeCost.js'
+import { classifyByReferenceTx, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendEmail } from '../../lib/notify.js'
@@ -935,8 +936,15 @@ export interface CreatePaymentInput {
   createdBy: string
 }
 
-export async function createPayment(input: CreatePaymentInput) {
-  return prisma.$transaction((tx) => createPaymentTx(tx, input))
+export async function createPayment(input: CreatePaymentInput, opts: { classification?: ClassificationInput | null } = {}) {
+  return prisma.$transaction(async (tx) => {
+    const payment = await createPaymentTx(tx, input)
+    // Internal payment classification (2026-10-20): a label on the payment's entry, same transaction.
+    if (opts.classification) {
+      await classifyByReferenceTx(tx, { reference: `supplier.payment:${payment.id}`, input: opts.classification, setById: input.createdBy ?? null })
+    }
+    return payment
+  })
 }
 
 /**

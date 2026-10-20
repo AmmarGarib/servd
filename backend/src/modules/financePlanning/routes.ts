@@ -47,6 +47,7 @@ import { FA_WRITER_ROLES, FA_APPROVER_ROLE, applyEvent, isFuturePktDay } from '.
 import { lastCompletedPeriodPkt } from '../fixedAssets/schedule.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
+import { classificationOf, classifyingTx } from '../accounting/paymentsRegister.js'
 
 // Capital (the CapEx tracker and the old capital ledger) is the Finance
 // workspace's: finance reads it as well as the manager tiers. Every /finance
@@ -789,7 +790,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const { payFrom, bankAccountId, whtOverrideCents: _o, whtOverrideReason: _r, ...data } = body
       await assertInstalmentBank(ownedLine.project.tenantId, payFrom, bankAccountId)
       const override = overrideData(body)
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await prisma.$transaction(classifyingTx(classificationOf(req.body), req.staffUser!.id, 'ledger.entryId', async (tx) => {
         const p = await tx.capexPayment.create({
           data: {
             ...data,
@@ -804,7 +805,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         await recalcLinePaid(req.params.lineId, tx)
         const fresh = await tx.capexPayment.findUniqueOrThrow({ where: { id: p.id } })
         return { ...fresh, ledger }
-      })
+      }))
       return reply.status(201).send(result)
     },
   )
@@ -831,7 +832,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const { payFrom, bankAccountId, whtOverrideCents: _o, whtOverrideReason: _r, ...data } = body
       await assertInstalmentBank(tenantId, payFrom, bankAccountId)
       const override = overrideData(body)
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await prisma.$transaction(classifyingTx(classificationOf(req.body), req.staffUser!.id, 'ledger.entryId', async (tx) => {
         await tx.capexPayment.update({
           where: { id: ownedPayment.id },
           data: {
@@ -846,7 +847,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         await recalcLinePaid(ownedPayment.lineId, tx)
         const fresh = await tx.capexPayment.findUniqueOrThrow({ where: { id: ownedPayment.id } })
         return { ...fresh, ledger }
-      })
+      }))
       return updated
     },
   )
@@ -1027,7 +1028,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     const paidAt = quickBuyPaidAt(body.paidAt)
     const supplierName = body.supplierId ? (await prisma.supplier.findUnique({ where: { id: body.supplierId }, select: { name: true } }))?.name ?? null : null
 
-    const out = await prisma.$transaction(async (tx) => {
+    const out = await prisma.$transaction(classifyingTx(classificationOf(req.body), req.staffUser!.id, 'ledger.entryId', async (tx) => {
       // The one engine (capexPosting.ts recordEquipmentPurchaseTx) — a finance payee voucher for equipment uses it too.
       const r = await recordEquipmentPurchaseTx(tx, {
         tenantId, locationId: body.locationId, item: body.item, cls, quantity: body.quantity, unitCostCents: body.unitCostCents,
@@ -1047,7 +1048,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         } : null,
       })
       return { projectId: r.projectId, lineId: r.lineId, paymentId: r.paymentId, eventId: r.eventId, ledger: r.ledger! }
-    }, { timeout: 60_000, maxWait: 15_000 })
+    }), { timeout: 60_000, maxWait: 15_000 })
 
     // The CEO's own Quick buy is applied at once, through the one approval
     // engine; a refusal leaves the request pending (with its reason) in the

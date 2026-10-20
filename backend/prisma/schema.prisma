@@ -2864,9 +2864,36 @@ model JournalEntry {
 
   tenant Tenant?       @relation("TenantJournalEntries", fields: [tenantId], references: [id])
   lines  JournalLine[]
+  // Internal payment classification (owner, 2026-10-20) — a reporting label
+  // only; never read by any posting, ledger report or tax return.
+  paymentClassification PaymentClassification?
 
   @@index([tenantId, entryDate])
   @@map("journal_entries")
+}
+
+// Internal payment classification (owner, 2026-10-20; migration
+// 20261020100000). A REPORTING DIMENSION on a payment journal entry: Official
+// / Unofficial / Unclassified (no row = Unclassified), plus the tax-deduction
+// status and the reason a tax was not deducted. A label only — no posting,
+// account, trial balance, tax return or statutory report ever reads it.
+// Written only by accounting/paymentsRegister.ts classifyPaymentTx, stamped
+// with the ENTRY's company. CHECKs live in the migration's SQL-only section.
+model PaymentClassification {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  journalEntryId     String   @unique
+  classification     String // 'official' | 'unofficial' | 'unclassified'
+  taxStatus          String? // 'deducted' | 'not_deducted' | 'not_applicable'
+  nonDeductionReason String?
+  setById            String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, classification])
+  @@map("payment_classifications")
 }
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).

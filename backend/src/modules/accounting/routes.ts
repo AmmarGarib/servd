@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { forgetReopened, rememberReopened, reopenedThrough } from './closedBooks.js'
+import { classificationOf } from './paymentsRegister.js'
 import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
@@ -735,6 +736,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     // A create: the ACTIVE company's books, never another membership.
     const tenantId = activeTenantId(req, 'a tax payment is in one company\'s books')
     const row = await recordTaxPayment({
+      classification: classificationOf(req.body),
       tenantId,
       authority: body.authority,
       periodFrom: p.from, periodTo: p.to,
