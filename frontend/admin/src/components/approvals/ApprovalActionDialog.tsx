@@ -10,6 +10,10 @@ import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { Modal } from '../ui/Modal'
 import type { ApprovalAction } from '../../app/ceo/approvalsData'
+import {
+  EMPTY_PAYMENT_CLASSIFICATION, PaymentClassificationFields, paymentClassificationBody, paymentClassificationError,
+  type PaymentClassificationValue,
+} from '../finance/PaymentClassificationFields'
 
 export function ApprovalActionDialog({ action, tenantId, warnings, onClose, onDone }: {
   action: ApprovalAction
@@ -23,6 +27,8 @@ export function ApprovalActionDialog({ action, tenantId, warnings, onClose, onDo
   const [text, setText] = useState('')
   const [ticked, setTicked] = useState<Record<string, boolean>>({})
   const [err, setErr] = useState<string | null>(null)
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  const clsError = action.classification ? paymentClassificationError(cls) : null
 
   const options = action.options ?? []
   // A box named acknowledge* is the "I have read it" tick: the button waits for it.
@@ -34,6 +40,7 @@ export function ApprovalActionDialog({ action, tenantId, warnings, onClose, onDo
       const body: Record<string, unknown> = { ...action.body }
       if (action.input && text.trim()) body[action.input.field] = text.trim()
       for (const o of options) if (ticked[o.field]) body[o.field] = true
+      if (action.classification) Object.assign(body, paymentClassificationBody(cls))
       const extra = tenantId ? { tenantId } : undefined
       return action.method === 'PATCH' ? api.patch(action.path, body, extra) : api.post(action.path, body, extra)
     },
@@ -41,7 +48,7 @@ export function ApprovalActionDialog({ action, tenantId, warnings, onClose, onDo
     onError: (e: Error) => setErr(e.message),
   })
 
-  const blocked = run.isPending || ackMissing || (!!action.input?.required && !text.trim())
+  const blocked = run.isPending || ackMissing || !!clsError || (!!action.input?.required && !text.trim())
   const danger = action.kind === 'reject'
   const taRef = useRef<HTMLTextAreaElement>(null)
   const noteId = useId()
@@ -88,6 +95,12 @@ export function ApprovalActionDialog({ action, tenantId, warnings, onClose, onDo
                 <span>{o.label}</span>
               </label>
             ))}
+          </div>
+        )}
+        {action.classification && (
+          <div className="mt-2">
+            <PaymentClassificationFields value={cls} onChange={setCls} compact />
+            {clsError && <p className="mt-1 text-[11px] text-white/50">{clsError}</p>}
           </div>
         )}
         {action.confirm && (

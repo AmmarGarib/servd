@@ -369,6 +369,8 @@ const hrRequests: ApprovalProvider = {
           { kind: 'approve', label: 'Approve', method: 'POST', path: base, body: { decision: 'approved' },
             ...(r.waitingOnPartner && { disabledReason: 'Waiting for the colleague to accept the swap' }),
             ...(loanNeedsSource && { disabledReason: 'Open the request to pick the bank account (or cash) the loan is paid from' }),
+            // The loan's last approval pays it out: classify the payment here (owner, 2026-10-20).
+            ...(r.section === 'loan' && lastStep && !loanNeedsSource && { classification: true }),
             ...(r.section === 'overtime' && { confirm: 'Approve the hours as claimed? To change the hours, open the request.' }) },
           { kind: 'reject', label: 'Reject', method: 'POST', path: base, body: { decision: 'rejected' },
             input: { field: 'note', label: 'Note (optional)', required: false } },

@@ -342,3 +342,29 @@ describe('bulk allocation of older payments', () => {
     expect((await register('finA', '&classification=unclassified')).rows.map((r) => r.journalEntryId)).not.toContain(p1)
   })
 })
+
+describe('supplier withholding in the register (taken at the bill — H47)', () => {
+  it('a payment settling a bill carries that bill\'s WHT: gross = net paid + WHT, by the share applied', async () => {
+    const sup = (await prisma.supplier.create({ data: { name: `Wht Mill ${RUN}`, tenantId: A, paymentTermsDays: 10, filerStatus: 'filer' } })).id
+    const bill = await call('finA', 'POST', '/procurement/bills', {
+      supplierId: sup, billNumber: `WHT-${RUN}`, billDate: today(),
+      lines: [{ description: 'Cleaning supplies', quantity: 1, unitCostCents: 100_000, expenseAccountCode: '6040' }],
+    })
+    expect(bill.statusCode, bill.body).toBe(201)
+    // The bill withheld 4,500 (as the WHT engine would when switched on): 95,500 is payable.
+    await prisma.supplierBill.update({ where: { id: bill.json().id }, data: { whtCents: 4_500 } })
+    const pay = async (cents: number, ref: string) => {
+      const r = await call('finA', 'POST', '/procurement/payments', {
+        supplierId: sup, paymentDate: today(), method: 'bank_transfer', bankAccountId: bankA, reference: ref, amountCents: cents,
+        applications: [{ billId: bill.json().id, amountAppliedCents: cents }], classification: 'official', taxStatus: 'deducted',
+      })
+      expect(r.statusCode, r.body).toBe(201)
+      return entryOf(A, `supplier.payment:${r.json().id}`)
+    }
+    const half = await pay(47_750, `WHT1-${RUN}`)   // half of what is payable → half the WHT
+    const rest = await pay(47_750, `WHT2-${RUN}`)
+    const rows = new Map((await register('ceoA')).rows.map((r) => [r.journalEntryId, r]))
+    expect(rows.get(half!)).toMatchObject({ netCents: 47_750, whtCents: 2_250, grossCents: 50_000, taxStatus: 'deducted' })
+    expect(rows.get(rest!)).toMatchObject({ netCents: 47_750, whtCents: 2_250, grossCents: 50_000 })
+  })
+})

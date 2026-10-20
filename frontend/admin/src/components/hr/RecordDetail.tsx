@@ -16,6 +16,7 @@ import { BankAccountSelect } from '../finance/BankAccountSelect'
 import { Select } from '@/components/ui/Select'
 import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 
 // Letters that make sense from a record — spec §26.
 export const LETTERS_FOR: Record<string, string[]> = {
@@ -80,6 +81,8 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
   // may not see the company's banks). Blank = what the loan says.
   const [payFrom, setPayFrom] = useState<string>(typeof record.data['paidFrom'] === 'string' ? record.data['paidFrom'] as string : '')
   const [payBank, setPayBank] = useState<string>(typeof record.data['bankAccount'] === 'string' ? record.data['bankAccount'] as string : '')
+  // A loan's last approval pays it out: Official / Unofficial is picked here (owner, 2026-10-20).
+  const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
   const lk = { employees: lookups?.employees, records: lookups?.records, org }
   const base = `/hr/records/${record.section}/${record.id}`
   const done = () => { setErr(''); void qc.invalidateQueries(); onChanged() }
@@ -109,6 +112,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
       ...(record.section === 'overtime' && hours !== '' && { approvedHours: Number(hours) }),
       ...(decision === 'approved' && loanPayout && payFrom && { paidFrom: payFrom }),
       ...(decision === 'approved' && loanPayout && payFrom !== 'cash' && payBank && { bankAccountId: payBank }),
+      ...(decision === 'approved' && loanPayout && paymentClassificationBody(cls)),
     }),
     onSuccess: () => { setNote(''); done() }, onError: fail,
   })
@@ -263,12 +267,14 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
               {payFrom !== 'cash' && (
                 <BankAccountSelect id={`loan-bank-${record.id}`} tenantId={record.tenantId} value={payBank} onChange={setPayBank} className={inp} />
               )}
+              <div className="sm:col-span-2"><PaymentClassificationFields value={cls} onChange={setCls} compact /></div>
               <p className="sm:col-span-2 text-[10px] text-white/40">Approving pays the loan out and books it from here.</p>
             </div>
           )}
           <input className={inp} placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
           <div className="flex gap-2">
-            <button className={btn} disabled={decide.isPending} onClick={() => decide.mutate('approved')}>Approve</button>
+            <button className={btn} disabled={decide.isPending || (loanPayout && !!paymentClassificationError(cls))}
+              title={loanPayout ? paymentClassificationError(cls) ?? undefined : undefined} onClick={() => decide.mutate('approved')}>Approve</button>
             <button className={btnDanger} disabled={decide.isPending} onClick={() => decide.mutate('rejected')}>Reject</button>
           </div>
           <p className="text-[10px] text-white/35">Only the person this step belongs to can act on it; anyone else gets a message saying who.</p>

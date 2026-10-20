@@ -208,6 +208,15 @@ describe('staff loans are paid out from where the loan says', () => {
     expect(amt(rev!.lines, '1350', 'credit')).toBe(RS(6000))
   })
 
+  it('the final approval classifies the loan payment (Official / Unofficial) on the entry, in its company', async () => {
+    const loan = await raise('loan', { employee: emps['Cheque Cook'], type: 'loan', amount: RS(2000), installments: 1, firstDeduction: '2027-06-01', paidFrom: 'bank', bankAccount: bankA2 })
+    await decide('ceo', 'loan', loan.id)
+    expect((await decide('mgmt', 'loan', loan.id, { classification: 'unofficial', taxStatus: 'not_applicable' })).json().status).toBe('approved')
+    const e = await entry(tenantA, `hr.loan.disbursement:${loan.id}`)
+    expect(await prisma.paymentClassification.findUnique({ where: { journalEntryId: e!.id } })).toMatchObject({ tenantId: tenantA, classification: 'unofficial' })
+    expect((await call('hr', 'POST', `/records/loan/${loan.id}/cancel`)).statusCode).toBe(200)
+  })
+
   it('with several banks and none named, a bank loan is refused rather than guessed', async () => {
     const loan = await raise('loan', { employee: emps['Cheque Cook'], type: 'advance', amount: RS(1000), installments: 1, firstDeduction: '2027-06-01' })
     await decide('ceo', 'loan', loan.id)

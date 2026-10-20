@@ -33,6 +33,9 @@ export interface ApprovalAction {
   /** Tick-boxes sent as `field: true` in the body when ticked (a recharge run's
    *  "post in the open month", "I have read the warnings"). */
   options?: Array<{ field: string; label: string; kind: 'checkbox' }>
+  /** The button pays money out: ask Official / Unofficial / Unclassified (+ tax status) and send it as
+   *  `classification` / `taxStatus` / `nonDeductionReason` (accounting/paymentsRegister.ts — a label only). */
+  classification?: boolean
 }
 
 export interface ApprovalItem {

@@ -37,6 +37,8 @@ export interface ApprovalAction {
   disabledReason?: string
   /** Tick-boxes sent as `field: true` when ticked. */
   options?: ApprovalOption[]
+  /** The button pays money out: the dialog asks Official / Unofficial / Unclassified. */
+  classification?: boolean
 }
 export interface ApprovalHandedOverTo { userId: string; name: string | null; endsAt: string | null; delegationId: string }
 

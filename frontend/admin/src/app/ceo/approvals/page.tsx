@@ -301,7 +301,7 @@ function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onDecided, on
     // Buttons that need text or tick-boxes open the dialog, which already
     // shows the confirm text inline. A one-click button with a confirm text has
     // no inline copy, so it asks once, in the shared dialog.
-    if (a.input || (a.options?.length ?? 0) > 0) { setPending(pending?.label === a.label ? null : a); return }
+    if (a.input || a.classification || (a.options?.length ?? 0) > 0) { setPending(pending?.label === a.label ? null : a); return }
     if (a.confirm) {
       void confirm({ title: a.label, body: a.confirm, confirmLabel: a.label, danger: a.kind !== 'approve' })
         .then((r) => { if (r) run.mutate(a) })
