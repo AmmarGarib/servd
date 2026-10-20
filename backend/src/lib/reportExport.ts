@@ -323,6 +323,14 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
   })
   const sum = natural.reduce((s, w) => s + w, 0) || 1
   let widths = natural.map((w) => (w / sum) * usable)
+  // Too wide: dates, codes and amounts keep their full width (never cut to "2026-10…" or "2,204,00…"); only the
+  // long text columns (account names, memos) give up room. Falls back to plain scaling if even that cannot fit.
+  const keepsWidth = (c: ReportColumn, i: number) => isNumeric(c.type) || natural[i]! <= 80
+  const fixedSum = natural.reduce((s, w, i) => s + (keepsWidth(cols[i]!, i) ? w : 0), 0)
+  const flexSum = sum - fixedSum
+  if (sum > usable && flexSum > 0 && usable - fixedSum >= 60 * cols.filter((c, i) => !keepsWidth(c, i)).length) {
+    widths = natural.map((w, i) => (keepsWidth(cols[i]!, i) ? w : (w / flexSum) * (usable - fixedSum)))
+  }
   if (sum < usable) {
     // Spare room goes to the text columns.
     const textIdx = cols.map((c, i) => (isNumeric(c.type) ? -1 : i)).filter((i) => i >= 0)

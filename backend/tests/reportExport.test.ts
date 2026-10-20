@@ -237,10 +237,9 @@ function legacyLedger(entries: Entry[]): string {
   for (const e of entries) {
     for (const l of e.lines) {
       flat.push({
-        date: fmtPktDate(new Date(e.entryDate)), entry: e.description, reference: e.reference ?? '',
-        accountCode: l.account.code, accountName: l.account.name,
+        date: fmtPktDate(new Date(e.entryDate)), accountCode: l.account.code, accountName: l.account.name,
+        memo: l.memo?.trim() || e.description,
         debit: l.type === 'debit' ? fmtPkr(l.amountCents) : '', credit: l.type === 'credit' ? fmtPkr(l.amountCents) : '',
-        memo: l.memo ?? '',
       })
     }
   }
@@ -308,7 +307,7 @@ describe('balance sheet, P&L, trial balance: CSV unchanged, Excel and PDF added'
 })
 
 describe('general ledger and the account statement', () => {
-  it('ledger CSV is unchanged; Excel and PDF added', async () => {
+  it('ledger: Date, Code, Account, Memo, Debit, Credit in every format', async () => {
     const json = await get('finA', `/accounting/ledger?dateFrom=${earlier}&dateTo=${today}&limit=1000`)
     expect(json.statusCode).toBe(200)
     const csv = await get('finA', `/accounting/ledger?dateFrom=${earlier}&dateTo=${today}&limit=1000&format=csv`)

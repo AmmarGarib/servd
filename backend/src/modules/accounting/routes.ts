@@ -116,15 +116,15 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         const flat: Array<Record<string, string | number>> = []
         for (const e of entries) {
           for (const l of e.lines) {
+            // Owner, 2026-10-20: Date · Code · Account · Memo · Debit · Credit only (CSV, Excel and PDF).
+            // A line with no memo of its own shows its entry's description.
             flat.push({
               date: fmtPktDate(e.entryDate),
-              entry: e.description,
-              reference: e.reference ?? '',
               accountCode: l.account.code,
               accountName: l.account.name,
+              memo: l.memo?.trim() || e.description,
               debit:  l.type === 'debit'  ? fmtPkr(toCents(l.amountCents)) : '',
               credit: l.type === 'credit' ? fmtPkr(toCents(l.amountCents)) : '',
-              memo: l.memo ?? '',
             })
           }
         }
