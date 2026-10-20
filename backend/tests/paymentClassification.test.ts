@@ -62,6 +62,7 @@ const classOf = async (journalEntryId: string) => prisma.paymentClassification.f
 type Reg = {
   rows: Array<{ journalEntryId: string; classification: string; category: string; method: string; payee: string; voucherNumber: string; grossCents: number; whtCents: number; netCents: number; taxStatus: string | null; taxStatusSource: string; nonDeductionReason: string | null }>
   totals: Record<string, { count: number; netCents: number; grossCents: number; whtCents: number }>
+  summary: { methods: Array<{ key: string; label: string }>; rows: Array<{ classification: string; cells: Record<string, { count: number; netCents: number }>; total: { count: number; netCents: number } }> }
   tieOut: { ties: boolean; paymentsNetCents: number; registerNetCents: number; differenceCents: number; moneyCreditsCents: number; transfersAndReceiptsCents: number; reversedCents: number }
 }
 const register = async (w: string, q = '') => {
@@ -235,6 +236,25 @@ describe('the register', () => {
     expect((await register('ceoA', '&category=vendor')).rows.map((r) => r.journalEntryId)).toEqual([ids.supplier!])
     expect((await register('ceoA', '&method=cheque')).rows.map((r) => r.journalEntryId)).toEqual([ids.supplier!])
     expect((await register('ceoA', '&q=fast%20couriers')).rows.map((r) => r.journalEntryId)).toEqual([ids.voucher!])
+
+    // The summary grid: classification × method, row and column totals tie to the tiles; unaffected by a method filter.
+    const g = all.summary
+    expect(g.methods.map((m) => m.key)).toEqual(expect.arrayContaining(['cash', 'petty_cash', 'bank', 'cheque']))
+    const line = (c: string) => g.rows.find((r) => r.classification === c)!
+    for (const c of ['official', 'unofficial', 'unclassified', 'all']) {
+      expect(line(c).total.netCents).toBe(all.totals[c]!.netCents)
+      expect(Object.values(line(c).cells).reduce((t, x) => t + x.netCents, 0)).toBe(line(c).total.netCents)
+    }
+    for (const m of g.methods) {
+      expect(line('all').cells[m.key]!.netCents).toBe(['official', 'unofficial', 'unclassified'].reduce((t, c) => t + line(c).cells[m.key]!.netCents, 0))
+    }
+    expect(line('official').cells['cheque']!.netCents).toBe(byId.get(ids.supplier!)!.netCents)
+    expect(line('unclassified').cells['cash']!.netCents).toBe(7_000)
+    expect((await register('ceoA', '&method=cheque')).summary).toEqual(g)
+    const sx = await call('finA', 'GET', `/accounting/payments?from=${today()}&to=${today()}&view=summary&format=csv`)
+    expect(sx.statusCode).toBe(200)
+    expect(sx.body).toContain('TOTAL')
+    expect(sx.body.split('\n')[0]).toContain('classification,cash,petty_cash,bank')
 
     // CSV with the report columns.
     const csv = await call('finA', 'GET', `/accounting/payments/payments.csv?from=${today()}&to=${today()}&classification=unofficial`)

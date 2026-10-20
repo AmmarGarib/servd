@@ -42,7 +42,7 @@ import { exportFormatOf, sendReportFor, type ExportFormat } from '../../lib/repo
 import { NotFoundError } from '../../lib/errors.js'
 import {
   PAYMENT_CATEGORIES, PAYMENT_CLASSIFICATIONS, TAX_STATUSES, PAYMENT_METHOD_LABELS,
-  paymentRows, filterRows, totalsByClassification, ledgerPaymentsTieOut, setPaymentClassification, classifyPaymentsBulk,
+  paymentRows, filterRows, totalsByClassification, paymentsSummary, ledgerPaymentsTieOut, setPaymentClassification, classifyPaymentsBulk,
   type PaymentCategory, type PaymentMethodKind, type PaymentRow,
 } from './paymentsRegister.js'
 
@@ -58,6 +58,8 @@ const listQuery = z.object({
   category: z.enum(Object.keys(PAYMENT_CATEGORIES) as [PaymentCategory, ...PaymentCategory[]]).optional(),
   method: z.enum(Object.keys(PAYMENT_METHOD_LABELS) as [PaymentMethodKind, ...PaymentMethodKind[]]).optional(),
   q: z.string().max(100).optional(),
+  /** Export only: 'summary' = the classification × method grid instead of the payment lines. */
+  view: z.enum(['register', 'summary']).optional(),
   format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional(),
 })
 
@@ -91,6 +93,8 @@ async function register(req: FastifyRequest) {
     multiCompany: scope.tenantIds.length > 1,
     rows: rows.map((r) => ({ ...r, companyName: names.get(r.tenantId) ?? null })),
     totals: totalsByClassification(narrowed),
+    // The grid: the period's payments narrowed by category and search only (it is itself the split by method and class).
+    summary: paymentsSummary(filterRows(all, { category: q.category, q: q.q })),
     tieOut,
     categories: PAYMENT_CATEGORIES,
     methods: PAYMENT_METHOD_LABELS,
@@ -119,6 +123,23 @@ function recordsOf(rows: Array<PaymentRow & { companyName: string | null }>, mul
 }
 
 function sendRegister(req: FastifyRequest, reply: FastifyReply, format: ExportFormat, out: Awaited<ReturnType<typeof register>>) {
+  if (out.query.view === 'summary') {
+    const { methods, rows } = out.summary
+    return sendReportFor(req, reply, format, { base: 'payments-summary', suffix: `${out.from}-to-${out.to}` }, {
+      title: 'Payments summary — by classification and method',
+      period: `${out.from} to ${out.to}${out.query.category ? ` · ${PAYMENT_CATEGORIES[out.query.category]}` : ''}`,
+      rows: rows.map((r) => ({
+        classification: r.classification === 'all' ? 'TOTAL' : CLASS_LABEL[r.classification]!,
+        ...Object.fromEntries(methods.map((m) => [m.key, fmtPkr(r.cells[m.key]!.netCents)])),
+        total: fmtPkr(r.total.netCents),
+        payments: r.total.count,
+      })),
+      types: { ...Object.fromEntries(methods.map((m) => [m.key, 'pkr' as const])), total: 'pkr', payments: 'number' },
+      labels: { ...Object.fromEntries(methods.map((m) => [m.key, m.label])), total: 'Total', payments: 'Payments' },
+      isTotal: (r) => r['classification'] === 'TOTAL',
+      notes: ['Net amounts paid (after tax withheld).', out.note],
+    })
+  }
   return sendReportFor(req, reply, format, { base: 'payments', suffix: `${out.query.classification}-${out.from}-to-${out.to}` }, {
     title: `Payments register${out.query.classification === 'all' ? '' : ` — ${CLASS_LABEL[out.query.classification]}`}`,
     period: `${out.from} to ${out.to}`,

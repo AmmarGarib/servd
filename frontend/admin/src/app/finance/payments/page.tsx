@@ -67,6 +67,11 @@ interface Resp {
   }
   categories: Record<string, string>
   methods: Record<string, string>
+  /** Classification × method grid (dates, category and search applied; not the method / classification filters). */
+  summary: {
+    methods: Array<{ key: string; label: string }>
+    rows: Array<{ classification: Filter; cells: Record<string, { count: number; netCents: number }>; total: { count: number; netCents: number } }>
+  }
   note: string
 }
 interface Detail {
@@ -193,6 +198,10 @@ export default function PaymentsRegisterPage() {
             <Tile key={k} label={k === 'all' ? 'All payments' : CLASSIFICATION_LABEL[k]} t={data?.totals[k]} active={filter === k} />
           ))}
         </div>
+
+        {data?.summary && (
+          <SummaryGrid s={data.summary} exportPath={`/accounting/payments/payments.csv?${qs}&view=summary`} filename={`payments-summary-${from}-to-${to}`} onError={setCsvErr} />
+        )}
 
         {data && <TieOut t={data.tieOut} />}
 
@@ -493,5 +502,55 @@ function KV({ k, v }: { k: React.ReactNode; v: React.ReactNode }) {
       <span className="text-white/50">{k}</span>
       <span className="text-right text-white/85">{v}</span>
     </div>
+  )
+}
+
+/** Net paid per classification × method (owner, 2026-10-20), with row and column totals. */
+function SummaryGrid({ s, exportPath, filename, onError }: { s: Resp['summary']; exportPath: string; filename: string; onError: (m: string) => void }) {
+  const label = (c: Filter) => (c === 'all' ? 'Total' : CLASSIFICATION_LABEL[c])
+  return (
+    <section className="rounded-2xl p-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-white/85">Summary — by classification and method</h2>
+          <p className="text-xs text-white/45">Net paid (after tax withheld) for the dates, category and search above.</p>
+        </div>
+        <ExportMenu path={exportPath} filename={filename} onError={onError} />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[32rem] text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wider text-white/40">
+              <th className="px-3 py-2 font-semibold">Classification</th>
+              {s.methods.map((m) => <th key={m.key} className="px-3 py-2 text-right font-semibold">{m.label}</th>)}
+              <th className="px-3 py-2 text-right font-semibold">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s.rows.map((r) => {
+              const total = r.classification === 'all'
+              return (
+                <tr key={r.classification} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                  <td className={`px-3 py-2.5 ${total ? 'font-bold text-white/90' : 'text-white/75'}`}>
+                    {total ? 'Total' : <ClassificationChip value={r.classification as PaymentClassification} />}
+                    <span className="sr-only">{label(r.classification)}</span>
+                  </td>
+                  {s.methods.map((m) => {
+                    const c = r.cells[m.key]!
+                    return (
+                      <td key={m.key} className={`whitespace-nowrap px-3 py-2.5 text-right ${total ? 'font-bold text-white/90' : 'text-white/75'}`}
+                        title={`${c.count} payment${c.count === 1 ? '' : 's'}`}>
+                        {c.netCents ? fmtPkr(c.netCents) : '—'}
+                      </td>
+                    )
+                  })}
+                  <td className="whitespace-nowrap px-3 py-2.5 text-right font-bold text-white/90" title={`${r.total.count} payments`}>{fmtPkr(r.total.netCents)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }

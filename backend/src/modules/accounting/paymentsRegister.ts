@@ -684,6 +684,35 @@ export function totalsByClassification(rows: PaymentRow[]): Record<PaymentClassi
   return t
 }
 
+/**
+ * The summary grid (owner, 2026-10-20: "combining all payments, through bank and cash, with the official /
+ * unofficial option"): net paid per classification × method, with row and column totals. Cash, petty cash and bank
+ * always show; cheque / other only when they hold something. Built from the rows it is given — the register passes
+ * the period's payments narrowed by category and search, never by method or classification (the grid IS that split).
+ */
+export interface SummaryCell { count: number; netCents: number }
+export interface PaymentsSummary {
+  methods: Array<{ key: PaymentMethodKind; label: string }>
+  rows: Array<{ classification: PaymentClassificationValue | 'all'; cells: Record<string, SummaryCell>; total: SummaryCell }>
+}
+export function paymentsSummary(rows: PaymentRow[]): PaymentsSummary {
+  const used = new Set(rows.map((r) => r.method))
+  const methods = (Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethodKind[])
+    .filter((m) => m === 'cash' || m === 'petty_cash' || m === 'bank' || used.has(m))
+    .map((key) => ({ key, label: PAYMENT_METHOD_LABELS[key] }))
+  const blank = () => Object.fromEntries(methods.map((m) => [m.key, { count: 0, netCents: 0 }])) as Record<string, SummaryCell>
+  const order = ['official', 'unofficial', 'unclassified', 'all'] as const
+  const out = order.map((classification) => ({ classification, cells: blank(), total: { count: 0, netCents: 0 } }))
+  for (const r of rows) {
+    for (const line of [out[order.indexOf(r.classification)]!, out[3]!]) {
+      const c = line.cells[r.method]!
+      c.count += 1; c.netCents += r.netCents
+      line.total.count += 1; line.total.netCents += r.netCents
+    }
+  }
+  return { methods, rows: out }
+}
+
 // ─── Tie-out to the ledger ───────────────────────────────────────────────────
 
 export interface LedgerTieOut {
