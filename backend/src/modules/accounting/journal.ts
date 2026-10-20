@@ -96,6 +96,30 @@ export function revenueCodeForConcept(concept: string | { slug: string; revenueA
   return CONCEPT_REVENUE_CODE[slug] ?? REVENUE_FALLBACK_CODE // Other/Catering fallback
 }
 
+/**
+ * The brand's servd SUB-ACCOUNT (till flow, owner 2026-10-20: "two accounts per
+ * brand"): `servdRevenueAccountCode` when assigned, else the main account
+ * (revenueCodeForConcept) — a brand whose company's 4010–4089 range is full, or
+ * one not yet reached by the boot step, still books its servd sales as brand sales.
+ */
+export function servdRevenueCodeForConcept(concept: { slug: string; revenueAccountCode?: string | null; servdRevenueAccountCode?: string | null }): string {
+  return concept.servdRevenueAccountCode || revenueCodeForConcept(concept)
+}
+
+/**
+ * THE sales account a sale is credited to TODAY, by how its bill was closed
+ * (Order.settlementChannel): 'servd' → the brand's servd sub-account; 'keenu',
+ * null (legacy / non-till) → the brand's main account. Refunds / reversals of a
+ * sale already booked never use this — they reverse the account the sale
+ * credited (orderPosting.ts saleBookingOf).
+ */
+export function saleRevenueCodeFor(order: {
+  settlementChannel?: string | null
+  concept: { slug: string; revenueAccountCode?: string | null; servdRevenueAccountCode?: string | null }
+}): string {
+  return order.settlementChannel === 'servd' ? servdRevenueCodeForConcept(order.concept) : revenueCodeForConcept(order.concept)
+}
+
 /** revenueCodeForConcept for several brands by id (one read). Unknown ids are left out. */
 export async function revenueCodesForConcepts(
   db: Pick<PrismaClient, 'concept'> | Prisma.TransactionClient,
@@ -105,6 +129,17 @@ export async function revenueCodesForConcepts(
   if (ids.length === 0) return new Map()
   const rows = await db.concept.findMany({ where: { id: { in: ids } }, select: { id: true, slug: true, revenueAccountCode: true } })
   return new Map(rows.map((r) => [r.id, revenueCodeForConcept(r)]))
+}
+
+/** servdRevenueCodeForConcept for several brands by id (one read). Unknown ids are left out. */
+export async function servdRevenueCodesForConcepts(
+  db: Pick<PrismaClient, 'concept'> | Prisma.TransactionClient,
+  conceptIds: string[],
+): Promise<Map<string, string>> {
+  const ids = Array.from(new Set(conceptIds.filter(Boolean)))
+  if (ids.length === 0) return new Map()
+  const rows = await db.concept.findMany({ where: { id: { in: ids } }, select: { id: true, slug: true, revenueAccountCode: true, servdRevenueAccountCode: true } })
+  return new Map(rows.map((r) => [r.id, servdRevenueCodeForConcept(r)]))
 }
 
 // Stable account codes used throughout the posting modules. Imported via

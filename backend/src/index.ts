@@ -102,6 +102,8 @@ import { withholdingRoutes } from './modules/accounting/withholdingRoutes.js'
 import { statutoryRoutes } from './modules/accounting/statutoryRoutes.js'
 import { paymentsRoutes } from './modules/accounting/paymentsRoutes.js'
 import { nightAuditRoutes } from './modules/nightAudit/routes.js'
+import { servdFilingRoutes } from './modules/accounting/servdFilings.js'
+import { posTillFlowRoutes } from './modules/pos/tillFlowRoutes.js'
 import { intercompanyRoutes } from './modules/intercompany/routes.js'
 import { stockDifferenceRoutes } from './modules/stockDifferences/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
@@ -405,6 +407,8 @@ async function build() {
       await api.register(posBoxGivenRoutes, { prefix: '/pos' })
       // On account (resumed 2026-10-15): a named client's QR card charges the whole bill at the till.
       await api.register(posOnAccountRoutes, { prefix: '/pos' })
+      // Till flow (owner, 2026-10-20; modules/pos/TILL_FLOW.md)
+      await api.register(posTillFlowRoutes, { prefix: '/pos' })
       // POS connector (spec §8): /connectors (config, module api_pos), /pos
       // (card machine + an order's fiscal documents), /webhooks/pos (vendor
       // events, own raw-body parser).
@@ -442,6 +446,7 @@ async function build() {
       await api.register(paymentsRoutes, { prefix: '/accounting/payments' })
       // Night audit (owner, 2026-10-16; SALES module only): lock each sales day, close it when its money settles.
       await api.register(nightAuditRoutes, { prefix: '/accounting/night-audit' })
+      await api.register(servdFilingRoutes, { prefix: '/accounting/servd-filings' })
       await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
       // Head office (D1/D3): /head-offices (CEO) + the recharge runs.
       await registerHeadOfficePlugins(api)

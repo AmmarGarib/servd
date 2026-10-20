@@ -450,9 +450,9 @@ async function issueCreditNoteTx(orderId: string, reason: string, opts: { refuse
 }
 
 const CREDIT_NOTE_ORDER_SELECT = {
-  id: true, status: true, source: true, conceptId: true, totalCents: true, walletAmountCents: true, taxCents: true,
+  id: true, status: true, source: true, settlementChannel: true, conceptId: true, totalCents: true, walletAmountCents: true, taxCents: true,
   discountCents: true, promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
-  concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true } },
+  concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true, servdRevenueAccountCode: true } },
   payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, processedAt: true, createdAt: true } },
   giftCardRedemptions: { select: { amountCents: true } },
 } as const

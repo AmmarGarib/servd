@@ -20,11 +20,35 @@ export interface CartItem {
 // refused as the wrong amount. GST (cash 15% / card 8% on the pre-discount
 // base) and the service charge are the server's — the till shows and charges
 // the bill the server returns (components/pos/tillApi.ts).
+export type Fulfilment = 'dine_in' | 'takeout' | 'delivery'
+/** The waiter on the ticket (an HR employee, GET /pos/waiters). */
+export interface TillWaiter { id?: string; code: string; name: string }
+/** The "Order information" guest (TILL_FLOW §3): a picked customer, or typed details. */
+export interface TillGuest {
+  customerId: string | null
+  name: string
+  email: string
+  mobile: string
+  phone: string
+  registrationNo: string
+}
+/** Delivery details (TILL_FLOW §7). */
+export interface TillDelivery { name: string; phone: string; address: string; notes: string; zoneId: string | null; cod: boolean }
+
 interface PosState {
   conceptId: string | null
   shiftId: string | null
   tableId: string | null
   customerId: string | null
+  // The "Order information" panel, held until the first Save (TILL_FLOW §3).
+  fulfilment: Fulfilment
+  tableLabel: string | null
+  waiter: TillWaiter | null
+  partySize: number | null
+  guest: TillGuest | null
+  delivery: TillDelivery | null
+  /** Manager PIN typed with a discount above the cashier's cap — never persisted. */
+  discountPin: string
   cart: CartItem[]
   discountCents: number
   discountReason: string
@@ -36,13 +60,21 @@ interface PosState {
   setShiftId: (id: string | null) => void
   setTableId: (id: string | null) => void
   setCustomerId: (id: string | null) => void
+  setFulfilment: (f: Fulfilment) => void
+  setTableLabel: (l: string | null) => void
+  setWaiter: (w: TillWaiter | null) => void
+  setPartySize: (n: number | null) => void
+  setGuest: (g: TillGuest | null) => void
+  setDelivery: (d: TillDelivery | null) => void
 
   addItem: (item: MenuItem, selectedModifiers: Modifier[]) => void
   removeItem: (localId: string) => void
   updateItemQty: (localId: string, qty: number) => void
   updateItemNotes: (localId: string, notes: string) => void
   updateItemCourse: (localId: string, course: number) => void
-  setDiscount: (cents: number, reason?: string) => void
+  setDiscount: (cents: number, reason?: string, pin?: string) => void
+  /** Empties the lines and discount but keeps the table, waiter, pax and guest (the next round on the same table). */
+  clearLines: () => void
   clearCart: () => void
   ensureCheckoutKey: () => string
 
@@ -62,6 +94,13 @@ export const usePosStore = create<PosState>()(
   shiftId: null,
   tableId: null,
   customerId: null,
+  fulfilment: 'takeout',
+  tableLabel: null,
+  waiter: null,
+  partySize: null,
+  guest: null,
+  delivery: null,
+  discountPin: '',
   cart: [],
   discountCents: 0,
   discountReason: '',
@@ -71,6 +110,12 @@ export const usePosStore = create<PosState>()(
   setShiftId: (id) => set({ shiftId: id }),
   setTableId: (id) => set({ tableId: id, checkoutKey: null }),
   setCustomerId: (id) => set({ customerId: id, checkoutKey: null }),
+  setFulfilment: (f) => set({ fulfilment: f, checkoutKey: null }),
+  setTableLabel: (l) => set({ tableLabel: l }),
+  setWaiter: (w) => set({ waiter: w, checkoutKey: null }),
+  setPartySize: (n) => set({ partySize: n, checkoutKey: null }),
+  setGuest: (g) => set({ guest: g, checkoutKey: null }),
+  setDelivery: (d) => set({ delivery: d, checkoutKey: null }),
 
   addItem: (item, selectedModifiers) => {
     const id = `cart-${++localIdCounter}`
@@ -120,10 +165,15 @@ export const usePosStore = create<PosState>()(
       cart: state.cart.map((i) => (i.id === localId ? { ...i, course } : i)),
     })),
 
-  setDiscount: (cents, reason = '') => set({ discountCents: cents, discountReason: reason, checkoutKey: null }),
+  setDiscount: (cents, reason = '', pin = '') => set({ discountCents: cents, discountReason: reason, discountPin: pin, checkoutKey: null }),
+
+  clearLines: () => set({ cart: [], discountCents: 0, discountReason: '', discountPin: '', checkoutKey: null }),
 
   clearCart: () =>
-    set({ cart: [], discountCents: 0, discountReason: '', tableId: null, customerId: null, checkoutKey: null }),
+    set({
+      cart: [], discountCents: 0, discountReason: '', discountPin: '', tableId: null, customerId: null, checkoutKey: null,
+      fulfilment: 'takeout', tableLabel: null, waiter: null, partySize: null, guest: null, delivery: null,
+    }),
 
   ensureCheckoutKey: () => {
     const existing = get().checkoutKey

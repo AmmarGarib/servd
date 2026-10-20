@@ -24,6 +24,8 @@
 //                            finance has not checked yet — only the documents: the expense is booked
 //                            at pay (1357 retired, owner 2026-10-16; a voucher still held there is
 //                            converted at boot or flagged 'cash_voucher_hold_unconverted')
+//   servd_sales_unfiled block  (servdFilings.ts) bills closed in servd dated on or before the lock whose
+//                            fiscal document is not yet recorded as filed on the SRB / FBR portal (CEO-overridable)
 //   vouchers_held_on_1357 block  cash vouchers paid on or before the lock still HELD on 1357 (not converted,
 //                            not "Resolved by journal entry") — overridable by the CEO with a reason
 //
@@ -54,6 +56,7 @@ import { headOfficeCloseChecks } from '../headOffices/closeChecks.js'
 import { codCloseCheck } from '../reconciliation/codCloseCheck.js'
 import { onAccountCloseChecks } from './onAccountCloseChecks.js'
 import { nightAuditCloseCheck } from '../nightAudit/closeCheck.js'
+import { servdFilingsCloseCheck } from './servdFilings.js'
 
 /** A close never looks further back than this many months (the oldest are dropped). */
 export const MAX_CLOSE_MONTHS = 24
@@ -551,6 +554,9 @@ export const CLOSE_CHECKS: CloseCheck[] = [
   // Night audit (owner, 2026-10-16; sales module only): every active SALES day
   // of the range closed (audited + settled), or the CEO closes over it.
   nightAuditCloseCheck,
+  // Till flow (owner, 2026-10-20): bills closed in servd are filed by hand on the
+  // SRB / FBR portal — unfiled ones dated on or before the lock block (CEO-overridable).
+  servdFilingsCloseCheck,
 ]
 
 /** The key of the block a throwing check becomes. */

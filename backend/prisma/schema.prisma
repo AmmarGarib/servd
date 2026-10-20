@@ -29,6 +29,12 @@ enum OrderSource {
 // How an order leaves the kitchen. Drives plating (dine-in: real plate;
 // takeout/delivery: containers + lid + order label), end-of-pipeline handoff
 // (server vs counter vs rider), and the CTA copy on the expo "served" button.
+// How a till bill was closed (owner, 2026-10-20 — pos/TILL_FLOW.md).
+enum SettlementChannel {
+  keenu // pushed to the Keenu fiscal POS: it settles and files with FBR / SRB
+  servd // closed in servd: filed by hand on the SRB / FBR portal
+}
+
 enum FulfilmentType {
   dine_in // plate it nice, server takes to table
   takeout // package for pickup, customer walks up to counter
@@ -365,6 +371,12 @@ model Concept {
   // create / boot (accounting/brandRevenueAccount.ts). NULL = posts to the 4090 fallback.
   // Read through accounting/journal.ts revenueCodeForConcept, never directly.
   revenueAccountCode String?
+  // The brand's servd SUB-ACCOUNT (owner 2026-10-20, till flow: "two accounts per brand"):
+  // "Sales — <brand> (servd)", the first free 40xx code in 4010–4089 of the brand's company,
+  // assigned with the main one (brandRevenueAccount.ts). Sales CLOSED IN SERVD
+  // (Order.settlementChannel 'servd') credit it; sales pushed to Keenu credit the main one.
+  // Read through journal.ts servdRevenueCodeForConcept / saleRevenueCodeFor, never directly.
+  servdRevenueAccountCode String?
 
   // Fixed assets v2 (2026-10-14)
   fixedAssets     FixedAsset[]     @relation("FixedAssetConcept")
@@ -428,6 +440,8 @@ model MenuItem {
   conceptId         String
   categoryId        String
   name              String
+  // The item code / SKU the till searches by (till flow, 2026-10-20). Unique per brand.
+  itemCode          String?
   nameUrdu          String? @map("name_urdu")
   description       String?
   instructions      String? // cooking/assembly steps shown in KDS tap modal
@@ -471,6 +485,7 @@ model MenuItem {
   orderItems     OrderItem[]
   recipe         Recipe?
 
+  @@unique([conceptId, itemCode])
   @@map("menu_items")
 }
 
@@ -1179,6 +1194,8 @@ model Customer {
   name               String
   email              String?   @unique
   phone              String?   @unique
+  // A second number (landline) taken at the till's guest form (till flow, 2026-10-20). Not unique.
+  altPhone           String?
   marketingOptIn     Boolean   @default(false)
   // Campaigns are OPT-OUT: everyone we hold contact details for is reachable
   // unless this is set. marketingOptIn above was never set by anything, so
@@ -1822,6 +1839,22 @@ model Order {
   // the SRB POS spec this link MUST be rendered as a QR code on the receipt.
   srbQrCodeLink String?
 
+  // ── Till flow (owner, 2026-10-20; backend/src/modules/pos/TILL_FLOW.md) ──
+  // How the bill was closed: 'keenu' = pushed to the Keenu fiscal POS (it settles and
+  // files; revenue → the brand's main sales account), 'servd' = closed in servd (cash /
+  // card / Raast / on account; revenue → the brand's servd sub-account; its fiscal
+  // document waits for a MANUAL filing on the SRB / FBR portal). Null = legacy / non-till.
+  settlementChannel SettlementChannel?
+  // Keenu push state (pos/keenuPush.ts): { keenu: { pushId, state, method, tipCents, shiftId, providerRef, at } }.
+  settlementMeta    Json?
+  // Waiter on the ticket: an HR employee of the ORDER's company (login or not — the
+  // tip-pool member rule); typed at the till as their employee code.
+  waiterEmployeeId  String?
+  // Pax: the number of guests at the table.
+  partySize         Int?
+  // The guest's registration number with this company, as typed at the till (free text).
+  guestRegistrationNo String?
+
   // raw platform payload stored for audit/debug
   rawPayload Json?
 
@@ -1832,6 +1865,7 @@ model Order {
   posStaff            User?                @relation("PosStaff", fields: [posStaffId], references: [id])
   rider               Rider?               @relation(fields: [riderId], references: [id])
   promoCode           PromoCode?           @relation(fields: [promoCodeId], references: [id])
+  waiter              HrEmployee?          @relation("OrderWaiter", fields: [waiterEmployeeId], references: [id], onDelete: SetNull)
   items               OrderItem[]
   payments            Payment[]
   loyaltyTxs          LoyaltyTransaction[]
@@ -1859,6 +1893,8 @@ model Order {
   // The rider app reads "orders on this rider's hands" on every request, every
   // location fix and every hand-back (dispatch/service riderOpenOrderWhere).
   @@index([riderId, deliveredAt])
+  @@index([waiterEmployeeId])
+  @@index([settlementChannel])
   @@map("orders")
 }
 
@@ -7099,6 +7135,8 @@ model HrEmployee {
   payslips           HrPayslip[]
   // Tip pools this person is in without a servd login (kiosk / time-clock staff)
   tipPoolMemberships TipPoolMember[]
+  // Till tickets this person waited (Order.waiterEmployeeId; till flow 2026-10-20)
+  waitedOrders       Order[]          @relation("OrderWaiter")
   // Where this person works (owner, 2026-10-15): one or more of the company's Locations; the time clock checks a
   // punch against the nearest of them.
   workLocations      HrWorkLocation[]

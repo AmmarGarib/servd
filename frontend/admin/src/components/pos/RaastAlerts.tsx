@@ -28,8 +28,7 @@ import { managerPinLockedMessage, WRONG_PIN_MESSAGE } from './pinErrors'
 import {
   RAAST_COUNTER_WARNING, attachRaastAlert, billFor, dismissRaastAlert, fetchRaastAlerts, fixRaastReference, getRaastIntent,
   isLocalRaastPayment, paidCentsOf, storedQuote, tillErrorMessage,
-  type RaastIntentView, type TillBrand, type TillOrder, type TillRaastAlert,
-} from './tillApi'
+  type RaastIntentView, type TillBrand, type TillOrder, type TillRaastAlert, tableName } from './tillApi'
 
 const TOLERANCE_CENTS = 2 // the server's RAAST_TOLERANCE_CENTS
 
@@ -289,7 +288,7 @@ function AlertRow({ alert, shiftId, brand, tickets, isManager, onDone }: {
             <p className="text-xs text-kds-subtext">No open tickets for this brand.</p>
           ) : rows.map(({ ticket, due, matches }) => (
             <AttachLine key={ticket.id}
-              label={ticket.table?.label ? `Table ${ticket.table.label}` : `Order ${orderRef(ticket.id)}`}
+              label={ticket.table?.label ? `${tableName(ticket.table.label)}` : `Order ${orderRef(ticket.id)}`}
               sub={paidCentsOf(ticket) > 0 ? 'part paid' : `#${orderRef(ticket.id)}`}
               dueCents={due} matches={matches}
               confirming={confirmFor === ticket.id} busy={busy}

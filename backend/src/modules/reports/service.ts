@@ -65,6 +65,12 @@ export interface SalesQuery {
   conceptId?: string | null
   locationId?: string | null
   channel?: string | null
+  /**
+   * Till flow (owner, 2026-10-20): how the bill was closed — 'keenu' (pushed to
+   * Keenu), 'servd' (closed in servd), 'none' (legacy / non-till: no channel),
+   * 'all' / omitted = combined.
+   */
+  settlement?: 'keenu' | 'servd' | 'none' | 'all' | null
   from: Date
   to: Date
 }
@@ -129,6 +135,7 @@ function orderScope(q: SalesQuery): Prisma.OrderWhereInput {
     ...(q.locationId && { locationId: q.locationId }),
     // An unknown channel matches nothing (it used to be a free-text column).
     ...(q.channel && { source: ORDER_SOURCES.has(q.channel) ? (q.channel as OrderSource) : { in: [] } }),
+    ...(q.settlement && q.settlement !== 'all' && { settlementChannel: q.settlement === 'none' ? null : q.settlement }),
     concept: conceptScope(q),
   }
 }
@@ -430,6 +437,21 @@ export async function salesByHour(q: SalesQuery): Promise<Record<string, { order
   const out: Record<string, { orders: number; gross: number; net: number }> = {}
   for (const [h, t] of await salesBuckets(q, 'pktHour')) out[h] = { orders: t.orders, gross: t.gross, net: t.net }
   return out
+}
+
+/**
+ * Sales per settlement channel (till flow, 2026-10-20): keenu, servd and none
+ * (legacy / non-till), each through THE sales figures with the filter, and
+ * `combined` = their sum (= the unfiltered totals).
+ */
+export async function salesBySettlement(q: SalesQuery): Promise<{ rows: Array<SalesTotals & { settlement: 'keenu' | 'servd' | 'none' }>; combined: SalesTotals }> {
+  const kinds = ['keenu', 'servd', 'none'] as const
+  const rows = await Promise.all(kinds.map(async (settlement) => ({ settlement, ...(await salesTotals({ ...q, settlement })) })))
+  const combined = emptyTotals()
+  for (const r of rows) {
+    for (const k of Object.keys(combined) as Array<keyof SalesTotals>) combined[k] += r[k]
+  }
+  return { rows, combined }
 }
 
 /** Sales per order channel (pos / servd / cart / manual). */

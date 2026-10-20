@@ -111,8 +111,9 @@ async function assertAccountMayBeSwitchedOff(acc: { id: string; tenantId: string
   if (acc.tenantId) {
     // A live brand's sales account, a live linked bank's chart code, or the
     // bank code a Raast receipt still waiting on the statement will post to.
-    const brands = await prisma.concept.findMany({ where: { tenantId: acc.tenantId, deletedAt: null }, select: { slug: true, name: true, revenueAccountCode: true } })
-    const brand = brands.find((b) => revenueCodeForConcept(b) === acc.code)
+    const brands = await prisma.concept.findMany({ where: { tenantId: acc.tenantId, deletedAt: null }, select: { slug: true, name: true, revenueAccountCode: true, servdRevenueAccountCode: true } })
+    // Its main sales account or its servd sub-account (till flow, 2026-10-20).
+    const brand = brands.find((b) => revenueCodeForConcept(b) === acc.code || b.servdRevenueAccountCode === acc.code)
     if (brand) {
       throw new AppError('ACCOUNT_IN_USE', `${label} is the sales account of the brand ${brand.name} — it cannot be switched off while the brand is live (renaming is fine)`, 422)
     }

@@ -101,6 +101,25 @@ async function insertOnceTx(tx: Tx, data: Prisma.FiscalDocumentCreateManyInput):
 
 export const TOTALS_MISMATCH = 'totals_mismatch'
 
+/**
+ * Till flow (owner, 2026-10-20): a bill CLOSED IN SERVD (Order.settlementChannel
+ * 'servd') is filed BY HAND on the SRB / FBR portal (daily / weekly / monthly —
+ * owner confirmed). Its sale document — and every return of that sale — is
+ * 'manual_required' with this reason: never sent to the fiscal POS (not at
+ * enqueue, not by a retry, not by a release, not by the sender — sendOnce turns
+ * it back), never skipped. Finance records the portal filing with
+ * recordManualFiling (Finance → Servd sales to file, accounting/servdFilings.ts),
+ * and the month close blocks while any stays unfiled (close check
+ * 'servd_sales_unfiled').
+ */
+export const SERVD_CHANNEL = 'servd_channel'
+
+/** Is this order's bill closed in servd (filed by hand)? */
+async function servdChannelTx(db: Tx | typeof prisma, orderId: string): Promise<boolean> {
+  const o = await db.order.findUnique({ where: { id: orderId }, select: { settlementChannel: true } })
+  return o?.settlementChannel === 'servd'
+}
+
 function mismatchText(orderRef: string, check: TotalsCheck, inDoubt = false, kind: FiscalDocument['kind'] = 'sale'): string {
   if (inDoubt) {
     // F-RV-2: an earlier submit's outcome is unknown — the vendor MAY have it.
@@ -179,6 +198,8 @@ export async function enqueueFiscalSaleTx(tx: Tx, input: { orderId: string; tena
   else if (!built.check.ok) { status = 'failed'; reason = TOTALS_MISMATCH }
   // Zero-value = the BILL is zero (a wallet- or gift-card-paid sale is not, ONL-R2-02).
   else if (built.totalCents === 0 && !conn.settings.fileZeroValue) { status = 'skipped'; reason = 'zero_value' }
+  // Closed in servd: filed by hand on the portal — never sent (till flow, 2026-10-20).
+  else if (built.settlementChannel === 'servd') { status = 'manual_required'; reason = SERVD_CHANNEL }
   else if (!conn.live) { status = 'held'; reason = 'no_connector' }
   else if (built.registrations.length === 0) { status = 'held'; reason = 'not_registered' }
   else if (built.totalCents === 0 && !capsOf(conn.driver, conn.row).zeroValue) { status = 'skipped'; reason = 'zero_value_unsupported' }
@@ -317,6 +338,12 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
     }
   }
 
+  // A return of a sale closed in servd is filed by hand too (till flow,
+  // 2026-10-20) — whatever its sale's state, never sent to the fiscal POS.
+  if ((status === 'pending' || status === 'waiting') && (sale?.statusReason === SERVD_CHANNEL || await servdChannelTx(tx, input.orderId))) {
+    status = 'manual_required'; reason = SERVD_CHANNEL
+  }
+
   const payload = buildRefundPayload(salePayload, {
     documentId: id,
     refundAmountCents: input.amountCents,
@@ -329,7 +356,7 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
   })
   // The same totals rule as the sale: a return that does not add up is never filed.
   const check = totalsCheck(payload)
-  if (!check.ok && (status === 'pending' || status === 'waiting')) { status = 'failed'; reason = TOTALS_MISMATCH }
+  if (!check.ok && (status === 'pending' || status === 'waiting' || reason === SERVD_CHANNEL)) { status = 'failed'; reason = TOTALS_MISMATCH }
   const row = await insertOnceTx(tx, {
     id,
     tenantId: input.tenantId,
@@ -346,11 +373,12 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
     payloadHash: payloadHash(payload),
     amountCents: payload.refundAmountCents ?? input.amountCents,
     nextAttemptAt: now,
-    ...((status === 'manual_required' || reason === TOTALS_MISMATCH) && { alertedAt: now }),
+    ...(((status === 'manual_required' && reason !== SERVD_CHANNEL) || reason === TOTALS_MISMATCH) && { alertedAt: now }),
     ...(reason === TOTALS_MISMATCH && { lastErrorCode: 'TOTALS_MISMATCH', lastError: check.problems.join('; ').slice(0, 500) }),
   })
   if (row.id === id && reason === TOTALS_MISMATCH) await flagMismatchTx(tx, row, payload.orderRef, check)
-  if (row.id === id && status === 'manual_required') {
+  // (A servd-channel return is the close check's business, not an exception flag.)
+  if (row.id === id && status === 'manual_required' && reason !== SERVD_CHANNEL) {
     // Inside the refund's transaction, so the flag and the document stand or fall together.
     await tx.exceptionFlag.create({
       data: {
@@ -656,6 +684,14 @@ export async function sendOnce(documentId: string, via: FiscalVia, budgetMs: num
   if (leased.length === 0) return 'busy'
   const doc = await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: documentId } })
 
+  // Till flow (2026-10-20): a document of a bill closed in servd is NEVER sent —
+  // whatever moved it to pending (a retry, a rebuild, a release), it goes back to
+  // 'manual_required' / servd_channel for finance to record the portal filing.
+  if (await servdChannelTx(prisma, doc.orderId)) {
+    await updateLeased(doc, { status: 'manual_required', statusReason: SERVD_CHANNEL, attempts: { decrement: 1 } })
+    return 'held'
+  }
+
   // 2. The connector of THIS document's company, read fresh.
   let conn: LoadedConnector
   try {
@@ -932,7 +968,8 @@ async function retryMismatch(doc: FiscalDocument): Promise<FiscalDocument> {
     }
     let status: FiscalDocStatus = 'pending'
     let reason: string | null = null
-    if (cur.kind === 'refund') {
+    if (await servdChannelTx(tx, cur.orderId)) { status = 'manual_required'; reason = SERVD_CHANNEL }
+    else if (cur.kind === 'refund') {
       const sale = cur.saleDocumentId ? await tx.fiscalDocument.findFirst({ where: { id: cur.saleDocumentId, tenantId: cur.tenantId }, select: { status: true } }) : null
       if (sale && sale.status !== 'filed' && sale.status !== 'manual_filed') status = 'waiting'
     } else if (!conn.live) { status = 'held'; reason = 'no_connector' }
@@ -992,10 +1029,15 @@ export const MANUAL_FILABLE: FiscalDocStatus[] = ['held', 'waiting', 'pending', 
 /** Record an out-of-band filing (the operator filed it on the authority portal). */
 export async function recordManualFiling(documentId: string, tenantWhere: { tenantId: string } | { tenantId: { in: string[] } }, input: {
   fiscalNumber: string; authority: FiscalAuthority; qrPayload?: string | null; verifyUrl?: string | null; actorId: string
+  /** When it was filed on the portal (till flow: finance files servd sales daily / weekly / monthly). Default now. */
+  filedOn?: Date | null
+  /** statusReason after the filing. Default 'operator'; servd-channel filings say 'servd_portal'. */
+  reason?: string
 }): Promise<FiscalDocument> {
   const doc = await prisma.fiscalDocument.findFirst({ where: { id: documentId, ...tenantWhere } })
   if (!doc) throw new NotFoundError('Fiscal document', documentId)
   const now = connectorNow()
+  const filedOn = input.filedOn ?? now
   const r = await prisma.fiscalDocument.updateMany({
     where: {
       id: doc.id,
@@ -1005,10 +1047,10 @@ export async function recordManualFiling(documentId: string, tenantWhere: { tena
       ],
     },
     data: {
-      status: 'manual_filed', statusReason: 'operator', driver: 'manual',
+      status: 'manual_filed', statusReason: input.reason ?? 'operator', driver: 'manual',
       fiscalNumber: input.fiscalNumber.trim(), authority: input.authority,
       qrPayload: input.qrPayload ?? null, verifyUrl: input.verifyUrl ?? null,
-      fiscalAt: now, filedAt: now, isTest: false, resolvedById: input.actorId,
+      fiscalAt: filedOn, filedAt: now, isTest: false, resolvedById: input.actorId,
       lastErrorCode: null, leaseUntil: null, leaseOwner: null,
     },
   })

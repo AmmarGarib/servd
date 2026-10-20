@@ -1,6 +1,6 @@
 'use client'
 // The admin till's server calls — used only by /pos, /pos/waiter and the
-// till's PaymentModal / PosCart.
+// till's flow screens (components/pos/flow) / PosCart.
 //
 // The till computes NO tax (FOH-02). GST is split by tender (cash 15% / card
 // 8%, owner decision 9) on the pre-discount base, plus the company's service
@@ -95,6 +95,12 @@ export interface TillOrder {
   fulfilmentType?: string | null
   tableId?: string | null
   table?: { label: string } | null
+  /** Till order rows (TILL_FLOW §3): who serves it, how many, how it closes, and whether a delivery is collected on delivery. */
+  settlementChannel?: string | null
+  partySize?: number | null
+  waiterEmployeeId?: string | null
+  waiter?: { id: string; employeeCode: string; fullName: string } | null
+  cod?: boolean
   items: TillOrderItem[]
   // Optional on purpose (R2-UI-01): the ring-up answer (POST /pos/orders) did
   // not carry `payments`, and reading `.filter` off it crashed the till right
@@ -452,6 +458,8 @@ export interface FiscalView {
  */
 export function fiscalLine(f: FiscalView | null | undefined): { text: string; tone: 'ok' | 'pending' | 'test' | 'muted'; test: boolean } | null {
   if (!f) return null
+  // Closed in servd (TILL_FLOW §6a): never sent to the fiscal POS — finance files it by hand on the portal.
+  if (f.statusReason === 'servd_channel') return { text: 'Filed by hand (servd)', tone: 'muted', test: false }
   const auth = (f.authority ?? '').toUpperCase()
   switch (f.status) {
     case 'filed':
@@ -1594,4 +1602,10 @@ export function onAccountErrorText(e: { code?: string | null; message?: string; 
       return 'An on-account bill is not money taken at the till. Refund it back to the client’s account.'
   }
   return null
+}
+
+/** How a table is named on the till: its label, with "Table " in front unless the label already says it ("T4" → "Table T4"; "Table 4" stays). */
+export function tableName(label: string | null | undefined): string {
+  const l = (label ?? '').trim()
+  return /^table\b/i.test(l) ? l : `Table ${l || '—'}`
 }

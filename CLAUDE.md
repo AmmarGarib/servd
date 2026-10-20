@@ -2005,6 +2005,55 @@ leave, read by `service.ts attendanceWithin` (the ONE attendance reading
 `prefillInputs` uses too); lates are not docked in F&F. Calculate stamps only a
 settlement still editable with no approvals. Tests: `tests/hrNoPaidDaysFnf.test.ts`.
 
+### Till flow (owner, 2026-10-20)
+
+Contract: `backend/src/modules/pos/TILL_FLOW.md` (the screens build against it —
+change a route only together with that file). Binding rules:
+
+- **Two ways to close a bill** (`Order.settlementChannel`, set before / at the
+  close; null = legacy / non-till). **Push to Keenu** (`POST /pos/orders/:id/keenu-push`,
+  `pos/keenuPush.ts`): the bill goes through the POS connector (Keenu = the fiscal
+  POS vendor; seam `FiscalDriver.pushBill` / `getBillPush` — the real Keenu driver is
+  one file in `connectors/drivers/`; the TEST driver settles at once), servd records
+  Keenu's tender through `processPayment` (key `keenu:<pushId>`), completeOrder files
+  the ONE sale document (payload `settlement.pushId`) → revenue to the brand's MAIN
+  account. **Close in servd** (`settlementChannel: 'servd'` on `/pos/payments`, or
+  `PUT /pos/orders/:id/settlement-channel` before any other tender path) → revenue
+  to the brand's **servd sub-account**; its fiscal documents (sale AND returns) are
+  `manual_required` / `servd_channel` — NEVER sent (enqueue, retry, rebuild and the
+  sender itself all refuse; `outbox.ts SERVD_CHANNEL`), never skipped. A pending Keenu
+  push blocks every other tender (`KEENU_PUSH_PENDING` in the active-tender guard).
+- **Two accounts per brand:** `Concept.servdRevenueAccountCode` "Sales — <brand>
+  (servd)" — the LAST free code of 4010–4089 (main accounts keep numbering from
+  4010 up), created with the main one at brand create and by the boot step
+  (`brandRevenueAccount.ts`); renumbered by the company merge like the main one.
+  Both are 40xx brand sales (P&L, brand P&L, food cost, `brandSalesRevenueCents`);
+  `brandSalesByAccount` (tax return, allocations) lists both. The ONE chooser is
+  `journal.ts saleRevenueCodeFor`; refunds / credit notes / cancel-undos reverse the
+  account the SALE credited (`saleBookingOf` picks the channel's line in a shift
+  close that carries both).
+- **Servd sales are filed by hand** on the SRB / FBR portal (owner confirmed):
+  finance records the filing on `/accounting/servd-filings` (`servdFilings.ts`,
+  through `outbox.recordManualFiling` — no second filing table). Close check
+  **`servd_sales_unfiled`** BLOCKS (CEO-overridable) while any is unfiled on or
+  before the lock. Reporting-OFF companies have no documents (as before).
+- **Waiter = an HR employee of the order's company** (`Order.waiterEmployeeId`;
+  waiter code = `HrEmployee.employeeCode`); pax `Order.partySize`; guest = a
+  customer of the brand's company only (`tillFlow.ts attachableCustomerWhere` —
+  another company's customer is 422; a typed mobile of another company's customer
+  is never linked). Table occupancy = open orders (the board `GET /floors/board`);
+  `Table.currentOrderId` is written at open and released at completion / cancel.
+- **A delivery rung at the till** is source `manual` + `rawPayload.channel
+  'till_delivery'` (`lib/tillDelivery.ts`): priced like the till (fee from the zone,
+  GST on top at the tender rate — `lib/pricing.ts`), completes ON DELIVERY, booked
+  by its own `order.complete`, COD = a pending cash row (lib/cod.ts custody, closed
+  in servd). Never make it a `source 'pos'` order.
+- **Tip from excess cash** (`excessAsTip`): tendered − due → `tipCents` (2095, the tip
+  pool), never revenue. Sales reports take `settlement=keenu|servd|none|all`;
+  `/reports/by-settlement` combined = the sum. Item codes: `MenuItem.itemCode`
+  (unique per brand). Not in this release: appending lines to an existing ticket
+  (a later round is another ticket on the table).
+
 ### Closed books are the CEO's (owner, 2026-10-16)
 
 `accounting/closedBooks.ts`. A closed month refuses every posting (as

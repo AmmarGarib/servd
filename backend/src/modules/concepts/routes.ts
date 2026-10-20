@@ -498,13 +498,17 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     // One sales account per brand (owner, 2026-10-17): "Sales — <brand>" in
     // its company's chart. Never blocks the create — on a failure the brand
     // posts to 4090 until the boot step gives it its account.
+    // And its servd sub-account "Sales — <brand> (servd)" (till flow, owner 2026-10-20).
     let revenueAccountCode = concept.revenueAccountCode
+    let servdRevenueAccountCode = concept.servdRevenueAccountCode
     try {
-      revenueAccountCode = (await ensureBrandRevenueAccount(concept.id)).code
+      const r = await ensureBrandRevenueAccount(concept.id)
+      revenueAccountCode = r.code
+      servdRevenueAccountCode = r.servdCode ?? null
     } catch (err) {
       req.log.error({ err, conceptId: concept.id }, '[concepts] brand sales account not created — the boot step retries')
     }
-    return reply.status(201).send({ ...concept, revenueAccountCode })
+    return reply.status(201).send({ ...concept, revenueAccountCode, servdRevenueAccountCode })
   })
 
   // PATCH /concepts/:id — the Brand Editor (CEO → Brands): the CEO only

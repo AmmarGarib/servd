@@ -87,7 +87,7 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, resolvePostingFailed, revenueCodeForConcept, revenueCodesForConcepts, type JournalLineInput } from './journal.js'
+import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, resolvePostingFailed, revenueCodeForConcept, revenueCodesForConcepts, servdRevenueCodesForConcepts, type JournalLineInput } from './journal.js'
 import { tillClearingCodeTx } from './tillClearingCode.js'
 import {
   computeSaleAccounting, giftCardAppliedOf, GATEWAY_METHODS, giftCardSaleMemo, homeShiftOf, isShiftReceipt, isVoidedRaast, outputTaxCodeFor, withTenderTips,
@@ -124,6 +124,8 @@ export interface ShiftSaleOrder extends SaleOrderFields {
   source: string
   /** Order status — a cancelled / rejected order is never a sale (FOH-09). */
   status?: string
+  /** How the bill was closed (till flow 2026-10-20): 'servd' → the brand's servd sub-account. */
+  settlementChannel?: string | null
   conceptId: string
   concept: { id: string; slug: string } & TaxJurisdiction
   /** Every payment of the order, on any drawer. */
@@ -141,7 +143,7 @@ export interface ShiftPaymentRow extends ShiftOrderPaymentRow {
 export const SHIFT_SALE_PAYMENT_INCLUDE = {
   order: {
     select: {
-      id: true, source: true, status: true, conceptId: true,
+      id: true, source: true, status: true, conceptId: true, settlementChannel: true,
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
       promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
       concept: { select: { id: true, slug: true, province: true, srbPosId: true } },
@@ -175,6 +177,12 @@ export interface ShiftBrandSales {
   giftCards: Array<{ orderId: string; cents: number }>
   orders: number
   revenueCents: number
+  /**
+   * The part of revenueCents from bills CLOSED IN SERVD (Order.settlementChannel
+   * 'servd', till flow 2026-10-20) — credited to the brand's servd sub-account;
+   * the rest goes to its main account.
+   */
+  servdRevenueCents: number
   serviceChargeCents: number
   tipCents: number
   taxCents: number
@@ -301,7 +309,7 @@ function addRaast(
 export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]): ShiftSales {
   const out: ShiftSales = {
     byConcept: new Map(),
-    totals: { orders: 0, revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0 },
+    totals: { orders: 0, revenueCents: 0, servdRevenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0 },
     cashCents: 0, cardPaidCents: 0, cardAwaitingCents: 0, raastByCode: new Map(), raastUnknown: [], compCents: 0,
     onAccount: { cents: 0, byAccount: new Map() },
     unsettledCents: 0, settledElsewhereCents: 0, roundingCents: 0, nonTillCashCents: 0,
@@ -376,11 +384,12 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
     const brand = out.byConcept.get(order.conceptId) ?? {
       conceptId: order.conceptId, conceptSlug: order.concept.slug, taxAccountCode: outputTaxCodeFor(order.concept),
       orderIds: [], giftCards: [], orders: 0,
-      revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0,
+      revenueCents: 0, servdRevenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, deliveryFeeCents: 0, discountCents: 0, walletAppliedCents: 0, giftCardAppliedCents: 0,
     }
     brand.orders             += 1
     brand.orderIds.push(order.id)
     brand.revenueCents       += sa.grossRevenueCents
+    if (order.settlementChannel === 'servd') brand.servdRevenueCents += sa.grossRevenueCents
     brand.serviceChargeCents += sa.serviceChargeCents
     brand.tipCents           += sa.tipCents
     brand.taxCents           += sa.taxCents
@@ -400,6 +409,7 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
   for (const b of out.byConcept.values()) {
     out.totals.orders             += b.orders
     out.totals.revenueCents       += b.revenueCents
+    out.totals.servdRevenueCents  += b.servdRevenueCents
     out.totals.serviceChargeCents += b.serviceChargeCents
     out.totals.tipCents           += b.tipCents
     out.totals.taxCents           += b.taxCents
@@ -629,11 +639,22 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   }
 
   // ── Credits per brand: revenue, service charge, tips, GST output ────────
-  // Each brand's own sales account (owner, 2026-10-17: one per brand).
+  // Each brand's own sales account (owner, 2026-10-17: one per brand); bills
+  // closed in servd go to the brand's servd sub-account (till flow, owner
+  // 2026-10-20: "two accounts per brand"), the rest — pushed to Keenu, or
+  // legacy — to its main account.
   const revenueCodes = await revenueCodesForConcepts(prisma, [...sales.byConcept.keys()])
+  const servdCodes = await servdRevenueCodesForConcepts(prisma, [...sales.byConcept.keys()])
   for (const b of sales.byConcept.values()) {
-    if (b.revenueCents > 0) {
-      lines.push({ accountCode: revenueCodes.get(b.conceptId) ?? revenueCodeForConcept(b.conceptSlug), type: 'credit', amountCents: b.revenueCents, memo: `Revenue @ ${b.conceptSlug}`, conceptId: b.conceptId })
+    const mainCode = revenueCodes.get(b.conceptId) ?? revenueCodeForConcept(b.conceptSlug)
+    const servdCode = servdCodes.get(b.conceptId) ?? mainCode
+    const servdPart = Math.min(Math.max(0, b.servdRevenueCents), Math.max(0, b.revenueCents))
+    const mainPart = b.revenueCents - servdPart
+    if (mainPart > 0) {
+      lines.push({ accountCode: mainCode, type: 'credit', amountCents: mainPart, memo: `Revenue @ ${b.conceptSlug}`, conceptId: b.conceptId })
+    }
+    if (servdPart > 0) {
+      lines.push({ accountCode: servdCode, type: 'credit', amountCents: servdPart, memo: `Revenue (closed in servd) @ ${b.conceptSlug}`, conceptId: b.conceptId })
     }
     if (b.serviceChargeCents > 0) {
       lines.push({ accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'credit', amountCents: b.serviceChargeCents, memo: `Service charge @ ${b.conceptSlug}`, conceptId: b.conceptId })

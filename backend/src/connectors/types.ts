@@ -78,6 +78,10 @@ export interface FiscalPayload {
   refundAmountCents?: number
   reason?: string
   test?: boolean                   // dry run from the setup page — never stored
+  // Till flow (2026-10-20, optional — contract v1 stays): a sale whose bill was
+  // PUSHED to the Keenu POS (pushBill below) names that push, so the vendor
+  // files the bill it settled instead of a new one. Absent on every other sale.
+  settlement?: { channel: 'keenu'; pushId?: string; providerRef?: string }
 }
 export interface FiscalResult {
   fiscalNumber: string; authority: FiscalAuthority; fiscalAt: string
@@ -92,11 +96,41 @@ export type FiscalLookupValue =
   | { state: 'processing'; retryAfterMs?: number }
   | { state: 'not_found' }
 
+// ── Keenu bill push (till flow, owner 2026-10-20) ─────────────────────────
+// "Push to Keenu": the till sends an open bill to the fiscal POS (Keenu), which
+// takes the money on its own device and settles it. servd then records the
+// tender the POS reports and completes the order; the sale's FiscalDocument
+// (outbox, completeOrder) carries `settlement` so the POS files THAT bill.
+// A vendor implements pushBill (and getBillPush to look a push up); the real
+// Keenu driver is one file in drivers/ + one line in registry.ts.
+export interface BillPushRequest {
+  pushId: string                   // servd's idempotency key for this push (stable across retries)
+  orderId: string
+  orderRef: string
+  description: string              // "<brand> order <ref>"
+  method: 'cash' | 'card'          // the tender the bill is priced for
+  amountCents: number              // what the POS must take: the bill (priced for `method`) + tip
+  tipCents: number
+  currency: 'PKR'
+  lines: Array<{ name: string; quantity: number; unitPriceCents: number }>
+  taxCents: number
+  registrations: FiscalRegistration[]
+}
+export type BillPushState =
+  | { state: 'settled'; providerRef: string; approvalRef: string; method: 'cash' | 'card'; amountCents: number; tipCents?: number }
+  | { state: 'pending'; providerRef?: string }
+  | { state: 'declined'; reason: string }
+  | { state: 'not_found' }
+
 export interface FiscalDriver {
   readonly id: string
   readonly label: string
   readonly needs: { baseUrl: boolean; apiKey: boolean; webhookSecret: boolean }
-  capabilities(ctx: ConnectorCtx): { refunds: boolean; zeroValue: boolean; lookup: boolean }
+  capabilities(ctx: ConnectorCtx): { refunds: boolean; zeroValue: boolean; lookup: boolean; billPush?: boolean }
+  /** Push an open bill to the POS to settle (Keenu). Optional: a driver without it cannot take a push (409 KEENU_PUSH_UNSUPPORTED). */
+  pushBill?(ctx: ConnectorCtx, r: BillPushRequest): Promise<Outcome<BillPushState>>
+  /** Look a push up (after 'pending' / 'unknown'). */
+  getBillPush?(ctx: ConnectorCtx, r: { pushId: string; providerRef?: string }): Promise<Outcome<BillPushState>>
   submitSale(ctx: ConnectorCtx, p: FiscalPayload): Promise<Outcome<FiscalSubmitValue>>     // idempotent on p.documentId
   submitRefund(ctx: ConnectorCtx, p: FiscalPayload): Promise<Outcome<FiscalSubmitValue>>   // credit note / sales return vs p.original
   getDocumentStatus(ctx: ConnectorCtx, ref: { documentId: string; providerRef?: string }): Promise<Outcome<FiscalLookupValue>>
@@ -152,7 +186,7 @@ export interface FiscalSettings {
   outlets: { locationId: string; conceptId: string | null; authority: FiscalAuthority; posId: string; storeId?: string }[] // max 200
   apiKeyHeader?: string          // default 'Authorization' (sent as 'Bearer <key>'); any other header name gets the raw key
   paths?: Partial<Record<'sales' | 'refunds' | 'documents' | 'health', string>>
-  test?: { scenario: 'ok' | 'slow' | 'down' | 'reject' | 'auth' | 'processing_then_ok' | 'unknown_then_filed' }
+  test?: { scenario: 'ok' | 'slow' | 'down' | 'reject' | 'auth' | 'processing_then_ok' | 'unknown_then_filed'; push?: 'settle' | 'decline' | 'pending' }
 }
 export interface TerminalSettings {
   chargeTimeoutSec: number       // 45..300, default 120

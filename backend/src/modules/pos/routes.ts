@@ -12,6 +12,8 @@ import { buildReceiptHtml, buildReceiptData } from './receipt.js'
 import { assertShiftHasNoActiveCharges } from '../../connectors/terminal/guard.js'
 import { audit } from '../../lib/audit.js'
 import { REFUND_TENDERS, legacyRingUpTender } from '../../lib/tenders.js'
+import { resolveWaiter, resolveGuest } from './tillFlow.js'
+import { guestBodySchema } from './tillFlowRoutes.js'
 import type { RaastTenderMeta } from './raastTender.js'
 import { COD_PAY_IN_HOURS, codDueWhere, codStatusOf, codHoursSince } from '../../lib/cod.js'
 
@@ -91,6 +93,20 @@ const posOrderSchema = z.object({
   // firing duplicate tickets. Absent → the server generates a UUID (FOH-06).
   idempotencyKey: z.string().min(8).max(100).optional(),
   paymentMethod: ringUpTenderSchema.optional(),
+  // ── Till flow (owner, 2026-10-20; TILL_FLOW.md) ──
+  fulfilmentType: z.enum(['dine_in', 'takeout', 'delivery']).optional(),
+  waiterEmployeeId: z.string().uuid().optional(),
+  waiterCode: z.string().trim().min(1).max(40).optional(),
+  partySize: z.number().int().min(1).max(500).optional(),
+  guest: guestBodySchema.optional(),
+  delivery: z.object({
+    name: z.string().trim().min(1).max(120),
+    phone: z.string().trim().min(7).max(30),
+    address: z.string().trim().min(3).max(400),
+    notes: z.string().trim().max(400).nullable().optional(),
+    zoneId: z.string().min(1).max(64).nullable().optional(),
+    cod: z.boolean(),
+  }).optional(),
 })
 
 const posQuoteSchema = z.object({
@@ -98,6 +114,9 @@ const posQuoteSchema = z.object({
   items: z.array(posItemSchema).min(1),
   discountCents: z.number().int().min(0).default(0),
   paymentMethod: ringUpTenderSchema.optional(),
+  // Till flow: a delivery's fee (before GST) from its zone, GST on top (H9).
+  fulfilmentType: z.enum(['dine_in', 'takeout', 'delivery']).optional(),
+  zoneId: z.string().min(1).max(64).nullable().optional(),
 })
 
 const paymentSchema = z.object({
@@ -121,6 +140,9 @@ const paymentSchema = z.object({
       // Raast QR: "I saw it arrive on the counter phone" — required with a
       // Raast reference (spec D9).
       raastVerified: raastVerifiedSchema,
+      // Till flow (2026-10-20): cash handed over above the bill kept as a TIP
+      // (cashier chose tip, not change) — added to amountCents and tipCents.
+      excessAsTip: z.boolean().optional(),
       gateway: z.enum(['keenu', 'jazzcash', 'easypaisa', 'none']).optional(),
       // FOH-14: the part of amountCents that is a tip (→ Order.tipCents).
       tipCents: z.number().int().min(0).optional(),
@@ -133,6 +155,9 @@ const paymentSchema = z.object({
   ),
   // FOH-04: one key per "Pay" submission, reused by its retries.
   idempotencyKey: z.string().min(8).max(100).optional(),
+  // Till flow (2026-10-20): 'servd' = close this bill in servd (its revenue to
+  // the brand's servd sub-account; its fiscal document filed by hand).
+  settlementChannel: z.literal('servd').optional(),
 })
 
 const openShiftSchema = z.object({
@@ -170,6 +195,22 @@ export async function posRoutes(fastify: FastifyInstance) {
       })
       if (!table) throw new AppError('TABLE_NOT_IN_BRAND', 'That table does not belong to this brand', 422)
     }
+    // Till flow (2026-10-20): the waiter and the guest inside the brand's company.
+    if (body.customerId && body.guest) throw new AppError('GUEST_ONE_OF', 'Pick a guest from the search OR enter a new one — not both', 400)
+    if (body.delivery && body.fulfilmentType !== 'delivery') throw new AppError('DELIVERY_NEEDS_FULFILMENT', 'Send fulfilmentType "delivery" with the delivery details', 400)
+    const waiter = await resolveWaiter(prisma, tenantId, { waiterEmployeeId: body.waiterEmployeeId ?? null, waiterCode: body.waiterCode ?? null })
+    let customerId = body.customerId ?? null
+    let customerName: string | null = null
+    if (body.guest) {
+      const g = await resolveGuest(prisma, tenantId, body.guest)
+      customerId = g.customerId
+      customerName = g.name
+    } else if (body.delivery) {
+      // A delivery's customer: the name and phone typed for it.
+      const g = await resolveGuest(prisma, tenantId, { name: body.delivery.name, mobile: body.delivery.phone })
+      customerId = customerId ?? g.customerId
+      customerName = g.name
+    }
     const menuItemIds = Array.from(new Set(body.items.map((i) => i.menuItemId).filter((x): x is string => !!x)))
     if (menuItemIds.length > 0) {
       const owned = await prisma.menuItem.count({
@@ -179,8 +220,13 @@ export async function posRoutes(fastify: FastifyInstance) {
     }
     if (body.shiftId) await assertShiftOf(tenantId, body.shiftId, false)
 
+    const { guest, waiterCode: _code, waiterEmployeeId: _wid, ...rest } = body
     const order = await createPosOrder({
-      ...body,
+      ...rest,
+      customerId,
+      customerName,
+      waiterEmployeeId: waiter?.id ?? null,
+      guestRegistrationNo: guest?.registrationNo ?? null,
       staffId: req.staffUser!.id,
       staffRole: req.staffUser!.role,
     })
@@ -214,6 +260,7 @@ export async function posRoutes(fastify: FastifyInstance) {
       shiftId: body.shiftId,
       idempotencyKey: body.idempotencyKey,
       actorId: req.staffUser!.id,
+      ...(body.settlementChannel && { settlementChannel: body.settlementChannel }),
       // A Raast reference typed at the till is the cashier's, with their
       // counter-device tick — the server sets the tender's Raast meta.
       payments: body.payments.map(({ raastVerified, ...p }) => ({
@@ -268,7 +315,7 @@ export async function posRoutes(fastify: FastifyInstance) {
       })
       if (owned !== menuItemIds.length) throw new AppError('ITEM_NOT_IN_BRAND', 'One or more items do not belong to this brand', 422)
     }
-    return quotePosOrder(body)
+    return quotePosOrder({ ...body, delivery: body.fulfilmentType === 'delivery' ? { zoneId: body.zoneId ?? null } : null })
   })
 
   // POST /pos/payments/:id/settle — take the money for ONE pending payment row

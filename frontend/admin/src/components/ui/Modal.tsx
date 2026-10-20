@@ -6,7 +6,7 @@
 // wrappers over <Modal> (same props they always had) — never another copy.
 //
 // `useDialog` is exported for the few overlays that must keep their own markup
-// (a drawer, the till's guarded PaymentModal): it gives them the same
+// (a drawer, the till's settle screen): it gives them the same
 // keyboard / focus / scroll-lock behaviour without the chrome.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'

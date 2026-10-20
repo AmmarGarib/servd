@@ -244,6 +244,8 @@ export interface BuiltSale {
   legacy: { fbrInvoiceNumber: string | null; srbInvoiceNumber: string | null }
   /** totalsCheck(payload): the outbox never files a document that fails it. */
   check: TotalsCheck
+  /** How the bill was closed (Order.settlementChannel, till flow 2026-10-20): 'servd' is filed by hand, never sent. */
+  settlementChannel: 'keenu' | 'servd' | null
 }
 
 /**
@@ -442,6 +444,9 @@ export async function buildFiscalSaleTx(tx: Tx, orderId: string, documentId: str
       tenders: [...tenders.entries()].map(([method, amountCents]) => ({ method, amountCents })),
     },
     ...(invoice && { servdInvoiceNumber: invoice.invoiceNumber }),
+    // Till flow (2026-10-20): a bill pushed to Keenu names the push, so the
+    // Keenu driver files THE bill its POS settled (idempotent on the push).
+    ...(order.settlementChannel === 'keenu' && { settlement: { channel: 'keenu' as const, ...keenuPushRefOf(order.settlementMeta) } }),
   }
   return {
     payload,
@@ -452,6 +457,18 @@ export async function buildFiscalSaleTx(tx: Tx, orderId: string, documentId: str
     registrations,
     legacy: { fbrInvoiceNumber: order.fbrInvoiceNumber, srbInvoiceNumber: order.srbInvoiceNumber },
     check: totalsCheck(payload),
+    settlementChannel: order.settlementChannel ?? null,
+  }
+}
+
+/** The Keenu push reference stored on Order.settlementMeta.keenu (pos/keenuPush.ts). */
+function keenuPushRefOf(meta: unknown): { pushId?: string; providerRef?: string } {
+  const k = meta && typeof meta === 'object' && !Array.isArray(meta) ? (meta as { keenu?: unknown }).keenu : null
+  if (!k || typeof k !== 'object') return {}
+  const o = k as { pushId?: unknown; providerRef?: unknown }
+  return {
+    ...(typeof o.pushId === 'string' && { pushId: o.pushId }),
+    ...(typeof o.providerRef === 'string' && { providerRef: o.providerRef }),
   }
 }
 

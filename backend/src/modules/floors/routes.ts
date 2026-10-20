@@ -23,6 +23,7 @@ import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 const floorSchema = z.object({
   conceptId:     z.string().uuid(),
@@ -279,6 +280,72 @@ export async function floorRoutes(fastify: FastifyInstance) {
       ),
     )
     return { ok: true, count: body.tables.length }
+  })
+
+  // GET /floors/board?conceptId&floorId — the till's Dine In grid (till flow,
+  // owner 2026-10-20; pos/TILL_FLOW.md §2): every floor with occupied / vacant
+  // counts, the tables (of `floorId`, else all) with their open ticket, pax and
+  // waiter. Occupied = an OPEN order sits on the table (the truth); a foreign
+  // brand 404s.
+  fastify.get('/board', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const q = z.object({ conceptId: z.string().uuid(), floorId: z.string().uuid().optional() }).parse(req.query ?? {})
+    await assertConceptOwned(req, q.conceptId, 'read')
+    await assertConceptAccess(req.staffUser!, q.conceptId)
+    const [floors, tables] = await Promise.all([
+      prisma.floor.findMany({
+        where: { conceptId: q.conceptId, deletedAt: null, isActive: true },
+        orderBy: { displayOrder: 'asc' },
+        select: { id: true, name: true, displayOrder: true },
+      }),
+      prisma.table.findMany({
+        where: { conceptId: q.conceptId, deletedAt: null },
+        orderBy: { label: 'asc' },
+        select: { id: true, label: true, capacity: true, floorId: true, status: true, shape: true, x: true, y: true, width: true, height: true, rotation: true },
+      }),
+    ])
+    const open = tables.length > 0
+      ? await prisma.order.findMany({
+          where: { conceptId: q.conceptId, tableId: { in: tables.map((t) => t.id) }, status: { in: ['received', 'confirmed', 'preparing', 'ready'] }, deletedAt: null },
+          orderBy: { placedAt: 'asc' },
+          select: {
+            id: true, tableId: true, status: true, totalCents: true, placedAt: true, partySize: true, customerName: true,
+            waiter: { select: { id: true, employeeCode: true, fullName: true } },
+          },
+        })
+      : []
+    const byTable = new Map<string, typeof open>()
+    for (const o of open) byTable.set(o.tableId!, [...(byTable.get(o.tableId!) ?? []), o])
+    const count = (ts: typeof tables) => {
+      const occupied = ts.filter((t) => byTable.has(t.id)).length
+      return { tables: ts.length, occupied, vacant: ts.length - occupied }
+    }
+    const floorRows = floors.map((f) => ({ ...f, totals: count(tables.filter((t) => t.floorId === f.id)) }))
+    const known = new Set(floors.map((f) => f.id))
+    const loose = tables.filter((t) => !t.floorId || !known.has(t.floorId))
+    if (loose.length > 0) floorRows.push({ id: null as unknown as string, name: 'No floor', displayOrder: 9999, totals: count(loose) })
+    const shown = q.floorId ? tables.filter((t) => t.floorId === q.floorId) : tables
+    return {
+      conceptId: q.conceptId,
+      totals: count(tables),
+      floors: floorRows,
+      tables: shown.map((t) => {
+        const os = byTable.get(t.id) ?? []
+        const first = os[0]
+        return {
+          ...t,
+          occupied: os.length > 0,
+          openOrders: os.length,
+          openOrderIds: os.map((o) => o.id),
+          order: first
+            ? {
+                id: first.id, ref: orderRefOf(first.id), status: first.status, totalCents: first.totalCents,
+                placedAt: first.placedAt, partySize: first.partySize, customerName: first.customerName,
+                waiter: first.waiter ? { id: first.waiter.id, code: first.waiter.employeeCode, name: first.waiter.fullName } : null,
+              }
+            : null,
+        }
+      }),
+    }
   })
 
   // Live status — combines tables + currently-open orders + active reservations.

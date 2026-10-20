@@ -6,7 +6,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
 import { getMenuEngineering } from './menu-engineering.js'
 import { getDemandForecast } from './demand-forecast.js'
-import { salesTotals, salesByHour, salesByChannel, salesByTender, topItems, stationTimes, reportDateRange, type SalesQuery } from './service.js'
+import { salesTotals, salesByHour, salesByChannel, salesBySettlement, salesByTender, topItems, stationTimes, reportDateRange, type SalesQuery } from './service.js'
 import { exportFormatOf, sendReportFor, type ExportFormat, type ReportRow } from '../../lib/reportExport.js'
 import { fmtPktDate } from '../accounting/dates.js'
 
@@ -47,8 +47,17 @@ type ExportQ = { format?: string }
 function exportOf(req: FastifyRequest): ExportFormat | null {
   return exportFormatOf((req.query as ExportQ).format)
 }
+const SETTLEMENTS = ['keenu', 'servd', 'none', 'all'] as const
+const SETTLEMENT_LABEL: Record<string, string> = { keenu: 'pushed to Keenu', servd: 'closed in servd', none: 'no settlement channel (legacy / online)' }
 function periodLine(q: SalesQuery): string {
-  return `${fmtPktDate(q.from)} to ${fmtPktDate(q.to)}`
+  const base = `${fmtPktDate(q.from)} to ${fmtPktDate(q.to)}`
+  // The settlement filter rides on every export's period line (till flow, 2026-10-20).
+  return q.settlement && q.settlement !== 'all' ? `${base} — ${SETTLEMENT_LABEL[q.settlement]}` : base
+}
+/** The file-name suffix of an export: the dates, plus the settlement filter. */
+function suffixOf(q: SalesQuery): string {
+  const base = `${fmtPktDate(q.from)}-to-${fmtPktDate(q.to)}`
+  return q.settlement && q.settlement !== 'all' ? `${base}-${q.settlement}` : base
 }
 
 export async function reportRoutes(fastify: FastifyInstance) {
@@ -66,6 +75,10 @@ export async function reportRoutes(fastify: FastifyInstance) {
     defaultDays = 90,
   ): Promise<SalesQuery> {
     const { from, to } = reportDateRange(q.dateFrom, q.dateTo, defaultDays)
+    // Till flow (2026-10-20): ?settlement=keenu|servd|none|all (default all = combined).
+    const rawSettlement = (req.query as { settlement?: string }).settlement
+    if (rawSettlement && !SETTLEMENTS.includes(rawSettlement as never)) throw new AppError('INVALID_SETTLEMENT', 'settlement must be keenu, servd, none or all', 400)
+    const settlement = (rawSettlement || 'all') as SalesQuery['settlement']
     const company = await scopeTenantWhere(req, 'read')
     if (q.conceptId) await assertConceptOwned(req, q.conceptId, 'read')
     if (q.locationId) {
@@ -77,6 +90,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       conceptId: q.conceptId || null,
       locationId: q.locationId || null,
       channel: q.channel || null,
+      settlement,
       from, to,
     }
   }
@@ -101,7 +115,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
             { metric: 'Total orders', amountCents: null, orders: totals.orders },
           ]
         : [{ metric: 'Total orders', orders: totals.orders }]
-      return sendReportFor(req, reply, format, { base: 'sales', suffix: periodLine(q).replace(' to ', '-to-') }, {
+      return sendReportFor(req, reply, format, { base: 'sales', suffix: suffixOf(q) }, {
         title: 'Sales', period: periodLine(q), rows, labels: { amountCents: 'Amount' }, types: { orders: 'number' },
       })
     }
@@ -126,7 +140,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const shown = seesItemRevenue(req) ? items : items.map(({ revenueCents: _revenue, ...rest }) => rest)
       const format = exportOf(req)
       if (format) {
-        return sendReportFor(req, reply, format, { base: 'top-items', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+        return sendReportFor(req, reply, format, { base: 'top-items', suffix: suffixOf(sq) }, {
           title: 'Top items', period: periodLine(sq),
           rows: shown.map((i): ReportRow => ({ rank: i.rank, item: i.name, quantity: i.quantity, ...('revenueCents' in i ? { revenueCents: (i as { revenueCents: number }).revenueCents } : {}) })),
           types: { rank: 'number', quantity: 'number' }, labels: { revenueCents: 'Revenue' },
@@ -145,7 +159,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const stations = (await stationTimes(sq)).stations
       const format = exportOf(req)
       if (!format) return stations
-      return sendReportFor(req, reply, format, { base: 'stations', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+      return sendReportFor(req, reply, format, { base: 'stations', suffix: suffixOf(sq) }, {
         title: 'Ticket times by station', period: periodLine(sq),
         rows: stations.map((st) => ({ station: st.stationName, itemsFired: st.items, avgMinutes: Number(st.avgMinutes.toFixed(1)) })),
         types: { itemsFired: 'number', avgMinutes: 'number' }, labels: { avgMinutes: 'Average minutes' },
@@ -163,7 +177,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const money = seesRevenue(req)
       const format = exportOf(req)
       if (format) {
-        return sendReportFor(req, reply, format, { base: 'by-channel', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+        return sendReportFor(req, reply, format, { base: 'by-channel', suffix: suffixOf(sq) }, {
           title: 'Sales by channel', period: periodLine(sq),
           rows: (money ? rows : [...rows].sort((a, b) => b.orders - a.orders)).map((r) => ({
             channel: r.source, orders: r.orders, ...(money ? { grossCents: r.gross, netCents: r.net } : {}),
@@ -175,6 +189,28 @@ export async function reportRoutes(fastify: FastifyInstance) {
       return rows.map((r) => ({ source: r.source, orders: r.orders })).sort((a, b) => b.orders - a.orders)
     },
   )
+
+  // GET /reports/by-settlement — sales per settlement channel (till flow, owner
+  // 2026-10-20): keenu (pushed to Keenu), servd (closed in servd), none
+  // (legacy / online), and combined = their sum. Money only to
+  // FINANCIALS_VIEWERS; the other report readers get the order counts.
+  fastify.get('/by-settlement', { preHandler: requireAuth(...REPORT_READERS) }, async (req, reply) => {
+    const sq = await salesQuery(req, req.query as Record<string, string>)
+    const r = await salesBySettlement({ ...sq, settlement: 'all' })
+    const money = seesRevenue(req)
+    const format = exportOf(req)
+    if (format) {
+      const all = [...r.rows.map((x) => ({ ...x, label: x.settlement })), { ...r.combined, label: 'combined' }]
+      return sendReportFor(req, reply, format, { base: 'by-settlement', suffix: suffixOf({ ...sq, settlement: 'all' }) }, {
+        title: 'Sales by settlement', period: periodLine({ ...sq, settlement: 'all' }),
+        rows: all.map((x) => ({ settlement: x.label, orders: x.orders, ...(money ? { grossCents: x.gross, taxCents: x.tax, tipsCents: x.tips, netCents: x.net } : {}) })),
+        types: { orders: 'number', grossCents: 'cents', taxCents: 'cents', tipsCents: 'cents', netCents: 'cents' },
+        labels: { grossCents: 'Gross (incl. GST)', taxCents: 'GST', tipsCents: 'Tips', netCents: 'Net (ex-GST)' },
+      })
+    }
+    if (money) return r
+    return { volumeOnly: true, rows: r.rows.map((x) => ({ settlement: x.settlement, orders: x.orders })), combined: { orders: r.combined.orders } }
+  })
 
   // GET /reports/by-tender — how the period's sales were paid (Raast QR, spec
   // §7.6): Cash, Card – Keenu, Raast QR (provisional / matched), the retired
@@ -190,7 +226,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const format = exportOf(req)
       if (format) {
         const money = seesRevenue(req)
-        return sendReportFor(req, reply, format, { base: 'by-tender', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+        return sendReportFor(req, reply, format, { base: 'by-tender', suffix: suffixOf(sq) }, {
           title: 'Sales by tender', period: periodLine(sq),
           rows: r.tenders.map((t) => ({ tender: t.label, orders: t.orders, ...(money ? { payments: t.payments, amountCents: t.amountCents, sharePct: t.sharePct } : {}) })),
           types: { orders: 'number', payments: 'number', amountCents: 'cents', sharePct: 'number' }, labels: { amountCents: 'Amount', sharePct: 'Share %' },

@@ -1019,6 +1019,8 @@ export async function listOrders(filter: ListOrdersFilter) {
       table: { select: { label: true } },
       payments: true,
       rider: { select: { id: true, name: true, phone: true } },
+      // Till flow (2026-10-20): the ticket's waiter (an HR employee of the order's company).
+      waiter: { select: { id: true, employeeCode: true, fullName: true } },
     },
     orderBy: { placedAt: 'desc' },
     take: limit + 1,
@@ -1028,7 +1030,9 @@ export async function listOrders(filter: ListOrdersFilter) {
   if (hasMore) orders.pop()
 
   return {
-    data: orders,
+    // Till flow: `cod` — a till delivery whose cash is collected on delivery
+    // (rawPayload.delivery.cod); settlementChannel / partySize / waiter ride on the row.
+    data: orders.map((o) => ({ ...o, cod: (o.rawPayload as { delivery?: { cod?: unknown } } | null)?.delivery?.cod === true })),
     cursor: hasMore ? (orders[orders.length - 1]?.id ?? null) : null,
     hasMore,
   }
@@ -1556,6 +1560,9 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
     await releaseRiderFromEndedOrder(id, `order ${status}: ${reason}`).catch((err) =>
       console.error(`[dispatch] rider release failed for ${status} order ${id}:`, (err as Error).message),
     )
+    // Its table is free again (till flow, 2026-10-20). Never throws.
+    const { releaseTablesOf } = await import('../pos/tillFlow.js')
+    await releaseTablesOf(id)
     // The books of a ticket that ends without a sale (LEDGER R5-B / R5-C):
     // whatever a drawer close or a pre-cancel refund already booked for it as
     // a SALE is undone now, once — a ticket refunded in full before the
@@ -2064,6 +2071,9 @@ export function isTillSale(order: { source: string; rawPayload?: unknown }): boo
   return raw?.channel === 'group_order'
 }
 
+/** Till flow (2026-10-20): a delivery rung up at the till — lib/tillDelivery.ts. */
+export { TILL_DELIVERY_CHANNEL, isTillDelivery } from '../../lib/tillDelivery.js'
+
 /** Decision 8: which door completes an order. */
 export type CompletionDoor = 'payment' | 'delivery' | 'handoff'
 export function completionDoor(order: { source: string; fulfilmentType: string; rawPayload?: unknown }): CompletionDoor {
@@ -2230,6 +2240,9 @@ export async function completeOrder(
     return { tenantId: row.tenantId, fiscalDoc, refundDocs }
   }, { maxWait: 10_000, timeout: 15_000 })
   if (!claim) return { ran: false, fiscal: null }
+
+  // The ticket's table is free again (till flow, 2026-10-20). Never throws.
+  await (await import('../pos/tillFlow.js')).releaseTablesOf(orderId)
 
   const order = await prisma.order.findUniqueOrThrow({
     where: { id: orderId },

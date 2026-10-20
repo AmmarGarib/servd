@@ -75,7 +75,7 @@ async function revenueByConcept(tenantId: string, periodStart: Date, periodEnd: 
   // allocation must never spread one company's overhead over another's sales.
   // Each brand's own sales account plus its 4090 sales from before it had one
   // (owner, 2026-10-17); a shared account is never summed once per brand.
-  const concepts = await prisma.concept.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, slug: true, revenueAccountCode: true } })
+  const concepts = await prisma.concept.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, slug: true, revenueAccountCode: true, servdRevenueAccountCode: true } })
   const out: RevenueByConcept[] = []
   const sales = await brandSalesByAccount(prisma, tenantId, concepts, { from: periodStart, to: periodEnd })
   for (const c of concepts) out.push({ conceptId: c.id, revenueCents: Math.max(0, sales.byConcept.get(c.id) ?? 0) })

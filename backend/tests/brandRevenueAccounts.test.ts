@@ -112,19 +112,24 @@ describe('one sales account per brand', () => {
     expect(accA).toMatchObject({ name: `Sales — ${a.name}`, type: 'revenue', isActive: true })
     expect(accB).toMatchObject({ name: `Sales — ${b.name}`, type: 'revenue', isActive: true })
     expect(accA.id).not.toBe(accB.id)
-    expect(await prisma.account.count({ where: { tenantId: { in: [A.tenantId, B.tenantId] } } })).toBe(before + 2)
+    // Till flow (2026-10-20): each brand also gets its servd sub-account, from the top of the range.
+    for (const t of [A.tenantId, B.tenantId]) {
+      expect((await prisma.account.findFirstOrThrow({ where: { tenantId: t, code: '4089' } })).name).toContain('(servd)')
+    }
+    expect(await prisma.account.count({ where: { tenantId: { in: [A.tenantId, B.tenantId] } } })).toBe(before + 4)
 
     // Idempotent: a second run (and a second call per brand) adds nothing.
     await ensureBrandRevenueAccounts()
     expect((await ensureBrandRevenueAccount(A.conceptId)).created).toBe(false)
-    expect(await prisma.account.count({ where: { tenantId: { in: [A.tenantId, B.tenantId] } } })).toBe(before + 2)
+    expect(await prisma.account.count({ where: { tenantId: { in: [A.tenantId, B.tenantId] } } })).toBe(before + 4)
   })
 
   it('a legacy brand keeps its fixed code (no new account)', async () => {
     const legacy = await prisma.concept.create({
       data: { name: 'Bukhari', slug: 'bukhari', type: 'restaurant', tenantId: B.tenantId, taxRateCash: 15, taxRateCard: 8, province: 'SD' },
     })
-    expect(await ensureBrandRevenueAccount(legacy.id)).toMatchObject({ code: '4007', created: false })
+    // No new MAIN account (4007 is a template account); only its servd sub-account (till flow) is new.
+    expect(await ensureBrandRevenueAccount(legacy.id)).toMatchObject({ code: '4007', servdCode: '4088' })
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: legacy.id } })).revenueAccountCode).toBe('4007')
   })
 
@@ -202,7 +207,8 @@ describe('one sales account per brand', () => {
     const oC = await sale(C)
     const accC = await prisma.account.findFirstOrThrow({ where: { tenantId: C.tenantId, code: '4010' }, select: { id: true } })
     const moved = await prisma.$transaction((tx) => renumberClashingBrandAccountsTx(tx, C.tenantId, D.tenantId))
-    expect(moved).toEqual([{ conceptId: C.conceptId, from: '4010', to: '4011' }])
+    // The servd sub-accounts clash too (4089 in both — till flow, 2026-10-20) and move down the range.
+    expect(moved).toEqual([{ conceptId: C.conceptId, from: '4010', to: '4011' }, { conceptId: C.conceptId, from: '4089', to: '4088' }])
     // Same account row (its history stays on it), new code; the brand follows.
     expect((await prisma.account.findUniqueOrThrow({ where: { id: accC.id } })).code).toBe('4011')
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: C.conceptId } })).revenueAccountCode).toBe('4011')

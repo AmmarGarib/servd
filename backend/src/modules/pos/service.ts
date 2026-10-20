@@ -15,7 +15,9 @@ import {
   postRefundPayment, refundDueCents, isShiftReceipt, isVoidedRaast, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf, onAccountOf,
   raastLedgerCodeOf, GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX, CREDIT_NOTE_SOURCE, creditNotePayoutOf,
 } from '../accounting/orderPosting.js'
-import { postJournalEntry, ACCT, TILL_CLEARING_CODES, revenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
+import { postJournalEntry, ACCT, TILL_CLEARING_CODES, revenueCodeForConcept, servdRevenueCodeForConcept, type JournalLineInput } from '../accounting/journal.js'
+import { assertCustomerAttachable, occupyTableTx, stampSettlementChannelTx, tillDeliveryFee } from './tillFlow.js'
+import { TILL_DELIVERY_CHANNEL } from '../../lib/tillDelivery.js'
 import { tillClearingCodeTx } from '../accounting/tillClearingCode.js'
 import { EXPENSE_PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { wasteSoldLineTx } from '../inventory/voidWaste.js'
@@ -96,6 +98,31 @@ export interface PosOrderInput {
   // specified. (The route maps a legacy 'keenu_qr' from an offline-queued
   // pre-deploy ring-up to 'raast' — lib/tenders legacyRingUpTender.)
   paymentMethod?: 'cash' | 'card' | 'raast' | 'split' | 'comp'
+  // ── Till flow (owner, 2026-10-20; TILL_FLOW.md). The route resolves the
+  //    waiter, the guest and the table inside the brand's company first. ──
+  /** dine_in (a table) / takeout / delivery. Default: dine_in with a table, else takeout (as before). */
+  fulfilmentType?: 'dine_in' | 'takeout' | 'delivery'
+  /** HR employee of the brand's company (resolved by the route from an id or a typed code). */
+  waiterEmployeeId?: string | null
+  partySize?: number | null
+  guestRegistrationNo?: string | null
+  /** The guest's name when no customer row is linked. */
+  customerName?: string | null
+  /**
+   * A delivery rung up at the till: stored as source 'manual' with
+   * rawPayload.channel 'till_delivery' (orders/service isTillDelivery) so it
+   * completes ON DELIVERY and its cash on delivery is COD custody (lib/cod.ts).
+   * The fee comes from the zone (lib/pricing.ts adds its GST at the tender's rate).
+   */
+  delivery?: {
+    name: string
+    phone: string
+    address: string
+    notes?: string | null
+    zoneId?: string | null
+    /** true = cash on delivery: a PENDING cash payment the rider collects (bill closed in servd). */
+    cod: boolean
+  } | null
 }
 
 type PosLine = PosOrderInput['items'][number]
@@ -147,16 +174,23 @@ export async function quotePosOrder(input: {
   items: PosLine[]
   discountCents?: number
   paymentMethod?: PosOrderInput['paymentMethod']
+  /** Till flow (2026-10-20): a delivery's zone — its fee before GST; GST on top (H9). */
+  delivery?: { zoneId: string | null } | null
 }) {
   const concept = await prisma.concept.findUnique({ where: { id: input.conceptId } })
   if (!concept) throw new NotFoundError('Concept', input.conceptId)
   const items = await resolvePosLines(input.items)
-  const price = await priceOrder(items, tenderOf(input.paymentMethod), 'pos', concept, { discountCents: input.discountCents ?? 0 })
+  const itemTotal = items.reduce((s, i) => s + (i.unitPriceCents + i.modifiers.reduce((m, x) => m + x.priceDeltaCents, 0)) * i.quantity, 0)
+  const fee = input.delivery && concept.tenantId
+    ? await tillDeliveryFee(concept.id, concept.tenantId, input.delivery.zoneId, itemTotal)
+    : { feeCents: 0, zoneId: null, zoneName: null }
+  const price = await priceOrder(items, tenderOf(input.paymentMethod), 'pos', concept, { discountCents: input.discountCents ?? 0, deliveryFeeCents: fee.feeCents })
   // THE priceOrder result (tender, taxRatePct, itemTotalCents, discountCents,
   // taxCents, serviceChargeCents, totalCents, lines…), plus the lines as the
   // server prices them (add-ons at menu price).
   return {
     conceptId: concept.id,
+    ...(input.delivery && { deliveryZone: { id: fee.zoneId, name: fee.zoneName } }),
     ...price,
     items: items.map((i) => ({ menuItemId: i.menuItemId, name: i.name, quantity: i.quantity, unitPriceCents: i.unitPriceCents, modifiers: i.modifiers })),
   }
@@ -169,9 +203,14 @@ export async function createPosOrder(input: PosOrderInput) {
   // FOH-07: only to the brand it was rung for. The key is global (orders are
   // unique on source + externalId), so a key reused by another brand — another
   // company's till — is a 409, never that company's order.
+  // A till delivery is stored as source 'manual' (till flow, 2026-10-20).
+  const isDelivery = input.fulfilmentType === 'delivery'
+  const source = isDelivery ? 'manual' as const : 'pos' as const
+  if (isDelivery && !input.delivery) throw new AppError('DELIVERY_DETAILS_REQUIRED', 'A delivery needs the customer\'s name, phone and address', 400)
+  if (isDelivery && input.tableId) throw new AppError('DELIVERY_HAS_NO_TABLE', 'A delivery is not seated at a table', 400)
   if (input.idempotencyKey) {
     const existing = await prisma.order.findUnique({
-      where: { source_externalId: { source: 'pos', externalId: input.idempotencyKey } },
+      where: { source_externalId: { source, externalId: input.idempotencyKey } },
       include: RING_UP_INCLUDE,
     })
     if (existing) {
@@ -182,12 +221,6 @@ export async function createPosOrder(input: PosOrderInput) {
     }
   }
 
-  // FOH-22: an unknown customer is the caller's mistake (422), not a 500 from
-  // the foreign key halfway through the insert.
-  if (input.customerId) {
-    const customer = await prisma.customer.findFirst({ where: { id: input.customerId, deletedAt: null }, select: { id: true } })
-    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', 'That customer does not exist', 422)
-  }
 
   // FOH-08: add-ons at their menu price (see resolvePosLines).
   input = { ...input, items: await resolvePosLines(input.items) }
@@ -204,6 +237,19 @@ export async function createPosOrder(input: PosOrderInput) {
   // Every policy read below (discount caps, service charge, manager PINs) is
   // resolved for the brand's own company.
   const tenantId = concept.tenantId
+
+  // FOH-22: an unknown customer is the caller's mistake (422), not a 500 from
+  // the foreign key halfway through the insert. Till flow (2026-10-20): only a
+  // customer of the brand's OWN company (or a servd account no company has
+  // dealt with yet) — another company's customer is the same 422.
+  if (input.customerId) {
+    if (tenantId) {
+      await assertCustomerAttachable(prisma, tenantId, input.customerId)
+    } else {
+      const customer = await prisma.customer.findFirst({ where: { id: input.customerId, deletedAt: null }, select: { id: true } })
+      if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', 'That customer does not exist', 422)
+    }
+  }
   const ops = await getOperationsConfig(tenantId)
 
   // Owner-review flags raised by the gates below, written once the order
@@ -300,11 +346,17 @@ export async function createPosOrder(input: PosOrderInput) {
   // (SRB POS rule), item tax classes applied, then the discount, then the
   // company's service charge for the till. If the customer ends up paying
   // with the other tender, processPayment re-prices before taking the money.
-  const price = await priceOrder(input.items, tenderOf(input.paymentMethod), 'pos', concept, { discountCents: discount })
+  // A till delivery's fee (before GST) from its zone; lib/pricing.ts adds the
+  // fee's GST at the tender's rate (H9).
+  const fee = isDelivery && tenantId
+    ? await tillDeliveryFee(concept.id, tenantId, input.delivery?.zoneId ?? null, itemTotal)
+    : { feeCents: 0, zoneId: null, zoneName: null }
+  const price = await priceOrder(input.items, tenderOf(input.paymentMethod), 'pos', concept, { discountCents: discount, deliveryFeeCents: fee.feeCents })
   const totalCents = price.totalCents
+  const d = input.delivery ?? null
 
   const dto: OrderDTO = {
-    source: 'pos',
+    source,
     // FOH-06: a ring-up without a client key (the waiter screen) gets a key
     // that is unique — a UUID. It used to be `pos-${Date.now()}`, so two
     // tills ringing in the same millisecond collided on (source, externalId)
@@ -314,8 +366,15 @@ export async function createPosOrder(input: PosOrderInput) {
     concept_id: input.conceptId,
     placed_at: new Date().toISOString(),
     customer_id: input.customerId ?? null,
-    customer_name: null,
+    customer_name: (isDelivery ? d?.name : input.customerName)?.trim() || null,
     table_id: input.tableId ?? null,
+    ...(input.fulfilmentType && { fulfilment_type: input.fulfilmentType }),
+    ...(isDelivery && d && {
+      raw_payload: {
+        channel: TILL_DELIVERY_CHANNEL,
+        delivery: { name: d.name, phone: d.phone, address: d.address, notes: d.notes ?? null, zoneId: fee.zoneId, zoneName: fee.zoneName, cod: d.cod },
+      },
+    }),
     pos_staff_id: input.staffId,
     shift_id: input.shiftId ?? null,
     items: input.items.map((item) => ({
@@ -328,9 +387,10 @@ export async function createPosOrder(input: PosOrderInput) {
       notes: item.notes,
       course: item.course,
     })),
-    payment: { provider: null, amountCents: totalCents, status: 'pending' },
+    // Cash on delivery: a PENDING cash row the rider collects (lib/cod.ts).
+    payment: { provider: isDelivery && d?.cod ? 'cash' : null, amountCents: totalCents, status: 'pending' },
     loyalty_points_earned: null,
-    delivery_notes: null,
+    delivery_notes: isDelivery && d ? [d.address.trim(), d.notes?.trim()].filter(Boolean).join(' — ').slice(0, 500) : null,
     estimated_pickup: null,
   }
 
@@ -346,6 +406,21 @@ export async function createPosOrder(input: PosOrderInput) {
   // (A racing duplicate of the same ring-up got the first one's order back —
   // its flags were raised by that request.)
   if (created) for (const f of pendingFlags) await flagException({ ...f, entityType: 'Order', entityId: order.id })
+  // Till flow (2026-10-20): the ticket's waiter, pax and guest registration,
+  // and — cash on delivery — the servd close (the rider's cash is settled in
+  // servd); the table is occupied by this ticket.
+  if (created) {
+    await prisma.$transaction(async (tx) => {
+      const data: Prisma.OrderUncheckedUpdateInput = {
+        ...(input.waiterEmployeeId && { waiterEmployeeId: input.waiterEmployeeId }),
+        ...(input.partySize != null && { partySize: input.partySize }),
+        ...(input.guestRegistrationNo?.trim() && { guestRegistrationNo: input.guestRegistrationNo.trim().slice(0, 64) }),
+        ...(isDelivery && d?.cod && { settlementChannel: 'servd' as const }),
+      }
+      if (Object.keys(data).length > 0) await tx.order.update({ where: { id: order.id }, data })
+      if (input.tableId) await occupyTableTx(tx, input.tableId, order.id, input.partySize ?? null)
+    })
+  }
   return prisma.order.findUniqueOrThrow({
     where: { id: order.id },
     include: RING_UP_INCLUDE,
@@ -390,6 +465,16 @@ export interface TillTenderInput {
   //    Raast intents and the bank-SMS matcher (connectors/raast) set the rest.
   //    gatewayRef is the bank reference (normalised + validated here).
   raast?: RaastTenderMeta
+  /**
+   * Till flow (owner, 2026-10-20): cash handed over ABOVE what this tender
+   * takes is kept as a TIP instead of change (the cashier chose). The excess
+   * (tenderedCents − amountCents) is added to amountCents and tipCents, so it
+   * rides the ONE tip path (Order.tipCents → 2095 Tips Payable → the tip pool),
+   * never revenue. Cash only; ignored without tenderedCents.
+   */
+  excessAsTip?: boolean
+  /** Server only: this tender records what the Keenu POS settled for a pushed bill (pos/keenuPush.ts). */
+  keenuPushId?: string
 }
 
 export interface ProcessPaymentInput {
@@ -410,6 +495,16 @@ export interface ProcessPaymentInput {
    * again; the same key with different tenders is a 409.
    */
   idempotencyKey?: string
+  /**
+   * Till flow (owner, 2026-10-20): close this bill IN SERVD — stamped on
+   * Order.settlementChannel in the payment's transaction (tillFlow.ts
+   * stampSettlementChannelTx): its revenue goes to the brand's servd
+   * sub-account and its fiscal document waits for a manual portal filing.
+   * Omitted: the order keeps what it has (null = legacy behaviour).
+   */
+  settlementChannel?: 'servd'
+  /** Server only: the Keenu push this payment records (pos/keenuPush.ts) — the one path onto a pushed bill. */
+  keenuPushId?: string
 }
 
 /** The largest amount a till / order / payment column holds (Postgres INT4 —
@@ -962,8 +1057,9 @@ type TenderPricedOrder = Pick<
  */
 export async function tenderPriceOf(db: Tx, order: TenderPricedOrder, methods: Array<string | null | undefined>): Promise<OrderPrice | null> {
   if (order.taxRatePct == null) return null
-  const { isTillSale } = await import('../orders/service.js')
-  if (!isTillSale(order)) return null
+  const { isTillSale, isTillDelivery } = await import('../orders/service.js')
+  // A till delivery (till flow, 2026-10-20) re-prices for its tender like a till sale.
+  if (!isTillSale(order) && !isTillDelivery(order)) return null
   if (order.promoDiscountCents > 0 || order.walletAmountCents > 0 || order.tipCents > 0) return null
   if ((await db.giftCardRedemption.count({ where: { orderId: order.id } })) > 0) return null
 
@@ -979,7 +1075,7 @@ export async function tenderPriceOf(db: Tx, order: TenderPricedOrder, methods: A
   })
   // The delivery fee (BEFORE GST) re-prices with the bill: its GST follows
   // the tender like the food's (H9). Till sales carry 0.
-  return priceOrder(items, tender, order.source === 'pos' ? 'pos' : 'group', concept, {
+  return priceOrder(items, tender, order.source === 'pos' || isTillDelivery(order) ? 'pos' : 'group', concept, {
     discountCents: order.discountCents,
     deliveryFeeCents: order.deliveryFeeCents,
     db,
@@ -1081,6 +1177,17 @@ export async function processPayment(input: ProcessPaymentInput) {
   if (input.payments.length === 0) {
     throw new AppError('NO_PAYMENTS', 'At least one payment is required', 400)
   }
+  // Till flow (2026-10-20): cash handed over above the tender kept as a tip.
+  input = {
+    ...input,
+    payments: input.payments.map((p) => {
+      if (!p.excessAsTip) return p
+      if (p.method !== 'cash') throw new AppError('TIP_FROM_EXCESS_CASH_ONLY', 'Only cash handed over above the bill can be kept as a tip — add a card or Raast tip as tipCents', 400)
+      const excess = p.tenderedCents !== undefined ? p.tenderedCents - p.amountCents : 0
+      if (excess <= 0) return p
+      return { ...p, amountCents: p.amountCents + excess, tipCents: (p.tipCents ?? 0) + excess }
+    }),
+  }
   // R2-UI-07: a mistyped 11-digit tender is the cashier's typo (422), not a
   // 500 from the database column.
   assertAmountsFit(
@@ -1128,7 +1235,7 @@ export async function processPayment(input: ProcessPaymentInput) {
     throw new AppError('TERMINAL_CHARGE_MISMATCH', 'That card-machine charge was not started for this payment', 409)
   }
   // W4-AUTH-2: a keyed card reference only where the company allows it.
-  if (input.payments.some((p) => p.method === 'card' && !p.terminalChargeId)) {
+  if (input.payments.some((p) => p.method === 'card' && !p.terminalChargeId && !p.keenuPushId)) {
     const owner = await prisma.order.findUnique({ where: { id: input.orderId }, select: { concept: { select: { tenantId: true } } } })
     await assertManualCardRefAllowed(owner?.concept.tenantId ?? null, input.shiftId)
   }
@@ -1193,10 +1300,20 @@ export async function processPayment(input: ProcessPaymentInput) {
       // §7.10: while the card machine works on this bill — or a Raast request
       // waits for the customer's transfer — no other tender is taken; only the
       // charge / the Raast request being recorded passes.
-      await assertNoActiveTerminalChargeTx(tx, input.orderId, input.terminalChargeId, raast?.meta.intentId ?? null)
+      await assertNoActiveTerminalChargeTx(tx, input.orderId, input.terminalChargeId, raast?.meta.intentId ?? null, input.keenuPushId ?? null)
 
       // FOH-09: a cancelled / rejected / refunded ticket takes no money.
       assertTakesMoney(order.status)
+      // Till flow (2026-10-20): a bill pushed to Keenu is settled THERE — the
+      // only payment it takes is the one the Keenu push records.
+      if (order.settlementChannel === 'keenu' && !input.keenuPushId) {
+        const pushState = (order.settlementMeta as { keenu?: { state?: string } } | null)?.keenu?.state
+        if (pushState === 'pending' || pushState === 'settled') {
+          throw new AppError('SETTLED_AT_KEENU', 'This bill was pushed to Keenu — it is settled there, not at the servd till', 409)
+        }
+      }
+      // Close in servd (till flow): stamped in this transaction, before the money.
+      if (input.settlementChannel) await stampSettlementChannelTx(tx, order.id, input.settlementChannel)
       // W4-MONEY-1: a tender recorded from the card machine is exactly that charge.
       for (const p of input.payments) {
         if (!p.terminalChargeId) continue
@@ -1275,6 +1392,8 @@ export async function processPayment(input: ProcessPaymentInput) {
           ...(p.cardBrand && { cardBrand: p.cardBrand }),
           ...(p.cardLast4 && { cardLast4: p.cardLast4 }),
           ...(p.manualReason && { manualReason: p.manualReason }),
+          ...(p.keenuPushId && { keenuPush: { pushId: p.keenuPushId } }),
+          ...(p.excessAsTip && (p.tipCents ?? 0) > 0 && { tipFromExcess: true }),
         }
         const payment = await tx.payment.create({
           data: {
@@ -1931,6 +2050,8 @@ function pricingChannelOf(order: { source: string; rawPayload?: unknown }): Pric
   if (order.source === 'pos') return 'pos'
   const raw = order.rawPayload as { channel?: unknown } | null | undefined
   if (raw?.channel === 'group_order') return 'group'
+  // A delivery rung up at the till (till flow, 2026-10-20) is priced like the till.
+  if (order.source === 'manual' && raw?.channel === 'till_delivery') return 'pos'
   return 'storefront'
 }
 
@@ -3173,10 +3294,10 @@ type Parked = Map<string, number>
 const addParked = (m: Parked, code: string, cents: number): void => { m.set(code, (m.get(code) ?? 0) + cents) }
 
 const CANCELLED_BOOKS_SELECT = {
-  id: true, status: true, source: true, conceptId: true,
+  id: true, status: true, source: true, conceptId: true, settlementChannel: true,
   totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
   promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
-  concept: { select: { id: true, slug: true, province: true, srbPosId: true, tenantId: true, revenueAccountCode: true } },
+  concept: { select: { id: true, slug: true, province: true, srbPosId: true, tenantId: true, revenueAccountCode: true, servdRevenueAccountCode: true } },
   payments: {
     select: {
       id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true,
@@ -3287,13 +3408,20 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
       })
       const taxAccount = await refundTaxAccountFor(tx as typeof prisma, tenantId, order, taxLine?.account.code ?? b.taxAccountCode, b.taxCents)
       // Revenue goes back to the sales account the close credited for the brand
-      // (4090 for a close booked before the brand had its own account, 2026-10-17).
-      const revLine = await tx.journalLine.findFirst({
+      // (4090 for a close booked before the brand had its own account, 2026-10-17)
+      // — the servd part to the brand's servd sub-account the close credited
+      // (till flow 2026-10-20), the rest to its main account.
+      const revLines = await tx.journalLine.findMany({
         where: { journalEntryId: close.id, type: 'credit', conceptId: order.conceptId, account: { tenantId, code: { startsWith: '40' } } },
         orderBy: { amountCents: 'desc' },
         select: { account: { select: { code: true } } },
       })
-      add(revLine?.account.code ?? revenueCodeForConcept(concept), b.revenueCents)
+      const servdSub = concept.servdRevenueAccountCode ?? null
+      const closeCodes = revLines.map((l) => l.account.code)
+      const mainCode = closeCodes.find((c) => c !== servdSub) ?? revenueCodeForConcept(concept)
+      const servdCode = servdSub && closeCodes.includes(servdSub) ? servdSub : servdRevenueCodeForConcept(concept)
+      add(mainCode, b.revenueCents - b.servdRevenueCents)
+      add(servdCode, b.servdRevenueCents)
       add(ACCT.SERVICE_CHARGE_REVENUE, b.serviceChargeCents)
       add(ACCT.TIPS_PAYABLE, b.tipCents)
       add(ACCT.DELIVERY_FEE_REVENUE, b.deliveryFeeCents)    // the close credited 4110 (its GST is in taxCents)

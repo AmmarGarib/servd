@@ -550,6 +550,8 @@ export interface OrderItemModifier {
 
 export interface MenuItem {
   id: string
+  /** Item code / SKU, unique per brand (TILL_FLOW §4). */
+  itemCode?: string | null
   conceptId: string
   categoryId: string
   name: string

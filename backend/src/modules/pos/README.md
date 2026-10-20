@@ -8,6 +8,7 @@ Backend module: **pos**. HTTP routes + business logic for the Pos domain. Regist
 - `routes.ts` — Fastify route registrations for this module. `GET /pos/payout-categories` and the till pay-out accept **expense categories only**; a `cogs` key (`kitchen_food` …) is a 400.
 - `service.ts` — Business-logic functions invoked by route handlers (orders, payments, refunds, voids, shifts, Z-report, cancelled-ticket books).
 - `boxGivenRoutes.ts` — **"Box given"** (`posBoxGivenRoutes`, registered at `/pos`, below).
+- `tillFlow.ts`, `tillFlowRoutes.ts`, `keenuPush.ts` — the till flow (owner, 2026-10-20): waiters, guests, item search, delivery zones, order information, settlement channel, Push to Keenu, Order Summary. **Contract: `TILL_FLOW.md`.**
 - `drawerToBox.ts` — `recordDrawerToBoxTx`: the till drawer's cash moving into a petty-cash box. A drawer `payout` CashMovement with no PIN and no `pos.payout` entry; the box's `pettycash.till_topup:<cashMovementId>` Dr 1011 / Cr 1015 is the only posting and the shift close skips it. Keepers only.
 
 ## Box given

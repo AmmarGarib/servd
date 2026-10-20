@@ -1205,7 +1205,7 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   // closed or removed mid-month still made taxable supplies in it.
   const concepts = await prisma.concept.findMany({
     where: { tenantId },
-    select: { id: true, slug: true, name: true, province: true, srbPosId: true, isActive: true, deletedAt: true, revenueAccountCode: true },
+    select: { id: true, slug: true, name: true, province: true, srbPosId: true, isActive: true, deletedAt: true, revenueAccountCode: true, servdRevenueAccountCode: true },
     orderBy: { createdAt: 'asc' },
   })
 

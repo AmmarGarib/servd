@@ -1,4 +1,5 @@
 'use client'
+import { tableName } from './tillApi'
 // TILL-R1 / FOH-21: a drawer's close was refused because unpaid tickets are
 // still on it. Names them (table, ref, what is still due) and offers the two
 // ways on: settle or cancel them first, or "Close anyway" — the tickets stay
@@ -65,7 +66,7 @@ export function OpenTicketsCloseConfirm({ openTickets, message, loading, confirm
             <li key={tk.id} className={`flex items-center justify-between gap-3 px-3 py-2 ${t.row}`}>
               <div className="min-w-0">
                 <p className={`truncate font-semibold ${t.title}`}>
-                  {tk.table ? `Table ${tk.table}` : 'Counter'} · #{tk.ref}
+                  {tk.table ? `${tableName(tk.table)}` : 'Counter'} · #{tk.ref}
                 </p>
                 <p className={`text-xs ${t.text}`}>
                   {new Date(tk.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

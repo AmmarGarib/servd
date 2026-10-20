@@ -4,7 +4,7 @@ import { X } from 'lucide-react'
 import { useDialog } from '../ui/Modal'
 import { fmtPkrWhole } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
-import { paidCentsOf, preBillErrorMessage, printPreBill, type TillOrder } from './tillApi'
+import { paidCentsOf, preBillErrorMessage, printPreBill, type TillOrder, tableName } from './tillApi'
 import { orderRef } from '../../lib/orderRef'
 
 interface OpenTicketsProps {
@@ -85,7 +85,7 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-semibold text-kds-text">
-                          {o.table?.label ? `Table ${o.table.label}` : `Order ${orderRef(o.id)}`}
+                          {o.table?.label ? `${tableName(o.table.label)}` : `Order ${orderRef(o.id)}`}
                         </p>
                         <p className="text-xs text-kds-subtext">
                           {items} item{items !== 1 ? 's' : ''} · {o.status} · {minutesSince(o.placedAt)} ago

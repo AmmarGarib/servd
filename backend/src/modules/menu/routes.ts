@@ -17,6 +17,8 @@ const createItemSchema = z.object({
   instructions: z.string().optional(),
   instructionsUrdu: z.string().optional(),
   priceCents: z.number().int().min(0),
+  // The item code / SKU the till searches by (till flow, 2026-10-20). Unique per brand (409 ITEM_CODE_TAKEN).
+  itemCode: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9._\-]+$/, 'Letters, digits, dot, dash or underscore').nullable().optional(),
   imageUrl: z.string().url().optional(),
   // Looping video shown in place of the image on the storefront menu.
   // Both fields are independent — operator can set either, neither, or
@@ -97,6 +99,15 @@ async function assertStationOf(conceptId: string, stationId: string): Promise<vo
   }
 }
 
+/** An item code is unique per brand (case-insensitive) — 409 ITEM_CODE_TAKEN (till flow, 2026-10-20). */
+async function assertItemCodeFree(conceptId: string, itemCode: string, exceptId: string | null): Promise<void> {
+  const clash = await prisma.menuItem.findFirst({
+    where: { conceptId, itemCode: { equals: itemCode, mode: 'insensitive' }, ...(exceptId && { id: { not: exceptId } }) },
+    select: { id: true, name: true },
+  })
+  if (clash) throw new AppError('ITEM_CODE_TAKEN', `The code ${itemCode} is already used by "${clash.name}" on this brand`, 409)
+}
+
 /** A row's brand never changes from an edit; resending the same id is fine. */
 function assertSameConcept(current: string, requested: string | undefined): void {
   if (requested !== undefined && requested !== current) {
@@ -172,6 +183,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
     await assertConceptOwned(req, body.conceptId, 'create')
     await assertCategoryOf(body.conceptId, body.categoryId)
     if (body.stationId) await assertStationOf(body.conceptId, body.stationId)
+    if (body.itemCode) await assertItemCodeFree(body.conceptId, body.itemCode, null)
     const item = await prisma.menuItem.create({ data: body })
     return reply.status(201).send(item)
   })
@@ -196,6 +208,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
       assertSameConcept(item.conceptId, conceptId)
       if (data.categoryId) await assertCategoryOf(item.conceptId, data.categoryId)
       if (data.stationId) await assertStationOf(item.conceptId, data.stationId)
+      if (data.itemCode) await assertItemCodeFree(item.conceptId, data.itemCode, item.id)
       const updated = await prisma.menuItem.update({ where: { id: req.params.id }, data })
       // Seed Redis availability whenever portionsAvailable is set
       if (typeof body.portionsAvailable === 'number') {

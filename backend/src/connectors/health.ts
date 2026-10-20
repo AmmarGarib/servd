@@ -67,7 +67,9 @@ export async function connectorHealthChecks(): Promise<ConnectorHealth> {
         prisma.fiscalDocument.count({ where: { tenantId: { in: liveIds.filter((id) => !off.includes(id)) }, status: 'held' } }),
         prisma.fiscalDocument.count({ where: { ...scope, status: { in: ['pending', 'submitting'] }, createdAt: { lt: new Date(now.getTime() - 15 * 60_000) } } }),
         prisma.fiscalDocument.count({ where: { ...scope, status: { in: ['failed', 'rejected'] } } }),
-        prisma.fiscalDocument.count({ where: { ...scope, status: 'manual_required' } }),
+        // A sale closed in servd (till flow) waits for finance's portal filing — the
+        // month close's servd_sales_unfiled check, not a connector problem.
+        prisma.fiscalDocument.count({ where: { ...scope, status: 'manual_required', OR: [{ statusReason: null }, { statusReason: { not: 'servd_channel' } }] } }),
       ])
       if (held > 0) reasons.push(`${held} held (release them in Dev → API → POS connector)`)
       if (stale > 0) reasons.push(`${stale} not filed for 15+ min`)

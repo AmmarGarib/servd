@@ -21,7 +21,7 @@
 
 import type { Order, Payment, Concept, Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { ACCT, ON_ACCOUNT_MEMO, TILL_CLEARING_CODES, postJournalEntry, revenueCodeForConcept, withLateNote, type JournalLineInput, type RepostOptions } from './journal.js'
+import { ACCT, ON_ACCOUNT_MEMO, TILL_CLEARING_CODES, postJournalEntry, revenueCodeForConcept, saleRevenueCodeFor, withLateNote, type JournalLineInput, type RepostOptions } from './journal.js'
 import { tillClearingCodeTx } from './tillClearingCode.js'
 import { salesPostingDate } from '../nightAudit/lock.js'
 import { cogsLinesForOrders } from './cogs.js'
@@ -487,8 +487,9 @@ function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsLines: J
   // ── Credits: revenue + tax + service charge + tip ──────────────────────
   if (sa.grossRevenueCents > 0) {
     lines.push({
-      // The brand's own sales account (owner, 2026-10-17: one per brand).
-      accountCode: revenueCodeForConcept(order.concept),
+      // The brand's own sales account (owner, 2026-10-17: one per brand) — its
+      // servd sub-account when the bill was closed in servd (till flow, 2026-10-20).
+      accountCode: saleRevenueCodeFor(order),
       type: 'credit',
       amountCents: sa.grossRevenueCents,
       memo: conceptMemo,
@@ -735,7 +736,7 @@ export function refundDebitLines(
   return shareDebitLines(order, refundShareOf(order, priorCents, amountCents), memo, taxAccountCode, revenueAccountCode)
 }
 
-type RevenueConcept = { slug: string; revenueAccountCode?: string | null }
+type RevenueConcept = { slug: string; revenueAccountCode?: string | null; servdRevenueAccountCode?: string | null }
 
 /** The debit lines of one refund split (refundShareOf, or a void's exact split), tagged with the brand. */
 export function shareDebitLines(
@@ -797,6 +798,14 @@ type BookingOrder = {
   id: string
   conceptId: string
   source: string
+  /**
+   * Till flow (2026-10-20): how the bill was closed. With the brand's codes it
+   * picks, in a shift close that carries BOTH of the brand's sales accounts,
+   * the one THIS sale credited. Optional: callers that omit it get the
+   * largest brand revenue line, as before.
+   */
+  settlementChannel?: string | null
+  concept?: Partial<RevenueConcept> & { tenantId?: string | null }
   payments: Parameters<typeof homeShiftOf>[0]['payments']
   giftCardRedemptions: Array<{ amountCents: number }>
 }
@@ -836,8 +845,11 @@ export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrde
   })
 
   // The sales account the sale credited for this brand (one per brand since
-  // 2026-10-17; 4090 before). Brand-tagged, like the tax line.
-  const revenueLine = await db.journalLine.findFirst({
+  // 2026-10-17; 4090 before). Brand-tagged, like the tax line. A shift close
+  // can carry BOTH of a brand's accounts (main + servd sub-account, till flow
+  // 2026-10-20): the one this sale's channel books to is preferred; a sale not
+  // closed in servd never takes the servd sub-account.
+  const revenueLines = await db.journalLine.findMany({
     where: {
       journalEntryId: { in: entries.map((e) => e.id) },
       type: 'credit',
@@ -847,6 +859,15 @@ export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrde
     orderBy: { amountCents: 'desc' },
     select: { account: { select: { code: true } } },
   })
+  const codes = revenueLines.map((l) => l.account.code)
+  let revenueCode: string | null = codes[0] ?? null
+  if (order.concept?.slug && codes.length > 1) {
+    const expected = saleRevenueCodeFor({ settlementChannel: order.settlementChannel ?? null, concept: { ...order.concept, slug: order.concept.slug } })
+    const servdCode = order.concept.servdRevenueAccountCode ?? null
+    if (codes.includes(expected)) revenueCode = expected
+    else if (order.settlementChannel !== 'servd' && servdCode) revenueCode = codes.find((c) => c !== servdCode) ?? revenueCode
+  }
+  const revenueLine = revenueCode ? { account: { code: revenueCode } } : null
 
   // A 2080 debit naming the order, ANYWHERE in the company's books: the sale's
   // own line, or a backfill journal for a pre-ONL-05 sale whose memo names the
@@ -869,10 +890,10 @@ export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrde
  * account today (revenueCodeForConcept), where it will be booked.
  */
 export function refundRevenueAccountFor(
-  order: { concept: RevenueConcept },
+  order: { concept: RevenueConcept; settlementChannel?: string | null },
   booking: Pick<SaleBooking, 'saleRevenueAccount'> | null | undefined,
 ): string {
-  return booking?.saleRevenueAccount ?? revenueCodeForConcept(order.concept)
+  return booking?.saleRevenueAccount ?? saleRevenueCodeFor(order)
 }
 
 /**
@@ -958,9 +979,9 @@ export async function postRefundPayment(refundPaymentId: string, options: { tx?:
       gatewayMeta: true,
       order: {
         select: {
-          id: true, status: true, conceptId: true, source: true, totalCents: true, walletAmountCents: true, taxCents: true,
+          id: true, status: true, conceptId: true, source: true, settlementChannel: true, totalCents: true, walletAmountCents: true, taxCents: true,
           discountCents: true, promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
-          concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true } },
+          concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true, servdRevenueAccountCode: true } },
           // gatewayMeta: a TILL-R3 void refund's exact split (voidSplitOf).
           payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
           giftCardRedemptions: { select: { amountCents: true } },
@@ -1133,11 +1154,12 @@ export async function postOrderRefund(
       id: true,
       status: true,
       source: true,
+      settlementChannel: true,
       customerId: true,
       conceptId: true,
       totalCents: true, walletAmountCents: true, taxCents: true, discountCents: true,
       promoDiscountCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
-      concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true } },
+      concept: { select: { slug: true, tenantId: true, province: true, srbPosId: true, revenueAccountCode: true, servdRevenueAccountCode: true } },
       payments: { select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, gatewayMeta: true, createdAt: true } },
       loyaltyTxs: {
         where: { type: { in: ['earn', 'redeem'] } },

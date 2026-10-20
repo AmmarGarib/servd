@@ -8,7 +8,7 @@
 // till, card machine, receipts, refunds) before a vendor is chosen.
 
 import type {
-  ChargeRequest, ChargeState, ConnectorCtx, FiscalAuthority, FiscalDriver, FiscalLookupValue,
+  BillPushRequest, BillPushState, ChargeRequest, ChargeState, ConnectorCtx, FiscalAuthority, FiscalDriver, FiscalLookupValue,
   FiscalPayload, FiscalResult, FiscalSettings, FiscalSubmitValue, Outcome, TerminalDriver, TerminalSettings,
 } from '../types.js'
 import { prisma } from '../../lib/prisma.js'
@@ -16,7 +16,7 @@ import { sha256Hex, sleep } from '../util.js'
 
 /** Per-process call counter — for tests only. */
 export const testDriverCalls = {
-  submitSale: 0, submitRefund: 0, getDocumentStatus: 0, fiscalHealth: 0,
+  submitSale: 0, submitRefund: 0, getDocumentStatus: 0, fiscalHealth: 0, pushBill: 0, getBillPush: 0,
   startCharge: 0, getChargeStatus: 0, cancelCharge: 0, voidCharge: 0, refund: 0, terminalHealth: 0,
 }
 export function resetTestDriverCalls(): void {
@@ -69,11 +69,36 @@ async function submit(ctx: ConnectorCtx, p: FiscalPayload): Promise<Outcome<Fisc
   }
 }
 
+/**
+ * The test POS's answer to a pushed bill (till flow, 2026-10-20): settled at
+ * once for exactly what was pushed (deterministic refs from the push id), or
+ * the scenario in settings.test.push ('decline' / 'pending').
+ */
+function testPush(ctx: ConnectorCtx, r: Pick<BillPushRequest, 'pushId' | 'method' | 'amountCents' | 'tipCents'>): BillPushState {
+  const mode = (ctx.settings as FiscalSettings).test?.push ?? 'settle'
+  if (mode === 'decline') return { state: 'declined', reason: 'Test POS declined the bill (scenario push=decline)' }
+  if (mode === 'pending') return { state: 'pending', providerRef: `KP-${r.pushId}` }
+  const h = sha256Hex(`${ctx.tenantId}:${r.pushId}`)
+  return { state: 'settled', providerRef: `KP-${r.pushId}`, approvalRef: `TESTKEENU-${h.slice(0, 8).toUpperCase()}`, method: r.method, amountCents: r.amountCents, tipCents: r.tipCents }
+}
+
 export const testFiscalDriver: FiscalDriver = {
   id: 'test',
   label: 'Test (built in — files TEST numbers, never a real invoice)',
   needs: { baseUrl: false, apiKey: false, webhookSecret: false },
-  capabilities: () => ({ refunds: true, zeroValue: true, lookup: true }),
+  capabilities: () => ({ refunds: true, zeroValue: true, lookup: true, billPush: true }),
+  async pushBill(ctx, r) {
+    testDriverCalls.pushBill++
+    return ok(testPush(ctx, r))
+  },
+  async getBillPush(ctx, r) {
+    testDriverCalls.getBillPush++
+    // Stateless: a pending push stays pending until the scenario changes; then it settles for what servd stored.
+    const order = await prisma.order.findFirst({ where: { settlementMeta: { path: ['keenu', 'pushId'], equals: r.pushId }, concept: { tenantId: ctx.tenantId } }, select: { settlementMeta: true } })
+    const k = (order?.settlementMeta as { keenu?: { method?: 'cash' | 'card'; amountCents?: number; tipCents?: number } } | null)?.keenu
+    if (!k?.method || typeof k.amountCents !== 'number') return ok({ state: 'not_found' })
+    return ok(testPush(ctx, { pushId: r.pushId, method: k.method, amountCents: k.amountCents, tipCents: k.tipCents ?? 0 }))
+  },
   async submitSale(ctx, p) {
     testDriverCalls.submitSale++
     return submit(ctx, p)

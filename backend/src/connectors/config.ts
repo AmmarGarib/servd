@@ -40,6 +40,8 @@ export const fiscalSettingsSchema = z.object({
   paths: z.object({ sales: pathSchema, refunds: pathSchema, documents: pathSchema, health: pathSchema }).partial().optional(),
   test: z.object({
     scenario: z.enum(['ok', 'slow', 'down', 'reject', 'auth', 'processing_then_ok', 'unknown_then_filed']),
+    // Keenu bill push (till flow, 2026-10-20): what the test POS does with a pushed bill. Default 'settle'.
+    push: z.enum(['settle', 'decline', 'pending']).optional(),
   }).optional(),
 })
 

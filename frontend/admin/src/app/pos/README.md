@@ -4,7 +4,7 @@ Admin route: **/pos**. Next.js App Router page module — `page.tsx` is the entr
 
 ## Files
 
-- `page.tsx` — Next.js page component (server or client)
+- `page.tsx` — the till flow controller: start menu (Dine In, Delivery, No Charge, Order Summary; Manager; Other/Takeaway) -> table board -> Order Information -> order screen -> Settle (close in servd / push to Keenu). Screens live in `components/pos/flow/`; contract `backend/src/modules/pos/TILL_FLOW.md`
 
 ## Subdirectories
 

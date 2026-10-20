@@ -30,6 +30,7 @@ export async function assertNoActiveTerminalChargeTx(
   orderId: string,
   exceptChargeId?: string | null,
   exceptRaastReceiptId?: string | null,
+  exceptKeenuPushId?: string | null,
 ): Promise<void> {
   const active = await tx.terminalCharge.findFirst({
     where: { orderId, kind: 'charge', status: { in: ACTIVE_CHARGE_STATUSES }, ...(exceptChargeId && { id: { not: exceptChargeId } }) },
@@ -53,6 +54,18 @@ export async function assertNoActiveTerminalChargeTx(
       'This bill is waiting for a Raast QR transfer — wait for the bank SMS, enter the reference by hand, or cancel Raast before doing anything else with it',
       409,
       { receiptId: raast.id },
+    )
+  }
+  // Till flow (2026-10-20): a bill pushed to Keenu whose outcome is not known
+  // yet is Keenu's to settle — nothing else touches it (pos/keenuPush.ts).
+  const o = await tx.order.findUnique({ where: { id: orderId }, select: { settlementChannel: true, settlementMeta: true } })
+  const push = o?.settlementChannel === 'keenu' ? (o.settlementMeta as { keenu?: { state?: string; pushId?: string } } | null)?.keenu : null
+  if (push && (push.state === 'pending' || push.state === 'needs_attention') && push.pushId !== exceptKeenuPushId) {
+    throw new AppError(
+      'KEENU_PUSH_PENDING',
+      'This bill was pushed to Keenu and its outcome is not known yet — check it on the till before doing anything else with it',
+      409,
+      { pushId: push.pushId },
     )
   }
 }

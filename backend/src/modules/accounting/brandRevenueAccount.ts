@@ -23,6 +23,15 @@
 // History never moves: sales already credited to 4090 stay there, and their
 // refunds / reversals debit 4090 (orderPosting.ts saleBookingOf reads the
 // account the sale credited).
+//
+// Two accounts per brand (till flow, owner 2026-10-20): every brand also gets
+// its servd SUB-ACCOUNT "Sales — <brand> (servd)" (Concept.servdRevenueAccountCode)
+// at the LAST free code of the same range (4089 downward), assigned with the main one at create
+// and by the same boot step. Bills closed in servd credit it; bills pushed to
+// Keenu (and legacy sales) credit the main one. Both are 40xx brand sales, so
+// the P&L, brand P&L, food cost and brandSalesRevenueCents count both; the
+// readers that map an ACCOUNT to a brand (brandSalesByAccount, below — the
+// sales-tax return and allocations) list both codes.
 
 import type { Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -42,10 +51,29 @@ export function brandSalesAccountName(brandName: string): string {
   return `Sales — ${brandName}`.slice(0, 120)
 }
 
+/** The servd sub-account's name (till flow, 2026-10-20). */
+export function brandServdSalesAccountName(brandName: string): string {
+  return `Sales — ${brandName} (servd)`.slice(0, 120)
+}
+
 /** The first code in BRAND_SALES_RANGE that is in none of `taken`, or null when the range is full. */
 export function firstFreeBrandCode(taken: Iterable<string>): string | null {
   const used = new Set(taken)
   for (let n = BRAND_SALES_RANGE.from; n <= BRAND_SALES_RANGE.to; n++) {
+    const code = String(n)
+    if (!used.has(code)) return code
+  }
+  return null
+}
+
+/**
+ * The servd sub-account's code (till flow, 2026-10-20): the LAST free code in
+ * BRAND_SALES_RANGE (4089 downward), so main brand accounts keep numbering
+ * from 4010 upward exactly as before and the two never interleave.
+ */
+export function lastFreeBrandCode(taken: Iterable<string>): string | null {
+  const used = new Set(taken)
+  for (let n = BRAND_SALES_RANGE.to; n >= BRAND_SALES_RANGE.from; n--) {
     const code = String(n)
     if (!used.has(code)) return code
   }
@@ -60,14 +88,24 @@ async function lockCompanyChartTx(tx: Prisma.TransactionClient, tenantId: string
 async function takenCodesTx(tx: Prisma.TransactionClient, tenantId: string): Promise<Set<string>> {
   const [accounts, brands] = await Promise.all([
     tx.account.findMany({ where: { tenantId }, select: { code: true } }),
-    tx.concept.findMany({ where: { tenantId, revenueAccountCode: { not: null } }, select: { revenueAccountCode: true } }),
+    tx.concept.findMany({
+      where: { tenantId, OR: [{ revenueAccountCode: { not: null } }, { servdRevenueAccountCode: { not: null } }] },
+      select: { revenueAccountCode: true, servdRevenueAccountCode: true },
+    }),
   ])
-  return new Set([...accounts.map((a) => a.code), ...brands.map((b) => b.revenueAccountCode!)])
+  const out = new Set(accounts.map((a) => a.code))
+  for (const b of brands) {
+    if (b.revenueAccountCode) out.add(b.revenueAccountCode)
+    if (b.servdRevenueAccountCode) out.add(b.servdRevenueAccountCode)
+  }
+  return out
 }
 
 export interface BrandRevenueAccountResult {
   conceptId: string
   code: string | null
+  /** The brand's servd sub-account (till flow, 2026-10-20), or null when its company's range is full. */
+  servdCode?: string | null
   /** A new chart account was created for the brand. */
   created: boolean
 }
@@ -86,26 +124,43 @@ export async function ensureBrandRevenueAccountTx(tx: Prisma.TransactionClient, 
   const tenantId = head.tenantId
   await lockCompanyChartTx(tx, tenantId)
   // Re-read under the lock: a parallel call may have assigned it.
-  const c = await tx.concept.findUnique({ where: { id: conceptId }, select: { tenantId: true, slug: true, name: true, revenueAccountCode: true } })
-  if (!c || c.tenantId !== tenantId) return { conceptId, code: c?.revenueAccountCode ?? null, created: false }
+  const c = await tx.concept.findUnique({ where: { id: conceptId }, select: { tenantId: true, slug: true, name: true, revenueAccountCode: true, servdRevenueAccountCode: true } })
+  if (!c || c.tenantId !== tenantId) return { conceptId, code: c?.revenueAccountCode ?? null, servdCode: c?.servdRevenueAccountCode ?? null, created: false }
 
-  const code = c.revenueAccountCode ?? CONCEPT_REVENUE_CODE[c.slug] ?? firstFreeBrandCode(await takenCodesTx(tx, tenantId))
-  if (!code) return { conceptId, code: null, created: false }
+  const taken = await takenCodesTx(tx, tenantId)
+  const code = c.revenueAccountCode ?? CONCEPT_REVENUE_CODE[c.slug] ?? firstFreeBrandCode(taken)
   let created = false
-  const existing = await tx.account.findFirst({ where: { tenantId, code }, select: { id: true } })
-  if (!existing) {
-    await tx.account.create({
-      data: {
-        tenantId, code, name: brandSalesAccountName(c.name), type: 'revenue', isActive: true,
-        description: `Sales of the brand ${c.name} (one sales account per brand)`,
-      },
-    })
-    created = true
+  if (code) {
+    taken.add(code)
+    const existing = await tx.account.findFirst({ where: { tenantId, code }, select: { id: true } })
+    if (!existing) {
+      await tx.account.create({
+        data: {
+          tenantId, code, name: brandSalesAccountName(c.name), type: 'revenue', isActive: true,
+          description: `Sales of the brand ${c.name} (one sales account per brand)`,
+        },
+      })
+      created = true
+    }
   }
-  if (c.revenueAccountCode !== code) {
-    await tx.concept.update({ where: { id: conceptId }, data: { revenueAccountCode: code } })
+  // The servd sub-account (till flow, 2026-10-20) — a code of its own, never the main one.
+  const servdCode = c.servdRevenueAccountCode && c.servdRevenueAccountCode !== code ? c.servdRevenueAccountCode : lastFreeBrandCode(taken)
+  if (servdCode) {
+    const existing = await tx.account.findFirst({ where: { tenantId, code: servdCode }, select: { id: true } })
+    if (!existing) {
+      await tx.account.create({
+        data: {
+          tenantId, code: servdCode, name: brandServdSalesAccountName(c.name), type: 'revenue', isActive: true,
+          description: `Sales of the brand ${c.name} closed in servd (filed by hand on the SRB / FBR portal) — the brand's servd sub-account`,
+        },
+      })
+      created = true
+    }
   }
-  return { conceptId, code, created }
+  if (c.revenueAccountCode !== code || c.servdRevenueAccountCode !== servdCode) {
+    await tx.concept.update({ where: { id: conceptId }, data: { revenueAccountCode: code ?? null, servdRevenueAccountCode: servdCode ?? null } })
+  }
+  return { conceptId, code: code ?? null, servdCode: servdCode ?? null, created }
 }
 
 /** ensureBrandRevenueAccountTx in its own transaction (service client — the chart is written for the brand's company). */
@@ -120,7 +175,7 @@ export async function ensureBrandRevenueAccount(conceptId: string): Promise<Bran
  */
 export async function ensureBrandRevenueAccounts(): Promise<BrandRevenueAccountResult[]> {
   const brands = await prisma.concept.findMany({
-    where: { revenueAccountCode: null, tenantId: { not: null }, deletedAt: null },
+    where: { OR: [{ revenueAccountCode: null }, { servdRevenueAccountCode: null }], tenantId: { not: null }, deletedAt: null },
     select: { id: true },
     orderBy: { createdAt: 'asc' },
   })
@@ -144,10 +199,16 @@ export async function renumberClashingBrandAccountsTx(
   dst: string,
 ): Promise<Array<{ conceptId: string; from: string; to: string }>> {
   await lockCompanyChartTx(tx, dst)
-  const brands = await tx.concept.findMany({
-    where: { tenantId: { in: [src, dst] }, revenueAccountCode: { not: null } },
-    select: { id: true, tenantId: true, revenueAccountCode: true },
+  const rows = await tx.concept.findMany({
+    where: { tenantId: { in: [src, dst] }, OR: [{ revenueAccountCode: { not: null } }, { servdRevenueAccountCode: { not: null } }] },
+    select: { id: true, tenantId: true, revenueAccountCode: true, servdRevenueAccountCode: true },
   })
+  // One entry per (brand, field): the main account and the servd sub-account
+  // (till flow, 2026-10-20) are renumbered by the same rule.
+  type Field = 'revenueAccountCode' | 'servdRevenueAccountCode'
+  const brands = rows.flatMap((r) => (['revenueAccountCode', 'servdRevenueAccountCode'] as Field[])
+    .filter((f) => !!r[f])
+    .map((f) => ({ id: r.id, tenantId: r.tenantId, field: f, revenueAccountCode: r[f] as string })))
   const srcBrands = brands.filter((b) => b.tenantId === src && isBrandAccountRangeCode(b.revenueAccountCode!))
   if (srcBrands.length === 0) return []
   const taken = new Set([...(await takenCodesTx(tx, src)), ...(await takenCodesTx(tx, dst))])
@@ -161,16 +222,16 @@ export async function renumberClashingBrandAccountsTx(
     if (renumbered.has(from)) {
       // Two source brands on one code (only by hand): follow the first move.
       const moved = out.find((o) => o.from === from)!
-      await tx.concept.update({ where: { id: b.id }, data: { revenueAccountCode: moved.to } })
+      await tx.concept.update({ where: { id: b.id }, data: { [b.field]: moved.to } })
       out.push({ conceptId: b.id, from, to: moved.to })
       continue
     }
-    const to = firstFreeBrandCode(taken)
+    const to = b.field === 'servdRevenueAccountCode' ? lastFreeBrandCode(taken) : firstFreeBrandCode(taken)
     if (!to) continue   // range full: left to the code-by-code merge (reported by the caller's counts)
     taken.add(to)
     renumbered.add(from)
     await tx.account.updateMany({ where: { tenantId: src, code: from }, data: { code: to } })
-    await tx.concept.update({ where: { id: b.id }, data: { revenueAccountCode: to } })
+    await tx.concept.update({ where: { id: b.id }, data: { [b.field]: to } })
     out.push({ conceptId: b.id, from, to })
   }
   return out
@@ -195,13 +256,14 @@ type SalesDb = Pick<typeof prisma, 'journalLine' | 'account'> | Prisma.Transacti
 export async function brandSalesByAccount(
   db: SalesDb,
   tenantId: string,
-  concepts: Array<{ id: string; slug: string; revenueAccountCode?: string | null }>,
+  concepts: Array<{ id: string; slug: string; revenueAccountCode?: string | null; servdRevenueAccountCode?: string | null }>,
   window: { from: Date; to: Date },
 ): Promise<{ byConcept: Map<string, number>; otherCents: number }> {
   const users = new Map<string, string[]>()
   for (const c of concepts) {
-    const code = revenueCodeForConcept(c)
-    users.set(code, [...(users.get(code) ?? []), c.id])
+    // The main account and the servd sub-account (till flow, 2026-10-20): both the brand's sales.
+    const codes = new Set([revenueCodeForConcept(c), ...(c.servdRevenueAccountCode ? [c.servdRevenueAccountCode] : [])])
+    for (const code of codes) users.set(code, [...(users.get(code) ?? []), c.id])
   }
   const codes = Array.from(new Set([...users.keys(), REVENUE_FALLBACK_CODE]))
   const accounts = await db.account.findMany({ where: { tenantId, code: { in: codes } }, select: { id: true, code: true } })
