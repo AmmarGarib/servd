@@ -33,6 +33,7 @@
 //
 // Lock order (onAccount.ts): order → client account → invoice / statement.
 
+import { exportFormatOf, sendReport, type ReportRow, type ReportTable } from '../../lib/reportExport.js'
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { CustomerAccount, CustomerAccountCharge, Prisma, ReceivableInvoice } from '@prisma/client'
@@ -211,7 +212,7 @@ function statementView(inv: ReceivableInvoice) {
  * due, the due date and the company's bank details. Read in the statement's
  * own company only.
  */
-export async function renderStatementHtml(inv: ReceivableInvoice): Promise<string> {
+async function loadStatement(inv: ReceivableInvoice) {
   const tenantId = inv.tenantId
   const [company, account, charges, banks] = await Promise.all([
     prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
@@ -256,6 +257,47 @@ export async function renderStatementHtml(inv: ReceivableInvoice): Promise<strin
   const thisCents = inv.status === 'void' ? 0 : balanceOf(inv)
   const dueCents = previousCents + thisCents
   const total = totalOf(inv)
+  return { company, account, charges, banks, brandOf, cardOf, fiscalOf, previousCents, thisCents, dueCents, total }
+}
+
+/**
+ * The statement as a report table (?format=csv|xlsx|pdf on the printable
+ * route, lib/reportExport.ts): the same bills, totals, previous balance and
+ * total due as the printed copy.
+ */
+export async function statementReport(inv: ReceivableInvoice): Promise<ReportTable> {
+  const { company, account, charges, cardOf, brandOf, fiscalOf, previousCents, thisCents, dueCents, total } = await loadStatement(inv)
+  const rows: ReportRow[] = charges.map((c) => {
+    const card = c.cardId ? cardOf.get(c.cardId) : undefined
+    return {
+      date: karachiDay(c.chargedAt), order: orderRefOf(c.orderId), brand: brandOf.get(c.conceptId) ?? '',
+      card: card ? `${card.label} ··${card.tokenHint}` : '', reference: c.reference ?? '', fiscalNo: fiscalOf.get(c.orderId) ?? '',
+      amountCents: toCents(c.amountCents), refundedCents: toCents(c.refundedCents) || null, netCents: chargeNetCents(c),
+    }
+  })
+  const sum = (label: string, cents: number) => ({ date: '', order: '', brand: label, card: '', reference: '', fiscalNo: '', amountCents: null, refundedCents: null, netCents: cents })
+  rows.push(sum('THIS STATEMENT', total))
+  if (total !== thisCents) rows.push(sum('Paid / credited since', -(total - thisCents)))
+  rows.push(sum('Previous balance', previousCents))
+  rows.push(sum('TOTAL DUE', dueCents))
+  return {
+    title: `Statement ${inv.number} — ${account?.legalName ?? inv.customerName}`,
+    companies: company?.name ? [company.name] : [],
+    period: `${inv.periodFrom ? dayOf(inv.periodFrom) : ''} to ${inv.periodTo ? dayOf(inv.periodTo) : ''} · issued ${dayOf(inv.issueDate)} · due ${dayOf(inv.dueDate)}`,
+    rows,
+    labels: { fiscalNo: 'Fiscal no.', amountCents: 'Amount', refundedCents: 'Refunded', netCents: 'Net' },
+    types: { amountCents: 'cents', refundedCents: 'cents', netCents: 'cents' },
+    isTotal: (r) => r.brand === 'THIS STATEMENT' || r.brand === 'TOTAL DUE',
+    notes: [
+      'Statement — not a tax invoice. Each bill was charged on account at the till; its tax invoice is the fiscal receipt numbered on its line.',
+      ...(inv.status === 'void' ? ['This statement has been voided.'] : []),
+      `Please quote ${inv.number} as the payment reference.`,
+    ],
+  }
+}
+
+export async function renderStatementHtml(inv: ReceivableInvoice): Promise<string> {
+  const { company, account, charges, banks, brandOf, cardOf, fiscalOf, previousCents, thisCents, dueCents, total } = await loadStatement(inv)
 
   const td = (s: string, right = false) => `<td${right ? ' style="text-align:right"' : ''}>${s}</td>`
   const lines = charges.map((c) => {
@@ -374,8 +416,11 @@ export async function statementRoutes(app: FastifyInstance): Promise<void> {
   })
 
   // ── Printable ──
-  app.get<{ Params: { invoiceId: string } }>('/statements/:invoiceId/html', viewers, async (req, reply) => {
+  // ?format=csv|xlsx|pdf: the same statement as a file (same viewers and scope).
+  app.get<{ Params: { invoiceId: string }; Querystring: { format?: string } }>('/statements/:invoiceId/html', viewers, async (req, reply) => {
     const inv = await findStatement(req, req.params.invoiceId, 'read')
+    const format = exportFormatOf(req.query.format)
+    if (format) return sendReport(reply, format, `statement-${inv.number}`, await statementReport(inv))
     return reply.type('text/html; charset=utf-8').send(await renderStatementHtml(inv))
   })
 

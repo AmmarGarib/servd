@@ -13,6 +13,7 @@ import { api } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 import { usePermissions } from '../../../hooks/useCan'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type Section = '153_1_a' | '153_1_b' | '153_1_c' | '155'
 interface Row {
@@ -65,11 +66,6 @@ export default function WithholdingRegister({ from, to }: { from: string; to: st
     queryFn: () => api.get<Register>(`/accounting/withholding/register?from=${from}&to=${to}`),
   })
   const [csvError, setCsvError] = useState<string | null>(null)
-  async function exportCsv() {
-    setCsvError(null)
-    try { await api.download(`/accounting/withholding/register?from=${from}&to=${to}&format=csv`, `withholding-register-${from}-${to}.csv`) }
-    catch (e) { setCsvError(errText(e)) }
-  }
 
   // A document links to its page only for a login that can open it.
   const { data: me } = usePermissions()
@@ -82,9 +78,9 @@ export default function WithholdingRegister({ from, to }: { from: string; to: st
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-s-muted">Income tax withheld from vendors, {from} → {to}. File it with your CA (s.165 statement).</p>
-        <button type="button" onClick={exportCsv} className="s-btn-secondary text-sm">Download CSV</button>
+        <ExportMenu path={`/accounting/withholding/register?from=${from}&to=${to}`} filename={`withholding-register-${from}-${to}`} onError={(m) => setCsvError(m)} />
       </div>
-      {csvError && <p className="text-s-red text-sm">CSV download failed: {csvError}</p>}
+      {csvError && <p className="text-s-red text-sm">Export failed: {csvError}</p>}
       {q.isLoading && <p className="text-s-muted text-sm">Loading…</p>}
       {q.isError && <p className="text-s-red text-sm">{errText(q.error)}</p>}
       {d && (

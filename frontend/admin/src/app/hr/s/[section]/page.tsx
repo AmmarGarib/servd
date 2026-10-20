@@ -13,6 +13,7 @@ import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } fr
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
 import { Select } from '@/components/ui/Select'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 export default function HrSectionPage() {
   const { section } = useParams<{ section: string }>()
@@ -59,7 +60,7 @@ export default function HrSectionPage() {
       title={info?.title ?? human(section)}
       subtitle={[info ? `Spec §${info.specNo}.` : '', info?.effect ?? ''].filter(Boolean).join(' ')}
       actions={<>
-        <button className={btnGhost} onClick={() => { setCsvErr(''); api.download(`/hr/records/${section}/export.csv`, `hr-${section}.csv`).catch((e: Error) => setCsvErr(e.message)) }}>Export CSV</button>
+        <ExportMenu className={btnGhost} path={`/hr/records/${section}/export.csv`} filename={`hr-${section}`} onError={(m) => setCsvErr(m)} />
         {section === 'final_settlement' && isPayrollPayer && (
           <button className={btnGhost} disabled={backfill.isPending} onClick={() => { setBackfillMsg(''); backfill.mutate() }}>
             {backfill.isPending ? 'Booking…' : 'Post approved settlements'}

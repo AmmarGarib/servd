@@ -20,6 +20,7 @@ import { roleLabel } from '../../../../lib/appRoles'
 import { RecordFiles } from '@/components/files/RecordFiles'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface Profile {
   employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
@@ -292,7 +293,13 @@ function PayTab({ p }: { p: Profile }) {
   return (
     <div className="grid lg:grid-cols-2 gap-4">
       <div className="rounded-2xl p-4" style={card}>
-        <p className="text-sm font-black text-white/85 mb-3">Loans & advances</p>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-sm font-black text-white/85">Loans & advances</p>
+          {p.loans.length > 0 && (
+            <ExportMenu className={btnGhost} label="Statement" path={`/hr/employees/${p.employee.id}/loan-statement`}
+              filename={`loan-statement-${p.employee.employeeCode || p.employee.id.slice(-8)}`} />
+          )}
+        </div>
         {p.loans.length === 0 && <p className="text-xs text-white/40">None.</p>}
         {p.loans.map((l) => (
           <div key={l.id} className="text-sm py-2 border-t border-white/[0.05] first:border-t-0">

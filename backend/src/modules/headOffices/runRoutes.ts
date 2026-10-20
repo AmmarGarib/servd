@@ -22,6 +22,8 @@
 // the head office's trail AND each company's on the run (A19: never the
 // caller's active company).
 
+import { exportFormatOf, sendReport, type ReportRow } from '../../lib/reportExport.js'
+import { fmtPkr } from '../accounting/csv.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
@@ -174,7 +176,8 @@ export async function rechargeRunRoutes(fastify: FastifyInstance) {
   })
 
   // ─── Statement, close status, summary ──────────────────────────────────────
-  fastify.get<{ Querystring: { headOfficeId?: string; companyId?: string; from?: string; to?: string } }>('/statement', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+  // ?format=csv|xlsx|pdf exports the pair's statement (lib/reportExport.ts); same viewers, same pair check.
+  fastify.get<{ Querystring: { headOfficeId?: string; companyId?: string; from?: string; to?: string; format?: string } }>('/statement', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req, reply) => {
     const hoId = req.query.headOfficeId ?? ''
     const companyId = req.query.companyId ?? ''
     if (!(await maySeePair(actorOf(req), hoId, companyId))) throw new NotFoundError('Head office pair', `${hoId}:${companyId}`)
@@ -182,7 +185,25 @@ export async function rechargeRunRoutes(fastify: FastifyInstance) {
     const from = req.query.from ? dateParam(req.query.from, 'from') : `${addMonths(current, -2)}-01`
     const to = req.query.to ? dateParam(req.query.to, 'to') : new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10)
     if (from > to) throw new AppError('INVALID_RANGE', 'from is after to', 422)
-    return headOfficeStatement(serviceClient, hoId, companyId, parsePktStartOfDay(from), parsePktEndOfDay(to))
+    const st = await headOfficeStatement(serviceClient, hoId, companyId, parsePktStartOfDay(from), parsePktEndOfDay(to))
+    const format = exportFormatOf(req.query.format)
+    if (!format) return st
+    const names = await serviceClient.tenant.findMany({ where: { id: { in: [hoId, companyId] } }, select: { id: true, name: true } })
+    const nameOf = (id: string) => names.find((n) => n.id === id)?.name ?? ''
+    let bal = st.openingCents
+    const rows: ReportRow[] = [{ date: from, category: '', description: 'OPENING BALANCE', reference: '', amountCents: null, balanceCents: bal }]
+    for (const r of st.rows) {
+      bal += r.cents
+      rows.push({ date: r.date.slice(0, 10), category: r.category, description: `${r.description}${r.reversal ? ' (reversal)' : ''}`, reference: r.reference ?? '', amountCents: r.cents, balanceCents: bal })
+    }
+    rows.push({ date: to, category: '', description: 'CLOSING BALANCE', reference: '', amountCents: null, balanceCents: st.closingCents })
+    return sendReport(reply, format, { base: 'head-office-statement', suffix: `${from}-${to}` }, {
+      title: `Head office statement — ${nameOf(companyId)}`, companies: [nameOf(hoId)].filter(Boolean),
+      period: `${from} to ${to} · owed by the company to the head office (head office's books)`,
+      rows, types: { amountCents: 'cents', balanceCents: 'cents' }, labels: { amountCents: 'Amount' },
+      isTotal: (r) => r.description === 'OPENING BALANCE' || r.description === 'CLOSING BALANCE',
+      notes: [`By the company's books at ${to}: ${fmtPkr(st.companyClosingCents)} (difference ${fmtPkr(st.differenceCents)}).`],
+    })
   })
 
   fastify.get<{ Querystring: { tenantId?: string; through?: string } }>('/close-status', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {

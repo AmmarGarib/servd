@@ -5,7 +5,8 @@
 // eobi | sessi) — never a second payment engine.
 //
 //   GET  /         FINANCIALS_VIEWERS, the ACTIVE company: ?from=YYYY-MM&to=YYYY-MM
-//                  (default: the last six months) → statutorySummary + canPay.
+//                  (default: the last six months) → statutorySummary + canPay;
+//                  &format=csv|xlsx|pdf exports it (lib/reportExport.ts).
 //   GET  /reclass  FINANCIALS_VIEWERS, the ACTIVE company → reclassPreview + canPost.
 //   POST /reclass  admin, finance (TAX_PAYER_ROLES), the ACTIVE company:
 //                  { eobiCents, sessiCents, salaryTaxCents, note } → the
@@ -24,6 +25,7 @@ import { activeTenantId } from '../../lib/tenantScope.js'
 import { fmtPktDate, pktToday } from './dates.js'
 import { TAX_PAYER_ROLES } from './taxPayments.js'
 import { statutorySummary, reclassPreview, postReclass } from './statutory.js'
+import { exportFormatOf, sendReportFor, companyNamesOf, type ReportRow } from '../../lib/reportExport.js'
 
 const TAX_PAYERS = [...TAX_PAYER_ROLES] as UserRole[]
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/
@@ -38,6 +40,7 @@ function monthsBefore(month: string, n: number): string {
 const rangeQuery = z.object({
   from: z.string().regex(MONTH, 'Give the month as YYYY-MM').optional(),
   to: z.string().regex(MONTH, 'Give the month as YYYY-MM').optional(),
+  format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional(),
 })
 
 const reclassBody = z.object({
@@ -48,13 +51,37 @@ const reclassBody = z.object({
 })
 
 export async function statutoryRoutes(fastify: FastifyInstance): Promise<void> {
-  fastify.get('/', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+  fastify.get('/', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req, reply) => {
     const q = rangeQuery.parse(req.query ?? {})
     const tenantId = activeTenantId(req, 'statutory payables are per company')
     const thisMonth = fmtPktDate(pktToday().from).slice(0, 7)
     const to = q.to ?? thisMonth
     const from = q.from ?? monthsBefore(to, 5)
     const summary = await statutorySummary(prisma, tenantId, from, to)
+    const format = exportFormatOf(q.format)
+    if (format) {
+      const rows: ReportRow[] = []
+      for (const s of summary.schemes) {
+        for (const m of summary.months) {
+          const c = m[s.key]
+          rows.push({
+            scheme: `${s.label} (${s.account})`, month: m.month,
+            accruedCents: c.accruedCents + c.legacyAccruedCents, reclassCents: c.reclassCents, paidCents: c.paidCents, owedCents: c.owedCents,
+            balanceAtMonthEndCents: c.balanceAtMonthEndCents,
+            challans: c.payments.map((p) => `${p.paidAt}${p.cprNumber ? ` CPR ${p.cprNumber}` : ''}`).join('; '),
+          })
+        }
+        const t = summary.totals[s.key]
+        rows.push({ scheme: `${s.label} (${s.account})`, month: 'TOTAL', accruedCents: t.accruedCents + t.legacyAccruedCents, reclassCents: t.reclassCents, paidCents: t.paidCents, owedCents: t.owedCents, balanceAtMonthEndCents: null, challans: '' })
+      }
+      return sendReportFor(req, reply, format, { base: 'statutory-payables', suffix: `${from}-to-${to}` }, {
+        title: 'Statutory payables — accrued vs paid', companies: await companyNamesOf([tenantId]), period: `${from} to ${to}`,
+        rows, sectionKey: 'scheme', csvEmpty: 'header',
+        labels: { accruedCents: 'Accrued', reclassCents: 'Reclassified', paidCents: 'Paid', owedCents: 'Still owed', balanceAtMonthEndCents: 'Ledger balance at month end', challans: 'Payments' },
+        types: { accruedCents: 'cents', reclassCents: 'cents', paidCents: 'cents', owedCents: 'cents', balanceAtMonthEndCents: 'cents' },
+        isTotal: (r) => r.month === 'TOTAL',
+      })
+    }
     return { ...summary, canPay: TAX_PAYERS.includes(req.staffUser!.role) }
   })
 

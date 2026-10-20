@@ -13,6 +13,7 @@ import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { orderRef } from '../../../lib/orderRef'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface TaxInvoiceRow {
   id: string
@@ -63,10 +64,6 @@ export default function TaxInvoicesPage() {
     taxable: t.taxable + r.taxableValueCents, fbr: t.fbr + r.fbrTaxCents, prov: t.prov + r.provincialTaxCents, total: t.total + r.totalCents,
   }), { taxable: 0, fbr: 0, prov: 0, total: 0 })
 
-  const download = () => {
-    setErr('')
-    api.download(`/invoices/register.csv?${qs}`, `tax-invoices-${from}-${to}.csv`).catch((e: Error) => setErr(e.message))
-  }
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -76,7 +73,7 @@ export default function TaxInvoicesPage() {
           <p className="text-[11px] font-bold uppercase tracking-wider text-success">Sales tax</p>
           <h1 className="text-xl font-bold text-s-text">Tax invoices</h1>
         </div>
-        <button type="button" className="s-btn-secondary text-sm" onClick={download}>Download CSV</button>
+        <ExportMenu path={`/invoices/register.csv?${qs}`} filename={`tax-invoices-${from}-${to}`} onError={(m) => setErr(m)} />
       </header>
 
       <div className="px-4 sm:px-6 py-6 max-w-6xl mx-auto space-y-4">

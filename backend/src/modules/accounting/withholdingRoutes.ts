@@ -45,7 +45,8 @@ import {
 } from '../../lib/withholding.js'
 import { TAX_PAYER_ROLES } from './taxPayments.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay, pktToday } from './dates.js'
-import { toCsv, fmtPkr } from './csv.js'
+import { fmtPkr } from './csv.js'
+import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
 
 const RATE_EDITORS = [...TAX_PAYER_ROLES] as UserRole[]
 
@@ -339,7 +340,8 @@ export async function withholdingRoutes(fastify: FastifyInstance): Promise<void>
       const scope = await resolveTenantScope(req)
       const rows = await withholdingRegister(prisma, scope.tenantIds, from, to)
 
-      if (q.format === 'csv') {
+      const format = exportFormatOf(q.format)
+      if (format) {
         const csvRows = rows.map((r) => ({
           Company: r.company,
           Date: r.date,
@@ -354,10 +356,12 @@ export async function withholdingRoutes(fastify: FastifyInstance): Promise<void>
           WHT: fmtPkr(r.whtCents),
         }))
         const columns = ['Company', 'Date', 'Source', 'Document', 'Vendor', 'NTN', 'Filer status', 'Section', 'Rate %', 'Base', 'WHT']
-        reply.header('Content-Type', 'text/csv; charset=utf-8')
-        reply.header('Content-Disposition', `attachment; filename="withholding-register-${fromIso}-${toIso}.csv"`)
         // An empty register still gets its header row.
-        return reply.send(csvRows.length > 0 ? toCsv(csvRows, columns) : `﻿${columns.join(',')}\r\n`)
+        return sendReportFor(req, reply, format, { base: 'withholding-register', suffix: `${fromIso}-${toIso}` }, {
+          title: 'Withholding tax register', period: `${fromIso} to ${toIso}`,
+          rows: csvRows, columns: columns.map((key) => ({ key, label: key })), csvEmpty: 'header',
+          types: { 'Rate %': 'number', Base: 'pkr', WHT: 'pkr' },
+        })
       }
 
       const totals = { baseCents: 0, whtCents: 0, bySection: {} as Record<string, number> }

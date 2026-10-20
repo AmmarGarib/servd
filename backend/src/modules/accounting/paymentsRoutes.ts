@@ -6,11 +6,11 @@
 //   GET /                      PAYMENT_READERS (CEO, owner, management, finance), resolveTenantScope:
 //                              ?classification=official|unofficial|unclassified|all
 //                              &from&to (YYYY-MM-DD PKT, default this month)
-//                              &category&method&q[&format=csv]. Rows, totals per
+//                              &category&method&q[&format=csv|xlsx|pdf]. Rows, totals per
 //                              classification (of the period, after category /
 //                              method / q) and the tie-out of ALL the period's
 //                              payments to the ledger.
-//   GET /payments.csv          the same as CSV.
+//   GET /payments.csv          the same as CSV (?format=xlsx|pdf for Excel / PDF; lib/reportExport.ts).
 //   GET /:journalEntryId       one payment + its classification history (read scope; foreign 404).
 //   PUT /:journalEntryId/classification
 //                              CEO, or finance with 'accounting' (403 otherwise):
@@ -37,7 +37,8 @@ import { requireAuth } from '../auth/middleware.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from './dates.js'
-import { toCsv, fmtPkr } from './csv.js'
+import { fmtPkr } from './csv.js'
+import { exportFormatOf, sendReportFor, type ExportFormat } from '../../lib/reportExport.js'
 import { NotFoundError } from '../../lib/errors.js'
 import {
   PAYMENT_CATEGORIES, PAYMENT_CLASSIFICATIONS, TAX_STATUSES, PAYMENT_METHOD_LABELS,
@@ -57,7 +58,7 @@ const listQuery = z.object({
   category: z.enum(Object.keys(PAYMENT_CATEGORIES) as [PaymentCategory, ...PaymentCategory[]]).optional(),
   method: z.enum(Object.keys(PAYMENT_METHOD_LABELS) as [PaymentMethodKind, ...PaymentMethodKind[]]).optional(),
   q: z.string().max(100).optional(),
-  format: z.enum(['json', 'csv']).optional(),
+  format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional(),
 })
 
 const CLASS_LABEL: Record<string, string> = { official: 'Official', unofficial: 'Unofficial', unclassified: 'Unclassified' }
@@ -97,8 +98,8 @@ async function register(req: FastifyRequest) {
   }
 }
 
-function csvOf(rows: Array<PaymentRow & { companyName: string | null }>, multi: boolean): string {
-  return toCsv(rows.map((r) => ({
+function recordsOf(rows: Array<PaymentRow & { companyName: string | null }>, multi: boolean) {
+  return rows.map((r) => ({
     ...(multi && { company: r.companyName ?? '' }),
     voucher_number: r.voucherNumber,
     date: fmtPktDate(new Date(r.entryDate)),
@@ -114,13 +115,18 @@ function csvOf(rows: Array<PaymentRow & { companyName: string | null }>, multi: 
     non_deduction_reason: r.nonDeductionReason ?? '',
     ledger_reference: r.reference ?? '',
     journal_entry_id: r.journalEntryId,
-  })))
+  }))
 }
 
-function sendCsv(reply: FastifyReply, filename: string, body: string) {
-  reply.header('Content-Type', 'text/csv; charset=utf-8')
-  reply.header('Content-Disposition', `attachment; filename="${filename}"`)
-  return reply.send(body)
+function sendRegister(req: FastifyRequest, reply: FastifyReply, format: ExportFormat, out: Awaited<ReturnType<typeof register>>) {
+  return sendReportFor(req, reply, format, { base: 'payments', suffix: `${out.query.classification}-${out.from}-to-${out.to}` }, {
+    title: `Payments register${out.query.classification === 'all' ? '' : ` — ${CLASS_LABEL[out.query.classification]}`}`,
+    period: `${out.from} to ${out.to}`,
+    rows: recordsOf(out.rows, out.multiCompany),
+    types: { gross: 'pkr', withholding_tax: 'pkr', net: 'pkr' },
+    labels: { journal_entry_id: 'Journal entry' },
+    notes: [out.note],
+  })
 }
 
 export async function paymentsRoutes(fastify: FastifyInstance) {
@@ -128,15 +134,14 @@ export async function paymentsRoutes(fastify: FastifyInstance) {
 
   fastify.get('/', readGate, async (req, reply) => {
     const out = await register(req)
-    if (out.query.format === 'csv') {
-      return sendCsv(reply, `payments-${out.query.classification}-${out.from}-to-${out.to}.csv`, csvOf(out.rows, out.multiCompany))
-    }
+    const format = exportFormatOf(out.query.format)
+    if (format) return sendRegister(req, reply, format, out)
     return out
   })
 
   fastify.get('/payments.csv', readGate, async (req, reply) => {
     const out = await register(req)
-    return sendCsv(reply, `payments-${out.query.classification}-${out.from}-to-${out.to}.csv`, csvOf(out.rows, out.multiCompany))
+    return sendRegister(req, reply, exportFormatOf(out.query.format, 'csv')!, out)
   })
 
   fastify.get<{ Params: { journalEntryId: string } }>('/:journalEntryId', readGate, async (req) => {

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import Link from 'next/link'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 // Inflow / outflow are cash from and to OUTSIDE the company. Money moved
 // between the company's own cash accounts (safe drops, pay-ins, bank
@@ -31,9 +32,6 @@ export default function CashFlowPage() {
 
   const multi = (data?.companies?.length ?? 0) > 1
 
-  const apiUrl = process.env['NEXT_PUBLIC_API_URL'] ?? ''
-  const csvHref = `${apiUrl}/api/v1/accounting/cash-flow?dateFrom=${from}&dateTo=${to}&format=csv`
-
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between">
@@ -45,7 +43,7 @@ export default function CashFlowPage() {
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
           <span className="text-s-muted text-xs">→</span>
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
-          <a href={csvHref} className="s-btn-secondary text-sm">Export CSV</a>
+          <ExportMenu path={`/accounting/cash-flow?dateFrom=${from}&dateTo=${to}`} filename={`cash-flow-${from}-${to}`} />
         </div>
       </header>
 

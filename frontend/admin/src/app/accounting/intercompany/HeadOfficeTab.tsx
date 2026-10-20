@@ -30,6 +30,7 @@ import type { MyHeadOffice } from '../../../hooks/useWorkspaces'
 import {
   RUN_BADGE, RechargeRunDetail, RunBody, runMonthLabel, type RechargeRun,
 } from './RechargeRunDetail'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type Msg = { ok: boolean; text: string } | null
 
@@ -455,6 +456,9 @@ function StatementCard({ headOfficeId, companies }: { headOfficeId: string; comp
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="s-input" />
         </label>
         <button type="button" className="s-btn-secondary text-sm" disabled={!from || !to || from > to} onClick={() => setAsked((n) => n + 1)}>Show statement</button>
+        <ExportMenu disabled={!from || !to || from > to}
+          path={`/accounting/intercompany/recharge-runs/statement?headOfficeId=${encodeURIComponent(headOfficeId)}&companyId=${encodeURIComponent(companyId)}&from=${from}&to=${to}`}
+          filename={`head-office-statement-${from}-${to}`} />
       </div>
       {q.isError && <p className="text-sm" style={{ color: danger }}>{errText(q.error)}</p>}
       {st && (

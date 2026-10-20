@@ -1264,6 +1264,20 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   run's transaction). Closed books stay the CEO's through the ledger. Audited with
   `actorRole`. Tests: `tests/allocationsFinance.test.ts`.
 
+- **Every report exports CSV / Excel / PDF (owner, 2026-10-20: "Add option
+  to export BS, P&L, GL, and any other report/account statement in PDF and
+  Excel also").** ONE renderer, `backend/src/lib/reportExport.ts`: a route
+  builds its records once as a `ReportTable` and calls `sendReport` /
+  `sendReportFor` with `exportFormatOf(?format)`. Convention: the report's own
+  route takes `?format=csv|xlsx|pdf` (a path already ending `.csv` keeps
+  working and takes the same `?format=`); same auth, module gate and company
+  scope — export never widens access. CSV stays byte-identical to what the
+  route sent before; Excel has money as numbers; PDF is A4 (landscape over 6
+  columns), header repeated, "Page x of y". The GL account statement is
+  `GET /accounting/ledger?accountId&view=statement` (`accountStatement.ts`).
+  Admin: `components/ui/ExportMenu.tsx` (Export → CSV / Excel / PDF, through
+  `api.download`). A new report uses these two, never its own exporter.
+  Tests: `tests/reportExport.test.ts`.
 - **Internal payment classification (owner, 2026-10-20: "a SEPARATE REPORTING
   DIMENSION inside the existing accounting system — no duplicate accounting
   entries, no separate statutory books").** Every payment carries Official /

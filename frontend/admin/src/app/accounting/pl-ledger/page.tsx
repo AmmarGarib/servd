@@ -12,6 +12,7 @@ import { useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import Link from 'next/link'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface PL {
   dateFrom: string
@@ -230,13 +231,8 @@ export default function PLLedgerPage() {
     setPreset(key); setFrom(r.from); setTo(r.to)
   }
 
-  async function exportCsv() {
-    setCsvError(null)
-    const path = tab === 'statement' ? '/accounting/pl-ledger' : '/accounting/pl-ledger/brands'
-    const name = tab === 'statement' ? `pl-${from}-${to}.csv` : `pl-by-brand-${from}-${to}.csv`
-    try { await api.download(`${path}?dateFrom=${from}&dateTo=${to}&format=csv`, name) }
-    catch (e) { setCsvError((e as Error).message) }
-  }
+  const exportPath = `${tab === 'statement' ? '/accounting/pl-ledger' : '/accounting/pl-ledger/brands'}?dateFrom=${from}&dateTo=${to}`
+  const exportName = tab === 'statement' ? `pl-${from}-${to}` : `pl-by-brand-${from}-${to}`
 
   const isLoading = tab === 'statement' ? statement.isLoading : brands.isLoading
 
@@ -265,7 +261,7 @@ export default function PLLedgerPage() {
             <span className="text-s-muted text-xs">→</span>
             <input type="date" value={to} onChange={(e) => { setPreset(null); setTo(e.target.value) }}
               className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
-            <button onClick={() => void exportCsv()} className="s-btn-secondary text-sm">Export CSV</button>
+            <ExportMenu path={exportPath} filename={exportName} onError={(m) => setCsvError(m)} />
           </div>
         </div>
         <div className="flex gap-1 mt-3 -mb-px">

@@ -22,6 +22,7 @@ import { BankAccountSelect } from '../../../components/finance/BankAccountSelect
 import { Select } from '@/components/ui/Select'
 import { Modal as SharedModal } from '../../../components/ui/Modal'
 import { DialogForm, RupeeField } from '../../../components/finance/PaymentReceivedFields'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type SchemeKey = 'salary_tax' | 'eobi' | 'sessi'
 const SCHEMES: SchemeKey[] = ['salary_tax', 'eobi', 'sessi']
@@ -129,6 +130,7 @@ export default function StatutoryPaymentsPage() {
           <input type="month" aria-label="From month" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
           <span className="text-s-muted text-xs">→</span>
           <input type="month" aria-label="To month" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+          <ExportMenu path={`/accounting/statutory?from=${from}&to=${to}`} filename={`statutory-payables-${from}-to-${to}`} />
         </div>
       </header>
 

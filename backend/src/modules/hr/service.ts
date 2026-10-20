@@ -608,6 +608,45 @@ export async function loansFor(tenantId: string, employeeId?: string, opts: { ru
   })
 }
 
+/**
+ * One employee's loans and advances as a statement (HR → employee → Loans &
+ * pay, exported via lib/reportExport.ts): each approved loan, then every
+ * recovery from a LOCKED payroll run or an approved full & final, with the
+ * running outstanding. The same reading loansFor makes (locked runs only).
+ */
+export async function loanStatement(tenantId: string, employeeId: string) {
+  const loans = await prisma.hrRecord.findMany({
+    where: { tenantId, employeeId, section: 'loan', status: 'approved' },
+    orderBy: { createdAt: 'asc' },
+  })
+  if (loans.length === 0) return []
+  const [slips, settlements] = await Promise.all([
+    prisma.hrPayslip.findMany({
+      where: { tenantId, employeeId, run: { status: 'locked' } },
+      select: { inputs: true, run: { select: { period: true } } },
+    }),
+    prisma.hrRecord.findMany({
+      where: { tenantId, employeeId, section: 'final_settlement', status: 'approved' },
+      select: { data: true, effectiveDate: true, createdAt: true },
+    }),
+  ])
+  return loans.map((l) => {
+    const moves: Array<{ when: string; what: string; cents: number }> = []
+    for (const sl of slips) {
+      for (const x of loanLinesOf(sl.inputs)) if (x.loanId === l.id) moves.push({ when: sl.run.period, what: `Payroll ${sl.run.period}`, cents: x.cents })
+    }
+    for (const st of settlements) {
+      for (const x of settlementLoansOf(st.data)) if (x.loanId === l.id) moves.push({ when: periodOf(st.effectiveDate ?? st.createdAt), what: 'Full & final settlement', cents: x.cents })
+    }
+    moves.sort((a, b) => a.when.localeCompare(b.when))
+    return {
+      id: l.id, type: l.category, amountCents: l.amountCents ?? 0, installments: l.quantity ?? 1,
+      firstPeriod: l.effectiveDate ? periodOf(l.effectiveDate) : periodOf(l.createdAt),
+      recoveries: moves,
+    }
+  })
+}
+
 // ─── Payroll ────────────────────────────────────────────────────────────────
 
 /** Attendance entries that stand. Draft, rejected and cancelled entries never

@@ -32,7 +32,7 @@ import { scopeTenantWhere, resolveTenantScope, assertConceptOwned, activeTenantI
 import { audit } from '../../lib/audit.js'
 import { toCents } from '../../lib/money.js'
 import { invalidateSetupCache } from '../../lib/setup-config.js'
-import { toCsv } from '../accounting/csv.js'
+import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
 import { taxYearOf } from '../accounting/fiscalYear.js'
 import { assertSupplierOfCompany } from '../financePlanning/companyRefs.js'
 import { getAssetClasses, getFixedAssetPolicy, SMALLWARE_TYPES, SMALLWARE_TYPE_LABELS } from './classes.js'
@@ -158,12 +158,6 @@ function assetRow(
   }
 }
 
-function sendCsv(reply: FastifyReply, name: string, rows: Array<Record<string, string | number | null>>) {
-  return reply
-    .header('Content-Type', 'text/csv; charset=utf-8')
-    .header('Content-Disposition', `attachment; filename="${name}.csv"`)
-    .send(rows.length > 0 ? toCsv(rows) : '﻿')
-}
 
 // What the CEO / finance edit through a request instead of PATCH.
 const NOT_PATCHABLE: Record<string, string> = {
@@ -219,7 +213,7 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
       poolId: z.string().max(64).optional(),
       kind: z.enum(['individual', 'pool_layer']).optional(),
       uncharged: z.enum(['0', '1']).optional(),
-      format: z.enum(['json', 'csv']).optional(),
+      format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional(),
     }).parse(req.query)
     const asOf = q.asOf ? endOfPktDay(q.asOf) : new Date()
     const { tenantIds, portfolio } = await resolveTenantScope(req)
@@ -245,7 +239,14 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     const pendingOf = new Map(pending.map((p) => [p.assetId, p._count._all]))
     let assets = data.assets.map((a) => assetRow(data, names, a, asOf, facts.get(a.id), pendingOf.get(a.id) ?? 0))
     if (q.uncharged === '1') assets = assets.filter((a) => a.unchargedMonths > 0)
-    if (q.format === 'csv') return sendCsv(reply, `fixed-assets-${pktDay(asOf)}`, assets.map((r) => ({ ...r, initialAllowanceEligible: String(r.initialAllowanceEligible) })))
+    const exportAs = exportFormatOf(q.format)
+    if (exportAs) {
+      const rows = assets.map((r) => ({ ...r, initialAllowanceEligible: String(r.initialAllowanceEligible) }))
+      return sendReportFor(req, reply, exportAs, `fixed-assets-${pktDay(asOf)}`, {
+        title: 'Fixed asset register', period: `As at ${pktDay(asOf)}`, rows,
+        hide: rows[0] ? Object.keys(rows[0]).filter((k) => k === 'tenantId' || /Id$/.test(k) || k === 'id' || k === 'notes') : [],
+      })
+    }
 
     const totalsByCompany = tenantIds.map((t) => {
       const mine = assets.filter((a) => a.tenantId === t)

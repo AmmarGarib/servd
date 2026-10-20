@@ -17,6 +17,7 @@ import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { activeTenantId } from '../../lib/tenantScope.js'
 import { normalisePhone } from '../auth/otp.js'
 import { csv } from '../accounting/csv.js'
+import { exportFormatOf, fromMatrix, sendReportFor, type ReportColumnType, type ReportRow } from '../../lib/reportExport.js'
 import { audit } from '../../lib/audit.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
@@ -27,7 +28,7 @@ import {
 } from './forms.js'
 import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
-  applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, settlementLoansOf,
+  applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, loanStatement, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
 } from './service.js'
@@ -1188,6 +1189,33 @@ export async function hrRoutes(fastify: FastifyInstance) {
       }))
     })
 
+  // The employee's loans & advances statement (owner, 2026-10-20: every
+  // account statement exports): ?format=csv|xlsx|pdf (default csv), same
+  // HR_ADMIN readers and company scope as the employee profile (foreign 404).
+  fastify.get<{ Params: { id: string }; Querystring: { format?: string } }>('/employees/:id/loan-statement', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const emp = await prisma.hrEmployee.findFirst({ where: { id: req.params.id, ...inTenants(req) }, select: { id: true, tenantId: true, fullName: true, employeeCode: true } })
+    if (!emp) throw new NotFoundError('Employee', req.params.id)
+    const loans = await loanStatement(emp.tenantId, emp.id)
+    const rows: ReportRow[] = []
+    for (const l of loans) {
+      const loan = `${l.type ? `${l.type} ` : ''}from ${l.firstPeriod}, ${l.installments} instalment${l.installments === 1 ? '' : 's'}`
+      let out = l.amountCents
+      rows.push({ loan, period: l.firstPeriod, entry: 'Granted', grantedCents: l.amountCents, recoveredCents: null, outstandingCents: out })
+      for (const m of l.recoveries) {
+        out -= m.cents
+        rows.push({ loan, period: m.when, entry: m.what, grantedCents: null, recoveredCents: m.cents, outstandingCents: Math.max(0, out) })
+      }
+    }
+    const company = await prisma.tenant.findUnique({ where: { id: emp.tenantId }, select: { name: true } })
+    return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, { base: 'loan-statement', suffix: `${emp.employeeCode ?? emp.id.slice(-8)}` }, {
+      title: `Loans & advances — ${emp.fullName}${emp.employeeCode ? ` (${emp.employeeCode})` : ''}`,
+      companies: company ? [company.name] : [], period: 'Recoveries from locked payroll runs and approved full & final settlements',
+      rows, sectionKey: 'loan', csvEmpty: 'header',
+      columns: ['loan', 'period', 'entry', 'grantedCents', 'recoveredCents', 'outstandingCents'].map((key) => ({ key })),
+      labels: { grantedCents: 'Granted', recoveredCents: 'Recovered', outstandingCents: 'Outstanding' },
+    })
+  })
+
   fastify.get<{ Params: { id: string } }>('/employees/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const emp = await prisma.hrEmployee.findFirst({ where: { id: req.params.id, ...inTenants(req) }, include: { documents: { orderBy: { createdAt: 'desc' } } } })
     if (!emp) throw new NotFoundError('Employee', req.params.id)
@@ -1845,7 +1873,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
   })
 
-  fastify.get<{ Params: { section: string }; Querystring: { status?: string; from?: string; to?: string } }>('/records/:section/export.csv', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
+  fastify.get<{ Params: { section: string }; Querystring: { status?: string; from?: string; to?: string; format?: string } }>('/records/:section/export.csv', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
     const sec = recordSection(req.params.section)
     const fmt = await getFormat(activeTenant(req), sec.key)
     const { status, from, to } = req.query
@@ -1856,11 +1884,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const cols = fmt.fields.filter((f) => f.type !== 'table')
     // Printed the way the reports print them: money in rupees, references by name.
     const show = await resolver(rows, cols)
-    const out = csv([
-      ['Record', 'Status', 'Stage', 'Employee ID', 'Employee', ...cols.map((c) => c.label), 'Created'],
-      ...rows.map((r) => [r.id, r.status, r.stage, r.employee?.employeeCode, r.employee?.fullName, ...cols.map((c) => show(c, (r.data as Record<string, unknown>)[c.key])), r.createdAt]),
-    ])
-    return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="hr-${sec.key}.csv"`).send(out)
+    const head = ['Record', 'Status', 'Stage', 'Employee ID', 'Employee', ...cols.map((c) => c.label), 'Created']
+    const body = rows.map((r) => [r.id, r.status, r.stage, r.employee?.employeeCode, r.employee?.fullName, ...cols.map((c) => show(c, (r.data as Record<string, unknown>)[c.key])), r.createdAt])
+    const out = csv([head, ...body])
+    // ?format=xlsx|pdf: the same rows through lib/reportExport.ts (the record id stays in the CSV only).
+    const m = fromMatrix(head, body, head.map(() => 'text' as const))
+    return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, `hr-${sec.key}`, {
+      title: `HR — ${sec.key.replace(/_/g, ' ')}`, ...(from || to ? { period: `${from ?? '…'} to ${to ?? '…'}` } : {}),
+      ...m, hide: ['c0'], csv: out,
+    })
   })
 
   // Offer → Employee Master.
@@ -2262,7 +2294,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  fastify.get<{ Params: { id: string }; Querystring: { kind?: string } }>('/payroll/runs/:id/export.csv', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req, reply) => {
+  fastify.get<{ Params: { id: string }; Querystring: { kind?: string; format?: string } }>('/payroll/runs/:id/export.csv', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req, reply) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...inTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
     const slips = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: true }, orderBy: { employee: { employeeCode: 'asc' } } })
@@ -2284,7 +2316,14 @@ export async function hrRoutes(fastify: FastifyInstance) {
         return [s.employee.employeeCode, s.employee.fullName, b ? r(b.monthlyGrossCents) : null, b?.daysInMonth ?? null, b?.paidDays ?? null, b ? r(b.dailyRateCents) : null, r(s.grossCents), r(s.earningsCents), r(s.deductionsCents), r(s.eobiEmployeeCents), r(s.eobiEmployerCents), r(s.netCents)]
       })]
     }
-    return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="payroll-${run.period}-${kind}.csv"`).send(csv(rows))
+    // ?format=xlsx|pdf: the same sheet through lib/reportExport.ts (CSV unchanged — the bank file stays CSV-exact).
+    const head = rows[0] as string[]
+    const MONEY = new Set(['Net pay', 'Employee 1%', 'Employer 5%', 'Total', 'Amount', 'Monthly gross', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', 'EOBI employee', 'EOBI employer', 'Net'])
+    const types: ReportColumnType[] = head.map((h) => (MONEY.has(h) ? 'pkr' : h === 'Days in month' || h === 'Paid days' ? 'number' : 'text'))
+    const title = { register: 'Payroll register', bank: 'Payroll bank file', eobi: 'EOBI', deductions: 'Payroll deductions' }[kind] ?? `Payroll ${kind}`
+    return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, `payroll-${run.period}-${kind}`, {
+      title: `${title} — ${run.period}`, period: `Pay period ${run.period}`, ...fromMatrix(head, rows.slice(1), types), csv: csv(rows),
+    })
   })
 
   // ── Letters ───────────────────────────────────────────────────────────────
@@ -2376,9 +2415,19 @@ export async function hrRoutes(fastify: FastifyInstance) {
     department: z.string().uuid().optional(),
     location: z.string().uuid().optional(),
   }).parse(q ?? {})
-  const sendReport = async (req: FastifyRequest, reply: FastifyReply, key: string, q: ReportQuery, as: 'csv' | 'xlsx' = 'csv') => {
+  const sendReport = async (req: FastifyRequest, reply: FastifyReply, key: string, q: ReportQuery, as: 'csv' | 'xlsx' | 'pdf' = 'csv') => {
     const t = await buildReport(key, readTenants(req), activeTenant(req), q)
     const name = `hr-${key.replace(/_/g, '-')}${t.month ? `-${t.month}` : ''}`
+    // PDF through lib/reportExport.ts; the .xlsx stays laid out as Danish's workbook.
+    if (as === 'pdf') {
+      const kindType: Record<string, ReportColumnType> = { money: 'pkr', number: 'number', text: 'text', date: 'text', percent: 'text' }
+      const m = fromMatrix(t.header, t.rows, t.kinds.map((k) => kindType[k] ?? 'text'))
+      const last = m.rows[m.rows.length - 1]
+      return sendReportFor(req, reply, 'pdf', name, {
+        title: t.title, ...(t.month ? { period: t.month } : {}), ...m,
+        isTotal: (r) => Boolean(t.totalsRow && r === last), ...(t.note ? { notes: [t.note] } : {}),
+      })
+    }
     if (as === 'xlsx') {
       return reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         .header('Content-Disposition', `attachment; filename="${name}.xlsx"`)
@@ -2388,12 +2437,16 @@ export async function hrRoutes(fastify: FastifyInstance) {
       .header('Content-Disposition', `attachment; filename="${name}.csv"`)
       .send(csv([t.header, ...t.rows]))
   }
-  fastify.get('/reports/employees.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => sendReport(req, reply, 'employee_master', {}))
+  fastify.get('/reports/employees.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) =>
+    sendReport(req, reply, 'employee_master', {}, exportFormatOf((req.query as { format?: string } | undefined)?.format, 'csv')!))
 
   fastify.get<{ Params: { key: string } }>('/reports/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const q = reportQuery(req.query)
-    const m = /^(.+)\.(csv|xlsx)$/.exec(req.params.key)
-    if (m) return sendReport(req, reply, m[1]!, q, m[2] as 'csv' | 'xlsx')
+    // The HR reports' own convention (.csv / .xlsx / .pdf in the path) and the shared ?format= both work.
+    const m = /^(.+)\.(csv|xlsx|pdf)$/.exec(req.params.key)
+    if (m) return sendReport(req, reply, m[1]!, q, exportFormatOf((req.query as { format?: string }).format, m[2] as 'csv' | 'xlsx' | 'pdf')!)
+    const asked = exportFormatOf((req.query as { format?: string }).format)
+    if (asked) return sendReport(req, reply, req.params.key, q, asked)
     // On-screen preview: first 500 rows, with the full count.
     const t = await buildReport(req.params.key, readTenants(req), activeTenant(req), q)
     return { ...t, total: t.rows.length, rows: t.rows.slice(0, 500) }

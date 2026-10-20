@@ -25,6 +25,7 @@ import { fmtPkrWhole, startOfMonthPktIso } from '../../../../../lib/money'
 import { orderRef } from '../../../../../lib/orderRef'
 import { useAuthStore } from '../../../../../store/auth'
 import { OnAccountCardPrint } from '../../../../../components/finance/OnAccountCardPrint'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -348,6 +349,8 @@ export default function OnAccountClientPage() {
                       <Td>
                         <span className="flex flex-wrap gap-2">
                           <Btn onClick={() => { openStatementHtml(s.id).catch((e) => setNotice(errText(e))) }}>Print</Btn>
+                          <ExportMenu className="rounded-lg px-3 py-1.5 text-xs font-black border border-white/15 hover:bg-white/5 text-white/90"
+                            path={`/accounting/customer-accounts/statements/${s.id}/html`} filename={`statement-${s.number}`} onError={(m) => setNotice(m)} />
                           <Btn onClick={() => sendStatement.mutate(s.id)}>Send</Btn>
                           <Link href="/accounting/receivables" className="rounded-lg px-3 py-1.5 text-xs font-black border border-white/15 hover:bg-white/5 text-white/90">Open in Receivables</Link>
                         </span>

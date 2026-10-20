@@ -7,7 +7,7 @@
 //     GET  /pos/pre-bills/:id/html         printable pre-bill (same roles)
 //
 //   preBillFinanceRoutes  prefix /pre-bills
-//     GET  /pre-bills[?format=csv]         Finance → Voided pre bills
+//     GET  /pre-bills[?format=csv|xlsx|pdf]         Finance → Voided pre bills
 //
 // There is NO delete, hide, edit or exclude endpoint: a pre-bill is a
 // permanent record. Pre-bills never reach the fiscal POS, the ledger or any
@@ -21,7 +21,7 @@ import { NotFoundError } from '../../lib/errors.js'
 import { requireAuth, CASHIERS } from '../auth/middleware.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { reportDateRange } from '../reports/service.js'
-import { toCsv } from '../accounting/csv.js'
+import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
 import { createPreBill, renderPreBillHtml, listPreBills, preBillsCsvRows } from './service.js'
 
 /**
@@ -41,7 +41,7 @@ const listQuerySchema = z.object({
   printedById: z.string().min(1).optional(),
   status: z.enum(['open', 'superseded', 'converted', 'cancelled']).optional(),
   flagged: z.enum(['0', '1', 'true', 'false']).optional(),
-  format: z.enum(['json', 'csv']).optional(),
+  format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional(),
 })
 
 export async function preBillPosRoutes(fastify: FastifyInstance) {
@@ -106,12 +106,13 @@ export async function preBillFinanceRoutes(fastify: FastifyInstance) {
         status: q.status,
         flaggedOnly: q.flagged === '1' || q.flagged === 'true',
       })
-      if (q.format === 'csv') {
+      const format = exportFormatOf(q.format)
+      if (format) {
         const day = (d: Date) => new Date(d.getTime() + 5 * 3600_000).toISOString().slice(0, 10)
-        return reply
-          .header('Content-Type', 'text/csv; charset=utf-8')
-          .header('Content-Disposition', `attachment; filename="voided-pre-bills-${day(from)}-to-${day(to)}.csv"`)
-          .send(toCsv(preBillsCsvRows(list.rows)))
+        return sendReportFor(req, reply, format, { base: 'voided-pre-bills', suffix: `${day(from)}-to-${day(to)}` }, {
+          title: 'Voided pre-bills', period: `${day(from)} to ${day(to)}`, rows: preBillsCsvRows(list.rows),
+          types: { 'Pre-bill total': 'pkr', 'Card total': 'pkr', 'Final total': 'pkr', Difference: 'pkr', 'Line voids after': 'number', 'Line voids after (PKR)': 'pkr' },
+        })
       }
       return list
     },

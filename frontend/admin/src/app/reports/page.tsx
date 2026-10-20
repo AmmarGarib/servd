@@ -6,6 +6,7 @@ import { api } from '../../lib/api'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 // Completed orders (GET /reports/sales): gross = order value incl. GST, before
 // refunds; net = the P&L's net revenue for them (ex-GST, after discounts,
@@ -108,16 +109,6 @@ function buildPrevRange(dateFrom: string, dateTo: string) {
   }
 }
 
-function exportToCsv(rows: Record<string, unknown>[], filename: string) {
-  if (!rows.length) return
-  const headers = Object.keys(rows[0]!)
-  const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
-  const csv = [headers.map(escape).join(','), ...rows.map(r => headers.map(h => escape(r[h])).join(','))].join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
-}
 
 // ─── Delta helpers ─────────────────────────────────────────────────────────────
 
@@ -313,23 +304,8 @@ export default function ReportsPage() {
         {tab === 'sales' && (salesLoading ? <Skeleton /> : sales ? (
           <div className="space-y-5">
             <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  const t = sales.totals
-                  const rows: Record<string, unknown>[] = [
-                    ...(t.gross !== undefined ? [
-                      { metric: 'Sales incl. GST (completed orders, before refunds)', value: Math.round(t.gross / 100) },
-                      { metric: 'Refunds (incl. GST)', value: Math.round((t.refunds ?? 0) / 100) },
-                      { metric: 'Net sales ex-GST (P&L net revenue)', value: Math.round((t.net ?? 0) / 100) },
-                      { metric: 'GST on these orders, less refunds', value: Math.round((t.tax ?? 0) / 100) },
-                    ] : []),
-                    { metric: 'Total Orders', value: t.orders },
-                  ]
-                  exportToCsv(rows, `sales_${slug}.csv`)
-                }}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
-                Export CSV
-              </button>
+              <ExportMenu className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors"
+                  path={`/reports/sales?dateFrom=${fromISO}&dateTo=${toISO}`} filename={`sales_${slug}`} />
             </div>
 
             {/* KPI cards with delta arrows */}
@@ -415,19 +391,8 @@ export default function ReportsPage() {
               <>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs text-s-muted">Top {topItems?.length} items by quantity sold</p>
-                  <button
-                    onClick={() => {
-                      const rows = (topItems ?? []).map((item, i) => ({
-                        rank: i + 1,
-                        name: item.name,
-                        quantity: item.quantity,
-                        ...(item.revenueCents !== undefined && { revenue_pkr: Math.round(item.revenueCents / 100) }),
-                      }))
-                      exportToCsv(rows as Record<string, unknown>[], `top-items_${slug}.csv`)
-                    }}
-                    className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
-                    Export CSV
-                  </button>
+                  <ExportMenu className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors"
+                    path={`/reports/top-items?dateFrom=${fromISO}&dateTo=${toISO}&limit=20`} filename={`top-items_${slug}`} />
                 </div>
 
                 {/* Build previous-period rank map for comparison */}
@@ -479,18 +444,8 @@ export default function ReportsPage() {
           (stations ?? []).length === 0 ? <Empty /> : (
             <div className="space-y-3">
               <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    const rows = (stations ?? []).map(s => ({
-                      station: s.stationName,
-                      items_fired: s.items,
-                      avg_minutes: s.avgMinutes.toFixed(1),
-                    }))
-                    exportToCsv(rows as Record<string, unknown>[], `stations_${slug}.csv`)
-                  }}
-                  className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
-                  Export CSV
-                </button>
+                <ExportMenu className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors"
+                    path={`/reports/stations?dateFrom=${fromISO}&dateTo=${toISO}`} filename={`stations_${slug}`} />
               </div>
               <div className="s-card overflow-hidden max-w-xl">
                 <div className="overflow-x-auto">
@@ -540,7 +495,7 @@ export default function ReportsPage() {
 
         {/* ── By Tender ─────────────────────────────────────────────────────── */}
         {tab === 'tender' && (tendersLoading ? <Skeleton /> : tenders && tenders.tenders.length > 0 ? (
-          <TenderReport data={tenders} slug={slug} />
+          <TenderReport data={tenders} slug={slug} exportPath={`/reports/by-tender?dateFrom=${fromISO}&dateTo=${toISO}`} />
         ) : <Empty />)}
 
         {/* ── By Channel ────────────────────────────────────────────────────── */}
@@ -548,18 +503,8 @@ export default function ReportsPage() {
           (channels ?? []).length === 0 ? <Empty /> : (
             <div className="space-y-3">
               <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    const rows = [...(channels ?? [])].sort(byChannelSize).map(c => ({
-                      channel: c.source,
-                      orders: c.orders,
-                      ...(c.gross !== undefined && { gross_pkr: Math.round(c.gross / 100), net_pkr: Math.round((c.net ?? 0) / 100) }),
-                    }))
-                    exportToCsv(rows as Record<string, unknown>[], `by-channel_${slug}.csv`)
-                  }}
-                  className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
-                  Export CSV
-                </button>
+                <ExportMenu className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors"
+                    path={`/reports/by-source?dateFrom=${fromISO}&dateTo=${toISO}`} filename={`by-channel_${slug}`} />
               </div>
               <div className="s-card overflow-hidden max-w-xl">
                 <div className="overflow-x-auto">
@@ -617,7 +562,7 @@ export default function ReportsPage() {
  * statement has proven), the retired Keenu QR's old rows, wallet and gift
  * cards; comps apart; refunds by tender. Rupees only when the API sent them.
  */
-function TenderReport({ data, slug }: { data: ByTender; slug: string }) {
+function TenderReport({ data, slug, exportPath }: { data: ByTender; slug: string; exportPath: string }) {
   const money = !data.volumeOnly && data.totalCents !== undefined
   const raastRow = data.tenders.find((t) => t.tender === 'raast')
   const raast = data.raast
@@ -625,18 +570,8 @@ function TenderReport({ data, slug }: { data: ByTender; slug: string }) {
   return (
     <div className="space-y-5">
       <div className="flex justify-end">
-        <button
-          onClick={() => {
-            const rows = data.tenders.map((t) => ({
-              tender: t.label,
-              orders: t.orders,
-              ...(money && { payments: t.payments ?? 0, amount_pkr: Math.round((t.amountCents ?? 0) / 100), share_pct: t.sharePct ?? 0 }),
-            }))
-            exportToCsv(rows as Record<string, unknown>[], `by-tender_${slug}.csv`)
-          }}
-          className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors">
-          Export CSV
-        </button>
+        <ExportMenu className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-primary-ink hover:border-s-teal/40 transition-colors"
+          path={exportPath} filename={`by-tender_${slug}`} />
       </div>
 
       {money && (

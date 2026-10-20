@@ -26,6 +26,7 @@ import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 import { useTrashPrefill } from '../../lib/trash'
 import { unwrapPrefill, pStr, pNum, pArr, type Prefill } from '../../lib/trashPrefill'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
@@ -2177,6 +2178,10 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="font-bold text-s-text">{statement.supplier.name} — Statement</p>
+            <span className="ml-auto mr-2">
+              <ExportMenu className="rounded-lg border border-s-border px-3 py-1 text-xs font-semibold text-s-muted hover:text-s-text"
+                path={`/procurement/suppliers/${statementId}/statement`} filename={`supplier-statement-${statement.supplier.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} />
+            </span>
             <button type="button" onClick={() => setStatementId(null)} aria-label="Close statement" className="text-s-muted text-xs [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
           </div>
           <div className="flex flex-wrap gap-6">

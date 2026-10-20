@@ -12,6 +12,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type Buckets = { current: number; '1_30': number; '31_60': number; '61_90': number; '90_plus': number }
 export interface ApAgingRow extends Buckets {
@@ -115,6 +116,9 @@ export function ApAging() {
           Back to today
         </button>
       )}
+      <span className="ml-auto">
+        <ExportMenu path={`/procurement/ap-aging${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ''}`} filename={`ap-aging-${asOf || 'today'}`} />
+      </span>
       <p className="text-[11px] text-s-muted basis-full">
         {asOf
           ? 'Bills, credit notes and payments dated on or before this day, as they stood then — ties to AP 2010 in that day\'s trial balance.'

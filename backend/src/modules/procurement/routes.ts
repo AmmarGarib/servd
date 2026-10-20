@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { exportFormatOf, sendReportFor, type ReportRow } from '../../lib/reportExport.js'
 import { trashReasonOf } from '../../lib/trash.js'
 import { classificationOf, classificationsOfReferences } from '../accounting/paymentsRegister.js'
 import type { Prisma } from '@prisma/client'
@@ -52,7 +53,7 @@ import {
   createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, markPoSent,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment, unapplyPayment, voidPayment,
-  agingReport, supplierAging, reorderSuggestions,
+  agingReport, supplierAging, reorderSuggestions, type AgingTotals,
   getApprovalThresholdCents, setApprovalThresholdCents,
 } from './service.js'
 import {
@@ -67,6 +68,7 @@ import { type DbMoney, toCents, zInt4Cents, zMoneyCents } from '../../lib/money.
 import { FILER_STATUSES, WHT_SECTIONS } from '../../lib/withholding.js'
 import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { parsePktEndOfDay, fmtPktDate } from '../accounting/dates.js'
+import { fmtPkr } from '../accounting/csv.js'
 
 export const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
 
@@ -491,10 +493,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.get<{ Params: { id: string } }>(
+  // ?format=csv|xlsx|pdf: the supplier's account statement (lib/reportExport.ts)
+  // — opening balance, every live bill (net of withholding), credit note and
+  // payment by date with a running balance, closing balance. Same reader and
+  // scope (another company's supplier is 404).
+  fastify.get<{ Params: { id: string }; Querystring: { format?: string } }>(
     '/suppliers/:id/statement',
     { preHandler: requireAuth(...AP_READERS) },
-    async (req) => {
+    async (req, reply) => {
       const supplier = await findSupplierInScope(req, req.params.id, 'read')
       const [bills, creditNotes, payments, aging] = await Promise.all([
         prisma.supplierBill.findMany({ where: { supplierId: req.params.id, kind: 'bill' }, orderBy: { billDate: 'desc' } }),
@@ -508,6 +514,41 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       // supplier's AP 2010 balance in the ledger. The opening balance is
       // counted once, inside it (openingBalance.ts posts it).
       const outstanding = aging?.total ?? 0
+      const format = exportFormatOf(req.query.format)
+      if (format) {
+        const day = (d: Date) => fmtPktDate(d)
+        type Move = { date: Date; type: string; document: string; reference: string; chargeCents: number; paidCents: number }
+        const moves: Move[] = [
+          ...bills.filter((b) => b.status !== 'void' && b.status !== 'draft').map((b) => ({
+            date: b.billDate, type: 'Bill', document: b.billNumber,
+            reference: toCents(b.whtCents) ? `Withholding ${fmtPkr(toCents(b.whtCents))} deducted` : '',
+            chargeCents: toCents(b.totalCents) - toCents(b.whtCents), paidCents: 0,
+          })),
+          ...creditNotes.filter((b) => b.status !== 'void' && b.status !== 'draft').map((b) => ({
+            date: b.billDate, type: 'Credit note', document: b.billNumber, reference: '', chargeCents: 0, paidCents: toCents(b.totalCents),
+          })),
+          ...payments.filter((p) => !p.voidedAt).map((p) => ({
+            date: p.paymentDate, type: 'Payment', document: p.method.replace(/_/g, ' '), reference: p.reference ?? '', chargeCents: 0, paidCents: toCents(p.amountCents),
+          })),
+        ].sort((a, b) => a.date.getTime() - b.date.getTime())
+        const opening = aging?.openingCents ?? 0
+        let bal = opening
+        const rows: ReportRow[] = [{ date: '', type: '', document: 'OPENING BALANCE', reference: '', billedCents: null, paidCents: null, balanceCents: opening }]
+        for (const m of moves) {
+          bal += m.chargeCents - m.paidCents
+          rows.push({ date: day(m.date), type: m.type, document: m.document, reference: m.reference, billedCents: m.chargeCents || null, paidCents: m.paidCents || null, balanceCents: bal })
+        }
+        rows.push({ date: day(new Date()), type: '', document: 'CLOSING BALANCE', reference: '', billedCents: null, paidCents: null, balanceCents: bal })
+        const notes = [`Balance due per AP aging: ${fmtPkr(outstanding)}.`]
+        if (aging?.openingUnpostedCents) notes.push(`Opening balance not yet posted: ${fmtPkr(aging.openingUnpostedCents)}.`)
+        const companyName = supplier.tenantId ? (await prisma.tenant.findUnique({ where: { id: supplier.tenantId }, select: { name: true } }))?.name : null
+        return sendReportFor(req, reply, format, { base: 'supplier-statement', suffix: `${supplier.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}-${day(new Date())}` }, {
+          title: `Supplier statement — ${supplier.name}`, companies: companyName ? [companyName] : [], period: `As at ${day(new Date())}`,
+          rows, labels: { billedCents: 'Billed (net of WHT)', paidCents: 'Paid / credited', balanceCents: 'Balance' },
+          types: { billedCents: 'cents', paidCents: 'cents', balanceCents: 'cents' }, notes,
+          isTotal: (r) => r.document === 'OPENING BALANCE' || r.document === 'CLOSING BALANCE',
+        })
+      }
       return {
         supplier,
         outstanding,
@@ -765,9 +806,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // month-end aging run later still ties to AP 2010 in the trial balance.
   // Suppliers with no company (legacy rows, never in any company's books) are
   // listed to the CEO only — anyone else would see other companies' names.
-  fastify.get('/ap-aging', { preHandler: requireAuth(...FINANCE_TEAM, 'procurement') }, async (req) => {
+  //
+  // ?format=csv|xlsx|pdf exports the same report (lib/reportExport.ts): one row
+  // per supplier, the total, then the CEO-only no-company suppliers.
+  fastify.get('/ap-aging', { preHandler: requireAuth(...FINANCE_TEAM, 'procurement') }, async (req, reply) => {
     const q = z.object({
       asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Give the date as YYYY-MM-DD').optional(),
+      format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional(),
     }).parse(req.query ?? {})
     let asOf: Date | undefined
     if (q.asOf) {
@@ -775,7 +820,27 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       if (Number.isNaN(asOf.getTime())) throw new AppError('INVALID_DATE', 'Give the date as YYYY-MM-DD', 422)
     }
     const scope = await resolveTenantScope(req)
-    return agingReport(scope.tenantIds, { asOf, includeUnassigned: req.staffUser!.role === 'admin' })
+    const report = await agingReport(scope.tenantIds, { asOf, includeUnassigned: req.staffUser!.role === 'admin' })
+    const format = exportFormatOf(q.format)
+    if (!format) return report
+    const line = (section: string, name: string, r: AgingTotals) => ({
+      section, supplier: name, bills: r.bills,
+      currentCents: r.current, days1to30Cents: r['1_30'], days31to60Cents: r['31_60'], days61to90Cents: r['61_90'], days90PlusCents: r['90_plus'],
+      creditsCents: r.creditsCents, openingCents: r.openingCents, totalCents: r.total,
+    })
+    const rows = [
+      ...report.bySupplier.map((r) => line('Suppliers', r.supplierName, r)),
+      line('Suppliers', 'TOTAL', report.total),
+      ...report.unassigned.bySupplier.map((r) => line('Suppliers with no company', r.supplierName, r)),
+      ...(report.unassigned.bySupplier.length ? [line('Suppliers with no company', 'TOTAL', report.unassigned.total)] : []),
+    ]
+    return sendReportFor(req, reply, format, { base: 'ap-aging', suffix: report.asOf }, {
+      title: 'Accounts payable aging', period: `As at ${report.asOf} · net of withholding, by due date`,
+      rows, sectionKey: 'section', csvEmpty: 'header',
+      labels: { currentCents: 'Current', days1to30Cents: '1–30 days', days31to60Cents: '31–60 days', days61to90Cents: '61–90 days', days90PlusCents: '90+ days', creditsCents: 'Unapplied credits', openingCents: 'Opening balance' },
+      types: { bills: 'number' },
+      isTotal: (r) => r.supplier === 'TOTAL',
+    })
   })
 
   // Bills by default. A supplier credit note is a SupplierBill row too (kind

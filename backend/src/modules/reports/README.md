@@ -36,7 +36,7 @@ Module gate: `food_cost` (its own module; `GET` also opens with `accounting`). E
 | `GET /ingredients/:inventoryItemId/movements?from&to` | The item, its lots and its movements in the period. |
 | `GET /valuation?tenantId?&asOf?` | Lots vs 1210 / 1220 / 1230, issued-not-booked, the pre-FIFO difference, unreconciled, failed postings, the 1290 balance, cut-over details (`catchupRefused`, `untied`, aligned) and GRNI (2015 vs open receipts − pending matches). |
 | `GET /flags?tenantId?` | Read-only: `shrinkage`, `shrinkage_trend`, `yield_low`, `stock_shortfall`, `stock_unrecorded`, `recipe_foreign_stock`, plus `posting_failed` for `inventory.*` and `pos.void_waste`. |
-| `GET /export.csv?view=summary\|ingredients\|valuation&…` | `text/csv`, same scope and revenue hiding. 400 `BAD_VIEW`. |
+| `GET /export.csv?view=summary\|ingredients\|valuation&…[&format=csv\|xlsx\|pdf]` | CSV (default), Excel or PDF via `lib/reportExport.ts`; same scope and revenue hiding. 400 `BAD_VIEW`. |
 | `POST /align-inventory { tenantId, dryRun = true }` | CEO. Calls `postFifoAlign` (`inventory.fifo_align:<tenantId>`, Dr/Cr 12x0 vs 3020, dated now). 404 if the CEO is not a member of the company; 409 `CUTOVER_NOT_RUN` / `ALREADY_ALIGNED`. Audits `inventory.fifo_align`. |
 
 **The identity** (checked per brand and company): `theoretical + explained + unexplained + alignment + timing == actual`, exactly.

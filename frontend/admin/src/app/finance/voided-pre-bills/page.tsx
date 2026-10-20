@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 // A pre-bill is priced for cash or the digital rate. 'card' is the digital tax
 // group — Card – Keenu and Raast QR share it (backend lib/pricing.ts).
@@ -195,10 +196,6 @@ export default function VoidedPreBillsPage() {
   const rows = data?.rows ?? []
   const open = rows.find((r) => r.id === openId) ?? null
 
-  const downloadCsv = () => {
-    setCsvErr('')
-    api.download(`/pre-bills?${qs}&format=csv`, `voided-pre-bills-${from}-to-${to}.csv`).catch((e: Error) => setCsvErr(e.message))
-  }
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -212,13 +209,7 @@ export default function VoidedPreBillsPage() {
               Red flags mark pre-bills that never became a full &amp; final bill, came out lower, or had lines voided after printing. Pre-bills are a permanent record and cannot be removed.
             </p>
           </div>
-          <button
-            onClick={downloadCsv}
-            className="rounded-xl border px-4 py-2.5 text-sm font-semibold text-white/70 hover:text-white"
-            style={{ borderColor: 'var(--border-strong)', background: 'var(--surface)' }}
-          >
-            Download CSV
-          </button>
+          <ExportMenu path={`/pre-bills?${qs}`} filename={`voided-pre-bills-${from}-to-${to}`} onError={(m) => setCsvErr(m)} />
         </div>
         {csvErr && <p className="mt-2 text-sm" style={{ color: danger }}>{csvErr}</p>}
       </header>

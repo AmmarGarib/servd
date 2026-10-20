@@ -11,6 +11,7 @@ import { api } from '../../../lib/api'
 import { card, inp, btn, btnGhost, localDate } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type Param = 'month' | 'status' | 'department' | 'location'
 interface ReportDef { key: string; title: string; description: string; params: Param[]; columns?: string[] }
@@ -81,10 +82,8 @@ export default function HrReportsPage() {
                   </Select>
                 </Field>
               )}
-              <button className={btn} onClick={() => {
-                setDlErr(null)
-                api.download(`/hr/reports/${def.key}.xlsx${qs}`, `hr-${def.key.replace(/_/g, '-')}${def.params.includes('month') ? `-${q.month}` : ''}.xlsx`).catch((e: Error) => setDlErr(e.message))
-              }}>Download Excel</button>
+              <ExportMenu className={btn} label="Download" path={`/hr/reports/${def.key}${qs}`}
+                filename={`hr-${def.key.replace(/_/g, '-')}${def.params.includes('month') ? `-${q.month}` : ''}`} onError={(m) => setDlErr(m)} />
               <button className={btnGhost} onClick={() => void preview.refetch()}>Refresh</button>
             </div>
             {dlErr && <p className="text-xs text-s-red mt-2">{dlErr}</p>}

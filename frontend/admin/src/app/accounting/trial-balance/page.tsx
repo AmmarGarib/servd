@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import Link from 'next/link'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface TrialBalance {
   asOf: string
@@ -34,9 +35,6 @@ export default function TrialBalancePage() {
 
   const multi = (data?.companies.length ?? 0) > 1
 
-  const apiUrl = process.env['NEXT_PUBLIC_API_URL'] ?? ''
-  const csvHref = `${apiUrl}/api/v1/accounting/trial-balance?asOf=${asOf}&basis=${basis}&format=csv`
-
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
@@ -51,7 +49,7 @@ export default function TrialBalancePage() {
           </label>
           <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
             className="bg-s-card border border-s-border rounded px-3 py-1.5 text-sm text-s-text" />
-          <a href={csvHref} className="s-btn-secondary text-sm">Export CSV</a>
+          <ExportMenu path={`/accounting/trial-balance?asOf=${asOf}&basis=${basis}`} filename={`trial-balance-${basis === 'year' ? 'year-' : ''}${asOf}`} />
         </div>
       </header>
 

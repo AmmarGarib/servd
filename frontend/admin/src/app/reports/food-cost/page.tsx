@@ -20,6 +20,7 @@ import { FlagsTab } from './components/FlagsTab'
 import { ErrorNote } from './components/ui'
 import type { SummaryResponse } from './components/types'
 import { Select } from '@/components/ui/Select'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type Tab = 'summary' | 'ingredients' | 'valuation' | 'flags'
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -62,14 +63,13 @@ export default function FoodCostReportPage() {
   )
   const companyBrands = company ? company.brands.filter((b) => b.conceptId).map((b) => ({ id: b.conceptId!, name: b.name })) : []
 
-  const download = () => {
-    setCsvErr('')
-    const view = tab === 'ingredients' || tab === 'valuation' ? tab : 'summary'
+  const exportView = tab === 'ingredients' || tab === 'valuation' ? tab : 'summary'
+  const exportQs = (() => {
     const p = new URLSearchParams(qs)
-    p.set('view', view)
-    if (view !== 'summary' && company) { p.set('tenantId', company.tenantId); p.delete('conceptId') }
-    api.download(`/reports/food-cost/export.csv?${p.toString()}`, `food-cost-${view}-${range.from}-${range.to}.csv`).catch((e: Error) => setCsvErr(e.message))
-  }
+    p.set('view', exportView)
+    if (exportView !== 'summary' && company) { p.set('tenantId', company.tenantId); p.delete('conceptId') }
+    return p.toString()
+  })()
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -84,7 +84,7 @@ export default function FoodCostReportPage() {
               Food, drinks and packaging; by brand, by order type and by ingredient.
             </p>
           </div>
-          <button className="s-btn-secondary" onClick={download}>Download CSV</button>
+          <ExportMenu className="s-btn-secondary" path={`/reports/food-cost/export.csv?${exportQs}`} filename={`food-cost-${exportView}-${range.from}-${range.to}`} onError={(m) => setCsvErr(m)} />
         </div>
         {csvErr && <p className="mt-2 text-sm" style={{ color: 'var(--erp-danger)' }}>{csvErr}</p>}
 

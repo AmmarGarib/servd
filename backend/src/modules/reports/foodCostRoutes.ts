@@ -28,6 +28,7 @@ import { requireAuth, FINANCE_TEAM, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../au
 import { resolveTenantScope, assertConceptOwned } from '../../lib/tenantScope.js'
 import { COST_CLASSES, type CostClass } from '../../lib/inventoryClass.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
+import { exportFormatOf, fromMatrix, sendReportFor, type ReportColumnType } from '../../lib/reportExport.js'
 import { postFifoAlign } from '../accounting/inventoryPosting.js'
 import {
   foodCostSummary, ingredientVariance, itemMovements, inventoryValuation, foodCostFlags,
@@ -191,8 +192,10 @@ export default async function foodCostRoutes(fastify: FastifyInstance): Promise<
   fastify.get<{ Querystring: IngredientsQ & { view?: string; asOf?: string } }>('/export.csv', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req, reply) => {
     const view = req.query.view ?? 'summary'
     const revenueVisible = seesRevenue(req)
+    const format = exportFormatOf((req.query as { format?: string }).format, 'csv')!
     let body: string
     let name: string
+    let table: { title: string; period: string; header: string[]; matrix: unknown[][]; types: Array<ReportColumnType | undefined> }
     if (view === 'summary') {
       const { from, to } = periodOf(req.query)
       const s = await summaryScope(req, req.query)
@@ -213,7 +216,11 @@ export default async function foodCostRoutes(fastify: FastifyInstance): Promise<
         }
       }
       body = csv(rows)
-      name = `food-cost-summary-${fmtPktDate(from)}-${fmtPktDate(to)}.csv`
+      name = `food-cost-summary-${fmtPktDate(from)}-${fmtPktDate(to)}`
+      table = {
+        title: 'Food cost summary', period: `${fmtPktDate(from)} to ${fmtPktDate(to)}`, header: head, matrix: rows.slice(1),
+        types: head.map((h, i) => (i < 2 || h === 'Status' ? 'text' : /%|points/.test(h) ? 'number' : 'pkr')),
+      }
     } else if (view === 'ingredients') {
       const { from, to } = periodOf(req.query)
       const tenantId = await companyOf(req, req.query.tenantId)
@@ -234,7 +241,8 @@ export default async function foodCostRoutes(fastify: FastifyInstance): Promise<
           rs(r.shortfall.cents), r.closing.qty, rs(r.closing.cents), r.unexplained.qty, rs(r.unexplained.cents)])
       }
       body = csv(out)
-      name = `food-cost-ingredients-${fmtPktDate(from)}-${fmtPktDate(to)}.csv`
+      name = `food-cost-ingredients-${fmtPktDate(from)}-${fmtPktDate(to)}`
+      table = { title: 'Food cost by ingredient', period: `${fmtPktDate(from)} to ${fmtPktDate(to)}`, header: out[0] as string[], matrix: out.slice(1), types: [] }
     } else if (view === 'valuation') {
       const tenantId = await companyOf(req, req.query.tenantId)
       const asOf = req.query.asOf ? pktDay('asOf', req.query.asOf, true) : undefined
@@ -243,11 +251,14 @@ export default async function foodCostRoutes(fastify: FastifyInstance): Promise<
       for (const c of v.classes) out.push([c.label, c.glCode, rs(c.lotsCents), rs(c.glCents), rs(c.issuedNotBookedCents), rs(c.preFifoDiffCents), rs(c.unreconciledCents)])
       out.push(['Goods received not invoiced', v.grni.glCode, rs(v.grni.expectedCents), rs(v.grni.glCreditCents), '', '', rs(v.grni.differenceCents)])
       body = csv(out)
-      name = `food-cost-valuation-${v.asOf.slice(0, 10)}.csv`
+      name = `food-cost-valuation-${v.asOf.slice(0, 10)}`
+      const head = out[0] as string[]
+      table = { title: 'Stock valuation', period: `As at ${v.asOf.slice(0, 10)}`, header: head, matrix: out.slice(1), types: head.map((_, i) => (i < 2 ? 'text' : 'pkr')) }
     } else {
       throw new AppError('BAD_VIEW', 'view is summary, ingredients or valuation', 400)
     }
-    return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="${name}"`).send(body)
+    const m = fromMatrix(table.header, table.matrix, table.types)
+    return sendReportFor(req, reply, format, name, { title: table.title, period: table.period, ...m, csv: body })
   })
 
   // The CEO aligns 1210 / 1220 / 1230 with the lots once, after the cut-over

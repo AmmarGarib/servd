@@ -20,6 +20,7 @@ import {
   type FaAsset,
 } from '../../../components/fixedAssets/shared'
 import { Select } from '@/components/ui/Select'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface CompanyTotals { tenantId: string; companyName: string; assets: number; costCents: number; accumulatedCents: number; nbvCents: number; monthlyCents: number }
 interface LastRun {
@@ -131,9 +132,7 @@ export default function FixedAssetsPage() {
       actions={
         <>
           {canBuy && <Link href="/finance/capex?quickBuy=1" className={btnPrimary}>Buy equipment</Link>}
-          <button className={btnGhost} onClick={() => { void api.download(`${FA_BASE}?${qs}&format=csv`, `fixed-assets-${asOf || data?.asOf || 'today'}.csv`).catch((e) => setNotice({ tone: 'bad', text: errorWords(e) })) }}>
-            Download CSV
-          </button>
+          <ExportMenu className={btnGhost} path={`${FA_BASE}?${qs}`} filename={`fixed-assets-${asOf || data?.asOf || 'today'}`} onError={(m) => setNotice({ tone: 'bad', text: m })} />
         </>
       }
     >

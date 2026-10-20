@@ -9,6 +9,7 @@ import { api } from '../../../lib/api'
 import { card, btn, btnGhost, rs, day, human, STATUS_BADGE, type HrField } from '../../../lib/hr'
 import { HrShell, Modal, useHrForm, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface Row {
   id: string; employeeCode: string; fullName: string; phone: string | null; status: string; employmentType: string
@@ -64,7 +65,7 @@ function Employees() {
   return (
     <HrShell title="Employees" subtitle="The central HR database. Everyone employed — with or without a servd login."
       actions={<>
-        <button className={btnGhost} onClick={() => { setCsvErr(''); api.download('/hr/reports/employees.csv', 'hr-employee-master.csv').catch((e: Error) => setCsvErr(e.message)) }}>Export CSV</button>
+        <ExportMenu className={btnGhost} path="/hr/reports/employees.csv" filename="hr-employee-master" onError={(m) => setCsvErr(m)} />
         <button className={btn} onClick={() => setAdding(true)}>+ Add employee</button>
       </>}>
       <div className="flex flex-wrap items-center gap-2 mb-4">

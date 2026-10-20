@@ -18,7 +18,9 @@ import {
 } from './taxPayments.js'
 import type { Prisma, UserRole } from '@prisma/client'
 import { resolveTenantScope, scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
-import { toCsv, fmtPkr } from './csv.js'
+import { fmtPkr } from './csv.js'
+import { exportFormatOf, sendReportFor, companyNamesOf } from '../../lib/reportExport.js'
+import { accountStatement } from './accountStatement.js'
 import { audit } from '../../lib/audit.js'
 import { moveToTrash } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
@@ -36,12 +38,6 @@ import { requireModule } from '../notifications/requireModule.js'
 // the one list. Inside the /accounting module gate like every route here.
 const TAX_PAYERS = [...TAX_PAYER_ROLES] as UserRole[]
 
-function sendCsv(reply: FastifyReply, filename: string, body: string) {
-  reply.header('Content-Type', 'text/csv; charset=utf-8')
-  reply.header('Content-Disposition', `attachment; filename="${filename}"`)
-  return reply.send(body)
-}
-
 /** Who posts, edits and cancels manual journal entries (and attaches their supporting documents):
  *  the CEO and finance with the accounting module (owner, 2026-10-16). */
 export const JOURNAL_POSTERS = ['admin', 'finance'] as UserRole[]
@@ -53,13 +49,38 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // activity links (?id=) and the CSV export. (/finance/ledger listed the
   // sales register to every manager tier and had no caller; the /finance
   // Transactions tab called a GET /accounting/entries that never existed.)
-  fastify.get<{ Querystring: { id?: string; accountId?: string; source?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string } }>(
+  fastify.get<{ Querystring: { id?: string; accountId?: string; source?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string; view?: string } }>(
     '/ledger',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
-      const { id, accountId, source, dateFrom, dateTo, limit: limitStr, cursor, format } = req.query
+      const { id, accountId, source, dateFrom, dateTo, limit: limitStr, cursor } = req.query
+      const format = exportFormatOf(req.query.format)
       const limit = Math.min(parseInt(limitStr ?? '50', 10), 1000)
       const { from, to } = resolveDateRange(dateFrom, dateTo)
+
+      // ?accountId&view=statement — THE general-ledger account statement
+      // (owner, 2026-10-20): one account's lines in the window with the
+      // opening balance, a running balance and the closing balance. Same
+      // route, same viewers, same company scope (another company's account
+      // is 404). JSON for the screen, or ?format=csv|xlsx|pdf.
+      if (req.query.view === 'statement') {
+        if (!accountId) throw new AppError('ACCOUNT_REQUIRED', 'Pick an account for its statement', 422)
+        const st = await accountStatement((await resolveTenantScope(req)).tenantIds, accountId, from, to)
+        if (!format) return st
+        return sendReportFor(req, reply, format, { base: 'account-statement', suffix: `${st.account.code}-${st.dateFrom}-${st.dateTo}` }, {
+          title: `Account statement — ${st.account.code} ${st.account.name}`,
+          companies: st.account.companyName ? [st.account.companyName] : undefined,
+          period: `${st.dateFrom} to ${st.dateTo} · ${st.account.normal === 'debit' ? 'Debit' : 'Credit'}-balance account`,
+          rows: st.rows.map((r) => ({
+            date: r.date, entry: r.description, reference: r.reference ?? '', memo: r.memo ?? '',
+            debit: r.debitCents ? fmtPkr(r.debitCents) : '', credit: r.creditCents ? fmtPkr(r.creditCents) : '',
+            balance: fmtPkr(r.balanceCents),
+          })),
+          types: { debit: 'pkr', credit: 'pkr', balance: 'pkr' },
+          isTotal: (r) => r.entry === 'OPENING BALANCE' || r.entry === 'CLOSING BALANCE' || r.entry === 'TOTAL MOVEMENT',
+          ...(st.truncated && { notes: ['This statement stops at the line limit — narrow the dates for the rest.'] }),
+        })
+      }
 
       // The ledger is per company: single-company view shows that company's
       // books, "All companies" shows every company the operator belongs to.
@@ -91,7 +112,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const hasMore = entries.length > limit
       if (hasMore) entries.pop()
 
-      if (format === 'csv') {
+      if (format) {
         const flat: Array<Record<string, string | number>> = []
         for (const e of entries) {
           for (const l of e.lines) {
@@ -107,7 +128,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             })
           }
         }
-        return sendCsv(reply, `ledger-${fmtPktDate(from)}-${fmtPktDate(to)}.csv`, toCsv(flat))
+        return sendReportFor(req, reply, format, { base: 'ledger', suffix: `${fmtPktDate(from)}-${fmtPktDate(to)}` }, {
+          title: 'General ledger', period: `${fmtPktDate(from)} to ${fmtPktDate(to)}`,
+          rows: flat, types: { debit: 'pkr', credit: 'pkr' }, labels: { accountCode: 'Code', accountName: 'Account' },
+          ...(hasMore && { notes: [`Only the newest ${limit} entries are included — narrow the dates for the rest.`] }),
+        })
       }
 
       // A manual entry says whether it has been reversed (and by which entry),
@@ -285,7 +310,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const basis = z.enum(['inception', 'year']).default('inception').parse(req.query.basis || undefined)
       const report = await trialBalance((await resolveTenantScope(req)).tenantIds, asOf, { basis })
 
-      if (req.query.format === 'csv') {
+      const format = exportFormatOf(req.query.format)
+      if (format) {
         // "All companies": every row names its company, and each company's
         // own total follows the grand total.
         const multi = report.companies.length > 1
@@ -304,7 +330,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             rows.push({ company: c.name, code: '', account: 'COMPANY TOTAL', type: '', debit: fmtPkr(c.debitCents), credit: fmtPkr(c.creditCents) })
           }
         }
-        return sendCsv(reply, `trial-balance-${report.basis === 'year' ? 'year-' : ''}${report.asOf}.csv`, toCsv(rows))
+        return sendReportFor(req, reply, format, { base: 'trial-balance', suffix: `${report.basis === 'year' ? 'year-' : ''}${report.asOf}` }, {
+          title: 'Trial balance', companies: report.companies.map((c) => c.name),
+          period: `As at ${report.asOf}${report.basis === 'year' ? ' · profit and loss accounts from the start of the fiscal year' : ''}`,
+          rows, types: { debit: 'pkr', credit: 'pkr' },
+        })
       }
       return report
     },
@@ -319,7 +349,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const asOf = req.query.asOf ? parsePktEndOfDay(req.query.asOf) : new Date()
       const report = await balanceSheet((await resolveTenantScope(req)).tenantIds, asOf)
 
-      if (req.query.format === 'csv') {
+      const format = exportFormatOf(req.query.format)
+      if (format) {
         // "All companies": every account row names its company.
         const multi = report.companies.length > 1
         const co = (name: string | null): Record<string, string> => (multi ? { company: name ?? '' } : {})
@@ -340,7 +371,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const p of report.ppe) {
           flat.push({ section: 'Fixed assets by class', ...co(p.companyName), code: [p.costCode, p.accumCode].filter(Boolean).join(' / '), name: `${p.label}: cost ${fmtPkr(p.costCents)}, accumulated ${fmtPkr(p.accumulatedCents)}`, balance: fmtPkr(p.netCents) })
         }
-        return sendCsv(reply, `balance-sheet-${report.asOf}.csv`, toCsv(flat))
+        return sendReportFor(req, reply, format, { base: 'balance-sheet', suffix: report.asOf }, {
+          title: 'Balance sheet', companies: report.companies.map((c) => c.name), period: `As at ${report.asOf}`,
+          rows: flat, sectionKey: 'section', types: { balance: 'pkr' },
+        })
       }
       return report
     },
@@ -355,7 +389,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
       const report = await profitAndLoss((await resolveTenantScope(req)).tenantIds, from, to)
 
-      if (req.query.format === 'csv') {
+      const format = exportFormatOf(req.query.format)
+      if (format) {
         const flat: Array<Record<string, string | number>> = []
         for (const r of report.revenue)       flat.push({ section: 'Revenue', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
         flat.push({ section: 'Revenue', code: '', name: 'TOTAL REVENUE', amount: fmtPkr(report.totals.revenueCents) })
@@ -372,7 +407,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const r of report.otherIncome)   flat.push({ section: 'Other income', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
         flat.push({ section: 'Other income', code: '', name: 'TOTAL OTHER INCOME', amount: fmtPkr(report.totals.otherIncomeCents) })
         flat.push({ section: 'Result', code: '', name: 'NET PROFIT', amount: fmtPkr(report.totals.netProfitCents) })
-        return sendCsv(reply, `pl-${report.dateFrom}-${report.dateTo}.csv`, toCsv(flat))
+        return sendReportFor(req, reply, format, { base: 'pl', suffix: `${report.dateFrom}-${report.dateTo}` }, {
+          title: 'Profit and loss', period: `${report.dateFrom} to ${report.dateTo}`,
+          rows: flat, sectionKey: 'section', types: { amount: 'pkr' },
+        })
       }
       return report
     },
@@ -436,7 +474,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       )
       const report = { dateFrom: fmtPktDate(from), dateTo: fmtPktDate(to), brands, shared, totals }
 
-      if (req.query.format === 'csv') {
+      const format = exportFormatOf(req.query.format)
+      if (format) {
         const flat = [...all, { ...totals, name: 'TOTAL', grossMarginPct: '' }].map((r) => ({
           brand: r.name,
           revenue: fmtPkr(r.revenueCents),
@@ -448,7 +487,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           otherIncome: fmtPkr(r.otherIncomeCents),
           netProfit: fmtPkr(r.netProfitCents),
         }))
-        return sendCsv(reply, `pl-by-brand-${report.dateFrom}-${report.dateTo}.csv`, toCsv(flat))
+        const money = ['revenue', 'discountsRefunds', 'netRevenue', 'cogs', 'grossProfit', 'opex', 'otherIncome', 'netProfit'] as const
+        return sendReportFor(req, reply, format, { base: 'pl-by-brand', suffix: `${report.dateFrom}-${report.dateTo}` }, {
+          title: 'Profit and loss by brand', period: `${report.dateFrom} to ${report.dateTo}`,
+          rows: flat, types: Object.fromEntries(money.map((k) => [k, 'pkr' as const])), labels: { cogs: 'COGS', opex: 'OpEx', discountsRefunds: 'Discounts / refunds' },
+        })
       }
       return report
     },
@@ -463,7 +506,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
       const report = await cashFlow((await resolveTenantScope(req)).tenantIds, from, to)
 
-      if (req.query.format === 'csv') {
+      const format = exportFormatOf(req.query.format)
+      if (format) {
         // Transfers between the company's own cash accounts (safe drops,
         // pay-ins, deposits) have their own columns and are not inflow/outflow.
         const multi = report.companies.length > 1
@@ -472,7 +516,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         for (const a of report.byCashAccount) flat.push({ section: 'By account', ...co(a.companyName), code: a.code, name: a.name, inflow: fmtPkr(a.inflowCents), outflow: fmtPkr(a.outflowCents), transferIn: fmtPkr(a.transferInCents), transferOut: fmtPkr(a.transferOutCents), net: fmtPkr(a.netCents) })
         for (const c of report.byCategory)    flat.push({ section: 'By category', ...co(''), code: '', name: c.category, inflow: fmtPkr(c.inflowCents), outflow: fmtPkr(c.outflowCents), transferIn: '', transferOut: '', net: fmtPkr(c.netCents) })
         flat.push({ section: 'Total', ...co(''), code: '', name: 'NET CHANGE IN CASH', inflow: fmtPkr(report.totals.inflowCents), outflow: fmtPkr(report.totals.outflowCents), transferIn: fmtPkr(report.totals.transfersCents), transferOut: fmtPkr(report.totals.transfersCents), net: fmtPkr(report.totals.netCents) })
-        return sendCsv(reply, `cash-flow-${report.dateFrom}-${report.dateTo}.csv`, toCsv(flat))
+        return sendReportFor(req, reply, format, { base: 'cash-flow', suffix: `${report.dateFrom}-${report.dateTo}` }, {
+          title: 'Cash flow', companies: report.companies.map((c) => c.name), period: `${report.dateFrom} to ${report.dateTo}`,
+          rows: flat, sectionKey: 'section',
+          types: { inflow: 'pkr', outflow: 'pkr', transferIn: 'pkr', transferOut: 'pkr', net: 'pkr' },
+        })
       }
       return report
     },
@@ -585,7 +633,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       if (!filingTenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company to file the return for', 422)
       const report = await salesTaxReturn(filingTenantId, from, to)
 
-      if (req.query.format === 'csv') {
+      const format = exportFormatOf(req.query.format)
+      if (format) {
         const flat: Array<Record<string, string | number>> = []
         flat.push({ section: 'Period',     code: '',                       name: 'From',    value: report.period.from })
         flat.push({ section: 'Period',     code: '',                       name: 'To',      value: report.period.to })
@@ -671,7 +720,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         flat.push({ section: 'Result',     code: '',                          name: 'NET PAYABLE AFTER FEDERAL INPUT ON RAW MATERIALS (H8)', value: fmtPkr(report.netPayableAfterCrossSetOffCents) })
         flat.push({ section: 'Result',     code: '1320',                      name: 'Federal input on raw materials still claimable (H8)', value: fmtPkr(report.federalCrossSetOff.availableCents) })
         for (const n of report.notes) flat.push({ section: 'Notes', code: '', name: n, value: '' })
-        return sendCsv(reply, `sales-tax-return-${report.period.from}-${report.period.to}.csv`, toCsv(flat))
+        return sendReportFor(req, reply, format, { base: 'sales-tax-return', suffix: `${report.period.from}-${report.period.to}` }, {
+          title: 'Sales tax return', companies: (await companyNamesOf([filingTenantId])),
+          period: `${report.period.from} to ${report.period.to}`,
+          rows: flat, sectionKey: 'section', types: { value: 'pkr' },
+        })
       }
       return report
     },

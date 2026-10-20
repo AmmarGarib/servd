@@ -22,6 +22,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { requireAuth } from '../auth/middleware.js'
 import { AppError } from '../../lib/errors.js'
 import { csvCell } from '../accounting/csv.js'
+import { exportFormatOf, fromMatrix, sendReport, type ExportFormat } from '../../lib/reportExport.js'
 import { directorBrands, pickDirectorBrand, type DirectorBrand } from './access.js'
 import {
   directorPeriod, directorSales, directorPnl, directorFoodCost, directorMenu, directorReviews, directorComplaints,
@@ -124,12 +125,21 @@ const VIEWS: Record<string, (b: DirectorBrand, p: DirectorPeriod) => Promise<Tab
 
 export const DIRECTOR_CSV_VIEWS = Object.keys(VIEWS)
 
-function sendCsv(reply: FastifyReply, name: string, t: Table) {
+const VIEW_TITLE: Record<string, string> = {
+  'sales-daily': 'Sales by day', 'sales-channels': 'Sales by channel', 'sales-tenders': 'Sales by tender', 'top-items': 'Top items',
+  pnl: 'Profit and loss', 'food-cost': 'Food cost', menu: 'Menu engineering', reviews: 'Reviews', complaints: 'Complaints',
+}
+
+/** CSV exactly as before; Excel / PDF through lib/reportExport.ts, headed with the BRAND only (never a company). */
+function sendTable(reply: FastifyReply, format: ExportFormat, name: string, view: string, brandName: string | null, period: string | null, t: Table) {
   const body = '﻿' + [t.columns, ...t.rows].map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n'
-  return reply
-    .header('Content-Type', 'text/csv; charset=utf-8')
-    .header('Content-Disposition', `attachment; filename="${name}.csv"`)
-    .send(body)
+  return sendReport(reply, format, name, {
+    title: `${brandName ? `${brandName} — ` : ''}${VIEW_TITLE[view] ?? view}`,
+    companies: brandName ? [brandName] : [],
+    ...(period ? { period } : {}),
+    ...fromMatrix(t.columns, t.rows),
+    csv: body,
+  })
 }
 
 export async function directorRoutes(fastify: FastifyInstance) {
@@ -177,8 +187,9 @@ export async function directorRoutes(fastify: FastifyInstance) {
     if (!build) throw new AppError('BAD_VIEW', `view is one of: ${DIRECTOR_CSV_VIEWS.join(', ')}`, 400)
     const { brand, period } = await context(req, req.query)
     // No brand on the login: an empty file, never another brand's rows.
-    if (!brand) return sendCsv(reply, `director-${view}`, { columns: [], rows: [] })
+    const format = exportFormatOf((req.query as { format?: string }).format, 'csv')!
+    if (!brand) return sendTable(reply, format, `director-${view}`, view, null, null, { columns: [], rows: [] })
     const slug = brand.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'brand'
-    return sendCsv(reply, `${slug}-${view}-${period.dateFrom}-to-${period.dateTo}`, await build(brand, period))
+    return sendTable(reply, format, `${slug}-${view}-${period.dateFrom}-to-${period.dateTo}`, view, brand.name, `${period.dateFrom} to ${period.dateTo}`, await build(brand, period))
   })
 }

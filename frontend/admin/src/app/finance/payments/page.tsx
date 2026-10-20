@@ -28,6 +28,7 @@ import {
   CLASSIFICATION_LABEL, TAX_STATUS_LABEL, ClassificationChip,
   type PaymentClassification, type PaymentTaxStatus,
 } from '@/components/finance/PaymentClassificationFields'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type Filter = PaymentClassification | 'all'
 
@@ -128,10 +129,6 @@ export default function PaymentsRegisterPage() {
   const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.journalEntryId))
   const selectAll = () => setSelected(allOnPage ? new Set() : new Set(rows.map((r) => r.journalEntryId)))
 
-  const downloadCsv = () => {
-    setCsvErr('')
-    api.download(`/accounting/payments/payments.csv?${qs}`, `payments-${filter}-${from}-to-${to}.csv`).catch((e: Error) => setCsvErr(e.message))
-  }
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -146,13 +143,7 @@ export default function PaymentsRegisterPage() {
               reporting label only — the ledger, trial balance, tax returns and statutory reports are exactly the same whatever it says.
             </p>
           </div>
-          <button
-            onClick={downloadCsv}
-            className="rounded-xl border px-4 py-2.5 text-sm font-semibold text-white/70 hover:text-white"
-            style={{ borderColor: 'var(--border-strong)', background: 'var(--surface)' }}
-          >
-            Download CSV
-          </button>
+          <ExportMenu path={`/accounting/payments/payments.csv?${qs}`} filename={`payments-${filter}-${from}-to-${to}`} onError={(m) => setCsvErr(m)} />
         </div>
         {csvErr && <p className="mt-2 text-sm" style={{ color: danger }}>{csvErr}</p>}
       </header>

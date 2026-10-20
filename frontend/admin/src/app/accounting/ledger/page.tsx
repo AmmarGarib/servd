@@ -13,6 +13,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface LedgerLine {
   id: string
@@ -120,11 +121,6 @@ function LedgerView() {
     setOpenIds(next)
   }
 
-  async function exportCsv() {
-    setCsvError(null)
-    try { await api.download(`/accounting/ledger?${query}&limit=1000&format=csv`, `ledger-${from}-${to}.csv`) }
-    catch (e) { setCsvError((e as Error).message) }
-  }
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -149,7 +145,12 @@ function LedgerView() {
             <span className="text-s-muted text-xs">→</span>
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
               className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
-            <button onClick={() => void exportCsv()} className="s-btn-secondary text-sm">Export CSV</button>
+            {/* An account picked: its statement (opening, running balance, closing). Otherwise the journal feed. */}
+            {accountId && (
+              <ExportMenu label="Account statement" path={`/accounting/ledger?dateFrom=${from}&dateTo=${to}&accountId=${accountId}&view=statement`}
+                filename={`account-statement-${accounts.find((a) => a.id === accountId)?.code ?? 'account'}-${from}-${to}`} onError={(m) => setCsvError(m)} />
+            )}
+            <ExportMenu path={`/accounting/ledger?${query}&limit=1000`} filename={`ledger-${from}-${to}`} onError={(m) => setCsvError(m)} />
           </div>
         )}
       </header>

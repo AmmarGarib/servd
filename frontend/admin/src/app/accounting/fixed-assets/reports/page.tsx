@@ -16,6 +16,7 @@ import {
   FA_BASE, FaFrame, Notice, Stat, card, inp, btnPrimary, btnGhost, money, moneyExact, fmtDay, fmtMonth, pct, todayIso, errorWords, useFaLookups,
 } from '../../../../components/fixedAssets/shared'
 import { Select } from '@/components/ui/Select'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 type ReportKey = 'schedule' | 'roll' | 'nbv' | 'tie' | 'advances' | 'tax'
 const REPORTS: Array<{ key: ReportKey; label: string; about: string }> = [
@@ -27,10 +28,9 @@ const REPORTS: Array<{ key: ReportKey; label: string; about: string }> = [
   { key: 'tax', label: 'Tax depreciation', about: 'The Third Schedule view for one tax year, for one company.' },
 ]
 
+/** CSV / Excel / PDF of one report: `path` without format, `name` without extension. */
 function csvButton(path: string, name: string, onError: (m: string) => void) {
-  return (
-    <button className={btnGhost} onClick={() => { void api.download(path, name).catch((e) => onError(errorWords(e))) }}>Download CSV</button>
-  )
+  return <ExportMenu className={btnGhost} path={path} filename={name} onError={onError} />
 }
 
 export default function ReportsPage() {
@@ -117,7 +117,7 @@ function ScheduleReport({ onError }: { onError: (m: string) => void }) {
           <Select className={inp} value={by} onChange={(e) => setBy(e.target.value)}>
             <option value="class">Class</option><option value="brand">Brand</option><option value="location">Outlet</option><option value="pool">Smallwares pool</option><option value="asset">Asset</option>
           </Select></label>
-        <div>{csvButton(`${FA_BASE}/reports/schedule?${qs}&format=csv`, 'depreciation-schedule.csv', onError)}</div>
+        <div>{csvButton(`${FA_BASE}/reports/schedule?${qs}`, 'depreciation-schedule', onError)}</div>
       </div>
       <Loading q={q} />
       {d && (
@@ -230,7 +230,7 @@ function RollForwardReport({ onError }: { onError: (m: string) => void }) {
         <label className="block"><span className="text-[11px] font-bold text-white/50">From</span><input type="date" className={inp} value={from} onChange={(e) => setFrom(e.target.value)} /></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">To</span><input type="date" className={inp} value={to} max={todayIso()} onChange={(e) => setTo(e.target.value)} /></label>
         <p className="text-[11px] text-white/40 col-span-2 md:col-span-1">Blank means the tax year so far.</p>
-        <div>{csvButton(`${FA_BASE}/reports/roll-forward?${qs}${qs ? '&' : ''}format=csv`, 'fixed-asset-roll-forward.csv', onError)}</div>
+        <div>{csvButton(`${FA_BASE}/reports/roll-forward${qs ? `?${qs}` : ''}`, 'fixed-asset-roll-forward', onError)}</div>
       </div>
       <Loading q={q} />
       {d && (
@@ -279,7 +279,7 @@ function NbvReport({ onError }: { onError: (m: string) => void }) {
             <option value="class">Class</option><option value="brand">Brand</option><option value="location">Outlet</option><option value="pool">Smallwares pool</option><option value="company">Company</option><option value="asset">Asset</option>
           </Select></label>
         <p className="text-[11px] text-white/40">Brand and outlet are where each asset was on that day.</p>
-        <div>{csvButton(`${FA_BASE}/reports/nbv?${qs}&format=csv`, `fixed-asset-nbv.csv`, onError)}</div>
+        <div>{csvButton(`${FA_BASE}/reports/nbv?${qs}`, `fixed-asset-nbv`, onError)}</div>
       </div>
       <Loading q={q} />
       {d && (
@@ -335,7 +335,7 @@ function TieOutReport({ onError }: { onError: (m: string) => void }) {
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
         <label className="block"><span className="text-[11px] font-bold text-white/50">As of</span><input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></label>
         <p className="text-[11px] text-white/40 col-span-2 md:col-span-2">Blank compares today&rsquo;s balances.</p>
-        <div>{csvButton(`${FA_BASE}/reports/tie-out?${qs}${qs ? '&' : ''}format=csv`, 'fixed-asset-tie-out.csv', onError)}</div>
+        <div>{csvButton(`${FA_BASE}/reports/tie-out${qs ? `?${qs}` : ''}`, 'fixed-asset-tie-out', onError)}</div>
       </div>
       <Loading q={q} />
       {q.data?.companies.map((c) => {
@@ -409,7 +409,7 @@ function AdvancesReport({ onError }: { onError: (m: string) => void }) {
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
         <label className="block"><span className="text-[11px] font-bold text-white/50">As of</span><input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></label>
         <p className="text-[11px] text-white/40 col-span-2">An advance is money paid to a supplier before the item is capitalised.</p>
-        <div>{csvButton(`${FA_BASE}/reports/advances?${qs}${qs ? '&' : ''}format=csv`, 'supplier-advances.csv', onError)}</div>
+        <div>{csvButton(`${FA_BASE}/reports/advances${qs ? `?${qs}` : ''}`, 'supplier-advances', onError)}</div>
       </div>
       <Loading q={q} />
       {d && (
@@ -511,7 +511,7 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
               {freeze.isPending ? 'Freezing…' : 'Freeze this year'}
             </button>
           ))}
-          {csvButton(`${FA_BASE}/reports/tax?${qs}${qs ? '&' : ''}format=csv`, `tax-depreciation-${shownYear ?? ''}.csv`, onError)}
+          {csvButton(`${FA_BASE}/reports/tax${qs ? `?${qs}` : ''}`, `tax-depreciation-${shownYear ?? ''}`, onError)}
         </div>
       </div>
       <p className="text-[11px] text-white/40">Tax is filed per company, so this report shows the company picked in the top bar.</p>

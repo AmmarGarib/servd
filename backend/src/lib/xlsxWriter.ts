@@ -14,6 +14,8 @@ export interface XlsxSheet {
   rows: XlsxCell[][]
   /** Merged ranges like "A1:D1". */
   merges?: string[]
+  /** Freeze the first N rows (they stay in view while scrolling). */
+  freezeRows?: number
 }
 
 const STYLE_INDEX: Record<XlsxStyle, number> = { normal: 0, bold: 1, title: 2, currency: 3, boldCurrency: 4, wrap: 5, header: 6, amount: 7, boldAmount: 8, percent: 9 }
@@ -158,7 +160,10 @@ function sheetXml(sheet: XlsxSheet): string {
   const merges = sheet.merges?.length
     ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((m) => `<mergeCell ref="${xmlEscape(m)}"/>`).join('')}</mergeCells>`
     : ''
-  return `${XML_HEAD}<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${cols}<sheetData>${rows}</sheetData>${merges}</worksheet>`
+  const freeze = sheet.freezeRows && sheet.freezeRows > 0
+    ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${sheet.freezeRows}" topLeftCell="A${sheet.freezeRows + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
+    : ''
+  return `${XML_HEAD}<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${freeze}${cols}<sheetData>${rows}</sheetData>${merges}</worksheet>`
 }
 
 /** One-sheet workbook as .xlsx bytes. */

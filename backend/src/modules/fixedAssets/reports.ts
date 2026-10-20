@@ -25,7 +25,7 @@
 // deliberately no deferred-tax report or route here. Smallwares (pooled
 // classes) are deducted in full for tax in the year bought (H35, 2026-10-15).
 
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { FixedAsset, FixedAssetClass, FixedAssetDepreciation, FixedAssetEvent, Prisma, PrismaClient, UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -35,7 +35,7 @@ import { toCents, sumCents } from '../../lib/money.js'
 import { resolveTenantScope, activeTenantId } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { ledgerBalancesByCode } from '../../lib/bankAccounts.js'
-import { toCsv } from '../accounting/csv.js'
+import { exportFormatOf, sendReportFor, type ExportFormat } from '../../lib/reportExport.js'
 import { ACCT } from '../accounting/journal.js'
 import { taxYearOf } from '../accounting/fiscalYear.js'
 import { findOrphanAdvances } from '../financePlanning/capexPosting.js'
@@ -869,41 +869,45 @@ export async function taxReport(db: Db, tenantId: string, taxYear: number) {
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
-function sendCsv(reply: FastifyReply, name: string, rows: Array<Record<string, string | number | null>>, columns: string[]) {
-  return reply
-    .header('Content-Type', 'text/csv; charset=utf-8')
-    .header('Content-Disposition', `attachment; filename="${name}.csv"`)
-    .send(rows.length > 0 ? toCsv(rows, columns) : `﻿${columns.join(',')}\r\n`)
+/** Every fixed-asset report exports through lib/reportExport.ts (csv unchanged; xlsx / pdf leave the ids out). */
+function sendFa(req: FastifyRequest, reply: FastifyReply, format: ExportFormat, name: string, title: string, period: string, rows: Array<Record<string, string | number | null>>, columns: string[]) {
+  return sendReportFor(req, reply, format, name, {
+    title, period, rows, columns: columns.map((key) => ({ key })), csvEmpty: 'header',
+    hide: columns.filter((k) => k === 'tenantId' || /Id$/.test(k) || k === 'key'),
+  })
 }
+const EXPORT = z.enum(['json', 'csv', 'xlsx', 'pdf']).optional()
 
 const columnsOf = (rows: Array<Record<string, unknown>>, fallback: string[]) => (rows[0] ? Object.keys(rows[0]) : fallback)
 
-const asOfQuery = z.object({ asOf: z.string().optional(), format: z.enum(['json', 'csv']).optional() })
+const asOfQuery = z.object({ asOf: z.string().optional(), format: EXPORT })
 
 export async function fixedAssetReportRoutes(fastify: FastifyInstance) {
   fastify.get('/schedule', { preHandler: requireAuth(...READERS) }, async (req, reply) => {
     const q = z.object({
       from: z.string().optional(), to: z.string().optional(),
-      groupBy: z.enum(SCHEDULE_GROUPS).default('class'), format: z.enum(['json', 'csv']).optional(),
+      groupBy: z.enum(SCHEDULE_GROUPS).default('class'), format: EXPORT,
     }).parse(req.query)
     const cur = currentPeriodPkt()
     const from = q.from ?? periodFromIndex(periodIndex(cur) - 11)
     const to = q.to ?? periodFromIndex(periodIndex(cur) + 12)
     const { tenantIds } = await resolveTenantScope(req)
     const r = await scheduleReport(prisma, tenantIds, from, to, q.groupBy)
-    if (q.format === 'csv') return sendCsv(reply, `depreciation-schedule-${from}-${to}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'key', 'label', 'period', 'postedCents', 'forecastCents']))
+    const f = exportFormatOf(q.format)
+    if (f) return sendFa(req, reply, f, `depreciation-schedule-${from}-${to}`, 'Depreciation schedule', `${from} to ${to}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'key', 'label', 'period', 'postedCents', 'forecastCents']))
     return r
   })
 
   fastify.get('/roll-forward', { preHandler: requireAuth(...READERS) }, async (req, reply) => {
-    const q = z.object({ from: z.string().optional(), to: z.string().optional(), format: z.enum(['json', 'csv']).optional() }).parse(req.query)
+    const q = z.object({ from: z.string().optional(), to: z.string().optional(), format: EXPORT }).parse(req.query)
     const now = new Date()
     const from = q.from ? startOfPktDay(q.from) : taxYearOf(now).start
     const to = q.to ? endOfPktDay(q.to) : endOfPktDay(pktDay(now))
     if (to.getTime() < from.getTime()) throw new AppError('BAD_DATE', '"to" must not be before "from"', 400)
     const { tenantIds } = await resolveTenantScope(req)
     const r = await rollForward(prisma, tenantIds, from, to)
-    if (q.format === 'csv') return sendCsv(reply, `fixed-asset-roll-forward-${r.from}-${r.to}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'classKey', 'label']))
+    const f = exportFormatOf(q.format)
+    if (f) return sendFa(req, reply, f, `fixed-asset-roll-forward-${r.from}-${r.to}`, 'Fixed asset roll-forward', `${r.from} to ${r.to}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'classKey', 'label']))
     return r
   })
 
@@ -912,7 +916,8 @@ export async function fixedAssetReportRoutes(fastify: FastifyInstance) {
     const asOf = q.asOf ? endOfPktDay(q.asOf) : new Date()
     const { tenantIds } = await resolveTenantScope(req)
     const r = await nbvReport(prisma, tenantIds, asOf, q.groupBy)
-    if (q.format === 'csv') return sendCsv(reply, `fixed-asset-nbv-${r.asOf}-${q.groupBy}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'key', 'label', 'assets', 'costCents', 'accumulatedCents', 'nbvCents']))
+    const f = exportFormatOf(q.format)
+    if (f) return sendFa(req, reply, f, `fixed-asset-nbv-${r.asOf}-${q.groupBy}`, 'Fixed assets — net book value', `As at ${r.asOf}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'key', 'label', 'assets', 'costCents', 'accumulatedCents', 'nbvCents']))
     return r
   })
 
@@ -921,7 +926,8 @@ export async function fixedAssetReportRoutes(fastify: FastifyInstance) {
     const asOf = q.asOf ? endOfPktDay(q.asOf) : undefined
     const { tenantIds } = await resolveTenantScope(req)
     const r = await tieOutReport(prisma, tenantIds, asOf)
-    if (q.format === 'csv') return sendCsv(reply, `fixed-asset-tie-out-${r.asOf ?? 'now'}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'check', 'code', 'registerCents', 'glCents', 'diffCents']))
+    const f = exportFormatOf(q.format)
+    if (f) return sendFa(req, reply, f, `fixed-asset-tie-out-${r.asOf ?? 'now'}`, 'Fixed asset register vs ledger', `As at ${r.asOf ?? 'now'}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'check', 'code', 'registerCents', 'glCents', 'diffCents']))
     return r
   })
 
@@ -930,17 +936,19 @@ export async function fixedAssetReportRoutes(fastify: FastifyInstance) {
     const asOf = q.asOf ? endOfPktDay(q.asOf) : new Date()
     const { tenantIds } = await resolveTenantScope(req)
     const r = await advancesReport(prisma, tenantIds, asOf)
-    if (q.format === 'csv') return sendCsv(reply, `supplier-advances-${r.asOf}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'lineId', 'heldCents', 'flags']))
+    const f = exportFormatOf(q.format)
+    if (f) return sendFa(req, reply, f, `supplier-advances-${r.asOf}`, 'Supplier advances (CapEx)', `As at ${r.asOf}`, r.rows, columnsOf(r.rows, ['tenantId', 'companyName', 'lineId', 'heldCents', 'flags']))
     return r
   })
 
   // Tax is filed per company: the ACTIVE company only (never the portfolio).
   fastify.get('/tax', { preHandler: requireAuth(...READERS) }, async (req, reply) => {
-    const q = z.object({ taxYear: z.coerce.number().int().optional(), format: z.enum(['json', 'csv']).optional() }).parse(req.query)
+    const q = z.object({ taxYear: z.coerce.number().int().optional(), format: EXPORT }).parse(req.query)
     const tenantId = activeTenantId(req, 'tax depreciation is per company')
     const taxYear = q.taxYear ?? taxYearOf(new Date()).taxYear
     const r = await taxReport(prisma, tenantId, taxYear)
-    if (q.format === 'csv') return sendCsv(reply, `tax-depreciation-${taxYear}`, r.rows, columnsOf(r.rows, ['assetId', 'assetTag', 'name', 'classKey', 'closingWdvCents']))
+    const f = exportFormatOf(q.format)
+    if (f) return sendFa(req, reply, f, `tax-depreciation-${taxYear}`, `Tax depreciation ${taxYear}`, `${r.companyName} · ${r.start} to ${r.end}`, r.rows, columnsOf(r.rows, ['assetId', 'assetTag', 'name', 'classKey', 'closingWdvCents']))
     return r
   })
 

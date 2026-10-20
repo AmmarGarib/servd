@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import Link from 'next/link'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 // In "All companies" view (more than one company) each row names its company.
 type Row = { tenantId?: string | null; companyName?: string | null; code: string; name: string; balanceCents: number }
@@ -97,9 +98,6 @@ export default function BalanceSheetPage() {
 
   const multi = (data?.companies?.length ?? 0) > 1
 
-  const apiUrl = process.env['NEXT_PUBLIC_API_URL'] ?? ''
-  const csvHref = `${apiUrl}/api/v1/accounting/balance-sheet?asOf=${asOf}&format=csv`
-
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
@@ -110,7 +108,7 @@ export default function BalanceSheetPage() {
         <div className="flex items-center gap-3">
           <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
             className="bg-s-card border border-s-border rounded px-3 py-1.5 text-sm text-s-text" />
-          <a href={csvHref} className="s-btn-secondary text-sm">Export CSV</a>
+          <ExportMenu path={`/accounting/balance-sheet?asOf=${asOf}`} filename={`balance-sheet-${asOf}`} />
         </div>
       </header>
 

@@ -7,6 +7,8 @@ import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
 import { getMenuEngineering } from './menu-engineering.js'
 import { getDemandForecast } from './demand-forecast.js'
 import { salesTotals, salesByHour, salesByChannel, salesByTender, topItems, stationTimes, reportDateRange, type SalesQuery } from './service.js'
+import { exportFormatOf, sendReportFor, type ExportFormat, type ReportRow } from '../../lib/reportExport.js'
+import { fmtPktDate } from '../accounting/dates.js'
 
 // Who reads the OPERATIONAL reports — sales volume (orders, orders by hour,
 // orders by channel), item mix, ticket times by station and the demand
@@ -35,6 +37,18 @@ function seesRevenue(req: FastifyRequest): boolean {
 /** Item revenue on the item mix: the manager tiers and finance, as before. */
 function seesItemRevenue(req: FastifyRequest): boolean {
   return FINANCE_TEAM.includes(req.staffUser!.role)
+}
+
+// ?format=csv|xlsx|pdf on /sales, /top-items, /stations, /by-source and
+// /by-tender (owner, 2026-10-20): the SAME answer the screen gets — revenue
+// already hidden for the volume-only readers — as a file through
+// lib/reportExport.ts.
+type ExportQ = { format?: string }
+function exportOf(req: FastifyRequest): ExportFormat | null {
+  return exportFormatOf((req.query as ExportQ).format)
+}
+function periodLine(q: SalesQuery): string {
+  return `${fmtPktDate(q.from)} to ${fmtPktDate(q.to)}`
 }
 
 export async function reportRoutes(fastify: FastifyInstance) {
@@ -70,10 +84,28 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // GET /reports/sales — sales totals + by-hour (PKT) breakdown
   fastify.get<{
     Querystring: { conceptId?: string; locationId?: string; channel?: string; dateFrom?: string; dateTo?: string }
-  }>('/sales', { preHandler: requireAuth(...REPORT_READERS) }, async (req) => {
+  }>('/sales', { preHandler: requireAuth(...REPORT_READERS) }, async (req, reply) => {
     const q = await salesQuery(req, req.query)
     const [totals, byHour] = await Promise.all([salesTotals(q), salesByHour(q)])
-    if (seesRevenue(req)) return { totals, byHour }
+    const money = seesRevenue(req)
+    const format = exportOf(req)
+    if (format) {
+      const rows: ReportRow[] = money
+        ? [
+            { metric: 'Sales incl. GST (completed orders, before refunds)', amountCents: totals.gross, orders: null },
+            { metric: 'Discounts', amountCents: totals.discount, orders: null },
+            { metric: 'Refunds (incl. GST)', amountCents: totals.refunds, orders: null },
+            { metric: 'GST on these orders, less refunds', amountCents: totals.tax, orders: null },
+            { metric: 'Tips', amountCents: totals.tips, orders: null },
+            { metric: 'NET SALES EX-GST (P&L net revenue)', amountCents: totals.net, orders: null },
+            { metric: 'Total orders', amountCents: null, orders: totals.orders },
+          ]
+        : [{ metric: 'Total orders', orders: totals.orders }]
+      return sendReportFor(req, reply, format, { base: 'sales', suffix: periodLine(q).replace(' to ', '-to-') }, {
+        title: 'Sales', period: periodLine(q), rows, labels: { amountCents: 'Amount' }, types: { orders: 'number' },
+      })
+    }
+    if (money) return { totals, byHour }
     // Volume only — the orders, and the orders by hour (see REPORT_READERS).
     return {
       volumeOnly: true,
@@ -86,12 +118,21 @@ export async function reportRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; limit?: string } }>(
     '/top-items',
     { preHandler: requireAuth(...REPORT_READERS) },
-    async (req) => {
+    async (req, reply) => {
       const asked = parseInt(req.query.limit ?? '20', 10)
       const limit = Math.min(Number.isFinite(asked) && asked > 0 ? asked : 20, 50)
-      const items = await topItems(await salesQuery(req, req.query), limit)
-      if (seesItemRevenue(req)) return items
-      return items.map(({ revenueCents: _revenue, ...rest }) => rest)
+      const sq = await salesQuery(req, req.query)
+      const items = await topItems(sq, limit)
+      const shown = seesItemRevenue(req) ? items : items.map(({ revenueCents: _revenue, ...rest }) => rest)
+      const format = exportOf(req)
+      if (format) {
+        return sendReportFor(req, reply, format, { base: 'top-items', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+          title: 'Top items', period: periodLine(sq),
+          rows: shown.map((i): ReportRow => ({ rank: i.rank, item: i.name, quantity: i.quantity, ...('revenueCents' in i ? { revenueCents: (i as { revenueCents: number }).revenueCents } : {}) })),
+          types: { rank: 'number', quantity: 'number' }, labels: { revenueCents: 'Revenue' },
+        })
+      }
+      return shown
     },
   )
 
@@ -99,16 +140,38 @@ export async function reportRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/stations',
     { preHandler: requireAuth(...REPORT_READERS) },
-    async (req) => (await stationTimes(await salesQuery(req, req.query))).stations,
+    async (req, reply) => {
+      const sq = await salesQuery(req, req.query)
+      const stations = (await stationTimes(sq)).stations
+      const format = exportOf(req)
+      if (!format) return stations
+      return sendReportFor(req, reply, format, { base: 'stations', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+        title: 'Ticket times by station', period: periodLine(sq),
+        rows: stations.map((st) => ({ station: st.stationName, itemsFired: st.items, avgMinutes: Number(st.avgMinutes.toFixed(1)) })),
+        types: { itemsFired: 'number', avgMinutes: 'number' }, labels: { avgMinutes: 'Average minutes' },
+      })
+    },
   )
 
   // GET /reports/by-source — sales by order source
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/by-source',
     { preHandler: requireAuth(...REPORT_READERS) },
-    async (req) => {
-      const rows = await salesByChannel(await salesQuery(req, req.query))
-      if (seesRevenue(req)) return rows
+    async (req, reply) => {
+      const sq = await salesQuery(req, req.query)
+      const rows = await salesByChannel(sq)
+      const money = seesRevenue(req)
+      const format = exportOf(req)
+      if (format) {
+        return sendReportFor(req, reply, format, { base: 'by-channel', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+          title: 'Sales by channel', period: periodLine(sq),
+          rows: (money ? rows : [...rows].sort((a, b) => b.orders - a.orders)).map((r) => ({
+            channel: r.source, orders: r.orders, ...(money ? { grossCents: r.gross, netCents: r.net } : {}),
+          })),
+          types: { orders: 'number', grossCents: 'cents', netCents: 'cents' }, labels: { grossCents: 'Gross (incl. GST)', netCents: 'Net (ex-GST)' },
+        })
+      }
+      if (money) return rows
       return rows.map((r) => ({ source: r.source, orders: r.orders })).sort((a, b) => b.orders - a.orders)
     },
   )
@@ -121,8 +184,18 @@ export async function reportRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { conceptId?: string; locationId?: string; channel?: string; dateFrom?: string; dateTo?: string } }>(
     '/by-tender',
     { preHandler: requireAuth(...REPORT_READERS) },
-    async (req) => {
-      const r = await salesByTender(await salesQuery(req, req.query))
+    async (req, reply) => {
+      const sq = await salesQuery(req, req.query)
+      const r = await salesByTender(sq)
+      const format = exportOf(req)
+      if (format) {
+        const money = seesRevenue(req)
+        return sendReportFor(req, reply, format, { base: 'by-tender', suffix: periodLine(sq).replace(' to ', '-to-') }, {
+          title: 'Sales by tender', period: periodLine(sq),
+          rows: r.tenders.map((t) => ({ tender: t.label, orders: t.orders, ...(money ? { payments: t.payments, amountCents: t.amountCents, sharePct: t.sharePct } : {}) })),
+          types: { orders: 'number', payments: 'number', amountCents: 'cents', sharePct: 'number' }, labels: { amountCents: 'Amount', sharePct: 'Share %' },
+        })
+      }
       if (seesRevenue(req)) return r
       return {
         volumeOnly: true,

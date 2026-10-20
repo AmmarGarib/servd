@@ -31,6 +31,7 @@ import WithholdingRegister from './WithholdingRegister'
 import { Select } from '@/components/ui/Select'
 import { Modal as SharedModal } from '../../../components/ui/Modal'
 import { DialogForm, RupeeField } from '../../../components/finance/PaymentReceivedFields'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface AccountTotal { code: string; name: string; totalCents: number }
 type AuthorityKey = 'fbr' | 'srb'
@@ -247,11 +248,6 @@ export default function SalesTaxReturnPage() {
   // Through api.download so the request carries the session (a plain link
   // sent no Authorization header and the export came back 401).
   const [csvError, setCsvError] = useState<string | null>(null)
-  async function exportCsv() {
-    setCsvError(null)
-    try { await api.download(`/accounting/sales-tax-return?dateFrom=${from}&dateTo=${to}&format=csv`, `sales-tax-return-${from}-${to}.csv`) }
-    catch (e) { setCsvError((e as Error).message) }
-  }
 
   const [paying, setPaying] = useState<PayTarget | null>(null)
   // "Recover as copy" from the Trash (a voided tax payment, type
@@ -314,7 +310,7 @@ export default function SalesTaxReturnPage() {
               <input type="date" aria-label="To" min="2000-01-01" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
             </>
           )}
-          {tab === 'return' && <button type="button" onClick={exportCsv} className="s-btn-secondary text-sm">Export CSV</button>}
+          {tab === 'return' && <ExportMenu path={`/accounting/sales-tax-return?dateFrom=${from}&dateTo=${to}`} filename={`sales-tax-return-${from}-${to}`} onError={(m) => setCsvError(m)} />}
         </div>
         <nav className="w-full flex gap-1 overflow-x-auto -mb-4" role="tablist" aria-label="Sales tax return sections">
           {TABS.map((t) => (

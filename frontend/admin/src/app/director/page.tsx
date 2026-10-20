@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { fmtPkrWhole, todayPktIso, startOfMonthPktIso } from '../../lib/money'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface Brand { id: string; name: string; slug: string }
 interface Head { brand: { id: string; name: string } | null; period: { dateFrom: string; dateTo: string } }
@@ -112,14 +113,11 @@ export default function DirectorPage() {
   const complaints = useQuery<ComplaintsResp>(q<ComplaintsResp>('complaints', 'complaints'))
 
   const brandName = brands.find((b) => b.id === conceptId)?.name ?? ''
-  async function csv(view: string) {
-    setDownloadErr(null)
-    try {
-      await api.download(`/director/export.csv?view=${view}&${qs}`, `${(brandName || 'brand').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${view}-${dateFrom}-to-${dateTo}.csv`)
-    } catch (e) {
-      setDownloadErr(e instanceof Error ? e.message : 'Download failed')
-    }
-  }
+  // CSV / Excel / PDF of one section (GET /director/export.csv?view=…&format=…).
+  const exp = (view: string) => ({
+    path: `/director/export.csv?view=${view}&${qs}`,
+    filename: `${(brandName || 'brand').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${view}-${dateFrom}-to-${dateTo}`,
+  })
   function setRange(r: { from: string; to: string }) { setDateFrom(r.from); setDateTo(r.to) }
 
   if (!brandsLoading && brands.length === 0) {
@@ -191,7 +189,7 @@ export default function DirectorPage() {
                 <Card label="GST" value={fmtPkrWhole(t.tax)} />
               </div>
 
-              <Section title="Net sales by day" onCsv={() => void csv('sales-daily')}>
+              <Section title="Net sales by day" exp={exp('sales-daily')} onError={setDownloadErr}>
                 {s.daily.length === 0 ? <Empty /> : (
                   <div className="space-y-1">
                     {s.daily.map((d) => (
@@ -208,11 +206,11 @@ export default function DirectorPage() {
                 )}
               </Section>
 
-              <Section title="By channel" onCsv={() => void csv('sales-channels')}>
+              <Section title="By channel" exp={exp('sales-channels')} onError={setDownloadErr}>
                 <Table head={['Channel', 'Orders', 'Net sales']} rows={s.byChannel.map((c) => [CHANNEL[c.source] ?? c.source, c.orders, fmtPkrWhole(c.net)])} />
               </Section>
 
-              <Section title="By tender" onCsv={() => void csv('sales-tenders')}>
+              <Section title="By tender" exp={exp('sales-tenders')} onError={setDownloadErr}>
                 <Table head={['Tender', 'Orders', 'Amount', 'Share']}
                   rows={(s.byTender?.tenders ?? []).map((x) => [x.label, x.orders, fmtPkrWhole(x.amountCents), pct(x.sharePct)])} />
                 {(s.byTender?.comp.orders ?? 0) > 0 && (
@@ -220,7 +218,7 @@ export default function DirectorPage() {
                 )}
               </Section>
 
-              <Section title="Top items" onCsv={() => void csv('top-items')}>
+              <Section title="Top items" exp={exp('top-items')} onError={setDownloadErr}>
                 <Table head={['#', 'Item', 'Sold', 'Revenue']} rows={s.topItems.map((i) => [i.rank, i.name, i.quantity, fmtPkrWhole(i.revenueCents)])} />
               </Section>
             </>
@@ -251,7 +249,7 @@ export default function DirectorPage() {
                 <Card label="Labour" value={pct(r.labourPct)} sub="of revenue" />
                 <Card label="Prime cost" value={pct(r.primeCostPct)} sub="cost of sales + labour" />
               </div>
-              <Section title="Profit and loss" onCsv={() => void csv('pnl')}>
+              <Section title="Profit and loss" exp={exp('pnl')} onError={setDownloadErr}>
                 <table className="w-full text-sm">
                   <tbody>
                     {lines.map(([label, cents, p, bold]) => (
@@ -279,7 +277,7 @@ export default function DirectorPage() {
                 <Card label="Status" value={food.data.summary.statusLabel} />
               </div>
             )}
-            <Section title="Items" onCsv={() => void csv('food-cost')}>
+            <Section title="Items" exp={exp('food-cost')} onError={setDownloadErr}>
               <Table head={['Item', 'Sold', 'Cost', 'Revenue', 'Cost %']}
                 rows={food.data.items.map((i) => [i.name, i.qtySold, fmtPkrWhole(i.costCents), fmtPkrWhole(i.revenueCents ?? null), pct(i.costPct)])} />
             </Section>
@@ -287,7 +285,7 @@ export default function DirectorPage() {
         ) : <Empty />)}
 
         {tab === 'menu' && (menu.isLoading ? <Loading /> : (
-          <Section title="Menu engineering" onCsv={() => void csv('menu')}>
+          <Section title="Menu engineering" exp={exp('menu')} onError={setDownloadErr}>
             <Table head={['Item', 'Price', 'Sold', 'Plate cost', 'Margin', 'Class']}
               rows={(menu.data?.items ?? []).map((i) => [i.name, fmtPkrWhole(i.priceCents), i.qtySold, fmtPkrWhole(i.foodCostCents), pct(i.grossMarginPct), QUADRANT[i.quadrant] ?? i.quadrant])} />
             <p className="mt-3 text-xs text-s-muted">Star: popular and profitable. Plowhorse: popular, low margin. Puzzle: profitable, sells little. Dog: neither.</p>
@@ -300,7 +298,7 @@ export default function DirectorPage() {
               <Card label="Average rating" value={reviews.data?.average != null ? `${reviews.data.average} / 5` : '—'} />
               <Card label="Reviews" value={String(reviews.data?.total ?? 0)} />
             </div>
-            <Section title="Reviews" onCsv={() => void csv('reviews')}>
+            <Section title="Reviews" exp={exp('reviews')} onError={setDownloadErr}>
               {(reviews.data?.reviews ?? []).length === 0 ? <Empty /> : (
                 <ul className="divide-y divide-s-border">
                   {reviews.data!.reviews.map((r) => (
@@ -327,7 +325,7 @@ export default function DirectorPage() {
               <Card label="In progress" value={String(complaints.data?.stats.inProgress ?? 0)} />
               <Card label="Resolved" value={String((complaints.data?.stats.resolved ?? 0) + (complaints.data?.stats.closed ?? 0))} />
             </div>
-            <Section title="Complaints" onCsv={() => void csv('complaints')}>
+            <Section title="Complaints" exp={exp('complaints')} onError={setDownloadErr}>
               {(complaints.data?.complaints ?? []).length === 0 ? <Empty /> : (
                 <ul className="divide-y divide-s-border">
                   {complaints.data!.complaints.map((c) => (
@@ -371,15 +369,13 @@ function Card({ label, value, sub }: { label: string; value: string; sub?: strin
   )
 }
 
-function Section({ title, onCsv, children }: { title: string; onCsv: () => void; children: React.ReactNode }) {
+function Section({ title, exp, onError, children }: { title: string; exp: { path: string; filename: string }; onError: (m: string) => void; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-s-border bg-s-surface p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-sm font-bold text-s-text">{title}</h2>
-        <button type="button" onClick={onCsv}
-          className="rounded-lg px-3 py-1.5 text-xs font-semibold border border-s-border text-s-muted hover:text-primary-ink">
-          Download CSV
-        </button>
+        <ExportMenu path={exp.path} filename={exp.filename} onError={onError}
+          className="rounded-lg px-3 py-1.5 text-xs font-semibold border border-s-border text-s-muted hover:text-primary-ink" />
       </div>
       {children}
     </section>

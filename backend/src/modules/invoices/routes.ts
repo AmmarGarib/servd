@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma, UserRole } from '@prisma/client'
 import { requireModule } from '../notifications/requireModule.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { exportFormatOf, fromMatrix, sendReportFor } from '../../lib/reportExport.js'
 import { zBackdatedReason } from '../nightAudit/backdate.js'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -112,7 +113,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
       const brands = new Map((await prisma.concept.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.conceptId))] } }, select: { id: true, name: true } })).map((c) => [c.id, c.name]))
       const rs = (c: number) => (c / 100).toFixed(2)
       const pkt = (d: Date) => new Date(d.getTime() + 5 * 3_600_000).toISOString().slice(0, 16).replace('T', ' ')
-      const lines = [
+      const matrix = [
         ['Number', 'Type', 'Issued (PKT)', 'Brand', 'Seller', 'Seller STRN', 'Seller NTN', 'Buyer', 'Buyer STRN', 'Buyer NTN', 'Order ref', 'Taxable value', 'FBR tax', 'Provincial tax', 'Service charge', 'Delivery charge', 'Discount', 'Total', 'Credit note for'],
         ...rows.map((r) => [
           r.invoiceNumber, r.type === 'credit_note' ? 'Credit note' : 'Invoice', pkt(r.issuedAt), brands.get(r.conceptId) ?? '',
@@ -120,11 +121,16 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
           rs(r.taxableValueCents), rs(r.fbrTaxCents), rs(r.provincialTaxCents), rs(r.serviceChargeCents),
           rs(r.deliveryFeeCents), rs(r.discountCents), rs(r.totalCents), r.originalInvoiceId ? origNo.get(r.originalInvoiceId) ?? '' : '',
         ]),
-      ].map((l) => l.map(csvCell).join(',')).join('\n')
-      return reply
-        .header('Content-Type', 'text/csv; charset=utf-8')
-        .header('Content-Disposition', 'attachment; filename="tax-invoices.csv"')
-        .send(lines)
+      ]
+      const lines = matrix.map((l) => l.map(csvCell).join(',')).join('\n')
+      const format = exportFormatOf(req.query.format, 'csv')!
+      const head = matrix[0] as string[]
+      return sendReportFor(req, reply, format, 'tax-invoices', {
+        title: 'Tax invoice register',
+        ...(q.from || q.to ? { period: `${q.from ?? '…'} to ${q.to ?? '…'}` } : {}),
+        ...fromMatrix(head, matrix.slice(1), head.map((_, i) => (i >= 11 && i <= 17 ? 'pkr' : 'text'))),
+        csv: lines,
+      })
     },
   )
 

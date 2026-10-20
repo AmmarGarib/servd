@@ -13,6 +13,7 @@ import { HrShell, Modal, Stat, useHrAccess } from '../../../../components/hr/HrS
 import { BankAccountSelect } from '../../../../components/finance/BankAccountSelect'
 import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { ExportMenu } from '@/components/ui/ExportMenu'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
 /** How the salary was worked out (backend hr/logic.ts PayBasis, owner HR-1):
@@ -69,7 +70,10 @@ export default function PayrollRunPage() {
   const t = (run?.totals ?? {}) as Record<string, number>
   const warnings = (run?.totals?.['warnings'] as string[] | undefined) ?? []
   const payment = run?.totals?.['payment'] as RunPayment | undefined
-  const dl = (kind: string) => { setErr(''); api.download(`/hr/payroll/runs/${id}/export.csv?kind=${kind}`, `payroll-${run?.period}-${kind}.csv`).catch((e: Error) => setErr(e.message)) }
+  // Each sheet as CSV / Excel / PDF (the bank file's CSV is unchanged).
+  const dl = (kind: string, label: string) => (
+    <ExportMenu className={btnGhost} label={label} path={`/hr/payroll/runs/${id}/export.csv?kind=${kind}`} filename={`payroll-${run?.period}-${kind}`} onError={(m) => setErr(m)} />
+  )
   // The API's rules: only admin, owner or management approve, reopen and lock,
   // and nobody approves a payroll they created, recalculated or edited — the
   // CEO (admin) excepted.
@@ -125,10 +129,10 @@ export default function PayrollRunPage() {
             )}
             {run.paidAt && run.paymentClassification && <span className="self-center"><ClassificationChip value={run.paymentClassification} /></span>}
             <span className="ml-auto flex flex-wrap gap-2">
-              <button className={btnGhost} onClick={() => dl('register')}>Payroll register</button>
-              <button className={btnGhost} onClick={() => dl('bank')}>Bank transfer sheet</button>
-              <button className={btnGhost} onClick={() => dl('eobi')}>EOBI report</button>
-              <button className={btnGhost} onClick={() => dl('deductions')}>Deduction report</button>
+              {dl('register', 'Payroll register')}
+              {dl('bank', 'Bank transfer sheet')}
+              {dl('eobi', 'EOBI report')}
+              {dl('deductions', 'Deduction report')}
             </span>
           </div>
           {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
