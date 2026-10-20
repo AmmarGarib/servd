@@ -884,6 +884,8 @@ function InlineEditor({
   // uses (POST /auth/staff/:id/offboard|reinstate). Another CEO login is not
   // offboarded there, so it keeps the staff editor's switch.
   const myId = useAuthStore((st) => st.user?.id ?? '')
+  // Per-person module access is the CEO's (owner, 2026-10-20: "Module access belongs in CEO, only presets in HR").
+  const iAmCeo = useAuthStore((st) => st.user?.role === 'admin')
   const offboard = useMutation({
     mutationFn: (reason: string) => api.post(`/auth/staff/${user.id}/offboard`, { reason }),
     onSuccess:  () => onChange(),
@@ -932,10 +934,12 @@ function InlineEditor({
       )}
       {/* Per-person module access (owner, 2026-10-15) — the CEO's ticks for
           this person, on top of the role preset. */}
-      <details open className="rounded-lg border border-s-border bg-s-surface px-3 py-2">
-        <summary className="cursor-pointer text-xs font-black text-s-text">What they can open</summary>
-        <div className="mt-2"><PersonModules userId={user.id} /></div>
-      </details>
+      {iAmCeo && (
+        <details open className="rounded-lg border border-s-border bg-s-surface px-3 py-2">
+          <summary className="cursor-pointer text-xs font-black text-s-text">What they can open</summary>
+          <div className="mt-2"><PersonModules userId={user.id} /></div>
+        </details>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} name="staff-name" autoComplete="off"

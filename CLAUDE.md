@@ -194,14 +194,22 @@ module id belongs to exactly one workspace (tested). The admin sidebar,
 `GET /permissions/workspaces` — never keep a copy in the frontend. A new
 module id must be placed in a workspace in the same change.
 
-- **Brands is the CEO's (owner, 2026-10-14).** The brand editor is CEO →
-  Brands (`/ceo/brands`; `/marketing/brands` redirects). `brands` is a
-  CEO-only module (`CEO_ONLY_MODULES` in `lib/moduleAccess.ts`: dropped from
-  every non-admin role, saved row and moduleAllow; one-time revoke
-  `MODULE_REVOKES`) and `PATCH /concepts/:id` + `GET ?view=brand` answer 403
-  `BRAND_CEO_ONLY` to every other role. Marketing keeps Storefront and the
-  Brand kit (CEO-approved). One-setting writers keep their own routes (POS
-  ids on `/connectors`, Raast account on `/setup`, the look via the kit).
+- **Brand info is Marketing's; companies are the CEO's (owner, 2026-10-20:
+  "create a company can lie with CEO, but adding brand info etc can go to
+  marketing manager" — REPLACES the CEO-only rule of 2026-10-14).** The
+  brand editor (`/ceo/brands`, module `brands`, Marketing → Brand & site) is
+  open to whoever holds `brands`: marketing and brand_manager by default
+  (MODULE_GRANTS), anyone the CEO ticks on Workforce. `PATCH /concepts/:id` +
+  `GET ?view=brand` check the module (403 `BRAND_EDITOR_ONLY`); a CHANGE to a
+  CEO field (`BRAND_CEO_FIELDS` in `concepts/routes.ts`: tax rates, province,
+  STRN / NTN / invoice details, POS ids, active, service vessel, portion
+  forecast, the kit's look) by anyone but the CEO is 403
+  `BRAND_FIELD_CEO_ONLY` (an unchanged value in a full save passes). Creating
+  and deleting brands, and creating companies, stay the CEO's (CEO →
+  Companies). `CEO_ONLY_MODULES` is empty. **Module access per person is the
+  CEO's** (CEO → Logins & access → Logins & module access, `/workforce`; the
+  "What they can open" panel shows to the CEO only); HR keeps only the role
+  presets. The Configuration hub stays the CEO's (CEO → Company rules).
 - **Team = the HR reporting line** (`HrEmployee.managerId`). `GET /hr/team`
   returns the whole tree under the caller. Don't build another hierarchy.
 - **Owners add logins only for roles under them** (`childRoles`;

@@ -61,7 +61,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ],
   // CEO home: a top-down view of every department, first in the Dashboards section.
   ceo_overview:   [{ label: 'Home', href: '/home', icon: 'home', lead: true }],
-  role_management: [{ label: 'Pending logins', href: '/workforce?status=pending', hint: 'The CEO approves every login' }],
+  role_management: [
+    { label: 'Logins & module access', href: '/workforce', icon: 'users', hint: 'Every login, and what each person can open' },
+    { label: 'Pending logins', href: '/workforce?status=pending', sub: true, hint: 'The CEO approves every login' },
+  ],
   role_modules:   [{ label: 'Role presets', href: '/configuration/role-modules', icon: 'folders' }],
   configuration:  [
     { label: 'Company rules', href: '/configuration/operations', icon: 'cog', hint: 'Clock-in selfie and geofence, tip split, service charge — CEO only' },
@@ -243,7 +246,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Discounts', href: '/discounts', sub: true },
     { label: 'QR codes', href: '/qrcodes', sub: true },
   ],
-  brands:         [{ label: 'Brands', href: '/ceo/brands', icon: 'tag', hint: 'The one brand editor — CEO only' }],
+  brands:         [{ label: 'Brands', href: '/ceo/brands', icon: 'tag', hint: 'Brand info — tax, legal and the look stay with the CEO' }],
   analytics:      [{ label: 'Analytics', href: '/analytics', icon: 'chart' }],
   storefront:     [{ label: 'Storefront', href: '/storefront', icon: 'layout', hint: 'Pages, pop-ups, library, approvals' }],
 

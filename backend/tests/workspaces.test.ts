@@ -162,7 +162,8 @@ describe('D2: the CEO section and Operations for the F&B manager (2026-10-11)', 
   it('CEO holds Approvals, Companies & head offices, Logins & access and Company rules — owned by admin only', () => {
     const ceo = ws('ceo')
     expect(ceo.ownerRoles).toEqual(['admin'])
-    expect(ceo.sections.map((s) => s.title)).toEqual(['Overview', 'Approvals', 'Trash', 'Companies & head offices', 'Brands', 'Logins & access', 'Company rules'])
+    // Brands moved to Marketing (owner, 2026-10-20).
+    expect(ceo.sections.map((s) => s.title)).toEqual(['Overview', 'Approvals', 'Trash', 'Companies & head offices', 'Logins & access', 'Company rules'])
     const of = (key: string) => ceo.sections.find((s) => s.key === key)!.modules
     expect(of('approvals')).toEqual(['approvals'])
     expect(of('companies')).toEqual(['tenants', 'business_info', 'onboarding'])

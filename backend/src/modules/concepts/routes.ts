@@ -77,20 +77,29 @@ const PICKER_CONCEPT_SELECT = {
   primaryColor: true,
 } satisfies Prisma.ConceptSelect
 
-// The Brand Editor (CEO → Brands, /ceo/brands) is the CEO's ONLY (owner,
-// 2026-10-14: "the brand editor needs to be moved to CEO stuff, because a lot
-// of this stuff is not marketing related"). PATCH /concepts and the editor's
-// read (?view=brand) answer 403 BRAND_CEO_ONLY to every other role — the
-// marketing tier that used to edit copy / brief / profile links here
-// (R2-UI-03) is gone, and so is management's full edit. 'brands' is a
-// CEO-only module (lib/moduleAccess.ts CEO_ONLY_MODULES), so no saved Module
-// Access row or per-user allow can re-open it; this route checks the role
-// itself anyway.
+// The Brand Editor (Marketing → Brands, /ceo/brands). Owner, 2026-10-20:
+// "create a company can lie with CEO, but adding brand info etc can go to
+// marketing manager" — this REPLACES the CEO-only rule of 2026-10-14. Whoever
+// holds the 'brands' module (the CEO, and by default marketing and the brand
+// manager; the CEO may tick it for anyone on Workforce) reads ?view=brand and
+// PATCHes the brand info of their own companies' brands. The CEO keeps the
+// fields that are tax, legal, books or the live look (BRAND_CEO_FIELDS): a
+// change to one by anyone else is 403 BRAND_FIELD_CEO_ONLY (an unchanged value
+// in a full-form save is fine). Creating and deleting a brand stay the CEO's.
 //
 // Other screens that set ONE brand setting do it through their own routes,
 // not this one: POS ids (PUT /connectors/fiscal/brand-pos-ids), the look
 // (Storefront → Brand kit publish, CEO-approved), the Raast receiving account
 // (/setup), the kitchen address mirror (/locations).
+
+/** Brand fields only the CEO changes: tax rates and province, the tax-invoice identity, the fiscal POS ids, switching
+ *  the brand off, the service vessel and portion forecast (food cost), and the Brand kit's look (CEO-approved). */
+export const BRAND_CEO_FIELDS: readonly string[] = [
+  'taxRate', 'taxRateCash', 'taxRateCard', 'province',
+  'strn', 'ntn', 'invoiceLegalName', 'invoiceAddress', 'invoicePrefix', 'fbrPosId', 'srbPosId',
+  'isActive', 'serviceVessel', 'forecastPortionsPerMonth', 'storefrontLayout',
+  ...KIT_CONCEPT_FIELDS,
+]
 
 /** Most profile links a brand may list (sameAs). */
 export const MAX_PROFILE_LINKS = 12
@@ -165,10 +174,23 @@ function isManager(role: UserRole): boolean {
   return MANAGERS.includes(role)
 }
 
-/** The Brand Editor (PATCH /concepts/:id, GET ?view=brand): the CEO only. */
-function assertBrandEditor(req: FastifyRequest): void {
+/** The Brand Editor (PATCH /concepts/:id, GET ?view=brand): the CEO, or a login holding the 'brands' module. */
+async function assertBrandEditor(req: FastifyRequest): Promise<void> {
+  const su = req.staffUser!
+  if (su.role === 'admin') return
+  const u = await prisma.user.findUnique({ where: { id: su.id }, select: { moduleAllow: true, moduleDeny: true } })
+  const modules = await effectiveModulesForUser({ role: su.role as UserRole, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+  if (!modules.has('brands')) throw new AppError('BRAND_EDITOR_ONLY', 'Brand info is edited by marketing and the CEO (Marketing → Brands).', 403)
+}
+
+/** A non-CEO save may not CHANGE a CEO field (an unchanged value sent by the full form passes). */
+function assertNoCeoFieldChange(req: FastifyRequest, body: Record<string, unknown>, current: Record<string, unknown>): void {
   if (req.staffUser!.role === 'admin') return
-  throw new AppError('BRAND_CEO_ONLY', 'Brands are edited by the CEO only (CEO → Brands).', 403)
+  const same = (a: unknown, b: unknown) => (a ?? null) === (b ?? null) || (typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 1e-9)
+  const changed = BRAND_CEO_FIELDS.filter((f) => body[f] !== undefined && !same(body[f], current[f]))
+  if (changed.length > 0) {
+    throw new AppError('BRAND_FIELD_CEO_ONLY', `Only the CEO changes: ${changed.join(', ')}.`, 403)
+  }
 }
 
 /** Which brand view the caller gets. Read-only either way — every write route
@@ -431,9 +453,9 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       })
     }
     const includeInactive = req.query.includeInactive === '1'
-    // ?view=brand — the Brand Editor (CEO → Brands): the CEO only, full rows.
+    // ?view=brand — the Brand Editor: the CEO and the 'brands' module holders, full rows.
     const brandEditor = wantsBrandEditor(req.query)
-    if (brandEditor) assertBrandEditor(req)
+    if (brandEditor) await assertBrandEditor(req)
     const view = brandEditor ? 'full' : await conceptView(req, wantsStorefront(req.query))
     if (view !== 'full') {
       return prisma.concept.findMany({
@@ -456,7 +478,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       // join — Tenant is tiny.
       include: scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : undefined,
     })
-    return brandEditor ? concepts.map((c) => ({ ...c, brandEditorAccess: 'full' as const })) : concepts
+    return brandEditor ? concepts.map((c) => ({ ...c, brandEditorAccess: (req.staffUser!.role === 'admin' ? 'full' : 'brand') as 'full' | 'brand' })) : concepts
   })
 
   // GET /concepts/:id — must belong to a company in the caller's read scope
@@ -465,7 +487,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // tenantFilter is null for a staffer with no company, and `tenantId: null`
   // would match every company-less brand.
   fastify.get<{ Params: { id: string }; Querystring: { view?: string } }>('/:id', { preHandler: requireAuth() }, async (req) => {
-    if (wantsBrandEditor(req.query)) assertBrandEditor(req)
+    if (wantsBrandEditor(req.query)) await assertBrandEditor(req)
     const view = wantsBrandEditor(req.query) ? 'full' : await conceptView(req, wantsStorefront(req.query))
     const where = { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'read')) }
     const concept = view === 'full'
@@ -515,7 +537,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // (owner, 2026-10-14). The brand must be in a company the CEO belongs to
   // ('write' scope — a foreign id 404s), and the change is audited.
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth() }, async (req, reply) => {
-    assertBrandEditor(req)
+    await assertBrandEditor(req)
     assertProfileLinks(req.body)
     assertNoMovedFields(req.body)
     const body = updateConceptSchema.parse(req.body)
@@ -526,12 +548,13 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your companies' } })
+    assertNoCeoFieldChange(req, body as Record<string, unknown>, owned as unknown as Record<string, unknown>)
     const { storefrontLayout, ...rest } = body
     const data: Prisma.ConceptUpdateInput = { ...rest }
     if (storefrontLayout !== undefined) {
       data.storefrontLayout = storefrontLayout === null ? Prisma.JsonNull : (storefrontLayout as Prisma.InputJsonValue)
     }
-    // A kit-owned field (only the CEO gets here with one) refreshes the live
+    // A kit-owned field (only the CEO changes one — BRAND_CEO_FIELDS) refreshes the live
     // kit's pre-kit snapshot in the same transaction, so a later kit change
     // never restores the value from before the CEO's edit (rv-7).
     const kitFieldsSent = KIT_CONCEPT_FIELDS.filter((f) => (rest as Record<string, unknown>)[f] !== undefined)
@@ -573,7 +596,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       tenantId: owned.tenantId,
       metadata: { fields: changedKeys },
     })
-    if (wantsBrandEditor(req.query as { view?: string })) return { ...concept, brandEditorAccess: 'full' as const }
+    if (wantsBrandEditor(req.query as { view?: string })) return { ...concept, brandEditorAccess: (req.staffUser!.role === 'admin' ? 'full' : 'brand') as 'full' | 'brand' }
     return concept
   })
 

@@ -1,6 +1,6 @@
 // The brand's public profiles (SEO round 1, owner 2026-10-14):
 // Concept.sameAs (https profile URLs, ≤ 12) + Concept.googleMapsUrl, edited in
-// CEO → Brands (CEO only since 2026-10-14).
+// Marketing → Brands (brand info, owner 2026-10-20; the CEO-only rule of 2026-10-14 is retired).
 //
 // What this guards (two companies):
 //   - company A's CEO saves A's links; blanks and repeats are dropped, ''
@@ -58,7 +58,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await app?.close() })
 
-describe('company A edits its own brand profiles (CEO → Brands, CEO only)', () => {
+describe('company A edits its own brand profiles (Marketing → Brands)', () => {
   it('the CEO saves them (cleaned) and the change is audited on the brand\'s company', async () => {
     const r = await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, {
       sameAs: [' https://instagram.com/brand_a ', '', 'https://facebook.com/branda', 'https://instagram.com/brand_a'],
@@ -92,14 +92,17 @@ describe('company A edits its own brand profiles (CEO → Brands, CEO only)', ()
     expect(await links(A.conceptId)).toEqual({ sameAs: ['https://www.tiktok.com/@branda'], googleMapsUrl: null })
   })
 
-  it('marketing and management are refused (403 BRAND_CEO_ONLY), nothing applied', async () => {
-    for (const who of [mktA, mgrA]) {
-      const r = await call(who, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://x.com/branda'] })
-      expect(r.statusCode).toBe(403)
-      expect(r.json().error.code).toBe('BRAND_CEO_ONLY')
-      expect((await call(who, 'GET', `/concepts/${A.conceptId}?view=brand`)).statusCode).toBe(403)
-    }
+  it('marketing sets them (brand info, owner 2026-10-20); management has no editor (403 BRAND_EDITOR_ONLY)', async () => {
+    const r = await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://x.com/branda'] })
+    expect(r.statusCode).toBe(403)
+    expect(r.json().error.code).toBe('BRAND_EDITOR_ONLY')
+    expect((await call(mgrA, 'GET', `/concepts/${A.conceptId}?view=brand`)).statusCode).toBe(403)
     expect((await links(A.conceptId)).sameAs).toEqual(['https://www.tiktok.com/@branda'])
+    const m = await call(mktA, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://x.com/branda'] })
+    expect(m.statusCode, m.body).toBe(200)
+    expect((await links(A.conceptId)).sameAs).toEqual(['https://x.com/branda'])
+    // Back to the CEO's links for the cases below.
+    expect((await call(mktA, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://www.tiktok.com/@branda'] })).statusCode).toBe(200)
   })
 })
 
@@ -111,10 +114,10 @@ describe('company B cannot set A\'s links', () => {
     expect(await links(A.conceptId)).toEqual(before)
   })
 
-  it('B\'s marketing → 403 (never the editor), nothing changes', async () => {
+  it('B\'s marketing → 404 on A\'s brand, nothing changes', async () => {
     const before = await links(A.conceptId)
     const r = await call(mktB, 'PATCH', `/concepts/${A.conceptId}`, { sameAs: ['https://instagram.com/hijack'] })
-    expect(r.statusCode).toBe(403)
+    expect(r.statusCode).toBe(404)
     expect(await links(A.conceptId)).toEqual(before)
   })
 

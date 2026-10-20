@@ -219,10 +219,11 @@ describe('Role presets: escalation attempts by HR', () => {
     }
     expect(await rowOf('foh')).toBeNull()
     expect(await rowOf('cashier')).toBeNull()
-    // A CEO-only module (Brands) is dropped, never granted.
+    // Brands is no longer CEO-only (owner, 2026-10-20): an ordinary module a preset may carry; its tax / legal / look
+    // fields stay the CEO's on the route itself.
     const brands = await put('hrA', 'foh', ['pos', 'brands'])
     expect(brands.statusCode, brands.body).toBe(200)
-    expect(await rowOf('foh')).toEqual(['pos'])
+    expect(await rowOf('foh')).toEqual(['pos', 'brands'])
     expect((await put('hrA', 'foh', null)).statusCode).toBe(200)
   })
 

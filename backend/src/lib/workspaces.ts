@@ -38,12 +38,13 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
   // charge), so it must stay a CEO-owned workspace — tested.
   // Head offices join "Companies" when head office is built.
   //
-  // Brands (owner, 2026-10-14: "the brand editor needs to be moved to CEO
-  // stuff, because a lot of this stuff is not marketing related"): the brand
-  // record — name, legal / tax, POS ids, vessel, contact, brief — is the
-  // CEO's ONLY. 'brands' is a CEO-only module (CEO_ONLY_MODULES in
-  // lib/moduleAccess.ts) and PATCH /concepts is admin-only. Marketing keeps
-  // Storefront and the Brand kit (both still CEO-approved).
+  // Brands (owner, 2026-10-20, replacing the CEO-only rule of 2026-10-14):
+  // "create a company can lie with CEO, but adding brand info etc can go to
+  // marketing manager". Creating companies and brands stays here (tenants /
+  // onboarding); the brand editor ('brands') is Marketing's, and its tax,
+  // legal, POS, vessel and look fields stay the CEO's on the route.
+  // The per-person module ticks (Workforce) are the CEO's (role_management);
+  // HR keeps only the role presets.
   {
     id: 'ceo',
     title: 'CEO',
@@ -54,7 +55,6 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       { key: 'approvals', title: 'Approvals',                   modules: ['approvals'] },
       { key: 'trash',     title: 'Trash',                       modules: ['trash'] },
       { key: 'companies', title: 'Companies & head offices',    modules: ['tenants', 'business_info', 'onboarding'] },
-      { key: 'brands',    title: 'Brands',                      modules: ['brands'] },
       // Role presets (role_modules) moved to HR (owner, 2026-10-16); logins
       // and the per-person ticks on Workforce stay here, the CEO's.
       { key: 'access',    title: 'Logins & access',             modules: ['role_management'] },
@@ -112,8 +112,9 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     sections: [
       { key: 'workspace', title: 'Workspace',      modules: ['marketing_workspace', 'calendar', 'analytics', 'brand_dashboard'] },
       { key: 'customers', title: 'Customers',      modules: ['crm', 'campaigns', 'promos', 'complaints', 'reviews'] },
-      // The brand records moved to CEO → Brands (owner, 2026-10-14).
-      { key: 'brand',     title: 'Brand & site',   modules: ['storefront'] },
+      // Brand info (owner, 2026-10-20: "adding brand info etc can go to marketing manager"); company creation and the
+      // brand's tax / legal / look stay the CEO's (concepts/routes.ts BRAND_CEO_FIELDS).
+      { key: 'brand',     title: 'Brand & site',   modules: ['brands', 'storefront'] },
     ],
   },
   {

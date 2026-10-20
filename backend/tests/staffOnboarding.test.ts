@@ -272,13 +272,13 @@ describe('per-person module access', () => {
     const p = await putMods('ceoA', id, chosen)
     expect(p.statusCode).toBe(200)
     const db = await row(id)
-    expect(db.moduleAllow).toEqual(['reports'])            // outside the preset → granted; Brands never
+    expect([...db.moduleAllow].sort()).toEqual(['brands', 'reports'])   // outside the preset → granted (Brands too, 2026-10-20)
     expect(db.moduleDeny).toEqual([dropped])
     const eff = await effectiveModulesForUser({ role: 'cashier', moduleAllow: db.moduleAllow, moduleDeny: db.moduleDeny })
     expect(eff.has('reports')).toBe(true)
     expect(eff.has(dropped)).toBe(false)
-    expect(eff.has('brands')).toBe(false)
-    expect(p.json().allow).toEqual(['reports'])
+    expect(eff.has('brands')).toBe(true)
+    expect([...p.json().allow].sort()).toEqual(['brands', 'reports'])
     const a = await prisma.auditLog.findFirst({ where: { entityId: id, action: 'staff.modules' }, orderBy: { createdAt: 'desc' } })
     expect(a).toMatchObject({ category: 'identity', tenantId: T.A })
 

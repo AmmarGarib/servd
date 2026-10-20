@@ -9,7 +9,7 @@
 //   R2-UI-03  HR's Rota reads the picker view. (The marketing tier of the
 //             Brand Editor is gone: Brands is CEO only since 2026-10-14 —
 //             /ceo/brands, GET ?view=brand and PATCH /concepts answer 403
-//             BRAND_CEO_ONLY to every other role.) Two companies throughout.
+//             BRAND_EDITOR_ONLY to roles without the brands module; tax / legal / look fields BRAND_FIELD_CEO_ONLY.) Two companies throughout.
 //   R2-UI-05  the Z-report screen's rows (zReportLines): takings, money taken
 //             on cancelled tickets, refunds, net sales, signed short/over.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
@@ -156,39 +156,32 @@ describe('R2-UI-03 — HR rota brand list (picker view)', () => {
 // marketing related"). The marketing tier (R2-UI-03) and management's full
 // edit are gone: GET ?view=brand and PATCH /concepts/:id answer 403
 // BRAND_CEO_ONLY to every other role, whatever its modules.
-describe('Brand Editor — CEO only (2026-10-14)', () => {
+describe('Brand Editor — marketing edits brand info, the CEO the rest (2026-10-20)', () => {
   let ceoA: Who
   beforeAll(async () => { ceoA = await mkUser('rsui-ceoA', 'admin', A.tenantId) })
 
-  it('marketing, brand_manager and management are refused the editor read and every PATCH; nothing is written', async () => {
+  it('roles without the brands module (management, HR, a cashier, a marketer whose module is denied) are refused; nothing is written', async () => {
     const before = await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })
-    for (const who of [marketingA, brandMgrA, managerA, marketingDenied, hrA, cashierA2]) {
+    for (const who of [managerA, marketingDenied, hrA, cashierA2]) {
       const list = await req(who, 'GET', '/concepts?view=brand&includeInactive=1')
       expect(list.statusCode, `${who.role}: ${list.body}`).toBe(403)
       expect((await req(who, 'GET', `/concepts/${A.conceptId}?view=brand`)).statusCode).toBe(403)
       for (const body of [{ description: 'nope' }, { taxRateCash: 1 }, { name: 'Renamed' }, { sameAs: ['https://x.com/a'] }]) {
         const p = await req(who, 'PATCH', `/concepts/${A.conceptId}`, body)
         expect(p.statusCode, `${who.role}: ${p.body}`).toBe(403)
-        expect(p.json().error.code).toBe('BRAND_CEO_ONLY')
       }
     }
     expect(await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).toEqual(before)
   })
 
-  it('a role re-granted brands (saved row or per-user allow) still cannot write: the server enforces admin', async () => {
-    await prisma.roleModuleAccess.upsert({
-      where: { role: 'marketing' }, create: { role: 'marketing', modules: ['storefront', 'brands'] }, update: { modules: ['storefront', 'brands'] },
-    })
-    await prisma.user.update({ where: { id: managerA.id }, data: { moduleAllow: ['brands'] } })
-    invalidateModuleAccessCache()
-    try {
-      expect((await req(marketingA, 'PATCH', `/concepts/${A.conceptId}`, { description: 're-granted' })).statusCode).toBe(403)
-      expect((await req(managerA, 'PATCH', `/concepts/${A.conceptId}`, { description: 're-granted' })).statusCode).toBe(403)
-      expect((await req(marketingA, 'GET', '/concepts?view=brand')).statusCode).toBe(403)
-    } finally {
-      await prisma.roleModuleAccess.deleteMany({ where: { role: 'marketing' } })
-      await prisma.user.update({ where: { id: managerA.id }, data: { moduleAllow: [] } })
-      invalidateModuleAccessCache()
+  it('marketing and the brand manager read rows marked "brand" and save brand info, never a tax field', async () => {
+    for (const who of [marketingA, brandMgrA]) {
+      const list = await req(who, 'GET', '/concepts?view=brand')
+      expect(list.statusCode, list.body).toBe(200)
+      expect((list.json() as Array<{ brandEditorAccess: string }>).every((c) => c.brandEditorAccess === 'brand')).toBe(true)
+      expect((await req(who, 'PATCH', `/concepts/${A.conceptId}`, { description: `copy by ${who.role}` })).statusCode).toBe(200)
+      const tax = await req(who, 'PATCH', `/concepts/${A.conceptId}`, { taxRateCash: 1 })
+      expect(tax.json().error.code).toBe('BRAND_FIELD_CEO_ONLY')
     }
   })
 

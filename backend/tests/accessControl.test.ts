@@ -130,9 +130,9 @@ describe('module defaults after the CEO section (D2) and the approvals inbox (D3
     expediter: ['kds_all', 'expo_station', 'orders', 'par_sheet', 'food_safety'],
     cashier: ['dashboard', 'pos', 'orders', 'curbside', 'tables'],
     procurement: ['procurement', 'inventory', 'reports'],
-    // Brands is CEO only since 2026-10-14 (CEO_ONLY_MODULES) — marketing lost it.
-    marketing: ['marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'analytics', 'storefront'],
-    brand_manager: ['brand_dashboard', 'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'analytics', 'storefront'],
+    // Brand info is marketing's again (owner, 2026-10-20) — tax / legal / look stay the CEO's on the route.
+    marketing: ['marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'analytics', 'storefront', 'brands'],
+    brand_manager: ['brand_dashboard', 'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'analytics', 'storefront', 'brands'],
     finance: ['dashboard', 'orders', 'pos', 'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'reports', 'voided_prebills', 'food_cost'],
     // + role_modules: Role presets moved to HR (owner, 2026-10-16).
     hr: ['staff_directory', 'staff_hr', 'payroll', 'scheduling', 'role_modules'],

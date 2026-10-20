@@ -121,10 +121,11 @@ const API_CONNECTORS = ['api_whatsapp', 'api_pos']
 // moduleAllow. effectiveModulesForUser drops them for every other role, the
 // Module Access save and the staff save strip them, and their routes check
 // role admin themselves, so a stale row can never re-open one.
-//   brands — CEO → Brands, the one brand editor (owner, 2026-10-14: "the
-//     brand editor needs to be moved to CEO stuff, because a lot of this
-//     stuff is not marketing related"). PATCH /concepts is admin-only.
-export const CEO_ONLY_MODULES: readonly string[] = ['brands']
+// None today: 'brands' (the brand editor) left this list on 2026-10-20 (owner:
+// "adding brand info etc can go to marketing manager") — marketing and the
+// brand manager hold it by default; its tax / legal / look fields stay the
+// CEO's on the route itself (concepts/routes.ts BRAND_CEO_FIELDS).
+export const CEO_ONLY_MODULES: readonly string[] = []
 const CEO_ONLY_SET = new Set<string>(CEO_ONLY_MODULES)
 
 // DIRECTOR modules (owner, 2026-10-18). A director login holds EXACTLY these —
@@ -161,7 +162,7 @@ export const PRESET_LIMITS = {
   governanceModules: ['role_management', 'role_modules', 'tenants', 'accounting_audit'] as readonly string[],
 } as const
 
-const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && !API_WHATSAPP_ONLY.includes(m) && !CEO_ONLY_SET.has(m) && !DIRECTOR_ONLY_SET.has(m))
+const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain' && m !== 'brands' && !API_WHATSAPP_ONLY.includes(m) && !CEO_ONLY_SET.has(m) && !DIRECTOR_ONLY_SET.has(m))
 // 'manager' mirrors 'management' for everything EXCEPT the accounting trail,
 // the API connectors, the Finance pre-bill register (none of whose routes
 // admit the legacy role) and Emergency overrides.
@@ -177,7 +178,7 @@ const MANAGER_MODULES = MANAGEMENT_MODULES.filter(
 // — the routes do not admit owner, so neither does the sidebar. Emergency
 // overrides are an on-shift tool (see above), not the co-owner's.
 const OWNER_MODULES = ALL_MODULES.filter(
-  (m) => !['role_management', 'role_modules', 'accounting_audit', 'emergency_overrides'].includes(m) && !API_CONNECTORS.includes(m) && !CEO_ONLY_SET.has(m) && !DIRECTOR_ONLY_SET.has(m),
+  (m) => !['role_management', 'role_modules', 'accounting_audit', 'emergency_overrides', 'brands'].includes(m) && !API_CONNECTORS.includes(m) && !CEO_ONLY_SET.has(m) && !DIRECTOR_ONLY_SET.has(m),
 )
 // The books' own audit trail — period closes, manual journals, wage rates,
 // tip-pool postings. Per the owner: the CEO and the exec (management) only.
@@ -216,14 +217,15 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   expediter: ['kds_all', 'expo_station', 'orders', 'par_sheet', 'food_safety'],
   cashier:   ['dashboard', 'pos', 'orders', 'curbside', 'tables'],
   procurement: ['procurement', 'inventory', 'reports'],
+  // brands: the brand editor's brand info (owner, 2026-10-20); tax / legal / look stay the CEO's on the route.
   marketing: [
     'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'analytics', 'storefront',
+    'calendar', 'media', 'promos', 'analytics', 'storefront', 'brands',
   ],
   brand_manager: [
     'brand_dashboard',
     'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'analytics', 'storefront',
+    'calendar', 'media', 'promos', 'analytics', 'storefront', 'brands',
   ],
   fnb_manager: [
     'fnb_dashboard',
@@ -312,6 +314,8 @@ export const MODULE_GRANTS: readonly string[] = [
   'procurement',
   // Finance runs the till (owner, 2026-10-20). Scoped to finance in MODULE_GRANT_ROLES.
   'pos',
+  // Brand info goes to marketing (owner, 2026-10-20). Scoped in MODULE_GRANT_ROLES.
+  'brands',
 ]
 /**
  * Grants that reach only SOME of the roles whose defaults hold the module
@@ -321,6 +325,7 @@ export const MODULE_GRANT_ROLES: Readonly<Partial<Record<string, readonly UserRo
   role_modules: ['hr'],
   procurement: ['fnb_manager'],
   pos: ['finance'],
+  brands: ['marketing', 'brand_manager'],
 }
 export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 
@@ -331,8 +336,8 @@ export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 // CEO_ONLY_MODULES are dropped on every read — this keeps the Module Access
 // matrix and the staff screen honest. Each entry has a stable key.
 export const MODULE_REVOKES: ReadonlyArray<{ key: string; modules: readonly string[] }> = [
-  // Brands moved to the CEO workspace, CEO only (owner, 2026-10-14).
-  { key: 'brands-ceo-only-20261014', modules: ['brands'] },
+  // (2026-10-14's 'brands-ceo-only' revoke was retired on 2026-10-20 when brand info went to marketing; it had
+  // run on live. Kept off the list so a fresh copy never takes back the grant above.)
 ]
 export const MODULE_REVOKES_MARKER_KEY = 'moduleAccess.revokesApplied'
 

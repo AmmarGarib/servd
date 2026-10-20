@@ -217,12 +217,13 @@ describe('GET /concepts for Storefront editors', () => {
     expect(r.json()).toHaveProperty('taxRateCash')
   })
 
-  it('no write widening: marketing cannot create, edit or delete a brand', async () => {
+  it('marketing cannot create or delete a brand, nor change its tax fields (brand info is theirs since 2026-10-20)', async () => {
     const h = auth(users.mktA!)
     const post = await app.inject({ method: 'POST', url: '/api/v1/concepts', headers: h, payload: { name: 'X', slug: `${PREFIX}-x-${STAMP}`, type: 'restaurant' } })
     expect(post.statusCode).toBe(403)
-    const patch = await app.inject({ method: 'PATCH', url: `/api/v1/concepts/${brandA}`, headers: h, payload: { name: 'Hijacked' } })
+    const patch = await app.inject({ method: 'PATCH', url: `/api/v1/concepts/${brandA}`, headers: h, payload: { taxRateCash: 1 } })
     expect(patch.statusCode).toBe(403)
+    expect(patch.json().error.code).toBe('BRAND_FIELD_CEO_ONLY')
     const del = await app.inject({ method: 'DELETE', url: `/api/v1/concepts/${brandA}`, headers: { ...h, 'content-type': 'application/json' } })
     expect(del.statusCode).toBe(403)
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: brandA } })).name).toBe('SFQ a1')

@@ -6,6 +6,7 @@ import { api, deleteWithUndo } from '../../../lib/api'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { BrandKitCard } from '../../../components/storefront/BrandKitCard'
 import { Select } from '@/components/ui/Select'
+import { useAuthStore } from '../../../store/auth'
 
 interface Concept {
   id: string
@@ -70,7 +71,8 @@ interface Concept {
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
   // GET /concepts?view=brand marks every row 'full' (the editor is CEO only).
-  brandEditorAccess?: 'full'
+  /** 'full' = the CEO; 'brand' = marketing / a ticked login: brand info only (tax, legal, status, vessel, look are the CEO's). */
+  brandEditorAccess?: 'full' | 'brand'
 }
 
 /** Most profile links a brand may list (the backend's MAX_PROFILE_LINKS). */
@@ -149,11 +151,12 @@ const PROVINCES = [
 
 export default function BrandEditorPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const isCeo = useAuthStore((st) => st.user?.role === 'admin')
   const { data: tenants = [] } = useMyTenants()
   // includeInactive: this is the ONE brand editor, so it is also where a
   // retired brand (isActive=false) is seen and reactivated. Everywhere else
   // in the admin retired brands are hidden. view=brand: the full rows, for
-  // the CEO only (owner, 2026-10-14 — Brands is a CEO-only module).
+  // the CEO and the 'brands' module holders (marketing — owner, 2026-10-20).
   const { data: concepts = [], isLoading } = useQuery<Concept[]>({
     queryKey: ['concepts', 'brand-editor'],
     queryFn: () => api.get('/concepts?view=brand&includeInactive=1'),
@@ -176,7 +179,7 @@ export default function BrandEditorPage() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
-        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">CEO</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">{isCeo ? 'CEO' : 'Marketing'}</p>
         <h1 className="text-2xl font-black text-white/90 mt-1">Brand Editor</h1>
         <p className="text-sm text-white/40 mt-1">
           The one place a brand is edited — identity, contact, brief, storefront copy and tax. The kitchen address and map pin
@@ -238,10 +241,13 @@ export default function BrandEditorPage() {
               </div>
             </button>
           ))}
-          <Link href="/onboarding"
-            className="block rounded-xl border border-dashed border-white/10 p-3 text-center text-xs text-white/45 hover:text-white hover:border-white/30">
-            + Add brand
-          </Link>
+          {/* Creating a brand stays the CEO's (CEO → Companies). */}
+          {isCeo && (
+            <Link href="/onboarding"
+              className="block rounded-xl border border-dashed border-white/10 p-3 text-center text-xs text-white/45 hover:text-white hover:border-white/30">
+              + Add brand
+            </Link>
+          )}
         </aside>
 
         {/* Editor */}
@@ -262,6 +268,10 @@ type TabKey = 'identity' | 'contact' | 'brief' | 'storefront' | 'delivery' | 'ta
 function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => void }) {
   const qc = useQueryClient()
   const [tab, setTab] = useState<TabKey>('identity')
+  // Owner, 2026-10-20: marketing edits brand info; tax / legal / status / vessel / delete stay the CEO's (the server
+  // refuses a change to them: BRAND_FIELD_CEO_ONLY).
+  const ceo = concept.brandEditorAccess !== 'brand'
+  const ceoNote = !ceo && <p className="text-xs text-s-muted">Set by the CEO.</p>
 
   // Form state. The component is keyed on the brand id, so picking another
   // brand remounts it with fresh state — no re-sync effect needed.
@@ -430,14 +440,14 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
                   className="s-input w-full resize-none" />
               </Field>
-              <div className="grid grid-cols-2 gap-3">
+              <fieldset disabled={!ceo} className="grid grid-cols-2 gap-3 disabled:opacity-60">
                   <Field label="Status" hint="Off = retired: hidden from the POS, pickers and the storefront. History is kept.">
                     <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
                       <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-primary" />
                       Brand is active
                     </label>
                   </Field>
-              </div>
+              </fieldset>
             </div>
           </Section>
 
@@ -446,6 +456,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           </Section>
 
           <Section title="Primary service vessel" subtitle="How this brand serves its food: on plates, or in packaging.">
+            <fieldset disabled={!ceo} className="disabled:opacity-60">
             <Field label="Primary service vessel *"
               hint="Packaging counts on takeaway and delivery always. With Plate, dine-in counts packaging only when staff tap Box given. With Packaging (the packaging is the serving vessel, e.g. Stackd), it counts on every order.">
               <Select value={serviceVessel} onChange={(e) => setServiceVessel(e.target.value as 'plate' | 'packaging')}
@@ -460,9 +471,11 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 Applies to orders from now on. Orders already rung up keep the vessel they were sold with, so past food cost is not restated.
               </p>
             )}
+            </fieldset>
+            {ceoNote}
           </Section>
 
-          <Section title="Delete brand" subtitle="Removes the brand from the POS, pickers and storefront. Orders and books keep its name.">
+          {ceo && <Section title="Delete brand" subtitle="Removes the brand from the POS, pickers and storefront. Orders and books keep its name.">
             {confirmDelete ? (
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-amber-700">Delete <span className="font-bold">{concept.name}</span>?</span>
@@ -480,7 +493,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 Delete brand
               </button>
             )}
-          </Section>
+          </Section>}
         </div>
       )}
 
@@ -627,6 +640,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       {/* ── Tax registration ─────────────────────────────────────────────── */}
       {tab === 'tax' && (
         <Section title="Tax registration" subtitle="GST rates and the details printed on tax invoices. Filing goes through the fiscal POS (Dev → API → POS connector).">
+          {ceoNote}
+          <fieldset disabled={!ceo} className="space-y-3 disabled:opacity-60">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="GST — cash tender %" hint="Charged on cash and cash-on-delivery sales.">
               <input value={taxRateCash} onChange={(e) => setTaxRateCash(e.target.value)}
@@ -676,6 +691,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             <input value={forecastPortions} onChange={(e) => setForecastPortions(e.target.value.replace(/[^0-9]/g, ''))}
               className="s-input w-full max-w-[180px] font-mono text-sm" />
           </Field>
+          </fieldset>
           {(!strn || !ntn || !invoiceLegalName) && (
             <div className="rounded-xl p-3 text-xs text-s-amber bg-s-amber-dim border border-s-amber/30">
               Tax invoices need the STRN, NTN and legal name. The fiscal POS files with whatever is set here, so fill them before the company goes live.

@@ -118,10 +118,10 @@ describe('PATCH /concepts/:id serviceVessel', () => {
     expect(await prisma.auditLog.count({ where: { action: 'concept.service_vessel', entityId: A.conceptId } })).toBe(0)
   })
 
-  it('management is refused (Brands is CEO only, 2026-10-14) — 403, nothing changes', async () => {
+  it('the vessel is the CEO\'s: management has no editor (403), nothing changes', async () => {
     const r = await call(mgrA, 'PATCH', `/concepts/${A.conceptId}`, { serviceVessel: 'packaging' })
     expect(r.statusCode).toBe(403)
-    expect(r.json().error.code).toBe('BRAND_CEO_ONLY')
+    expect(r.json().error.code).toBe('BRAND_EDITOR_ONLY')
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).serviceVessel).toBe('plate')
   })
 

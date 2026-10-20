@@ -165,7 +165,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'calendar',           label: 'Content Calendar',    section: 'Marketing' },
   { id: 'media',              label: 'Media (legacy)',      section: 'Marketing' },
   { id: 'promos',             label: 'Promotions',          section: 'Marketing' },
-  { id: 'brands',             label: 'Brands (CEO only)',   section: 'Executive' },
+  { id: 'brands',             label: 'Brand info',          section: 'Marketing' },
   { id: 'storefront',         label: 'Storefront content',  section: 'Marketing' },
   { id: 'analytics',          label: 'Analytics',           section: 'Marketing' },
 
