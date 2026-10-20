@@ -255,7 +255,8 @@ describe('new default modules reach saved Module Access rows once (W2-R3)', () =
       expect((await rowOf('it'))!.sort()).toEqual(['api_pos', 'api_whatsapp', 'audit_log', 'integrations'])
       // Already held: not duplicated.
       expect((await rowOf('finance'))!.filter((m) => m === 'voided_prebills')).toHaveLength(1)
-      expect((await rowOf('finance'))!.sort()).toEqual(['accounting', 'finance_pl', 'food_cost', 'voided_prebills'])
+      // finance also gains the till (owner, 2026-10-20: "Give finance access to POS").
+      expect((await rowOf('finance'))!.sort()).toEqual(['accounting', 'finance_pl', 'food_cost', 'pos', 'voided_prebills'])
       // A grantee of only the wave-B module: just that one appended. No row:
       // still no row (defaults apply).
       expect(await rowOf('foh_management')).toEqual(['dashboard', 'pos', 'emergency_overrides'])

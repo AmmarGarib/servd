@@ -85,7 +85,7 @@ beforeAll(async () => {
   for (const t of [A.tenantId, B.tenantId]) await prisma.setting.create({ data: { key: fifoCutoverKey(t), value: new Date(Date.now() - 30 * DAY).toISOString() } })
   cashierA = await mkUser('bg-cashier-a', 'cashier', A.tenantId)
   expoA = await mkUser('bg-expo-a', 'expediter', A.tenantId)
-  financeA = await mkUser('bg-finance-a', 'finance', A.tenantId)
+  financeA = await mkUser('bg-hr-a', 'hr', A.tenantId)   // a role outside the till (finance rings since 2026-10-20)
   cashierB = await mkUser('bg-cashier-b', 'cashier', B.tenantId)
   stackdConcept = (await prisma.concept.create({
     data: { name: 'Stackd BG', slug: `bg-stackd-${Date.now()}`, type: 'restaurant', tenantId: A.tenantId, serviceVessel: 'packaging', taxRateCash: 15, taxRateCard: 8 },

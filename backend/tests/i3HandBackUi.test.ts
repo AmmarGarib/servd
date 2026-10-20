@@ -97,11 +97,13 @@ describe('I3-RV-3 — bill printing shows only to the roles the bill routes admi
       expect(shown, role).toBe((CASHIERS as readonly string[]).includes(role))
     }
     expect(canPrintBill('expediter', { overrideApprovers: OVERRIDE_APPROVERS, modules: DEFAULT_MODULE_ACCESS['expediter'] })).toBe(false)
-    expect(canPrintBill('finance', { overrideApprovers: OVERRIDE_APPROVERS, modules: DEFAULT_MODULE_ACCESS['finance'] })).toBe(false)
+    expect(canPrintBill('hr', { overrideApprovers: OVERRIDE_APPROVERS, modules: DEFAULT_MODULE_ACCESS['hr'] })).toBe(false)
+    // finance runs the till (owner, 2026-10-20)
+    expect(canPrintBill('finance', { overrideApprovers: OVERRIDE_APPROVERS, modules: DEFAULT_MODULE_ACCESS['finance'] })).toBe(true)
   })
 
   it('with the server list, it is the list — nothing else', () => {
-    expect(canPrintBill('finance', { cashierRoles: CASHIERS, modules: ['pos'] })).toBe(false)
+    expect(canPrintBill('hr', { cashierRoles: CASHIERS, modules: ['pos'] })).toBe(false)
     expect(canPrintBill('cashier', { cashierRoles: CASHIERS, modules: [] })).toBe(true)
     expect(canPrintBill(null, { cashierRoles: CASHIERS })).toBe(false)
   })
@@ -158,6 +160,7 @@ beforeAll(async () => {
   await mkUser('cashier3', 'cashier', tenantA)
   await mkUser('fnbA', 'fnb_manager', tenantA)      // back office: no drawer of their own
   await mkUser('finance', 'finance', tenantA)
+  await mkUser('hr', 'hr', tenantA)
   await mkUser('expediter', 'expediter', tenantA)
   await mkUser('cashierB', 'cashier', tenantB)
   await mkUser('mgrB', 'foh_management', tenantB)
@@ -228,12 +231,14 @@ describe('I3-RV-1 — the hand-back route the dialog calls', () => {
 })
 
 describe('I3-RV-3 — the bill routes refuse the roles the buttons are now hidden from', () => {
-  it('expediter and finance get 403 from the receipt and the pre-bill; a cashier does not', async () => {
+  it('expediter and HR get 403 from the receipt and the pre-bill; a cashier does not', async () => {
     const o = await cancelledTicket(drawers['cashier1']!, 1_000)
-    for (const who of ['expediter', 'finance']) {
+    for (const who of ['expediter', 'hr']) {
       expect((await call(who, 'GET', `/pos/receipt/${o.id}`)).statusCode, who).toBe(403)
       expect((await call(who, 'POST', `/pos/orders/${o.id}/pre-bill`, {})).statusCode, who).toBe(403)
     }
     expect((await call('cashier1', 'GET', `/pos/receipt/${o.id}`)).statusCode).not.toBe(403)
+    // Finance runs the till (owner, 2026-10-20: "Give finance access to POS").
+    expect((await call('finance', 'GET', `/pos/receipt/${o.id}`)).statusCode).not.toBe(403)
   })
 })

@@ -245,7 +245,7 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   // 'projections' are /finance/* and /projections; 'food_cost' is
   // /reports/food-cost.
   finance: [
-    'dashboard', 'orders',
+    'dashboard', 'orders', 'pos',
     'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation',
     'exceptions', 'capital', 'projections', 'reports', 'voided_prebills', 'food_cost',
   ],
@@ -310,6 +310,8 @@ export const MODULE_GRANTS: readonly string[] = [
   // The F&B manager owns buying (decision 47; found by the simulated month,
   // 2026-10-17). Scoped to fnb_manager in MODULE_GRANT_ROLES.
   'procurement',
+  // Finance runs the till (owner, 2026-10-20). Scoped to finance in MODULE_GRANT_ROLES.
+  'pos',
 ]
 /**
  * Grants that reach only SOME of the roles whose defaults hold the module
@@ -318,6 +320,7 @@ export const MODULE_GRANTS: readonly string[] = [
 export const MODULE_GRANT_ROLES: Readonly<Partial<Record<string, readonly UserRole[]>>> = {
   role_modules: ['hr'],
   procurement: ['fnb_manager'],
+  pos: ['finance'],
 }
 export const MODULE_GRANTS_MARKER_KEY = 'moduleAccess.grantsApplied'
 

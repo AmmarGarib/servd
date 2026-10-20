@@ -379,7 +379,8 @@ export const APPROVERS = ['admin', 'owner'] as UserRole[]
 // fnb_manager is a full ops manager (BOH + FOH) — folded into MANAGERS so it
 // passes every manager-tier endpoint (reports, kds, inventory, reservations…).
 export const MANAGERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'] as UserRole[]
-export const CASHIERS = [...MANAGERS, 'cashier', 'foh'] as UserRole[]
+// finance runs the till too (owner, 2026-10-20: "Give finance access to POS"); voids still need a manager.
+export const CASHIERS = [...MANAGERS, 'cashier', 'foh', 'finance'] as UserRole[]
 export const KITCHEN_STAFF = [...MANAGERS, 'kitchen', 'expediter', 'boh', 'boh_management'] as UserRole[]
 // brand_manager is marketing-tier (NOT a full ops manager) — added to the
 // marketing team only, so it reaches CRM/reviews/campaigns + the Brand

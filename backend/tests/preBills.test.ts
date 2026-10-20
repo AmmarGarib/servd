@@ -103,6 +103,7 @@ beforeAll(async () => {
   await mkUser('waiterA', 'foh', tenantA)
   await mkUser('mgrA', 'foh_management', tenantA)
   await mkUser('financeA', 'finance', tenantA)
+  await mkUser('hrA', 'hr', tenantA)
   await mkUser('cashierB', 'cashier', tenantB)
   await mkUser('financeB', 'finance', tenantB)
   await mkUser('nobody', 'finance', null)
@@ -259,9 +260,9 @@ describe('printing a pre-bill', () => {
     expect(r.statusCode).toBe(400)
   })
 
-  it('a finance user (not a till role) cannot print', async () => {
+  it('a role outside the till (HR) cannot print; finance runs the till since 2026-10-20', async () => {
     const o = await ring('cashierA', conceptA, [NIHARI])
-    const r = await print('financeA', o.id)
+    const r = await print('hrA', o.id)
     expect(r.statusCode).toBe(403)
   })
 })
