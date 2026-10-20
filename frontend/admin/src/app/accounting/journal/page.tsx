@@ -488,12 +488,20 @@ export default function JournalEntryPage() {
                   <RecordFiles ownerType="journal_entry" ownerId={amending.id} tenantId={amending.tenantId ?? undefined} canUpload={false} compact
                     title="Documents on the original entry" emptyText="No documents on the original entry." />
                 )}
-                {paysOut && (
+                {paysOut ? (
                   <div>
                     <PaymentClassificationFields value={cls} onChange={setCls} />
                     <p className="mt-1 text-xs text-s-muted">
                       This entry pays money out of cash or a bank, so it is listed in the Payments register.
                       {amending ? ' Leave it blank to keep the original entry\'s classification.' : ''}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-s-border px-3 py-2">
+                    <p className="text-xs font-semibold">Classification — Official / Unofficial / Unclassified</p>
+                    <p className="text-xs text-s-muted">
+                      Asked when the entry pays money out: a credit line to Cash on hand (1010), Petty cash (1011) or a bank account.
+                      This entry has none yet, so it is not a payment and needs no classification.
                     </p>
                   </div>
                 )}
