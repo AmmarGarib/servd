@@ -381,7 +381,9 @@ describe('POST /pos/payments with Raast QR', () => {
     expect(data.statusCode, data.body).toBe(200)
     expect(data.json().payments).toEqual([{ method: 'raast', amountCents: CARD_TOTAL, tenderedCents: null, label: `Raast QR — Ref ${theRef}`, reference: theRef }])
     const html = await call(cashierA, 'GET', `/pos/receipt/${o.id}`)
-    expect(html.body).toContain(`Raast QR — Ref ${theRef}`)
+    // The bill shows Paid / Due, not the payment lines (owner, 2026-10-20); the reference stays on the receipt data.
+    expect(html.body).not.toContain(`Ref ${theRef}`)
+    expect(html.body).toContain('Paid')
   })
 })
 

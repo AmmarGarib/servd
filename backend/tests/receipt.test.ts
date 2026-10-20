@@ -215,14 +215,14 @@ describe('the fiscal block (POS connector)', () => {
     expect(html).toContain('<svg')
   })
 
-  it('pending (queued, not yet filed): the pending line, no number, no QR', async () => {
+  it('pending (queued, not yet filed): nothing about it printed (owner, 2026-10-20), no number, no QR', async () => {
     const o = await mk(A)
     await saleDoc(A, o.id, { status: 'pending' })
     const r = await buildReceiptData(o.id)
     expect(r.fiscal).toMatchObject({ status: 'pending', fiscalNumber: null })
     expect(r.number).toBe(o.id.slice(-8).toUpperCase())
     const html = await buildReceiptHtml(o.id)
-    expect(html).toContain('Fiscal invoice: pending — filed automatically. Ask for a reprint for the verification QR.')
+    expect(html).not.toContain('Fiscal invoice')
     expect(html).not.toContain('Fiscal Invoice:')
     expect(html).not.toContain('<svg')
   })
@@ -233,7 +233,7 @@ describe('the fiscal block (POS connector)', () => {
     const r = await buildReceiptData(o.id)
     expect(r.fiscal).toMatchObject({ status: 'pending', rawStatus: 'held', fiscalNumber: null })
     const html = await buildReceiptHtml(o.id)
-    expect(html).toContain('Fiscal invoice: not yet issued.')
+    expect(html).not.toContain('Fiscal invoice')
     expect(html).not.toContain('filed automatically')
     expect(html).not.toContain('reprint')
     expect(html).not.toContain('<svg')
@@ -244,7 +244,7 @@ describe('the fiscal block (POS connector)', () => {
     const r = await buildReceiptData(o.id)
     expect(r).toMatchObject({ notTaxInvoice: false, fiscal: { status: 'pending', statusReason: 'not_queued', fiscalNumber: null, documentId: null } })
     const html = await buildReceiptHtml(o.id)
-    expect(html).toContain('Fiscal invoice: pending — filed automatically.')
+    expect(html).not.toContain('Fiscal invoice')
     expect(html).not.toContain('Fiscal Invoice:')
   })
 
@@ -356,7 +356,7 @@ describe('the receipt routes', () => {
     const html = await call(cashierA, 'GET', `/pos/receipt/${o.id}`)
     expect(html.statusCode).toBe(200)
     expect(html.body).toContain('FULL &amp; FINAL BILL')
-    expect(html.body).toContain('Fiscal invoice: issued when the order is completed.')
+    expect(html.body).not.toContain('Fiscal invoice')   // owner, 2026-10-20: nothing printed until filed
     // Printing it files nothing: the sale document is made at completion.
     expect(await prisma.fiscalDocument.count({ where: { orderId: o.id } })).toBe(0)
     // The pre-bill refuses a paid order and says to print THIS bill — which now works.

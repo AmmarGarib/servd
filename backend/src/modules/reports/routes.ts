@@ -9,6 +9,7 @@ import { getDemandForecast } from './demand-forecast.js'
 import { salesTotals, salesByHour, salesByChannel, salesBySettlement, salesByTender, topItems, stationTimes, reportDateRange, type SalesQuery } from './service.js'
 import { exportFormatOf, sendReportFor, type ExportFormat, type ReportRow } from '../../lib/reportExport.js'
 import { fmtPktDate } from '../accounting/dates.js'
+import { tillSales, TILL_SALES_VIEWS, type TillSalesView } from './tillSales.js'
 
 // Who reads the OPERATIONAL reports — sales volume (orders, orders by hour,
 // orders by channel), item mix, ticket times by station and the demand
@@ -189,6 +190,28 @@ export async function reportRoutes(fastify: FastifyInstance) {
       return rows.map((r) => ({ source: r.source, orders: r.orders })).sort((a, b) => b.orders - a.orders)
     },
   )
+
+  // GET /reports/till-sales — the till's Sales report (owner, 2026-10-20; reports/tillSales.ts): one view at a time
+  // (?view=items|tenders|settlement|discounts|no_charge|waiters|order_type), THE sales engine underneath, money only
+  // to FINANCIALS_VIEWERS. ?format=csv|xlsx|pdf exports the same table.
+  fastify.get('/till-sales', { preHandler: requireAuth(...REPORT_READERS) }, async (req, reply) => {
+    const raw = req.query as Record<string, string>
+    const view = (raw['view'] || 'items') as TillSalesView
+    if (!TILL_SALES_VIEWS.includes(view)) throw new AppError('INVALID_VIEW', `view must be one of ${TILL_SALES_VIEWS.join(', ')}`, 400)
+    const sq = await salesQuery(req, raw, 1)
+    const r = await tillSales(sq, view, seesRevenue(req))
+    const format = exportOf(req)
+    if (format) {
+      return sendReportFor(req, reply, format, { base: `till-sales-${view}`, suffix: suffixOf(sq) }, {
+        title: r.title, period: periodLine(sq),
+        columns: r.columns.map((c) => ({ key: c.key, label: c.label, type: c.type === 'pkr' ? 'cents' : c.type === 'number' ? 'number' : 'text' })),
+        rows: [...r.rows, ...(r.totals ? [r.totals] : [])],
+        isTotal: (row) => typeof row[r.columns[0]!.key] === 'string' && String(row[r.columns[0]!.key]).startsWith('TOTAL'),
+        ...(r.note ? { notes: [r.note] } : {}),
+      })
+    }
+    return r
+  })
 
   // GET /reports/by-settlement — sales per settlement channel (till flow, owner
   // 2026-10-20): keenu (pushed to Keenu), servd (closed in servd), none

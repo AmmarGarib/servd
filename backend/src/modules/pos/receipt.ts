@@ -452,6 +452,10 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
   const tipRow = r.tipCents > 0
     ? `<tr><td>Tip</td><td style="text-align:right">${fmtPkr(r.tipCents)}</td></tr>`
     : ''
+  // Owner, 2026-10-20: the bill shows Total (items) · Discount · Sub-total · GST · Paid · Due — no payment lines.
+  const paidCents = r.payments.reduce((t, p) => t + p.amountCents, 0)
+  // An on-account bill still names the client it is charged to (the client signs under it).
+  const onAccount = r.payments.filter((p) => p.method === ON_ACCOUNT_TENDER)
   // FOH-23: a refunded / cancelled order never prints like a valid paid bill.
   const banners = [r.testCompany ? TEST_COMPANY_BANNER : null, r.banner, opts.duplicate ? 'DUPLICATE' : null].filter((b): b is string => !!b)
   const bannerHtml = banners.length > 0
@@ -508,18 +512,17 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
   <table>${itemRows}</table>
   <div class="divider"></div>
   <table>
-    <tr><td>Subtotal</td><td style="text-align:right">${fmtPkr(r.subtotalCents)}</td></tr>
-    ${r.discountCents > 0 ? `<tr><td>Discount</td><td style="text-align:right">-${fmtPkr(r.discountCents)}</td></tr>` : ''}
+    <tr class="bold"><td>Total</td><td style="text-align:right">${fmtPkr(r.subtotalCents)}</td></tr>
+    <tr><td>Discount</td><td style="text-align:right">${r.discountCents > 0 ? '-' : ''}${fmtPkr(r.discountCents)}</td></tr>
+    <tr><td>Sub-total</td><td style="text-align:right">${fmtPkr(r.subtotalCents - r.discountCents)}</td></tr>
     ${deliveryRow}
     ${taxRow}
     ${serviceRow}
     ${tipRow}
-    <tr class="bold"><td style="border-top:1px solid #000;padding-top:4px">TOTAL</td><td style="border-top:1px solid #000;padding-top:4px;text-align:right">${fmtPkr(r.totalCents)}</td></tr>
+    <tr class="bold"><td style="border-top:1px solid #000;padding-top:4px">Paid</td><td style="border-top:1px solid #000;padding-top:4px;text-align:right">${fmtPkr(paidCents)}</td></tr>
+    <tr class="bold"><td>Due</td><td style="text-align:right">${fmtPkr(Math.max(0, r.totalCents - paidCents))}</td></tr>
   </table>
-  ${r.payments.length > 0 ? `
-  <div class="divider"></div>
-  ${r.payments.map((p) => `<div>${esc(p.label)} ${fmtPkr(p.amountCents)}${p.tenderedCents && p.tenderedCents > p.amountCents ? ` / Change: ${fmtPkr(p.tenderedCents - p.amountCents)}` : ''}</div>`).join('')}
-  ` : ''}
+  ${onAccount.length > 0 ? `<div class="divider"></div>${onAccount.map((p) => `<div>${esc(p.label)} ${fmtPkr(p.amountCents)}</div>`).join('')}` : ''}
   ${r.clientSignature ? `<div style="margin-top:18px">${esc(CLIENT_SIGNATURE_LINE)}</div>` : ''}
   ${cardRow}
   ${refundRows}
@@ -570,15 +573,8 @@ async function fiscalBlockHtml(r: ReceiptData, show: boolean): Promise<string> {
         + extras.map((x) => `<div>${esc(x.authority.toUpperCase())} Fiscal Invoice: ${esc(x.number)}</div>`).join('')
     }
     default:
-      // Never a servd number presented as a fiscal number.
-      if (f.rawStatus === 'held') {
-        // W4-RG-3: the company is not live on the fiscal POS yet — nothing is
-        // being filed, so no promise of a QR on a reprint.
-        return '<div>Fiscal invoice: not yet issued.</div>'
-      }
-      if (f.statusReason === 'awaiting_completion') {
-        return '<div>Fiscal invoice: issued when the order is completed. Ask for a reprint for the verification QR.</div>'
-      }
-      return '<div>Fiscal invoice: pending — filed automatically. Ask for a reprint for the verification QR.</div>'
+      // Not filed yet (pending, held, awaiting completion): nothing printed (owner, 2026-10-20) — never a servd
+      // number presented as a fiscal number. A reprint once filed carries the fiscal number and its QR.
+      return ''
   }
 }

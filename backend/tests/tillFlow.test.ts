@@ -398,6 +398,27 @@ describe('settle: close in servd vs push to Keenu', () => {
     expect(s.statusCode, s.body).toBe(200)
     expect((await call(mgrA, 'GET', '/reports/sales?settlement=bogus')).statusCode).toBe(400)
 
+    // The till's Sales report (2026-10-20): every view answers from the same engine; combined = the totals.
+    const tf = await mkUser('tflow-fin-a', 'finance', A.tenantId)
+    const finB = await mkUser('tflow-fin-b', 'finance', B.tenantId)
+    const range = 'dateFrom=2026-01-01&dateTo=2030-01-01'
+    for (const view of ['items', 'tenders', 'settlement', 'discounts', 'no_charge', 'waiters', 'order_type']) {
+      const v = await call(tf, 'GET', `/reports/till-sales?view=${view}&${range}`)
+      expect(v.statusCode, `${view} ${v.body}`).toBe(200)
+      expect(v.json().summary.gross, view).toBe(all.gross)
+    }
+    const st = (await call(tf, 'GET', `/reports/till-sales?view=settlement&${range}`)).json()
+    expect(st.totals.grossCents).toBe(all.gross)
+    const ot = (await call(tf, 'GET', `/reports/till-sales?view=order_type&${range}`)).json()
+    expect(ot.totals.orders).toBe(all.orders)
+    expect((await call(tf, 'GET', `/reports/till-sales?view=items&${range}&format=csv`)).body.split('\n')[0]).toContain('item,quantity,salesCents')
+    expect((await call(tf, 'GET', `/reports/till-sales?view=bogus&${range}`)).statusCode).toBe(400)
+    // A cashier is not a report reader; company B sees none of A's sales and gets 404 on A's brand.
+    expect((await call(cashierA, 'GET', `/reports/till-sales?${range}`)).statusCode).toBe(403)
+    expect((await call(finB, 'GET', `/reports/till-sales?view=items&${range}&conceptId=${A.conceptId}`)).statusCode).toBe(404)
+    const b = (await call(finB, 'GET', `/reports/till-sales?view=items&${range}`)).json()
+    expect(b.rows.some((r: { item: string }) => r.item === 'Kheer')).toBe(false)
+
     const ret = await salesTaxReturn(A.tenantId, from, to)
     const row = ret.taxableValueByConceptCents.find((x) => x.conceptSlug === 'brand-tflow-a')!
     // Both accounts: 330,000 sold − the two refunds' revenue shares.

@@ -1,9 +1,11 @@
 'use client'
 import { useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ChevronDown, ChevronUp, ClipboardList, FileText, Receipt, Search, ShoppingBag, Tag, Truck, UtensilsCrossed, Wallet, X } from 'lucide-react'
+import { ArrowLeft, BarChart3, ChevronDown, ChevronUp, ClipboardList, FileText, Receipt, Search, ShoppingBag, Tag, Truck, UtensilsCrossed, Wallet, X } from 'lucide-react'
+import { useAuthStore } from '../../../store/auth'
+import { useIsManager } from '../managerRole'
 
-export type StartAction = 'dine_in' | 'delivery' | 'no_charge' | 'summary' | 'tickets' | 'takeaway'
+export type StartAction = 'dine_in' | 'delivery' | 'no_charge' | 'summary' | 'tickets' | 'takeaway' | 'sales_report'
 
 interface Entry { id: StartAction | 'shift' | 'back' | 'waiter'; label: string; icon: ReactNode; href?: string; badge?: number }
 
@@ -18,6 +20,10 @@ export function StartMenu({ onPick, ticketCount, active, onClose }: {
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState({ ordering: true, manager: false, other: false })
+  // Sales report: the report readers (managers, finance, procurement — reports/routes.ts REPORT_READERS).
+  const isManager = useIsManager()
+  const role = useAuthStore((st) => st.user?.role ?? null)
+  const seesSales = isManager || role === 'finance' || role === 'procurement'
 
   const ordering: Entry[] = [
     { id: 'dine_in', label: 'Dine In', icon: <UtensilsCrossed size={18} aria-hidden="true" /> },
@@ -33,6 +39,7 @@ export function StartMenu({ onPick, ticketCount, active, onClose }: {
   ]
   const other: Entry[] = [
     { id: 'takeaway', label: 'Takeaway', icon: <ShoppingBag size={18} aria-hidden="true" /> },
+    ...(seesSales ? [{ id: 'sales_report' as const, label: 'Sales report', icon: <BarChart3 size={18} aria-hidden="true" /> }] : []),
     { id: 'waiter', label: 'Waiter ordering', icon: <Receipt size={18} aria-hidden="true" />, href: '/pos/waiter' },
     { id: 'back', label: 'Back to admin', icon: <ArrowLeft size={18} aria-hidden="true" />, href: '/w' },
   ]

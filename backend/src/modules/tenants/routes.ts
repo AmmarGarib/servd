@@ -560,18 +560,20 @@ async function mergeSystemSuppliers(tx: MergeTx, src: string, dst: string, srcSl
         await tx.supplierBill.update({ where: { id: b.id }, data: { billNumber: freeName(`${b.billNumber}-${srcSlug}`, taken) } })
       }
     }
-    const move = { where: { supplierId: s.id }, data: { supplierId: twin.id } }
-    await tx.goodsReceipt.updateMany(move)
-    await tx.purchaseOrder.updateMany(move)
-    await tx.supplierBill.updateMany(move)
-    await tx.supplierPayment.updateMany(move)
-    await tx.inventoryItem.updateMany(move)
-    await tx.itemPriceHistory.updateMany(move)
-    await tx.capexLine.updateMany(move)
-    await tx.opexLine.updateMany(move)
-    await tx.fixedAsset.updateMany(move)
-    await tx.supplierConversation.updateMany(move)
-    await tx.supplierPortalToken.updateMany(move)
+    // A fresh argument object per call: the client stamps `updatedAt` into the data of a model that has one, and a
+    // shared object then carried it to supplier_payments (no such column) — the whole merge rolled back.
+    const move = () => ({ where: { supplierId: s.id }, data: { supplierId: twin.id } })
+    await tx.goodsReceipt.updateMany(move())
+    await tx.purchaseOrder.updateMany(move())
+    await tx.supplierBill.updateMany(move())
+    await tx.supplierPayment.updateMany(move())
+    await tx.inventoryItem.updateMany(move())
+    await tx.itemPriceHistory.updateMany(move())
+    await tx.capexLine.updateMany(move())
+    await tx.opexLine.updateMany(move())
+    await tx.fixedAsset.updateMany(move())
+    await tx.supplierConversation.updateMany(move())
+    await tx.supplierPortalToken.updateMany(move())
     await tx.supplier.delete({ where: { id: s.id } })
     absorbed++
   }

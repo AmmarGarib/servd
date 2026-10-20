@@ -18,6 +18,7 @@ import { NoChargeDialog } from '../../components/pos/flow/NoChargeDialog'
 import { FlowDialog } from '../../components/pos/flow/ui'
 import { orderRef } from '../../lib/orderRef'
 import { OrderSummary } from '../../components/pos/flow/OrderSummary'
+import { SalesReport } from '../../components/pos/flow/SalesReport'
 import { getOrderInfo, flowErrorMessage, type BoardTable, type OrderInfoView } from '../../components/pos/flow/flowApi'
 import { requestSync, listenForSync, getQueuedOrders } from '../../lib/offline-queue'
 import Link from 'next/link'
@@ -38,7 +39,7 @@ function tabListKeys(e: KeyboardEvent<HTMLElement>) {
   tabs[n]!.focus()
 }
 
-type View = 'home' | 'board' | 'delivery' | 'order' | 'summary'
+type View = 'home' | 'board' | 'delivery' | 'order' | 'summary' | 'sales_report'
 type InfoModal =
   | { kind: 'new'; title: string; initial: OrderInfoValues }
   | { kind: 'ticket'; orderId: string; title: string; initial: OrderInfoValues }
@@ -206,6 +207,7 @@ export default function PosPage() {
     if (!(await discardCartOk())) return
     const st = usePosStore.getState()
     if (a === 'summary') { st.clearCart(); setView('summary'); return }
+    if (a === 'sales_report') { st.clearCart(); setView('sales_report'); return }
     st.clearCart()
     if (a === 'dine_in') { st.setFulfilment('dine_in'); setView('board') }
     else if (a === 'delivery') { st.setFulfilment('delivery'); setView('delivery') }
@@ -407,6 +409,7 @@ export default function PosPage() {
           />
         )}
         {view === 'summary' && <OrderSummary onMenu={() => setMenuOpen(true)} />}
+        {view === 'sales_report' && <SalesReport conceptId={conceptId || null} brandName={activeConcept?.name ?? null} onMenu={() => setMenuOpen(true)} />}
       </div>
 
       {note && (
