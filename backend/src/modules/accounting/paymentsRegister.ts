@@ -336,6 +336,9 @@ export interface PaymentRow {
   tenantId: string
   entryDate: string
   reference: string | null
+  /** The automatic voucher number (PV-00001…), stamped by the posting engine. null on an entry posted before numbering. */
+  voucherNo: string | null
+  /** The source document's own number or reference (cash voucher CV-…, cheque / bank reference, payroll period…). */
   voucherNumber: string
   payee: string
   category: PaymentCategory
@@ -417,6 +420,9 @@ export async function paymentRows(db: Db, tenantIds: string[], from: Date, to: D
   for (const l of lines) linesOf.set(l.journalEntryId, [...(linesOf.get(l.journalEntryId) ?? []), l])
 
   const details = await sourceDetails(db, aggs)
+  // The automatic voucher number of each entry (PV-…; voucherNumbers.ts).
+  const voucherNoOf = new Map((await db.journalEntry.findMany({ where: { id: { in: aggs.map((a) => a.id) } }, select: { id: true, voucherNo: true } }))
+    .map((e) => [e.id, e.voucherNo]))
 
   const out: PaymentRow[] = []
   for (const a of aggs) {
@@ -444,6 +450,7 @@ export async function paymentRows(db: Db, tenantIds: string[], from: Date, to: D
       tenantId: a.tenantId,
       entryDate: a.entryDate.toISOString(),
       reference: a.reference,
+      voucherNo: voucherNoOf.get(a.id) ?? null,
       voucherNumber: d.voucherNumber ?? shortRef(a.reference, a.id),
       payee: d.payee ?? a.description,
       category,
@@ -669,7 +676,7 @@ export function filterRows(rows: PaymentRow[], f: RegisterFilters): PaymentRow[]
     (!f.classification || f.classification === 'all' || r.classification === f.classification)
     && (!f.category || r.category === f.category)
     && (!f.method || r.method === f.method)
-    && (!q || [r.voucherNumber, r.payee, r.narration, r.categoryLabel, r.methodLabel, r.reference ?? ''].some((s) => s.toLowerCase().includes(q))))
+    && (!q || [r.voucherNo ?? '', r.voucherNumber, r.payee, r.narration, r.categoryLabel, r.methodLabel, r.reference ?? ''].some((s) => s.toLowerCase().includes(q))))
 }
 
 export interface ClassTotals { count: number; grossCents: number; whtCents: number; netCents: number }

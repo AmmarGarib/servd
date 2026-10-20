@@ -1085,6 +1085,21 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       // (before the supplier repoint, which would hit the per-company unique key).
       const systemSuppliersAbsorbed = await mergeSystemSuppliers(tx, src, dst, srcSlug)
 
+      // Voucher numbers (JV / PV / RV, accounting/voucherNumbers.ts) are per company: the source's entries continue
+      // after the target's last number of each kind, in their own order — never two JV-00001 in one company.
+      // Two steps so the per-company unique keys never clash midway (negative placeholders first).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${dst}::text), hashtext('journal-voucher-seq'))`
+      await tx.$executeRaw`UPDATE journal_entries SET "voucherSeq" = -"voucherSeq", "voucherNo" = 'merging-' || id WHERE "tenantId" = ${src} AND "voucherKind" IS NOT NULL`
+      await tx.$executeRaw`
+        WITH mx AS (SELECT "voucherKind" AS k, MAX("voucherSeq") AS m FROM journal_entries WHERE "tenantId" = ${dst} AND "voucherKind" IS NOT NULL GROUP BY 1),
+             s AS (SELECT id, "voucherKind" AS k, ROW_NUMBER() OVER (PARTITION BY "voucherKind" ORDER BY -"voucherSeq") AS rn
+                     FROM journal_entries WHERE "tenantId" = ${src} AND "voucherKind" IS NOT NULL)
+        UPDATE journal_entries e
+           SET "voucherSeq" = COALESCE(mx.m, 0) + s.rn,
+               "voucherNo"  = s.k || '-' || lpad((COALESCE(mx.m, 0) + s.rn)::text, 5, '0')
+          FROM s LEFT JOIN mx ON mx.k = s.k
+         WHERE e.id = s.id`
+
       const repoint: Array<{
         updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
       }> = [

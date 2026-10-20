@@ -102,24 +102,25 @@ async function register(req: FastifyRequest) {
   }
 }
 
+/** Owner, 2026-10-20: the register export is Date · Voucher no. · Narration · Payment method · Total amount · Classification. */
+const CLASS_SHORT: Record<string, string> = { official: 'O', unofficial: 'U', unclassified: 'UC' }
 function recordsOf(rows: Array<PaymentRow & { companyName: string | null }>, multi: boolean) {
-  return rows.map((r) => ({
+  const out: Array<Record<string, string>> = rows.map((r) => ({
     ...(multi && { company: r.companyName ?? '' }),
-    voucher_number: r.voucherNumber,
     date: fmtPktDate(new Date(r.entryDate)),
-    payee: r.payee,
-    category: r.categoryLabel,
+    voucher_no: r.voucherNo ?? r.voucherNumber,
     narration: r.narration,
     payment_method: r.methodLabel,
-    gross: fmtPkr(r.grossCents),
-    withholding_tax: fmtPkr(r.whtCents),
-    net: fmtPkr(r.netCents),
-    classification: CLASS_LABEL[r.classification] ?? r.classification,
-    tax_status: r.taxStatus ? `${TAX_LABEL[r.taxStatus]}${r.taxStatusSource === 'derived' ? ' (from books)' : ''}` : 'Not recorded',
-    non_deduction_reason: r.nonDeductionReason ?? '',
-    ledger_reference: r.reference ?? '',
-    journal_entry_id: r.journalEntryId,
+    total_amount: fmtPkr(r.netCents),
+    classification: CLASS_SHORT[r.classification] ?? r.classification,
   }))
+  if (out.length) {
+    out.push({
+      ...(multi && { company: '' }), date: '', voucher_no: '', narration: 'TOTAL', payment_method: '',
+      total_amount: fmtPkr(rows.reduce((s, r) => s + r.netCents, 0)), classification: '',
+    })
+  }
+  return out
 }
 
 function sendRegister(req: FastifyRequest, reply: FastifyReply, format: ExportFormat, out: Awaited<ReturnType<typeof register>>) {
@@ -144,9 +145,9 @@ function sendRegister(req: FastifyRequest, reply: FastifyReply, format: ExportFo
     title: `Payments register${out.query.classification === 'all' ? '' : ` — ${CLASS_LABEL[out.query.classification]}`}`,
     period: `${out.from} to ${out.to}`,
     rows: recordsOf(out.rows, out.multiCompany),
-    types: { gross: 'pkr', withholding_tax: 'pkr', net: 'pkr' },
-    labels: { journal_entry_id: 'Journal entry' },
-    notes: [out.note],
+    types: { total_amount: 'pkr' },
+    labels: { voucher_no: 'Voucher no.', payment_method: 'Payment method', total_amount: 'Total amount', classification: 'Class' },
+    notes: ['Class: O = Official, U = Unofficial, UC = Unclassified. Total amount = the amount paid (after tax withheld).', out.note],
   })
 }
 

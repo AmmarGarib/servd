@@ -45,6 +45,8 @@ interface LedgerEntry {
   reference: string | null
   description: string
   entryDate: string
+  /** Automatic voucher number (JV-00001…), stamped when posted. */
+  voucherNo?: string | null
   lines: LedgerLine[]
   reversedBy: { id: string; entryDate: string } | null
 }
@@ -187,7 +189,7 @@ export default function JournalEntryPage() {
   const post = useMutation({
     mutationFn: async () => {
       const pin = amending?.tenantId ?? company
-      const entry = await api.post<{ id: string }>(amending ? `/accounting/journal/${amending.id}/amend` : '/accounting/journal', {
+      const entry = await api.post<{ id: string; voucherNo?: string | null }>(amending ? `/accounting/journal/${amending.id}/amend` : '/accounting/journal', {
       ...(amending && { reason: amendReason.trim() }),
       description: description.trim(),
       ...(reference.trim() && { reference: reference.trim() }),
@@ -211,8 +213,8 @@ export default function JournalEntryPage() {
     },
     onSuccess: ({ entry, fileError }) => {
       const done = amending
-        ? `Edited — the old entry is reversed and the corrected one is posted (${fmtPkr(debitTotal)} on ${date}).`
-        : `Posted — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
+        ? `Edited — the old entry is reversed and the corrected one is posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} (${fmtPkr(debitTotal)} on ${date}).`
+        : `Posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
       setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's Files below.` : done, entryId: entry.id })
       setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION)
       void qc.invalidateQueries({ queryKey: ['record-files'] })
@@ -398,9 +400,9 @@ export default function JournalEntryPage() {
                   placeholder="e.g. Opening balance — HBL operating account" className={inputCls} />
               </label>
               <label className="block">
-                <span className="block text-xs text-s-muted mb-1">Reference (optional)</span>
+                <span className="block text-xs text-s-muted mb-1">Cheque / bank reference (optional)</span>
                 <input type="text" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={60}
-                  placeholder="e.g. JV-0042" className={inputCls} />
+                  placeholder="e.g. cheque 004512" className={inputCls} />
               </label>
             </div>
             {lockedThrough && companyIds.length === 1 && (
@@ -620,6 +622,7 @@ function ManualEntryRow({ e, isAdmin, canAttach, canRequest, company, onEdit, ce
   return (
     <div className="border-b border-s-border last:border-0 px-4 py-3 space-y-2">
       <div className="flex flex-wrap items-start gap-3">
+        <span className="font-mono text-xs font-semibold text-s-text w-20 shrink-0">{e.voucherNo ?? '—'}</span>
         <span className="font-mono text-xs text-s-muted w-24 shrink-0">{pktDate(e.entryDate)}</span>
         <span className="flex-1 min-w-0">
           <Link href={`/accounting/ledger?id=${e.id}`} className="block text-sm text-s-text truncate hover:underline">{e.description}</Link>

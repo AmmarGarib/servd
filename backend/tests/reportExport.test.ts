@@ -243,6 +243,8 @@ function legacyLedger(entries: Entry[]): string {
       })
     }
   }
+  const sum = (t: string) => entries.reduce((s, e) => s + e.lines.reduce((x, l) => x + (l.type === t ? l.amountCents : 0), 0), 0)
+  if (flat.length) flat.push({ date: '', accountCode: '', accountName: 'TOTAL', memo: '', debit: fmtPkr(sum('debit')), credit: fmtPkr(sum('credit')) })
   return toCsv(flat)
 }
 
@@ -369,23 +371,20 @@ describe('company scope and access are the route\'s own', () => {
 })
 
 describe('payments register', () => {
-  it('CSV unchanged on both paths; Excel and PDF on both', async () => {
+  it('CSV (Date, Voucher no., Narration, Method, Total, O/U/UC) the same on both paths; Excel and PDF on both', async () => {
     const json = await get('ceoA', `/accounting/payments?from=${monthStart}&to=${today}`)
     expect(json.statusCode, json.body).toBe(200)
     const out = json.json() as { rows: Array<Record<string, unknown> & { entryDate: string }>; multiCompany: boolean }
     expect(out.rows.length).toBeGreaterThan(0)
-    const CLASS: Record<string, string> = { official: 'Official', unofficial: 'Unofficial', unclassified: 'Unclassified' }
-    const TAX: Record<string, string> = { deducted: 'Deducted', not_deducted: 'Not deducted', not_applicable: 'Not applicable' }
-    const legacy = toCsv(out.rows.map((r) => ({
+    const SHORT: Record<string, string> = { official: 'O', unofficial: 'U', unclassified: 'UC' }
+    const recs: Array<Record<string, string>> = out.rows.map((r) => ({
       ...(out.multiCompany && { company: (r['companyName'] as string) ?? '' }),
-      voucher_number: r['voucherNumber'] as string, date: fmtPktDate(new Date(r.entryDate)), payee: r['payee'] as string,
-      category: r['categoryLabel'] as string, narration: r['narration'] as string, payment_method: r['methodLabel'] as string,
-      gross: fmtPkr(r['grossCents'] as number), withholding_tax: fmtPkr(r['whtCents'] as number), net: fmtPkr(r['netCents'] as number),
-      classification: CLASS[r['classification'] as string] ?? (r['classification'] as string),
-      tax_status: r['taxStatus'] ? `${TAX[r['taxStatus'] as string]}${r['taxStatusSource'] === 'derived' ? ' (from books)' : ''}` : 'Not recorded',
-      non_deduction_reason: (r['nonDeductionReason'] as string) ?? '', ledger_reference: (r['reference'] as string) ?? '',
-      journal_entry_id: r['journalEntryId'] as string,
-    })))
+      date: fmtPktDate(new Date(r.entryDate)), voucher_no: ((r['voucherNo'] as string | null) ?? (r['voucherNumber'] as string)),
+      narration: r['narration'] as string, payment_method: r['methodLabel'] as string,
+      total_amount: fmtPkr(r['netCents'] as number), classification: SHORT[r['classification'] as string]!,
+    }))
+    recs.push({ ...(out.multiCompany && { company: '' }), date: '', voucher_no: '', narration: 'TOTAL', payment_method: '', total_amount: fmtPkr(out.rows.reduce((t, r) => t + (r['netCents'] as number), 0)), classification: '' })
+    const legacy = toCsv(recs)
     const a = await get('ceoA', `/accounting/payments/payments.csv?from=${monthStart}&to=${today}`)
     expect(a.statusCode).toBe(200)
     expect(a.body).toBe(legacy)

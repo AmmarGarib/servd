@@ -26,6 +26,8 @@ interface LedgerLine {
 interface LedgerEntry {
   id: string
   reference: string | null
+  /** Automatic voucher number (JV- / PV- / RV-), null for sales, till and non-cash entries. */
+  voucherNo?: string | null
   description: string
   entryDate: string
   postedBy: string | null
@@ -45,6 +47,7 @@ function EntryCard({ e, open, onToggle }: { e: LedgerEntry; open: boolean; onTog
   return (
     <div className="border-b border-s-border last:border-0">
       <button onClick={onToggle} className="w-full text-left px-4 py-3 hover:bg-s-bg-soft flex items-start gap-3">
+        <span className="font-mono text-xs font-semibold text-s-text w-20 shrink-0">{e.voucherNo ?? '—'}</span>
         <span className="font-mono text-xs text-s-muted w-24 shrink-0">{pktDate(e.entryDate)}</span>
         <span className="flex-1 min-w-0">
           <span className="block text-sm text-s-text truncate">{e.description}</span>

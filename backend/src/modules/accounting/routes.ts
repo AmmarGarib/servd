@@ -128,6 +128,9 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             })
           }
         }
+        // Owner, 2026-10-20: a TOTAL line at the foot (debits and credits of every line exported).
+        const sumOf = (t: 'debit' | 'credit') => entries.reduce((s, e) => s + e.lines.reduce((x, l) => x + (l.type === t ? toCents(l.amountCents) : 0), 0), 0)
+        if (flat.length) flat.push({ date: '', accountCode: '', accountName: 'TOTAL', memo: '', debit: fmtPkr(sumOf('debit')), credit: fmtPkr(sumOf('credit')) })
         return sendReportFor(req, reply, format, { base: 'ledger', suffix: `${fmtPktDate(from)}-${fmtPktDate(to)}` }, {
           title: 'General ledger', period: `${fmtPktDate(from)} to ${fmtPktDate(to)}`,
           rows: flat, types: { debit: 'pkr', credit: 'pkr' }, labels: { accountCode: 'Code', accountName: 'Account' },

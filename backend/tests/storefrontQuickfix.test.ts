@@ -176,7 +176,8 @@ describe('GET /concepts for Storefront editors', () => {
   it('a role without the storefront module stays 403', async () => {
     expect((await sf('', users.finA!)).statusCode).toBe(403)
     expect((await sf(`/${brandA}`, users.finA!)).statusCode).toBe(403)
-    expect((await get('', users.finA!)).statusCode).toBe(403)
+    // Finance runs the till (owner, 2026-10-20), and the till reads the plain brand list — 200; the storefront editor stays 403.
+    expect((await get('', users.finA!)).statusCode).toBe(200)
   })
 
   it('a marketer whose storefront module is denied is 403', async () => {

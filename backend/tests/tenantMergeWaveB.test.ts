@@ -127,6 +127,12 @@ describe('the finance wave B tables move', () => {
     ids.voucherFile = (await prisma.cashVoucherAttachment.create({ data: { tenantId: S.id, voucherId: ids.v1, mime: 'image/png', sizeBytes: 4, data: Buffer.from('PNG!'), uploadedById: keeper.id } })).id
     const settlementCv = await prisma.cashVoucherSettlement.create({ data: { tenantId: S.id, voucherId: ids.v1, seq: 1, totalCents: 2_000, submittedById: keeper.id } })
     ids.cvSettlement = settlementCv.id
+    // Ledger voucher numbers: both companies have JV-00001; S has JV-00002 too.
+    const jv = async (tenantId: string, tag: string) => (await postJournalEntry({
+      tenantId, sourceType: 'manual', sourceId: `tmw-jv-${tag}-${Date.now()}`, description: `JV ${tag}`, postedBy: 'test',
+      lines: [{ accountCode: '6040', type: 'debit', amountCents: 100 }, { accountCode: '2010', type: 'credit', amountCents: 100 }],
+    })).entryId
+    ids.jvS1 = await jv(S.id, 's1'); ids.jvS2 = await jv(S.id, 's2'); ids.jvD1 = await jv(D.id, 'd1')
     ids.spendLine = (await prisma.pettyCashSpendLine.create({
       data: { tenantId: S.id, settlementId: settlementCv.id, kind: 'expense', accountCode: '6030', amountCents: 2_000, description: 'Market run' },
     })).id
@@ -164,6 +170,9 @@ describe('the finance wave B tables move', () => {
       { id: ids.v1, seq: 2, number: `CV-00001-${S.slug}` },
       { id: ids.v2, seq: 3, number: `CV-00002-${S.slug}` },
     ])
+    // Ledger voucher numbers continue after the target's, in order.
+    const jvNo = async (id: string) => (await prisma.journalEntry.findUniqueOrThrow({ where: { id }, select: { voucherNo: true } })).voucherNo
+    expect([await jvNo(ids.jvD1!), await jvNo(ids.jvS1!), await jvNo(ids.jvS2!)]).toEqual(['JV-00001', 'JV-00002', 'JV-00003'])
     expect(await isDeleted(S.id)).toBe(true)
   })
 })

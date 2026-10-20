@@ -38,6 +38,9 @@ interface Row {
   companyName: string | null
   entryDate: string
   reference: string | null
+  /** Automatic voucher number (PV-00001…). */
+  voucherNo: string | null
+  /** The document's own number / cheque or bank reference. */
   voucherNumber: string
   payee: string
   category: string
@@ -250,7 +253,10 @@ export default function PaymentsRegisterPage() {
                           <input type="checkbox" checked={selected.has(r.journalEntryId)} onChange={() => toggle(r.journalEntryId)} aria-label={`Select ${r.voucherNumber}`} />
                         </td>
                       )}
-                      <td className="px-3 py-2.5 font-mono text-xs font-semibold text-white/85">{r.voucherNumber}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">
+                        <span className="font-semibold text-white/85">{r.voucherNo ?? '—'}</span>
+                        {r.voucherNumber && r.voucherNumber !== r.voucherNo && <span className="block text-[11px] text-white/45">{r.voucherNumber}</span>}
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-white/60">{fmtDate(r.entryDate)}</td>
                       {data?.multiCompany && <td className="px-3 py-2.5 text-white/60">{r.companyName ?? '—'}</td>}
                       <td className="px-3 py-2.5 text-white/85">{r.payee}</td>
@@ -424,7 +430,7 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
       <aside className="h-full w-full max-w-md overflow-y-auto" style={{ background: 'var(--surface)', borderLeft: '1px solid var(--border)' }} onClick={(e) => e.stopPropagation()} aria-label="Payment">
         <div className="sticky top-0 flex items-center justify-between border-b px-5 py-4" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
           <div>
-            <h2 className="font-mono text-lg font-black text-white/90">{p?.voucherNumber ?? '…'}</h2>
+            <h2 className="font-mono text-lg font-black text-white/90">{p ? (p.voucherNo ?? p.voucherNumber) : '…'}</h2>
             <p className="text-xs text-white/45">{p ? `${p.payee} · ${p.categoryLabel}` : ''}</p>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/50 hover:text-white" aria-label="Close">Close</button>

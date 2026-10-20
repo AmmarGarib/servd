@@ -132,7 +132,7 @@ export function PaymentReceivedFields({
       </div>
       {hint}
       <div>
-        <label htmlFor={`${idPrefix}-ref`} className={labelClassName}>Payment reference #{required ? ' *' : ''}</label>
+        <label htmlFor={`${idPrefix}-ref`} className={labelClassName}>Cheque / bank reference #{required ? ' *' : ''}</label>
         <input
           id={`${idPrefix}-ref`}
           value={reference}

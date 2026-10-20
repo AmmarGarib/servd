@@ -2903,7 +2903,14 @@ model JournalEntry {
   // Internal payment classification (owner, 2026-10-20) — a reporting label
   // only; never read by any posting, ledger report or tax return.
   paymentClassification PaymentClassification?
+  // Automatic voucher number (owner, 2026-10-20; accounting/voucherNumbers.ts): JV- manual / reversal, PV- payment,
+  // RV- receipt — per company, ascending, stamped by postJournalEntry. null = sales / till / non-cash entries.
+  voucherKind String?
+  voucherSeq  Int?
+  voucherNo   String?
 
+  @@unique([tenantId, voucherNo])
+  @@unique([tenantId, voucherKind, voucherSeq])
   @@index([tenantId, entryDate])
   @@map("journal_entries")
 }
