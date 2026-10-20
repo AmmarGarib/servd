@@ -146,8 +146,8 @@ describe('printing a pre-bill', () => {
     expect(receipt.subtotalCents).toBe(145_000 + 2 * 55_000)
 
     expect(receipt.kind).toBe('pre_bill')
-    expect(receipt.banner).toBe('PRE-BILL — NOT A TAX INVOICE')
-    expect(receipt.number).toBe(`PB-${preBill.number}`)
+    expect(receipt.banner).toBe('KOT — NOT A TAX INVOICE')
+    expect(receipt.number).toBe(`KOT-${preBill.number}`)
     expect(receipt).not.toHaveProperty('fiscalNumber')
     expect(receipt).not.toHaveProperty('invoiceNumber')
     expect(receipt).not.toHaveProperty('srbInvoiceNo')
@@ -215,7 +215,7 @@ describe('printing a pre-bill', () => {
     const rb = await print('cashierB', ob.id)
     expect(rb.statusCode, rb.body).toBe(201)
     expect(rb.json().preBill.number).toBe(1)
-    expect(rb.json().receipt.number).toBe('PB-1')
+    expect(rb.json().receipt.number).toBe('KOT-1')
   })
 
   it('refuses a final order (ALREADY_FINAL) and a dead one (ORDER_NOT_OPEN)', async () => {
@@ -268,14 +268,14 @@ describe('printing a pre-bill', () => {
 })
 
 describe('the printable pre-bill', () => {
-  it('prints PRE-BILL — NOT A TAX INVOICE, the PB number, no fiscal block; a re-render is a COPY', async () => {
+  it('prints KOT — NOT A TAX INVOICE, the KOT number, no fiscal block; a re-render is a COPY', async () => {
     const o = await ring('cashierA', conceptA, [NIHARI, KHEER])
     const pb = (await print('cashierA', o.id)).json().preBill
     const r = await call('cashierA', 'GET', `/pos/pre-bills/${pb.id}/html`)
     expect(r.statusCode).toBe(200)
     expect(r.headers['content-type']).toContain('text/html')
-    expect(r.body).toContain('PRE-BILL — NOT A TAX INVOICE')
-    expect(r.body).toContain(`PB-${pb.number}`)
+    expect(r.body).toContain('KOT — NOT A TAX INVOICE')
+    expect(r.body).toContain(`KOT #: <strong>${pb.number}</strong>`)
     expect(r.body).toContain('If paid by card')
     expect(r.body).not.toMatch(/Fiscal invoice|SRB Invoice|FBR Invoice|FULL &amp; FINAL BILL<\/div>/)
     expect(r.body).not.toContain('COPY')
@@ -536,7 +536,7 @@ describe('Finance → Voided pre bills', () => {
     expect(lower.differenceCents).toBeLessThan(0)
     expect(lower.printedBy).toBe('User cashierC')
     expect(lower.brand).toBe('Flipd')
-    expect(lower.label).toBe(`PB-${lower.number}`)
+    expect(lower.label).toBe(`KOT-${lower.number}`)
     expect(lower.lines.map((x) => x.name).sort()).toEqual(['Fries', 'Smash'])
   })
 

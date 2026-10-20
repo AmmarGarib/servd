@@ -37,7 +37,7 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
     setNote(null)
     setPrinting(o.id)
     printPreBill(o.id, 'cash', useAuthStore.getState().token)
-      .then(() => setNote({ ok: true, text: `Pre-bill printed for ${o.table?.label ? `table ${o.table.label}` : `order ${orderRef(o.id)}`}.` }))
+      .then(() => setNote({ ok: true, text: `KOT printed for ${o.table?.label ? `table ${o.table.label}` : `order ${orderRef(o.id)}`}.` }))
       .catch((e: unknown) => setNote({ ok: false, text: preBillErrorMessage(e) }))
       .finally(() => setPrinting(null))
   }
@@ -101,10 +101,10 @@ export function OpenTickets({ brandName, tickets, loading, error, onPick, onClos
                       type="button"
                       onClick={() => preBill(o)}
                       disabled={printing !== null}
-                      aria-label={`Print pre-bill for ${o.table?.label ? `table ${o.table.label}` : `order ${orderRef(o.id)}`}`}
+                      aria-label={`Print KOT for ${o.table?.label ? `table ${o.table.label}` : `order ${orderRef(o.id)}`}`}
                       className="shrink-0 border-l border-kds-border px-4 text-xs font-semibold text-kds-subtext hover:bg-kds-border/30 disabled:opacity-30"
                     >
-                      {printing === o.id ? 'Printing…' : 'Pre-bill'}
+                      {printing === o.id ? 'Printing…' : 'KOT'}
                     </button>
                   </li>
                 )

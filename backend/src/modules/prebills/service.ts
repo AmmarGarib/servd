@@ -39,7 +39,8 @@ type Tx = Prisma.TransactionClient
 export type PreBillTender = 'cash' | 'card'
 
 /** The banner every pre-bill prints. A pre-bill must never look like a bill. */
-export const PRE_BILL_BANNER = 'PRE-BILL — NOT A TAX INVOICE' as const
+// Owner, 2026-10-20: the slip is a "KOT"; the brand fills the header, this line stays at the foot only.
+export const PRE_BILL_BANNER = 'KOT — NOT A TAX INVOICE' as const
 
 /** One line as printed (voided lines excluded). Stored in PreBill.lines. */
 export type PreBillLine = {
@@ -119,7 +120,7 @@ export interface PreBillReceipt {
 export { orderRefOf }
 
 export function preBillLabel(number: number): string {
-  return `PB-${number}`
+  return `KOT-${number}`
 }
 
 // ─── Create ──────────────────────────────────────────────────────────────────
@@ -535,7 +536,8 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
   const widthMm = cfg.paperWidthMm === 58 ? 58 : 80
   const screenWidth = cfg.paperWidthMm === 58 ? 240 : 320
   const row = (label: string, value: string) => `<tr><td>${label}</td><td style="text-align:right">${value}</td></tr>`
-  const banners = [r.testCompany ? 'TEST COMPANY — NOT A REAL SALE' : null, r.banner, priorRenders > 0 ? 'COPY' : null].filter((b): b is string => !!b)
+  // The boxed line only when it says something extra (a test company, a reprint); "not a tax invoice" is at the foot.
+  const banners = [r.testCompany ? 'TEST COMPANY — NOT A REAL SALE' : null, priorRenders > 0 ? 'COPY' : null].filter((b): b is string => !!b)
   // 'card' is the digital tax group: a card pre-bill's total is also what a
   // Raast QR transfer pays (both at Concept.taxRateCard).
   const tenderLabel = r.tender === 'card' ? 'card / Raast QR' : 'cash'
@@ -544,7 +546,7 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
 <html>
 <head>
 <meta charset="utf-8">
-<title>Pre-bill – ${esc(r.number)}</title>
+<title>KOT – ${esc(r.number)}</title>
 <style>
   @page { margin: 0; size: ${widthMm}mm auto }
   * { box-sizing: border-box }
@@ -559,11 +561,11 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
 </head>
 <body>
   ${cfg.showLogo && cfg.logoUrl ? `<img class="logo" src="${esc(cfg.logoUrl)}" alt="">` : ''}
-  <div class="center bold" style="font-size:16px">${esc(r.conceptName)}</div>
+  <div class="center bold" style="font-size:28px;line-height:1.1;letter-spacing:1px;margin:4px 0 2px">${esc(r.conceptName)}</div>
   ${cfg.headerText ? `<div class="center" style="font-size:11px">${esc(cfg.headerText)}</div>` : ''}
-  <div class="center bold" style="font-size:15px;border:2px solid #000;padding:4px;margin:6px 0">${banners.map(esc).join(' · ')}</div>
+  ${banners.length ? `<div class="center bold" style="font-size:13px;border:2px solid #000;padding:3px;margin:6px 0">${banners.map(esc).join(' · ')}</div>` : ''}
   <div class="divider"></div>
-  <div>Pre-bill #: <strong>${esc(r.number)}</strong></div>
+  <div>KOT #: <strong>${esc(r.number.replace(/^KOT-/, ''))}</strong></div>
   <div>Order: ${esc(r.orderRef)}</div>
   <div>Printed: ${fmtDate(r.printedAt)}</div>
   ${r.printedBy ? `<div>By: ${esc(r.printedBy)}</div>` : ''}

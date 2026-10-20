@@ -177,7 +177,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
     setError(null)
     if (cart.length > 0) {
       if (purpose === 'print' || purpose === 'comp') {
-        const ok = await confirm({ title: 'Send the order to the kitchen first?', body: purpose === 'print' ? 'A pre-bill is printed for a saved ticket.' : 'No Charge applies to a saved ticket.', confirmLabel: 'Send and continue', cancelLabel: 'Go back' })
+        const ok = await confirm({ title: 'Send the order to the kitchen first?', body: purpose === 'print' ? 'A KOT is printed for a saved ticket.' : 'No Charge applies to a saved ticket.', confirmLabel: 'Send and continue', cancelLabel: 'Go back' })
         if (!ok) return null
       }
       if (fulfilment === 'delivery' && (purpose === 'settle' || purpose === 'quick')) {
@@ -202,7 +202,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
   }
   async function preBill(t: TillOrder) {
     setPreBillBusy(t.id); setError(null)
-    try { await printPreBill(t.id, 'cash', useAuthStore.getState().token); setNote(`Pre-bill printed · ${orderRef(t.id)}`) }
+    try { await printPreBill(t.id, 'cash', useAuthStore.getState().token); setNote(`KOT printed · ${orderRef(t.id)}`) }
     catch (e) { setError(preBillErrorMessage(e)) } finally { setPreBillBusy(null) }
   }
 
@@ -361,7 +361,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
                       </ul>
                       <div className="mt-2 grid grid-cols-4 gap-1">
                         <button type="button" onClick={() => onSettle(t)} className="min-h-11 rounded-lg bg-kds-green text-xs font-bold text-primary-on">Settle</button>
-                        <button type="button" onClick={() => void preBill(t)} disabled={preBillBusy === t.id} className="min-h-11 rounded-lg border border-kds-border text-xs font-semibold text-kds-text disabled:opacity-40">Pre-bill</button>
+                        <button type="button" onClick={() => void preBill(t)} disabled={preBillBusy === t.id} className="min-h-11 rounded-lg border border-kds-border text-xs font-semibold text-kds-text disabled:opacity-40">KOT</button>
                         <button type="button" onClick={() => onTicketInfo(t)} className="min-h-11 rounded-lg border border-kds-border text-xs font-semibold text-kds-text">Info</button>
                         <button type="button" onClick={() => setCancelling(t)} className="min-h-11 rounded-lg border border-kds-border text-xs font-semibold text-kds-red">Cancel</button>
                       </div>

@@ -327,12 +327,12 @@ export function SettleScreen({ ticket, brand, onClose }: {
     const duplicate = printCount > 0
     return printHtml(() => fetchReceiptHtml(order.id, useAuthStore.getState().token, { duplicate }))
       .then(() => setPrintCount((n) => n + 1))
-      .catch((e: unknown) => setReceiptMsg({ ok: false, text: isPreBillRequired(e) ? 'The order is not final yet (a delivery completes when the rider hands it over) — print a pre-bill instead.' : flowErrorMessage(e, 'Could not load the bill') }))
+      .catch((e: unknown) => setReceiptMsg({ ok: false, text: isPreBillRequired(e) ? 'The order is not final yet (a delivery completes when the rider hands it over) — print a KOT instead.' : flowErrorMessage(e, 'Could not load the bill') }))
   }
   function preBill() {
     setReceiptMsg(null)
     printPreBill(order.id, tile === 'cash' || way === 'keenu' && keenuMethod === 'cash' ? 'cash' : 'card', useAuthStore.getState().token)
-      .then(() => setReceiptMsg({ ok: true, text: 'Pre-bill printed. It is not a tax invoice.' }))
+      .then(() => setReceiptMsg({ ok: true, text: 'KOT printed. It is not a tax invoice.' }))
       .catch((e: unknown) => setReceiptMsg({ ok: false, text: preBillErrorMessage(e) }))
   }
 
@@ -394,7 +394,7 @@ export function SettleScreen({ ticket, brand, onClose }: {
               </p>
               <button type="button" onClick={() => void switchCod(false)} disabled={codBusy} className={`${ghostBtn} w-full`}>{codBusy ? 'Switching…' : 'Switch to Pay now (customer pays at the counter)'}</button>
               <ErrorLine text={error} />
-              <div className="grid grid-cols-2 gap-3"><button type="button" onClick={preBill} className={ghostBtn}>Print pre-bill</button><button type="button" onClick={() => onClose(false)} className={primaryBtn}>Done</button></div>
+              <div className="grid grid-cols-2 gap-3"><button type="button" onClick={preBill} className={ghostBtn}>Print KOT</button><button type="button" onClick={() => onClose(false)} className={primaryBtn}>Done</button></div>
               {receiptMsg && <p className={`text-xs ${receiptMsg.ok ? 'text-kds-subtext' : 'text-kds-red'}`}>{receiptMsg.text}</p>}
             </div>
           ) : (
@@ -573,7 +573,7 @@ export function SettleScreen({ ticket, brand, onClose }: {
               )}
               {!done && (
                 <div className="mt-4 border-t border-kds-border pt-3">
-                  <button type="button" onClick={preBill} disabled={holding} className={`${ghostBtn} w-full py-2 text-sm`}>Print pre-bill</button>
+                  <button type="button" onClick={preBill} disabled={holding} className={`${ghostBtn} w-full py-2 text-sm`}>Print KOT</button>
                   {receiptMsg && <p className={`mt-2 text-xs ${receiptMsg.ok ? 'text-kds-subtext' : 'text-kds-red'}`} role={receiptMsg.ok ? 'status' : 'alert'}>{receiptMsg.text}</p>}
                   <p className="mt-2 text-center text-xs text-kds-subtext">{holding || keenuPending ? 'Something is waiting on this bill. Closing keeps it running; reopen the ticket to see it.' : 'Closing leaves the ticket open and unpaid. It stays under Open tickets.'}</p>
                 </div>
