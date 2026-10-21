@@ -165,6 +165,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Cash flow', href: '/accounting/cash-flow', sub: true },
     { label: 'Payments register', href: '/finance/payments', sub: true, hint: 'Every payment (vendors, salaries, advances, petty cash, vouchers, expenses) with its internal classification — Official / Unofficial / Unclassified; ties to the ledger' },
     { label: 'Night audit', href: '/finance/night-audit', sub: true, hint: 'Sales only: lock each sales day (tills, Raast, COD, tenders) the same night; closed when card payouts and the bank side match' },
+    { label: 'Shift corrections', href: '/finance/shift-corrections', sub: true, hint: 'Fix a mistake on a closed shift (void a bill, cancel an open ticket): finance lists the fixes, the CEO approves, then it applies on the sale\'s own day' },
     { label: 'Period close', href: '/accounting/period-close', sub: true },
     { label: 'Chart of accounts', href: '/configuration/chart-of-accounts', sub: true },
     { label: 'Allocations', href: '/allocations', sub: true },
