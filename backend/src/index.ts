@@ -1157,6 +1157,15 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[access] module grants skipped: ${(err as Error).message}`)
   }
+  // HR requests raised by HR that are already waiting on an HR step (owner,
+  // 2026-10-21): HR's raising was its sign-off — move them on once.
+  try {
+    const { signWaitingHrStepsRaisedByHr } = await import('./modules/hr/routes.js')
+    const n = await signWaitingHrStepsRaisedByHr()
+    if (n) fastify.log.info(`[hr] ${n} request(s) raised by HR moved past their HR step`)
+  } catch (err) {
+    fastify.log.warn(`[hr] HR-raised step sweep skipped: ${(err as Error).message}`)
+  }
   // Modules taken away from every non-admin role (MODULE_REVOKES — e.g.
   // 'brands', CEO only since 2026-10-14) leave the saved rows and users'
   // moduleAllow once. Enforcement never waits on this (CEO_ONLY_MODULES are

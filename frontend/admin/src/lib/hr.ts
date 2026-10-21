@@ -63,7 +63,7 @@ export interface HrSectionInfo {
   movedTo?: { path: string; label: string; message: string } | null
 }
 
-export interface Approval { step: string; role: string; decision: 'approved' | 'rejected'; byName: string; at: string; note?: string; override?: boolean }
+export interface Approval { step: string; role: string; decision: 'approved' | 'rejected'; byName: string; at: string; note?: string; override?: boolean; /** Signed by HR raising the request — no click. */ auto?: boolean }
 
 export interface HrRecord {
   id: string

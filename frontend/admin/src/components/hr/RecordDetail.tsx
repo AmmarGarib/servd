@@ -237,7 +237,9 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
                     {w.label}
                   </span>
                   <span className="text-white/40">({ROLE_LABEL[w.role]})</span>
-                  {a && <span className="text-white/60">— {a.decision} by {a.byName}, {day(a.at)}{a.override ? ' (CEO override)' : ''}{a.note ? ` · “${a.note}”` : ''}</span>}
+                  {a && (a.auto
+                    ? <span className="text-white/60">— not needed: raised by HR ({a.byName}), {day(a.at)}</span>
+                    : <span className="text-white/60">— {a.decision} by {a.byName}, {day(a.at)}{a.override ? ' (CEO override)' : ''}{a.note ? ` · “${a.note}”` : ''}</span>)}
                   {current && !a && <span className="text-white/60">— waiting</span>}
                 </li>
               )

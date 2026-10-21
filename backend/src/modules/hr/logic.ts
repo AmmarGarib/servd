@@ -869,7 +869,12 @@ export interface ApprovalEntry {
   /** Head office (D3): decided through reach or an HR hand-over (absent = a member's own right). */
   via?: 'reach' | 'delegation'
   delegationId?: string
+  /** Signed when an HR login raised the request (routes.ts signHrStepRaisedByHr) — no click. */
+  auto?: boolean
 }
+
+/** The decisions a PERSON made (an `auto` HR sign-off on raising is not one): a record nobody has acted on stays editable. */
+export const actedOnBy = (approvals: ApprovalEntry[]) => approvals.filter((a) => !a.auto)
 
 const HR_APPROVERS = ['hr', 'admin', 'owner', 'management']
 const MGMT_APPROVERS = ['admin', 'owner', 'management']
