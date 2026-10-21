@@ -62,6 +62,7 @@ import { approvalWaiting } from '../approvals/notify.js'
 import { headOfficeSetupApplied } from '../headOffices/books.js'
 import { workLocationRoutes, syncPrimaryWorkLocation } from './workLocations.js'
 import { attendanceTrackingRoutes } from './attendanceTracking.js'
+import { buildAttendanceRegister, registerTable } from './attendanceRegister.js'
 
 export const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 /** The HR back office under /hr/records (audit PPL-R2-01). lib/moduleAccess.ts
@@ -1890,8 +1891,21 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
   })
 
+  fastify.get<{ Querystring: { from?: string; to?: string; employeeId?: string; locationId?: string; status?: string; format?: string } }>('/attendance/register', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
+    const { from, to, employeeId, locationId, status } = req.query
+    const reg = await buildAttendanceRegister(req, { from, to, employeeId, locationId, status })
+    if (!req.query.format) return { columns: reg.columns, rows: reg.rows }
+    return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, 'hr-attendance', registerTable(reg, from, to))
+  })
+
   fastify.get<{ Params: { section: string }; Querystring: { status?: string; from?: string; to?: string; format?: string } }>('/records/:section/export.csv', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
     const sec = recordSection(req.params.section)
+    // Attendance exports are the owner's register format (hr/attendanceRegister.ts).
+    if (sec.key === 'attendance') {
+      const { from, to } = req.query
+      const reg = await buildAttendanceRegister(req, { from, to })
+      return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, 'hr-attendance', registerTable(reg, from, to))
+    }
     const fmt = await getFormat(activeTenant(req), sec.key)
     const { status, from, to } = req.query
     const rows = await prisma.hrRecord.findMany({ where: {
