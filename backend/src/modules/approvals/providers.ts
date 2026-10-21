@@ -680,6 +680,7 @@ const fixedAssetRequests: ApprovalProvider = {
       pool: { label: string } | null
       capexLine: { item: string; projectName: string } | null
       requestedById?: string | null
+      existing?: { sourceLabel: string; name: string | null } | null
     }
     const res = await ctx.read<{ requests: Row[] }>('/accounting/fixed-assets/requests?status=pending&limit=200')
     if (res === null) return null
@@ -687,16 +688,21 @@ const fixedAssetRequests: ApprovalProvider = {
       const base = `/accounting/fixed-assets/requests/${r.id}`
       const subject = r.asset
         ? `${r.asset.assetTag ? `${r.asset.assetTag} ` : ''}${r.asset.name}`
-        : r.pool?.label ?? (r.capexLine ? `${r.capexLine.projectName}: ${r.capexLine.item}` : '')
+        : r.existing?.name ?? r.pool?.label ?? (r.capexLine ? `${r.capexLine.projectName}: ${r.capexLine.item}` : '')
+      // "Add existing asset — Bought before servd — PKR 250,000" (owner, 2026-10-21).
+      const title = r.existing
+        ? [r.kindLabel, r.existing.sourceLabel, r.amountCents ? pkr(r.amountCents) : null].filter(Boolean).join(' — ')
+        : subject ? `${r.kindLabel} — ${subject}` : r.kindLabel
       return {
         type: 'fixed_asset_request',
         id: r.id,
         tenantId: r.tenantId,
         submittedByIds: idList(r.requestedById),
-        title: subject ? `${r.kindLabel} — ${subject}` : r.kindLabel,
+        title,
         subtitle: r.reason,
         facts: facts([
           ['Request', r.kindLabel],
+          ['Came from', r.existing?.sourceLabel ?? null],
           ['Asset', subject],
           ['Amount', r.amountCents ? pkr(r.amountCents) : null],
           ['Effective', ymd(r.effectiveDate)],

@@ -1,8 +1,10 @@
 'use client'
 // Fixed assets — the register of what the business owns and its depreciation.
 //
-// Equipment reaches this register ONLY through CapEx (Project tracker, or
-// Buy equipment = Quick buy); there is no Add form. Depreciation is charged
+// Bought equipment reaches this register through CapEx (Project tracker, or
+// Buy equipment = Quick buy). Equipment the business already had — bought
+// before servd or from a related party — comes on through "Add existing
+// asset" (owner, 2026-10-21), a request the CEO approves. Depreciation is charged
 // automatically every night for completed months — there is no switch, only a
 // "charge now" that catches up through the last completed month. Disposals,
 // write-downs and voids are requests the CEO approves (see an asset's page and
@@ -19,6 +21,7 @@ import {
   FA_BASE, FaFrame, Stat, Notice, AssetStatusBadge, card, inp, btnPrimary, btnGhost, money, fmtDay, fmtMonth, errorWords, useFaLookups,
   type FaAsset,
 } from '../../../components/fixedAssets/shared'
+import { AddExistingAssetForm } from '../../../components/fixedAssets/AddExistingAssetForm'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
@@ -60,6 +63,7 @@ export default function FixedAssetsPage() {
   const [asOf, setAsOf] = useState('')
   const [owedOnly, setOwedOnly] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'wait' | 'bad'; text: string } | null>(null)
+  const [addingExisting, setAddingExisting] = useState(false)
 
   const qs = useMemo(() => {
     const p = new URLSearchParams()
@@ -128,15 +132,26 @@ export default function FixedAssetsPage() {
   return (
     <FaFrame
       title="Register"
-      subtitle="Equipment and fit-out the company owns. It comes onto the register through CapEx, and depreciation is charged for you every night."
+      subtitle="Equipment and fit-out the company owns. New purchases come on through CapEx, equipment you already had through Add existing asset, and depreciation is charged for you every night."
       actions={
         <>
           {canBuy && <Link href="/finance/capex?quickBuy=1" className={btnPrimary}>Buy equipment</Link>}
+          {lookups?.capabilities.canWrite && <button type="button" onClick={() => setAddingExisting(true)} className={btnGhost}>Add existing asset</button>}
           <ExportMenu className={btnGhost} path={`${FA_BASE}?${qs}`} filename={`fixed-assets-${asOf || data?.asOf || 'today'}`} onError={(m) => setNotice({ tone: 'bad', text: m })} />
         </>
       }
     >
       {notice && <Notice tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Notice>}
+      {addingExisting && lookups && (
+        <AddExistingAssetForm lookups={lookups} onClose={() => setAddingExisting(false)}
+          onDone={(text, tone) => {
+            setAddingExisting(false)
+            setNotice({ tone, text })
+            void qc.invalidateQueries({ queryKey: ['fa-register'] })
+            void qc.invalidateQueries({ queryKey: ['fa-pending-count'] })
+            void qc.invalidateQueries({ queryKey: ['fa-requests'] })
+          }} />
+      )}
 
       {pendingTotal > 0 && (
         <Notice tone="wait">
@@ -265,6 +280,7 @@ export default function FixedAssetsPage() {
           <p className="font-bold text-white/85">Nothing on the register{status !== 'all' ? ' with these filters' : ''}</p>
           <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
             Equipment is added through CapEx: prepare a delivered item in the Project tracker, or use Buy equipment for a purchase made today.
+            Equipment you already had (bought before servd, or from a related party) goes on with Add existing asset.
           </p>
         </div>
       )}

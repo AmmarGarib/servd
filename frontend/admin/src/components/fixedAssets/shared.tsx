@@ -125,6 +125,8 @@ export interface FaRequest {
   postedAt: string | null
   errorMessage: string | null
   needsApproval: boolean
+  /** add_existing: where it came from, in plain words, and the item's name (no asset until approved). */
+  existing?: { sourceLabel: string; name: string | null }
   canDecide: boolean
   canCancel: boolean
 }
@@ -133,7 +135,7 @@ export interface FaRequest {
 
 /** Codes whose own message is worth leading with something clearer. Everything else shows the server's message, which is already plain English. */
 const CODE_WORDS: Record<string, string> = {
-  USE_CAPEX: 'Equipment goes on the register only through CapEx. Use Buy equipment (Quick buy) or prepare a delivered item in the Project tracker.',
+  USE_CAPEX: 'Bought equipment goes on the register through CapEx. Use Buy equipment (Quick buy) or prepare a delivered item in the Project tracker; equipment you already had goes on with Add existing asset.',
   MONTH_NOT_ENDED: 'That month has not ended yet. Depreciation is charged for completed months only.',
   RUN_IN_PROGRESS: 'Depreciation is being charged for this company right now. Try again in a minute.',
   REQUEST_PENDING: 'There is already a request waiting on this asset. Decide or cancel it first.',

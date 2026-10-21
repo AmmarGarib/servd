@@ -32,6 +32,7 @@ const ASSET_REQUEST_KINDS = new Set(['disposal', 'impairment', 'change_estimate'
 const KIND_LABEL: Record<string, string> = {
   capitalise: 'Capitalisation', disposal: 'Disposal', pool_write_off: 'Pool write-off', impairment: 'Write-down',
   change_estimate: 'Change of life / salvage', transfer: 'Move', pool_transfer: 'Pool move', void: 'Void', undispose: 'Undo disposal', count: 'Count',
+  add_existing: 'Add existing asset',
 }
 const DEAD = { status: { in: ['rejected', 'cancelled'] }, kind: { notIn: [...ALLOC_KINDS] } } satisfies Prisma.FixedAssetEventWhereInput
 const tenantIn = (ctx: TrashCtx) => ({ tenantId: { in: scopeIds(ctx.readScope) } })
@@ -45,12 +46,13 @@ type Sel = Prisma.FixedAssetEventGetPayload<{ select: typeof SELECT }>
 
 function notCopyable(e: Pick<Sel, 'kind' | 'assetId'>): string | null {
   if (e.kind === 'capitalise') return 'A capitalisation comes from its CapEx line — raise it there again'
+  if (e.kind === 'add_existing') return 'Raise it again from Fixed assets → Add existing asset'
   if (!ASSET_REQUEST_KINDS.has(e.kind) || !e.assetId) return 'Raise this pool request again from the smallwares pool'
   return null
 }
 
 function row(e: Sel): TrashRow {
-  const what = e.asset ? `${e.asset.assetTag ? `${e.asset.assetTag} ` : ''}${e.asset.name}` : 'pool'
+  const what = e.asset ? `${e.asset.assetTag ? `${e.asset.assetTag} ` : ''}${e.asset.name}` : e.kind === 'add_existing' ? 'not yet on the register' : 'pool'
   return {
     id: e.id,
     tenantId: e.tenantId,

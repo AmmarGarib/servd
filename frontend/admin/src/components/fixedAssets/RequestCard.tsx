@@ -10,6 +10,7 @@ import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { FA_BASE, RequestStatusBadge, ErrorLine, inp, btnPrimary, btnGhost, card, fmtDay, money, type FaRequest } from './shared'
 import { receiptMethodLabel } from '../finance/PaymentReceivedFields'
+import { RecordFiles } from '../files/RecordFiles'
 
 function num(v: unknown): number | null { return typeof v === 'number' && Number.isFinite(v) ? v : null }
 function str(v: unknown): string | null { return typeof v === 'string' && v ? v : null }
@@ -81,6 +82,16 @@ export function describeRequest(r: FaRequest): string[] {
       if (p['conceptId'] === null) out.push('shared across brands')
       break
     }
+    case 'add_existing': {
+      if (r.existing?.sourceLabel) out.push(r.existing.sourceLabel)
+      const v = num(p['valueCents'])
+      if (v) out.push(`today's value ${money(v)}`)
+      const life = num(p['remainingLifeMonths'])
+      if (life) out.push(`remaining life ${life} months`)
+      const k = str(p['classKey'])
+      if (k) out.push(`Class: ${k.replace(/_/g, ' ')}`)
+      break
+    }
     default:
   }
   return out
@@ -116,7 +127,9 @@ export function RequestCard({ r, showSubject = true, onChanged, onNotice }: {
       ? <Link href={`${FA_BASE}/pools`} className="text-primary-ink font-bold hover:underline">{r.pool.label}</Link>
       : r.capexLine
         ? <Link href={`/finance/capex?project=${r.capexLine.projectId}`} className="text-primary-ink font-bold hover:underline">{r.capexLine.projectName}: {r.capexLine.item}</Link>
-        : null
+        : r.existing?.name
+          ? <span className="text-white/85 font-bold">{r.existing.name}</span>
+          : null
 
   const facts = describeRequest(r)
   const busy = approve.isPending || reject.isPending || cancel.isPending
@@ -161,6 +174,13 @@ export function RequestCard({ r, showSubject = true, onChanged, onNotice }: {
           )}
           {r.canDecide && <button onClick={() => setRejecting(true)} disabled={busy} className={btnGhost}>Reject</button>}
           {r.canCancel && <button onClick={() => cancel.mutate()} disabled={busy} className={btnGhost}>{cancel.isPending ? 'Cancelling…' : 'Cancel request'}</button>}
+        </div>
+      )}
+      {/* An existing asset's documents sit on the request until the CEO approves (then on the asset). */}
+      {r.kind === 'add_existing' && r.status !== 'posted' && (
+        <div className="mt-3">
+          <RecordFiles ownerType="fixed_asset" ownerId={r.id} tenantId={r.tenantId} canUpload={r.status === 'pending' && r.canCancel}
+            title="Purchase or transfer documents" compact lazy />
         </div>
       )}
       <ErrorLine error={approve.error ?? reject.error ?? cancel.error} />

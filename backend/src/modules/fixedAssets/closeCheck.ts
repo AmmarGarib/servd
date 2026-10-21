@@ -77,6 +77,32 @@ export const fixedAssetCloseChecks: CloseCheck[] = [
       }
     },
   },
+  {
+    // "Add existing asset" requests (owner, 2026-10-21) are dated their in-service day and never
+    // late-dated: once this month is closed, one dated in it can no longer be approved.
+    key: 'existing_asset_pending',
+    severity: 'warn',
+    overridable: false,
+    async run(ctx): Promise<CloseProblem | null> {
+      const pending = await ctx.db.fixedAssetEvent.findMany({
+        where: { tenantId: ctx.tenantId, kind: 'add_existing', status: 'pending', effectiveDate: { lte: ctx.newLock } },
+        select: { amountCents: true },
+      })
+      if (pending.length === 0) return null
+      const cents = pending.reduce((t, e) => t + (toCents(e.amountCents) ?? 0), 0)
+      return {
+        key: 'existing_asset_pending',
+        severity: 'warn',
+        title: 'Existing assets waiting for the CEO',
+        detail: `${pending.length} existing asset${pending.length === 1 ? ' is' : 's are'} dated in this period and not yet approved. `
+          + 'They post on their in-service date, so once the month is closed they can no longer be approved — approve them first, or raise them again with a date in the open month.',
+        count: pending.length,
+        ...(cents > 0 ? { cents } : {}),
+        link: '/accounting/fixed-assets/requests?kind=add_existing&status=pending',
+        overridable: false,
+      }
+    },
+  },
 ]
 
 /**

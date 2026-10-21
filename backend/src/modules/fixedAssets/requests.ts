@@ -27,7 +27,7 @@ import { audit } from '../../lib/audit.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import {
-  createRequest, applyEvent, rejectEvent, cancelEvent, needsApproval,
+  createRequest, applyEvent, rejectEvent, cancelEvent, needsApproval, existingSourceLabel,
   FA_WRITER_ROLES, FA_APPROVER_ROLE, ALLOC_KINDS, REQUEST_KINDS, DISPOSAL_KINDS, PAYLOAD_SCHEMAS, type RequestKind,
 } from './events.js'
 import type { Db } from './classes.js'
@@ -50,6 +50,7 @@ export const REQUEST_KIND_LABELS: Record<string, string> = {
   pool_write_off: 'Write off smallwares units',
   pool_transfer: 'Move smallwares units',
   count: 'Smallwares count',
+  add_existing: 'Add existing asset',
 }
 
 const MIN_REASON = 10
@@ -81,7 +82,10 @@ export async function shapeEvents(db: Db, events: FixedAssetEvent[], who: { id: 
     db.fixedAssetPool.findMany({ where: { id: { in: ids((e) => e.poolId) as string[] } }, select: { id: true, label: true } }),
     db.capexLine.findMany({ where: { id: { in: ids((e) => e.capexLineId) as string[] } }, select: { id: true, item: true, project: { select: { id: true, name: true } } } }),
     db.user.findMany({ where: { id: { in: [...ids((e) => e.requestedById), ...ids((e) => e.decidedById)] as string[] } }, select: { id: true, name: true, email: true } }),
-    db.tenant.findMany({ where: { id: { in: ids((e) => e.tenantId) as string[] } }, select: { id: true, name: true } }),
+    db.tenant.findMany({
+      where: { id: { in: [...ids((e) => e.tenantId), ...ids((e) => existingOf(e)?.counterpartyTenantId ?? null)] as string[] } },
+      select: { id: true, name: true },
+    }),
   ])
   const asset = new Map(assets.map((a) => [a.id, a]))
   const pool = new Map(pools.map((p) => [p.id, p]))
@@ -93,6 +97,7 @@ export async function shapeEvents(db: Db, events: FixedAssetEvent[], who: { id: 
     const a = e.assetId ? asset.get(e.assetId) : undefined
     const l = e.capexLineId ? line.get(e.capexLineId) : undefined
     const pending = e.status === 'pending'
+    const ex = existingOf(e)
     return {
       id: e.id,
       tenantId: e.tenantId,
@@ -124,11 +129,29 @@ export async function shapeEvents(db: Db, events: FixedAssetEvent[], who: { id: 
       journalEntryId: e.journalEntryId,
       errorMessage: e.errorMessage,
       needsApproval: needsApproval(e.kind),
+      // add_existing: where it came from, in plain words, and the item's name (no asset until approved).
+      ...(ex ? {
+        existing: {
+          sourceLabel: existingSourceLabel(ex, ex.counterpartyTenantId ? company.get(ex.counterpartyTenantId) ?? null : null),
+          name: ex.name ?? null,
+        },
+      } : {}),
       // What the caller may do (the screens show buttons from these, never a local role list).
       canDecide: pending && isCeo,
       canCancel: pending && (isCeo || e.requestedById === who.id),
     }
   })
+}
+
+/** The add_existing payload fields the screens read (null for every other kind). */
+function existingOf(e: FixedAssetEvent): { source?: unknown; counterparty?: unknown; counterpartyTenantId?: string | null; name?: string | null } | null {
+  if (e.kind !== 'add_existing' || !e.payload || typeof e.payload !== 'object' || Array.isArray(e.payload)) return null
+  const p = e.payload as Record<string, unknown>
+  return {
+    source: p['source'], counterparty: p['counterparty'],
+    counterpartyTenantId: typeof p['counterpartyTenantId'] === 'string' ? p['counterpartyTenantId'] : null,
+    name: typeof p['name'] === 'string' ? p['name'] : null,
+  }
 }
 
 /** approval.decide + the "decided" notice to the requester (the bell). The routes' guard is a

@@ -78,6 +78,7 @@ export default function RequestsPage() {
           <Select className={inp} value={kind} onChange={(e) => setKind(e.target.value)}>
             <option value="">All kinds</option>
             <option value="capitalise">Capitalise from CapEx</option>
+            <option value="add_existing">Add existing asset</option>
             {(lookups?.requestKinds ?? []).map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
             <option value="pool_write_off">Write off smallwares units</option>
             <option value="pool_transfer">Move smallwares units</option>

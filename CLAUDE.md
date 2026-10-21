@@ -1363,8 +1363,22 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   roll-forward: nothing posts at year end.
 - **Fixed assets v2:** classes per company; 1500–1599 and 2012 are
   `controlledBy 'fixed_asset'` (only `fixed_asset.*` / `capex.*` sources post
-  there). Assets come in through CapEx capitalisation — the CEO approves every
-  one, Quick buys included. Depreciation is AUTOMATIC (worker 03:20 PKT,
+  there). Bought assets come in through CapEx capitalisation — the CEO approves
+  every one, Quick buys included. **Existing assets (owner, 2026-10-21: "It
+  only showing buy equipment, give an option to add asset also, so we can add
+  previously bought / Transferred from related party assets" — REVERSES "no
+  opening / pre-servd assets"):** `POST /accounting/fixed-assets/existing`
+  (Register → "Add existing asset") raises request kind `add_existing` on the
+  same queue (`fixed_asset_request`, CEO approves; nothing posts before), in
+  the ACTIVE company, at TODAY'S value (book value) over the REMAINING life
+  (default the class life). On approval ONE entry `fixed_asset.acquire:<assetId>`
+  Dr class cost / Cr **3010** (bought before servd; owners contributed) or
+  **2210** (Garibsons paid), dated the in-service date, never late-dated (a
+  closed month: 422 `PERIOD_LOCKED`); documents via record-files `fixed_asset`
+  on the request id, moved to the asset on approval. "Another servd company
+  gave it" is NOT built (422 `RELATED_COMPANY_NOT_YET`) until the owner says
+  how the GIVING company books it out (contract:
+  `modules/fixedAssets/README.md`). Depreciation is AUTOMATIC (worker 03:20 PKT,
   `chargeThrough` the one path, no switch); smallwares are pooled (H21);
   prepayments sit on 1310 and release monthly (`accounting/prepaidReleases.ts`);
   refundable deposits (1360) only through CapEx. No deferred tax anywhere

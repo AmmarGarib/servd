@@ -4,9 +4,77 @@ The ONE fixed-asset register of servd (`FixedAsset` + `FixedAssetDepreciation`
 + `FixedAssetEvent`), per company. Owner rules (2026-10-13): depreciation is
 **automatic** every month (no switch, no threshold); smallwares are pooled per
 outlet / brand / type, big items are individual; disposals, scraps and
-write-downs — finance requests, the CEO approves (the F&B manager does not);
-no opening / pre-servd assets; equipment reaches the register **only through
-CapEx** (Finance → Project tracker, or Quick buy).
+write-downs — finance requests, the CEO approves (the F&B manager does not).
+Bought equipment reaches the register through CapEx (Finance → Project
+tracker, or Quick buy). **Existing assets (owner, 2026-10-21 — REVERSES the
+old "no opening / pre-servd assets" rule):** "It only showing buy equipment,
+give an option to add asset also, so we can add previously bought /
+Transferred from related party assets" — see "Add existing asset" below.
+
+## Add existing asset (owner, 2026-10-21)
+
+`POST /accounting/fixed-assets/existing` (FA_WRITER_ROLES; admin page:
+Register → "Add existing asset") raises a request of kind **`add_existing`**
+on the ONE request queue (events.ts) in the ACTIVE company (create mode). It
+is a new request KIND, not a new source on `capitalise`: a capitalisation is
+keyed on its CapEx line (`capexLineId`, the pending-capitalise unique index,
+advances on 1340, the void-the-line-group rule) and an existing asset has no
+line; a kind keeps the same queue, the same `applyEvent` / `rejectEvent`, the
+same `fixed_asset_request` approval type and bell, and the same posting key.
+
+| field | rule |
+|---|---|
+| `source` | `pre_servd` (bought before servd) or `related_party` |
+| `counterparty` | related party only: `garibsons`, `servd_company`, `owners` |
+| `counterpartyTenantId` | `servd_company` only — another company the caller belongs to (else 422 `COUNTERPARTY_NOT_YOURS`) |
+| `classId` | an active, NON-pooled class of the active company (another company's 422 `ASSET_CLASS_NOT_IN_COMPANY`; smallwares 422 `POOLED_CLASS_NOT_ALLOWED` — pools come through Quick buy) |
+| `name`, `serial?` | the item |
+| `conceptId` / `locationId` | of the active company (422 `CONCEPT_NOT_IN_COMPANY` / `LOCATION_NOT_IN_COMPANY`); shared needs an outlet (422 `LOCATION_REQUIRED_FOR_SHARED`) |
+| `valueCents` | TODAY'S value (book value) > 0 — the register's cost from now on; no original cost, no carried accumulated |
+| `inServiceDate` | the day it starts on this company's books; not in the future (422 `IN_SERVICE_DATE`), not in a closed month (422 `PERIOD_LOCKED`) |
+| `remainingLifeMonths` | 1 … class life × 2 (422 `REMAINING_LIFE`), default the class life; land: not depreciated |
+| `salvageCents?` | below the value (422 `SALVAGE_TOO_HIGH`) |
+| `reason` | ≥ 10 characters |
+
+Finance's request waits for the CEO (202); the CEO's own applies at once
+(201), like every fixed-asset request. **Nothing is booked before approval;
+a rejection books nothing.** On approval (one transaction) the asset is made
+in the request's company and ONE entry posts:
+
+| where it came from | `fixed_asset.acquire:<assetId>` |
+|---|---|
+| bought before servd | Dr class cost / Cr **3010** Owner's capital (as opening stock H19, supplier opening balances H49) |
+| Garibsons paid for it | Dr class cost / Cr **2210** Due to Garibsons (the petty-cash code, H1) |
+| the owners contributed it | Dr class cost / Cr **3010** |
+| another servd company gave it | **not built** — 422 `RELATED_COMPANY_NOT_YET` (owner question below) |
+
+The entry is dated the in-service date and is **never late-dated**: if the
+month was closed while the request waited, the books refuse it
+(`PERIOD_LOCKED`), the request stays pending with the reason, and the close
+check `existing_asset_pending` (warn) lists such requests before a close.
+A reopened month is the CEO's (closedBooks.ts) — the CEO is the one posting.
+`FixedAsset.acquisitionCreditCode` records 3010 / 2210; the initial allowance
+starts unticked (a used asset; finance may tick it). Depreciation then runs
+through `chargeThrough` from the in-service month over the remaining life
+(first month = value ÷ remaining months). A void reverses the acquire entry
+like any other.
+
+**Documents** ride the record-files provider `fixed_asset`: while the request
+is pending the files are attached to the REQUEST id
+(`/record-files/fixed_asset/<requestId>`), and on approval they move to the
+asset in the same transaction. No URL fields.
+
+**Open owner question (another servd company):** the receiving side is the
+inter-company engine (pair accounts, an `ic.*` transfer), but the GIVING
+company's side needs a decision: if the asset is on the giver's register, at
+what value does it leave (its NBV, or the agreed today's value?) and where
+does a difference go (gain / loss 8030 in the giver, or nothing — transfer at
+NBV)? If it is NOT on the giver's register, what does the giver credit for
+the amount owed to it (other income, or owner's capital)? There is no
+cross-company asset transfer today (transfers are outlet / brand within one
+company), and the register's accounts (`fixed_asset.*`) and the pair accounts
+(`ic.*`) are controlled by different source prefixes, so this is a new
+cross-company event either way.
 
 ## Files
 
@@ -63,6 +131,7 @@ balances only) and `depreciation_failed` → `FixedAssetRun` rows
 | transfer (outlet / brand) | finance | none — at once | `fixed_asset.transfer:<eventId>` when the brand changes |
 | pool_transfer (units) | finance | none — at once | `fixed_asset.transfer:<eventId>` when the brand changes |
 | count | finance / F&B manager | none — at once | none (counted vs on hand) |
+| add_existing | finance | CEO | `fixed_asset.acquire:<assetId>` Dr class cost / Cr 3010 or 2210 |
 
 "Finance" = `FA_WRITER_ROLES` (admin, owner, management, finance); the
 approver is the CEO (role `admin`) only. A request answers **202** (pending)
@@ -103,7 +172,7 @@ the reason on the request (`errorMessage`) and leaves it pending.
 
 | key | lines |
 |---|---|
-| `fixed_asset.acquire:<assetId>` | Dr class cost (+ Dr input tax 132x) / Cr 1340 advanced, Cr 2012 still owed |
+| `fixed_asset.acquire:<assetId>` | Dr class cost (+ Dr input tax 132x) / Cr 1340 advanced, Cr 2012 still owed; an existing asset: Dr class cost / Cr 3010 or 2210, dated the in-service date, never late |
 | `fixed_asset.depreciation:<assetId>:<YYYY-MM>` | Dr 6150 / Cr the class's accumulated code (1591–1599), both on the brand charged that month (revisions `@n`) |
 | `fixed_asset.dispose:<assetId>` | Dr accumulated (per code) + Dr money (`moneyAccountCode`; memo "Disposal proceeds (bank deposit, ref …)") / Cr cost, gain Cr / loss Dr 8030 |
 | `fixed_asset.impairment:<eventId>` | Dr 6155 / Cr accumulated |
@@ -129,7 +198,8 @@ layer, 1..N for a line split into N ≥ 2 assets) is THE link to the CapEx line
 — the old `capex-line:` notes prefix is never read. A line of N units of a
 non-pooled class becomes N individual assets with their own tags (≤ 200); a
 pooled class becomes one layer of its pool with a quantity.
-`POST /accounting/fixed-assets` answers 422 `USE_CAPEX`.
+`POST /accounting/fixed-assets` answers 422 `USE_CAPEX`; equipment that did
+not come through CapEx uses `POST /existing` (above).
 
 ## Class → account map (H22 lives, H23 tax, H27 accumulated per class)
 

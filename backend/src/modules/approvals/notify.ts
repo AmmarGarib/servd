@@ -211,7 +211,7 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
     }
     case 'fixed_asset_request': {
       const e = await db.fixedAssetEvent.findUnique({ where: { id }, select: { kind: true, amountCents: true } })
-      return e && { ref: `Fixed asset ${human(e.kind)}`, amountCents: e.amountCents == null ? null : Number(e.amountCents) }
+      return e && { ref: e.kind === 'add_existing' ? 'Add existing asset' : `Fixed asset ${human(e.kind)}`, amountCents: e.amountCents == null ? null : Number(e.amountCents) }
     }
     case 'intercompany_transfer': {
       const t = await db.intercompanyTransfer.findUnique({ where: { id }, select: { kind: true, amountCents: true } })

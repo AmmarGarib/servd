@@ -21,6 +21,9 @@
 //   prep_batch      PrepBatch        ALL_STAFF                    the cook who logged it, or a manager   none (as /crosschecks/prep-batches)
 //   hr_document     HrDocument       HR_ADMIN                     HR_ADMIN                       /hr/documents (staff_hr)
 //   fixed_asset     FixedAsset       FINANCIALS_VIEWERS           FA_WRITER_ROLES                /accounting/fixed-assets (accounting)
+//                   — or an "Add existing asset" request (FixedAssetEvent kind add_existing; owner, 2026-10-21):
+//                     its purchase / transfer documents sit under the request id (attach while pending) and
+//                     move to the asset when the CEO approves (events.ts applyAddExisting)
 //   capex_quote     CapexQuote       CAPITAL_READERS              CAPITAL_WRITERS (POST /capex/lines/:id/quotes)   /finance (capital)
 //   payment         JournalEntry (a payment — accounting/paymentsRegister.ts)   PAYMENT_READERS   PAYMENT_CLASSIFIERS   /accounting/payments (accounting) + requireModule('accounting') on write
 //                   — the supporting documents of a payment's tax status / reason for non-deduction (2026-10-20)
@@ -194,12 +197,16 @@ const fixedAsset: RecordFileProvider = {
   async resolve(req, ownerId, mode) {
     assertRole(req, mode === 'read' ? FINANCIALS_VIEWERS : FA_WRITER_ROLES, this.label)
     await gateAs(req, '/accounting/fixed-assets', mode)
-    const a = await prisma.fixedAsset.findFirst({
-      where: { id: ownerId, ...(await scopeTenantWhere(req, scopeMode(mode))) },
+    const scope = await scopeTenantWhere(req, scopeMode(mode))
+    const a = await prisma.fixedAsset.findFirst({ where: { id: ownerId, ...scope }, select: { tenantId: true } })
+    if (a) return { tenantId: a.tenantId }
+    // An "Add existing asset" request: attach only while it waits for the CEO.
+    const ev = await prisma.fixedAssetEvent.findFirst({
+      where: { id: ownerId, kind: 'add_existing', ...(mode === 'read' ? {} : { status: 'pending' }), ...scope },
       select: { tenantId: true },
     })
-    if (!a) throw new NotFoundError('FixedAsset', ownerId)
-    return { tenantId: a.tenantId }
+    if (!ev) throw new NotFoundError('FixedAsset', ownerId)
+    return { tenantId: ev.tenantId }
   },
 }
 
