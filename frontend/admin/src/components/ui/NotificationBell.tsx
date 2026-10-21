@@ -94,6 +94,9 @@ export function NotificationRow({ n, showCompany, onOpen }: { n: NotificationIte
   )
 }
 
+// The panel's width on desktop (md:w-[360px] below).
+const PANEL_W = 360
+
 export function NotificationBell({ variant = 'sidebar' }: { variant?: 'sidebar' | 'collapsed' | 'mobile' }) {
   const { data: me } = usePermissions()
   const enabled = Boolean(me)
@@ -124,7 +127,13 @@ export function NotificationBell({ variant = 'sidebar' }: { variant?: 'sidebar' 
       if (!r) return
       const mobile = window.innerWidth < 768
       if (mobile) setPos({ top: r.bottom + 6, left: 0 })
-      else setPos({ top: Math.max(8, Math.min(r.top, window.innerHeight - 480)), left: r.right + 8 })
+      // Beside the bell when there is room (sidebar); otherwise below it,
+      // right edge aligned to the bell, kept inside the window (top bar).
+      else if (r.right + 8 + PANEL_W + 8 <= window.innerWidth) {
+        setPos({ top: Math.max(8, Math.min(r.top, window.innerHeight - 480)), left: r.right + 8 })
+      } else {
+        setPos({ top: r.bottom + 6, left: Math.max(8, Math.min(r.right - PANEL_W, window.innerWidth - PANEL_W - 8)) })
+      }
     }
     place()
     window.addEventListener('resize', place)
