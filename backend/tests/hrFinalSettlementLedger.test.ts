@@ -117,7 +117,7 @@ async function entry(tenantId: string, reference: string) {
 const amt = (lines: Ln[], code: string, type: 'debit' | 'credit') => lines.filter((l) => l.account.code === code && l.type === type).reduce((a, l) => a + Number(l.amountCents), 0)
 const balanced = (lines: Ln[]) => amt(lines.map((l) => ({ ...l, account: { code: 'x' } })), 'x', 'debit') === amt(lines.map((l) => ({ ...l, account: { code: 'x' } })), 'x', 'credit')
 
-/** HR raises it; the CEO takes the HR step and management the last. */
+/** HR raises it, which signs its HR step (auto); management takes the last. */
 async function raise(section: string, data: Record<string, unknown>) {
   const r = await call('hr', 'POST', `/records/${section}`, { data })
   expect(r.statusCode, r.body).toBe(201)
@@ -173,7 +173,10 @@ describe('staff loans are paid out from where the loan says', () => {
   it('a cash loan credits the safe (1010)', async () => {
     const loan = await raise('loan', { employee: emps['Leaver'], type: 'loan', amount: RS(10000), installments: 4, firstDeduction: '2026-08-01', paidFrom: 'cash' })
     leaverLoan = loan.id
-    expect((await decide('ceo', 'loan', loan.id)).json().status).toBe('submitted')
+    // Raised by HR: the HR step is already signed (auto), the record waits on management.
+    const at = await prisma.hrRecord.findUniqueOrThrow({ where: { id: loan.id } })
+    expect([at.status, at.currentStep]).toEqual(['submitted', 1])
+    expect((at.approvals as Array<{ auto?: boolean }>)[0]?.auto).toBe(true)
     expect((await decide('mgmt', 'loan', loan.id)).json().status).toBe('approved')
     const e = await entry(tenantA, `hr.loan.disbursement:${loan.id}`)
     expect(amt(e!.lines, '1350', 'debit')).toBe(RS(10000))
@@ -190,7 +193,6 @@ describe('staff loans are paid out from where the loan says', () => {
     expect(both.json().error.code).toBe('BANK_ACCOUNT_ON_CASH')
 
     const loan = await raise('loan', { employee: emps['Cheque Cook'], type: 'loan', amount: RS(6000), installments: 2, firstDeduction: '2027-06-01', paidFrom: 'bank', bankAccount: bankA2 })
-    await decide('ceo', 'loan', loan.id)
     // The approver names company B's bank: refused, and nothing approved.
     const bad = await decide('mgmt', 'loan', loan.id, { bankAccountId: bankB })
     expect(bad.statusCode).toBe(422)
@@ -210,7 +212,6 @@ describe('staff loans are paid out from where the loan says', () => {
 
   it('the final approval classifies the loan payment (Official / Unofficial) on the entry, in its company', async () => {
     const loan = await raise('loan', { employee: emps['Cheque Cook'], type: 'loan', amount: RS(2000), installments: 1, firstDeduction: '2027-06-01', paidFrom: 'bank', bankAccount: bankA2 })
-    await decide('ceo', 'loan', loan.id)
     expect((await decide('mgmt', 'loan', loan.id, { classification: 'unofficial', taxStatus: 'not_applicable' })).json().status).toBe('approved')
     const e = await entry(tenantA, `hr.loan.disbursement:${loan.id}`)
     expect(await prisma.paymentClassification.findUnique({ where: { journalEntryId: e!.id } })).toMatchObject({ tenantId: tenantA, classification: 'unofficial' })
@@ -219,7 +220,6 @@ describe('staff loans are paid out from where the loan says', () => {
 
   it('with several banks and none named, a bank loan is refused rather than guessed', async () => {
     const loan = await raise('loan', { employee: emps['Cheque Cook'], type: 'advance', amount: RS(1000), installments: 1, firstDeduction: '2027-06-01' })
-    await decide('ceo', 'loan', loan.id)
     const r = await decide('mgmt', 'loan', loan.id)
     expect(r.statusCode).toBe(422)
     expect(r.json().error.code).toBe('BANK_ACCOUNT_REQUIRED')
@@ -313,7 +313,8 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
   })
 
   it('is approved only once every payroll with the leaver is locked', async () => {
-    expect((await decide('ceo', 'final_settlement', fnf)).json().status).toBe('submitted')
+    const at = await prisma.hrRecord.findUniqueOrThrow({ where: { id: fnf } })
+    expect([at.status, at.currentStep]).toEqual(['submitted', 1]) // HR step signed by raising
     const open = await decide('mgmt', 'final_settlement', fnf)
     expect(open.statusCode).toBe(409)
     expect(open.json().error.code).toBe('FNF_PAYROLL_OPEN')
@@ -401,7 +402,6 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     // October is deleted instead of locked: the settlement would leave
     // October unpaid, so its approval is refused.
     expect((await call('hr', 'DELETE', `/payroll/runs/${oct.id}`)).statusCode).toBe(204)
-    await decide('ceo', 'final_settlement', stale)
     const r = await decide('mgmt', 'final_settlement', stale)
     expect(r.statusCode).toBe(409)
     expect(r.json().error.code).toBe('FNF_STALE')
@@ -413,7 +413,6 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     expect(c2.salaryFrom).toBe('2026-10-01T00:00:00.000Z')
     expect(c2.salaryPayable).toBe(Math.round(RS(52000) * 20 / 31))
     await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c2.salaryPayable, incomeTax: c2.incomeTax, eobiEmployee: c2.eobiEmployee, eobiEmployer: c2.eobiEmployer, sessiEmployer: c2.sessiEmployer } })
-    await decide('ceo', 'final_settlement', id)
     expect((await decide('mgmt', 'final_settlement', id)).json().status).toBe('approved')
     const booked = await entry(tenantA, `hr.final_settlement.accrual:${id}`)
     expect(balanced(booked!.lines)).toBe(true)
@@ -436,7 +435,6 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     await prisma.hrEmployee.update({ where: { id: emps['Cheque Cook']! }, data: { status: 'resigned', lastWorkingDay: D('2026-10-05') } })
     const owing = (await raise('final_settlement', { employee: emps['Cheque Cook'], lastWorkingDay: '2026-10-05' })).id
     await call('hr', 'PATCH', `/records/final_settlement/${owing}`, { data: { salaryPayable: RS(1000), deductions: RS(5000) } })
-    await decide('ceo', 'final_settlement', owing)
     const neg = await decide('mgmt', 'final_settlement', owing)
     expect(neg.statusCode).toBe(422)
     expect(neg.json().error.code).toBe('FNF_NEGATIVE')
@@ -445,7 +443,6 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const id = (await raise('final_settlement', { employee: emps['Cheque Cook'], lastWorkingDay: '2026-10-05' })).id
     const c = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: emps['Cheque Cook'], lastWorkingDay: '2026-10-05', recordId: id })).json()
     await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c.salaryPayable, incomeTax: c.incomeTax, eobiEmployee: c.eobiEmployee, eobiEmployer: c.eobiEmployer, sessiEmployer: c.sessiEmployer } })
-    await decide('ceo', 'final_settlement', id)
     const lock = await prisma.periodLock.create({ data: { tenantId: tenantA, lockedThrough: new Date(pktToday().getTime() + 86_400_000 - 5 * 3_600_000 - 1), lockedBy: users['ceo']!.id } })
     try {
       const closed = await decide('mgmt', 'final_settlement', id)
@@ -514,7 +511,6 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const id = (await raise('final_settlement', { employee: who, lastWorkingDay: '2026-10-15' })).id
     const c = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: who, lastWorkingDay: '2026-10-15', recordId: id })).json()
     await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c.salaryPayable, incomeTax: c.incomeTax, eobiEmployee: c.eobiEmployee, eobiEmployer: c.eobiEmployer, sessiEmployer: c.sessiEmployer } })
-    await decide('ceo', 'final_settlement', id)
     const ok = await decide('mgmt', 'final_settlement', id)
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().status).toBe('approved')
@@ -530,7 +526,6 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const third = (await raise('final_settlement', { employee: who, lastWorkingDay: '2026-10-15' })).id
     const c3 = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: who, lastWorkingDay: '2026-10-15', recordId: third })).json()
     await call('hr', 'PATCH', `/records/final_settlement/${third}`, { data: { salaryPayable: c3.salaryPayable, incomeTax: c3.incomeTax, eobiEmployee: c3.eobiEmployee, eobiEmployer: c3.eobiEmployer, sessiEmployer: c3.sessiEmployer } })
-    await decide('ceo', 'final_settlement', third)
     expect((await decide('mgmt', 'final_settlement', third)).json().status).toBe('approved')
     expect(await entry(tenantA, `hr.final_settlement.accrual:${third}`)).not.toBeNull()
   })

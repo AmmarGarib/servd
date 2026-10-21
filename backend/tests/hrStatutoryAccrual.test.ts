@@ -143,7 +143,6 @@ describe('payroll and F&F credit the statutory payables', () => {
     expect(c.salaryFrom).toBe('2026-08-01T00:00:00.000Z')
     const keys = ['salaryPayable', 'otPayable', 'leaveEncashment', 'gratuity', 'loanRecovery', 'incomeTax', 'eobiEmployee', 'eobiEmployer', 'sessiEmployer']
     expect((await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: Object.fromEntries(keys.map((k) => [k, c[k]])) })).statusCode).toBe(200)
-    await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     const e = await entry(tenantA, `hr.final_settlement.accrual:${fnf}`)

@@ -66,7 +66,7 @@ const code = (r: { json: () => unknown }) => (r.json() as { error?: { code?: str
 
 const revision = (employee: string) => ({ data: { employee, revisedGross: RS(70_000), effectiveDate: '2027-01-01', reason: 'review' } })
 
-/** A salary revision ([HR, MGMT]) raised in A by `who`. */
+/** A salary revision ([HR, MGMT]) raised in A by `who` (an HR `who` signs the HR step by raising). */
 async function raise(who: string, lens?: string): Promise<string> {
   const r = await call(who, 'POST', '/records/salary_revision', { lens, payload: revision(empA1) })
   expect(r.statusCode, r.body).toBe(201)
@@ -84,6 +84,9 @@ beforeAll(async () => {
   await mkUser('deleg', 'hr', HO, [HO])
   await mkUser('deleg2', 'hr', HO, [HO])
   await mkUser('hrA', 'hr', A, [A])
+  // Raises requests whose HR step must still WAIT: a request raised by an HR login signs its own
+  // (non-final) HR step by raising (owner, 2026-10-21), so these tests raise as a non-HR login.
+  await mkUser('raiserA', 'management', A, [A])
   await mkUser('gmA', 'management', A, [A])
   await mkUser('mgmtB', 'management', B, [B])
   await mkUser('hrB', 'hr', B, [B])
@@ -150,8 +153,10 @@ describe('HR records through the head-office lens', () => {
     expect(code(patch)).toBe('HEAD_OFFICE_SUBMIT_ONLY')
     expect(code(await call('hoHr', 'POST', `/records/salary_revision/${theirs}/cancel`, { lens: A }))).toBe('HEAD_OFFICE_SUBMIT_ONLY')
 
-    // Own, but acted on (hrA approved the HR step): no more cancelling.
-    expect((await call('hrA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
+    // Own, but acted on: a person other than the raiser has decided it — no more cancelling.
+    // (hoHr is an HR login, so raising signed the HR step automatically; the CEO takes the last step.)
+    expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id } })).currentStep).toBe(1)
+    expect((await call('ceo', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
     expect(code(await call('hoHr', 'POST', `/records/salary_revision/${id}/cancel`, { lens: A }))).toBe('HEAD_OFFICE_SUBMIT_ONLY')
 
     // Own and untouched: cancel works.
@@ -193,7 +198,7 @@ describe('HR records through the head-office lens', () => {
 
 describe('decideRight: who decides a step (§7.4.3, A20)', () => {
   it('HO HR approves a non-final HR step of a company request, but cannot reject it', async () => {
-    const one = await raise('hrA')
+    const one = await raise('raiserA')
     const rej = await call('hoHr2', 'POST', `/records/salary_revision/${one}/decide`, { payload: { decision: 'rejected' } })
     expect(rej.statusCode).toBe(403)
     expect(code(rej)).toBe('FINAL_STEP_NEEDS_HANDOVER')
@@ -209,8 +214,8 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
   })
 
   it('the final step → 403 without a hand-over, passes with one', async () => {
-    const id = await raise('hrA')
-    expect((await call('hrA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(403) // raised it
+    const id = await raise('raiserA')
+    expect((await call('raiserA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(403) // raised it
     expect((await call('hoHr2', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
     // Final (management) step: a reached HO manager with no hand-over.
     const no = await call('hoMgr', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
@@ -229,14 +234,16 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
   })
 
   it('a delegate may reject at any step', async () => {
-    const id = await raise('hrA')
+    const id = await raise('raiserA')
     const r = await call('deleg', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'rejected', note: 'not now' } })
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().status).toBe('rejected')
   })
 
   it("a request that came through head office: the company GM can't give the final sign-off; the CEO can", async () => {
-    const id = await raise('hoHr', A)
+    // Raised through head office by a non-HR login (an HR raiser would have signed the HR step already).
+    const id = await raise('hoMgr', A)
+    expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id } })).viaHeadOfficeId).toBe(HO)
     // A's own HR may still do the (non-final) HR review.
     expect((await call('hrA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
     const gm = await call('gmA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
@@ -246,7 +253,7 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
   })
 
   it("a company GM still gives the final sign-off on their own staff's requests (unchanged)", async () => {
-    const id = await raise('hrA')
+    const id = await raise('raiserA')
     expect((await call('hoHr2', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
     const gm = await call('gmA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
     expect(gm.statusCode, gm.body).toBe(200)
@@ -272,8 +279,8 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
   })
 
   it('GET /hr/approvals agrees: reach lists non-final HR steps, a delegate lists final steps', async () => {
-    const atHr = await raise('hrA')
-    const atFinal = await raise('hrA')
+    const atHr = await raise('raiserA')
+    const atFinal = await raise('raiserA')
     expect((await call('hoHr2', 'POST', `/records/salary_revision/${atFinal}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
     const ids = async (who: string) => ((await call(who, 'GET', '/approvals')).json() as Array<{ id: string }>).map((r) => r.id)
     const hoHr = await ids('hoHr')

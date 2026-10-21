@@ -228,7 +228,6 @@ describe('full & final applies the final month\'s attendance', () => {
   it('once approved, its figures never change — added attendance does not move it', async () => {
     const saved = await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: Object.fromEntries(FNF_KEYS.map((k) => [k, calc[k]])) })
     expect(saved.statusCode, saved.body).toBe(200)
-    await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     const before = await prisma.hrRecord.findUniqueOrThrow({ where: { id: fnf } })
@@ -283,7 +282,6 @@ describe('full & final over several months: window edges and a month with no pai
 
     const saved = await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: Object.fromEntries(FNF_KEYS.map((k) => [k, c[k]])) })
     expect(saved.statusCode, saved.body).toBe(200)
-    await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     const e = await entry(tenantA, `hr.final_settlement.accrual:${fnf}`)

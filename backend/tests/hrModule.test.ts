@@ -678,8 +678,7 @@ describe('HR through the API', () => {
   it('holds a future-dated salary revision until its effective date', async () => {
     const rev = (await call('hr', 'POST', '/records/salary_revision', { data: { employee: cookEmp, revisedGross: RS(60000), effectiveDate: '2099-01-01' } })).json()
     expect(rev.data.increaseAmount).toBe(RS(8000))
-    // HR raised it, so another HR approver takes the HR step, and management the last.
-    expect((await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).statusCode).toBe(200)
+    // HR raised it, so its HR step is signed by raising; management has the last.
     expect((await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
     const e = (await call('hr', 'GET', `/employees/${cookEmp}`)).json().employee
     expect(e.grossSalaryCents).toBe(RS(52000)) // not yet
@@ -695,7 +694,6 @@ describe('HR through the API', () => {
     expect(otDone.amountCents).toBe(SEPT_OT)
 
     const loan = (await call('hr', 'POST', '/records/loan', { data: { employee: cookEmp, type: 'loan', amount: RS(10000), installments: 3, firstDeduction: '2026-09-01' } })).json()
-    await call('ceo', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })
     expect((await call('mgmt', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
 
     const run = (await call('hr', 'POST', '/payroll/runs', { period: '2026-09' })).json()
@@ -807,7 +805,6 @@ describe('HR through the API', () => {
 
   it('will not cancel a loan while an installment of it sits on a payroll, even a draft', async () => {
     const loan = (await call('hr', 'POST', '/records/loan', { data: { employee: cookEmp, type: 'advance', amount: RS(6000), installments: 2, firstDeduction: '2026-10-01' } })).json()
-    await call('ceo', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })
     await call('mgmt', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })
     const run = (await call('hr', 'POST', '/payroll/runs', { period: '2026-10' })).json()
     const slip = (await call('hr', 'GET', `/payroll/runs/${run.id}`)).json().payslips.find((p: { employeeId: string }) => p.employeeId === cookEmp)
@@ -824,7 +821,6 @@ describe('HR through the API', () => {
 
   it('an HR-cancelled revision never takes effect', async () => {
     const rev = (await call('hr', 'POST', '/records/salary_revision', { data: { employee: cookEmp, revisedGross: RS(90000), effectiveDate: '2098-06-01' } })).json()
-    await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })
     await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })
     expect((await call('hr', 'POST', `/records/salary_revision/${rev.id}/cancel`)).json().status).toBe('cancelled')
     // Its date comes; the 2099 revisions approved earlier are not yet due.
@@ -843,7 +839,10 @@ describe('HR through the API', () => {
     expect((await call('hr', 'GET', '/approvals')).json().map((r: { id: string }) => r.id)).not.toContain(bonus.id)
 
     // Management is an HR approver too, but one person signs off one step.
-    const rev = (await call('hr', 'POST', '/records/salary_revision', { data: { employee: bossEmp, revisedGross: RS(160000), effectiveDate: '2099-01-01' } })).json()
+    // Raised by a second admin (not HR), so its HR step still waits (an HR raiser would have signed it by raising).
+    await mkUser('raiser', 'admin')
+    const rev = (await call('raiser', 'POST', '/records/salary_revision', { data: { employee: bossEmp, revisedGross: RS(160000), effectiveDate: '2099-01-01' } })).json()
+    expect(rev.currentStep).toBe(0)
     expect((await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
     const twice = await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })
     expect(twice.statusCode).toBe(403)
@@ -851,6 +850,21 @@ describe('HR through the API', () => {
     const done = (await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json()
     expect(done.status).toBe('approved')
     expect(done.approvals[1].override).toBeUndefined()
+
+    // Raised by HR (owner, 2026-10-21): the HR step is signed by raising (auto entry) and the record is at management.
+    const hrRaised = (await call('hr', 'POST', '/records/salary_revision', { data: { employee: bossEmp, revisedGross: RS(170000), effectiveDate: '2099-02-01' } })).json()
+    expect(hrRaised.status).toBe('submitted')
+    expect(hrRaised.currentStep).toBe(1)
+    expect(hrRaised.approvals[0]).toMatchObject({ role: 'hr', decision: 'approved', byUserId: users['hr']!.id, auto: true, note: 'Raised by HR' })
+    // …but never when the request is about the HR raiser themselves.
+    const hrEmp = (await call('hr', 'POST', '/employees', { data: { fullName: 'HR Person', grossSalaryCents: RS(90000), joiningDate: '2025-01-01', employmentType: 'permanent' } })).json().id
+    await prisma.hrEmployee.update({ where: { id: hrEmp }, data: { userId: users['hr']!.id } })
+    const own = (await call('hr', 'POST', '/records/salary_revision', { data: { employee: hrEmp, revisedGross: RS(95000), effectiveDate: '2099-03-01' } })).json()
+    expect(own.currentStep).toBe(0)
+    expect(own.approvals ?? []).toHaveLength(0)
+    await call('hr', 'POST', `/records/salary_revision/${hrRaised.id}/cancel`)
+    await call('hr', 'POST', `/records/salary_revision/${own.id}/cancel`)
+    await prisma.hrEmployee.update({ where: { id: hrEmp }, data: { userId: null } }) // unlink: later tests use HR as plain HR
 
     // A management user who raises a loan clears neither step of it.
     const loan = (await call('mgmt', 'POST', '/records/loan', { data: { employee: bossEmp, type: 'loan', amount: RS(500000), installments: 10, firstDeduction: '2099-01-01' } })).json()
@@ -1079,7 +1093,6 @@ describe('HR through the API', () => {
     (await call('hr', 'POST', '/employees', { data: { fullName, grossSalaryCents: RS(grossRs), joiningDate: '2025-01-01', employmentType: 'permanent', ...extra } })).json().id as string
   const approvedLoan = async (employee: string, amountRs: number, installments: number, firstDeduction: string) => {
     const loan = (await call('hr', 'POST', '/records/loan', { data: { employee, type: 'loan', amount: RS(amountRs), installments, firstDeduction } })).json()
-    await call('ceo', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })
     expect((await call('mgmt', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
     return loan.id as string
   }
@@ -1093,7 +1106,6 @@ describe('HR through the API', () => {
   }
   const approvedRevision = async (employee: string, grossRs: number, effectiveDate: string) => {
     const rev = (await call('hr', 'POST', '/records/salary_revision', { data: { employee, revisedGross: RS(grossRs), effectiveDate } })).json()
-    await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })
     expect((await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
     return rev.id as string
   }

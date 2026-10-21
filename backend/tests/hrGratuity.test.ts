@@ -230,7 +230,9 @@ describe('gratuity on a full & final', () => {
     expect(saved.json().data.gratuity).toBe(RS(280000))
     expect(saved.json().amountCents).toBe(calc['netAmount'])
 
-    expect((await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
+    // HR raised it, so its HR step is signed by raising: it already waits on management.
+    const at = await prisma.hrRecord.findUniqueOrThrow({ where: { id: fnf } })
+    expect([at.status, at.currentStep]).toEqual(['submitted', 1])
     const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().status).toBe('approved')
