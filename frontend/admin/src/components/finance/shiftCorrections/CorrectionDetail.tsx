@@ -6,7 +6,7 @@ import { api } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { useConfirm } from '../../ui/ConfirmDialog'
-import { type CorrectionSet, MIN_REASON, STATUS_BADGE, STATUS_LABEL, effectText, fmtDateTime, fmtDay, tenderText } from './types'
+import { type CorrectionSet, MIN_REASON, TENDER_LABEL, errorText, STATUS_BADGE, STATUS_LABEL, effectText, fmtDateTime, fmtDay, tenderText } from './types'
 
 export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const qc = useQueryClient()
@@ -28,7 +28,7 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
       else if (r.status === 'applied') setMsg({ ok: true, text: 'Approved and applied.' })
       else setMsg({ ok: false, text: r.error ? `Approved, but it did not finish: ${r.error}` : 'Approved, but it did not finish. You can retry.' })
     },
-    onError: (e: Error) => setMsg({ ok: false, text: e.message || 'Could not complete that' }),
+    onError: (e: Error) => setMsg({ ok: false, text: errorText(e) || 'Could not complete that' }),
   })
 
   async function approve() {
@@ -108,16 +108,21 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
               <li key={i.id} className="rounded-lg border border-s-border p-3 space-y-1">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-sm font-medium text-s-text">
-                    {i.kind === 'cancel_kot' ? 'Cancel open ticket' : 'Void bill'} #{i.orderRef}{p?.brand ? ` · ${p.brand}` : ''}
+                    {i.kind === 'cancel_kot' ? 'Cancel open ticket' : i.kind === 'void_reissue' ? 'Void and re-issue' : 'Void bill'} #{i.orderRef}{p?.brand ? ` · ${p.brand}` : ''}
                   </span>
                   {p && <span className="text-sm tabular-nums text-s-text">{fmtPkr(p.totalCents)}</span>}
                 </div>
                 {p && <p className="text-xs text-s-muted">{tenderText(p.tenders)}</p>}
                 <p className="text-xs text-s-text">Reason: {i.reason}</p>
+                {i.kind === 'void_reissue' && <p className="text-xs text-s-muted">Re-issue as {TENDER_LABEL[i.newTender ?? ''] ?? i.newTender ?? 'the new payment method'}{i.tenderRef ? ` (reference ${i.tenderRef})` : ''}.</p>}
                 {i.kind === 'void_bill' && <p className="text-xs text-s-muted">{i.moneyReturned ? 'Money was handed back.' : 'Money was not handed back.'} {i.foodMade ? 'Food was made.' : 'Food was not made.'}</p>}
                 {p && c.status === 'submitted' && <p className="text-xs text-s-muted">On approval: {effectText(p, c.businessDay)}</p>}
                 {p?.blockedBy && c.status !== 'applied' && c.status !== 'rejected' && <p role="alert" className="text-xs text-s-red">Cannot be applied now: {p.blockedBy.message}</p>}
-                {i.result?.applied && <p className="text-xs text-success">Done.</p>}
+                {i.result?.applied && (
+                  <p className="text-xs text-success">
+                    {i.result.newOrderRef ? `Done. New bill #${i.result.newOrderRef}${i.result.newTotalCents != null ? `, total ${fmtPkr(i.result.newTotalCents)}` : ''}${i.result.oldTotalCents != null && i.result.newTotalCents != null ? ` (difference ${fmtPkr(i.result.newTotalCents - i.result.oldTotalCents)})` : ''}.` : 'Done.'}
+                  </p>
+                )}
                 {i.result?.error && <p role="alert" className="text-xs text-s-red">{i.result.error}</p>}
               </li>
             )

@@ -5,12 +5,12 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
-import { type CorrectionSet, type ShiftCandidates, MIN_REASON, KIND_LABEL, fmtDateTime, fmtDay, tenderText } from './types'
+import { type CorrectionSet, type ShiftCandidates, MIN_REASON, KIND_LABEL, REISSUE_TENDERS, TENDER_LABEL, TENDER_REF_LABEL, errorText, fmtDateTime, fmtDay, tenderText } from './types'
 
 interface ShiftRow { shiftId: string; cashier: string; openedAt: string; closedAt: string | null; status: string; totalSalesCents: number; varianceCents: number | null }
 interface Summary { shifts: ShiftRow[] }
 
-interface Pick { reason: string; moneyReturned: boolean; foodMade: boolean }
+interface Pick { action: 'void' | 'reissue'; reason: string; moneyReturned: boolean; foodMade: boolean; newTender: string; tenderRef: string }
 
 function daysAgo(n: number) {
   const d = new Date(`${todayPktIso()}T12:00:00Z`)
@@ -85,11 +85,20 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
 
   const blocked = data?.booksClosed ?? (data?.pendingCorrectionId ? { code: 'CORRECTION_PENDING', message: 'This shift already has a correction waiting for the CEO. Add to it after it is decided.' } : null)
   const chosen = useMemo(() => (data?.orders ?? []).filter((o) => picks[o.orderId]), [data, picks])
-  const ready = !blocked && chosen.length > 0 && reason.trim().length >= MIN_REASON && chosen.every((o) => picks[o.orderId]!.reason.trim().length >= MIN_REASON)
+  const pickOk = (o: ShiftCandidates['orders'][number]) => {
+    const p = picks[o.orderId]!
+    if (p.reason.trim().length < MIN_REASON) return false
+    if (o.kind === 'void_bill' && p.action === 'reissue') {
+      if (!p.newTender) return false
+      if (p.newTender !== 'cash' && (p.tenderRef.trim().length < 1 || p.tenderRef.trim().length > 120)) return false
+    }
+    return true
+  }
+  const ready = !blocked && chosen.length > 0 && reason.trim().length >= MIN_REASON && chosen.every(pickOk)
 
   const toggle = (id: string) => setPicks((p) => {
     const n = { ...p }
-    if (n[id]) delete n[id]; else n[id] = { reason: '', moneyReturned: false, foodMade: false }
+    if (n[id]) delete n[id]; else n[id] = { action: 'void', reason: '', moneyReturned: false, foodMade: false, newTender: '', tenderRef: '' }
     return n
   })
   const patch = (id: string, v: Partial<Pick>) => setPicks((p) => ({ ...p, [id]: { ...p[id]!, ...v } }))
@@ -100,6 +109,12 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
       reason: reason.trim(),
       items: chosen.map((o) => {
         const p = picks[o.orderId]!
+        if (o.kind === 'void_bill' && p.action === 'reissue') {
+          return {
+            orderId: o.orderId, kind: 'void_reissue', reason: p.reason.trim(), newTender: p.newTender,
+            ...(p.newTender !== 'cash' ? { tenderRef: p.tenderRef.trim() } : {}),
+          }
+        }
         return {
           orderId: o.orderId, kind: o.kind, reason: p.reason.trim(),
           ...(o.kind === 'void_bill' ? { moneyReturned: p.moneyReturned, foodMade: p.foodMade } : {}),
@@ -107,7 +122,7 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
       }),
     }),
     onSuccess: onCreated,
-    onError: (e: Error) => setErr(e.message || 'Could not send the correction'),
+    onError: (e: Error) => setErr(errorText(e) || 'Could not send the correction'),
   })
 
   if (isLoading) return <p className="text-xs text-s-muted">Loading the shift…</p>
@@ -126,10 +141,6 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
       </div>
 
       {blocked && <div role="alert" className="rounded-lg border border-s-border p-3 text-sm text-s-red">{blocked.message}</div>}
-
-      <p className="text-xs text-s-muted rounded-lg bg-s-bg p-3">
-        Wrong payment method? Void the bill here, then ring the correct bill on an open till.
-      </p>
 
       {data.orders.length === 0 && <p className="text-sm text-s-muted">This shift has no bills or tickets.</p>}
       <ul className="space-y-2">
@@ -161,6 +172,19 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
                       className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
                   </div>
                   {o.kind === 'void_bill' && (
+                    <fieldset className="space-y-1">
+                      <legend className="text-xs text-s-muted">What should happen to this bill?</legend>
+                      <label className="flex items-center gap-2 text-xs text-s-text">
+                        <input type="radio" className="accent-primary" name={`sc-a-${o.orderId}`} checked={p.action === 'void'} onChange={() => patch(o.orderId, { action: 'void' })} />
+                        Void the bill
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-s-text">
+                        <input type="radio" className="accent-primary" name={`sc-a-${o.orderId}`} checked={p.action === 'reissue'} onChange={() => patch(o.orderId, { action: 'reissue', moneyReturned: false, foodMade: false })} />
+                        Wrong payment method: void and re-issue
+                      </label>
+                    </fieldset>
+                  )}
+                  {o.kind === 'void_bill' && p.action === 'void' && (
                     <div className="flex flex-col gap-1">
                       <label className="flex items-center gap-2 text-xs text-s-text">
                         <input type="checkbox" className="accent-primary" checked={p.moneyReturned} onChange={(e) => patch(o.orderId, { moneyReturned: e.target.checked })} />
@@ -170,6 +194,26 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
                         <input type="checkbox" className="accent-primary" checked={p.foodMade} onChange={(e) => patch(o.orderId, { foodMade: e.target.checked })} />
                         Food was made (waste it)
                       </label>
+                    </div>
+                  )}
+                  {o.kind === 'void_bill' && p.action === 'reissue' && (
+                    <div className="space-y-2">
+                      <div>
+                        <label htmlFor={`sc-t-${o.orderId}`} className="block text-xs text-s-muted">The right payment method</label>
+                        <select id={`sc-t-${o.orderId}`} value={p.newTender} onChange={(e) => patch(o.orderId, { newTender: e.target.value, tenderRef: '' })}
+                          className="bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text">
+                          <option value="">Choose…</option>
+                          {REISSUE_TENDERS.filter((t) => !o.tenders.some((x) => x.status === 'paid' && x.method === t)).map((t) => <option key={t} value={t}>{TENDER_LABEL[t]}</option>)}
+                        </select>
+                      </div>
+                      {p.newTender && p.newTender !== 'cash' && (
+                        <div>
+                          <label htmlFor={`sc-f-${o.orderId}`} className="block text-xs text-s-muted">{TENDER_REF_LABEL[p.newTender]}</label>
+                          <input id={`sc-f-${o.orderId}`} type="text" maxLength={120} value={p.tenderRef} onChange={(e) => patch(o.orderId, { tenderRef: e.target.value })}
+                            className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+                        </div>
+                      )}
+                      <p className="text-[11px] text-s-muted">The same items are billed again at this payment method, dated on the original day. The food is not wasted and no money is handed back.</p>
                     </div>
                   )}
                 </div>

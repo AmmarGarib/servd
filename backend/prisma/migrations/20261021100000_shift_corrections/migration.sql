@@ -4,8 +4,7 @@
 -- should require CEO's approval to move the entry to trash."
 --
 -- Finance raises ONE set of fixes on a closed drawer (void a full & final bill,
--- cancel an open KOT, void & re-issue with the right tender on the original
--- business day); the CEO approves or rejects the set once; nothing moves
+-- cancel an open KOT); the CEO approves or rejects the set once; nothing moves
 -- until it is approved (modules/shiftCorrections/). tenantId = the SHIFT's
 -- company. One open (submitted) set per shift.
 --
@@ -51,7 +50,6 @@ CREATE TABLE "shift_correction_items" (
   "moneyReturned" BOOLEAN NOT NULL DEFAULT false,
   "foodMade" BOOLEAN NOT NULL DEFAULT false,
   "newTender" TEXT,
-  "tenderRef" TEXT,
   "result" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "shift_correction_items_pkey" PRIMARY KEY ("id")
@@ -73,8 +71,6 @@ CREATE UNIQUE INDEX "shift_corrections_one_open" ON "shift_corrections"("shiftId
 ALTER TABLE "shift_corrections" ADD CONSTRAINT "shift_corrections_reason_chk" CHECK (char_length(btrim("reason")) >= 10);
 ALTER TABLE "shift_correction_items" ADD CONSTRAINT "shift_correction_items_reason_chk" CHECK (char_length(btrim("reason")) >= 10);
 ALTER TABLE "shift_correction_items" ADD CONSTRAINT "shift_correction_items_tender_chk" CHECK ("kind" <> 'void_reissue' OR "newTender" IS NOT NULL);
-ALTER TABLE "shift_correction_items" ADD CONSTRAINT "shift_correction_items_tender_ref_chk" CHECK ("kind" <> 'void_reissue' OR "newTender" = 'cash' OR char_length(btrim(COALESCE("tenderRef", ''))) > 0);
-ALTER TABLE "shift_correction_items" ADD CONSTRAINT "shift_correction_items_reissue_food_chk" CHECK ("kind" <> 'void_reissue' OR ("foodMade" = false AND "moneyReturned" = false));
 
 -- ─── Row-level security (the guarded wave-A/B pattern, as 20261020100000_payment_classification)
 DO $do$

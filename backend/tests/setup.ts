@@ -175,6 +175,9 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Shift corrections (2026-10-21): one open set per shift, the reason / tender CHECKs.
   for (const statement of migrationSection('20261021100000_shift_corrections',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Void & re-issue (2026-10-21): the tender-reference and no-food / no-money-returned CHECKs.
+  for (const statement of migrationSection('20261021140000_shift_correction_reissue',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
   // The Trash bin (2026-10-15): one OPEN entry per thing, and promo codes /
   // allocation rules unique over LIVE rows only (migration 20261015170000).
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "trash_entries_open_key" ON "trash_entries"("entityType", "entityId") WHERE "restoredAt" IS NULL AND "purgedAt" IS NULL`)

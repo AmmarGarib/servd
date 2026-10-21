@@ -1,3 +1,4 @@
+import { fmtPkr } from '../../../lib/money'
 // Shapes of /pos/shift-corrections (backend/src/modules/shiftCorrections/service.ts).
 export const MIN_REASON = 10
 
@@ -26,11 +27,12 @@ export interface ItemPreview {
   status: string | null
   totalCents: number
   tenders: Tender[]
+  reissue?: { tender: string; taxRatePct: number; taxCents: number; serviceChargeCents: number; tipCents: number; totalCents: number; differenceCents: number } | null
   effect: {
-    order: 'void_final_bill' | 'cancel_ticket' | 'not_available'
+    order: 'void_final_bill' | 'cancel_ticket' | 'void_and_reissue' | 'not_available'
     reversesRevenue: boolean
     money: 'voided' | 'owed_back' | 'none'
-    stock: 'back_to_stock' | 'waste'
+    stock: 'back_to_stock' | 'waste' | 'moves_to_new_bill'
     fiscal: 'void_document' | 'void_document_manual' | 'none'
   }
   blockedBy: { code: string; message: string } | null
@@ -44,7 +46,9 @@ export interface SetItem {
   reason: string
   moneyReturned: boolean
   foodMade: boolean
-  result: { applied?: boolean; error?: string } | null
+  newTender?: string | null
+  tenderRef?: string | null
+  result: { applied?: boolean; error?: string; newOrderRef?: string; newTotalCents?: number; newTender?: string; oldTotalCents?: number } | null
   preview?: ItemPreview
 }
 
@@ -94,6 +98,23 @@ export interface ShiftCandidates {
   orders: Candidate[]
 }
 
+export const REISSUE_TENDERS = ['cash', 'card', 'raast'] as const
+export const TENDER_REF_LABEL: Record<string, string> = { card: 'Card slip / approval number', raast: 'Bank reference' }
+
+/** Friendly text for the re-issue refusals; anything else keeps the server's own message. */
+export const ERROR_TEXT: Record<string, string> = {
+  TENDER_REF_REQUIRED: 'Type the card slip number or the bank reference for the new payment method.',
+  REISSUE_NOT_SUPPORTED: 'This bill cannot be re-issued (for example a promo, gift card, wallet, loyalty or delivery fee is on it). Void it and ring the right bill on an open till.',
+  RAAST_REF_USED: 'That bank reference was already used on another bill in this company.',
+  RAAST_REF_INVALID: 'That bank reference is not valid. Check it against the bank message.',
+  FOOD_MADE_NOT_FOR_REISSUE: 'A re-issued bill keeps its food, so "Food was made" does not apply.',
+  TENDER_UNCHANGED: 'Pick a payment method different from the one the bill was paid with.',
+}
+export const errorText = (e: unknown) => {
+  const x = e as { code?: string; message?: string }
+  return (x.code && ERROR_TEXT[x.code]) || x.message || 'Something went wrong'
+}
+
 export const KIND_LABEL = { void_bill: 'Void the bill', cancel_kot: 'Cancel the open ticket', void_reissue: 'Void and re-issue' } as const
 
 export const TENDER_LABEL: Record<string, string> = {
@@ -120,6 +141,13 @@ const dayShort = (ymd: string) => {
 /** What approving a fix does, in plain words. */
 export function effectText(p: ItemPreview, businessDay: string): string {
   const day = dayShort(businessDay)
+  if (p.effect.order === 'void_and_reissue') {
+    const r = p.reissue
+    const t = r ? (TENDER_LABEL[r.tender] ?? r.tender) : 'the new payment method'
+    return `Bill voided and re-issued as ${t}` + (r
+      ? `: GST ${r.taxRatePct}% ${fmtPkr(r.taxCents)}, new total ${fmtPkr(r.totalCents)} (difference ${fmtPkr(r.differenceCents)}), dated on the original day`
+      : ', dated on the original day') + ' · the old bill moves to the Trash · stock moves to the new bill'
+  }
   const parts: string[] = []
   if (p.effect.order === 'cancel_ticket') parts.push('Open ticket cancelled')
   else parts.push('Bill voided')
