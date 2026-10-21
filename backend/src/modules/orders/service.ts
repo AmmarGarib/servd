@@ -189,7 +189,24 @@ async function passStationOf(conceptId: string): Promise<string | null> {
  * the ticket fires with the bill the customer is charged. `totalCents` is
  * always dto.payment.amountCents — the caller's figure after customer credits.
  */
-export async function ingestOrder(dto: IngestOrderDTO, opts: { price?: OrderPrice } = {}) {
+export interface IngestCorrection {
+  /** The voided bill's lines are re-issued: the food was already made and served. */
+  reissueOf: string
+}
+
+export async function ingestOrder(dto: IngestOrderDTO, opts: {
+  price?: OrderPrice
+  /**
+   * Shift correction re-issue (owner, 2026-10-21; modules/shiftCorrections is
+   * the ONE caller, never a client body): the lines are a copy of a bill the
+   * kitchen already cooked and served. Every line is written 'bumped' (done) —
+   * no kitchen ticket, no order:new, no stock depletion (the voided bill's
+   * stock MOVES to it — orders/stock.ts moveSaleStockTx), no customer receipt,
+   * no course pacing; today's 86 / unpriced guards do not apply (the sale
+   * already happened).
+   */
+  correction?: IngestCorrection
+} = {}) {
   if (!ORDER_SOURCES.includes(dto.source)) {
     throw new AppError('UNKNOWN_ORDER_SOURCE', `Unknown order source '${String(dto.source)}'`, 422)
   }
@@ -263,7 +280,7 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: { price?: OrderPric
   // any change a person made after the auto-86 — is refused everywhere, the
   // till included; so is a deleted dish. The storefront, group orders and
   // WhatsApp refuse every 86.
-  const off = menuItemStations.filter((m) => !m.isAvailable || m.deletedAt !== null)
+  const off = opts.correction ? [] : menuItemStations.filter((m) => !m.isAvailable || m.deletedAt !== null)
   if (off.length > 0) {
     const tillOverride = dto.source === 'pos'
       ? await standingAutoEightySix(off.filter((m) => m.deletedAt === null))
@@ -313,7 +330,7 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: { price?: OrderPric
   // Revenue guard: refuse to take an order for an unpriced (PKR 0) menu item.
   // Items are staged at 0 before the operator sets prices; they may be visible
   // ("coming soon") but must never be orderable, or customers get free food.
-  const unpriced = menuItemStations.find((m) => (m.priceCents ?? 0) <= 0)
+  const unpriced = opts.correction ? undefined : menuItemStations.find((m) => (m.priceCents ?? 0) <= 0)
   if (unpriced) {
     throw new AppError('ITEM_NOT_PRICED', `"${unpriced.name}" isn't available to order yet.`, 409)
   }
@@ -404,7 +421,8 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: { price?: OrderPric
               name: item.name,
               quantity: item.quantity,
               unitPriceCents: item.unitPriceCents,
-              status: 'pending' as ItemStatus,
+              status: (opts.correction ? 'bumped' : 'pending') as ItemStatus,
+              ...(opts.correction && { completedAt: new Date(dto.placed_at) }),
               notes: item.notes ?? null,
               course: item.course ?? null,
               serviceVessel,
@@ -471,6 +489,11 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: { price?: OrderPric
   // (workers/preOrderRelease.ts → releaseDuePreOrders) lets it through at
   // scheduledFor − PRE_ORDER_PREP_MS. Tomorrow's ticket used to land on the
   // KDS straight away and drain today's stock (and auto-86 today's menu).
+  if (opts.correction) {
+    // A re-issued bill (shift correction): nothing for the kitchen, the stock
+    // or the guest — see the option's comment above.
+    return { order: txResult.order, created: true }
+  }
   if (heldAtCreation(txResult.order)) {
     console.log(`[pre-order] order ${orderId.slice(0, 8)} held until ${new Date(txResult.order.scheduledFor!.getTime() - PRE_ORDER_PREP_MS).toISOString()}`)
   } else {
@@ -1452,6 +1475,12 @@ export interface CancelOrderInput {
   shiftCorrection?: {
     voidFinalBill: boolean
     returnAll: boolean
+    /**
+     * Void & re-issue: the stock stays where it is — it MOVES to the re-issued
+     * bill (orders/stock.ts moveSaleStockTx); nothing goes back to the lots
+     * and nothing is wasted.
+     */
+    keepStock?: boolean
     inTx: (tx: Prisma.TransactionClient) => Promise<void>
   }
 }
@@ -1570,17 +1599,20 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
   // call that actually made the change; the restore is itself once-only, so
   // a retry after a failure is safe. A failure is flagged, never only logged.
   if (changed) {
-    try {
-      await restoreInventoryForOrder(id, {
-        cookedFood: returned
-          ? { wasteReason: 'returned_food', wasteAll: true }
-          : (input.cookedFood ?? { wasteReason: 'cancelled_after_fire' }),
-        actorId: input.actor?.id ?? null,
-        approverId,
-        ...(input.shiftCorrection?.returnAll ? { returnAll: true } : {}),
-      })
-    } catch (err) {
-      await flagOrderStockFailure(id, 'restore', err, input.actor?.id ?? null)
+    // (A void & re-issue keeps its stock: it moves to the re-issued bill.)
+    if (!input.shiftCorrection?.keepStock) {
+      try {
+        await restoreInventoryForOrder(id, {
+          cookedFood: returned
+            ? { wasteReason: 'returned_food', wasteAll: true }
+            : (input.cookedFood ?? { wasteReason: 'cancelled_after_fire' }),
+          actorId: input.actor?.id ?? null,
+          approverId,
+          ...(input.shiftCorrection?.returnAll ? { returnAll: true } : {}),
+        })
+      } catch (err) {
+        await flagOrderStockFailure(id, 'restore', err, input.actor?.id ?? null)
+      }
     }
     // Its rider (if any) is freed, with an `unassigned` job event — an order
     // that will never be delivered must not keep a rider 'busy' or on the
@@ -1973,6 +2005,8 @@ export type CompletionVia =
   | 'status_update'
   /** recoverIncompleteCompletions: a completed order whose completion claim never committed. */
   | 'recovery'
+  /** A shift correction's re-issued bill (modules/shiftCorrections) — no customer notice. */
+  | 'shift_correction'
 
 const COMPLETE_CLAIM = 'order.complete'
 
@@ -2317,9 +2351,12 @@ export async function completeOrder(
     )
   })().catch((err) => console.error(`[webhook] order.delivered failed for ${orderId}:`, (err as Error).message))
 
-  notifyStatusChange(orderId, 'completed').catch((err) =>
-    console.error(`[Notify] Status update failed for ${orderId}:`, (err as Error).message),
-  )
+  // A shift correction's re-issued bill is a correction of the books, not news for the guest.
+  if (opts.via !== 'shift_correction') {
+    notifyStatusChange(orderId, 'completed').catch((err) =>
+      console.error(`[Notify] Status update failed for ${orderId}:`, (err as Error).message),
+    )
+  }
 
   // Fiscal send, after commit (spec §6.3). Never throws, never blocks a sale
   // beyond the company's bounded till budget (D10).

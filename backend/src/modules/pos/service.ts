@@ -602,6 +602,8 @@ type Tx = Prisma.TransactionClient
 async function completeTillSaleTx(
   tx: Tx,
   order: Pick<Order, 'id'>,
+  /** Shift correction re-issue only (TillPaymentInternal.asOf): the original sale's time. */
+  at?: Date,
 ): Promise<void> {
   // The till's own status write (a till sale goes received → completed at
   // payment, which the kitchen state machine does not model). Conditional, so
@@ -612,7 +614,7 @@ async function completeTillSaleTx(
   // write is gone — owner decision 39: the ledger is the record.)
   await tx.order.updateMany({
     where: { id: order.id, status: { notIn: ['completed', 'refunded', 'cancelled', 'rejected'] } },
-    data: { status: 'completed', completedAt: new Date() },
+    data: { status: 'completed', completedAt: at ?? new Date() },
   })
 }
 
@@ -631,7 +633,7 @@ export function coveredCents(payments: Array<{ status: string; amountCents: numb
  * rider's cash paid into the drawer or an online payment confirmed by the
  * gateway never completes them here.
  */
-export async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'gateway'): Promise<{ covered: boolean; completedNow: boolean; customerId: string | null; source: string }> {
+export async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'gateway', at?: Date): Promise<{ covered: boolean; completedNow: boolean; customerId: string | null; source: string }> {
   const order = await tx.order.findUniqueOrThrow({
     where: { id: orderId },
     include: { payments: { select: { id: true, status: true, amountCents: true } } },
@@ -650,7 +652,7 @@ export async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'ga
   const completes = order.source === 'pos' || (via === 'till' && order.fulfilmentType === 'dine_in')
   const open = !['completed', 'refunded', 'cancelled', 'rejected'].includes(order.status)
   if (completes && open) {
-    await completeTillSaleTx(tx, order)
+    await completeTillSaleTx(tx, order, at)
     return { covered, completedNow: true, customerId: order.customerId, source: order.source }
   }
   return { covered, completedNow: false, customerId: order.customerId, source: order.source }
@@ -1173,7 +1175,26 @@ export function paymentKeyOf(p: Pick<Payment, 'gatewayMeta'>): string | null {
   return typeof meta?.idempotencyKey === 'string' ? meta.idempotencyKey : null
 }
 
-export async function processPayment(input: ProcessPaymentInput) {
+/**
+ * SERVER-ONLY options of processPayment — a second argument no route ever
+ * passes (no client body can reach them). The ONE caller is the shift
+ * correction's void & re-issue (modules/shiftCorrections/service.ts), after
+ * the CEO approved it:
+ *   asOf        the original sale's time: Payment.createdAt / processedAt, the
+ *               Raast receipt's time and Order.completedAt (so the ONE fiscal
+ *               sale document is issued on the original business day);
+ *   correction  marks the tender gatewayMeta.correction; a typed card slip
+ *               reference is accepted while the card machine is connected
+ *               (the CEO's approval is the control); the caller runs
+ *               completeOrder itself (via 'shift_correction').
+ * Omitted: processPayment behaves exactly as before.
+ */
+export interface TillPaymentInternal {
+  asOf?: Date
+  correction?: { correctionId: string; itemId: string }
+}
+
+export async function processPayment(input: ProcessPaymentInput, internal: TillPaymentInternal = {}) {
   if (input.payments.length === 0) {
     throw new AppError('NO_PAYMENTS', 'At least one payment is required', 400)
   }
@@ -1235,7 +1256,7 @@ export async function processPayment(input: ProcessPaymentInput) {
     throw new AppError('TERMINAL_CHARGE_MISMATCH', 'That card-machine charge was not started for this payment', 409)
   }
   // W4-AUTH-2: a keyed card reference only where the company allows it.
-  if (input.payments.some((p) => p.method === 'card' && !p.terminalChargeId && !p.keenuPushId)) {
+  if (!internal.correction && input.payments.some((p) => p.method === 'card' && !p.terminalChargeId && !p.keenuPushId)) {
     const owner = await prisma.order.findUnique({ where: { id: input.orderId }, select: { concept: { select: { tenantId: true } } } })
     await assertManualCardRefAllowed(owner?.concept.tenantId ?? null, input.shiftId)
   }
@@ -1394,6 +1415,7 @@ export async function processPayment(input: ProcessPaymentInput) {
           ...(p.manualReason && { manualReason: p.manualReason }),
           ...(p.keenuPushId && { keenuPush: { pushId: p.keenuPushId } }),
           ...(p.excessAsTip && (p.tipCents ?? 0) > 0 && { tipFromExcess: true }),
+          ...(internal.correction && { correction: { correctionId: internal.correction.correctionId, itemId: internal.correction.itemId } }),
         }
         const payment = await tx.payment.create({
           data: {
@@ -1409,7 +1431,8 @@ export async function processPayment(input: ProcessPaymentInput) {
             ...(Object.keys(meta).length > 0 && { gatewayMeta: meta }),
             tenderedCents: p.tenderedCents ?? null,
             changeCents: changeCents ?? null,
-            processedAt: new Date(),
+            processedAt: internal.asOf ?? new Date(),
+            ...(internal.asOf && { createdAt: internal.asOf }),
           },
         })
         createdPayments.push(payment)
@@ -1429,13 +1452,14 @@ export async function processPayment(input: ProcessPaymentInput) {
             intentId: raast.meta.intentId ?? null,
             smsAlertId: raast.meta.smsAlertId ?? null,
             targetPaymentId: null,
+            ...(internal.asOf && { at: internal.asOf }),
           }))
         }
       }
 
       // The tenders cover what was due, so the one coverage rule completes the
       // sale (and voids a leftover placeholder row).
-      const coverage = await applyCoverageTx(tx, order.id, 'till')
+      const coverage = await applyCoverageTx(tx, order.id, 'till', internal.asOf)
       return { payments: createdPayments, coverage, replayCompleted: false, receipts: receipts.map(raastTenderView) }
     }, { maxWait: 10_000, timeout: 15_000 })
   } catch (err) {
@@ -1450,7 +1474,8 @@ export async function processPayment(input: ProcessPaymentInput) {
     const fiscal = result.replayCompleted ? await fiscalViewForOrder(input.orderId, 'sale', { staff: true }).catch(() => null) : null
     return { payments: result.payments, orderCompleted: result.replayCompleted, ...tillFiscal(fiscal), replayed: true, raast: result.receipts }
   }
-  const fiscal = result.coverage.completedNow
+  // A shift correction's re-issue runs completeOrder itself (via 'shift_correction').
+  const fiscal = result.coverage.completedNow && !internal.correction
     ? await afterTillSale(input.orderId, result.coverage.customerId, result.coverage.source)
     : null
   return { payments: result.payments, orderCompleted: result.coverage.completedNow, ...tillFiscal(fiscal), replayed: false, raast: result.receipts }

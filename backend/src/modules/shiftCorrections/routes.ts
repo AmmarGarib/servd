@@ -37,6 +37,8 @@ const itemSchema = z.object({
   moneyReturned: z.boolean().optional(),
   foodMade: z.boolean().optional(),
   newTender: z.enum(TILL_TENDERS).nullable().optional(),
+  /** void_reissue: the card slip / approval reference (card) or the Raast bank reference. */
+  tenderRef: z.string().trim().min(1).max(120).nullable().optional(),
 })
 
 const createSchema = z.object({

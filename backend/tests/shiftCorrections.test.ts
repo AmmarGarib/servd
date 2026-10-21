@@ -12,7 +12,13 @@
 //     audited sales day is reopened first;
 //   - a second set on the same drawer (money really handed back): the receipts
 //     are held as a REFUND DUE on till clearing in the re-posted close;
-//   - cancel_kot: an open ticket cancelled, nothing posted.
+//   - cancel_kot: an open ticket cancelled, nothing posted;
+//   - void & re-issue on a PAST business day (cash → card, card → cash, → Raast):
+//     the corrected bill, its payment and its ONE fiscal sale document are
+//     dated the original day, GST at the new tender's rate, no kitchen ticket,
+//     the stock moves (never drawn twice), cost of sales booked once, the
+//     re-posted close carries the new bill; a duplicate Raast reference 409;
+//     a retry after a mid-apply failure issues no second bill.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -29,7 +35,7 @@ import { sumCents } from '../src/lib/money.js'
 import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 import { flushNotifications } from '../src/lib/staffNotify.js'
 import {
-  prisma, mkCompany, mkUser, caller, setConnector, resetConnectorCache, openDrawer, ringKheer,
+  prisma, mkCompany, mkUser, caller, setConnector, resetConnectorCache, openDrawer, ringKheer, mkRaastAccount,
   type Company, type Who,
 } from './connectorsFixtures.js'
 
@@ -150,12 +156,17 @@ describe('shift corrections', () => {
     expect((await call()(financeB, 'GET', `/pos/shift-corrections/shift/${drawer}`)).statusCode).toBe(404)
   })
 
-  it('refuses void & re-issue (not built) and an order that is not on the drawer', async () => {
+  it('refuses a void & re-issue with "food made" or no card reference, and an order that is not on the drawer', async () => {
     const r = await call()(financeA, 'POST', '/pos/shift-corrections', {
-      shiftId: drawer, reason: REASON, items: [{ orderId: bill1.id, kind: 'void_reissue', newTender: 'card', reason: 'Paid by card, rung as cash' }],
+      shiftId: drawer, reason: REASON, items: [{ orderId: bill1.id, kind: 'void_reissue', newTender: 'card', tenderRef: 'SLIP-4411', foodMade: true, reason: 'Paid by card, rung as cash' }],
     })
     expect(r.statusCode, r.body).toBe(422)
-    expect(r.json().error.code).toBe('VOID_REISSUE_NOT_AVAILABLE')
+    expect(r.json().error.code).toBe('FOOD_MADE_NOT_FOR_REISSUE')
+    const noRef = await call()(financeA, 'POST', '/pos/shift-corrections', {
+      shiftId: drawer, reason: REASON, items: [{ orderId: bill1.id, kind: 'void_reissue', newTender: 'card', reason: 'Paid by card, rung as cash' }],
+    })
+    expect(noRef.statusCode, noRef.body).toBe(422)
+    expect(noRef.json().error.code).toBe('TENDER_REF_REQUIRED')
     // A bill rung up as a KOT, an unknown order → 422.
     const bad = await call()(financeA, 'POST', '/pos/shift-corrections', {
       shiftId: drawer, reason: REASON, items: [{ orderId: '00000000-0000-4000-8000-000000000000', kind: 'void_bill', reason: 'Duplicate bill of table 4' }],
@@ -378,7 +389,7 @@ describe('shift corrections and stock (FIFO lots, cost booked by the close)', ()
       ],
     })
     expect(r.statusCode, r.body).toBe(201)
-    expect(r.json().items[1].preview.effect.stock).toBe('waste')
+    expect(r.json().items.find((i: { orderId: string }) => i.orderId === made.id).preview.effect.stock).toBe('waste')
     const ok = await call()(ceoC, 'POST', `/pos/shift-corrections/${r.json().id}/approve`, {})
     expect(ok.json().status, ok.body).toBe('applied')
 
@@ -393,6 +404,183 @@ describe('shift corrections and stock (FIFO lots, cost booked by the close)', ()
     expect(await prisma.journalEntry.count({ where: { tenantId: C.tenantId, reference: { startsWith: 'order_item.return:' } } })).toBe(0)
     expect(await prisma.journalEntry.count({ where: { tenantId: C.tenantId, reference: { startsWith: 'order.cancel_unwind:' } } })).toBe(0)
     const tb = await trialBalance(C.tenantId)
+    expect(tb.debits).toBe(tb.credits)
+  })
+})
+
+describe('void & re-issue on a past business day', () => {
+  let D: Company
+  let cashierD: Who, financeD: Who, ceoD: Who
+  let beef: string
+  const YESTERDAY = () => new Date(Date.now() - 86_400_000)
+
+  const stockOf = async () => (await prisma.inventoryItem.findUniqueOrThrow({ where: { id: beef } })).currentStock
+
+  beforeAll(async () => {
+    D = await mkCompany(`scor-d-${Date.now()}`, { srbPosId: 7404 })
+    await prisma.setting.create({ data: { key: fifoCutoverKey(D.tenantId), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
+    cashierD = await mkUser('scor-cashier-d', 'cashier', D.tenantId)
+    financeD = await mkUser('scor-fin-d', 'finance', D.tenantId)
+    ceoD = await mkUser('scor-ceo-d', 'admin', D.tenantId)
+    await setConnector(D.tenantId, 'fiscal', { driver: 'test', enabled: true, settings: { test: { scenario: 'ok' }, syncTimeoutMs: 1000, syncAtTill: true, fiscalReportingRequired: true } })
+    beef = (await prisma.inventoryItem.create({ data: { tenantId: D.tenantId, name: 'Beef', unit: 'kg', category: 'protein', parLevel: 0 } })).id
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: D.tenantId, inventoryItemId: beef, qty: 50, unitCostCents: 100_000, kind: 'count_gain', lotSourceType: 'count_gain', lotSourceId: 'scor-lot-d',
+      movementSourceType: 'test', movementSourceId: 'scor-lot-d', receivedAt: new Date(Date.now() - 5 * 86_400_000),
+    }))
+    await prisma.recipe.create({
+      data: { kind: 'plate', menuItemId: D.items.nihari, servings: 1, qFactorPct: 0, ingredients: { create: [{ inventoryItemId: beef, quantity: 1000, unit: 'kg' }] } },
+    })
+  }, 60_000)
+
+  /** A Nihari bill paid by `method` on an open drawer (the stock comes out at the sale). */
+  async function bill(drawer: string, method: 'cash' | 'card') {
+    const r = await call()(cashierD, 'POST', '/pos/orders', { conceptId: D.conceptId, items: [{ menuItemId: D.items.nihari, name: 'Beef Nihari', quantity: 1, unitPriceCents: 145_000, modifiers: [] }], paymentMethod: method })
+    expect(r.statusCode, r.body).toBe(201)
+    const o = r.json()
+    const p = await call()(cashierD, 'POST', '/pos/payments', {
+      orderId: o.id, shiftId: drawer,
+      payments: [method === 'cash' ? { method, amountCents: o.totalCents, tenderedCents: o.totalCents } : { method, amountCents: o.totalCents, gatewayRef: `SLIP${Date.now()}` }],
+    })
+    expect(p.statusCode, p.body).toBe(201)
+    return o.id as string
+  }
+
+  /** Move the drawer and its bills to YESTERDAY, close it there and post its close (dated that business day). */
+  async function closeYesterday(drawer: string, orderIds: string[], counted: number) {
+    const day = YESTERDAY()
+    await prisma.shift.update({ where: { id: drawer }, data: { openedAt: new Date(day.getTime() - 3_600_000), closedAt: new Date(day.getTime() + 3_600_000), status: 'closed', closingFloatCents: counted } })
+    await prisma.order.updateMany({ where: { id: { in: orderIds } }, data: { placedAt: day, completedAt: day } })
+    await prisma.payment.updateMany({ where: { orderId: { in: orderIds } }, data: { createdAt: day, processedAt: day } })
+    const posted = await postShiftClose(drawer)
+    expect(posted.entryId, JSON.stringify(posted)).toBeTruthy()
+  }
+
+  async function approve(body: Record<string, unknown>) {
+    const r = await call()(financeD, 'POST', '/pos/shift-corrections', body)
+    expect(r.statusCode, r.body).toBe(201)
+    const ok = await call()(ceoD, 'POST', `/pos/shift-corrections/${r.json().id}/approve`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    return { created: r.json(), applied: ok.json() }
+  }
+
+  it('cash → card: the corrected bill, its payment and its ONE fiscal sale document are dated the original day; GST at the card rate; stock moved, never drawn twice', async () => {
+    const start = await stockOf()
+    const drawer = await openDrawer(D, cashierD)
+    const wrong = await bill(drawer, 'cash')
+    const old = await prisma.order.findUniqueOrThrow({ where: { id: wrong }, include: { items: true } })
+    await closeYesterday(drawer, [wrong], old.totalCents)
+    const oldDone = await prisma.order.findUniqueOrThrow({ where: { id: wrong } })
+    expect(await stockOf()).toBeCloseTo(start - 1, 6)
+    expect(await net(D.tenantId, ['5010'], D.conceptId)).toBe(100_000)
+
+    const { created, applied } = await approve({
+      shiftId: drawer, reason: 'Guest paid by card, cashier pressed cash',
+      items: [{ orderId: wrong, kind: 'void_reissue', newTender: 'card', tenderRef: 'APPR 778812', reason: 'Wrong tender on the bill' }],
+    })
+    expect(created.items[0].preview.effect).toMatchObject({ order: 'void_and_reissue', stock: 'moves_to_new_bill' })
+    expect(created.items[0].preview.reissue).toMatchObject({ tender: 'card', taxRatePct: 8 })
+    expect(applied.status, JSON.stringify(applied)).toBe('applied')
+    const res = applied.items[0].result as { newOrderId: string; applied: boolean }
+    expect(res.applied).toBe(true)
+
+    // The voided bill: cancelled, its tender voided, one fiscal void document.
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: wrong } })).status).toBe('cancelled')
+    expect((await prisma.fiscalDocument.findMany({ where: { orderId: wrong, kind: 'refund' } })).map((d) => d.idempotencyKey)).toEqual([`void:${wrong}`])
+
+    // The corrected bill: same drawer, completed AS OF the original sale, at the card rate.
+    const fresh = await prisma.order.findUniqueOrThrow({ where: { id: res.newOrderId }, include: { items: true, payments: true } })
+    expect(fresh).toMatchObject({ status: 'completed', source: 'pos', shiftId: drawer, taxRatePct: 8 })
+    expect(fresh.completedAt!.getTime()).toBe(oldDone.completedAt!.getTime())
+    expect(fresh.taxCents).toBe(11_600)                 // 8% of 1,450
+    expect(fresh.totalCents).toBeLessThan(old.totalCents) // cash 15% → card 8%
+    expect(fresh.payments).toHaveLength(1)
+    const pay = fresh.payments[0]!
+    expect(pay).toMatchObject({ method: 'card', status: 'paid', shiftId: drawer, amountCents: fresh.totalCents, gatewayRef: 'APPR 778812' })
+    expect(pay.createdAt.getTime()).toBe(oldDone.completedAt!.getTime())
+    expect((pay.gatewayMeta as { correction?: { itemId?: string } }).correction?.itemId).toBe(applied.items[0].id)
+    // ONE sale document for the new bill, issued on the original day.
+    const sales = await prisma.fiscalDocument.findMany({ where: { orderId: fresh.id, kind: 'sale' } })
+    expect(sales).toHaveLength(1)
+    expect(String((sales[0]!.payload as { issuedAt?: string }).issuedAt).slice(0, 10)).toBe(fmtPktDate(oldDone.completedAt!))
+
+    // No kitchen ticket: every line is already done.
+    expect(fresh.items.every((i) => i.status === 'bumped')).toBe(true)
+    // Stock: moved to the new bill, never drawn twice; cost of sales booked once.
+    expect(await stockOf()).toBeCloseTo(start - 1, 6)
+    expect(await prisma.stockMovement.count({ where: { orderId: wrong } })).toBe(0)
+    expect(await prisma.stockMovement.count({ where: { orderId: fresh.id, kind: 'sale' } })).toBeGreaterThan(0)
+    expect(await net(D.tenantId, ['5010'], D.conceptId)).toBe(100_000)
+
+    // The re-posted close carries the new bill: output tax = the new bill's; the books balance.
+    const repost = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: D.tenantId, reference: `shift.close:${drawer}@2` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(fmtPktDate(repost.entryDate)).toBe(fmtPktDate(oldDone.completedAt!))
+    expect(repost.lines.some((l) => l.account.code === '1030' && l.type === 'debit' && Number(l.amountCents) === fresh.totalCents)).toBe(true)
+    expect(await net(D.tenantId, OUTPUT_TAX_ACCOUNTS, D.conceptId)).toBe(-fresh.taxCents)
+    const tb = await trialBalance(D.tenantId)
+    expect(tb.debits).toBe(tb.credits)
+  })
+
+  it('card → cash: the corrected bill is at the cash rate and paid in cash', async () => {
+    const drawer = await openDrawer(D, cashierD)
+    const wrong = await bill(drawer, 'card')
+    await closeYesterday(drawer, [wrong], 0)
+    const { applied } = await approve({
+      shiftId: drawer, reason: 'Guest paid cash, cashier pressed card',
+      items: [{ orderId: wrong, kind: 'void_reissue', newTender: 'cash', reason: 'Wrong tender on the bill' }],
+    })
+    expect(applied.status, JSON.stringify(applied)).toBe('applied')
+    const fresh = await prisma.order.findUniqueOrThrow({ where: { id: applied.items[0].result.newOrderId }, include: { payments: true } })
+    expect(fresh.taxRatePct).toBe(15)
+    expect(fresh.payments.map((p) => [p.method, p.status, p.amountCents])).toEqual([['cash', 'paid', fresh.totalCents]])
+    // The counted cash (0) stays — the drawer is short by the cash bill until someone explains it.
+    expect(applied.result.drawer.varianceCents).toBe(-fresh.totalCents)
+    const tb = await trialBalance(D.tenantId)
+    expect(tb.debits).toBe(tb.credits)
+  })
+
+  it('→ Raast: a failure mid-apply (no receiving account) is retried without a second bill; a used reference is 409', async () => {
+    const drawer = await openDrawer(D, cashierD)
+    const wrong = await bill(drawer, 'cash')
+    const other = await bill(drawer, 'cash')
+    const o1 = await prisma.order.findUniqueOrThrow({ where: { id: wrong } })
+    const o2 = await prisma.order.findUniqueOrThrow({ where: { id: other } })
+    await closeYesterday(drawer, [wrong, other], o1.totalCents + o2.totalCents)
+    const r = await call()(financeD, 'POST', '/pos/shift-corrections', {
+      shiftId: drawer, reason: 'Guest paid by Raast, cashier pressed cash',
+      items: [{ orderId: wrong, kind: 'void_reissue', newTender: 'raast', tenderRef: 'FT26102177881', reason: 'Wrong tender on the bill' }],
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    const id = r.json().id
+    // No Raast receiving account yet: the void went through, the re-issue stops at the payment.
+    const failed = await call()(ceoD, 'POST', `/pos/shift-corrections/${id}/approve`, {})
+    expect(failed.json().status, failed.body).toBe('failed')
+    expect(failed.json().error).toMatch(/RAAST_NOT_SET_UP/)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: wrong } })).status).toBe('cancelled')
+
+    await mkRaastAccount(D)
+    const retried = await call()(ceoD, 'POST', `/pos/shift-corrections/${id}/retry`, {})
+    expect(retried.statusCode, retried.body).toBe(200)
+    expect(retried.json().status, retried.body).toBe('applied')
+    const key = `shift-correction:${r.json().items[0].id}`
+    const issued = await prisma.order.findMany({ where: { externalId: key } })
+    expect(issued).toHaveLength(1)
+    expect(await prisma.payment.count({ where: { orderId: issued[0]!.id } })).toBe(1)
+    const receipt = await prisma.raastReceipt.findFirstOrThrow({ where: { orderId: issued[0]!.id } })
+    expect(receipt).toMatchObject({ bankRef: 'FT26102177881', status: 'provisional', tenantId: D.tenantId })
+    const o1Day = await prisma.order.findUniqueOrThrow({ where: { id: wrong } })
+    expect(receipt.createdAt.getTime()).toBe(o1Day.completedAt!.getTime())
+    expect(issued[0]!.completedAt!.getTime()).toBe(o1Day.completedAt!.getTime())
+    expect(await prisma.fiscalDocument.count({ where: { orderId: issued[0]!.id, kind: 'sale' } })).toBe(1)
+
+    // The same bank reference for another bill → 409 (one transfer pays one bill).
+    const dup = await call()(financeD, 'POST', '/pos/shift-corrections', {
+      shiftId: drawer, reason: 'Second guest also paid by Raast',
+      items: [{ orderId: other, kind: 'void_reissue', newTender: 'raast', tenderRef: 'ft-2610 2177 881', reason: 'Wrong tender on the bill' }],
+    })
+    expect(dup.statusCode, dup.body).toBe(409)
+    expect(dup.json().error.code).toBe('RAAST_REF_USED')
+    const tb = await trialBalance(D.tenantId)
     expect(tb.debits).toBe(tb.credits)
   })
 })

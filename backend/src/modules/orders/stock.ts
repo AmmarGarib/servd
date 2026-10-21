@@ -1203,3 +1203,71 @@ export async function autoEightySixDepletedItems(ingredientIds: string[]) {
   }
 }
 
+
+// ─── Void & re-issue: the sale's stock MOVES to the re-issued bill ───────────
+//
+// Shift correction (owner, 2026-10-21; modules/shiftCorrections): a bill rung
+// up with the wrong tender is voided and re-issued with the same lines. The
+// food was cooked and served ONCE, so its stock leaves the lots once: the
+// voided bill gives nothing back (cancelOrder `keepStock`) and the re-issued
+// bill draws nothing (ingestOrder `correction` — no depletion); instead the
+// voided bill's sale movements and its depletion claim are re-pointed to the
+// re-issued bill's lines here. Cost of sales is then booked once, for the
+// re-issued bill, by its drawer's re-posted close (accounting/cogs.ts reads
+// the movements by order).
+//
+// Only a plain sale is moved: every movement of the order is a 'sale' row of
+// 'order_item.sale', nothing was given back, no late cost of sales was booked
+// on the old order's own key. Anything else is refused before anything moves
+// (saleStockMoveBlocker) — the bill is then voided and the right bill rung on
+// an open till instead.
+
+/** Why the order's stock cannot simply move to a re-issued bill, or null when it can. */
+export async function saleStockMoveBlocker(db: Tx | typeof prisma, orderId: string): Promise<string | null> {
+  const [moves, restored, depleted] = await Promise.all([
+    db.stockMovement.findMany({ where: { orderId }, select: { kind: true, sourceType: true, sourceId: true, orderItemId: true } }),
+    db.auditLog.findFirst({ where: { entity: 'Order', entityId: orderId, action: STOCK_RESTORE }, select: { id: true } }),
+    db.auditLog.findFirst({ where: { entity: 'Order', entityId: orderId, action: STOCK_DEPLETE }, select: { metadata: true } }),
+  ])
+  if (restored) return 'its stock was already given back'
+  if (moves.some((m) => m.kind !== 'sale' || m.sourceType !== ORDER_STOCK_SOURCE.sale || m.sourceId !== m.orderItemId)) {
+    return 'its stock changed after the sale (a return, waste, box or shortfall settlement)'
+  }
+  const meta = (depleted?.metadata ?? null) as { lateCogs?: unknown } | null
+  if (meta && meta.lateCogs) return 'its cost of sales was booked late on its own entry'
+  return null
+}
+
+/**
+ * Re-point the voided bill's sale movements and depletion claim to the
+ * re-issued bill (`lineMap`: old line id → new line id), inside the caller's
+ * transaction. Idempotent: once moved, the old order has no claim and nothing
+ * moves again. Locks both orders (id order).
+ */
+export async function moveSaleStockTx(tx: Tx, input: { fromOrderId: string; toOrderId: string; lineMap: ReadonlyMap<string, string> }): Promise<{ moved: number; claimMoved: boolean }> {
+  const { fromOrderId: from, toOrderId: to } = input
+  for (const id of [from, to].sort()) await lockOrderForStock(tx, id)
+  const { depleted } = await claimsTx(tx, from)
+  if (!depleted) return { moved: 0, claimMoved: false }
+  const blocker = await saleStockMoveBlocker(tx, from)
+  if (blocker) throw new AppError('REISSUE_NOT_SUPPORTED', `This bill cannot be re-issued: ${blocker}`, 422)
+  const toClaim = await claimsTx(tx, to)
+  if (toClaim.depleted) throw new AppError('STOCK_ALREADY_TAKEN', 'The re-issued bill already took its own stock', 409)
+  const moves = await tx.stockMovement.findMany({ where: { orderId: from }, select: { id: true, orderItemId: true } })
+  for (const m of moves) {
+    const line = m.orderItemId ? input.lineMap.get(m.orderItemId) : undefined
+    if (!line) throw new AppError('REISSUE_LINE_MISSING', 'A sold line of the voided bill has no line on the re-issued bill', 409)
+    await tx.stockMovement.update({ where: { id: m.id }, data: { orderId: to, orderItemId: line, sourceId: line } })
+  }
+  const meta = (depleted.metadata && typeof depleted.metadata === 'object' && !Array.isArray(depleted.metadata)) ? depleted.metadata as Record<string, unknown> : {}
+  const taken = meta['taken'] && typeof meta['taken'] === 'object' && !Array.isArray(meta['taken']) ? meta['taken'] as Record<string, unknown> : null
+  // A FIFO claim keys what it took by line: re-key it to the new lines (a legacy claim keys by item and stays).
+  const rekeyed = taken && isFifoClaim(depleted.metadata)
+    ? Object.fromEntries(Object.entries(taken).map(([lineId, v]) => [input.lineMap.get(lineId) ?? lineId, v]))
+    : taken
+  await tx.auditLog.update({
+    where: { id: depleted.id },
+    data: { entityId: to, metadata: { ...meta, ...(rekeyed ? { taken: rekeyed } : {}), movedFrom: from } as Prisma.InputJsonValue },
+  })
+  return { moved: moves.length, claimMoved: true }
+}

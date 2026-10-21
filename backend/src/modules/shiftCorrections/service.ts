@@ -49,7 +49,17 @@
 // it. A close reversed but not yet re-posted is flagged posting_failed on the
 // shift (it blocks the month close) until the retry posts it.
 //
-// NOT built (stopped, owner to decide): `void_reissue` — see VOID_REISSUE_BLOCKER.
+// void_reissue (owner, 2026-10-21: "make re-issue land on the original day"):
+// the wrong bill is voided as above but KEEPS its stock (cancelOrder
+// `keepStock`), then reissueItem issues the corrected bill — the same lines
+// priced at the NEW tender, on the same drawer, no kitchen ticket, the stock
+// moved to it, paid and completed AS OF the voided bill's completion (server-
+// only processPayment options), so its payment, completedAt and ONE fiscal
+// sale document carry the original day. A card reference is typed by finance
+// (accepted under the CEO's approval while the card machine is connected); a
+// Raast reference goes through the normal receipt rules. What was really
+// collected vs the new total is never invented: the drawer re-post recomputes
+// the cash variance, card payouts / Raast statement matching show the rest.
 
 import type { OrderStatus, Prisma, ShiftCorrection, ShiftCorrectionItem } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -82,29 +92,6 @@ const OPEN_STATUSES = ['received', 'confirmed', 'preparing', 'ready'] as const
 /** Tenders a correction never voids: their money is matched elsewhere (bank statement, client statement). */
 const NOT_VOIDABLE_TENDERS: ReadonlySet<string> = new Set(['raast', 'on_account'])
 
-/**
- * Why a corrected bill is NOT re-issued by servd yet (owner's answer 3 — "void
- * and re-issue inside the same set"). Back-dating a new bill through the till
- * engines is not clean today:
- *  1. processPayment / completeTillSaleTx stamp Payment.createdAt / processedAt
- *     and Order.completedAt with NOW, and the ONE sale fiscal document takes
- *     its issue date from completedAt (connectors/fiscal/payload.ts) — a new
- *     bill would be dated today, not on the original business day;
- *  2. createPosOrder → ingestOrder fires a new kitchen ticket and depletes
- *     stock for the new order (the food was already served and relieved by
- *     the voided bill);
- *  3. a card / Raast tender needs the real card-machine charge or bank
- *     reference (keyed card references are refused while the company's card
- *     machine is connected; a Raast reference is unique per company).
- * Until the owner decides how the engines take an "as of" date, a wrong tender
- * is corrected by voiding the bill here and ringing the right bill on an open
- * till.
- */
-export const VOID_REISSUE_BLOCKER =
-  'Void and re-issue is not available yet: servd cannot back-date a new bill to the original business day through the till '
-  + '(the payment and the fiscal sale document are stamped with today, the kitchen would get a new ticket and the stock would '
-  + 'come out twice). Void the bill in this correction and ring the right bill on an open till.'
-
 export interface ItemInput {
   orderId: string
   kind: ItemKind
@@ -112,6 +99,8 @@ export interface ItemInput {
   moneyReturned?: boolean
   foodMade?: boolean
   newTender?: string | null
+  /** void_reissue: the card slip / approval reference (card) or the bank reference (Raast). */
+  tenderRef?: string | null
 }
 
 export interface Actor { id: string; role: string; email?: string | null }
@@ -186,7 +175,11 @@ async function checkItem(db: Db, shift: ShiftRow, tenantId: string, item: ItemIn
     if (!item.newTender || !(TILL_TENDERS as readonly string[]).includes(item.newTender)) {
       throw err('TENDER_REQUIRED', `Order ${ref}: name the right tender (${TILL_TENDERS.join(', ')}) for a void and re-issue`, 422, item.orderId)
     }
-    throw err('VOID_REISSUE_NOT_AVAILABLE', VOID_REISSUE_BLOCKER, 422, item.orderId)
+    if (item.foodMade) throw err('FOOD_MADE_NOT_FOR_REISSUE', `Order ${ref}: a re-issued bill keeps its food — "food made" does not apply`, 422, item.orderId)
+    if (item.moneyReturned) throw err('MONEY_RETURNED_NOT_FOR_REISSUE', `Order ${ref}: a re-issued bill is paid by the right tender — no money is handed back`, 422, item.orderId)
+    if (item.newTender !== 'cash' && !item.tenderRef?.trim()) {
+      throw err('TENDER_REF_REQUIRED', `Order ${ref}: type the ${item.newTender === 'card' ? 'card slip / approval reference' : 'bank reference of the Raast transfer'}`, 422, item.orderId)
+    }
   }
   const o = await db.order.findFirst({ where: { id: item.orderId, deletedAt: null }, select: ORDER_SELECT })
   // Another company's order is the same answer as one on another drawer.
@@ -199,12 +192,13 @@ async function checkItem(db: Db, shift: ShiftRow, tenantId: string, item: ItemIn
   if (blocked) {
     throw err('TENDER_NOT_VOIDABLE', `Order ${ref} was paid by ${blocked.method === 'raast' ? 'Raast QR' : 'an on-account client'} — that money is matched elsewhere; refund it through its own route`, 422, o.id)
   }
-  if (item.kind === 'void_bill') {
+  if (item.kind === 'void_bill' || item.kind === 'void_reissue') {
     if (o.source !== 'pos' || homeShiftOf(o) !== shift.id) throw err('ORDER_NOT_ON_SHIFT', `Order ${ref} is not a till bill of this drawer`, 422, o.id)
     if (o.status !== 'completed') throw err('BILL_NOT_VOIDABLE', `Order ${ref} is ${o.status}, not a full & final bill that still stands`, 409, o.id)
     if (o.payments.some((p) => p.status === 'refunded')) throw err('BILL_NOT_VOIDABLE', `Order ${ref} already has refunds or voided lines — it cannot be voided whole`, 409, o.id)
     const cn = await db.taxInvoice.findFirst({ where: { orderId: o.id, type: 'credit_note' }, select: { id: true } })
     if (cn) throw err('BILL_NOT_VOIDABLE', `Order ${ref} already has a credit note`, 409, o.id)
+    if (item.kind === 'void_reissue') await checkReissue(db, o, tenantId, item)
     return o
   }
   // cancel_kot
@@ -212,6 +206,39 @@ async function checkItem(db: Db, shift: ShiftRow, tenantId: string, item: ItemIn
   if (!(OPEN_STATUSES as readonly string[]).includes(o.status)) throw err('KOT_NOT_OPEN', `Order ${ref} is ${o.status} — only an open ticket (KOT) is cancelled`, 409, o.id)
   if (o.payments.some((p) => p.status === 'refunded')) throw err('BILL_NOT_VOIDABLE', `Order ${ref} has refunds or voided lines already`, 409, o.id)
   return o
+}
+
+/** What a void & re-issue needs on top of a void (see the header). */
+async function checkReissue(db: Db, o: OrderRow, tenantId: string, item: ItemInput): Promise<void> {
+  const ref = orderRefOf(o.id)
+  const unsupported = (why: string) => err('REISSUE_NOT_SUPPORTED', `Order ${ref} cannot be re-issued: ${why} — void it and ring the right bill on an open till`, 422, o.id)
+  const receipts = receiptsOf(o)
+  if (receipts.length > 0 && receipts.every((p) => p.method === item.newTender)) {
+    throw err('TENDER_UNCHANGED', `Order ${ref} was already paid by ${item.newTender} — a re-issue changes the tender`, 422, o.id)
+  }
+  if (receipts.some((p) => p.method === 'comp')) throw unsupported('part of it was comped')
+  if (o.walletAmountCents > 0) throw unsupported('the wallet paid part of it')
+  const extra = await db.order.findUniqueOrThrow({
+    where: { id: o.id },
+    select: {
+      promoDiscountCents: true, deliveryFeeCents: true,
+      _count: { select: { giftCardRedemptions: true } },
+      loyaltyTxs: { where: { type: 'redeem' }, select: { id: true } },
+    },
+  })
+  if (extra.promoDiscountCents > 0) throw unsupported('a promo code was applied')
+  if (extra._count.giftCardRedemptions > 0) throw unsupported('a gift card paid part of it')
+  if (extra.loyaltyTxs.length > 0) throw unsupported('loyalty points paid part of it')
+  if (extra.deliveryFeeCents > 0) throw unsupported('it carries a delivery fee')
+  const { saleStockMoveBlocker } = await import('../orders/stock.js')
+  const blocker = await saleStockMoveBlocker(db, o.id)
+  if (blocker) throw unsupported(blocker)
+  if (item.newTender === 'raast') {
+    // The normal Raast receipt rules: normalised, unique per company (409 RAAST_REF_USED).
+    const { cleanRaastRef, raastRefRule, raastRefRequired, assertRaastRefFreeTx } = await import('../pos/raastTender.js')
+    const { ref: bankRef } = cleanRaastRef(item.tenderRef, { orderId: o.id, rule: await raastRefRule(tenantId), missing: raastRefRequired })
+    await assertRaastRefFreeTx(db as Prisma.TransactionClient, tenantId, bankRef)
+  }
 }
 
 function assertItemsShape(items: ItemInput[], reason: string): void {
@@ -247,13 +274,17 @@ export async function createCorrection(input: {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`shift-correction:${shift.id}`}))`
     const open = await tx.shiftCorrection.findFirst({ where: { shiftId: shift.id, status: 'submitted' }, select: { id: true } })
     if (open) throw new AppError('CORRECTION_PENDING', 'This drawer already has a correction waiting for the CEO — add to it after it is decided', 409, { correctionId: open.id })
+    const now = Date.now()
     return tx.shiftCorrection.create({
       data: {
         tenantId, shiftId: shift.id, businessDay, reason, requestedById: actor.id,
         items: {
-          create: input.items.map((i) => ({
+          // createdAt one millisecond apart: the set lists its fixes in the order finance gave them.
+          create: input.items.map((i, n) => ({
+            createdAt: new Date(now + n),
             tenantId, kind: i.kind, orderId: i.orderId, reason: i.reason.trim(),
             moneyReturned: !!i.moneyReturned, foodMade: !!i.foodMade, newTender: i.newTender ?? null,
+            tenderRef: i.kind === 'void_reissue' && i.newTender !== 'cash' ? (i.tenderRef?.trim() || null) : null,
           })),
         },
       },
@@ -283,13 +314,15 @@ export interface ItemPreview {
   tenders: Array<{ method: string; amountCents: number; status: string }>
   /** What the CEO's approval does to it. */
   effect: {
-    order: 'void_final_bill' | 'cancel_ticket' | 'not_available'
+    order: 'void_final_bill' | 'cancel_ticket' | 'void_and_reissue'
     /** Taken off the drawer's sales (re-posted close). */
     reversesRevenue: boolean
     money: 'voided' | 'owed_back' | 'none'
-    stock: 'back_to_stock' | 'waste'
+    stock: 'back_to_stock' | 'waste' | 'moves_to_new_bill'
     fiscal: 'void_document' | 'void_document_manual' | 'none'
   }
+  /** void_reissue: the corrected bill, priced at the new tender (lib/pricing.ts). */
+  reissue?: { tender: string; taxRatePct: number; taxCents: number; serviceChargeCents: number; tipCents: number; totalCents: number; differenceCents: number } | null
   /** Why the CEO's approval would be refused for this fix now (null = fine). */
   blockedBy: { code: string; message: string } | null
 }
@@ -297,8 +330,8 @@ export interface ItemPreview {
 async function previewItem(shift: ShiftRow, tenantId: string, item: ShiftCorrectionItem): Promise<ItemPreview> {
   const o = await prisma.order.findFirst({ where: { id: item.orderId, concept: { tenantId } }, select: ORDER_SELECT })
   let blockedBy: ItemPreview['blockedBy'] = null
-  const done = (item.result as { applied?: boolean } | null)?.applied
-  if (!done) {
+  const r = item.result as { applied?: boolean; voided?: boolean } | null
+  if (!r?.applied && !r?.voided) {
     try { await checkItem(prisma, shift, tenantId, item) } catch (e) {
       blockedBy = e instanceof AppError ? { code: e.code, message: e.message } : { code: 'ERROR', message: String((e as Error).message) }
     }
@@ -320,15 +353,44 @@ async function previewItem(shift: ShiftRow, tenantId: string, item: ShiftCorrect
     discountCents: o?.discountCents ?? 0,
     tenders: o?.payments.map((p) => ({ method: p.method, amountCents: p.amountCents, status: p.status })) ?? [],
     effect: {
-      order: item.kind === 'void_reissue' ? 'not_available' : finalBill ? 'void_final_bill' : 'cancel_ticket',
+      order: item.kind === 'void_reissue' ? 'void_and_reissue' : finalBill ? 'void_final_bill' : 'cancel_ticket',
       reversesRevenue: receipts.length > 0,
       money: receipts.filter((p) => p.method !== 'comp').length === 0 ? 'none' : item.moneyReturned ? 'owed_back' : 'voided',
-      stock: item.foodMade ? 'waste' : 'back_to_stock',
+      stock: item.kind === 'void_reissue' ? 'moves_to_new_bill' : item.foodMade ? 'waste' : 'back_to_stock',
       fiscal: !finalBill || !sale || sale.status === 'skipped' ? 'none'
         : (sale.statusReason === 'servd_channel' || o?.settlementChannel === 'servd') ? 'void_document_manual' : 'void_document',
     },
     blockedBy,
+    ...(item.kind === 'void_reissue' && item.newTender ? { reissue: await previewReissue(item.orderId, item.newTender, o?.totalCents ?? 0).catch(() => null) } : {}),
   }
+}
+
+async function previewReissue(orderId: string, tender: string, oldTotalCents: number): Promise<NonNullable<ItemPreview['reissue']>> {
+  const plan = await reissuePlan(prisma, orderId, tender)
+  return {
+    tender, taxRatePct: plan.price.taxRatePct, taxCents: plan.price.taxCents, serviceChargeCents: plan.price.serviceChargeCents,
+    tipCents: plan.tipCents, totalCents: plan.payCents, differenceCents: plan.payCents - oldTotalCents,
+  }
+}
+
+/** The re-issued bill of a voided one: its lines (copied) priced at the NEW tender through lib/pricing.ts. */
+async function reissuePlan(db: Db, orderId: string, tender: string) {
+  const old = await db.order.findUniqueOrThrow({
+    where: { id: orderId },
+    include: {
+      items: { where: { status: { not: 'voided' } }, include: { modifiers: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+      concept: { select: { id: true, tenantId: true, taxRateCash: true, taxRateCard: true } },
+    },
+  })
+  const lines = old.items.map((i) => ({
+    externalItemId: i.id, menuItemId: i.menuItemId, name: i.name, quantity: i.quantity, unitPriceCents: i.unitPriceCents,
+    notes: i.notes ?? undefined, course: i.course ?? undefined,
+    modifiers: i.modifiers.map((m) => ({ name: m.name, priceDeltaCents: m.priceDeltaCents, modifierId: m.modifierId })),
+  }))
+  const { priceOrder, tenderOf } = await import('../../lib/pricing.js')
+  const price = await priceOrder(lines, tenderOf(tender), 'pos', old.concept, { discountCents: old.discountCents, db: db as typeof prisma })
+  const tipCents = old.tipCents
+  return { old, lines, price, tipCents, payCents: price.totalCents + tipCents }
 }
 
 export type CorrectionWithItems = ShiftCorrection & { items: ShiftCorrectionItem[] }
@@ -349,6 +411,7 @@ export async function correctionView(c: CorrectionWithItems, opts: { preview: bo
     moneyReturned: i.moneyReturned,
     foodMade: i.foodMade,
     newTender: i.newTender,
+    tenderRef: i.tenderRef,
     result: i.result,
     ...(opts.preview && shift ? { preview: await previewItem(shift, c.tenantId, i) } : {}),
   })))
@@ -501,8 +564,14 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
 
     const pending = c.items.filter((i) => !(i.result as { applied?: boolean } | null)?.applied)
     // Every fix still stands as it was checked — before anything moves.
+    // (A void & re-issue already voided by an earlier attempt only has its re-issue left — idempotent.)
     const orders = new Map<string, OrderRow>()
-    for (const i of pending) orders.set(i.orderId, await checkItem(prisma, shift, tenantId, i))
+    for (const i of pending) {
+      const voided = !!(i.result as { voided?: boolean } | null)?.voided
+      orders.set(i.orderId, voided
+        ? await prisma.order.findUniqueOrThrow({ where: { id: i.orderId }, select: ORDER_SELECT })
+        : await checkItem(prisma, shift, tenantId, i))
+    }
     if (progress.drawer === undefined) {
       const d = await drawerExpectation(shift.id)
       progress.drawer = { expectedCents: d.expectedCents, countedCents: shift.closingFloatCents, varianceCents: null, varianceBeforeCents: shift.closingFloatCents == null ? null : shift.closingFloatCents - d.expectedCents }
@@ -536,7 +605,12 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
     const { enqueueFiscalRefundTx, kickFiscal } = await import('../../connectors/fiscal/outbox.js')
     for (const item of pending) {
       const o = orders.get(item.orderId)!
-      const finalBill = item.kind === 'void_bill'
+      const finalBill = item.kind !== 'cancel_kot'
+      const reissue = item.kind === 'void_reissue'
+      if (reissue && (item.result as { voided?: boolean } | null)?.voided) {
+        await reissueItem(c, item, ceo, tenantId)
+        continue
+      }
       let fiscal: { id: string; status: string; statusReason: string | null } | null = null
       const voidedPaymentIds: string[] = []
       await cancelOrder(o.id, {
@@ -546,11 +620,13 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
         backdatedReason: c.reason,
         onlyFrom: (finalBill ? ['completed'] : [...OPEN_STATUSES]) as OrderStatus[],
         cookedFood: item.foodMade ? { wasteReason: 'cancelled_after_fire', wasteAll: true } : undefined,
-        action: finalBill ? 'shift_correction.void_bill' : 'shift_correction.cancel_kot',
+        action: reissue ? 'shift_correction.void_reissue' : finalBill ? 'shift_correction.void_bill' : 'shift_correction.cancel_kot',
         metadata: { correctionId: c.id, itemId: item.id, moneyReturned: item.moneyReturned, foodMade: item.foodMade },
         shiftCorrection: {
           voidFinalBill: finalBill,
           returnAll: !item.foodMade,
+          // Void & re-issue: the stock MOVES to the re-issued bill (orders/stock.ts moveSaleStockTx).
+          keepStock: reissue,
           inTx: async (tx) => {
             const at = new Date()
             // Not a refund: the tenders were never right — voided, unless the money really went back.
@@ -591,12 +667,13 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
               subtitle: `${finalBill ? 'Bill voided' : 'KOT cancelled'} by shift correction ${ref}`,
               reason: item.reason, meta: { correctionId: c.id, kind: item.kind },
             })
-            // The applied marker, with the cancel itself (a retry skips this fix).
+            // The applied marker, with the cancel itself (a retry skips this fix); a
+            // void & re-issue is only `voided` until its corrected bill is issued.
             await tx.shiftCorrectionItem.update({
               where: { id: item.id },
               data: {
                 result: json({
-                  applied: true, at: at.toISOString(), fromStatus: o.status, voidedPaymentIds,
+                  ...(reissue ? { voided: true } : { applied: true }), at: at.toISOString(), fromStatus: o.status, voidedPaymentIds,
                   moneyOwedBackCents: item.moneyReturned ? receiptsOf(o).filter((p) => p.method !== 'comp').reduce((t, p) => t + p.amountCents, 0) : 0,
                   fiscal,
                 }),
@@ -606,11 +683,13 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
         },
       })
       const done = await prisma.shiftCorrectionItem.findUniqueOrThrow({ where: { id: item.id }, select: { result: true } })
-      if (!(done.result as { applied?: boolean } | null)?.applied) {
+      const marker = done.result as { applied?: boolean; voided?: boolean } | null
+      if (!(reissue ? marker?.voided : marker?.applied)) {
         throw new AppError('ORDER_MOVED_ON', `Order ${orderRefOf(o.id)} changed while the correction was applied — reload and retry`, 409, { orderId: o.id })
       }
       const f = fiscal as { id: string; status: string } | null
       if (f?.status === 'pending') void kickFiscal(f.id)
+      if (reissue) await reissueItem(c, item, ceo, tenantId)
     }
 
     // d. Re-post the close from the same function as a normal close.
@@ -674,6 +753,90 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
     notifyOutcome(failed, ceo.id, 'failed')
     return failed
   }
+}
+
+/**
+ * The corrected bill of a void & re-issue, after its wrong bill was voided:
+ * the same lines on a new till order of the same drawer and company (waiter,
+ * table, guest and settlement channel kept), priced at the NEW tender
+ * (lib/pricing.ts), with no kitchen ticket and no stock draw (ingestOrder
+ * `correction`); the voided bill's stock MOVES to it (moveSaleStockTx); paid
+ * by the right tender through processPayment and completed through
+ * completeOrder — ALL dated as the voided bill's completion (the "as of"
+ * date), so the ONE sale fiscal document is issued on the original business
+ * day. Every step is keyed on the item (`shift-correction:<itemId>`): a retry
+ * never issues a second bill or a second payment.
+ */
+async function reissueItem(c: ShiftCorrection, item: ShiftCorrectionItem, ceo: Actor, tenantId: string): Promise<void> {
+  const key = `shift-correction:${item.id}`
+  const tender = item.newTender!
+  const plan = await reissuePlan(prisma, item.orderId, tender)
+  const old = plan.old
+  const asOf = old.completedAt ?? old.placedAt
+  const { ingestOrder, completeOrder } = await import('../orders/service.js')
+  const table = old.tableId ? await prisma.table.findFirst({ where: { id: old.tableId, conceptId: old.conceptId, deletedAt: null }, select: { id: true } }) : null
+  const { order: fresh } = await ingestOrder({
+    source: 'pos',
+    external_id: key,
+    concept_id: old.conceptId,
+    placed_at: old.placedAt.toISOString(),
+    customer_id: old.customerId,
+    customer_name: old.customerName,
+    table_id: table?.id ?? null,
+    fulfilment_type: old.fulfilmentType,
+    pos_staff_id: old.posStaffId,
+    shift_id: c.shiftId,
+    items: plan.lines,
+    payment: { provider: null, amountCents: plan.price.totalCents, status: 'pending' },
+    loyalty_points_earned: null,
+    delivery_notes: null,
+    estimated_pickup: null,
+  }, { price: plan.price, correction: { reissueOf: old.id } })
+  // What the till flow keeps on the ticket, and the bill's settlement channel.
+  await prisma.order.update({
+    where: { id: fresh.id },
+    data: {
+      waiterEmployeeId: old.waiterEmployeeId, partySize: old.partySize, guestRegistrationNo: old.guestRegistrationNo,
+      settlementChannel: old.settlementChannel,
+    },
+  })
+  // The sale's stock moves from the voided bill to its re-issue (once; idempotent).
+  const newLines = await prisma.orderItem.findMany({ where: { orderId: fresh.id }, select: { id: true, externalItemId: true } })
+  const lineMap = new Map(newLines.filter((l) => l.externalItemId).map((l) => [l.externalItemId!, l.id]))
+  const { moveSaleStockTx } = await import('../orders/stock.js')
+  await prisma.$transaction((tx) => moveSaleStockTx(tx, { fromOrderId: old.id, toOrderId: fresh.id, lineMap }), { maxWait: 10_000, timeout: 30_000 })
+
+  // The right tender, as of the original sale (server-only options — no route passes them).
+  const { processPayment } = await import('../pos/service.js')
+  const tip = plan.tipCents
+  await processPayment({
+    orderId: fresh.id,
+    shiftId: c.shiftId,
+    actorId: ceo.id,
+    idempotencyKey: key,
+    ...(old.settlementChannel === 'servd' ? { settlementChannel: 'servd' as const } : {}),
+    payments: [{
+      method: tender as 'cash' | 'card' | 'raast',
+      amountCents: plan.payCents,
+      ...(tip > 0 ? { tipCents: tip } : {}),
+      ...(tender !== 'cash' ? { gatewayRef: item.tenderRef ?? undefined } : {}),
+      ...(tender === 'raast' ? { raast: { via: 'cashier' as const, cashierVerified: true } } : {}),
+    }],
+  }, { asOf, correction: { correctionId: c.id, itemId: item.id } })
+  // THE completion: ledger (with its drawer's re-post), tax invoice, the ONE fiscal sale document, loyalty — once.
+  await completeOrder(fresh.id, { id: ceo.id, email: ceo.email ?? null, tenantId }, { via: 'shift_correction', syncFiscal: true })
+  const after = await prisma.order.findUniqueOrThrow({ where: { id: fresh.id }, select: { totalCents: true, taxCents: true, taxRatePct: true, completedAt: true } })
+  const prev = (item.result && typeof item.result === 'object' ? item.result : {}) as Record<string, unknown>
+  await prisma.shiftCorrectionItem.update({
+    where: { id: item.id },
+    data: {
+      result: json({
+        ...prev, applied: true, newOrderId: fresh.id, newOrderRef: orderRefOf(fresh.id), newTender: tender,
+        newTotalCents: after.totalCents, newTaxCents: after.taxCents, newTaxRatePct: after.taxRatePct, completedAt: after.completedAt,
+        oldTotalCents: old.totalCents,
+      }),
+    },
+  })
 }
 
 const shiftBusinessDateIso = (day: string) => `${day}T23:59:59.999+05:00`

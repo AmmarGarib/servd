@@ -2074,7 +2074,7 @@ under /pos); tables `shift_corrections` / `shift_correction_items`
 
 - **One set, one CEO decision.** Finance (with `accounting`) or the CEO raises
   ONE set on a CLOSED drawer (`POST /`, reason ≥10, items
-  `{orderId, kind void_bill|cancel_kot, reason ≥10, moneyReturned, foodMade}`);
+  `{orderId, kind void_bill|cancel_kot|void_reissue, reason ≥10, moneyReturned, foodMade, newTender, tenderRef}`);
   one open set per drawer (409 `CORRECTION_PENDING`); closed month 409
   `BOOKS_CLOSED` (the CEO reopens the month first). Nothing moves until the
   CEO approves (`/:id/approve`, ADMIN_ONLY, approval type `shift_correction`
@@ -2099,13 +2099,31 @@ under /pos); tables `shift_corrections` / `shift_correction_items`
   reference when the question is "did this close book the order?" (cogs,
   saleBookingOf, the cancelled-ticket unwind). `shift.close.reversal` is a
   sales source (night-audit day lock) and a food-cost sale source.
-- **Not built (stopped for the owner): void & re-issue** with the right
-  tender — 422 `VOID_REISSUE_NOT_AVAILABLE` (`VOID_REISSUE_BLOCKER`): the till
-  engines stamp the payment, `completedAt` and the fiscal sale's issue date
-  with today, ring-up fires a kitchen ticket and depletes stock again, and a
-  card / Raast tender needs a real charge / bank reference. Raast and
-  on-account bills and bills paid across drawers are refused (422).
-  Tests: `tests/shiftCorrections.test.ts`.
+- **Void & re-issue (owner, 2026-10-21: "make re-issue land on the original
+  day").** Item `{kind void_reissue, newTender cash|card|raast, tenderRef}`
+  (card slip / Raast bank reference; required for card / Raast; `foodMade` /
+  `moneyReturned` 422). The wrong bill is voided as above but KEEPS its stock
+  (`cancelOrder` `keepStock`); `reissueItem` then issues the corrected bill:
+  the same lines priced at the NEW tender (`lib/pricing.ts`), same drawer,
+  waiter, table, guest and settlement channel, NO kitchen ticket and NO stock
+  draw (`ingestOrder` `correction` — lines `bumped`); the voided bill's sale
+  movements and depletion claim MOVE to it (`orders/stock.ts
+  moveSaleStockTx`; refused, 422 `REISSUE_NOT_SUPPORTED`, when its stock
+  changed after the sale, or a wallet / gift card / points / promo / comp /
+  delivery fee paid part of it); paid through `processPayment` and completed
+  through `completeOrder` AS OF the voided bill's `completedAt` — the payment,
+  a Raast receipt, `completedAt` and the ONE fiscal sale document carry the
+  original day. The as-of date and the correction flag are processPayment's
+  SECOND argument (`TillPaymentInternal`), which no route passes — never read
+  them from a body. A typed card reference is accepted under the CEO's
+  approval while the card machine is connected (`gatewayMeta.correction`); a
+  Raast reference follows the receipt rules (409 `RAAST_REF_USED`). Keyed on
+  the item (`shift-correction:<itemId>`): a retry never issues a second bill.
+  What was really collected is never invented — the re-posted close
+  recomputes the cash variance; card payouts / Raast statement matching show
+  the rest. Raast and on-account bills and bills paid across drawers are not
+  voided here (422). The tax invoice of the new bill is issued today (its
+  numbering series). Tests: `tests/shiftCorrections.test.ts`.
 
 ### Closed books are the CEO's (owner, 2026-10-16)
 

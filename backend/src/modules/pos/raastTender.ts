@@ -261,6 +261,8 @@ export interface RecordRaastReceiptInput {
   smsAlertId?: string | null
   /** A check-split portion this tender settles. */
   targetPaymentId?: string | null
+  /** Shift correction re-issue only (processPayment TillPaymentInternal.asOf): the original sale's time. */
+  at?: Date
 }
 
 export type RecordedRaastReceipt = RaastReceipt & { smsConfirmed: boolean }
@@ -277,6 +279,7 @@ export async function recordRaastReceiptTx(tx: Tx, input: RecordRaastReceiptInpu
   const { order, payment } = input
   const tenantId = order.tenantId
   const now = connectorNow()
+  const at = input.at ?? now
   const intentId = input.intentId ?? null
   const smsAlertId = input.smsAlertId ?? null
   const viaSms = input.via === 'sms'
@@ -351,12 +354,13 @@ export async function recordRaastReceiptTx(tx: Tx, input: RecordRaastReceiptInpu
         bankRefRaw: input.bankRefRaw,
         status: 'provisional',
         confirmedVia: input.via,
-        confirmedAt: now,
+        confirmedAt: at,
         confirmedById: input.actorId,
         cashierVerified: input.cashierVerified,
         smsAlertId,
         smsConfirmedAt: viaSms ? now : null,
         idempotencyKey: `pay:${payment.id}`,
+        ...(input.at && { createdAt: input.at }),
         createdById: input.actorId,
       },
       select: { id: true },

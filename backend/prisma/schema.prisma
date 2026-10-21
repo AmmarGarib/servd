@@ -8577,6 +8577,8 @@ model ShiftCorrectionItem {
   foodMade      Boolean             @default(false)
   /// void_reissue only: the right tender (lib/tenders.ts TILL_TENDERS).
   newTender     String?
+  /// void_reissue only: the card slip / approval reference (card) or the bank reference (Raast) of the right tender.
+  tenderRef     String?
   result        Json?
   createdAt     DateTime            @default(now())
 
