@@ -7,7 +7,9 @@
 //   fixed-asset queue (events.applyEvent). Nothing posts before approval.
 //   - bought before servd → Dr class cost / Cr 3010 at today's value;
 //   - related party: Garibsons → Cr 2210; owners → Cr 3010; another servd
-//     company → 422 RELATED_COMPANY_NOT_YET (waits for the owner's answer);
+//     company (owner: "Book value, no gain or loss") → the giver's register
+//     asset leaves at its NBV after the catch-up charge, the receiver's comes
+//     in at that NBV, and the pair goes through the inter-company engine;
 //   - dated the in-service date (a closed month: 422 PERIOD_LOCKED when raised,
 //     refused and kept pending when approved), depreciation over the remaining
 //     life through chargeThrough;
@@ -26,8 +28,8 @@ import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { ensureAssetClasses } from '../src/modules/fixedAssets/classes.js'
-import { applyEvent, rejectEvent } from '../src/modules/fixedAssets/events.js'
-import { chargeThrough } from '../src/modules/fixedAssets/service.js'
+import { applyEvent, rejectEvent, createRequest } from '../src/modules/fixedAssets/events.js'
+import { chargeThrough, postAcquisition, nextAssetTag } from '../src/modules/fixedAssets/service.js'
 import { addMonths, currentPeriodPkt, endOfMonthPkt } from '../src/modules/fixedAssets/schedule.js'
 import { fixedAssetRoutes } from '../src/modules/fixedAssets/routes.js'
 import { recordFileRoutes } from '../src/modules/recordFiles/routes.js'
@@ -42,7 +44,7 @@ const day = (k: number) => `${m(k)}-15`
 let app: FastifyInstance
 const who: Record<string, { id: string; token: string }> = {}
 interface Co { tenantId: string; conceptId: string; locationId: string; kitchen: string; smallwares: string; land: string }
-let A: Co, B: Co, C: Co
+let A: Co, B: Co, C: Co, D: Co, E: Co
 let seq = 0
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << >>\n%%EOF\n').toString('base64')
@@ -101,8 +103,11 @@ beforeAll(async () => {
   A = await mkCo('Existing A')
   B = await mkCo('Existing B')
   C = await mkCo('Existing C')
+  D = await mkCo('Existing D')
+  E = await mkCo('Existing E')
   await mkUser('ceoA', 'admin', A.tenantId)
-  await mkUser('finA', 'finance', A.tenantId, [C.tenantId])
+  await mkUser('ceoAD', 'admin', A.tenantId, [D.tenantId, E.tenantId])
+  await mkUser('finA', 'finance', A.tenantId, [C.tenantId, D.tenantId, E.tenantId])
   await mkUser('finB', 'finance', B.tenantId)
   await mkUser('fnbA', 'fnb_manager', A.tenantId)
   await mkUser('finC', 'finance', C.tenantId)
@@ -193,18 +198,10 @@ describe('add an existing asset — from a related party', () => {
     expect(await trialBalance(A.tenantId)).toBe(0)
   })
 
-  it('another servd company: a company the caller is not in → 422; one it is in → 422 RELATED_COMPANY_NOT_YET (owner question)', async () => {
-    const n = await raise('finA', body(A, { source: 'related_party', counterparty: 'servd_company', counterpartyTenantId: B.tenantId }))
-    expect(n.statusCode).toBe(422)
-    expect(n.json().error.code).toBe('COUNTERPARTY_NOT_YOURS')
-    const self = await raise('finA', body(A, { source: 'related_party', counterparty: 'servd_company', counterpartyTenantId: A.tenantId }))
-    expect(self.json().error.code).toBe('COUNTERPARTY_NOT_YOURS')
-    const y = await raise('finA', body(A, { source: 'related_party', counterparty: 'servd_company', counterpartyTenantId: C.tenantId }))
-    expect(y.statusCode).toBe(422)
-    expect(y.json().error.code).toBe('RELATED_COMPANY_NOT_YET')
-    // A related party must be named.
+  it('a related party must be named', async () => {
     expect((await raise('finA', body(A, { source: 'related_party' }))).statusCode).toBe(400)
   })
+
 })
 
 describe('rules', () => {
@@ -280,5 +277,153 @@ describe('rules', () => {
     // Today's month is open.
     const ok = await raise('finC', body(C, { inServiceDate: day(0) }))
     expect(ok.statusCode, ok.body).toBe(202)
+  })
+})
+
+// ─── Another servd company gave it (owner, 2026-10-21: "Book value, no gain or loss") ───
+
+const mid = (k: number) => new Date(`${m(k)}-15T12:00:00+05:00`)
+async function giverAsset(co: Co, name: string, costCents = 120_000, life = 12): Promise<string> {
+  return prisma.$transaction(async (tx) => {
+    const a = await tx.fixedAsset.create({
+      data: {
+        tenantId: co.tenantId, name, category: 'kitchen_equipment', assetTag: await nextAssetTag(tx, co.tenantId),
+        acquiredAt: mid(-6), inServiceAt: mid(-6), costCents, originalCostCents: costCents, usefulLifeMonths: life,
+        conceptId: co.conceptId, locationId: co.locationId, acquisitionCreditCode: '2012', serialNumber: `SN-${name}`,
+      },
+    })
+    await postAcquisition(tx, a, { advancedCents: 0, owedCents: costCents, inputTaxCents: 0, inputTaxCode: null, natural: mid(-6) })
+    return a.id
+  })
+}
+const transferBody = (giver: Co, giverAssetId: string, extra: Record<string, unknown> = {}) => ({
+  source: 'related_party', counterparty: 'servd_company', counterpartyTenantId: giver.tenantId, giverAssetId,
+  conceptId: A.conceptId, inServiceDate: day(-1), reason: 'Oven moved from the D kitchen to the A kitchen', ...extra,
+})
+async function linesOf(tenantId: string, reference: string) {
+  const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId, reference }, include: { lines: { include: { account: true } } } })
+  return je.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()
+}
+
+describe('add an existing asset — another servd company gave it', () => {
+  it('book value after the catch-up, no gain or loss, giver out / receiver in, the pair through the inter-company engine, depreciation continues', async () => {
+    const oven = await giverAsset(D, 'Deck oven')
+    // D charged m(-6) and m(-5) only; the approval must catch up m(-4)..m(-2) (the month before the transfer).
+    await chargeThrough(D.tenantId, m(-5), { postedBy: 'system' })
+
+    const pick = await call('finA', 'GET', `${BASE}/existing/giver-assets?giverTenantId=${D.tenantId}&date=${day(-1)}`)
+    expect(pick.statusCode, pick.body).toBe(200)
+    const listed = (pick.json().assets as Array<{ assetId: string; nbvCents: number; remainingLifeMonths: number }>).find((a) => a.assetId === oven)!
+    expect(listed).toMatchObject({ nbvCents: 70_000, remainingLifeMonths: 7 })
+
+    const beforeA = await entries(A.tenantId), beforeD = await entries(D.tenantId)
+    const r = await raise('finA', transferBody(D, oven))
+    expect(r.statusCode, r.body).toBe(202)
+    const ev = r.json().event as { id: string; payload: Record<string, unknown>; existing: { sourceLabel: string } }
+    expect(ev.payload).toMatchObject({ valueCents: 70_000, remainingLifeMonths: 7, classKey: 'kitchen_equipment', name: 'Deck oven', giverAssetId: oven })
+    expect(ev.existing.sourceLabel).toBe('From Existing D')
+    expect(await entries(A.tenantId)).toBe(beforeA)
+    expect(await entries(D.tenantId)).toBe(beforeD)
+
+    // The CEO must belong to both companies.
+    await expect(applyEvent(ev.id, who.ceoA!.id)).rejects.toMatchObject({ code: 'NOT_IN_BOTH_COMPANIES', statusCode: 403 })
+    expect((await prisma.fixedAssetEvent.findUniqueOrThrow({ where: { id: ev.id } })).status).toBe('pending')
+    expect(await entries(D.tenantId)).toBe(beforeD)
+
+    const done = await applyEvent(ev.id, who.ceoAD!.id)
+    expect(done.status).toBe('posted')
+    expect(Number(done.amountCents)).toBe(70_000)
+
+    // Giver: caught up through m(-2), out at NBV — Dr accumulated + Dr 1395 / Cr cost, nothing on 8030.
+    const charged = await prisma.fixedAssetDepreciation.findMany({ where: { assetId: oven, reversedAt: null } })
+    expect(charged.map((c) => c.period).sort()).toEqual([m(-6), m(-5), m(-4), m(-3), m(-2)])
+    expect(await linesOf(D.tenantId, `fixed_asset.transfer_out:${oven}`)).toEqual([['1395', 'debit', 70_000], ['1510', 'credit', 120_000], ['1591', 'debit', 50_000]])
+    const gone = await prisma.fixedAsset.findUniqueOrThrow({ where: { id: oven } })
+    expect(gone).toMatchObject({ status: 'disposed', disposalKind: 'transferred_out' })
+    expect(Number(gone.disposalProceedsCents)).toBe(70_000)
+    const out = await prisma.fixedAssetEvent.findFirstOrThrow({ where: { assetId: oven, kind: 'transfer_out' } })
+    expect(out).toMatchObject({ tenantId: D.tenantId, status: 'posted', parentEventId: ev.id })
+
+    // Receiver: in at NBV over the giver's remaining months.
+    const got = await prisma.fixedAsset.findUniqueOrThrow({ where: { id: done.assetId! } })
+    expect(got).toMatchObject({ tenantId: A.tenantId, status: 'active', usefulLifeMonths: 7, conceptId: A.conceptId, serialNumber: 'SN-Deck oven' })
+    expect(Number(got.costCents)).toBe(70_000)
+    expect(await linesOf(A.tenantId, `fixed_asset.acquire:${got.id}`)).toEqual([['1395', 'credit', 70_000], ['1510', 'debit', 70_000]])
+
+    // The pair: one inter-company transfer, posted in both books; 1395 back to zero; no gain or loss.
+    const ic = await prisma.intercompanyTransfer.findFirstOrThrow({ where: { source: 'asset_transfer', sourceRef: `asset:${oven}` } })
+    expect(ic).toMatchObject({ tenantId: A.tenantId, counterpartyTenantId: D.tenantId, status: 'posted', kind: 'charge' })
+    expect(Number(ic.amountCents)).toBe(70_000)
+    const dueTo = await prisma.account.findFirstOrThrow({ where: { tenantId: A.tenantId, controlledBy: 'intercompany', counterpartyTenantId: D.tenantId, type: 'liability' } })
+    const dueFrom = await prisma.account.findFirstOrThrow({ where: { tenantId: D.tenantId, controlledBy: 'intercompany', counterpartyTenantId: A.tenantId, type: 'asset' } })
+    expect(Number(dueTo.code)).toBeGreaterThanOrEqual(2150)
+    expect(Number(dueFrom.code)).toBeGreaterThanOrEqual(1450)
+    const aDue = await balance(A.tenantId, dueTo.code)
+    const dDue = await balance(D.tenantId, dueFrom.code)
+    expect(aDue).toBe(-70_000)
+    expect(dDue).toBe(70_000)
+    expect(aDue + dDue).toBe(0)
+    for (const t of [A.tenantId, D.tenantId]) {
+      expect(await balance(t, '1395')).toBe(0)
+      expect(await balance(t, '8030')).toBe(0)
+    }
+    expect(await balance(D.tenantId, '1510')).toBe(0)
+    expect(await balance(D.tenantId, '1591')).toBe(0)
+
+    // Depreciation continues on the receiver at NBV ÷ remaining months.
+    await chargeThrough(A.tenantId, m(-1), { postedBy: 'system' })
+    const dep = await prisma.fixedAssetDepreciation.findFirstOrThrow({ where: { assetId: got.id, period: m(-1), reversedAt: null } })
+    expect(Number(dep.amountCents)).toBe(10_000)
+    await chargeThrough(D.tenantId, m(-1), { postedBy: 'system' })
+    expect(await prisma.fixedAssetDepreciation.count({ where: { assetId: oven, period: m(-1), reversedAt: null } })).toBe(0)
+
+    // Neither side is undone by hand: no un-dispose of the giver's, no void of the receiver's.
+    await expect(createRequest({ kind: 'undispose', assetId: oven, tenantId: D.tenantId, reason: 'Bring the oven back please', payload: {} }, { id: who.finA!.id, role: 'finance' }))
+      .rejects.toMatchObject({ code: 'TRANSFERRED_OUT' })
+    await expect(createRequest({ kind: 'void', assetId: got.id, tenantId: A.tenantId, reason: 'Capitalised in error, void it', payload: {} }, { id: who.finA!.id, role: 'finance' }))
+      .rejects.toMatchObject({ code: 'TRANSFERRED_IN' })
+    // Gone from the giver's register: it cannot be transferred again.
+    expect((await raise('finA', transferBody(D, oven))).json().error.code).toBe('ASSET_NOT_ON_GIVER_REGISTER')
+
+    expect(await trialBalance(A.tenantId)).toBe(0)
+    expect(await trialBalance(D.tenantId)).toBe(0)
+  })
+
+  it('refuses: a company the caller is not in, its own company, an asset not on the giver\'s register; reject → nothing', async () => {
+    const fridge = await giverAsset(D, 'Fridge')
+    expect((await raise('finB', transferBody(D, fridge))).json().error.code).toBe('COUNTERPARTY_NOT_YOURS')
+    expect((await call('finB', 'GET', `${BASE}/existing/giver-assets?giverTenantId=${D.tenantId}`)).json().error.code).toBe('COUNTERPARTY_NOT_YOURS')
+    expect((await raise('finA', transferBody(A, fridge))).json().error.code).toBe('COUNTERPARTY_NOT_YOURS')
+    expect((await raise('finA', transferBody(B, fridge))).json().error.code).toBe('COUNTERPARTY_NOT_YOURS')
+    // Named under the wrong company → not on that giver's register.
+    expect((await raise('finA', transferBody(E, fridge))).json().error.code).toBe('ASSET_NOT_ON_GIVER_REGISTER')
+    expect((await raise('finA', transferBody(D, 'no-such-asset'))).json().error.code).toBe('ASSET_NOT_ON_GIVER_REGISTER')
+    // Company B never sees A's request.
+    const beforeA = await entries(A.tenantId), beforeD = await entries(D.tenantId)
+    const r = await raise('finA', transferBody(D, fridge))
+    expect(r.statusCode, r.body).toBe(202)
+    expect((await call('finB', 'POST', `${BASE}/requests/${r.json().event.id}/cancel`)).statusCode).toBe(404)
+    expect((await rejectEvent(r.json().event.id, who.ceoAD!.id, 'Keep it at D for now')).status).toBe('rejected')
+    expect(await entries(A.tenantId)).toBe(beforeA)
+    expect(await entries(D.tenantId)).toBe(beforeD)
+    expect((await prisma.fixedAsset.findUniqueOrThrow({ where: { id: fridge } })).status).toBe('active')
+    expect(await prisma.intercompanyTransfer.count({ where: { sourceRef: `asset:${fridge}` } })).toBe(0)
+  })
+
+  it('a closed month in the GIVER refuses it — when raised, and when it closed while waiting', async () => {
+    const mixer = await giverAsset(E, 'Mixer')
+    const r = await raise('finA', transferBody(E, mixer))
+    expect(r.statusCode, r.body).toBe(202)
+    await prisma.periodLock.create({ data: { tenantId: E.tenantId, lockedThrough: endOfMonthPkt(m(-1)), lockedBy: who.ceoAD!.id } })
+    const beforeA = await entries(A.tenantId), beforeE = await entries(E.tenantId)
+    await expect(applyEvent(r.json().event.id, who.ceoAD!.id)).rejects.toMatchObject({ code: 'PERIOD_LOCKED' })
+    expect((await prisma.fixedAssetEvent.findUniqueOrThrow({ where: { id: r.json().event.id } })).status).toBe('pending')
+    expect(await entries(A.tenantId)).toBe(beforeA)
+    expect(await entries(E.tenantId)).toBe(beforeE)
+    expect((await prisma.fixedAsset.findUniqueOrThrow({ where: { id: mixer } })).status).toBe('active')
+    const again = await raise('finA', transferBody(E, mixer))
+    expect(again.statusCode).toBe(422)
+    expect(again.json().error.code).toBe('PERIOD_LOCKED')
+    expect(await trialBalance(E.tenantId)).toBe(0)
   })
 })

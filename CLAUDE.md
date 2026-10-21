@@ -1375,10 +1375,20 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   Dr class cost / Cr **3010** (bought before servd; owners contributed) or
   **2210** (Garibsons paid), dated the in-service date, never late-dated (a
   closed month: 422 `PERIOD_LOCKED`); documents via record-files `fixed_asset`
-  on the request id, moved to the asset on approval. "Another servd company
-  gave it" is NOT built (422 `RELATED_COMPANY_NOT_YET`) until the owner says
-  how the GIVING company books it out (contract:
-  `modules/fixedAssets/README.md`). Depreciation is AUTOMATIC (worker 03:20 PKT,
+  on the request id, moved to the asset on approval. **Another servd company
+  gave it (owner, 2026-10-21: "Book value, no gain or loss"):** finance picks
+  the GIVER's own register asset (`giverAssetId`; not there → 422
+  `ASSET_NOT_ON_GIVER_REGISTER`, add it to the giver's register first); the
+  value is its book value on the transfer date (never typed), life defaults
+  to its months left, salvage carries over; raiser and approving CEO belong
+  to BOTH companies. One approval transaction: giver caught up through the
+  month before, then `fixed_asset.transfer_out:<giverAssetId>` Dr accumulated
+  + Dr 1395 / Cr cost (no gain or loss; asset `transferred_out`); receiver
+  `fixed_asset.acquire:<newId>` Dr cost / Cr 1395; the pair through the
+  inter-company engine (`postSystemTransferTx`, source `asset_transfer`:
+  receiver Dr 1395 / Cr Due to, giver Dr Due from / Cr 1395) — 1395 Fixed
+  Asset Transfer Clearing nets to zero; a closed month in either company is
+  422 `PERIOD_LOCKED` (contract: `modules/fixedAssets/README.md`). Depreciation is AUTOMATIC (worker 03:20 PKT,
   `chargeThrough` the one path, no switch); smallwares are pooled (H21);
   prepayments sit on 1310 and release monthly (`accounting/prepaidReleases.ts`);
   refundable deposits (1360) only through CapEx. No deferred tax anywhere
@@ -2156,9 +2166,25 @@ under /pos); tables `shift_corrections` / `shift_correction_items`
   the item (`shift-correction:<itemId>`): a retry never issues a second bill.
   What was really collected is never invented — the re-posted close
   recomputes the cash variance; card payouts / Raast statement matching show
-  the rest. Raast and on-account bills and bills paid across drawers are not
-  voided here (422). The tax invoice of the new bill is issued today (its
-  numbering series). Tests: `tests/shiftCorrections.test.ts`.
+  the rest. On-account bills and bills paid across drawers are not voided here
+  (422). The tax invoice of the new bill is issued today (its numbering
+  series). Tests: `tests/shiftCorrections.test.ts`.
+- **Raast QR bills are corrected like cash and card (owner, 2026-10-21).** The
+  bill's `RaastReceipt` follows the money. Void / cancel with NO money handed
+  back (and void & re-issue Raast → cash / card): the tender is voided, the
+  re-posted close carries no Raast money (no Dr bank, no refund due), and
+  AFTER the re-post the receipt is voided through the CEO's own "void, never
+  booked" path (`reconciliation/raast.ts voidNeverBooked`: posts nothing, bank
+  reference stays claimed, never matched to the bank; the CEO's approval of
+  the set is the authority; already voided = step done). A receipt already
+  MATCHED to a bank line refuses that (422 `RAAST_MONEY_RECEIVED`). Money
+  handed back: the receipt stays (provisional or matched), the tender stays
+  paid, the re-posted close holds it as REFUND DUE (Dr the receiving bank / Cr
+  till clearing) until the till's refund route pays it out. A receipt written
+  off as not received (or any other state) is fixed in Reconciliation → Raast
+  first (422 `RAAST_RECEIPT_NOT_VOIDABLE`). `saleBookedTx` reads the LIVE
+  close: a cancelled till bill's close re-posted after the cancel with no
+  refund due for it no longer counts as booking its Raast money.
 
 ### Closed books are the CEO's (owner, 2026-10-16)
 

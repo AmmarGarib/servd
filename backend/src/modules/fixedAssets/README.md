@@ -26,14 +26,15 @@ same `fixed_asset_request` approval type and bell, and the same posting key.
 |---|---|
 | `source` | `pre_servd` (bought before servd) or `related_party` |
 | `counterparty` | related party only: `garibsons`, `servd_company`, `owners` |
-| `counterpartyTenantId` | `servd_company` only — another company the caller belongs to (else 422 `COUNTERPARTY_NOT_YOURS`) |
-| `classId` | an active, NON-pooled class of the active company (another company's 422 `ASSET_CLASS_NOT_IN_COMPANY`; smallwares 422 `POOLED_CLASS_NOT_ALLOWED` — pools come through Quick buy) |
+| `counterpartyTenantId` | `servd_company` only — another live company the caller belongs to, never the active one (else 422 `COUNTERPARTY_NOT_YOURS`) |
+| `giverAssetId` | `servd_company` only — the GIVER's own register asset: in use, individual (else 422 `ASSET_NOT_ON_GIVER_REGISTER` — add it to the giver's register first, then transfer). Picker: `GET /existing/giver-assets?giverTenantId&date` (its in-use assets with their book value on the date) |
+| `classId` | (not for `servd_company`: the asset keeps its class) an active, NON-pooled class of the active company (another company's 422 `ASSET_CLASS_NOT_IN_COMPANY`; smallwares 422 `POOLED_CLASS_NOT_ALLOWED` — pools come through Quick buy) |
 | `name`, `serial?` | the item |
 | `conceptId` / `locationId` | of the active company (422 `CONCEPT_NOT_IN_COMPANY` / `LOCATION_NOT_IN_COMPANY`); shared needs an outlet (422 `LOCATION_REQUIRED_FOR_SHARED`) |
-| `valueCents` | TODAY'S value (book value) > 0 — the register's cost from now on; no original cost, no carried accumulated |
-| `inServiceDate` | the day it starts on this company's books; not in the future (422 `IN_SERVICE_DATE`), not in a closed month (422 `PERIOD_LOCKED`) |
-| `remainingLifeMonths` | 1 … class life × 2 (422 `REMAINING_LIFE`), default the class life; land: not depreciated |
-| `salvageCents?` | below the value (422 `SALVAGE_TOO_HIGH`) |
+| `valueCents` | TODAY'S value (book value) > 0 — the register's cost from now on; no original cost, no carried accumulated. Not typed for `servd_company`: the giver's book value (422 `NO_BOOK_VALUE` at 0) |
+| `inServiceDate` | the day it starts on this company's books (for `servd_company`: the transfer date, on or after the giver's in-service day); not in the future (422 `IN_SERVICE_DATE`), not in a closed month of THIS company — nor of the giver (422 `PERIOD_LOCKED`) |
+| `remainingLifeMonths` | 1 … class life × 2 (422 `REMAINING_LIFE`), default the class life (`servd_company`: the giver's months left from the transfer month); land: not depreciated |
+| `salvageCents?` | below the value (422 `SALVAGE_TOO_HIGH`); `servd_company`: the giver's salvage carries over (capped at the book value) |
 | `reason` | ≥ 10 characters |
 
 Finance's request waits for the CEO (202); the CEO's own applies at once
@@ -46,7 +47,7 @@ in the request's company and ONE entry posts:
 | bought before servd | Dr class cost / Cr **3010** Owner's capital (as opening stock H19, supplier opening balances H49) |
 | Garibsons paid for it | Dr class cost / Cr **2210** Due to Garibsons (the petty-cash code, H1) |
 | the owners contributed it | Dr class cost / Cr **3010** |
-| another servd company gave it | **not built** — 422 `RELATED_COMPANY_NOT_YET` (owner question below) |
+| another servd company gave it | see "From another servd company" below — three entries, one transaction |
 
 The entry is dated the in-service date and is **never late-dated**: if the
 month was closed while the request waited, the books refuse it
@@ -64,17 +65,36 @@ is pending the files are attached to the REQUEST id
 (`/record-files/fixed_asset/<requestId>`), and on approval they move to the
 asset in the same transaction. No URL fields.
 
-**Open owner question (another servd company):** the receiving side is the
-inter-company engine (pair accounts, an `ic.*` transfer), but the GIVING
-company's side needs a decision: if the asset is on the giver's register, at
-what value does it leave (its NBV, or the agreed today's value?) and where
-does a difference go (gain / loss 8030 in the giver, or nothing — transfer at
-NBV)? If it is NOT on the giver's register, what does the giver credit for
-the amount owed to it (other income, or owner's capital)? There is no
-cross-company asset transfer today (transfers are outlet / brand within one
-company), and the register's accounts (`fixed_asset.*`) and the pair accounts
-(`ic.*`) are controlled by different source prefixes, so this is a new
-cross-company event either way.
+### From another servd company (owner, 2026-10-21: "Book value, no gain or loss")
+
+The asset must already be on the GIVER's register (pick the asset, not a
+value). One request in the RECEIVING company (kind `add_existing`,
+`counterparty servd_company`); the raiser and the approving CEO must belong
+to BOTH companies (approve: 403 `NOT_IN_BOTH_COMPANIES`). On approval, ONE
+transaction (`events.ts applyRelatedCompanyTransfer`), every entry dated the
+transfer date (a closed month in EITHER company: 422 `PERIOD_LOCKED`,
+nothing saved, the request stays pending):
+
+| book | key | lines |
+|---|---|---|
+| giver | (catch-up) `fixed_asset.depreciation:*` | every month BEFORE the transfer month charged; any charge of the transfer month or later reversed |
+| giver | `fixed_asset.transfer_out:<giverAssetId>` | Dr accumulated (per code) + Dr **1395** Fixed Asset Transfer Clearing (NBV) / Cr class cost — no gain or loss line |
+| receiver | `fixed_asset.acquire:<newAssetId>` | Dr class cost (NBV) / Cr **1395** |
+| both | `ic.transfer:<id>` (inter-company engine, `postSystemTransferTx`, source **`asset_transfer`**, sourceRef `asset:<giverAssetId>`) | receiver Dr 1395 / Cr Due to <giver>; giver Dr Due from <receiver> / Cr 1395 |
+
+1395 is zero again in both companies after the transaction: the register's
+legs stay under `fixed_asset.*` (never 1450–1499 / 2150–2199) and the
+engine's under `ic.*` (never 15xx, which it refuses). The pair shows on the
+inter-company page and settles like any transfer; it is never reversed there
+(409 `REVERSE_FROM_SOURCE`). The giver's asset becomes `disposed`,
+`disposalKind 'transferred_out'`, `disposalProceedsCents` = NBV, with a
+posted history row of kind `transfer_out` (payload: `toTenantId`,
+`toAssetId`, `transferId`) — the roll-forward shows it as a transfer out. The
+receiver's asset: cost = NBV, salvage carried, life = the months confirmed,
+`acquisitionCreditCode` 1395, then `chargeThrough` (NBV ÷ remaining months).
+Neither side is undone by hand: un-disposing the giver's is 409
+`TRANSFERRED_OUT`, voiding the receiver's 409 `TRANSFERRED_IN` — transfer it
+back instead.
 
 ## Files
 

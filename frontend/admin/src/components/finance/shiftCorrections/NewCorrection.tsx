@@ -162,6 +162,7 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
                   <span className="block text-xs text-s-muted truncate">{o.lines.map((l) => `${l.quantity}× ${l.name}`).join(', ') || 'No items'}</span>
                   {o.kind && !o.blockedBy && <span className="block text-xs text-success mt-0.5">Can be fixed: {KIND_LABEL[o.kind].toLowerCase()}</span>}
                   {o.blockedBy && <span className="block text-xs text-s-red mt-0.5">Cannot be fixed: {o.blockedBy.message}</span>}
+                  {o.raastStatus === 'matched' && !o.blockedBy && <span className="block text-xs text-s-muted mt-0.5">The Raast money reached the bank: it can only be voided with &quot;Money was handed back&quot; ticked.</span>}
                 </span>
               </label>
               {p && o.kind && (

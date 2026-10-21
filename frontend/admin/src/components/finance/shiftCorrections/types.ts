@@ -34,6 +34,8 @@ export interface ItemPreview {
     money: 'voided' | 'owed_back' | 'none'
     stock: 'back_to_stock' | 'waste' | 'moves_to_new_bill'
     fiscal: 'void_document' | 'void_document_manual' | 'none'
+    /** The bill's Raast receipt: cancelled (never matched to the bank) / kept, owed to the customer / no Raast tender. */
+    raast?: 'cancelled' | 'owed_back' | null
   }
   blockedBy: { code: string; message: string } | null
 }
@@ -86,6 +88,8 @@ export interface Candidate {
   lines: Array<{ name: string; quantity: number }>
   kind: 'void_bill' | 'cancel_kot' | null
   blockedBy: { code: string; message: string } | null
+  /** The Raast receipt's state; 'matched' = the money reached the bank, only "money handed back" applies. */
+  raastStatus?: string | null
 }
 
 export interface ShiftCandidates {
@@ -109,6 +113,8 @@ export const ERROR_TEXT: Record<string, string> = {
   RAAST_REF_INVALID: 'That bank reference is not valid. Check it against the bank message.',
   FOOD_MADE_NOT_FOR_REISSUE: 'A re-issued bill keeps its food, so "Food was made" does not apply.',
   TENDER_UNCHANGED: 'Pick a payment method different from the one the bill was paid with.',
+  RAAST_MONEY_RECEIVED: 'The Raast money for this bill has already reached the bank. Tick "Money was handed back" if it was given back to the customer; otherwise the bill stands as paid by Raast.',
+  RAAST_RECEIPT_NOT_VOIDABLE: 'This bill\'s Raast payment was already settled another way in Reconciliation → Raast (for example marked not received). Correct it there first.',
 }
 export const errorText = (e: unknown) => {
   const x = e as { code?: string; message?: string }
@@ -138,6 +144,11 @@ const dayShort = (ymd: string) => {
   return Number.isNaN(d.getTime()) ? ymd : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 }
 
+const RAAST_EFFECT = {
+  cancelled: 'Raast payment cancelled; it will not be matched to the bank',
+  owed_back: 'Money handed back: owed to the customer',
+} as const
+
 /** What approving a fix does, in plain words. */
 export function effectText(p: ItemPreview, businessDay: string): string {
   const day = dayShort(businessDay)
@@ -147,12 +158,14 @@ export function effectText(p: ItemPreview, businessDay: string): string {
     return `Bill voided and re-issued as ${t}` + (r
       ? `: GST ${r.taxRatePct}% ${fmtPkr(r.taxCents)}, new total ${fmtPkr(r.totalCents)} (difference ${fmtPkr(r.differenceCents)}), dated on the original day`
       : ', dated on the original day') + ' · the old bill moves to the Trash · stock moves to the new bill'
+      + (p.effect.raast === 'cancelled' ? ' · ' + RAAST_EFFECT.cancelled : '')
   }
   const parts: string[] = []
   if (p.effect.order === 'cancel_ticket') parts.push('Open ticket cancelled')
   else parts.push('Bill voided')
   if (p.effect.reversesRevenue) parts.push(`revenue and GST reversed on ${day}`)
-  if (p.effect.money === 'voided') parts.push('payment cancelled (no refund)')
+  if (p.effect.raast) parts.push(RAAST_EFFECT[p.effect.raast])
+  else if (p.effect.money === 'voided') parts.push('payment cancelled (no refund)')
   else if (p.effect.money === 'owed_back') parts.push('money handed back, shown as a refund due on till clearing')
   parts.push(p.effect.stock === 'waste' ? 'food was made, so stock is written off as waste' : 'stock back to stock')
   if (p.effect.fiscal === 'void_document') parts.push('void sent to FBR/SRB')

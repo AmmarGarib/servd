@@ -107,7 +107,7 @@ let c2SettleId: string
 
 describe('an HO finance member prepares for HO↔C1', () => {
   it('ho_recharge is a system source', () => {
-    expect([...SYSTEM_SOURCES]).toEqual(['fleet', 'cod', 'ho_recharge'])
+    expect([...SYSTEM_SOURCES]).toEqual(['fleet', 'cod', 'ho_recharge', 'asset_transfer'])
   })
 
   it('/companies lists the head office pairs it may prepare for', async () => {

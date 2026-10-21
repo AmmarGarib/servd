@@ -19,6 +19,12 @@
 //     the stock moves (never drawn twice), cost of sales booked once, the
 //     re-posted close carries the new bill; a duplicate Raast reference 409;
 //     a retry after a mid-apply failure issues no second bill.
+//   - Raast QR bills: a provisional receipt + void_bill → the receipt voided
+//     (never matched), the re-posted close without the Raast money, a retry
+//     idempotent; a matched receipt refuses a void with no money returned and
+//     a re-issue (422 RAAST_MONEY_RECEIVED); matched + money handed back → a
+//     REFUND DUE; Raast → cash re-issue voids the receipt, cash bill on the
+//     original day at the cash GST.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -581,6 +587,179 @@ describe('void & re-issue on a past business day', () => {
     expect(dup.statusCode, dup.body).toBe(409)
     expect(dup.json().error.code).toBe('RAAST_REF_USED')
     const tb = await trialBalance(D.tenantId)
+    expect(tb.debits).toBe(tb.credits)
+  })
+})
+
+describe('Raast QR bills (correctable like cash and card)', () => {
+  let R: Company
+  let cashierR: Who, financeR: Who, ceoR: Who
+  let bank: { bankAccountId: string; ledgerCode: string }
+  const CARD_TOTAL = 118_800 // 2 × Kheer at the card / Raast rate (8%)
+  let refN = 0
+  const bankRef = () => `FT2610${Date.now().toString().slice(-6)}${String(++refN).padStart(2, '0')}`
+  const YESTERDAY = () => new Date(Date.now() - 86_400_000)
+
+  beforeAll(async () => {
+    R = await mkCompany(`scor-r-${Date.now()}`, { srbPosId: 7405 })
+    cashierR = await mkUser('scor-cashier-r', 'cashier', R.tenantId)
+    financeR = await mkUser('scor-fin-r', 'finance', R.tenantId)
+    ceoR = await mkUser('scor-ceo-r', 'admin', R.tenantId)
+    await setConnector(R.tenantId, 'fiscal', { driver: 'test', enabled: true, settings: { test: { scenario: 'ok' }, syncTimeoutMs: 1000, syncAtTill: true, fiscalReportingRequired: true } })
+    bank = await mkRaastAccount(R)
+  }, 60_000)
+
+  /** A bill paid by Raast QR on an open drawer (the cashier checked the counter device). */
+  async function raastBill(drawer: string) {
+    const o = await ringKheer(app, cashierR, R)
+    const r = await call()(cashierR, 'POST', '/pos/payments', { orderId: o.id, shiftId: drawer, payments: [{ method: 'raast', amountCents: CARD_TOTAL, gatewayRef: bankRef(), raastVerified: true }] })
+    expect(r.statusCode, r.body).toBe(201)
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
+    expect(order.status).toBe('completed')
+    const receipt = await prisma.raastReceipt.findFirstOrThrow({ where: { orderId: o.id } })
+    expect(receipt).toMatchObject({ status: 'provisional', ledgerCode: bank.ledgerCode })
+    return { order, receipt }
+  }
+
+  async function submit(body: Record<string, unknown>) {
+    return call()(financeR, 'POST', '/pos/shift-corrections', body)
+  }
+
+  const closeLines = (reference: string) => prisma.journalEntry.findFirstOrThrow({
+    where: { tenantId: R.tenantId, reference }, include: { lines: { include: { account: { select: { code: true } } } } },
+  })
+
+  it('provisional receipt + void_bill: the bill is cancelled, the receipt voided (never matched), the close re-posted without the Raast money; a retry after a refused void is idempotent', async () => {
+    const drawer = await openDrawer(R, cashierR)
+    const { order, receipt } = await raastBill(drawer)
+    await closeDrawer(drawer, 0)
+    const original = await closeLines(`shift.close:${drawer}`)
+    expect(original.lines.some((l) => l.account.code === bank.ledgerCode && l.type === 'debit' && Number(l.amountCents) === CARD_TOTAL)).toBe(true)
+
+    // The drawer view: the Raast bill is correctable.
+    const view = await call()(financeR, 'GET', `/pos/shift-corrections/shift/${drawer}`)
+    expect(view.statusCode, view.body).toBe(200)
+    expect(view.json().orders.find((o: { orderId: string }) => o.orderId === order.id)).toMatchObject({ kind: 'void_bill', blockedBy: null, raastStatus: 'provisional' })
+
+    const r = await submit({ shiftId: drawer, reason: 'Test bill rung on the live till', items: [{ orderId: order.id, kind: 'void_bill', reason: 'Test bill, no money was sent' }] })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().items[0].preview.effect).toMatchObject({ order: 'void_final_bill', money: 'voided', raast: 'cancelled', reversesRevenue: true })
+
+    // A refused posting on the bill holds the Raast void (RAAST_CLOSE_PENDING) — the set fails AFTER the re-post.
+    const flag = await prisma.exceptionFlag.create({
+      data: { tenantId: R.tenantId, kind: 'posting_failed', severity: 'high', title: 'held', description: 'x', entityType: 'Order', entityId: order.id, status: 'open' },
+    })
+    const failed = await call()(ceoR, 'POST', `/pos/shift-corrections/${r.json().id}/approve`, {})
+    expect(failed.statusCode, failed.body).toBe(200)
+    expect(failed.json().status, failed.body).toBe('failed')
+    expect(failed.json().error).toMatch(/RAAST_CLOSE_PENDING/)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('cancelled')
+    expect((await prisma.raastReceipt.findUniqueOrThrow({ where: { id: receipt.id } })).status).toBe('provisional')
+    const entriesAfterFail = await prisma.journalEntry.count({ where: { tenantId: R.tenantId } })
+
+    await prisma.exceptionFlag.update({ where: { id: flag.id }, data: { status: 'resolved' } })
+    const retried = await call()(ceoR, 'POST', `/pos/shift-corrections/${r.json().id}/retry`, {})
+    expect(retried.statusCode, retried.body).toBe(200)
+    expect(retried.json().status, retried.body).toBe('applied')
+    // Nothing re-posted twice: the retry only voided the receipt.
+    expect(await prisma.journalEntry.count({ where: { tenantId: R.tenantId } })).toBe(entriesAfterFail)
+
+    const v = await prisma.raastReceipt.findUniqueOrThrow({ where: { id: receipt.id } })
+    expect(v).toMatchObject({ status: 'voided', voidedById: ceoR.id, bankRef: receipt.bankRef, statementLineId: null })
+    expect(v.voidReason).toMatch(/Shift correction/)
+    expect(retried.json().items[0].result.raastReceiptsVoided).toEqual([receipt.id])
+    const pay = await prisma.payment.findFirstOrThrow({ where: { orderId: order.id, method: 'raast' } })
+    expect(pay.status).toBe('failed')
+
+    // The close: reversed and re-posted with no Raast money — no bank debit, no refund due; the bank nets to zero.
+    await closeLines(`shift.close.reversal:${drawer}`)
+    const repost = await prisma.journalEntry.findFirst({ where: { tenantId: R.tenantId, reference: `shift.close:${drawer}@2` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(repost?.lines.some((l) => l.account.code === bank.ledgerCode) ?? false).toBe(false)
+    expect(repost?.lines.some((l) => (l.memo ?? '').includes(order.id)) ?? false).toBe(false)
+    expect(await net(R.tenantId, [bank.ledgerCode])).toBe(0)
+    expect(await revenueNet(R.tenantId, R.conceptId)).toBe(0)
+    const tb = await trialBalance(R.tenantId)
+    expect(tb.debits).toBe(tb.credits)
+    // A second retry is refused (applied) — nothing moves.
+    expect((await call()(ceoR, 'POST', `/pos/shift-corrections/${r.json().id}/retry`, {})).statusCode).toBe(409)
+  })
+
+  it('matched receipt (the money reached the bank) + void with no money returned → 422 RAAST_MONEY_RECEIVED; void & re-issue too', async () => {
+    const drawer = await openDrawer(R, cashierR)
+    const { order, receipt } = await raastBill(drawer)
+    await closeDrawer(drawer, 0)
+    await prisma.raastReceipt.update({ where: { id: receipt.id }, data: { status: 'matched', matchedAt: new Date() } })
+
+    // The drawer view: still correctable (with the money handed back), its receipt shown as matched.
+    const view = await call()(financeR, 'GET', `/pos/shift-corrections/shift/${drawer}`)
+    expect(view.json().orders.find((o: { orderId: string }) => o.orderId === order.id)).toMatchObject({ kind: 'void_bill', blockedBy: null, raastStatus: 'matched' })
+
+    const r = await submit({ shiftId: drawer, reason: 'Guest disputes this Raast bill', items: [{ orderId: order.id, kind: 'void_bill', reason: 'Guest says it was a test' }] })
+    expect(r.statusCode, r.body).toBe(422)
+    expect(r.json().error.code).toBe('RAAST_MONEY_RECEIVED')
+    const re = await submit({ shiftId: drawer, reason: 'Guest paid cash, cashier pressed Raast', items: [{ orderId: order.id, kind: 'void_reissue', newTender: 'cash', reason: 'Wrong tender on the bill' }] })
+    expect(re.statusCode, re.body).toBe(422)
+    expect(re.json().error.code).toBe('RAAST_MONEY_RECEIVED')
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('completed')
+  })
+
+  it('matched receipt + money handed back: the receipt is kept and the money is a REFUND DUE on till clearing', async () => {
+    const drawer = await openDrawer(R, cashierR)
+    const { order, receipt } = await raastBill(drawer)
+    await closeDrawer(drawer, 0)
+    await prisma.raastReceipt.update({ where: { id: receipt.id }, data: { status: 'matched', matchedAt: new Date() } })
+    const bankBefore = await net(R.tenantId, [bank.ledgerCode])
+
+    const r = await submit({ shiftId: drawer, reason: 'Guest refused the order after paying', items: [{ orderId: order.id, kind: 'void_bill', reason: 'Raast money sent back to the guest', moneyReturned: true }] })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().items[0].preview.effect).toMatchObject({ money: 'owed_back', raast: 'owed_back' })
+    const ok = await call()(ceoR, 'POST', `/pos/shift-corrections/${r.json().id}/approve`, {})
+    expect(ok.json().status, ok.body).toBe('applied')
+
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('cancelled')
+    expect((await prisma.raastReceipt.findUniqueOrThrow({ where: { id: receipt.id } })).status).toBe('matched')
+    expect((await prisma.payment.findFirstOrThrow({ where: { orderId: order.id, method: 'raast' } })).status).toBe('paid')
+    const repost = await closeLines(`shift.close:${drawer}@2`)
+    const due = repost.lines.find((l) => l.type === 'credit' && (l.memo ?? '').startsWith('REFUND DUE') && (l.memo ?? '').includes(order.id))
+    expect(due && Number(due.amountCents)).toBe(CARD_TOTAL)
+    expect(['1110', '1115']).toContain(due!.account.code)
+    expect(repost.lines.some((l) => l.account.code === bank.ledgerCode && l.type === 'debit' && Number(l.amountCents) === CARD_TOTAL)).toBe(true)
+    // The bank still holds the money once (reversal + re-post, never twice); revenue gone.
+    expect(await net(R.tenantId, [bank.ledgerCode])).toBe(bankBefore)
+    const tb = await trialBalance(R.tenantId)
+    expect(tb.debits).toBe(tb.credits)
+  })
+
+  it('Raast → cash re-issue: the Raast receipt is voided; the new cash bill is on the original day at the cash GST', async () => {
+    const drawer = await openDrawer(R, cashierR)
+    const { order, receipt } = await raastBill(drawer)
+    const day = YESTERDAY()
+    await prisma.shift.update({ where: { id: drawer }, data: { openedAt: new Date(day.getTime() - 3_600_000), closedAt: new Date(day.getTime() + 3_600_000), status: 'closed', closingFloatCents: 0 } })
+    await prisma.order.update({ where: { id: order.id }, data: { placedAt: day, completedAt: day } })
+    await prisma.payment.updateMany({ where: { orderId: order.id }, data: { createdAt: day, processedAt: day } })
+    expect((await postShiftClose(drawer)).entryId).toBeTruthy()
+    const bankBefore = await net(R.tenantId, [bank.ledgerCode])
+
+    const r = await submit({ shiftId: drawer, reason: 'Guest paid cash, cashier pressed Raast', items: [{ orderId: order.id, kind: 'void_reissue', newTender: 'cash', reason: 'Wrong tender on the bill' }] })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().items[0].preview.effect).toMatchObject({ order: 'void_and_reissue', raast: 'cancelled' })
+    expect(r.json().items[0].preview.reissue).toMatchObject({ tender: 'cash', taxRatePct: 15 })
+    const ok = await call()(ceoR, 'POST', `/pos/shift-corrections/${r.json().id}/approve`, {})
+    expect(ok.json().status, ok.body).toBe('applied')
+
+    expect((await prisma.raastReceipt.findUniqueOrThrow({ where: { id: receipt.id } })).status).toBe('voided')
+    const fresh = await prisma.order.findUniqueOrThrow({ where: { id: ok.json().items[0].result.newOrderId }, include: { payments: true } })
+    expect(fresh).toMatchObject({ status: 'completed', shiftId: drawer, taxRatePct: 15 })
+    expect(fresh.completedAt!.getTime()).toBe(day.getTime())
+    expect(fresh.taxCents).toBe(16_500) // 15% of 1,100
+    expect(fresh.payments.map((p) => [p.method, p.status, p.amountCents])).toEqual([['cash', 'paid', fresh.totalCents]])
+    expect(fresh.payments[0]!.createdAt.getTime()).toBe(day.getTime())
+    // The re-posted close, on the original day: cash, no Raast bank debit.
+    const repost = await closeLines(`shift.close:${drawer}@2`)
+    expect(fmtPktDate(repost.entryDate)).toBe(fmtPktDate(day))
+    expect(repost.lines.some((l) => l.account.code === bank.ledgerCode)).toBe(false)
+    expect(await net(R.tenantId, [bank.ledgerCode])).toBe(bankBefore - CARD_TOTAL)
+    const tb = await trialBalance(R.tenantId)
     expect(tb.debits).toBe(tb.credits)
   })
 })

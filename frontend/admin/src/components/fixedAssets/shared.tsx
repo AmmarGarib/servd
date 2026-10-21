@@ -40,6 +40,8 @@ export interface FaPoolRef { id: string; label: string; tenantId: string; locati
 export interface FaLookups {
   activeTenantId: string | null
   companies: Array<{ id: string; name: string }>
+  /** "Another servd company gave it": the other companies the caller belongs to. */
+  relatedCompanies?: Array<{ id: string; name: string }>
   classes: FaClass[]
   smallwareTypes: Array<{ key: string; label: string }>
   locations: FaNamed[]
