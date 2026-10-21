@@ -318,7 +318,7 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
         {editable && !editing && <button className={btnGhost} onClick={() => { setDraft(record.data); setEditing(true) }}>Edit</button>}
         {admin && record.status === 'draft' && <button className={btn} disabled={submit.isPending} onClick={() => submit.mutate()}>Submit for approval</button>}
         {editable && record.section === 'final_settlement' && (
-          <button className={btnGhost} disabled={calc.isPending} onClick={() => calc.mutate()}>{calc.isPending ? 'Calculating…' : 'Calculate'}</button>
+          <button className={btnGhost} disabled={calc.isPending} onClick={() => calc.mutate(undefined)}>{calc.isPending ? 'Calculating…' : 'Calculate'}</button>
         )}
         {admin && record.section === 'offer' && record.status === 'approved' && !record.data['_employeeId'] && (
           <button className={btn} disabled={hire.isPending} onClick={() => hire.mutate()}>Create employee</button>
