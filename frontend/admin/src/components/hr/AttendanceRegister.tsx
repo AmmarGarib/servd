@@ -9,7 +9,7 @@ import { card } from '../../lib/hr'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
-interface RegisterRow { id: string; manual: boolean; values: string[] }
+interface RegisterRow { id: string; manual: boolean; values: string[]; checkIn?: { lat: number; lng: number } | null }
 interface Register { columns: string[]; rows: RegisterRow[] }
 
 const STATUSES: Array<[string, string]> = [
@@ -19,6 +19,8 @@ const STATUSES: Array<[string, string]> = [
 /** Columns that hold times or hours: Time In, Time Out, Late In, Early Out, OT Hours. */
 const NUMERIC = new Set([6, 7, 8, 9, 10])
 const SOURCE = 11
+// Location: where they were at check-in — a map link when the time clock recorded a GPS fix.
+const LOCATION = 12
 const pad = (n: number) => String(n).padStart(2, '0')
 const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 
@@ -84,7 +86,11 @@ export function AttendanceRegister({ onOpen, onExportError }: { onOpen: (id: str
                 <tr key={r.id} onClick={() => onOpen(r.id)} className="border-t border-white/[0.05] cursor-pointer hover:bg-white/[0.03]">
                   {r.values.map((v, i) => (
                     <td key={i} className={`px-3 py-3 ${i === 4 ? 'text-white/85 font-bold' : 'text-white/70'} ${NUMERIC.has(i) ? 'text-right tabular-nums' : ''}`}>
-                      {v || '—'}
+                      {i === LOCATION && r.checkIn ? (
+                        <a href={`https://www.google.com/maps?q=${r.checkIn.lat},${r.checkIn.lng}`} target="_blank" rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()} className="underline decoration-dotted" style={{ color: 'var(--erp-primary)' }}
+                          title="Open where they checked in on the map">{v}</a>
+                      ) : (v || '—')}
                       {i === SOURCE && r.manual && <span className="s-badge-amber ml-2 text-[10px]">Entered manually</span>}
                     </td>
                   ))}

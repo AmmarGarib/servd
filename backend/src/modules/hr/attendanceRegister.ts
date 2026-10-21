@@ -33,7 +33,7 @@ const EXCLUDED = ['draft', 'rejected', 'cancelled']
 const MAX_ROWS = 5000
 
 export interface RegisterQuery { from?: string; to?: string; employeeId?: string; locationId?: string; status?: string }
-export interface RegisterRow { id: string; employeeId: string | null; manual: boolean; values: string[] }
+export interface RegisterRow { id: string; employeeId: string | null; manual: boolean; values: string[]; /** The GPS fix at check-in, for a map link. */ checkIn: { lat: number; lng: number } | null }
 export interface Register { columns: readonly string[]; rows: RegisterRow[] }
 
 /** Minutes as H:MM; blank for none. */
@@ -123,6 +123,16 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
     otHours.set(key, (otHours.get(key) ?? 0) + (typeof a === 'number' ? a : o.quantity ?? 0))
   }
   const locName = new Map(locations.map((l) => [l.id, l.name]))
+  // Where the person actually was at check-in (owner, 2026-10-21: "It should opt current location of the staff at
+  // time of checkin"): the GPS fix the time clock recorded with the punch (ClockLog lat/lng), in the record's company.
+  const inLogIds = kept.flatMap((r) => {
+    const first = ((((r.data ?? {}) as Record<string, unknown>)['_punches'] as PunchEntry[] | undefined) ?? []).find((p) => p.type === 'in')
+    return first?.clockLogId ? [first.clockLogId] : []
+  })
+  const fixes = inLogIds.length
+    ? await prisma.clockLog.findMany({ where: { id: { in: inLogIds }, tenantId: { in: tenantIds } }, select: { id: true, lat: true, lng: true } })
+    : []
+  const fixById = new Map(fixes.filter((f) => f.lat != null && f.lng != null).map((f) => [f.id, { lat: f.lat!, lng: f.lng! }]))
   const shiftById = new Map(shifts.map((s) => [s.id, s.data as Record<string, unknown>]))
 
   // The rota answers the days whose record names no shift or no expected end (a hand-keyed day). One call per company.
@@ -161,7 +171,8 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
     const punches = ((d['_punches'] as PunchEntry[] | undefined) ?? [])
     const firstIn = punches.find((p) => p.type === 'in')
     const manual = !!d['_manual']
-    const location = manual || !firstIn ? '' : firstIn.outOfArea ? 'Out of area' : firstIn.locationId ? locName.get(firstIn.locationId) ?? '' : ''
+    const fix = !manual && firstIn?.clockLogId ? fixById.get(firstIn.clockLogId) ?? null : null
+    const location = manual || !firstIn ? '' : checkInPlace(fix, firstIn, locName)
     const otH = r.employee && date ? otHours.get(`${r.employee.id}:${date}`) ?? 0 : 0
     const ot = otH > 0 ? otH.toFixed(2) : ''
     const values = [
@@ -169,10 +180,28 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
       label(r.employee?.departmentId) ?? '', timeIn, timeOut, hmm(r.quantity), early, ot, sourceText(d, r.status, punches), location,
       locName.get(branchOf(r)) ?? '', STATUS_LABEL[r.category ?? ''] ?? (r.category ?? ''), str(d['remarks']),
     ]
-    return { id: r.id, employeeId: r.employeeId, manual, values }
+    return { id: r.id, employeeId: r.employeeId, manual, values, checkIn: fix }
   })
   rows.sort((a, b) => a.values[0]!.localeCompare(b.values[0]!) || a.values[3]!.localeCompare(b.values[3]!))
   return { columns: ATTENDANCE_REGISTER_COLUMNS, rows }
+}
+
+/** Distance in words: "120 m" / "3.4 km". */
+const distText = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`)
+
+/**
+ * The Location column: the GPS position at check-in ("24.86072, 67.00109"), then how far that was from the work
+ * location it was measured against — or, with no fix (kiosk PIN, location refused), what the punch recorded.
+ */
+export function checkInPlace(fix: { lat: number; lng: number } | null, p: PunchEntry, locName: Map<string, string>): string {
+  const near = p.locationId ? locName.get(p.locationId) ?? '' : ''
+  const away = p.geofenceDistanceM != null && near ? `${distText(p.geofenceDistanceM)} from ${near}` : near
+  if (fix) {
+    const at = `${fix.lat.toFixed(5)}, ${fix.lng.toFixed(5)}`
+    const note = [p.outOfArea ? 'out of area' : '', away].filter(Boolean).join(', ')
+    return note ? `${at} (${note})` : at
+  }
+  return p.outOfArea ? 'Out of area (no location shared)' : near ? `${near} (no GPS)` : 'No location shared'
 }
 
 /** The register as the report exporter wants it (CSV text + columns/rows for Excel and PDF). */

@@ -49,9 +49,12 @@ beforeAll(async () => {
   emp['a2'] = (await mk(tA, 'RA-002', 'Bilal Manual')).id
   emp['b1'] = (await mk(tB, 'RB-001', 'Other Company')).id
 
+  // The time clock's GPS fix at check-in (owner, 2026-10-21: the staff's own location at check-in).
+  const anyUser = await prisma.user.findFirstOrThrow({ select: { id: true } })
+  const fixLog = await prisma.clockLog.create({ data: { userId: anyUser.id, type: 'in', lat: 24.860721, lng: 67.001093, tenantId: tA } })
   rec['a1'] = (await attendance(tA, emp['a1']!, '2026-10-05', 'late', {
     checkIn: '09:40', checkOut: '16:30', lateMinutes: 40, location: locA, remarks: 'Traffic', _source: 'clock',
-    _punches: [{ type: 'in', at: '2026-10-05T04:40:00.000Z', source: 'clock', locationId: locA }, { type: 'out', at: '2026-10-05T11:30:00.000Z', source: 'clock', locationId: locA }],
+    _punches: [{ type: 'in', at: '2026-10-05T04:40:00.000Z', source: 'clock', locationId: locA, clockLogId: fixLog.id, geofenceDistanceM: 120 }, { type: 'out', at: '2026-10-05T11:30:00.000Z', source: 'clock', locationId: locA }],
   }, { quantity: 40, refId: shiftA })).id
   const ot = (hours: number, status: string, data: Record<string, unknown> = {}) =>
     prisma.hrRecord.create({ data: { tenantId: tA, section: 'overtime', formVersion: 0, employeeId: emp['a1']!, startDate: new Date('2026-10-05T00:00:00.000Z'), quantity: hours, status, data: { otHours: hours, ...data } as never } })
@@ -92,8 +95,9 @@ describe('attendance register', () => {
     expect(v).toMatchObject({
       'Attendance Date': '2026-10-05', 'Attendance Day': 'Monday', 'Shift Code': 'Morning', 'Employee Name': 'Alia Late',
       'Time In': '09:40', 'Time Out': '16:30', 'Late In': '0:40', 'Early Out': '0:30', 'OT Hours': '2.50', Department: 'Kitchen', Source: 'Time clock',
-      Location: 'Reg Branch A', Branch: 'Reg Branch A', Status: 'Late', Remarks: 'Traffic',
+      Location: '24.86072, 67.00109 (120 m from Reg Branch A)', Branch: 'Reg Branch A', Status: 'Late', Remarks: 'Traffic',
     })
+    expect((rows[0] as { checkIn?: unknown }).checkIn).toEqual({ lat: 24.860721, lng: 67.001093 })
     expect(hmm(0)).toBe('')
     expect(hmm(75)).toBe('1:15')
   })
