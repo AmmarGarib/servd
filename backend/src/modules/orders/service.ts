@@ -1116,6 +1116,13 @@ async function transitionOrder(
      * really was when it was cancelled) — guards read it, never an earlier read.
      */
     inCancelTx?: (tx: Prisma.TransactionClient, ctx: { fromStatus: OrderStatus }) => Promise<void>
+    /**
+     * Shift correction (owner, 2026-10-21; modules/shiftCorrections): the
+     * CEO-approved void of a FULL & FINAL till bill — completed → cancelled,
+     * a move the state machine gives no other caller. No customer notice
+     * (a correction of the books, not news for the guest).
+     */
+    voidFinalBill?: boolean
   } = {},
 ) {
   const order = await prisma.order.findFirst({ where: { id, deletedAt: null } })
@@ -1135,7 +1142,8 @@ async function transitionOrder(
   // entries, loyalty earns, fiscal filing. The state machine rejects with a
   // 409 here so the caller can dedupe.
   const { canTransitionOrder } = await import('../../lib/orderStateMachine.js')
-  if (!canTransitionOrder(order.status, status)) {
+  const finalBillVoid = !!opts.voidFinalBill && order.status === 'completed' && status === 'cancelled'
+  if (!canTransitionOrder(order.status, status) && !finalBillVoid) {
     throw new AppError(
       'INVALID_TRANSITION',
       `Cannot move order ${id} from ${order.status} → ${status}`,
@@ -1244,7 +1252,8 @@ async function transitionOrder(
   }
 
   // Notify customer on key status transitions ('completed' is completeOrder's)
-  if (['preparing', 'ready', 'cancelled', 'rejected'].includes(status)) {
+  // — not on a shift correction's void of a final bill.
+  if (['preparing', 'ready', 'cancelled', 'rejected'].includes(status) && !opts.voidFinalBill) {
     notifyStatusChange(id, status).catch((err) =>
       console.error(`[Notify] Status update failed for ${id}:`, (err as Error).message),
     )
@@ -1428,6 +1437,23 @@ export interface CancelOrderInput {
      */
     onClaimed?: (r: { codVoidedCents: number; codPaymentIds: string[] }) => void
   }
+  /**
+   * Shift correction (owner, 2026-10-21; modules/shiftCorrections/service.ts
+   * is the ONE caller): the CEO approved it, so the approver is the CEO and
+   * `backdatedReason` is the set's reason.
+   *   voidFinalBill: a FULL & FINAL till bill may move completed → cancelled
+   *                  (transitionOrder), with no customer notice;
+   *   returnAll:     the food was never made — every line back to its lots;
+   *   inTx:          runs inside the cancel transaction once this call's claim
+   *                  changed the status (voids the payments, queues the fiscal
+   *                  void document, parks the order in the Trash) — a throw
+   *                  rolls the whole cancel back.
+   */
+  shiftCorrection?: {
+    voidFinalBill: boolean
+    returnAll: boolean
+    inTx: (tx: Prisma.TransactionClient) => Promise<void>
+  }
 }
 
 export const RETURN_CAUSES = ['refused', 'unreachable', 'other'] as const
@@ -1497,6 +1523,7 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
       && await codeOnlyDelivery(tx, before.concept.tenantId)) {
       throw new AppError('USE_EMERGENCY_OVERRIDE', USE_EMERGENCY_OVERRIDE_MESSAGE, 409)
     }
+    if (input.shiftCorrection) await input.shiftCorrection.inTx(tx)
     if (!returned) return
     const at = new Date()
     await tx.order.update({ where: { id }, data: { returnedAt: at, returnCause: returned.cause } })
@@ -1531,6 +1558,7 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
     onlyFrom: input.onlyFrom,
     approverId,
     inCancelTx,
+    voidFinalBill: !!input.shiftCorrection?.voidFinalBill,
   })
 
   // No sale → what the kitchen had not started goes back into its lots, and
@@ -1549,6 +1577,7 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
           : (input.cookedFood ?? { wasteReason: 'cancelled_after_fire' }),
         actorId: input.actor?.id ?? null,
         approverId,
+        ...(input.shiftCorrection?.returnAll ? { returnAll: true } : {}),
       })
     } catch (err) {
       await flagOrderStockFailure(id, 'restore', err, input.actor?.id ?? null)

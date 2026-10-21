@@ -157,14 +157,15 @@ export async function orderSaleBookedEntry(db: Db, tenantId: string, orderId: st
   const { homeShiftOf, isShiftReceipt, isVoidedRaast, REFUND_DUE_PREFIX } = await import('./orderPosting.js')
   const completeRef = `order.complete:${order.id}`
   const home = order.source === 'pos' ? homeShiftOf(order) : null
-  const closeRef = home ? `shift.close:${home}` : null
-  const entries = await db.journalEntry.findMany({
-    where: { tenantId, reference: { in: closeRef ? [completeRef, closeRef] : [completeRef] } },
+  const complete = await db.journalEntry.findFirst({
+    where: { tenantId, reference: completeRef },
     select: { id: true, reference: true, createdAt: true, entryDate: true },
   })
-  const complete = entries.find((e) => e.reference === completeRef)
   if (complete) return complete
-  const close = closeRef ? entries.find((e) => e.reference === closeRef) : undefined
+  // The home drawer's LIVE close (a shift correction reverses it and re-posts
+  // a revision — shiftPosting.ts liveShiftCloses).
+  const { liveShiftCloses } = await import('./shiftPosting.js')
+  const close = home ? (await liveShiftCloses(db, tenantId, [home])).get(home) : undefined
   if (!close) return null
   const due = await db.journalLine.findFirst({
     where: {
@@ -204,11 +205,15 @@ export async function orderSaleBookedEntry(db: Db, tenantId: string, orderId: st
  */
 export async function unbookedSalesCostByClass(db: Db, tenantId: string): Promise<Record<CostClass, number>> {
   const out = zeroByClass()
-  // The company's posted drawer closes ('shift.close:' is 12 characters).
+  // The company's LIVE drawer closes ('shift.close:' is 12 characters; a
+  // shift correction's re-post is '<shiftId>@n', its reversal
+  // 'shift.close.reversal:<shiftId>[@n]' — shiftPosting.ts liveShiftCloses).
   const rows = await db.$queryRaw<Array<{ id: string }>>`
     WITH posted AS (
-      SELECT substr(je.reference, 13) AS sid FROM journal_entries je
+      SELECT split_part(substr(je.reference, 13), '@', 1) AS sid FROM journal_entries je
        WHERE je."tenantId" = ${tenantId} AND je.reference LIKE 'shift.close:%'
+         AND NOT EXISTS (SELECT 1 FROM journal_entries r
+                          WHERE r."tenantId" = je."tenantId" AND r.reference = 'shift.close.reversal:' || substr(je.reference, 13))
     )
     SELECT o.id FROM orders o JOIN concepts c ON c.id = o."conceptId"
      WHERE c."tenantId" = ${tenantId}
@@ -224,17 +229,16 @@ export async function unbookedSalesCostByClass(db: Db, tenantId: string): Promis
   })
   const { homeShiftOf } = await import('./orderPosting.js')
   const homeOf = new Map(candidates.map((o) => [o.id, o.source === 'pos' ? homeShiftOf(o) : null]))
-  const refs = [
-    ...candidates.map((o) => `order.complete:${o.id}`),
-    ...[...new Set([...homeOf.values()].filter((s): s is string => !!s))].map((s) => `shift.close:${s}`),
-  ]
+  const refs = candidates.map((o) => `order.complete:${o.id}`)
   const bookedRefs = new Set((await db.journalEntry.findMany({ where: { tenantId, reference: { in: refs } }, select: { reference: true } })).map((e) => e.reference))
+  const { liveShiftCloses } = await import('./shiftPosting.js')
+  const liveCloses = await liveShiftCloses(db, tenantId, [...new Set([...homeOf.values()].filter((s): s is string => !!s))])
   const ids = candidates.filter((o) => {
     if (bookedRefs.has(`order.complete:${o.id}`)) return false
     if (o.source !== 'pos') return o.status !== 'completed'
     const home = homeOf.get(o.id)
     if (!home) return o.status !== 'completed'   // a completed till order with no drawer receipt is booked by its own entry
-    return !bookedRefs.has(`shift.close:${home}`)
+    return !liveCloses.has(home)
   }).map((o) => o.id)
   if (ids.length === 0) return out
   const { byClass, withMovements } = await relievedByClass(db, tenantId, ids)

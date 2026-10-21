@@ -2062,6 +2062,51 @@ change a route only together with that file). Binding rules:
   (unique per brand). Not in this release: appending lines to an existing ticket
   (a later round is another ticket on the table).
 
+### Shift corrections (owner, 2026-10-21)
+
+"A shift closed by staff/cashier, Finance should have access to reopen the
+shift and cancel any KOT, with CEO's approval … not like refund … all this
+void & cancellation should require CEO's approval to move the entry to
+trash." `modules/shiftCorrections/` (header of `service.ts` is the contract);
+API `/pos/shift-corrections` (module `accounting` — the ONLY gated path
+under /pos); tables `shift_corrections` / `shift_correction_items`
+(`tenantId` = the SHIFT's company, RLS, merge repoint list).
+
+- **One set, one CEO decision.** Finance (with `accounting`) or the CEO raises
+  ONE set on a CLOSED drawer (`POST /`, reason ≥10, items
+  `{orderId, kind void_bill|cancel_kot, reason ≥10, moneyReturned, foodMade}`);
+  one open set per drawer (409 `CORRECTION_PENDING`); closed month 409
+  `BOOKS_CLOSED` (the CEO reopens the month first). Nothing moves until the
+  CEO approves (`/:id/approve`, ADMIN_ONLY, approval type `shift_correction`
+  — section `ceo`, never delegable; the CEO may approve a set they raised;
+  finance never). Reject needs a note ≥10.
+- **Apply = the existing engines, in order:** reopen an audited sales day
+  (`reopenDay`) → reverse the drawer's LIVE close on its own date
+  (`shift.close.reversal:<id>[@n]`) → each fix through `cancelOrder`
+  (`shiftCorrection` option: the one completed → cancelled move for a
+  voided final bill, no customer notice; tenders voided — Payment `failed` +
+  `gatewayMeta.voided`, never refunded — unless `moneyReturned`; the fiscal
+  VOID document `void:<orderId>` through the outbox; the order parked in the
+  Trash; stock back to its lots, or wasted to 1290 when `foodMade`) →
+  re-post the close from `buildShiftCloseEntry` as revision
+  `shift.close:<id>@n` (counted cash stays, the variance recomputes; money
+  really handed back is a REFUND DUE on till clearing until the till's refund
+  route pays it). A refused step leaves the set `failed` (CEO `/:id/retry`;
+  every step is idempotent); a close reversed but not re-posted is flagged
+  `posting_failed`.
+- **Readers of a drawer's close use the LIVE revision**
+  (`shiftPosting.ts liveShiftCloses`) — never the exact `shift.close:<id>`
+  reference when the question is "did this close book the order?" (cogs,
+  saleBookingOf, the cancelled-ticket unwind). `shift.close.reversal` is a
+  sales source (night-audit day lock) and a food-cost sale source.
+- **Not built (stopped for the owner): void & re-issue** with the right
+  tender — 422 `VOID_REISSUE_NOT_AVAILABLE` (`VOID_REISSUE_BLOCKER`): the till
+  engines stamp the payment, `completedAt` and the fiscal sale's issue date
+  with today, ring-up fires a kitchen ticket and depletes stock again, and a
+  card / Raast tender needs a real charge / bank reference. Raast and
+  on-account bills and bills paid across drawers are refused (422).
+  Tests: `tests/shiftCorrections.test.ts`.
+
 ### Closed books are the CEO's (owner, 2026-10-16)
 
 `accounting/closedBooks.ts`. A closed month refuses every posting (as

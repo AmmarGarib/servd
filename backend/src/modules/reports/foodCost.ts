@@ -271,7 +271,8 @@ function sourceTypeOf(reference: string | null): string {
 }
 
 /** Sale-side entries: the completion / drawer close, and the cost-of-sales fixes of orders/stock.ts. */
-const SALE_SOURCES: ReadonlySet<string> = new Set(['order.complete', 'shift.close', ...ORDER_COGS_FIX_SOURCES])
+// 'shift.close.reversal': a shift correction reverses a close and re-posts it ('shift.close:<id>@n').
+const SALE_SOURCES: ReadonlySet<string> = new Set(['order.complete', 'shift.close', 'shift.close.reversal', ...ORDER_COGS_FIX_SOURCES])
 /** Stock-document entries that book 5010–5030 (5040 / 5050 are stock documents whatever their source). */
 const DOC_SOURCES: ReadonlySet<string> = new Set(['inventory.prep_draw', 'inventory.issue_on_receipt', 'inventory.shortfall_settle', 'inventory.waste', 'pos.void_waste', 'inventory.count'])
 const COS_CODES = [ACCT.FOOD_COST, ACCT.BEVERAGE_COST, ACCT.PACKAGING_COST, ACCT.WASTE, ACCT.INVENTORY_VARIANCE, ACCT.COST_ADJUSTMENT]

@@ -58,6 +58,7 @@ export type NotificationKind =
   | 'exception'               // a new ExceptionFlag (CEO only, plus finance for night_audit_pending)
   | 'exception.digest'        // a burst of flags collapsed into one row
   | 'task.next'               // not an approval: your step is next (cash voucher pay / documents / verify)
+  | 'shift_correction.applied' // a CEO-approved shift correction was applied (or failed) — finance + the requester
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
 

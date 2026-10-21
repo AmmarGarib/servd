@@ -142,6 +142,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   journal_request: spec((id) => `/accounting/journal?tab=requests&id=${encodeURIComponent(id)}`),
   ho_recharge: spec((id) => `/accounting/intercompany?tab=recharges&run=${encodeURIComponent(id)}`),
   connector_change: spec(() => '/connectors/pos?tab=changes'),
+  shift_correction: spec((id) => `/finance/shift-corrections?id=${encodeURIComponent(id)}`),
 }
 
 /** The inbox, filtered to the type (every login may open it). */
@@ -250,6 +251,10 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
     case 'connector_change': {
       const c = await db.posConnectorChange.findUnique({ where: { id }, select: { kind: true } })
       return c && { ref: `POS connector change (${human(String(c.kind))})` }
+    }
+    case 'shift_correction': {
+      const c = await db.shiftCorrection.findUnique({ where: { id }, select: { shiftId: true, businessDay: true, _count: { select: { items: true } } } })
+      return c && { ref: `Shift correction, drawer ${short(c.shiftId)} (${c.businessDay})`, detail: `${c._count.items} fix${c._count.items === 1 ? '' : 'es'}` }
     }
   }
   return null

@@ -22,6 +22,7 @@ import { isSelfApprovalExempt } from '../../lib/separation-of-duties.js'
 import { APPROVAL_RIGHTS, recipeCompaniesBatch, recipeOwnerOf, sectionOf } from '../../lib/approvalRights.js'
 import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } from './types.js'
 import { onAccountClients } from './onAccountProvider.js'
+import { shiftCorrections } from '../shiftCorrections/approvalProvider.js'
 import { karachiDay } from '../../connectors/util.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -1211,6 +1212,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   grniWriteOffs,
   stockDifferences,
   connectorChanges,
+  shiftCorrections,
 ]
 
 export type { ProviderContext }

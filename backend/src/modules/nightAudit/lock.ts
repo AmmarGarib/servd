@@ -27,6 +27,7 @@ type Db = Prisma.TransactionClient | PrismaClient
 export const SALES_SOURCES: ReadonlySet<string> = new Set([
   'order',                    // orders/returnedFood.ts
   'shift.close',
+  'shift.close.reversal',     // a shift correction's reversal of a close (modules/shiftCorrections)
   'deposit.drop',             // till cash to the bank
   'raast.unreceived',         // Raast sale money written off
   'cod.rider_debt', 'cod.rider_debt.reversal',

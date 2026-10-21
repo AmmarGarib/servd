@@ -142,6 +142,21 @@ enum ShiftStatus {
   closed
 }
 
+// Shift corrections (owner, 2026-10-21): finance asks, the CEO approves the SET once.
+enum ShiftCorrectionStatus {
+  submitted
+  approved
+  rejected
+  applied
+  failed
+}
+
+enum ShiftCorrectionKind {
+  void_bill
+  cancel_kot
+  void_reissue
+}
+
 enum LoyaltyTxType {
   earn
   redeem
@@ -1004,6 +1019,7 @@ model Shift {
   payments      Payment[]
   cashMovements CashMovement[]
   tenant        Tenant?        @relation("TenantShifts", fields: [tenantId], references: [id])
+  corrections   ShiftCorrection[]
 
   @@index([locationId, openedAt(sort: Desc)])
   @@index([tenantId])
@@ -8511,4 +8527,63 @@ model NightAuditDay {
   @@unique([tenantId, businessDate])
   @@index([tenantId, status, businessDate])
   @@map("night_audit_days")
+}
+
+// ─── Shift corrections (owner, 2026-10-21) ───────────────────────────────────
+//
+// "A shift closed by staff/cashier, Finance should have access to reopen the
+// shift and cancel any KOT, with CEO's approval." Finance lists every fix on a
+// CLOSED drawer with a reason; the CEO approves or rejects the set once;
+// nothing touches the books, stock, fiscal documents or orders until it is
+// approved (modules/shiftCorrections/). tenantId = the SHIFT's company. One
+// open (submitted) set per shift (partial unique shift_corrections_one_open).
+model ShiftCorrection {
+  id            String                @id @default(uuid())
+  tenantId      String
+  shiftId       String
+  /// The shift's Karachi business day 'YYYY-MM-DD' (lib/businessDay.ts).
+  businessDay   String
+  status        ShiftCorrectionStatus @default(submitted)
+  reason        String
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  appliedAt     DateTime?
+  error         String?
+  /// What the apply did (steps, entries, the new drawer variance).
+  result        Json?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  shift Shift                 @relation(fields: [shiftId], references: [id])
+  items ShiftCorrectionItem[]
+
+  @@index([tenantId, status])
+  @@index([shiftId])
+  @@map("shift_corrections")
+}
+
+model ShiftCorrectionItem {
+  id            String              @id @default(uuid())
+  tenantId      String
+  correctionId  String
+  kind          ShiftCorrectionKind
+  orderId       String
+  reason        String
+  /// The money was really handed back to the customer: the receipts stay and are owed back (refund due).
+  moneyReturned Boolean             @default(false)
+  /// The food was made: every line is wasted (cancelled_after_fire); otherwise every line goes back to its lots.
+  foodMade      Boolean             @default(false)
+  /// void_reissue only: the right tender (lib/tenders.ts TILL_TENDERS).
+  newTender     String?
+  result        Json?
+  createdAt     DateTime            @default(now())
+
+  correction ShiftCorrection @relation(fields: [correctionId], references: [id], onDelete: Cascade)
+
+  @@unique([correctionId, orderId])
+  @@index([tenantId])
+  @@index([orderId])
+  @@map("shift_correction_items")
 }

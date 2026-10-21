@@ -665,6 +665,12 @@ export interface RestoreOptions {
   cookedFood?: { wasteReason: 'cancelled_after_fire' | 'returned_food'; photoUrl?: string; wasteAll?: boolean }
   actorId?: string | null
   approverId?: string | null
+  /**
+   * Shift correction (owner, 2026-10-21; modules/shiftCorrections): the food
+   * was never made (a bill rung up by mistake) — EVERY live line goes back to
+   * its lots, fired or not. Ignored with `cookedFood.wasteAll`.
+   */
+  returnAll?: boolean
 }
 
 /**
@@ -737,7 +743,7 @@ export async function restoreInventoryForOrder(orderId: string, o: RestoreOption
     for (const l of lines) {
       const rows = outByLine.get(l.id) ?? []
       if (rows.length === 0) continue
-      if (UNFIRED.has(l.status) && !wasteAll) {
+      if ((UNFIRED.has(l.status) || o.returnAll) && !wasteAll) {
         const r = await returnToLotsTx(tx, {
           rows, kind: 'sale_return', sourceType: ORDER_STOCK_SOURCE.ret, sourceId: l.id, occurredAt: at, tenantId, createdById: o.actorId ?? null,
         })
@@ -864,7 +870,10 @@ async function legacyRestoreTx(
     const key = `${orderId}:cancel`
     for (const id of ids) await legacyGiveBackTx(tx, tenantId, cutOver, id, taken[id]!, key, o.actorId ?? null)
     // Its cost already booked (the old plate cost): the lots it gets back come out of cost of sales.
-    if (cutOver && ids.length > 0) fix = await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.legacy, key, o.actorId ?? null)
+    // A shift correction reversed the close that booked it first (orderCostBookedAt
+    // reads the LIVE close): nothing is booked, so nothing comes out of cost of sales.
+    const unbookedByCorrection = !!o.returnAll && !(await orderCostBookedAt(tx, tenantId, orderId))
+    if (cutOver && ids.length > 0 && !unbookedByCorrection) fix = await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.legacy, key, o.actorId ?? null)
   }
   await tx.auditLog.create({
     data: {

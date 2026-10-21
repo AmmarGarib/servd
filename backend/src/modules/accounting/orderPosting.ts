@@ -812,11 +812,14 @@ type BookingOrder = {
 
 export async function saleBookingOf(db: Db, tenantId: string, order: BookingOrder): Promise<SaleBooking> {
   const completeRef = `order.complete:${order.id}`
-  const refs = [completeRef]
   const home = order.source === 'pos' ? homeShiftOf(order) : null
-  if (home) refs.push(`shift.close:${home}`)
+  // The home drawer's LIVE close (a shift correction re-posts it as a revision — shiftPosting.ts liveShiftCloses).
+  const { liveShiftCloses } = await import('./shiftPosting.js')
   const [entries, dueLine] = await Promise.all([
-    db.journalEntry.findMany({ where: { tenantId, reference: { in: refs } }, select: { id: true, reference: true } }),
+    Promise.all([
+      db.journalEntry.findMany({ where: { tenantId, reference: completeRef }, select: { id: true, reference: true } }),
+      home ? liveShiftCloses(db, tenantId, [home]) : Promise.resolve(new Map<string, { id: string; reference: string }>()),
+    ]).then(([own, closes]) => [...own, ...[...closes.values()].map((c) => ({ id: c.id, reference: c.reference as string | null }))]),
     db.journalLine.findFirst({
       where: {
         type: 'credit',

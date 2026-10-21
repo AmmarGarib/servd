@@ -85,6 +85,7 @@
 // to 7040 without their GST share, pay-outs to 8010 memo'd for the accountant
 // to reclassify — so a legacy drawer still balances.
 
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, resolvePostingFailed, revenueCodeForConcept, revenueCodesForConcepts, servdRevenueCodesForConcepts, type JournalLineInput } from './journal.js'
@@ -693,6 +694,51 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   // a till closing before 05:00 PKT books to the day it opened on, so a dinner
   // shift's sales and GST stay in that day, month and tax return.
   return { ok: true, tenantId, entryDate: shiftBusinessDate(shift) ?? shift.closedAt ?? new Date(), lines, debits, credits, diagnostics }
+}
+
+// ─── The LIVE close of a shift (shift corrections, owner 2026-10-21) ─────────
+//
+// A drawer's close is normally ONE entry, 'shift.close:<shiftId>'. A CEO-
+// approved shift correction (modules/shiftCorrections) reverses it
+// ('shift.close.reversal:<shiftId>', reverseJournalEntry) and re-posts the
+// recomputed close as a revision 'shift.close:<shiftId>@2', @3 …
+// (sourcePosting.ts — the one revision convention). Every reader that asks
+// "did this drawer's close book the order?" reads the LIVE (un-reversed)
+// revision through this helper, never the exact 'shift.close:<id>' reference.
+
+type ReadDb = Prisma.TransactionClient | PrismaClient
+
+export interface LiveShiftClose { id: string; reference: string; createdAt: Date; entryDate: Date; sourceId: string }
+
+/** The live (un-reversed) close entry of each shift, keyed by shift id (absent = none live). */
+export async function liveShiftCloses(db: ReadDb, tenantId: string, shiftIds: readonly string[]): Promise<Map<string, LiveShiftClose>> {
+  const out = new Map<string, LiveShiftClose>()
+  const ids = [...new Set(shiftIds.filter(Boolean))]
+  if (ids.length === 0) return out
+  const entries = await db.journalEntry.findMany({
+    where: {
+      tenantId,
+      OR: ids.flatMap((id) => [
+        { reference: `shift.close:${id}` },
+        { reference: { startsWith: `shift.close:${id}@` } },
+        { reference: `shift.close.reversal:${id}` },
+        { reference: { startsWith: `shift.close.reversal:${id}@` } },
+      ]),
+    },
+    select: { id: true, reference: true, createdAt: true, entryDate: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  const reversed = new Set(entries
+    .filter((e) => e.reference?.startsWith('shift.close.reversal:'))
+    .map((e) => e.reference!.slice('shift.close.reversal:'.length)))
+  for (const e of entries) {
+    if (!e.reference?.startsWith('shift.close:')) continue
+    const sourceId = e.reference.slice('shift.close:'.length)
+    if (reversed.has(sourceId)) continue
+    const shiftId = sourceId.split('@')[0]!
+    out.set(shiftId, { id: e.id, reference: e.reference, createdAt: e.createdAt, entryDate: e.entryDate, sourceId })
+  }
+  return out
 }
 
 export interface PostShiftCloseOptions {

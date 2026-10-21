@@ -57,7 +57,7 @@ beforeAll(async () => {
 describe('the sales-source list', () => {
   it('is exactly the owner\'s sales module', () => {
     expect([...SALES_SOURCES].sort()).toEqual([
-      'cod.rider_debt', 'cod.rider_debt.reversal', 'deposit.drop', 'loyalty.earn', 'loyalty.redeem', 'order', 'raast.unreceived', 'shift.close',
+      'cod.rider_debt', 'cod.rider_debt.reversal', 'deposit.drop', 'loyalty.earn', 'loyalty.redeem', 'order', 'raast.unreceived', 'shift.close', 'shift.close.reversal',
     ])
     expect([...SALES_SOURCE_PREFIXES]).toEqual(['order.', 'order_item.', 'pos.'])
     for (const s of ['order.complete', 'order.refund', 'order.cancel_unwind', 'order_item.box_given', 'pos.card_failed', 'pos.void_waste', 'shift.close', 'deposit.drop']) {

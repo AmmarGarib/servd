@@ -732,6 +732,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.supplierCreditApplication,
     // Internal payment classification (2026-10-20): a label on the entry, follows the entry's company.
     tx.paymentClassification,
+    // Shift corrections (2026-10-21): a set and its items follow their shift's company.
+    tx.shiftCorrection, tx.shiftCorrectionItem,
     // Customer money.
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
     // HR back office.

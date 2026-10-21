@@ -10,7 +10,7 @@ import { emitItemUpdated } from '../../lib/ws.js'
 import { priceOrder, tenderOf, tenderOfPayments, gstRatePct, type OrderPrice, type PricingChannel, type Tender } from '../../lib/pricing.js'
 import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
 import { shiftTenantId, assertShiftOf, shiftOfCompany } from '../../lib/tenantScope.js'
-import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, raastTotalCents, TENDER_ROUNDING_CENTS } from '../accounting/shiftPosting.js'
+import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, raastTotalCents, TENDER_ROUNDING_CENTS, liveShiftCloses } from '../accounting/shiftPosting.js'
 import {
   postRefundPayment, refundDueCents, isShiftReceipt, isVoidedRaast, refundCreditAccount, refundTaxAccountFor, giftCardAppliedOf, onAccountOf,
   raastLedgerCodeOf, GIFT_CARD_LIABILITY, OUTPUT_TAX_ACCOUNTS, REFUND_DUE_PREFIX, CREDIT_NOTE_SOURCE, creditNotePayoutOf,
@@ -3354,13 +3354,13 @@ async function cancelledTicketBooksTx(tx: Tx, tenantId: string, order: Cancelled
 
   const receipts = order.payments.filter((p) => p.amountCents > 0 && !!p.shiftId && isShiftReceipt(p))
   const drawers = [...new Set(receipts.map((p) => p.shiftId!))]
-  const closes = drawers.length === 0 ? [] : await tx.journalEntry.findMany({
-    where: { tenantId, reference: { in: drawers.map((d) => `shift.close:${d}`) } },
-    select: { id: true, reference: true },
-  })
+  // Each drawer's LIVE close: a shift correction reverses a close and re-posts
+  // it as a revision (shiftPosting.ts liveShiftCloses) — a reversed close
+  // booked nothing that is still standing.
+  const closes = drawers.length === 0 ? [] : [...(await liveShiftCloses(tx, tenantId, drawers)).entries()].map(([shiftId, c]) => ({ id: c.id, shiftId }))
   let legacyCard: boolean | null = null
   for (const close of closes) {
-    const shiftId = close.reference!.slice('shift.close:'.length)
+    const shiftId = close.shiftId
     // This close saw the ticket cancelled: it holds the receipts as a refund due (Cr 1110).
     const dueLine = await tx.journalLine.findFirst({
       where: {

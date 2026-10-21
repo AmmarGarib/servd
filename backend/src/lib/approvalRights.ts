@@ -68,6 +68,8 @@ export const APPROVAL_TYPES = [
   'journal_request',       // a manual journal finance prepared (kind post / reverse)
   'ho_recharge',           // a head office's monthly recharge run (or true-up)
   'connector_change',      // an IT change to a company's POS connector settings
+  // Shift corrections (owner, 2026-10-21).
+  'shift_correction',      // finance's set of fixes on a closed drawer (void bills / cancel KOTs) — CEO only
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -220,6 +222,12 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
   connector_change: {
     label: 'POS connector changes', section: 'dev', queueModule: 'api_pos', roles: ADMIN_ONLY,
     delegable: true, mustHoldModule: 'api_pos', ownership: 'company',
+  },
+  shift_correction: {
+    // POST /pos/shift-corrections/:id/approve | reject (modules/shiftCorrections): the CEO only, never handed
+    // over; the CEO may approve a set the CEO raised (there is no one above); finance never approves.
+    label: 'Shift corrections', section: 'ceo', queueModule: 'accounting', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
   },
 }
 
@@ -770,7 +778,7 @@ export async function auditApproval(
   e: { type: string; id: string; tenantId: string | null; decision: string; grant: ApprovalGrant; entity?: string; metadata?: Record<string, unknown> },
 ): Promise<void> {
   const section = isApprovalType(e.type) ? APPROVAL_RIGHTS[e.type].section : 'ceo'
-  const money = section === 'finance' || ['purchase_order', 'cash_voucher', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run'].includes(e.type)
+  const money = section === 'finance' || ['purchase_order', 'cash_voucher', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run', 'shift_correction'].includes(e.type)
   await audit({
     category: money ? 'accounting' : 'identity',
     action: 'approval.decide',
@@ -998,6 +1006,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
         submitterIds: [r.preparedById, r.submittedById, ...r.preparedByIds], viaHeadOfficeId: null, status: r.status, submittedAt: r.submittedAt, kind: r.kind,
       })
     }
+    case 'shift_correction': {
+      const c = await db.shiftCorrection.findUnique({ where: { id }, select: { tenantId: true, requestedById: true, status: true, createdAt: true } })
+      return c && subject({ companyIds: [c.tenantId], ownerTenantId: c.tenantId, submitterIds: [c.requestedById], viaHeadOfficeId: null, status: c.status, submittedAt: c.createdAt })
+    }
     case 'connector_change': {
       const c = await db.posConnectorChange.findUnique({ where: { id }, select: { tenantId: true, status: true, preparedById: true, preparedByIds: true, preparedAt: true, viaHeadOfficeId: true, kind: true } })
       return c && subject({ companyIds: [c.tenantId], ownerTenantId: c.tenantId, submitterIds: [c.preparedById, ...c.preparedByIds], viaHeadOfficeId: c.viaHeadOfficeId, status: c.status, submittedAt: c.preparedAt, kind: c.kind })
@@ -1093,6 +1105,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   journal_request: ['submitted'],
   ho_recharge: ['submitted'],
   connector_change: ['submitted'],
+  shift_correction: ['submitted'],
 }
 
 /**

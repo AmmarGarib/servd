@@ -541,6 +541,9 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // or the accounting module, as the old /finance P&L was.
   { prefix: '/accounting/pl-ledger', anyOf: ['finance_pl', 'accounting'] },
   { prefix: '/accounting',    anyOf: ['accounting'] },
+  // Shift corrections (owner, 2026-10-21): finance's fixes on a closed drawer, the CEO approves. The only
+  // gated path under /pos (the till itself never is).
+  { prefix: '/pos/shift-corrections', anyOf: ['accounting'] },
   // Reports → Food cost variance (wave B; the old /accounting/food-cost page
   // forwards here). Its own module — the 'reports' module does NOT open it
   // (foh_management and procurement hold reports, not food costs) — and the
