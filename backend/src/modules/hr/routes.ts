@@ -36,7 +36,7 @@ import {
 import {
   mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
   nextPeriod, settlementParts, settlementNet, settlementSalaryStart,
-  type ApprovalEntry, type HrSettings, type PayBasis,
+  type ApprovalEntry, type HrSettings, type SettlementPayBasis,
 } from './logic.js'
 import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml, withLetterSystemRows } from './letters.js'
 import { CASH_REQUEST_PAID_FROM } from './advanceLoan.js'
@@ -619,8 +619,7 @@ async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: num
 /** What "Calculate" worked a full & final out from, stamped on the record
  *  (POST /hr/final-settlement/calculate with its recordId). */
 interface SettlementCalc { salaryFrom: string | null; lastWorkingDay: string; paidThrough: string | null; unpaidMonthSalary: boolean; at: string; otRecordIds?: string[] }
-/** One month a full & final pays salary for, with its days (stored as data._payBasis). */
-interface SettlementPayBasis extends PayBasis { period: string; from: string; to: string; salaryCents: number }
+
 
 const ymdOf = (d: Date | string | null | undefined) => (d ? (typeof d === 'string' ? d : d.toISOString()).slice(0, 10) : null)
 
@@ -682,7 +681,7 @@ async function approveSettlement(tx: Tx, rec: HrRecord, postedBy: string) {
   // and unpaid — a payslip that took it since would pay it twice.
   const otIds = settlementOtIds(d)
   if (otIds.length > 0) {
-    const still = await unpaidOvertime(rec.tenantId, rec.employeeId, new Date(0), new Date(8.64e15), { runStatuses: ALL_RUN_STATUSES }, tx)
+    const still = await unpaidOvertime(rec.tenantId, rec.employeeId, new Date(0), new Date(8.64e15), { runStatuses: ALL_RUN_STATUSES, exceptSettlementId: rec.id }, tx)
     const ok = new Set(still.map((o) => o.id))
     if (otIds.some((id) => !ok.has(id))) {
       throw new AppError('FNF_STALE', 'Overtime added to this settlement has since been paid on a payroll or is no longer approved — calculate it again', 409)

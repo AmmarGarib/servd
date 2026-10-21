@@ -14,6 +14,7 @@ import { BankAccountSelect } from '../../../../components/finance/BankAccountSel
 import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { OvertimePicker, otAvailableOf, otSummary } from '../../../../components/hr/OvertimePicker'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
 /** How the salary was worked out (backend hr/logic.ts PayBasis, owner HR-1):
@@ -43,6 +44,15 @@ const isCashSlip = (s: Slip) => (typeof s.inputs['paymentMethod'] === 'string' ?
 const splitLine = (bankCents: number, bankStaff: number, cashCents: number, cashStaff: number) =>
   `Bank ${rs(bankCents)} / ${bankStaff} staff · Cash ${rs(cashCents)} / ${cashStaff} staff`
 
+/** The Overtime column: what is added, and what is available but not added. */
+function otCell(s: Slip): string {
+  const sel = (s.inputs['otRecordIds'] as string[] | undefined) ?? []
+  const left = otSummary(otAvailableOf(s.inputs['otAvailable']), sel)
+  const paid = Number(s.inputs['otCents'] ?? 0)
+  const parts = [paid > 0 ? `${rs(paid)} added` : '', left.count > 0 ? `${Math.round(left.hours * 100) / 100} h available` : '']
+  return parts.filter(Boolean).join(' · ') || '—'
+}
+
 const INPUTS: Array<[string, string, boolean]> = [
   ['absentDays', 'Absent days', false], ['unpaidLeaveDays', 'Unpaid leave days', false], ['lateCount', 'Lates', false],
   ['otHours', 'OT hours (prices the OT amount)', false], ['otCents', 'OT amount', true], ['earningAdjustmentsCents', 'Bonuses & allowances', true],
@@ -53,7 +63,7 @@ export default function PayrollRunPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const qc = useQueryClient()
-  const [editing, setEditing] = useState<Slip | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [paying, setPaying] = useState(false)
   const [err, setErr] = useState('')
   const { userId, role, isPayrollApprover, isPayrollPayer } = useHrAccess()
@@ -66,7 +76,20 @@ export default function PayrollRunPage() {
     onSuccess: (_r, what) => { setErr(''); if (what === 'delete') router.push('/hr/payroll'); else void qc.invalidateQueries() },
     onError: (e: Error) => setErr(e.message),
   })
+  // Overtime is opt-in (owner, 2026-10-21): "Add all available overtime" adds
+  // every payslip's approved, unpaid OT in one go.
+  const addAllOt = useMutation({
+    mutationFn: () => api.post<{ updated: number; otCents: number }>(`/hr/payroll/runs/${id}/overtime`, { all: true }),
+    onSuccess: (r) => { setErr(''); setOtMsg(r.updated ? `Overtime added on ${r.updated} payslip${r.updated === 1 ? '' : 's'} (${rs(r.otCents)}).` : 'No overtime was available to add.'); void qc.invalidateQueries() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const [otMsg, setOtMsg] = useState('')
   const run = data?.run
+  const editing = data?.payslips.find((p) => p.id === editingId) ?? null
+  const otLeft = (data?.payslips ?? []).reduce((acc, s) => {
+    const o = otSummary(otAvailableOf(s.inputs['otAvailable']), (s.inputs['otRecordIds'] as string[] | undefined) ?? [])
+    return { hours: acc.hours + o.hours, cents: acc.cents + o.cents, count: acc.count + o.count }
+  }, { hours: 0, cents: 0, count: 0 })
   const t = (run?.totals ?? {}) as Record<string, number>
   const warnings = (run?.totals?.['warnings'] as string[] | undefined) ?? []
   const payment = run?.totals?.['payment'] as RunPayment | undefined
@@ -112,6 +135,7 @@ export default function PayrollRunPage() {
           <div className="flex flex-wrap gap-2">
             {run.status === 'draft' && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('recalculate')}>Recalculate from records</button>
+              {otLeft.count > 0 && <button className={btnGhost} disabled={addAllOt.isPending} onClick={() => addAllOt.mutate()}>{addAllOt.isPending ? 'Adding…' : `Add all available overtime (${Math.round(otLeft.hours * 100) / 100} h, ${rs(otLeft.cents)})`}</button>}
               {canApprove && <button className={btn} disabled={act.isPending} onClick={() => void ask('approve')}>Approve</button>}
               <button className={`${btnDanger} ml-2 !text-xs [@media(pointer:coarse)]:min-h-[44px]`} disabled={act.isPending} onClick={() => void ask("delete")}>Delete draft</button>
             </>}
@@ -136,12 +160,14 @@ export default function PayrollRunPage() {
             </span>
           </div>
           {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
+          {otMsg && <p className="text-xs text-success" role="status">{otMsg}</p>}
+          {run.status === 'draft' && <p className="text-[11px] text-white/40">Approved overtime is paid only when you add it to a payslip — overtime not added stays available for a later payroll or the full &amp; final.</p>}
           {run.status === 'draft' && <p className="text-[11px] text-white/40">Approval must come from someone other than whoever created, recalculated or edited it (the CEO excepted){isPayrollApprover ? '' : ', and from the CEO, a co-owner or management'}.</p>}
 
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
-                {['Employee', 'Paid days', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
+                {['Employee', 'Paid days', 'Per-day rate', 'Overtime', 'Gross', 'Earnings', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
               </tr></thead>
               <tbody>
                 {data!.payslips.map((s) => {
@@ -151,12 +177,13 @@ export default function PayrollRunPage() {
                       <td className="px-4 py-3"><p className="font-bold text-white/85">{s.employee.fullName}</p><p className="text-[11px] text-white/40">{s.employee.employeeCode}{s.inputs['edited'] ? ' · edited' : ''}</p></td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basisOf(s) ? `${basisOf(s)!.paidDays} of ${basisOf(s)!.daysInMonth}` : '—'}</td>
                       <td className="px-4 py-3 text-white/70">{basisOf(s) ? rs(basisOf(s)!.dailyRateCents) : '—'}</td>
+                      <td className="px-4 py-3 text-white/70 whitespace-nowrap">{otCell(s)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.grossCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.earningsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
                       <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-s-amber" title={w.join('\n')}>⚠</span>}</td>
-                      <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditing(s)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
+                      <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditingId(s.id)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
                     </tr>
                   )
                 })}
@@ -165,7 +192,7 @@ export default function PayrollRunPage() {
           </div>
         </div>
       )}
-      {editing && run && <SlipModal slip={editing} period={run.period} draft={run.status === 'draft'} onClose={() => setEditing(null)} />}
+      {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} onClose={() => setEditingId(null)} />}
       {paying && run && data && <PayRunModal runId={run.id} tenantId={run.tenantId} period={run.period} slips={data.payslips} onClose={() => setPaying(false)} />}
     </HrShell>
   )
@@ -239,6 +266,13 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
     onSuccess: () => { void qc.invalidateQueries(); onClose() },
     onError: (e: Error) => setErr(e.message),
   })
+  // Overtime is added by HR (owner, 2026-10-21) — never on its own.
+  const setOt = useMutation({
+    mutationFn: (recordIds: string[]) => api.post(`/hr/payroll/payslips/${slip.id}/overtime`, { recordIds }),
+    onSuccess: () => { setErr(''); void qc.invalidateQueries() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const otAvailable = otAvailableOf(slip.inputs['otAvailable'])
   const submit = (ev: React.FormEvent) => {
     ev.preventDefault()
     if (!draft || save.isPending) return
@@ -279,6 +313,9 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
           <button type="button" className={`${btnGhost} mt-3`} onClick={print}>Print payslip</button>
         </div>
         <div>
+          <div className="mb-3">
+            <OvertimePicker available={otAvailable} selected={(slip.inputs['otRecordIds'] as string[] | undefined) ?? []} editable={draft} pending={setOt.isPending} onSave={(ids) => setOt.mutate(ids)} />
+          </div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Inputs {draft ? '(editable)' : ''}</p>
           <div className="grid grid-cols-2 gap-2">
             {INPUTS.map(([k, label, money]) => (
@@ -292,7 +329,7 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
           </div>
           {err && <p className="text-xs text-s-red mt-2" role="alert">{err}</p>}
           {draft && <button type="submit" className={`${btn} mt-3`} disabled={save.isPending || changed.length === 0}>{save.isPending ? 'Recalculating…' : 'Recalculate this payslip'}</button>}
-          <p className="text-xs text-white/55 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, overtime, adjustments and loans. “Recalculate from records” on the run replaces any edits.</p>
+          <p className="text-xs text-white/55 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, adjustments and loans; overtime is paid only when you add it above. “Recalculate from records” on the run replaces any edits.</p>
         </div>
       </form>
     </Modal>

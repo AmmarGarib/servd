@@ -699,6 +699,10 @@ describe('HR through the API', () => {
     expect((await call('mgmt', 'POST', `/records/loan/${loan.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
 
     const run = (await call('hr', 'POST', '/payroll/runs', { period: '2026-09' })).json()
+    // Overtime is opt-in (owner, 2026-10-21): HR adds it to the payslip.
+    const fresh = (await call('hr', 'GET', `/payroll/runs/${run.id}`)).json().payslips.find((p: { employeeId: string }) => p.employeeId === cookEmp)
+    expect(fresh.inputs.otCents).toBe(0)
+    expect((await call('hr', 'POST', `/payroll/payslips/${fresh.id}/overtime`, { recordIds: [ot.id] })).statusCode).toBe(200)
     const detail = (await call('hr', 'GET', `/payroll/runs/${run.id}`)).json()
     const slip = detail.payslips.find((p: { employeeId: string }) => p.employeeId === cookEmp)
     const codes = slip.lines.map((l: { code: string }) => l.code)
@@ -1103,6 +1107,14 @@ describe('HR through the API', () => {
 
     const may = (await call('hr', 'POST', '/payroll/runs', { period: '2027-05' })).json()
     const june = (await call('hr', 'POST', '/payroll/runs', { period: '2027-06' })).json()
+    // Overtime is opt-in (owner, 2026-10-21): nothing is on either until HR
+    // adds it; once on May it is not available to June.
+    expect((await slipOf(may.id, lee)).inputs.otRecordIds).toEqual([])
+    expect((await call('hr', 'POST', `/payroll/payslips/${(await slipOf(may.id, lee)).id}/overtime`, { recordIds: [ot.id] })).statusCode).toBe(200)
+    const june2 = await slipOf(june.id, lee)
+    const refused = await call('hr', 'POST', `/payroll/payslips/${june2.id}/overtime`, { recordIds: [ot.id] })
+    expect(refused.statusCode).toBe(422)
+    expect(refused.json().error.code).toBe('OT_NOT_AVAILABLE')
     const maySlip = await slipOf(may.id, lee)
     const juneSlip = await slipOf(june.id, lee)
     // May (still a draft) takes the first 10,000; June must not take all 20,000.
@@ -1232,6 +1244,8 @@ describe('HR through the API', () => {
     await approvedLoan(zed, 12000, 3, '2027-07-01')
     const julyOt = await approvedByChain('overtime', { employee: zed, date: '2027-07-20', otHours: 2 })
     const july = (await call('hr', 'POST', '/payroll/runs', { period: '2027-07' })).json()
+    expect((await slipOf(july.id, zed)).inputs.otRecordIds).toEqual([])
+    expect((await call('hr', 'POST', `/payroll/payslips/${(await slipOf(july.id, zed)).id}/overtime`, { recordIds: [julyOt.id] })).statusCode).toBe(200)
     expect((await slipOf(july.id, zed)).inputs.otRecordIds).toContain(julyOt.id)
     expect((await call('ceo', 'POST', `/payroll/runs/${july.id}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${july.id}/lock`)).statusCode).toBe(200)
@@ -1242,7 +1256,10 @@ describe('HR through the API', () => {
     const ff = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: zed, lastWorkingDay: '2027-08-10' })).json()
     expect(ff.paidThrough).toBe('2027-07')
     expect(ff.salaryPayable).toBe(Math.round(RS(70000) * 10 / 31)) // August only, at the revised salary
-    expect(ff.otPayable).toBe(augOt.amountCents)                    // July's OT went on July's payroll
+    expect(ff.otPayable).toBe(0)                                    // OT is opt-in: none until HR adds it
+    expect(ff.otAvailable.map((o: { recordId: string }) => o.recordId)).toEqual([augOt.id]) // July's OT went on July's payroll
+    const ffOt = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: zed, lastWorkingDay: '2027-08-10', otRecordIds: [augOt.id] })).json()
+    expect(ffOt.otPayable).toBe(augOt.amountCents)
     expect(ff.loanRecovery).toBe(RS(8000))                          // 4,000 came off in July
     // Now approved, the August payroll does not pay them again — and one
     // calculated before the approval can't be approved until recalculated.

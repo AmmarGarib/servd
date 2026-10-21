@@ -2012,6 +2012,27 @@ each month it pays with that month's absences, half days and approved unpaid
 leave, read by `service.ts attendanceWithin` (the ONE attendance reading
 `prefillInputs` uses too); lates are not docked in F&F. Calculate stamps only a
 settlement still editable with no approvals. Tests: `tests/hrNoPaidDaysFnf.test.ts`.
+**Overtime is opt-in (owner, 2026-10-21: "give an option to HR to add OT in
+final payroll at time of payroll, other wise it should not include in
+payroll").** A payroll run and a full & final start with NO overtime; the
+approved, unpaid OT is listed as `inputs.otAvailable` (`service.ts
+unpaidOvertime` → `otAvailableOf`, priced as approval priced it) and is paid
+only once HR adds it to a DRAFT: `POST /hr/payroll/payslips/:id/overtime
+{recordIds}` (replaces the choice, `[]` removes it), `POST
+/hr/payroll/runs/:id/overtime {all: true} | {payslipIds}` ("Add all available
+overtime"), and for a full & final `POST /hr/final-settlement/calculate
+{…, recordId, otRecordIds}` (stamped as `_calc.otRecordIds`). Same people and
+gate as editing a payslip (`HR_ADMIN`); not a draft 409 `RUN_NOT_DRAFT` /
+`FNF_NOT_DRAFT`; a record not approved, already on a payslip or settlement,
+another employee's or company's 422 `OT_NOT_AVAILABLE`; audit
+`hr.payroll.overtime_added` (+ `actorRole`). "Paid" = listed in a payslip's
+`otRecordIds` (any run status) or an approved settlement's
+`_calc.otRecordIds` — OT not added stays available. Recalculating keeps what
+HR added while still available; a draft from before this rule starts from none
+on its next recalculation. The F&F stores the days its salary pays as
+`data._payBasis` (one row per month: from–to, days employed, absent, unpaid
+leave, paid days, salary) — shown on the form and printed as "Days paid".
+Tests: `tests/payrollOvertimeOptIn.test.ts`.
 
 ### Till flow (owner, 2026-10-20)
 

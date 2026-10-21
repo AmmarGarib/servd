@@ -16,7 +16,7 @@ import {
   computePayslip, overtimeCents, otMultiplierFor, hourlyRateCents, periodStart, periodEnd, periodOf, pktToday,
   leaveYear, leaveBalance, leaveQuantity, leaveDaysWithin, leaveYearsBetween, carriedForwardDays, attendanceInputs,
   loanInstallmentCents, allocateLoanCents, isDueWithin, salaryInForce, EOBI_NOT_CALCULATED, settledFromPeriod, settlementParts,
-  nextPeriod, settlementSalaryStart, type SalaryChange,
+  nextPeriod, settlementSalaryStart, settlementPayBasisOf, settlementDaysText, type SalaryChange,
 } from './logic.js'
 
 type Tx = Prisma.TransactionClient
@@ -680,14 +680,14 @@ export async function firstPayrollStart(tenantId: string, fallback: Date): Promi
  * before the ids were kept is taken to have paid the OT dated in its month.
  * An approved full & final pays the records it lists (data._calc.otRecordIds).
  */
-export async function unpaidOvertime(tenantId: string, employeeId: string, from: Date, to: Date, opts: { runStatuses: string[]; exceptRunId?: string }, q: Db = prisma) {
+export async function unpaidOvertime(tenantId: string, employeeId: string, from: Date, to: Date, opts: { runStatuses: string[]; exceptRunId?: string; exceptSettlementId?: string }, q: Db = prisma) {
   const [records, slips, settlements] = await Promise.all([
     q.hrRecord.findMany({ where: { tenantId, section: 'overtime', employeeId, status: 'approved', startDate: { gte: from, lte: to } }, orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }] }),
     q.hrPayslip.findMany({
       where: { tenantId, employeeId, run: { status: { in: opts.runStatuses } }, ...(opts.exceptRunId && { runId: { not: opts.exceptRunId } }) },
       select: { inputs: true, run: { select: { period: true } } },
     }),
-    q.hrRecord.findMany({ where: { tenantId, employeeId, section: 'final_settlement', status: 'approved' }, select: { data: true } }),
+    q.hrRecord.findMany({ where: { tenantId, employeeId, section: 'final_settlement', status: 'approved', ...(opts.exceptSettlementId && { id: { not: opts.exceptSettlementId } }) }, select: { data: true } }),
   ])
   const paid = new Set<string>()
   const legacyPeriods = new Set<string>()
@@ -1216,6 +1216,11 @@ export async function letterContext(tenantId: string, emp: HrEmployee | null, re
       else if (fl.type === 'date' || fl.type === 'datetime') recordCtx[fl.key] = dt(v)
       else if (typeof v === 'string' && names.has(v)) recordCtx[fl.key] = names.get(v)
       else recordCtx[fl.key] = Array.isArray(v) ? v.join(', ') : v
+    }
+    // The days the salary pays for, one line per month (owner, 2026-10-21).
+    if (rec.section === 'final_settlement') {
+      const basis = settlementPayBasisOf(data)
+      recordCtx['daysPaid'] = basis.length ? basis.map(settlementDaysText).join('; ') : '—'
     }
   }
   return {

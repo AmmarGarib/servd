@@ -12,6 +12,8 @@ import {
 import { FormRenderer, BANK_ACCOUNT_REF } from './FormRenderer'
 import { useHrAccess } from './HrShell'
 import { RecordMoney, BankAccountName } from './RecordMoney'
+import { FnfPayBasis, payBasisOf } from './FnfPayBasis'
+import { OvertimePicker, otAvailableOf } from './OvertimePicker'
 import { BankAccountSelect } from '../finance/BankAccountSelect'
 import { Select } from '@/components/ui/Select'
 import { NumberField } from '@/components/ui/NumberField'
@@ -122,26 +124,48 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
     mutationFn: () => api.post<{ id: string; employeeCode: string }>(`/hr/records/offer/${record.id}/create-employee`, {}),
     onSuccess: (e) => { setMsg(`Employee ${e.employeeCode} created.`); done() }, onError: fail,
   })
+  // What the last "Calculate" returned (days paid, overtime on offer) — else
+  // what the settlement stored when it was last calculated.
+  const [calcInfo, setCalcInfo] = useState<Record<string, unknown> | null>(null)
+  const storedCalc = (record.data['_calc'] ?? {}) as Record<string, unknown>
+  const fnfBasisRaw = calcInfo ? calcInfo['payBasis'] : record.data['_payBasis']
+  const fnfOtAvailable = otAvailableOf(calcInfo ? calcInfo['otAvailable'] : record.data['_otAvailable'])
+  const fnfOtSelected = ((calcInfo ? calcInfo['otRecordIds'] : storedCalc['otRecordIds']) as string[] | undefined) ?? []
+  const fnfFigures = (d: Record<string, unknown>, r: Record<string, unknown>) => ({
+    ...d, salaryPayable: r['salaryPayable'], otPayable: r['otPayable'], leaveEncashment: r['leaveEncashment'], loanRecovery: r['loanRecovery'],
+    incomeTax: r['incomeTax'], eobiEmployee: r['eobiEmployee'], eobiEmployer: r['eobiEmployer'], sessiEmployer: r['sessiEmployer'],
+    gratuity: r['gratuity'] ?? 0,
+    deductions: d['deductions'] ?? 0, otherAdjustments: d['otherAdjustments'] ?? 0,
+  })
   const calc = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (otRecordIds?: string[]) => {
       const lwd = (draft['lastWorkingDay'] as string) || record.endDate
       if (!record.employeeId || !lwd) throw new Error('Set the employee and last working day first')
       // recordId: the server notes what it was worked out from, so approval
-      // can tell if payroll moved since.
-      return api.post<Record<string, unknown>>('/hr/final-settlement/calculate', { employeeId: record.employeeId, lastWorkingDay: lwd, recordId: record.id })
+      // can tell if payroll moved since. otRecordIds: the overtime HR adds
+      // (owner, 2026-10-21 — none is paid unless added).
+      return api.post<Record<string, unknown>>('/hr/final-settlement/calculate', { employeeId: record.employeeId, lastWorkingDay: lwd, recordId: record.id, ...(otRecordIds && { otRecordIds }) })
     },
     onSuccess: (r) => {
-      setDraft((d) => ({
-        ...d, salaryPayable: r['salaryPayable'], otPayable: r['otPayable'], leaveEncashment: r['leaveEncashment'], loanRecovery: r['loanRecovery'],
-        incomeTax: r['incomeTax'], eobiEmployee: r['eobiEmployee'], eobiEmployer: r['eobiEmployer'], sessiEmployer: r['sessiEmployer'],
-        gratuity: r['gratuity'] ?? 0,
-        deductions: d['deductions'] ?? 0, otherAdjustments: d['otherAdjustments'] ?? 0,
-      }))
+      setCalcInfo(r)
+      setDraft((d) => fnfFigures(d, r))
       setEditing(true)
       const through = r['paidThrough'] ? `; payroll pays through ${String(r['paidThrough'])}${r['paidThroughStatus'] && r['paidThroughStatus'] !== 'locked' ? ` (still ${String(r['paidThroughStatus'])} — lock it before approving this)` : ''}` : ''
       const warnings = Array.isArray(r['warnings']) && r['warnings'].length ? ` ${(r['warnings'] as string[]).join(' ')}` : ''
       setMsg(`Calculated from ${String(r['leaveBalanceDays'])} day(s) of paid leave earned this leave year${through}.${salaryDaysText(r)}${gratuityText(r)} Review, then save.${warnings}`)
     },
+    onError: fail,
+  })
+  const fnfOt = useMutation({
+    mutationFn: async (otRecordIds: string[]) => {
+      const lwd = (draft['lastWorkingDay'] as string) || record.endDate
+      if (!record.employeeId || !lwd) throw new Error('Set the employee and last working day first')
+      const r = await api.post<Record<string, unknown>>('/hr/final-settlement/calculate', { employeeId: record.employeeId, lastWorkingDay: lwd, recordId: record.id, otRecordIds })
+      const next = fnfFigures(editing ? draft : record.data, r)
+      await api.patch(base, { data: next })
+      return { r, next }
+    },
+    onSuccess: ({ r, next }) => { setCalcInfo(r); setDraft(next); setEditing(false); setMsg(`Overtime on this settlement: ${rs(r['otPayable'] as number)}. Figures recalculated and saved.`); done() },
     onError: fail,
   })
   const letter = useMutation({
@@ -167,6 +191,12 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
         )}
       </div>
 
+      {record.section === 'final_settlement' && Array.isArray(fnfBasisRaw) && (
+        <FnfPayBasis basis={payBasisOf(fnfBasisRaw)} salaryPayable={(editing ? draft : record.data)['salaryPayable']} />
+      )}
+      {record.section === 'final_settlement' && (fnfOtAvailable.length > 0 || fnfOtSelected.length > 0) && (
+        <OvertimePicker available={fnfOtAvailable} selected={fnfOtSelected} editable={editable && !!record.employeeId} pending={fnfOt.isPending} onSave={(ids) => fnfOt.mutate(ids)} />
+      )}
       {editing ? (
         <div>
           <FormRenderer fields={leaveFields(record.section, format.fields, draft)} value={draft}

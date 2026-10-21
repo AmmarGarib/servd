@@ -12,6 +12,8 @@ import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, S
 import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
+import { FnfPayBasis, payBasisOf } from '../../../../components/hr/FnfPayBasis'
+import { OvertimePicker, otAvailableOf } from '../../../../components/hr/OvertimePicker'
 import { AttendanceRegister } from '../../../../components/hr/AttendanceRegister'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
@@ -180,8 +182,40 @@ function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: s
   const [err, setErr] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const formRef = useRef<HTMLFormElement>(null)
+  // A full & final can be calculated before it is saved (owner, 2026-10-21:
+  // the form shows the days paid); saving then stamps the calculation, with
+  // the overtime HR added, on the new record.
+  const fnf = section === 'final_settlement'
+  const [calcInfo, setCalcInfo] = useState<Record<string, unknown> | null>(null)
+  const calc = useMutation({
+    mutationFn: (otRecordIds?: string[]) => {
+      const employeeId = value['employee'], lwd = value['lastWorkingDay']
+      if (typeof employeeId !== 'string' || !employeeId || typeof lwd !== 'string' || !lwd) throw new Error('Pick the employee and the last working day first')
+      return api.post<Record<string, unknown>>('/hr/final-settlement/calculate', { employeeId, lastWorkingDay: lwd, ...(otRecordIds && { otRecordIds }) })
+    },
+    onSuccess: (r) => {
+      setErr(''); setCalcInfo(r)
+      setValue((d) => ({
+        ...d, salaryPayable: r['salaryPayable'], otPayable: r['otPayable'], leaveEncashment: r['leaveEncashment'], loanRecovery: r['loanRecovery'],
+        incomeTax: r['incomeTax'], eobiEmployee: r['eobiEmployee'], eobiEmployer: r['eobiEmployer'], sessiEmployer: r['sessiEmployer'],
+        gratuity: r['gratuity'] ?? 0, deductions: d['deductions'] ?? 0, otherAdjustments: d['otherAdjustments'] ?? 0,
+      }))
+    },
+    onError: (e: Error) => setErr(e.message),
+  })
   const save = useMutation({
-    mutationFn: (submit: boolean) => api.post(`/hr/records/${section}`, { data: value, submit }),
+    mutationFn: async (submit: boolean) => {
+      const created = await api.post<{ id: string }>(`/hr/records/${section}`, { data: value, submit })
+      // The record is saved either way: if the stamp fails, "Calculate" on the
+      // saved settlement does it again.
+      if (fnf && calcInfo && created?.id) {
+        await api.post('/hr/final-settlement/calculate', {
+          employeeId: value['employee'], lastWorkingDay: value['lastWorkingDay'], recordId: created.id,
+          otRecordIds: (calcInfo['otRecordIds'] as string[] | undefined) ?? [],
+        }).catch(() => undefined)
+      }
+      return created
+    },
     onSuccess: onSaved,
     onError: (e: Error) => setErr(e.message),
   })
@@ -203,6 +237,15 @@ function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: s
       <form ref={formRef} noValidate onSubmit={(ev) => { ev.preventDefault(); run(true) }}>
         <FormRenderer fields={fields} value={value} errors={errors}
           onChange={(x) => { const nv = withLeaveDays(section, format.fields, value, x); setValue(nv); if (Object.keys(errors).length) setErrors(validate(leaveFields(section, format.fields, nv), nv)) }} ctx={{ lookups, org, tenantId }} />
+        {fnf && (
+          <div className="mt-4 space-y-3">
+            <button type="button" className={btnGhost} disabled={calc.isPending} onClick={() => calc.mutate(undefined)}>{calc.isPending ? 'Calculating…' : 'Calculate'}</button>
+            {calcInfo && Array.isArray(calcInfo['payBasis']) && <FnfPayBasis basis={payBasisOf(calcInfo['payBasis'])} salaryPayable={value['salaryPayable']} />}
+            {calcInfo && otAvailableOf(calcInfo['otAvailable']).length > 0 && (
+              <OvertimePicker available={otAvailableOf(calcInfo['otAvailable'])} selected={(calcInfo['otRecordIds'] as string[] | undefined) ?? []} editable pending={calc.isPending} onSave={(ids) => calc.mutate(ids)} />
+            )}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2 mt-5">
           <button type="submit" className={btn} disabled={save.isPending}>{save.isPending ? 'Saving…' : hasWorkflow ? 'Submit for approval' : 'Save'}</button>
           {hasWorkflow && <button type="button" className={btnGhost} disabled={save.isPending} onClick={() => run(false)}>Save as draft</button>}

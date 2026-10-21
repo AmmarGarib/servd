@@ -777,6 +777,31 @@ export function gratuityFor(
   return { eligible: true, reason: null, ...service, countedYears, amountCents: perYear * countedYears }
 }
 
+/** One month a full & final pays salary for, with its days — "Calculate"
+ *  stores the list on the settlement as data._payBasis. */
+export interface SettlementPayBasis extends PayBasis { period: string; from: string; to: string; salaryCents: number }
+
+/** A settlement's stored pay basis (data._payBasis), or [] when it was never
+ *  calculated (or calculated before the days were kept). */
+export function settlementPayBasisOf(data: unknown): SettlementPayBasis[] {
+  const v = ((data ?? {}) as Record<string, unknown>)['_payBasis']
+  return Array.isArray(v) ? (v as SettlementPayBasis[]).filter((b) => b && typeof b.period === 'string' && typeof b.paidDays === 'number') : []
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "1–3 Sep 2026" from two YYYY-MM-DD days of one month. */
+export function dayRangeText(from: string, to: string): string {
+  const [y, m, d1] = from.split('-').map(Number)
+  const d2 = Number(to.slice(8, 10))
+  return `${d1 === d2 ? d1 : `${d1}–${d2}`} ${MONTHS[(m ?? 1) - 1]} ${y}`
+}
+
+/** The days line of one month: "1–3 Sep 2026: 3 days employed − 0 absent −
+ *  0 unpaid leave = 3 paid days of 30". */
+export function settlementDaysText(b: SettlementPayBasis): string {
+  return `${dayRangeText(b.from, b.to)}: ${b.employedDays} days employed − ${b.absentDays} absent − ${b.unpaidLeaveDays} unpaid leave = ${b.paidDays} paid days of ${b.daysInMonth}`
+}
+
 /** The figures of a full & final, as its record holds them (data keys). The
  *  employer EOBI / SESSI are the company's cost: posted, never off the net. */
 export interface SettlementParts {
