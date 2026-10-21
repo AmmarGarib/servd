@@ -976,8 +976,9 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // (projectType 'equipment_only', the ACTIVE company), a line delivered on
   // the day, its payment from a BANK account (posted: Dr 1340 / Cr bank net /
   // Cr 2040 WHT) and the capitalisation request — all in one transaction.
-  // The CEO's own Quick buy is then applied at once. Cash never pays here
-  // (owner: cash goes through a cash request / petty cash and its CapEx line).
+  // The CEO's own Quick buy is then applied at once. Cash on hand pays too
+  // (owner, 2026-10-21: "Add cash option to Quick buy"): Cr 1010 instead of
+  // the bank; the CEO's capitalisation approval stays the check.
   fastify.post('/capex/quick-buy', { preHandler: requireAuth(...CAPITAL_WRITERS) }, async (req, reply) => {
     const body = z.object({
       locationId:        z.string().min(1),
@@ -1004,8 +1005,9 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       notes:             z.string().max(2000).nullable().optional(),
       reason:            z.string().trim().max(1000).optional(),
     }).parse(req.body)
-    if (body.payFrom === 'cash') {
-      throw new AppError('QUICK_BUY_BANK_ONLY', 'Quick buy pays from a bank account. Equipment bought with cash goes through a cash request (or a petty-cash spend) and its CapEx line', 422)
+    const payFrom = body.payFrom ?? 'bank'
+    if (payFrom === 'cash' && body.bankAccountId) {
+      throw new AppError('CASH_WITH_BANK', 'Paid from cash names no bank account — pick one or the other', 422)
     }
     // Every client id resolves to the ACTIVE company (422 otherwise).
     const tenantId = requireActiveCompany(req)
@@ -1035,7 +1037,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         paidAt, supplierId: body.supplierId ?? null, vendor: body.vendor ?? supplierName,
         inputTaxCents: body.inputTaxCents, inputTaxAuthority: body.inputTaxAuthority ?? null, whtSection: body.whtSection ?? null,
         warrantyMonths: body.warrantyMonths ?? null, notes: body.notes ?? null,
-        pay: { kind: 'instalment', payFrom: 'bank', bankAccountId: body.bankAccountId ?? null, paymentRef: body.paymentRef ?? null, extra: override },
+        pay: { kind: 'instalment', payFrom, bankAccountId: payFrom === 'bank' ? body.bankAccountId ?? null : null, paymentRef: body.paymentRef ?? null, extra: override },
         postedBy: actor.id,
         capitalise: canCapitalise ? {
           input: {

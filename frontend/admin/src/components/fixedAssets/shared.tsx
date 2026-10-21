@@ -156,7 +156,7 @@ const CODE_WORDS: Record<string, string> = {
   CAPITALISATION_PENDING: 'This item is already waiting for the CEO to capitalise it.',
   ALREADY_CAPITALISED: 'This item is already on the fixed-asset register.',
   PREPAID_TERM_REQUIRED: 'Say how many months this rent advance covers and from which month.',
-  QUICK_BUY_BANK_ONLY: 'Quick buy pays from a bank account. Equipment bought with cash goes through a cash request and its CapEx line.',
+  CASH_WITH_BANK: 'Paid from cash names no bank account — pick one or the other.',
   OVERRIDE_NOT_ALLOWED: 'Only the CEO can override that.',
 }
 

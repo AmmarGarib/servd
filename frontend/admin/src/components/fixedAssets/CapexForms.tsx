@@ -182,7 +182,7 @@ export function WhtPreview({ result, grossCents, override }: { result: WhtPrevie
       <div className="grid grid-cols-3 gap-2">
         <div><p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Gross</p><p className="font-mono text-white/90">{money(grossCents)}</p></div>
         <div><p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Income tax withheld</p><p className="font-mono text-white/90">{known ? money(wht) : 'On save'}</p></div>
-        <div><p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Net to the bank</p><p className="font-mono font-bold text-white/95">{known ? money(grossCents - wht) : money(grossCents)}</p></div>
+        <div><p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Net paid</p><p className="font-mono font-bold text-white/95">{known ? money(grossCents - wht) : money(grossCents)}</p></div>
       </div>
       <p className="text-[11px] text-white/45 mt-2">{override != null ? 'Your own figure is used.' : result.why} {known && 'This is an estimate; the books use the figure worked out when you save.'}</p>
     </div>
@@ -439,6 +439,8 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   const [supplierId, setSupplierId] = useState('')
   const [paidAt, setPaidAt] = useState(todayIso())
   const [bankId, setBankId] = useState('')
+  // Bank or cash on hand (owner, 2026-10-21: "Add cash option to Quick buy").
+  const [payFrom, setPayFrom] = useState<'bank' | 'cash'>('bank')
   const [ref, setRef] = useState('')
   const [tax, setTax] = useState(0)
   const [authority, setAuthority] = useState('')
@@ -474,8 +476,8 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
       unitCostCents: unitCost,
       ...(supplierId ? { supplierId } : {}),
       paidAt,
-      payFrom: 'bank',
-      ...(bankId ? { bankAccountId: bankId } : {}),
+      payFrom,
+      ...(payFrom === 'bank' && bankId ? { bankAccountId: bankId } : {}),
       ...(ref.trim() ? { paymentRef: ref.trim() } : {}),
       inputTaxCents: tax,
       ...(tax > 0 && authority ? { inputTaxAuthority: authority } : {}),
@@ -499,7 +501,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   if (qty < 1) problems.push(['qb-qty', 'Quantity must be 1 or more.'])
   if (unitCost <= 0) problems.push(['qb-cost', 'Enter the unit cost.'])
   if (!paidAt || paidAt < bounds.min || paidAt > todayIso()) problems.push(['qb-paid', 'Pick the day it was paid (not in the future).'])
-  if (banksHere.length > 1 && !bankId) problems.push(['quickbuy-bank', 'Pick the bank it was paid from.'])
+  if (payFrom === 'bank' && banksHere.length > 1 && !bankId) problems.push(['quickbuy-bank', 'Pick the bank it was paid from.'])
   if (tax > 0 && !authority) problems.push(['qb-auth', 'Pick the authority that charged the sales tax.'])
   if (tax > 0 && tax >= total) problems.push(['qb-tax', 'The sales tax must be less than the total.'])
   if (override && !(overrideReason.trim().length >= 5 && overrideCents < total)) problems.push(['qb-why', 'Your own withholding figure needs a reason (5 characters or more) and must be below the total.'])
@@ -521,8 +523,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
       {L0 && (
         <form onSubmit={submitBuy} noValidate className="space-y-3">
           <p className="text-xs text-white/55">
-            Records a purchase made today: it is paid from a bank account, and the equipment is prepared for the fixed-asset register in the same step.
-            Equipment bought with cash goes through a cash request and its CapEx line instead.
+            Records a purchase made today: it is paid from a bank account or the cash on hand, and the equipment is prepared for the fixed-asset register in the same step.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -563,8 +564,16 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
               </Select>
             </L>
             <L t="Paid on"><input id="qb-paid" type="date" min={bounds.min} className={inp} value={paidAt} max={todayIso()} onChange={(e) => setPaidAt(e.target.value)} /></L>
-            <BankAccountSelect tenantId={L0.tenantId} value={bankId} onChange={setBankId} id="quickbuy-bank" label="Paid from (bank)" className={inp} />
-            <L t="Payment reference"><input className={inp} value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Cheque or transfer number" /></L>
+            <L t="Paid from">
+              <Select id="qb-payfrom" className={inp} value={payFrom} onChange={(e) => setPayFrom(e.target.value as 'bank' | 'cash')}>
+                <option value="bank">Bank</option>
+                <option value="cash">Cash on hand</option>
+              </Select>
+            </L>
+            {payFrom === 'bank'
+              ? <BankAccountSelect tenantId={L0.tenantId} value={bankId} onChange={setBankId} id="quickbuy-bank" label="Bank account" className={inp} />
+              : <p className="text-[11px] text-white/45 self-end pb-2">Paid from the cash on hand (1010).</p>}
+            <L t="Payment reference"><input className={inp} value={ref} onChange={(e) => setRef(e.target.value)} placeholder={payFrom === 'cash' ? 'Receipt number' : 'Cheque or transfer number'} /></L>
           </div>
 
           {!cls?.pooled && <p className="text-[11px] text-white/45">Equipment is booked to the outlet and shared across brands. Smallwares can be given to a brand.</p>}

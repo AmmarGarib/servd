@@ -471,9 +471,16 @@ describe('Quick buy (bank only, one transaction)', () => {
     expect(layer.pool).toMatchObject({ locationId: locA2, conceptId: conceptA, typeKey: 'bowls' })
   })
 
-  it('cash is refused; every id must be the active company\'s; a refusal leaves nothing', async () => {
+  it('cash on hand pays a Quick buy (Dr 1340 / Cr 1010); every id must be the active company\'s; a refusal leaves nothing', async () => {
     const base = { locationId: locA, item: 'Mixer', classKey: 'kitchen_equipment', quantity: 1, unitCostCents: 50_000, paidAt: PAID }
-    expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'cash' })).json().error.code).toBe('QUICK_BUY_BANK_ONLY')
+    // Owner, 2026-10-21: "Add cash option to Quick buy".
+    expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'cash', bankAccountId: bank.a })).json().error.code).toBe('CASH_WITH_BANK')
+    const cash = await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, item: 'Cash mixer', payFrom: 'cash' })
+    expect(cash.statusCode, cash.body).toBe(201)
+    const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: tenantA, reference: `capex.payment:${cash.json().paymentId}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    const byCode = Object.fromEntries(je.lines.map((l) => [`${l.account.code}:${l.type}`, Number(l.amountCents)]))
+    expect(byCode).toMatchObject({ '1340:debit': 50_000, '1010:credit': 50_000 })
+    expect(Object.keys(byCode).some((k) => k.startsWith('1020'))).toBe(false)
     expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, locationId: locB })).json().error.code).toBe('LOCATION_NOT_IN_COMPANY')
     expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, conceptId: conceptB })).json().error.code).toBe('CONCEPT_NOT_IN_COMPANY')
     expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, supplierId: supB })).json().error.code).toBe('SUPPLIER_NOT_IN_COMPANY')
