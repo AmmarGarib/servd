@@ -176,6 +176,22 @@ describe('raising an asset voucher', () => {
 })
 
 describe('finance pays an asset voucher', () => {
+  it('cash on hand: ONE entry Dr 1340 / Cr 1010 and the capitalisation request; the raise-time "Cash" prefills it', async () => {
+    const v = await approvedAsset({ assetClassId: cls['A'], assetLocationId: loc['A'], payFrom: 'cash' })
+    const r = await call('finA', 'POST', `${V}/${v.id}/pay`, {})
+    expect(r.statusCode, r.body).toBe(200)
+    const paid = (r.json() as { voucher: Row }).voucher
+    expect(paid).toMatchObject({ status: 'disbursed', bookedAtPay: true, paidAccountCode: '1340' })
+    const pays = await capexPaymentsOf(paid.capexLineId!)
+    expect(pays).toHaveLength(1)
+    expect(await entryLines(`capex.payment:${pays[0]!.id}`)).toEqual([['1010', 'credit', v.amountCents], ['1340', 'debit', v.amountCents]])
+    expect(await entryLines(`cashvoucher.pay:${v.id}`)).toBeNull()
+    const ev = await prisma.fixedAssetEvent.findUniqueOrThrow({ where: { id: paid.capitaliseEventId! } })
+    expect(ev).toMatchObject({ kind: 'capitalise', status: 'pending', tenantId: T.A })
+    await applyEvent(paid.capitaliseEventId!, U['ceoA']!.id)
+    expect(await prisma.fixedAsset.count({ where: { tenantId: T.A, capexLineId: paid.capexLineId } })).toBe(1)
+  })
+
   it('bank: ONE entry Dr 1340 / Cr the bank, the capitalisation request; CEO approves → register, 1340 cleared; depreciation runs', async () => {
     const v = await approvedAsset({ assetClassId: cls['A'], assetLocationId: loc['A'], grossCents: 260_000, discountCents: 10_000, amountCents: undefined })
     expect(v.amountCents).toBe(250_000)

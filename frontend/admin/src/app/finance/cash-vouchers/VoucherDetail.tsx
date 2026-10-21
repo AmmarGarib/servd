@@ -573,9 +573,12 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Pay {holder}</p>
       <p className="text-xs text-white/55">
-        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. Paying books the expense now, in one entry
-        (the voucher&rsquo;s expense account against where the cash comes from). The supporting documents are attached
-        under this voucher afterwards and book nothing; any change or overspend is corrected with a manual journal.
+        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. {v.assetClassId
+          ? <>Paying books it to CapEx advances (1340) now, in one entry against where the money comes from (a cash box,
+            the cash on hand or a bank), and asks the CEO to approve the equipment onto the fixed-asset register.</>
+          : <>Paying books the expense now, in one entry (the voucher&rsquo;s expense account against where the cash comes from).</>}
+        {' '}The supporting documents are attached under this voucher afterwards and book nothing; any change or overspend is
+        corrected with a manual journal.
       </p>
       <Select value={chosen} onChange={(e) => setPick(e.target.value)} className={fieldCls} aria-label="Pay from" disabled={isLoading || nothing}>
         {options.length !== 1 && <option value="">{isLoading ? 'Loading…' : '— pay from —'}</option>}
