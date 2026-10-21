@@ -60,6 +60,30 @@
 // Raast reference goes through the normal receipt rules. What was really
 // collected vs the new total is never invented: the drawer re-post recomputes
 // the cash variance, card payouts / Raast statement matching show the rest.
+//
+// Raast QR bills (owner, 2026-10-21: "Raast bills correctable like cash and
+// card"). A Raast tender is corrected through the same engine; its
+// RaastReceipt follows what really happened to the money:
+//   void_bill / cancel_kot, no money handed back — the tender is voided like
+//       any other, the re-posted close carries no Raast money (a 'failed'
+//       payment is no receipt: no Dr bank, no refund due), and AFTER the
+//       re-post the receipt is voided through the CEO's own "void, never
+//       booked" path (reconciliation/raast.ts voidNeverBooked — posts nothing,
+//       the bank reference stays claimed, it stops waiting for a bank match;
+//       the CEO's approval of the set is the authority). A receipt already
+//       MATCHED to a bank-statement line (the money arrived) is refused
+//       (422 RAAST_MONEY_RECEIVED);
+//   void_bill / cancel_kot, money handed back — the receipt stays as it is
+//       (provisional or matched); the tender stays paid, so the re-posted
+//       close holds it as a REFUND DUE (Dr the receiving bank / Cr till
+//       clearing) until the till's refund route pays it out (Cr the bank);
+//   void_reissue Raast → cash / card — the receipt is voided as above (same
+//       RAAST_MONEY_RECEIVED refusal), then the bill re-issued as today.
+// A receipt written off as not received (or in any state but provisional /
+// matched) is corrected in Reconciliation → Raast first (422
+// RAAST_RECEIPT_NOT_VOIDABLE). Every Raast write takes lockRaastTx in its own
+// short transaction (voidNeverBooked), never inside the order's lock; an
+// already voided receipt is a step done (retry-safe).
 
 import type { OrderStatus, Prisma, ShiftCorrection, ShiftCorrectionItem } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -89,8 +113,8 @@ export const ITEM_KINDS = ['void_bill', 'cancel_kot', 'void_reissue'] as const
 export type ItemKind = (typeof ITEM_KINDS)[number]
 
 const OPEN_STATUSES = ['received', 'confirmed', 'preparing', 'ready'] as const
-/** Tenders a correction never voids: their money is matched elsewhere (bank statement, client statement). */
-const NOT_VOIDABLE_TENDERS: ReadonlySet<string> = new Set(['raast', 'on_account'])
+/** Tenders a correction never voids: an on-account charge is settled on the client's statement. */
+const NOT_VOIDABLE_TENDERS: ReadonlySet<string> = new Set(['on_account'])
 
 export interface ItemInput {
   orderId: string
@@ -119,7 +143,10 @@ const ORDER_SELECT = {
   walletAmountCents: true, deletedAt: true,
   concept: { select: { tenantId: true, name: true, slug: true } },
   payments: {
-    select: { id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, createdAt: true, gatewayMeta: true },
+    select: {
+      id: true, shiftId: true, method: true, status: true, amountCents: true, gatewayRef: true, createdAt: true, gatewayMeta: true,
+      raastReceipt: { select: { id: true, status: true } },
+    },
   },
   items: { where: { status: { not: 'voided' as const } }, select: { name: true, quantity: true, status: true } },
 } satisfies Prisma.OrderSelect
@@ -190,8 +217,9 @@ async function checkItem(db: Db, shift: ShiftRow, tenantId: string, item: ItemIn
   }
   const blocked = receipts.find((p) => NOT_VOIDABLE_TENDERS.has(p.method))
   if (blocked) {
-    throw err('TENDER_NOT_VOIDABLE', `Order ${ref} was paid by ${blocked.method === 'raast' ? 'Raast QR' : 'an on-account client'} — that money is matched elsewhere; refund it through its own route`, 422, o.id)
+    throw err('TENDER_NOT_VOIDABLE', `Order ${ref} was charged to an on-account client — that money is settled on the client's statement; refund it through its own route`, 422, o.id)
   }
+  checkRaast(o, item)
   if (item.kind === 'void_bill' || item.kind === 'void_reissue') {
     if (o.source !== 'pos' || homeShiftOf(o) !== shift.id) throw err('ORDER_NOT_ON_SHIFT', `Order ${ref} is not a till bill of this drawer`, 422, o.id)
     if (o.status !== 'completed') throw err('BILL_NOT_VOIDABLE', `Order ${ref} is ${o.status}, not a full & final bill that still stands`, 409, o.id)
@@ -206,6 +234,27 @@ async function checkItem(db: Db, shift: ShiftRow, tenantId: string, item: ItemIn
   if (!(OPEN_STATUSES as readonly string[]).includes(o.status)) throw err('KOT_NOT_OPEN', `Order ${ref} is ${o.status} — only an open ticket (KOT) is cancelled`, 409, o.id)
   if (o.payments.some((p) => p.status === 'refunded')) throw err('BILL_NOT_VOIDABLE', `Order ${ref} has refunds or voided lines already`, 409, o.id)
   return o
+}
+
+/**
+ * The Raast receipts of the bill's Raast tenders (see the header): provisional
+ * is correctable either way; matched (the money reached the bank) only with the
+ * money handed back; anything else is fixed in Reconciliation → Raast first.
+ */
+function checkRaast(o: OrderRow, item: ItemInput): void {
+  const ref = orderRefOf(o.id)
+  for (const p of receiptsOf(o)) {
+    if (p.method !== 'raast') continue
+    const status = p.raastReceipt?.status ?? null
+    if (status === null || status === 'provisional') continue
+    if (status === 'matched') {
+      if (item.kind !== 'void_reissue' && item.moneyReturned) continue
+      throw err('RAAST_MONEY_RECEIVED', item.kind === 'void_reissue'
+        ? `Order ${ref}: the Raast money reached the bank, so the bill was paid by Raast — it cannot be re-issued at another payment method. If the money was given back, void it with 'Money was handed back' ticked`
+        : `Order ${ref}: the Raast money reached the bank — tick 'Money was handed back' (the customer is owed it); a bill really paid by Raast stands`, 422, o.id)
+    }
+    throw err('RAAST_RECEIPT_NOT_VOIDABLE', `Order ${ref}: its Raast payment is ${status === 'unreceived' ? 'written off as not received' : status} in Reconciliation → Raast — correct it there first`, 422, o.id)
+  }
 }
 
 /** What a void & re-issue needs on top of a void (see the header). */
@@ -320,6 +369,12 @@ export interface ItemPreview {
     money: 'voided' | 'owed_back' | 'none'
     stock: 'back_to_stock' | 'waste' | 'moves_to_new_bill'
     fiscal: 'void_document' | 'void_document_manual' | 'none'
+    /**
+     * The bill's Raast receipt: 'cancelled' — voided, never matched to the bank
+     * (no money kept for it); 'owed_back' — kept, the money is owed to the
+     * customer (refund due); null — no Raast tender.
+     */
+    raast: 'cancelled' | 'owed_back' | null
   }
   /** void_reissue: the corrected bill, priced at the new tender (lib/pricing.ts). */
   reissue?: { tender: string; taxRatePct: number; taxCents: number; serviceChargeCents: number; tipCents: number; totalCents: number; differenceCents: number } | null
@@ -342,6 +397,7 @@ async function previewItem(shift: ShiftRow, tenantId: string, item: ShiftCorrect
   }) : null
   const receipts = o ? receiptsOf(o) : []
   const finalBill = item.kind !== 'cancel_kot'
+  const raastPaid = receipts.some((p) => p.method === 'raast')
   return {
     orderRef: orderRefOf(item.orderId),
     brand: o?.concept.name ?? null,
@@ -359,6 +415,7 @@ async function previewItem(shift: ShiftRow, tenantId: string, item: ShiftCorrect
       stock: item.kind === 'void_reissue' ? 'moves_to_new_bill' : item.foodMade ? 'waste' : 'back_to_stock',
       fiscal: !finalBill || !sale || sale.status === 'skipped' ? 'none'
         : (sale.statusReason === 'servd_channel' || o?.settlementChannel === 'servd') ? 'void_document_manual' : 'void_document',
+      raast: !raastPaid ? null : item.kind !== 'void_reissue' && item.moneyReturned ? 'owed_back' : 'cancelled',
     },
     blockedBy,
     ...(item.kind === 'void_reissue' && item.newTender ? { reissue: await previewReissue(item.orderId, item.newTender, o?.totalCents ?? 0).catch(() => null) } : {}),
@@ -474,10 +531,16 @@ export async function shiftCandidates(shift: ShiftRow) {
     let blockedBy: { code: string; message: string } | null = null
     if (!kind) blockedBy = { code: 'NOTHING_TO_CORRECT', message: `Order ${orderRefOf(o.id)} is ${o.status}` }
     else {
-      try { await checkItem(prisma, shift, tenantId, { orderId: o.id, kind, reason: 'x'.repeat(MIN_REASON) }) } catch (e) {
+      const probe = (moneyReturned: boolean) => checkItem(prisma, shift, tenantId, { orderId: o.id, kind, reason: 'x'.repeat(MIN_REASON), moneyReturned })
+      try { await probe(false) } catch (e) {
         blockedBy = e instanceof AppError ? { code: e.code, message: e.message } : { code: 'ERROR', message: String((e as Error).message) }
+        // Raast money that reached the bank: still correctable with the money handed back.
+        if (blockedBy.code === 'RAAST_MONEY_RECEIVED') {
+          try { await probe(true); blockedBy = null } catch { /* keep the first refusal */ }
+        }
       }
     }
+    const raastStatus = o.payments.find((p) => p.method === 'raast' && isShiftReceipt(p))?.raastReceipt?.status ?? null
     rows.push({
       orderId: o.id, orderRef: orderRefOf(o.id), brand: o.concept.name, status: o.status, source: o.source,
       placedAt: o.placedAt, completedAt: o.completedAt, totalCents: o.totalCents, taxCents: o.taxCents,
@@ -485,6 +548,8 @@ export async function shiftCandidates(shift: ShiftRow) {
       tenders: o.payments.map((p) => ({ method: p.method, amountCents: p.amountCents, status: p.status, onThisDrawer: p.shiftId === shift.id })),
       lines: o.items.map((i) => ({ name: i.name, quantity: i.quantity, status: i.status })),
       kind, blockedBy,
+      /** The Raast receipt's state ('provisional' | 'matched' | …), null without a Raast tender. matched = only "money handed back" applies. */
+      raastStatus,
     })
   }
   const d = await drawerExpectation(shift.id)
@@ -713,6 +778,14 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
       await resolvePostingFailed('Shift', shift.id, 'shift.close', `Re-posted by shift correction ${ref}.`, { tenantIds: [tenantId] })
     }
 
+    // e. The Raast receipts of bills voided with no money handed back: voided
+    //    through the CEO's "void, never booked" path, now that the live close
+    //    no longer books them (every item, so a retry finishes them).
+    for (const item of c.items) {
+      if (item.moneyReturned) continue
+      await voidRaastReceipts(c, item, ceo, tenantId, ref)
+    }
+
     const d = await drawerExpectation(shift.id)
     progress.drawer = {
       ...progress.drawer!,
@@ -837,6 +910,41 @@ async function reissueItem(c: ShiftCorrection, item: ShiftCorrectionItem, ceo: A
       }),
     },
   })
+}
+
+/**
+ * Void the RaastReceipts of the Raast tenders THIS set voided on an item's
+ * bill (Payment 'failed', gatewayMeta.voided.correctionId = the set), through
+ * reconciliation/raast.ts voidNeverBooked — its own short transaction under
+ * lockRaastTx, its own eligibility checks (bill cancelled, drawer closed, no
+ * live entry debiting the bank for it, no refund). Already voided = done.
+ * A receipt that reached the bank meanwhile is refused (RAAST_MONEY_RECEIVED).
+ */
+async function voidRaastReceipts(c: ShiftCorrection, item: ShiftCorrectionItem, ceo: Actor, tenantId: string, ref: string): Promise<void> {
+  const rows = await prisma.raastReceipt.findMany({
+    where: {
+      tenantId, orderId: item.orderId,
+      payment: { orderId: item.orderId, method: 'raast', status: 'failed', gatewayMeta: { path: ['voided', 'correctionId'], equals: c.id } },
+    },
+    select: { id: true, status: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  if (rows.length === 0) return
+  const { voidNeverBooked } = await import('../reconciliation/raast.js')
+  const voided: string[] = []
+  for (const r of rows) {
+    if (r.status === 'provisional') {
+      await voidNeverBooked(r.id, { actorId: ceo.id, reason: `Shift correction ${ref}: ${item.reason}` })
+    } else if (r.status === 'matched') {
+      throw err('RAAST_MONEY_RECEIVED', `Order ${orderRefOf(item.orderId)}: the Raast money reached the bank while the correction was applied — it is no longer voided as never received; finance reviews it in Reconciliation → Raast`, 422, item.orderId)
+    } else if (r.status !== 'voided') {
+      throw err('RAAST_RECEIPT_NOT_VOIDABLE', `Order ${orderRefOf(item.orderId)}: its Raast payment is ${r.status} in Reconciliation → Raast — correct it there, then retry`, 422, item.orderId)
+    }
+    voided.push(r.id)
+  }
+  const cur = await prisma.shiftCorrectionItem.findUniqueOrThrow({ where: { id: item.id }, select: { result: true } })
+  const prev = (cur.result && typeof cur.result === 'object' ? cur.result : {}) as Record<string, unknown>
+  await prisma.shiftCorrectionItem.update({ where: { id: item.id }, data: { result: json({ ...prev, raastReceiptsVoided: voided }) } })
 }
 
 const shiftBusinessDateIso = (day: string) => `${day}T23:59:59.999+05:00`

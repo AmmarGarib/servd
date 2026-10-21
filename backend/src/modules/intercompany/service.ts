@@ -62,7 +62,9 @@ export const IC_TRANSFER_REVERSAL_SOURCE = `${IC_TRANSFER_SOURCE}.reversal`
 
 export const TRANSFER_KINDS = ['charge', 'settlement', 'netting'] as const
 export type TransferKind = (typeof TRANSFER_KINDS)[number]
-export const SYSTEM_SOURCES = ['fleet', 'cod', 'ho_recharge'] as const
+// 'asset_transfer': a fixed asset one servd company gives another at book value (owner, 2026-10-21;
+// fixedAssets/events.ts applyRelatedCompanyTransfer) — reversed only from the register, never here.
+export const SYSTEM_SOURCES = ['fleet', 'cod', 'ho_recharge', 'asset_transfer'] as const
 export type SystemSource = (typeof SYSTEM_SOURCES)[number]
 /** How a settlement was paid (receipt methods without card — lib/bankAccounts.ts RECEIPT_METHODS). */
 export const SETTLEMENT_METHODS = ['bank_transfer', 'bank_deposit', 'cheque', 'cash'] as const
@@ -679,6 +681,9 @@ export async function reverseTransfer(actor: TransferActor, id: string, reason: 
   if (t.source === 'ho_recharge') {
     throw new AppError('REVERSE_FROM_SOURCE', 'A head-office recharge is reversed from its run — reverse the recharge run instead (Inter-company → Head office)', 409)
   }
+  if (t.source === 'asset_transfer') {
+    throw new AppError('REVERSE_FROM_SOURCE', 'A fixed asset given to another servd company is not undone here — transfer it back from the receiving company\'s register (Add existing asset → Another servd company)', 409)
+  }
   await serviceClient.$transaction((tx) => reverseInTx(tx, id, reason.trim(), { actorId: actor.id, idempotent: false }), TX_OPTS)
   return serviceClient.intercompanyTransfer.findUniqueOrThrow({ where: { id } })
 }
@@ -882,7 +887,7 @@ export async function presentTransfers(rows: TransferRow[], viewer: TransferActo
       createdAt: t.createdAt.toISOString(),
       memberOfBoth: both,
       canApprove: isCeo && both && t.status === 'submitted',
-      canReverse: isCeo && both && t.status === 'posted' && t.source !== 'cod' && t.source !== 'ho_recharge',
+      canReverse: isCeo && both && t.status === 'posted' && t.source !== 'cod' && t.source !== 'ho_recharge' && t.source !== 'asset_transfer',
     }
   })
 }

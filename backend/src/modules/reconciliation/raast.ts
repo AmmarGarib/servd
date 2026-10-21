@@ -483,41 +483,53 @@ export async function unmatchReceipt(input: { receiptId: string; actorId: string
  * The entry that actually debited the bank for THIS receipt is posted — a
  * write-off before that would credit a bank code nothing debited
  * (RV-MONEY-1). Which entry depends on the order:
- *   - a till sale (source 'pos'): its drawer's close books Raast, live or
- *     cancelled ('shift.close:<shiftId>');
+ *   - a till sale (source 'pos'): its drawer's LIVE close
+ *     (shiftPosting.ts liveShiftCloses — a shift correction reverses a close
+ *     and re-posts it as 'shift.close:<shiftId>@n'; a reversed revision books
+ *     nothing). A live bill: the live close books it. A cancelled / rejected
+ *     bill: the live close books it when it was posted while the sale still
+ *     stood (before the cancel, or the cancel time is unknown), or when it
+ *     holds the money as a refund due naming the order; a close re-posted
+ *     after the cancel with no refund due for it (a shift correction voided
+ *     the tender) does not;
  *   - any other order, live: only its completion debits the bank
  *     ('order.complete:<orderId>') — a drawer close books non-till CASH only;
- *   - any other order, cancelled / rejected: only a drawer close that held
- *     its money as a refund due (Cr till clearing — 1110 before the
+ *   - any other order, cancelled / rejected: only a live drawer close that
+ *     held its money as a refund due (Cr till clearing — 1110 before the
  *     company's cut-over, 1115 after; TILL_CLEARING_CODES holds both —
  *     'REFUND DUE …' naming the order).
  */
 export async function saleBookedTx(db: Db, r: RaastReceipt): Promise<boolean> {
-  const o = await db.order.findUnique({ where: { id: r.orderId }, select: { source: true, status: true } })
+  const o = await db.order.findUnique({ where: { id: r.orderId }, select: { source: true, status: true, cancelledAt: true } })
   if (!o) return false
-  const closeOf = async () => r.shiftId
-    ? db.journalEntry.findFirst({ where: { tenantId: r.tenantId, reference: `shift.close:${r.shiftId}` }, select: { id: true } })
-    : null
-  // (A till order with a receipt on a drawer never posts order.complete —
-  // postOrderCompletion skips it — so accepting it here opens nothing.)
-  if (o.source === 'pos') {
-    if (await closeOf()) return true
-    return !!(await db.journalEntry.findFirst({ where: { tenantId: r.tenantId, reference: `order.complete:${r.orderId}` }, select: { id: true } }))
+  const completion = () => db.journalEntry.findFirst({ where: { tenantId: r.tenantId, reference: `order.complete:${r.orderId}` }, select: { id: true } })
+  const liveClose = async () => {
+    if (!r.shiftId) return null
+    const { liveShiftCloses } = await import('../accounting/shiftPosting.js')
+    return (await liveShiftCloses(db, r.tenantId, [r.shiftId])).get(r.shiftId) ?? null
   }
-  const cancelled = o.status === 'cancelled' || o.status === 'rejected'
-  if (!cancelled) {
-    return !!(await db.journalEntry.findFirst({ where: { tenantId: r.tenantId, reference: `order.complete:${r.orderId}` }, select: { id: true } }))
-  }
-  const close = await closeOf()
-  if (!close) return false
-  const held = await db.journalLine.findFirst({
+  const heldAsRefundDue = async (entryId: string) => !!(await db.journalLine.findFirst({
     where: {
-      journalEntryId: close.id, type: 'credit', account: { tenantId: r.tenantId, code: { in: TILL_CLEARING_CODES } },
+      journalEntryId: entryId, type: 'credit', account: { tenantId: r.tenantId, code: { in: TILL_CLEARING_CODES } },
       AND: [{ memo: { startsWith: REFUND_DUE_PREFIX } }, { memo: { contains: r.orderId } }],
     },
     select: { id: true },
-  })
-  return !!held
+  }))
+  const cancelled = o.status === 'cancelled' || o.status === 'rejected'
+  // (A till order with a receipt on a drawer never posts order.complete —
+  // postOrderCompletion skips it — so accepting it here opens nothing.)
+  if (o.source === 'pos') {
+    if (await completion()) return true
+    const close = await liveClose()
+    if (!close) return false
+    if (!cancelled) return true
+    if (!o.cancelledAt || close.createdAt < o.cancelledAt) return true
+    return heldAsRefundDue(close.id)
+  }
+  if (!cancelled) return !!(await completion())
+  const close = await liveClose()
+  if (!close) return false
+  return heldAsRefundDue(close.id)
 }
 
 export async function writeOffUnreceived(input: {

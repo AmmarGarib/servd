@@ -27,7 +27,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { Prisma, type FixedAsset, type UserRole } from '@prisma/client'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
@@ -47,7 +47,8 @@ import {
 } from './events.js'
 import { taxSchedule, initialAllowanceEligibleOf, setInitialAllowanceEligible } from './tax.js'
 import { fixedAssetRequestRoutes, shapeEvents, actorOf, raiseRequest, ASSET_REQUEST_KINDS, REQUEST_KIND_LABELS } from './requests.js'
-import { EXISTING_SOURCES, EXISTING_COUNTERPARTIES } from './events.js'
+import { EXISTING_SOURCES, EXISTING_COUNTERPARTIES, assertGiverCompany, giverPreview } from './events.js'
+import { parseEffectiveDate } from './requests.js'
 import { fixedAssetPoolRoutes } from './pools.routes.js'
 import {
   fixedAssetReportRoutes, loadRegister, assetNbvAt, classOfAsset, pktDay, endOfPktDay, SMALLWARES_TAX_NOTE, type RegisterData,
@@ -299,6 +300,11 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     return {
       activeTenantId: req.staffUser!.tenantId,
       companies: tenants,
+      // "Another servd company gave it": the other live companies the caller belongs to.
+      relatedCompanies: await serviceClient.tenant.findMany({
+        where: { id: { in: (req.staffUser!.memberTenantIds ?? []).filter((t) => t !== req.staffUser!.tenantId) }, deletedAt: null, kind: 'company' },
+        select: { id: true, name: true }, orderBy: { name: 'asc' },
+      }),
       classes: classLists.flatMap(([t, cs]) => cs.map((c) => ({
         id: c.id, tenantId: t, key: c.key, label: c.label, costAccountCode: c.costAccountCode, accumAccountCode: c.accumAccountCode,
         depreciable: c.depreciable, pooled: c.pooled, defaultLifeMonths: c.defaultLifeMonths, taxRateBp: c.taxRateBp,
@@ -460,12 +466,15 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
       source: z.enum(EXISTING_SOURCES),
       counterparty: z.enum(EXISTING_COUNTERPARTIES).nullable().optional(),
       counterpartyTenantId: z.string().min(1).max(64).nullable().optional(),
-      classId: z.string().min(1).max(64),
-      name: z.string().trim().min(1).max(120),
+      // Another servd company: the class comes from the giver's asset (classId not needed).
+      classId: z.string().min(1).max(64).optional(),
+      giverAssetId: z.string().min(1).max(64).optional(),
+      name: z.string().trim().min(1).max(120).optional(),
       serial: z.string().trim().max(120).nullable().optional(),
       conceptId: z.string().min(1).max(64).nullable().optional(),
       locationId: z.string().min(1).max(64).nullable().optional(),
-      valueCents: zMoneyCents('Today\'s value', { sign: 'positive' }),
+      // Not typed for another servd company: the giver's book value is the value.
+      valueCents: zMoneyCents('Today\'s value', { sign: 'positive' }).optional(),
       inServiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-01'),
       remainingLifeMonths: z.number().int().min(1).max(1200).optional(),
       salvageCents: zMoneyCents('The salvage value').optional(),
@@ -474,8 +483,24 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     if (body.reason.trim().length < 10) throw new AppError('REASON_REQUIRED', 'Give a reason (at least 10 characters)', 422)
     // Create mode: the ACTIVE company only. The class must be one of its classes.
     const tenantId = activeTenantId(req, 'the asset belongs to one company')
-    const cls = await prisma.fixedAssetClass.findFirst({ where: { id: body.classId, tenantId } })
+    const fromCompany = body.source === 'related_party' && body.counterparty === 'servd_company'
+    // Another servd company (owner, 2026-10-21: "Book value, no gain or loss"): the giver's own
+    // register asset, at its book value on the transfer date; the caller belongs to both companies.
+    let giver: Awaited<ReturnType<typeof giverPreview>> | null = null
+    if (fromCompany) {
+      await assertGiverCompany(serviceClient, tenantId, body.counterpartyTenantId ?? '', req.staffUser!.memberTenantIds ?? [])
+      if (!body.giverAssetId) throw new AppError('ASSET_NOT_ON_GIVER_REGISTER', 'Pick the giving company\'s asset', 422)
+      giver = await giverPreview(serviceClient, body.counterpartyTenantId!, body.giverAssetId, parseEffectiveDate(body.inServiceDate)!)
+      if (giver.nbvCents <= 0) throw new AppError('NO_BOOK_VALUE', 'This asset has no book value left — there is nothing to transfer at book value', 422)
+    }
+    const cls = giver
+      ? await prisma.fixedAssetClass.findFirst({ where: { tenantId, key: giver.classKey } })
+      : await prisma.fixedAssetClass.findFirst({ where: { id: body.classId ?? '', tenantId } })
     if (!cls) throw new AppError('ASSET_CLASS_NOT_IN_COMPANY', 'That asset class is not one of this company\'s classes', 422)
+    const name = body.name ?? giver?.name
+    if (!name) throw new AppError('NAME_REQUIRED', 'Say what the asset is', 422)
+    const valueCents = giver ? giver.nbvCents : body.valueCents
+    if (!valueCents) throw new AppError('VALUE_REQUIRED', 'Enter today\'s value', 422)
     const r = await raiseRequest(req, {
       kind: 'add_existing',
       tenantId,
@@ -486,17 +511,44 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
         counterparty: body.source === 'related_party' ? (body.counterparty ?? null) : null,
         counterpartyTenantId: body.counterparty === 'servd_company' ? (body.counterpartyTenantId ?? null) : null,
         classKey: cls.key,
-        name: body.name,
-        serial: body.serial ?? null,
+        name,
+        serial: body.serial ?? giver?.serialNumber ?? null,
         conceptId: body.conceptId ?? null,
         locationId: body.locationId ?? null,
-        valueCents: body.valueCents,
+        valueCents,
         inServiceAt: body.inServiceDate,
-        remainingLifeMonths: body.remainingLifeMonths ?? (cls.defaultLifeMonths ?? 12),
-        ...(body.salvageCents !== undefined ? { salvageCents: body.salvageCents } : {}),
+        remainingLifeMonths: body.remainingLifeMonths ?? giver?.remainingLifeMonths ?? (cls.defaultLifeMonths ?? 12),
+        // Salvage carries over from the giver (capped at the book value).
+        ...(giver ? { salvageCents: Math.min(giver.salvageCents, giver.nbvCents), giverAssetId: giver.assetId }
+          : body.salvageCents !== undefined ? { salvageCents: body.salvageCents } : {}),
       },
     })
     return reply.status(r.statusCode).send(r.body)
+  })
+
+  // GET /existing/giver-assets?giverTenantId&date — the picker for "Another servd company gave
+  // it": that company's live, in-use, individual assets with their book value on `date`
+  // (default today). The caller must belong to it and it must not be the active company
+  // (422 COUNTERPARTY_NOT_YOURS).
+  fastify.get('/existing/giver-assets', { preHandler: requireAuth(...FA_WRITERS) }, async (req) => {
+    const q = z.object({
+      giverTenantId: z.string().min(1).max(64),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    }).parse(req.query)
+    const tenantId = activeTenantId(req, 'the asset belongs to one company')
+    await assertGiverCompany(serviceClient, tenantId, q.giverTenantId, req.staffUser!.memberTenantIds ?? [])
+    const at = parseEffectiveDate(q.date) ?? new Date()
+    const rows = await serviceClient.fixedAsset.findMany({
+      where: { tenantId: q.giverTenantId, status: 'active', kind: 'individual' },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }], take: 500, select: { id: true, inServiceAt: true, acquiredAt: true },
+    })
+    const assets = []
+    for (const r of rows) {
+      if (pktDay(r.inServiceAt ?? r.acquiredAt) > pktDay(at)) continue
+      const g = await giverPreview(serviceClient, q.giverTenantId, r.id, at)
+      if (g.nbvCents > 0) assets.push(g)
+    }
+    return { giverTenantId: q.giverTenantId, date: pktDay(at), assets }
   })
 
   // POST /depreciate { throughPeriod? } — "charge now / catch up" for the

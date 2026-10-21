@@ -3615,7 +3615,7 @@ model IntercompanyTransfer {
   tenantId              String // debtor
   counterpartyTenantId  String // creditor
   kind                  String // charge | settlement | netting
-  source                String    @default("manual") // manual | fleet | cod | ho_recharge
+  source                String    @default("manual") // manual | fleet | cod | ho_recharge | asset_transfer
   sourceRef             String? // fleet: 'fleet:<agreementId>:<YYYY-MM>'; cod: 'cod:<paymentId>'; null for manual
   period                String? // 'YYYY-MM' a charge is for
   amountCents           BigInt

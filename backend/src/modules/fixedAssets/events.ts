@@ -25,11 +25,11 @@
 // (default the class life). The other side: 3010 Owner's capital (bought
 // before servd; contributed by the owners — as opening stock H19 and supplier
 // opening balances H49) or 2210 Due to Garibsons (Garibsons paid for it — the
-// petty-cash code, H1). Another servd company → not built yet (owner
-// question: the giver's book-out value / gain or loss) — 422
-// RELATED_COMPANY_NOT_YET. Nothing is booked until the CEO approves; the
-// entry is dated the in-service date (never late-dated: a closed month is
-// refused by the books, PERIOD_LOCKED).
+// petty-cash code, H1). Another servd company (owner, 2026-10-21: "Book
+// value, no gain or loss"): the GIVER's own register asset moves at its book
+// value on the transfer date — applyRelatedCompanyTransfer. Nothing is booked
+// until the CEO approves; the entry is dated the in-service (transfer) date
+// (never late-dated: a closed month is refused by the books, PERIOD_LOCKED).
 //
 // The CEO's own request is applied at once. An approval runs in ONE
 // transaction (the months before it are charged first, through the same
@@ -61,10 +61,12 @@ import { inputTaxCodeFor, isAuthorityKey, INPUT_TAX_ACCOUNTS } from '../accounti
 import { classOf, type Db } from './classes.js'
 import { defaultInitialAllowanceEligible } from './tax.js'
 import {
-  addMonths, lastCompletedPeriodPkt, periodIndex, periodOfPkt,
+  addMonths, lastCompletedPeriodPkt, periodIndex, periodOfPkt, planCharges,
 } from './schedule.js'
+import { postSystemTransferTx } from '../intercompany/service.js'
+import { memberTenantIdsOf } from '../../lib/companyPairs.js'
 import {
-  chargeAssetTx, reverseChargesFrom, loadAssetState, accumulatedByCode, lockAsset, nextAssetTag, postAcquisition,
+  chargeAssetTx, reverseChargesFrom, loadAssetState, accumulatedByCode, accumulatedTotal, lockAsset, nextAssetTag, postAcquisition,
   payloadOf, ACQUIRE_SOURCE, DISPOSE_SOURCE, IMPAIRMENT_SOURCE, TRANSFER_SOURCE, POOL_WRITE_OFF_SOURCE,
 } from './service.js'
 import { findOrCreatePool, poolLayersFifo, poolUnitsOnHand, allocateFifo, sliceCents } from './pools.js'
@@ -126,18 +128,15 @@ export type ExistingCounterparty = typeof EXISTING_COUNTERPARTIES[number]
 /**
  * The account an existing asset is credited to: 3010 Owner's capital for an
  * asset bought before servd or contributed by the owners, 2210 Due to
- * Garibsons when Garibsons paid for it. Another servd company is not built
- * (422 RELATED_COMPANY_NOT_YET) — it waits for the owner's answer on the
- * giver's side (see the README).
+ * Garibsons when Garibsons paid for it, 1395 Fixed Asset Transfer Clearing
+ * when another servd company gave it (the inter-company engine moves 1395 to
+ * "Due to <giver>" in the same transaction).
  */
 export function existingOffsetCode(source: ExistingSource, counterparty: ExistingCounterparty | null | undefined): string {
   if (source === 'pre_servd') return ACCT.OWNERS_CAPITAL
   if (counterparty === 'garibsons') return ACCT.DUE_TO_GARIBSONS
   if (counterparty === 'owners') return ACCT.OWNERS_CAPITAL
-  if (counterparty === 'servd_company') {
-    throw new AppError('RELATED_COMPANY_NOT_YET',
-      'An asset given by another servd company is not built yet — it waits for the owner\'s answer on how the giving company books it out', 422)
-  }
+  if (counterparty === 'servd_company') return ACCT.ASSET_TRANSFER_CLEARING
   throw new AppError('COUNTERPARTY_REQUIRED', 'Say who it came from: Garibsons, another servd company or the owners', 422)
 }
 
@@ -225,11 +224,16 @@ export const PAYLOAD_SCHEMAS = {
     inServiceAt: dateInput,
     remainingLifeMonths: z.number().int().min(1).max(1200),
     salvageCents: zMoneyCents('The salvage value').optional(),
+    // Another servd company: the GIVER's register asset that moves (its book value is the value).
+    giverAssetId: idSchema.nullable().optional(),
   }).superRefine((p, ctx) => {
     if (p.source === 'related_party' && !p.counterparty) ctx.addIssue({ code: 'custom', path: ['counterparty'], message: 'Say who it came from' })
     if (p.source === 'pre_servd' && p.counterparty) ctx.addIssue({ code: 'custom', path: ['counterparty'], message: 'An asset bought before servd has no related party' })
     if ((p.counterparty === 'servd_company') !== !!p.counterpartyTenantId) {
       ctx.addIssue({ code: 'custom', path: ['counterpartyTenantId'], message: 'Name the servd company only when it came from another servd company' })
+    }
+    if ((p.counterparty === 'servd_company') !== !!p.giverAssetId) {
+      ctx.addIssue({ code: 'custom', path: ['giverAssetId'], message: 'Pick the giving company\'s asset (only when it came from another servd company)' })
     }
   }),
 } as const
@@ -398,6 +402,19 @@ function assertEffectiveDate(effective: Date, inService: Date | null): void {
   }
 }
 
+/** An asset another servd company gave: its value is the giver's book value and the pair owes it — never voided. */
+function assertNotTransferredIn(a: FixedAsset): void {
+  if (a.acquisitionCreditCode === ACCT.ASSET_TRANSFER_CLEARING) {
+    throw new AppError('TRANSFERRED_IN', 'This asset came from another servd company at book value — it cannot be voided; transfer it back instead', 409)
+  }
+}
+/** An asset given to another servd company left at book value — it is not un-disposed here. */
+function assertNotTransferredOut(a: FixedAsset): void {
+  if (a.disposalKind === 'transferred_out') {
+    throw new AppError('TRANSFERRED_OUT', 'This asset was transferred to another servd company — it lives on that company\'s register now', 409)
+  }
+}
+
 /** Posted history that a void must not erase (net of disposals already undone). */
 async function blockingHistory(db: Db, assetId: string): Promise<string | null> {
   const ev = await db.fixedAssetEvent.findMany({
@@ -429,7 +446,9 @@ async function validateRequest(db: Db, kind: string, s: Subject, payload: Record
     if (asset.status === 'voided') throw new AppError('ASSET_VOIDED', 'This asset was voided', 409)
     if (kind === 'undispose') {
       if (asset.status !== 'disposed') throw new AppError('NOT_DISPOSED', 'This asset is not disposed', 409)
+      assertNotTransferredOut(asset)
     } else if (kind === 'void') {
+      assertNotTransferredIn(asset)
       const blocking = await blockingHistory(db, asset.id)
       if (blocking || asset.status !== 'active') {
         throw new AppError('ASSET_HAS_EVENTS', `This asset has ${blocking ?? 'a disposal'} on the books — it cannot be voided`, 409)
@@ -525,6 +544,72 @@ function headlineCents(kind: string, payload: Record<string, unknown>): number |
   return null
 }
 
+/** A closed month refuses the day (422 PERIOD_LOCKED) — the books' own rule, checked up front. */
+async function assertOpenOn(db: Db, tenantId: string, day: Date): Promise<void> {
+  const lock = await db.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+  if (lock && day <= lock.lockedThrough) {
+    const name = (await db.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }))?.name ?? 'this company'
+    throw new AppError('PERIOD_LOCKED',
+      `${name}'s books are closed through ${fmtPktDate(lock.lockedThrough)} — the date must be in an open month (${fmtPktDate(day)} is closed)`, 422)
+  }
+}
+
+/** The giving company: another live company the caller belongs to (422 COUNTERPARTY_NOT_YOURS). */
+export async function assertGiverCompany(db: Db, receiverTenantId: string, giverTenantId: string, memberTenantIds: readonly string[]): Promise<void> {
+  const t = giverTenantId ? await db.tenant.findUnique({ where: { id: giverTenantId }, select: { id: true, deletedAt: true } }) : null
+  if (!t || t.deletedAt || giverTenantId === receiverTenantId || !memberTenantIds.includes(giverTenantId)) {
+    throw new AppError('COUNTERPARTY_NOT_YOURS', 'Pick another servd company you belong to', 422)
+  }
+}
+
+/**
+ * The giver's asset: on ITS register, in use, an individual (non-pooled) item.
+ * Anything else is 422 ASSET_NOT_ON_GIVER_REGISTER — add it to the giver's
+ * register first (Add existing asset there), then transfer it.
+ */
+export async function giverAssetOf(db: Db, giverTenantId: string, giverAssetId: string): Promise<FixedAsset> {
+  const a = giverAssetId ? await db.fixedAsset.findUnique({ where: { id: giverAssetId } }) : null
+  if (!a || a.tenantId !== giverTenantId || a.status !== 'active' || a.kind !== 'individual') {
+    throw new AppError('ASSET_NOT_ON_GIVER_REGISTER',
+      'That asset is not in use on the giving company\'s register — add it there first (Add existing asset), then transfer it', 422)
+  }
+  return a
+}
+
+export interface GiverPreview {
+  assetId: string; tenantId: string; assetTag: string | null; name: string; serialNumber: string | null; classKey: string
+  costCents: number; accumulatedCents: number; nbvCents: number; salvageCents: number
+  /** Months of its life left from the transfer month (the receiver's default; at least 1). */
+  remainingLifeMonths: number
+}
+
+/**
+ * What the giver's asset is worth on `transferDate`: its book value after
+ * every month BEFORE the transfer month is charged (the months it would be
+ * charged by the approval's catch-up, computed, not posted) and any charge of
+ * the transfer month or later taken back — exactly what the approval does.
+ */
+export async function giverPreview(db: Db, giverTenantId: string, giverAssetId: string, transferDate: Date): Promise<GiverPreview> {
+  const asset = await giverAssetOf(db, giverTenantId, giverAssetId)
+  const state = await loadAssetState(db, asset.id)
+  const transferPeriod = periodOfPkt(transferDate)
+  const before = new Map([...state.charged].filter(([p]) => periodIndex(p) < periodIndex(transferPeriod)))
+  // A charge already posted for the transfer month or later is taken back on approval.
+  let later = 0
+  for (const [p, c] of state.charged) if (periodIndex(p) >= periodIndex(transferPeriod)) later += c
+  const owed = planCharges(state.schedule, before, state.adjustments, chargeThroughBefore(transferDate))
+  const accumulated = accumulatedTotal(state) - later + owed.reduce((t, c) => t + c.amountCents, 0)
+  const cost = toCents(asset.costCents)
+  const start = periodIndex(periodOfPkt(asset.inServiceAt ?? asset.acquiredAt))
+  const used = periodIndex(transferPeriod) - start
+  return {
+    assetId: asset.id, tenantId: asset.tenantId, assetTag: asset.assetTag, name: asset.name, serialNumber: asset.serialNumber,
+    classKey: asset.category, costCents: cost, accumulatedCents: accumulated, nbvCents: cost - accumulated,
+    salvageCents: toCents(asset.salvageCents),
+    remainingLifeMonths: Math.max(1, (asset.usefulLifeMonths || 0) - used),
+  }
+}
+
 /**
  * The checks of an existing asset — when raised and again when the CEO
  * approves (on the approval's transaction). Returns the class and the offset
@@ -533,7 +618,7 @@ function headlineCents(kind: string, payload: Record<string, unknown>): number |
  * IN_SERVICE_DATE (future), PERIOD_LOCKED (a closed month — the books' own
  * rule; the entry is dated the in-service date, never late-dated),
  * REMAINING_LIFE (above twice the class life), SALVAGE_TOO_HIGH,
- * COUNTERPARTY_NOT_YOURS, RELATED_COMPANY_NOT_YET.
+ * COUNTERPARTY_NOT_YOURS, ASSET_NOT_ON_GIVER_REGISTER, NO_BOOK_VALUE.
  */
 export async function checkAddExisting(
   db: Db, tenantId: string, p: AddExistingPayload, when: 'raise' | 'apply',
@@ -550,27 +635,31 @@ export async function checkAddExisting(
   assertSharedHasLocation(p.conceptId, p.locationId)
   if (p.counterparty === 'servd_company' && when === 'raise') {
     // Another servd company the caller is a member of (never the asset's own).
-    const other = p.counterpartyTenantId ?? ''
-    const t = other ? await db.tenant.findUnique({ where: { id: other }, select: { id: true, kind: true, deletedAt: true } }) : null
-    if (!t || t.deletedAt || other === tenantId || !(opts.memberTenantIds ?? []).includes(other)) {
-      throw new AppError('COUNTERPARTY_NOT_YOURS', 'Pick another servd company you belong to', 422)
-    }
+    await assertGiverCompany(db, tenantId, p.counterpartyTenantId ?? '', opts.memberTenantIds ?? [])
   }
   const offsetCode = existingOffsetCode(p.source, p.counterparty)
   const inServiceAt = parseDate(p.inServiceAt)
   if (Number.isNaN(inServiceAt.getTime())) throw new AppError('IN_SERVICE_DATE', 'That date is not valid', 422)
   if (isFuturePktDay(inServiceAt)) throw new AppError('IN_SERVICE_DATE', 'The in-service date cannot be in the future', 422)
-  const lock = await db.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
-  if (lock && inServiceAt <= lock.lockedThrough) {
-    throw new AppError('PERIOD_LOCKED',
-      `The books are closed through ${fmtPktDate(lock.lockedThrough)} — the in-service date must be in an open month (${fmtPktDate(inServiceAt)} is closed)`, 422)
+  await assertOpenOn(db, tenantId, inServiceAt)
+  if (p.counterparty === 'servd_company') {
+    // The giver's books must be open that day too, and its asset on its register.
+    const giverTenantId = p.counterpartyTenantId ?? ''
+    await assertOpenOn(db, giverTenantId, inServiceAt)
+    const giver = await giverAssetOf(db, giverTenantId, p.giverAssetId ?? '')
+    if (pktDay(inServiceAt) < pktDay(giver.inServiceAt ?? giver.acquiredAt)) {
+      throw new AppError('IN_SERVICE_DATE', `The transfer date must be on or after the day the asset went into service at the giving company (${pktDay(giver.inServiceAt ?? giver.acquiredAt)})`, 422)
+    }
+    if (giver.category !== cls.key) throw new AppError('CLASS_MISMATCH', 'The asset keeps its class when it moves between companies', 422)
   }
   const classLife = cls.depreciable ? (cls.defaultLifeMonths ?? 12) : 0
   const life = cls.depreciable ? p.remainingLifeMonths : 0
   if (cls.depreciable && life > classLife * 2) {
     throw new AppError('REMAINING_LIFE', `The remaining life can be at most ${classLife * 2} months (twice the class life)`, 422)
   }
-  if ((p.salvageCents ?? 0) >= p.valueCents && cls.depreciable) {
+  // A transfer at book value may arrive fully depreciated (value = salvage): nothing left to charge.
+  const salvageTooHigh = p.counterparty === 'servd_company' ? (p.salvageCents ?? 0) > p.valueCents : (p.salvageCents ?? 0) >= p.valueCents
+  if (salvageTooHigh && cls.depreciable) {
     throw new AppError('SALVAGE_TOO_HIGH', 'Salvage value must be less than today\'s value', 422)
   }
   return { cls, offsetCode, inServiceAt, life }
@@ -858,6 +947,7 @@ async function applyUndispose(tx: Tx, event: FixedAssetEvent, actorId: string): 
   const asset = await tx.fixedAsset.findUnique({ where: { id: event.assetId } })
   if (!asset) throw new NotFoundError('FixedAsset', event.assetId)
   if (asset.status !== 'disposed') throw new AppError('NOT_DISPOSED', 'This asset is not disposed', 409)
+  assertNotTransferredOut(asset)
   if (asset.kind === 'pool_layer') throw new AppError('POOL_LAYER_UNDISPOSE', 'A written-off smallwares layer cannot be brought back — capitalise the units again', 422)
   const r = await syncSourcePosting({
     tenantId: asset.tenantId, sourceType: DISPOSE_SOURCE, id: asset.id, desired: null,
@@ -987,6 +1077,7 @@ async function applyVoid(tx: Tx, event: FixedAssetEvent, actorId: string): Promi
     ? await tx.fixedAsset.findMany({ where: { tenantId: target.tenantId, capexLineId: target.capexLineId, status: { not: 'voided' } }, orderBy: { id: 'asc' } })
     : [target]
   if (!group.some((a) => a.id === target.id)) throw new AppError('ASSET_VOIDED', 'This asset was voided', 409)
+  assertNotTransferredIn(target)
   for (const a of group) await lockAsset(tx, a.id)
   const reason = `Voided — capitalised in error: ${event.reason}`.slice(0, 200)
   for (const a of group) {
@@ -1361,6 +1452,7 @@ const FILES_OWNER = 'fixed_asset'
 // chargeThrough (the nightly worker / "charge now") from the in-service month.
 async function applyAddExisting(tx: Tx, event: FixedAssetEvent, payload: Record<string, unknown>, actorId: string): Promise<Applied> {
   const p = payload as AddExistingPayload
+  if (p.counterparty === 'servd_company') return applyRelatedCompanyTransfer(tx, event, p, actorId)
   const tenantId = event.tenantId
   const { cls, offsetCode, inServiceAt, life } = await checkAddExisting(tx, tenantId, p, 'apply')
   const value = p.valueCents
@@ -1398,4 +1490,135 @@ async function applyAddExisting(tx: Tx, event: FixedAssetEvent, payload: Record<
     data: { ownerId: asset.id },
   })
   return { journalEntryId: r.entryId, amountCents: value, assetId: asset.id, payload: { assetId: asset.id, offsetCode } }
+}
+
+/** The giver's side of a transfer, kept on the GIVER's asset history (never requested; listed as history). */
+export const TRANSFER_OUT_KIND = 'transfer_out'
+export const TRANSFER_OUT_SOURCE = 'fixed_asset.transfer_out'
+
+// Another servd company gave it (owner, 2026-10-21: "Book value, no gain or
+// loss"). ONE transaction, dated the transfer date in BOTH books (a closed
+// month in either: PERIOD_LOCKED, nothing saved):
+//   giver:    charge every month before the transfer month (chargeAssetTx),
+//             take back any charge of the transfer month or later, then
+//             fixed_asset.transfer_out:<giverAssetId>
+//               Dr accumulated (per code) + Dr 1395 (NBV) / Cr class cost
+//             — no gain or loss line; the asset is disposed 'transferred_out';
+//   receiver: the new asset at cost = NBV (salvage carried, the remaining
+//             life finance confirmed), fixed_asset.acquire:<newAssetId>
+//               Dr class cost / Cr 1395;
+//   pair:     the EXISTING inter-company engine (postSystemTransferTx, source
+//             'asset_transfer', ic.transfer:<id> in both books):
+//               receiver Dr 1395 / Cr Due to <giver>; giver Dr Due from <receiver> / Cr 1395
+//             — 1395 is zero again in both companies; the register never
+//             touches 1450–1499 / 2150–2199 and the engine never touches 15xx.
+// The approver (the CEO) must belong to BOTH companies (403 NOT_IN_BOTH_COMPANIES).
+async function applyRelatedCompanyTransfer(tx: Tx, event: FixedAssetEvent, p: AddExistingPayload, actorId: string): Promise<Applied> {
+  const receiverTenantId = event.tenantId
+  const giverTenantId = p.counterpartyTenantId ?? ''
+  const members = await memberTenantIdsOf(actorId)
+  if (!members.includes(receiverTenantId) || !members.includes(giverTenantId)) {
+    throw new AppError('NOT_IN_BOTH_COMPANIES', 'Only a CEO who belongs to both companies can approve a transfer between them', 403)
+  }
+  await lockAsset(tx, p.giverAssetId!)
+  const { cls, inServiceAt: transferDate, life } = await checkAddExisting(tx, receiverTenantId, p, 'apply')
+  const giver = await giverAssetOf(tx, giverTenantId, p.giverAssetId!)
+  const giverCls = await classOf(giverTenantId, giver.category, tx)
+
+  // The giver's book value on the transfer date.
+  await chargeAssetTx(tx, giver.id, chargeThroughBefore(transferDate), actorId)
+  await reverseChargesFrom(tx, giver.id, periodOfPkt(transferDate), actorId, 'Transferred to another servd company — the transfer month and later are charged by the receiver')
+  const state = await loadAssetState(tx, giver.id)
+  const byCode = accumulatedByCode(state)
+  const accumulated = sum(byCode)
+  const cost = toCents(giver.costCents)
+  const nbv = cost - accumulated
+  if (nbv <= 0) throw new AppError('NO_BOOK_VALUE', 'This asset has no book value left — there is nothing to transfer at book value', 422)
+  assertMoneyFits(nbv, 'The book value')
+  const salvage = Math.min(toCents(giver.salvageCents), nbv)
+  const names = new Map((await tx.tenant.findMany({ where: { id: { in: [giverTenantId, receiverTenantId] } }, select: { id: true, name: true } })).map((t) => [t.id, t.name]))
+  const giverName = names.get(giverTenantId) ?? 'the giving company'
+  const receiverName = names.get(receiverTenantId) ?? 'the receiving company'
+  const giverMemo = tagOf(giver)
+
+  // (a) Giver: out at book value — no gain or loss.
+  const outLines: JournalLineInput[] = []
+  for (const [code, cents] of byCode) {
+    outLines.push({ accountCode: code, type: cents > 0 ? 'debit' : 'credit', amountCents: Math.abs(cents), conceptId: giver.conceptId, memo: giverMemo })
+  }
+  outLines.push({ accountCode: ACCT.ASSET_TRANSFER_CLEARING, type: 'debit', amountCents: nbv, memo: `Book value to ${receiverName} — ${giverMemo}`.slice(0, 200) })
+  outLines.push({ accountCode: giverCls.costAccountCode, type: 'credit', amountCents: cost, conceptId: giver.conceptId, memo: giverMemo })
+  const out = await postJournalEntry({
+    tenantId: giverTenantId, sourceType: TRANSFER_OUT_SOURCE, sourceId: giver.id,
+    description: `Transferred to ${receiverName} at book value: ${giverMemo}`.slice(0, 500),
+    entryDate: transferDate, postedBy: actorId, lines: outLines,
+  }, { tx })
+  const claimed = await tx.fixedAsset.updateMany({
+    where: { id: giver.id, status: 'active' },
+    data: {
+      status: 'disposed', disposedAt: transferDate, disposalProceedsCents: nbv, disposalKind: 'transferred_out',
+      disposalReason: `Transferred to ${receiverName} at book value: ${event.reason}`.slice(0, 500),
+    },
+  })
+  if (claimed.count === 0) throw new AppError('ALREADY_DISPOSED', 'This asset has already left the giving company\'s register', 409)
+
+  // (b) Receiver: in at book value.
+  const asset = await tx.fixedAsset.create({
+    data: {
+      tenantId: receiverTenantId, conceptId: p.conceptId ?? null, locationId: p.locationId ?? null,
+      name: p.name.slice(0, 120), serialNumber: p.serial ?? giver.serialNumber ?? null,
+      category: cls.key, assetTag: await nextAssetTag(tx, receiverTenantId),
+      acquiredAt: transferDate, inServiceAt: transferDate,
+      costCents: nbv, originalCostCents: nbv, salvageCents: salvage, usefulLifeMonths: life,
+      acquisitionCreditCode: ACCT.ASSET_TRANSFER_CLEARING, kind: 'individual', quantity: 1, originalQuantity: 1,
+      method: cls.depreciable ? 'straight_line' : 'none',
+      initialAllowanceEligible: false,
+      supplier: giver.supplier, supplierId: null, warrantyUntil: giver.warrantyUntil, leaseEndsAt: null,
+      notes: `Transferred from ${giverName} (${giver.assetTag ?? giver.id}) at book value: ${event.reason}`.slice(0, 1000),
+      createdById: actorId,
+    },
+  })
+  const memo = tagOf(asset)
+  const acq = await postJournalEntry({
+    tenantId: receiverTenantId, sourceType: ACQUIRE_SOURCE, sourceId: asset.id,
+    description: `Transferred in from ${giverName} at book value: ${memo}`.slice(0, 500),
+    entryDate: transferDate, postedBy: actorId,
+    lines: [
+      { accountCode: cls.costAccountCode, type: 'debit', amountCents: nbv, conceptId: asset.conceptId, memo },
+      { accountCode: ACCT.ASSET_TRANSFER_CLEARING, type: 'credit', amountCents: nbv, memo: `Book value from ${giverName} — ${memo}`.slice(0, 200) },
+    ],
+  }, { tx })
+
+  // (c) The pair, through the inter-company engine: the receiver owes the giver the book value.
+  const ic = await postSystemTransferTx(tx, {
+    kind: 'charge', source: 'asset_transfer', sourceRef: `asset:${giver.id}`,
+    debtorTenantId: receiverTenantId, creditorTenantId: giverTenantId, amountCents: nbv, entryDate: transferDate,
+    debtorAccountCode: ACCT.ASSET_TRANSFER_CLEARING, creditorAccountCode: ACCT.ASSET_TRANSFER_CLEARING,
+    memo: `Fixed asset ${giver.assetTag ?? giver.name} transferred at book value: ${giverName} → ${receiverName} (${asset.assetTag ?? asset.id})`,
+    preparedById: actorId,
+  })
+
+  // The giver's history row (posted, never requested).
+  await tx.fixedAssetEvent.create({
+    data: {
+      tenantId: giverTenantId, assetId: giver.id, parentEventId: event.id, kind: TRANSFER_OUT_KIND, status: 'posted',
+      effectiveDate: transferDate,
+      payload: json({ toTenantId: receiverTenantId, toAssetId: asset.id, transferId: ic.transferId, nbvCents: nbv, accumOutByCode: Object.fromEntries(byCode) }),
+      amountCents: nbv, costOutCents: cost, accumOutCents: accumulated,
+      reason: event.reason, requestedById: event.requestedById, decidedById: actorId, decidedAt: new Date(), postedAt: new Date(),
+      journalEntryId: out.entryId,
+    },
+  })
+  await tx.cashVoucherAttachment.updateMany({
+    where: { tenantId: receiverTenantId, ownerType: FILES_OWNER, ownerId: event.id },
+    data: { ownerId: asset.id },
+  })
+  return {
+    journalEntryId: acq.entryId, amountCents: nbv, assetId: asset.id,
+    payload: {
+      assetId: asset.id, offsetCode: ACCT.ASSET_TRANSFER_CLEARING, valueCents: nbv, salvageCents: salvage,
+      giverNbvCents: nbv, giverCostCents: cost, giverAccumulatedCents: accumulated,
+      giverEntryId: out.entryId, transferId: ic.transferId,
+    },
+  }
 }

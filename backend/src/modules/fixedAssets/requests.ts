@@ -51,6 +51,7 @@ export const REQUEST_KIND_LABELS: Record<string, string> = {
   pool_transfer: 'Move smallwares units',
   count: 'Smallwares count',
   add_existing: 'Add existing asset',
+  transfer_out: 'Transferred to another servd company',
 }
 
 const MIN_REASON = 10

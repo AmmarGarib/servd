@@ -82,6 +82,11 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1355', name: 'Cash Advances to Settle',            type: 'asset',     description: 'Cash requests paid out, awaiting receipts or change (H3)' },
   { code: '1356', name: "Director's Current Account",         type: 'asset',     description: 'Unsettled cash advances held by a director (H4, Companies Act 2017 s.182); a credit balance is owed to the director' },
   { code: '1357', name: 'Petty Cash Vouchers Awaiting Documents', type: 'asset', description: 'RETIRED 2026-10-16 — nothing posts here. History of the 2026-10-15 hold flow (vouchers paid before their documents were verified); vouchers still held were booked out as one expense entry each' },
+  // A fixed asset given by one servd company to another (owner, 2026-10-21): the register's
+  // legs (fixed_asset.*) and the inter-company engine's legs (ic.*) meet here in the SAME
+  // transaction, so it is always zero after the entry pair. Not controlled — the engine
+  // posts only to ordinary accounts — but nothing else should ever post here.
+  { code: '1395', name: 'Fixed Asset Transfer Clearing',      type: 'asset',     description: 'Zero after every inter-company asset transfer (register leg + inter-company leg in one transaction); a balance means something posted here by hand' },
   { code: '1360', name: 'Security Deposits (refundable)',     type: 'asset',     description: 'Refundable deposits paid, held until returned or forfeited (H25)' },
   // Fixed assets — the register's accounts (controlledBy 'fixed_asset').
   { code: '1500', name: 'Land',                               type: 'asset',     description: 'Never depreciated',                                    controlledBy: 'fixed_asset' },

@@ -124,6 +124,10 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // default Raast receiving account per company.
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "raast_receipts_one_awaiting_per_order" ON "raast_receipts" ("orderId") WHERE "status" = 'awaiting'`)
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "bank_accounts_one_raast_default_per_company" ON "bank_accounts" ("tenantId") WHERE "raastDefault" = true AND "deletedAt" IS NULL`)
+  // Inter-company asset transfers (2026-10-21): ic_source_chk gains 'asset_transfer'.
+  await prisma.$executeRawUnsafe('ALTER TABLE "intercompany_transfers" DROP CONSTRAINT IF EXISTS "ic_source_chk"')
+  for (const statement of migrationSection('20261021160000_ic_asset_transfer',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
   // Head office (D1/D3): the partial uniques head_office_links_one_live and
   // recharge_runs_one_open, and every CHECK of the new tables — read from the
   // migration's SQL-only section (RLS stays out, as above).

@@ -293,12 +293,14 @@ export async function registerMovements(db: Db, data: RegisterData): Promise<Mov
     }
     for (const e of events) {
       const at = (e.journalEntryId ? entryDate.get(e.journalEntryId) : undefined) ?? e.postedAt ?? e.effectiveDate
-      if (e.kind === 'disposal') {
+      if (e.kind === 'disposal' || e.kind === 'transfer_out') {
+        // transfer_out: given to another servd company at book value (owner, 2026-10-21).
+        const mk: MovementKind = e.kind === 'disposal' ? 'disposal' : 'transfer_out'
         const cost = toCents(e.costOutCents) ?? toCents(a.costCents)
         const total = toCents(e.accumOutCents) ?? [...weights.values()].reduce((t, v) => t + Math.max(0, v), 0)
         const byCode = splitByWeights(total, weights, ac)
-        push(cc, 'disposal', -cost, at)
-        for (const [code, cents] of byCode) push(code, 'disposal', -cents, at)
+        push(cc, mk, -cost, at)
+        for (const [code, cents] of byCode) push(code, mk, -cents, at)
         lastDisposal = { cost, byCode }
       } else if (e.kind === 'undispose' && lastDisposal) {
         const back = e.postedAt ?? e.effectiveDate
@@ -309,7 +311,7 @@ export async function registerMovements(db: Db, data: RegisterData): Promise<Mov
     }
 
     // A pre-v2 disposal with no event row: off the books on its date.
-    if (a.status === 'disposed' && a.kind !== 'pool_layer' && a.disposedAt && !events.some((e) => e.kind === 'disposal')) {
+    if (a.status === 'disposed' && a.kind !== 'pool_layer' && a.disposedAt && !events.some((e) => e.kind === 'disposal' || e.kind === 'transfer_out')) {
       push(cc, 'disposal', -toCents(a.costCents), a.disposedAt)
       for (const [code, cents] of weights) if (cents > 0) push(code, 'disposal', -cents, a.disposedAt)
     }
