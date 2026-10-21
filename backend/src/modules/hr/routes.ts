@@ -31,11 +31,12 @@ import {
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, loanStatement, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
+  otAvailableOf, otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime,
 } from './service.js'
 import {
   mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
-  nextPeriod, settlementParts, settlementNet,
-  type ApprovalEntry, type HrSettings,
+  nextPeriod, settlementParts, settlementNet, settlementSalaryStart,
+  type ApprovalEntry, type HrSettings, type PayBasis,
 } from './logic.js'
 import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml, withLetterSystemRows } from './letters.js'
 import { CASH_REQUEST_PAID_FROM } from './advanceLoan.js'
@@ -617,7 +618,9 @@ async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: num
 
 /** What "Calculate" worked a full & final out from, stamped on the record
  *  (POST /hr/final-settlement/calculate with its recordId). */
-interface SettlementCalc { salaryFrom: string | null; lastWorkingDay: string; paidThrough: string | null; unpaidMonthSalary: boolean; at: string }
+interface SettlementCalc { salaryFrom: string | null; lastWorkingDay: string; paidThrough: string | null; unpaidMonthSalary: boolean; at: string; otRecordIds?: string[] }
+/** One month a full & final pays salary for, with its days (stored as data._payBasis). */
+interface SettlementPayBasis extends PayBasis { period: string; from: string; to: string; salaryCents: number }
 
 const ymdOf = (d: Date | string | null | undefined) => (d ? (typeof d === 'string' ? d : d.toISOString()).slice(0, 10) : null)
 
@@ -673,6 +676,16 @@ async function approveSettlement(tx: Tx, rec: HrRecord, postedBy: string) {
     if (calc.unpaidMonthSalary === false) salaryFrom = null
     else if (ymdOf(calc.salaryFrom) !== ymdOf(owedFrom)) {
       throw new AppError('FNF_STALE', `Payroll changed after this settlement was calculated: salary is now owed from ${ymdOf(owedFrom)}, not ${ymdOf(calc.salaryFrom) ?? 'nothing'} — calculate it again`, 409)
+    }
+  }
+  // The overtime HR added (owner, 2026-10-21: opt-in) must still be approved
+  // and unpaid — a payslip that took it since would pay it twice.
+  const otIds = settlementOtIds(d)
+  if (otIds.length > 0) {
+    const still = await unpaidOvertime(rec.tenantId, rec.employeeId, new Date(0), new Date(8.64e15), { runStatuses: ALL_RUN_STATUSES }, tx)
+    const ok = new Set(still.map((o) => o.id))
+    if (otIds.some((id) => !ok.has(id))) {
+      throw new AppError('FNF_STALE', 'Overtime added to this settlement has since been paid on a payroll or is no longer approved — calculate it again', 409)
     }
   }
   const cur = await tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id }, select: { data: true } })
@@ -1980,6 +1993,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const body = z.object({
       employeeId: z.string().uuid(), lastWorkingDay: z.string(), unpaidMonthSalary: z.boolean().default(true),
       recordId: z.string().uuid().optional(),
+      // Overtime is opt-in (owner, 2026-10-21): the approved, unpaid OT records
+      // HR adds to this settlement (replaces the choice; [] = none). Left out:
+      // the settlement keeps what it already chose, while still available.
+      otRecordIds: z.array(z.string().uuid()).max(500).optional(),
     }).parse(req.body)
     const found = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } })
     if (!found) throw new NotFoundError('Employee', body.employeeId)
@@ -2022,9 +2039,19 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // day, worked out above (never a second salaryForPeriod).
     const g = gratuityFor(emp, lwd, grossSalaryCents, s.gratuity)
     assertInt4Fits(g.amountCents, 'The gratuity')
+    // Overtime is paid only when HR adds it (owner, 2026-10-21), priced as a
+    // payslip prices it. A choice that is no longer available is 422 when sent
+    // now, and quietly dropped when it is the settlement's earlier choice.
+    const otAvailable = otAvailableOf(ot)
+    const approvals = (target?.approvals ?? []) as unknown as ApprovalEntry[]
+    const editable = !!target && (target.status === 'draft' || target.status === 'submitted') && approvals.length === 0
+    if (target && !editable && body.otRecordIds !== undefined) {
+      throw new AppError('FNF_NOT_DRAFT', 'This settlement has been acted on — its overtime can no longer change', 409)
+    }
+    const otChosen = otSelection(otAvailable, body.otRecordIds ?? (target ? settlementOtIds(target.data) : []), body.otRecordIds !== undefined)
     const r = finalSettlement({ ...emp, grossSalaryCents }, lwd, {
       salaryFrom,
-      otPayableCents: ot.reduce((a, o) => a + (o.amountCents ?? 0), 0),
+      otPayableCents: otChosen.otCents,
       leaveBalanceDays: leaveDays,
       loanOutstandingCents: loans.reduce((a, l) => a + l.outstandingCents, 0),
       deductionsCents: 0, otherAdjustmentsCents: 0,
@@ -2032,21 +2059,40 @@ export async function hrRoutes(fastify: FastifyInstance) {
       attendanceByPeriod,
       gratuityCents: g.amountCents,
     }, s)
+    // The days each month's salary pays for (owner, 2026-10-21: "Full and
+    // final form does not show number of days worked") — the pay basis each
+    // month's computePayslip produced, as a payslip keeps inputs.payBasis.
+    const payStart = settlementSalaryStart(emp.joiningDate, salaryFrom)
+    const payBasis: SettlementPayBasis[] = r.months.map((m) => {
+      const from = payStart && payStart > periodStart(m.period) ? payStart : periodStart(m.period)
+      const to = lwd < periodEnd(m.period) ? lwd : periodEnd(m.period)
+      return { period: m.period, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), ...m.basis, salaryCents: m.salaryCents }
+    })
     // Stamped only while the settlement can still be edited: once an
     // approver has acted, its figures are the ones they approved.
-    const approvals = (target?.approvals ?? []) as unknown as ApprovalEntry[]
-    if (target && (target.status === 'draft' || target.status === 'submitted') && approvals.length === 0) {
+    if (target && editable) {
       const calc: SettlementCalc = {
         salaryFrom: salaryFrom ? salaryFrom.toISOString() : null, lastWorkingDay: lwd.toISOString(),
         paidThrough: lastRun?.period ?? null, unpaidMonthSalary: body.unpaidMonthSalary, at: new Date().toISOString(),
+        otRecordIds: otChosen.otRecordIds,
       }
+      const cur = await prisma.hrRecord.findUniqueOrThrow({ where: { id: target.id }, select: { data: true } })
       await prisma.hrRecord.update({
         where: { id: target.id },
-        data: { data: { ...((target.data ?? {}) as Record<string, unknown>), _calc: calc } as unknown as Prisma.InputJsonValue },
+        data: { data: { ...((cur.data ?? {}) as Record<string, unknown>), _calc: calc, _payBasis: payBasis, _otAvailable: otAvailable } as unknown as Prisma.InputJsonValue },
       })
+      if (body.otRecordIds !== undefined) {
+        await audit({
+          category: 'identity', action: 'hr.payroll.overtime_added', entity: 'HrRecord', entityId: target.id,
+          userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: target.tenantId,
+          after: { settlement: true, employeeId: emp.id, recordIds: otChosen.otRecordIds, otHours: otChosen.otHours, otCents: otChosen.otCents },
+          metadata: { actorRole: req.staffUser!.role },
+        })
+      }
     }
     return {
-      ...r, leaveBalanceDays: leaveDays,
+      ...r, leaveBalanceDays: leaveDays, payBasis,
+      otAvailable, otRecordIds: otChosen.otRecordIds, otHours: otChosen.otHours,
       gratuityDetail: {
         eligible: g.eligible, reason: g.reason, joiningDate: emp.joiningDate ? emp.joiningDate.toISOString() : null,
         employmentType: emp.employmentType,
@@ -2216,6 +2262,50 @@ export async function hrRoutes(fastify: FastifyInstance) {
     await stampRunVia(req, slip.run)
     await recalcPayslip(slip.id, body, req.staffUser!.id)
     return prisma.hrPayslip.findUnique({ where: { id: slip.id } })
+  })
+
+  // Overtime is opt-in (owner, 2026-10-21): approved OT is paid only when HR
+  // adds it to a draft payslip. `recordIds` replaces the choice ([] = none);
+  // each must be approved, unpaid OT of this employee and company (422
+  // OT_NOT_AVAILABLE). Same people, module gate and scope as editing a payslip.
+  fastify.post<{ Params: { id: string } }>('/payroll/payslips/:id/overtime', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const body = z.object({ recordIds: z.array(z.string().uuid()).max(500) }).parse(req.body)
+    const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, ...writeTenants(req) }, include: { run: { select: { id: true, tenantId: true, status: true, viaHeadOfficeId: true } } } })
+    if (!slip) throw new NotFoundError('Payslip', req.params.id)
+    if (isReachOnly(req, slip.run.tenantId)) await assertHoMayPropose(req, slip.run.tenantId, slip.run.status === 'draft', 'editing a payslip on a payroll that is no longer a draft')
+    if (slip.run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'This payroll is no longer a draft', 409)
+    await stampRunVia(req, slip.run)
+    const r = await setPayslipOvertime(slip.id, body.recordIds, req.staffUser!.id)
+    await audit({
+      category: 'identity', action: 'hr.payroll.overtime_added', entity: 'HrPayslip', entityId: slip.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: slip.run.tenantId,
+      after: { runId: slip.run.id, employeeId: slip.employeeId, recordIds: r.otRecordIds, otHours: r.otHours, otCents: r.otCents },
+      metadata: { actorRole: req.staffUser!.role },
+    })
+    return r.payslip
+  })
+
+  // "Add all available overtime" on a draft run — every payslip, or those listed.
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/overtime', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const body = z.union([
+      z.object({ all: z.literal(true) }).strict(),
+      z.object({ payslipIds: z.array(z.string().uuid()).min(1).max(1000) }).strict(),
+    ]).parse(req.body)
+    const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    if (!run) throw new NotFoundError('Payroll', req.params.id)
+    if (isReachOnly(req, run.tenantId)) await assertHoMayPropose(req, run.tenantId, run.status === 'draft', 'editing a payroll that is no longer a draft')
+    if (run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'This payroll is no longer a draft', 409)
+    await stampRunVia(req, run)
+    const added = await addAllOvertime(run.id, 'payslipIds' in body ? body.payslipIds : null, req.staffUser!.id)
+    for (const a of added) {
+      await audit({
+        category: 'identity', action: 'hr.payroll.overtime_added', entity: 'HrPayslip', entityId: a.payslipId,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
+        after: { runId: run.id, recordIds: a.otRecordIds, otHours: a.otHours, otCents: a.otCents, all: true },
+        metadata: { actorRole: req.staffUser!.role },
+      })
+    }
+    return { updated: added.length, otCents: added.reduce((s2, a) => s2 + a.otCents, 0), payslips: added }
   })
 
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/approve', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {

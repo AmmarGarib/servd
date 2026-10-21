@@ -1039,6 +1039,61 @@ export async function recalcPayslip(payslipId: string, overrides: Partial<Payrol
   })
 }
 
+/**
+ * HR adds overtime to a draft payslip (owner, 2026-10-21: "give an option to
+ * HR to add OT in final payroll at time of payroll, other wise it should not
+ * include in payroll"). `recordIds` REPLACES the payslip's selection; [] takes
+ * OT off. Each id must be approved, unpaid overtime of this employee in this
+ * company (otAvailable, read fresh) — else 422 OT_NOT_AVAILABLE. Serialised
+ * per employee and re-checked inside the write, so two runs can never both
+ * take the same record. The payslip is recomputed through computePayslip.
+ */
+export async function setPayslipOvertime(payslipId: string, recordIds: string[], actorId?: string) {
+  const slip = await prisma.hrPayslip.findUniqueOrThrow({ where: { id: payslipId }, include: { run: true, employee: true } })
+  if (slip.run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'This payroll is no longer a draft', 409)
+  const s = await getSettings(slip.tenantId)
+  const otFrom = await firstPayrollStart(slip.tenantId, periodStart(slip.run.period))
+  const otTo = periodEnd(slip.run.period)
+  const readAvailable = async (q: Db) => otAvailableOf(await unpaidOvertime(slip.tenantId, slip.employeeId, otFrom, otTo, { runStatuses: ALL_RUN_STATUSES, exceptRunId: slip.runId }, q))
+  otSelection(await readAvailable(prisma), recordIds, true) // fail fast, before any lock
+  const cur = slip.inputs as unknown as PrefilledInputs & { salaryCents?: number }
+  const salaryCents = typeof cur.salaryCents === 'number' ? cur.salaryCents : await salaryForPeriod(slip.employee, slip.run.period)
+  const staffing = (await staffingWarnings([slip.employee])).get(slip.employeeId) ?? []
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`hr.ot.emp:${slip.tenantId}:${slip.employeeId}`}::text))`
+    await claimDraft(tx, slip.runId, actorId)
+    const otAvailable = await readAvailable(tx)
+    const sel = otSelection(otAvailable, recordIds, true)
+    const fresh = await tx.hrPayslip.findUniqueOrThrow({ where: { id: payslipId } })
+    const inputs = { ...(fresh.inputs as unknown as PrefilledInputs), otAvailable, ...sel }
+    const r = computePayslip({ ...slip.employee, grossSalaryCents: salaryCents }, slip.run.period, inputs, s)
+    const updated = await tx.hrPayslip.update({
+      where: { id: payslipId },
+      data: { inputs: { ...inputs, salaryCents, payBasis: r.basis, warnings: [...r.warnings, ...staffing] } as unknown as Prisma.InputJsonValue, ...payslipData(r) },
+    })
+    await refreshRunTotals(slip.runId, undefined, tx)
+    return { payslip: updated, ...sel }
+  })
+}
+
+/** "Add all available overtime" on a draft run: every payslip (or those
+ *  listed) takes all of its available OT, one payslip at a time. */
+export async function addAllOvertime(runId: string, payslipIds: string[] | null, actorId?: string) {
+  const run = await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: runId } })
+  if (run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'This payroll is no longer a draft', 409)
+  const slips = await prisma.hrPayslip.findMany({ where: { runId, ...(payslipIds && { id: { in: payslipIds } }) }, select: { id: true, employeeId: true } })
+  if (payslipIds && slips.length !== new Set(payslipIds).size) throw new AppError('NOT_FOUND', 'A payslip listed is not on this payroll', 404)
+  const otFrom = await firstPayrollStart(run.tenantId, periodStart(run.period))
+  const out: Array<{ payslipId: string; otRecordIds: string[]; otHours: number; otCents: number }> = []
+  for (const sl of slips) {
+    const avail = await unpaidOvertime(run.tenantId, sl.employeeId, otFrom, periodEnd(run.period), { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId })
+    if (avail.length === 0) continue
+    const r = await setPayslipOvertime(sl.id, avail.map((o) => o.id), actorId)
+    out.push({ payslipId: sl.id, otRecordIds: r.otRecordIds, otHours: r.otHours, otCents: r.otCents })
+  }
+  return out
+}
+
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
 export async function dashboard(tenantIds: string[]) {

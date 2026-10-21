@@ -145,6 +145,8 @@ export const HO_SUBMIT_ROUTES: ReadonlyArray<{ method: string; path: string }> =
   { method: 'POST',   path: '/hr/payroll/runs' },                             // payroll preparation, draft only
   { method: 'POST',   path: '/hr/payroll/runs/:id/recalculate' },
   { method: 'PATCH',  path: '/hr/payroll/payslips/:id' },
+  { method: 'POST',   path: '/hr/payroll/payslips/:id/overtime' },            // add OT to a draft payslip (2026-10-21)
+  { method: 'POST',   path: '/hr/payroll/runs/:id/overtime' },                // add all available OT, draft only
   { method: 'DELETE', path: '/hr/payroll/runs/:id' },
   // Finance (JournalRequest, wave 2)
   { method: 'POST',   path: '/accounting/journal-requests' },

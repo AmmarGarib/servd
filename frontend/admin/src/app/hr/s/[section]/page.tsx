@@ -12,6 +12,7 @@ import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, S
 import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
+import { AttendanceRegister } from '../../../../components/hr/AttendanceRegister'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
@@ -37,7 +38,14 @@ export default function HrSectionPage() {
     queryFn: () => api.get<{ format: HrFormat; formatTenantId: string; records: HrRecord[] }>(`/hr/records/${section}?${new URLSearchParams({ ...(status && { status }), ...(stageFilter && { stage: stageFilter }) })}`),
   })
   const fmt = data?.format
-  const open = data?.records.find((r) => r.id === openId) ?? null
+  const isRegister = section === 'attendance'
+  // The register is not limited to the list's 1000 rows, so a clicked day may not be in it: fetch that one.
+  const { data: fetched } = useQuery({
+    queryKey: ['hr-record-open', section, openId],
+    queryFn: () => api.get<{ record: HrRecord }>(`/hr/records/${section}/${openId}`),
+    enabled: isRegister && !!openId && !data?.records.some((r) => r.id === openId),
+  })
+  const open = data?.records.find((r) => r.id === openId) ?? fetched?.record ?? null
   // Show the first few meaningful columns of the format in the list.
   const cols = (fmt?.fields ?? []).filter((f) => f.bind !== 'employeeId' && !['table', 'textarea', 'file'].includes(f.type)).slice(0, 4)
   const lk = { employees: lookups?.employees, records: lookups?.records, org }
@@ -60,7 +68,7 @@ export default function HrSectionPage() {
       title={info?.title ?? human(section)}
       subtitle={[info ? `Spec §${info.specNo}.` : '', info?.effect ?? ''].filter(Boolean).join(' ')}
       actions={<>
-        <ExportMenu className={btnGhost} path={`/hr/records/${section}/export.csv`} filename={`hr-${section}`} onError={(m) => setCsvErr(m)} />
+        {!isRegister && <ExportMenu className={btnGhost} path={`/hr/records/${section}/export.csv`} filename={`hr-${section}`} onError={(m) => setCsvErr(m)} />}
         {section === 'final_settlement' && isPayrollPayer && (
           <button className={btnGhost} disabled={backfill.isPending} onClick={() => { setBackfillMsg(''); backfill.mutate() }}>
             {backfill.isPending ? 'Booking…' : 'Post approved settlements'}
@@ -80,7 +88,8 @@ export default function HrSectionPage() {
       {error && <p className="text-sm text-s-red mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
       {csvErr && <p className="text-sm text-s-red mb-4">Export failed: {csvErr}</p>}
       {backfillMsg && <p className="text-sm text-white/70 mb-4">{backfillMsg}</p>}
-      <div className="flex flex-wrap gap-2 mb-4">
+      {isRegister && <AttendanceRegister onOpen={setOpenId} onExportError={(m) => setCsvErr(m)} />}
+      {!isRegister && <div className="flex flex-wrap gap-2 mb-4">
         {['', 'draft', 'submitted', 'approved', 'rejected', 'cancelled'].map((s) => (
           <button key={s || 'all'} type="button" aria-pressed={status === s} onClick={() => setStatus(s)}
             className={`rounded-full px-3 py-1 text-xs font-bold border [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-4 ${status === s ? 'bg-primary text-primary-on border-primary' : 'border-white/10 text-white/50'}`}>
@@ -94,16 +103,16 @@ export default function HrSectionPage() {
           </Select>
         )}
         {fmt && !fmt.isDefault && <span className="ml-auto text-[11px] text-primary-ink self-center">Using HR format v{fmt.version}</span>}
-      </div>
+      </div>}
 
-      {isLoading && <p className="text-sm text-white/40 py-6 text-center" role="status">Loading…</p>}
-      {data && data.records.length === 0 && (
+      {!isRegister && isLoading && <p className="text-sm text-white/40 py-6 text-center" role="status">Loading…</p>}
+      {!isRegister && data && data.records.length === 0 && (
         <div className="rounded-2xl p-10 text-center" style={card}>
           <p className="font-bold text-white/85">Nothing here yet</p>
           <p className="text-sm text-white/45 mt-1">{moved ? `Nothing was recorded here before. Use ${moved.label}.` : 'Add the first one with “+ New”.'}</p>
         </div>
       )}
-      {data && data.records.length > 0 && (
+      {!isRegister && data && data.records.length > 0 && (
         <div className="rounded-2xl overflow-x-auto" style={card}>
           <table className="w-full text-sm">
             <thead>
@@ -134,7 +143,7 @@ export default function HrSectionPage() {
       {open && data && (
         <Modal title={open.label ?? info?.title ?? 'Record'} wide onClose={() => setOpenId(null)}>
           <OpenRecord record={open} listFormat={data.format} listTenantId={data.formatTenantId} readOnly={!!moved}
-            onChanged={() => { void qc.invalidateQueries({ queryKey: ['hr-records', section] }) }} />
+            onChanged={() => { void qc.invalidateQueries({ queryKey: ['hr-records', section] }); void qc.invalidateQueries({ queryKey: ['hr-attendance-register'] }) }} />
         </Modal>
       )}
     </HrShell>
