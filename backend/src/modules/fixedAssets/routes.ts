@@ -10,7 +10,9 @@
 //   GET    /runs                 the automatic runs (FixedAssetRun)
 //   GET    /classes              classes per company · PATCH /classes/:id (CEO)
 //   GET    /policy               per company · PATCH /policy (CEO, the ACTIVE company)
-//   POST   /                     422 USE_CAPEX — equipment reaches the register only through CapEx
+//   POST   /                     422 USE_CAPEX — bought equipment reaches the register through CapEx
+//   POST   /existing             "Add existing asset" (owner, 2026-10-21): bought before servd or from a
+//                                related party — a request the CEO approves (events.ts add_existing)
 //   POST   /depreciate           "charge now / catch up" for the ACTIVE company (service.ts chargeThrough)
 //   GET    /:id                  one asset: schedule (posted + to come), events, tax, CapEx link, journal refs
 //   PATCH  /:id                  descriptive fields only (audited)
@@ -30,7 +32,7 @@ import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
-import { toCents } from '../../lib/money.js'
+import { toCents, zMoneyCents } from '../../lib/money.js'
 import { invalidateSetupCache } from '../../lib/setup-config.js'
 import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
 import { taxYearOf } from '../accounting/fiscalYear.js'
@@ -44,7 +46,8 @@ import {
   FA_WRITER_ROLES, FA_COUNT_ROLES, FA_APPROVER_ROLE, DISPOSAL_KINDS, WRITE_OFF_CAUSES,
 } from './events.js'
 import { taxSchedule, initialAllowanceEligibleOf, setInitialAllowanceEligible } from './tax.js'
-import { fixedAssetRequestRoutes, shapeEvents, actorOf, ASSET_REQUEST_KINDS, REQUEST_KIND_LABELS } from './requests.js'
+import { fixedAssetRequestRoutes, shapeEvents, actorOf, raiseRequest, ASSET_REQUEST_KINDS, REQUEST_KIND_LABELS } from './requests.js'
+import { EXISTING_SOURCES, EXISTING_COUNTERPARTIES } from './events.js'
 import { fixedAssetPoolRoutes } from './pools.routes.js'
 import {
   fixedAssetReportRoutes, loadRegister, assetNbvAt, classOfAsset, pktDay, endOfPktDay, SMALLWARES_TAX_NOTE, type RegisterData,
@@ -442,6 +445,58 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
   // POST / — the hand-added asset is gone: equipment comes through CapEx.
   fastify.post('/', { preHandler: requireAuth(...FA_WRITERS) }, async () => {
     throw new AppError('USE_CAPEX', USE_CAPEX_MESSAGE, 422)
+  })
+
+  // POST /existing — "Add existing asset" (owner, 2026-10-21: "give an option
+  // to add asset also, so we can add previously bought / Transferred from
+  // related party assets"). A request of kind 'add_existing' in the ACTIVE
+  // company: 202 pending for finance, 201 applied for the CEO (as every
+  // fixed-asset request). At today's value; depreciated from the in-service
+  // date over the remaining life (default the class life). Nothing is booked
+  // until the CEO approves; the documents go to
+  // POST /record-files/fixed_asset/<requestId> and move to the asset then.
+  fastify.post('/existing', { preHandler: requireAuth(...FA_WRITERS) }, async (req, reply) => {
+    const body = z.object({
+      source: z.enum(EXISTING_SOURCES),
+      counterparty: z.enum(EXISTING_COUNTERPARTIES).nullable().optional(),
+      counterpartyTenantId: z.string().min(1).max(64).nullable().optional(),
+      classId: z.string().min(1).max(64),
+      name: z.string().trim().min(1).max(120),
+      serial: z.string().trim().max(120).nullable().optional(),
+      conceptId: z.string().min(1).max(64).nullable().optional(),
+      locationId: z.string().min(1).max(64).nullable().optional(),
+      valueCents: zMoneyCents('Today\'s value', { sign: 'positive' }),
+      inServiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-01'),
+      remainingLifeMonths: z.number().int().min(1).max(1200).optional(),
+      salvageCents: zMoneyCents('The salvage value').optional(),
+      reason: z.string().max(1000),
+    }).parse(req.body)
+    if (body.reason.trim().length < 10) throw new AppError('REASON_REQUIRED', 'Give a reason (at least 10 characters)', 422)
+    // Create mode: the ACTIVE company only. The class must be one of its classes.
+    const tenantId = activeTenantId(req, 'the asset belongs to one company')
+    const cls = await prisma.fixedAssetClass.findFirst({ where: { id: body.classId, tenantId } })
+    if (!cls) throw new AppError('ASSET_CLASS_NOT_IN_COMPANY', 'That asset class is not one of this company\'s classes', 422)
+    const r = await raiseRequest(req, {
+      kind: 'add_existing',
+      tenantId,
+      memberTenantIds: req.staffUser!.memberTenantIds ?? [],
+      reason: body.reason.trim(),
+      payload: {
+        source: body.source,
+        counterparty: body.source === 'related_party' ? (body.counterparty ?? null) : null,
+        counterpartyTenantId: body.counterparty === 'servd_company' ? (body.counterpartyTenantId ?? null) : null,
+        classKey: cls.key,
+        name: body.name,
+        serial: body.serial ?? null,
+        conceptId: body.conceptId ?? null,
+        locationId: body.locationId ?? null,
+        valueCents: body.valueCents,
+        inServiceAt: body.inServiceDate,
+        remainingLifeMonths: body.remainingLifeMonths ?? (cls.defaultLifeMonths ?? 12),
+        ...(body.salvageCents !== undefined ? { salvageCents: body.salvageCents } : {}),
+      },
+    })
+    return reply.status(r.statusCode).send(r.body)
   })
 
   // POST /depreciate { throughPeriod? } — "charge now / catch up" for the

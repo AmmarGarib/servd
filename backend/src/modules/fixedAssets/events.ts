@@ -15,6 +15,21 @@
 //   transfer          finance                   none (at once)  fixed_asset.transfer:<eventId> when the brand changes
 //   pool_transfer     finance                   none (at once)  fixed_asset.transfer:<eventId> when the brand changes
 //   count             finance / F&B manager     none (at once)  none (counted vs on hand)
+//   add_existing      finance                   CEO             fixed_asset.acquire:<assetId>  Dr class cost / Cr 3010 | 2210
+//
+// add_existing (owner, 2026-10-21: "give an option to add asset also, so we
+// can add previously bought / Transferred from related party assets") is an
+// asset that did not come through CapEx: bought before servd, or transferred
+// from a related party. It comes on at TODAY'S VALUE (book value) and is
+// depreciated from its in-service date over the REMAINING life finance gives
+// (default the class life). The other side: 3010 Owner's capital (bought
+// before servd; contributed by the owners — as opening stock H19 and supplier
+// opening balances H49) or 2210 Due to Garibsons (Garibsons paid for it — the
+// petty-cash code, H1). Another servd company → not built yet (owner
+// question: the giver's book-out value / gain or loss) — 422
+// RELATED_COMPANY_NOT_YET. Nothing is booked until the CEO approves; the
+// entry is dated the in-service date (never late-dated: a closed month is
+// refused by the books, PERIOD_LOCKED).
 //
 // The CEO's own request is applied at once. An approval runs in ONE
 // transaction (the months before it are charged first, through the same
@@ -29,6 +44,7 @@
 // applyEvent / rejectEvent — never a second approval engine.
 
 import { approvalWaiting } from '../approvals/notify.js'
+import { fmtPktDate } from '../accounting/dates.js'
 import { z } from 'zod'
 import type { FixedAsset, FixedAssetEvent, FixedAssetPool, Prisma } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
@@ -71,12 +87,13 @@ export const FA_APPROVER_ROLE = 'admin'
 
 export const REQUEST_KINDS = [
   'capitalise', 'disposal', 'pool_write_off', 'impairment', 'change_estimate', 'transfer', 'pool_transfer', 'void', 'undispose', 'count',
+  'add_existing',
 ] as const
 export type RequestKind = typeof REQUEST_KINDS[number]
 /** Per-layer rows the engine writes under a pool write-off / transfer (never requested). */
 export const ALLOC_KINDS = ['pool_write_off_alloc', 'pool_transfer_alloc'] as const
 
-const APPROVAL_KINDS = new Set<string>(['capitalise', 'disposal', 'pool_write_off', 'impairment', 'change_estimate', 'void', 'undispose'])
+const APPROVAL_KINDS = new Set<string>(['capitalise', 'disposal', 'pool_write_off', 'impairment', 'change_estimate', 'void', 'undispose', 'add_existing'])
 const ASSET_KINDS = new Set<string>(['disposal', 'impairment', 'change_estimate', 'transfer', 'void', 'undispose'])
 const POOL_KINDS = new Set<string>(['pool_write_off', 'pool_transfer', 'count'])
 /** Kinds that take effect today whatever date is sent. */
@@ -96,6 +113,42 @@ export const DISPOSAL_KINDS = ['sale', 'scrap', 'lost', 'stolen'] as const
  */
 export const DISPOSAL_METHODS = [...RECEIPT_METHODS, 'bank', 'online'] as const
 export const WRITE_OFF_CAUSES = ['breakage', 'loss', 'theft', 'worn_out'] as const
+
+// ─── Existing assets (owner, 2026-10-21) ────────────────────────────────────
+
+/** Where an existing asset came from. */
+export const EXISTING_SOURCES = ['pre_servd', 'related_party'] as const
+/** Who is on the other side of a related-party transfer. */
+export const EXISTING_COUNTERPARTIES = ['garibsons', 'servd_company', 'owners'] as const
+export type ExistingSource = typeof EXISTING_SOURCES[number]
+export type ExistingCounterparty = typeof EXISTING_COUNTERPARTIES[number]
+
+/**
+ * The account an existing asset is credited to: 3010 Owner's capital for an
+ * asset bought before servd or contributed by the owners, 2210 Due to
+ * Garibsons when Garibsons paid for it. Another servd company is not built
+ * (422 RELATED_COMPANY_NOT_YET) — it waits for the owner's answer on the
+ * giver's side (see the README).
+ */
+export function existingOffsetCode(source: ExistingSource, counterparty: ExistingCounterparty | null | undefined): string {
+  if (source === 'pre_servd') return ACCT.OWNERS_CAPITAL
+  if (counterparty === 'garibsons') return ACCT.DUE_TO_GARIBSONS
+  if (counterparty === 'owners') return ACCT.OWNERS_CAPITAL
+  if (counterparty === 'servd_company') {
+    throw new AppError('RELATED_COMPANY_NOT_YET',
+      'An asset given by another servd company is not built yet — it waits for the owner\'s answer on how the giving company books it out', 422)
+  }
+  throw new AppError('COUNTERPARTY_REQUIRED', 'Say who it came from: Garibsons, another servd company or the owners', 422)
+}
+
+/** Plain words for the screens and the approvals inbox. */
+export function existingSourceLabel(p: { source?: unknown; counterparty?: unknown }, counterpartyName?: string | null): string {
+  if (p.source === 'pre_servd') return 'Bought before servd'
+  if (p.counterparty === 'garibsons') return 'From Garibsons (owed to Garibsons)'
+  if (p.counterparty === 'owners') return 'Contributed by the owners'
+  if (p.counterparty === 'servd_company') return `From ${counterpartyName || 'another servd company'}`
+  return 'Existing asset'
+}
 
 const idSchema = z.string().min(1).max(64)
 const dateInput = z.union([z.string().datetime({ offset: true }), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)])
@@ -158,7 +211,30 @@ export const PAYLOAD_SCHEMAS = {
     inputTaxCents: zMoneyCents('The input tax').optional(),
     leaseEndsAt: dateInput.optional(),
   }),
+  add_existing: z.object({
+    source: z.enum(EXISTING_SOURCES),
+    counterparty: z.enum(EXISTING_COUNTERPARTIES).nullable().optional(),
+    counterpartyTenantId: idSchema.nullable().optional(),
+    classKey: z.string().min(1).max(40),
+    name: z.string().trim().min(1).max(120),
+    serial: z.string().trim().max(120).nullable().optional(),
+    conceptId: idSchema.nullable().optional(),
+    locationId: idSchema.nullable().optional(),
+    // Today's value (book value) — the cost the register carries from now on.
+    valueCents: zMoneyCents('Today\'s value', { sign: 'positive' }),
+    inServiceAt: dateInput,
+    remainingLifeMonths: z.number().int().min(1).max(1200),
+    salvageCents: zMoneyCents('The salvage value').optional(),
+  }).superRefine((p, ctx) => {
+    if (p.source === 'related_party' && !p.counterparty) ctx.addIssue({ code: 'custom', path: ['counterparty'], message: 'Say who it came from' })
+    if (p.source === 'pre_servd' && p.counterparty) ctx.addIssue({ code: 'custom', path: ['counterparty'], message: 'An asset bought before servd has no related party' })
+    if ((p.counterparty === 'servd_company') !== !!p.counterpartyTenantId) {
+      ctx.addIssue({ code: 'custom', path: ['counterpartyTenantId'], message: 'Name the servd company only when it came from another servd company' })
+    }
+  }),
 } as const
+
+export type AddExistingPayload = z.infer<typeof PAYLOAD_SCHEMAS.add_existing>
 
 export type CapitalisePayload = z.infer<typeof PAYLOAD_SCHEMAS.capitalise>
 
@@ -169,6 +245,8 @@ export interface CreateEventInput {
   capexLineId?: string | null
   /** The company the caller resolved (route scope). A subject of another company → 404. */
   tenantId?: string
+  /** add_existing: the caller's companies (a related servd company must be one of them). */
+  memberTenantIds?: readonly string[]
   /** Defaults to now. Transfers, voids, un-disposals and counts always take effect now. */
   effectiveDate?: Date
   reason: string
@@ -252,6 +330,12 @@ async function resolveSubject(db: Db, input: CreateEventInput): Promise<Subject>
     const pool = await db.fixedAssetPool.findUnique({ where: { id: input.poolId } })
     if (!pool || (input.tenantId && pool.tenantId !== input.tenantId)) throw new NotFoundError('FixedAssetPool', input.poolId)
     return { tenantId: pool.tenantId, asset: null, pool }
+  }
+  if (input.kind === 'add_existing') {
+    // The asset does not exist yet: the request belongs to the company the route
+    // resolved (the ACTIVE company — create mode), and the asset is made there on approval.
+    if (!input.tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the asset belongs to one company', 422)
+    return { tenantId: input.tenantId, asset: null, pool: null }
   }
   // capitalise
   if (!input.capexLineId) throw new AppError('CAPEX_LINE_REQUIRED', 'Name the CapEx line', 422)
@@ -437,7 +521,59 @@ function headlineCents(kind: string, payload: Record<string, unknown>): number |
   if (kind === 'disposal') return (payload['proceedsCents'] as number | undefined) ?? 0
   if (kind === 'impairment') return (payload['amountCents'] as number | undefined) ?? null
   if (kind === 'capitalise') return (payload['costCents'] as number | undefined) ?? null
+  if (kind === 'add_existing') return (payload['valueCents'] as number | undefined) ?? null
   return null
+}
+
+/**
+ * The checks of an existing asset — when raised and again when the CEO
+ * approves (on the approval's transaction). Returns the class and the offset
+ * account. 422: CLASS_NOT_FOUND / CLASS_INACTIVE / POOLED_CLASS_NOT_ALLOWED,
+ * CONCEPT_NOT_IN_COMPANY / LOCATION_NOT_IN_COMPANY, LOCATION_REQUIRED_FOR_SHARED,
+ * IN_SERVICE_DATE (future), PERIOD_LOCKED (a closed month — the books' own
+ * rule; the entry is dated the in-service date, never late-dated),
+ * REMAINING_LIFE (above twice the class life), SALVAGE_TOO_HIGH,
+ * COUNTERPARTY_NOT_YOURS, RELATED_COMPANY_NOT_YET.
+ */
+export async function checkAddExisting(
+  db: Db, tenantId: string, p: AddExistingPayload, when: 'raise' | 'apply',
+  opts: { memberTenantIds?: readonly string[] } = {},
+): Promise<{ cls: Awaited<ReturnType<typeof classOf>>; offsetCode: string; inServiceAt: Date; life: number }> {
+  const cls = await classOf(tenantId, p.classKey, db)
+  if (!cls.isActive) throw new AppError('CLASS_INACTIVE', `${cls.label} is switched off for this company`, 422)
+  if (cls.pooled) {
+    throw new AppError('POOLED_CLASS_NOT_ALLOWED',
+      `${cls.label} are pooled per outlet and come on through CapEx (Quick buy) — add an individual item here`, 422)
+  }
+  if (p.conceptId) await assertConceptOf(db, tenantId, p.conceptId)
+  if (p.locationId) await assertLocationOf(db, tenantId, p.locationId)
+  assertSharedHasLocation(p.conceptId, p.locationId)
+  if (p.counterparty === 'servd_company' && when === 'raise') {
+    // Another servd company the caller is a member of (never the asset's own).
+    const other = p.counterpartyTenantId ?? ''
+    const t = other ? await db.tenant.findUnique({ where: { id: other }, select: { id: true, kind: true, deletedAt: true } }) : null
+    if (!t || t.deletedAt || other === tenantId || !(opts.memberTenantIds ?? []).includes(other)) {
+      throw new AppError('COUNTERPARTY_NOT_YOURS', 'Pick another servd company you belong to', 422)
+    }
+  }
+  const offsetCode = existingOffsetCode(p.source, p.counterparty)
+  const inServiceAt = parseDate(p.inServiceAt)
+  if (Number.isNaN(inServiceAt.getTime())) throw new AppError('IN_SERVICE_DATE', 'That date is not valid', 422)
+  if (isFuturePktDay(inServiceAt)) throw new AppError('IN_SERVICE_DATE', 'The in-service date cannot be in the future', 422)
+  const lock = await db.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+  if (lock && inServiceAt <= lock.lockedThrough) {
+    throw new AppError('PERIOD_LOCKED',
+      `The books are closed through ${fmtPktDate(lock.lockedThrough)} — the in-service date must be in an open month (${fmtPktDate(inServiceAt)} is closed)`, 422)
+  }
+  const classLife = cls.depreciable ? (cls.defaultLifeMonths ?? 12) : 0
+  const life = cls.depreciable ? p.remainingLifeMonths : 0
+  if (cls.depreciable && life > classLife * 2) {
+    throw new AppError('REMAINING_LIFE', `The remaining life can be at most ${classLife * 2} months (twice the class life)`, 422)
+  }
+  if ((p.salvageCents ?? 0) >= p.valueCents && cls.depreciable) {
+    throw new AppError('SALVAGE_TOO_HIGH', 'Salvage value must be less than today\'s value', 422)
+  }
+  return { cls, offsetCode, inServiceAt, life }
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -475,9 +611,13 @@ export async function createRequest(
   const subject = await resolveSubject(serviceClient, input)
   let effective = TODAY_KINDS.has(input.kind) ? new Date() : (input.effectiveDate ?? new Date())
   if (input.kind === 'count' && typeof payload['countedAt'] === 'string') effective = parseDate(payload['countedAt'])
-  if (input.kind === 'capitalise' && typeof payload['inServiceAt'] === 'string') effective = parseDate(payload['inServiceAt'])
+  if ((input.kind === 'capitalise' || input.kind === 'add_existing') && typeof payload['inServiceAt'] === 'string') effective = parseDate(payload['inServiceAt'])
   if (Number.isNaN(effective.getTime())) throw new AppError('EFFECTIVE_DATE', 'That date is not valid', 422)
-  await validateRequest(serviceClient, input.kind, subject, payload, effective)
+  if (input.kind === 'add_existing') {
+    await checkAddExisting(serviceClient, subject.tenantId, payload as AddExistingPayload, 'raise', { memberTenantIds: input.memberTenantIds ?? [] })
+  } else {
+    await validateRequest(serviceClient, input.kind, subject, payload, effective)
+  }
 
   const data: Prisma.FixedAssetEventUncheckedCreateInput = {
     tenantId: subject.tenantId,
@@ -608,6 +748,7 @@ async function applyInTx(tx: Tx, event: FixedAssetEvent, actorId: string): Promi
     case 'pool_transfer': out = await applyPoolTransfer(tx, fresh, payload, actorId); break
     case 'count': out = await applyCount(tx, fresh, payload); break
     case 'capitalise': out = await applyCapitalise(tx, fresh, payload, actorId); break
+    case 'add_existing': out = await applyAddExisting(tx, fresh, payload, actorId); break
     default: throw new AppError('BAD_EVENT_KIND', `Fixed-asset request kind "${fresh.kind}" cannot be applied`, 422)
   }
 
@@ -1204,4 +1345,57 @@ async function applyCapitalise(tx: Tx, event: FixedAssetEvent, payload: Record<s
     journalEntryId: firstEntry, amountCents: gross, assetId: assetIds[0] ?? null,
     payload: { assetIds, advancedCents: advanced, owedCents: gross - advanced, inputTaxCents: inputTax, poolId: pool?.id ?? null },
   }
+}
+
+// ─── Add an existing asset (owner, 2026-10-21) ──────────────────────────────
+
+/** The record-files owner type the request's documents sit under until the asset exists. */
+const FILES_OWNER = 'fixed_asset'
+
+// On the CEO's approval: the asset joins the register at today's value, the
+// remaining life finance gave, in the request's company; ONE entry
+// fixed_asset.acquire:<assetId> Dr class cost / Cr 3010 | 2210, dated the
+// in-service date (a closed month refuses it — PERIOD_LOCKED; the request
+// stays pending with the reason). The documents attached to the request move
+// to the asset in the same transaction. Depreciation then runs through
+// chargeThrough (the nightly worker / "charge now") from the in-service month.
+async function applyAddExisting(tx: Tx, event: FixedAssetEvent, payload: Record<string, unknown>, actorId: string): Promise<Applied> {
+  const p = payload as AddExistingPayload
+  const tenantId = event.tenantId
+  const { cls, offsetCode, inServiceAt, life } = await checkAddExisting(tx, tenantId, p, 'apply')
+  const value = p.valueCents
+  assertMoneyFits(value, 'Today\'s value')
+  const source = existingSourceLabel(p)
+  const asset = await tx.fixedAsset.create({
+    data: {
+      tenantId, conceptId: p.conceptId ?? null, locationId: p.locationId ?? null,
+      name: p.name.slice(0, 120), serialNumber: p.serial ?? null,
+      category: cls.key, assetTag: await nextAssetTag(tx, tenantId),
+      acquiredAt: inServiceAt, inServiceAt,
+      costCents: value, originalCostCents: value, salvageCents: p.salvageCents ?? 0, usefulLifeMonths: life,
+      acquisitionCreditCode: offsetCode, kind: 'individual', quantity: 1, originalQuantity: 1,
+      method: cls.depreciable ? 'straight_line' : 'none',
+      // A used asset brought in at book value: the initial allowance is not ticked (finance may tick it on the asset page).
+      initialAllowanceEligible: false,
+      notes: `Existing asset — ${source}: ${event.reason}`.slice(0, 1000),
+      createdById: actorId,
+    },
+  })
+  const memo = `${asset.name}${asset.assetTag ? ` (${asset.assetTag})` : ''}`.slice(0, 200)
+  // Dated the in-service date, never late-dated: a closed month is refused by the books.
+  const r = await postJournalEntry({
+    tenantId, sourceType: ACQUIRE_SOURCE, sourceId: asset.id,
+    description: `Existing asset added — ${source}: ${memo}`.slice(0, 500),
+    entryDate: inServiceAt, postedBy: actorId,
+    lines: [
+      { accountCode: cls.costAccountCode, type: 'debit', amountCents: value, conceptId: asset.conceptId, memo },
+      { accountCode: offsetCode, type: 'credit', amountCents: value, memo: `${source} — ${memo}`.slice(0, 200) },
+    ],
+  }, { tx })
+  // The documents raised with the request now belong to the asset.
+  await tx.cashVoucherAttachment.updateMany({
+    where: { tenantId, ownerType: FILES_OWNER, ownerId: event.id },
+    data: { ownerId: asset.id },
+  })
+  return { journalEntryId: r.entryId, amountCents: value, assetId: asset.id, payload: { assetId: asset.id, offsetCode } }
 }
