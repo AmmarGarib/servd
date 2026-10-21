@@ -678,14 +678,16 @@ export async function firstPayrollStart(tenantId: string, fallback: Date): Promi
  * (inputs.otRecordIds), not by the month it was worked in — so OT approved
  * after its month's run was locked goes on the next one. A payslip from
  * before the ids were kept is taken to have paid the OT dated in its month.
+ * An approved full & final pays the records it lists (data._calc.otRecordIds).
  */
-export async function unpaidOvertime(tenantId: string, employeeId: string, from: Date, to: Date, opts: { runStatuses: string[]; exceptRunId?: string }) {
-  const [records, slips] = await Promise.all([
-    prisma.hrRecord.findMany({ where: { tenantId, section: 'overtime', employeeId, status: 'approved', startDate: { gte: from, lte: to } } }),
-    prisma.hrPayslip.findMany({
+export async function unpaidOvertime(tenantId: string, employeeId: string, from: Date, to: Date, opts: { runStatuses: string[]; exceptRunId?: string }, q: Db = prisma) {
+  const [records, slips, settlements] = await Promise.all([
+    q.hrRecord.findMany({ where: { tenantId, section: 'overtime', employeeId, status: 'approved', startDate: { gte: from, lte: to } }, orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }] }),
+    q.hrPayslip.findMany({
       where: { tenantId, employeeId, run: { status: { in: opts.runStatuses } }, ...(opts.exceptRunId && { runId: { not: opts.exceptRunId } }) },
       select: { inputs: true, run: { select: { period: true } } },
     }),
+    q.hrRecord.findMany({ where: { tenantId, employeeId, section: 'final_settlement', status: 'approved' }, select: { data: true } }),
   ])
   const paid = new Set<string>()
   const legacyPeriods = new Set<string>()
@@ -694,10 +696,55 @@ export async function unpaidOvertime(tenantId: string, employeeId: string, from:
     if (Array.isArray(ids)) ids.forEach((id) => paid.add(String(id)))
     else legacyPeriods.add(sl.run.period)
   }
+  for (const st of settlements) settlementOtIds(st.data).forEach((id) => paid.add(id))
   return records.filter((o) => !paid.has(o.id) && !(o.startDate && legacyPeriods.has(periodOf(o.startDate))))
 }
 
-export type PrefilledInputs = PayrollInputs & { loans: LoanLine[]; otRecordIds: string[] }
+/** The overtime records a full & final chose to pay (owner, 2026-10-21: OT is
+ *  opt-in) — stamped on the settlement by "Calculate" as _calc.otRecordIds. */
+export function settlementOtIds(data: unknown): string[] {
+  const calc = ((data ?? {}) as Record<string, unknown>)['_calc'] as Record<string, unknown> | undefined
+  const ids = calc?.['otRecordIds']
+  return Array.isArray(ids) ? ids.map(String) : []
+}
+
+/** One approved overtime record HR may add to a payslip or a full & final. */
+export interface OtAvailable { recordId: string; date: string | null; hours: number; amountCents: number }
+
+/** Approved, unpaid overtime as offered to HR — priced exactly as payroll pays
+ *  it: the approver's hours (else the hours claimed) and the amount fixed at
+ *  approval (onFinalApproval). */
+export function otAvailableOf(records: Array<Pick<HrRecord, 'id' | 'startDate' | 'quantity' | 'amountCents' | 'data'>>): OtAvailable[] {
+  return records.map((o) => {
+    const d = (o.data ?? {}) as Record<string, unknown>
+    return {
+      recordId: o.id,
+      date: o.startDate ? o.startDate.toISOString().slice(0, 10) : null,
+      hours: typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : o.quantity ?? 0,
+      amountCents: o.amountCents ?? 0,
+    }
+  })
+}
+
+/** The OT a payslip / settlement pays for the records chosen out of what is
+ *  available. A chosen id that is not available is 422 OT_NOT_AVAILABLE
+ *  (`strict`), or dropped (a recalculation keeping an earlier choice). */
+export function otSelection(available: OtAvailable[], ids: string[], strict: boolean): { otRecordIds: string[]; otHours: number; otCents: number } {
+  const byId = new Map(available.map((a) => [a.recordId, a]))
+  const chosen: OtAvailable[] = []
+  for (const id of new Set(ids)) {
+    const a = byId.get(id)
+    if (a) chosen.push(a)
+    else if (strict) throw new AppError('OT_NOT_AVAILABLE', 'That overtime is not available to add here — it is not approved, already paid or added elsewhere, or belongs to someone else', 422)
+  }
+  return {
+    otRecordIds: chosen.map((a) => a.recordId),
+    otHours: Math.round(chosen.reduce((s, a) => s + a.hours, 0) * 100) / 100,
+    otCents: chosen.reduce((s, a) => s + a.amountCents, 0),
+  }
+}
+
+export type PrefilledInputs = PayrollInputs & { loans: LoanLine[]; otRecordIds: string[]; otAvailable: OtAvailable[] }
 
 /**
  * Absences, lates and approved unpaid leave over [from, to] — a window
@@ -750,8 +797,11 @@ export async function settlementAttendance(tenantId: string, employeeId: string,
 }
 
 /** The month's payroll inputs for one employee, read from HR records.
- *  `runId` is the run they are for, left out of what other runs have claimed. */
-export async function prefillInputs(tenantId: string, emp: HrEmployee, period: string, s?: HrSettings, runId?: string): Promise<PrefilledInputs> {
+ *  `runId` is the run they are for, left out of what other runs have claimed.
+ *  Overtime is opt-in (owner, 2026-10-21): the approved, unpaid OT is listed
+ *  as `otAvailable` and paid only when HR adds it — `keepOtIds` (what HR
+ *  already added to this payslip) stays on while still available. */
+export async function prefillInputs(tenantId: string, emp: HrEmployee, period: string, s?: HrSettings, runId?: string, keepOtIds: string[] = []): Promise<PrefilledInputs> {
   const from = periodStart(period)
   const to = periodEnd(period)
   const settings = s ?? await getSettings(tenantId)
@@ -766,14 +816,10 @@ export async function prefillInputs(tenantId: string, emp: HrEmployee, period: s
     prisma.hrRecord.findMany({ where: { tenantId, section: 'payroll_adjustment', employeeId: emp.id, status: 'approved', effectiveDate: { gte: from, lte: to } } }),
     loansFor(tenantId, emp.id, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
   ])
-  const inputs: PrefilledInputs = { ...EMPTY_INPUTS, loans: [], otRecordIds: [] }
+  const otAvailable = otAvailableOf(ot)
+  const inputs: PrefilledInputs = { ...EMPTY_INPUTS, loans: [], otRecordIds: [], otAvailable }
   Object.assign(inputs, att)
-  for (const o of ot) {
-    const d = o.data as Record<string, unknown>
-    inputs.otHours += typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : o.quantity ?? 0
-    inputs.otCents += o.amountCents ?? 0
-    inputs.otRecordIds.push(o.id)
-  }
+  Object.assign(inputs, otSelection(otAvailable, keepOtIds, false))
   for (const a of adjustments) {
     if (a.category === 'deduction' || a.category === 'other_deduction') inputs.deductionAdjustmentsCents += a.amountCents ?? 0
     else inputs.earningAdjustmentsCents += a.amountCents ?? 0
@@ -885,9 +931,17 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
   const s = await getSettings(tenantId)
   const emps = await payableEmployees(tenantId, run.period)
   const staffing = await staffingWarnings(emps)
+  // Overtime HR already added on this run stays added while still approved
+  // and unpaid. Payslips from before OT was opt-in (no otAvailable) took every
+  // record automatically — they start again from none (owner, 2026-10-21).
+  const kept = new Map<string, string[]>()
+  for (const sl of await prisma.hrPayslip.findMany({ where: { runId }, select: { employeeId: true, inputs: true } })) {
+    const inp = (sl.inputs ?? {}) as Record<string, unknown>
+    if (Array.isArray(inp['otAvailable']) && Array.isArray(inp['otRecordIds'])) kept.set(sl.employeeId, (inp['otRecordIds'] as unknown[]).map(String))
+  }
   const slips: Prisma.HrPayslipCreateManyInput[] = []
   for (const emp of emps) {
-    const inputs = await prefillInputs(tenantId, emp, run.period, s, runId)
+    const inputs = await prefillInputs(tenantId, emp, run.period, s, runId, kept.get(emp.id))
     const salaryCents = await salaryForPeriod(emp, run.period)
     const r = computePayslip({ ...emp, grossSalaryCents: salaryCents }, run.period, inputs, s)
     slips.push({

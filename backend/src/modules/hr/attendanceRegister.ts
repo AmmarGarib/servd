@@ -2,9 +2,11 @@
 // A VIEW and an export over the existing attendance HrRecord rows — no second store. Punches stay in
 // attendanceTracking.ts / attendance.ts; the rota (rota.ts) is the one way to get a day's shift.
 //
-// Columns, in this order (owner; OT Hours removed 2026-10-21 — overtime is not read here):
+// Columns, in this order (owner):
 //   Attendance Date | Attendance Day | Shift Code | Employee ID | Employee Name | Department | Time In | Time Out |
-//   Late In | Early Out | Source | Location | Branch | Status | Remarks
+//   Late In | Early Out | OT Hours | Source | Location | Branch | Status | Remarks
+// OT Hours = APPROVED overtime records for the employee and date (approvedHours, else quantity — the same reading
+// payroll's prefill uses), whether or not payroll has paid them.
 
 import type { FastifyRequest } from 'fastify'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -18,7 +20,7 @@ import { rotaFor, ymd, toMinutes, type RotaCell } from './rota.js'
 
 export const ATTENDANCE_REGISTER_COLUMNS = [
   'Attendance Date', 'Attendance Day', 'Shift Code', 'Employee ID', 'Employee Name', 'Department', 'Time In', 'Time Out',
-  'Late In', 'Early Out', 'Source', 'Location', 'Branch', 'Status', 'Remarks',
+  'Late In', 'Early Out', 'OT Hours', 'Source', 'Location', 'Branch', 'Status', 'Remarks',
 ] as const
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -88,12 +90,21 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
   const kept = q.locationId ? records.filter((r) => branchOf(r) === q.locationId) : records
 
   const emps = kept.flatMap((r) => (r.employee ? [r.employee] : []))
-  const [label, shifts, locations] = await Promise.all([
+  const [label, shifts, overtime, locations] = await Promise.all([
     employeeLabelsAcross(emps),
     prisma.hrRecord.findMany({
       where: { tenantId: { in: tenantIds }, section: 'shift', id: { in: Array.from(new Set(kept.map((r) => r.refId).filter((x): x is string => !!x))) } },
       select: { id: true, data: true },
     }),
+    emps.length
+      ? prisma.hrRecord.findMany({
+          where: {
+            tenantId: { in: tenantIds }, section: 'overtime', status: 'approved', employeeId: { in: Array.from(new Set(emps.map((e) => e.id))) },
+            startDate: { gte: kept.reduce((m, r) => (r.startDate && r.startDate < m ? r.startDate : m), kept[0]!.startDate ?? new Date()), lte: kept.reduce((m, r) => (r.startDate && r.startDate > m ? r.startDate : m), kept[0]!.startDate ?? new Date()) },
+          },
+          select: { employeeId: true, startDate: true, quantity: true, data: true },
+        })
+      : Promise.resolve([]),
     (async () => {
       const ids = new Set<string>()
       for (const r of kept) {
@@ -104,6 +115,13 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
       return prisma.location.findMany({ where: { id: { in: Array.from(ids) }, tenantId: { in: tenantIds } }, select: { id: true, name: true } })
     })(),
   ])
+  const otHours = new Map<string, number>()
+  for (const o of overtime) {
+    if (!o.employeeId || !o.startDate) continue
+    const a = (o.data as Record<string, unknown>)['approvedHours']
+    const key = `${o.employeeId}:${ymd(o.startDate)}`
+    otHours.set(key, (otHours.get(key) ?? 0) + (typeof a === 'number' ? a : o.quantity ?? 0))
+  }
   const locName = new Map(locations.map((l) => [l.id, l.name]))
   const shiftById = new Map(shifts.map((s) => [s.id, s.data as Record<string, unknown>]))
 
@@ -144,9 +162,11 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
     const firstIn = punches.find((p) => p.type === 'in')
     const manual = !!d['_manual']
     const location = manual || !firstIn ? '' : firstIn.outOfArea ? 'Out of area' : firstIn.locationId ? locName.get(firstIn.locationId) ?? '' : ''
+    const otH = r.employee && date ? otHours.get(`${r.employee.id}:${date}`) ?? 0 : 0
+    const ot = otH > 0 ? otH.toFixed(2) : ''
     const values = [
       date, r.startDate ? WEEKDAY_NAMES[r.startDate.getUTCDay()]! : '', shiftCode, r.employee?.employeeCode ?? '', r.employee?.fullName ?? '',
-      label(r.employee?.departmentId) ?? '', timeIn, timeOut, hmm(r.quantity), early, sourceText(d, r.status, punches), location,
+      label(r.employee?.departmentId) ?? '', timeIn, timeOut, hmm(r.quantity), early, ot, sourceText(d, r.status, punches), location,
       locName.get(branchOf(r)) ?? '', STATUS_LABEL[r.category ?? ''] ?? (r.category ?? ''), str(d['remarks']),
     ]
     return { id: r.id, employeeId: r.employeeId, manual, values }

@@ -1,4 +1,4 @@
-// Attendance register (owner, 2026-10-21): the 15 columns, the computed values, and company separation.
+// Attendance register (owner, 2026-10-21): the 16 columns, the computed values, and company separation.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -10,7 +10,7 @@ import { hrRoutes } from '../src/modules/hr/routes.js'
 import { ATTENDANCE_REGISTER_COLUMNS, hmm } from '../src/modules/hr/attendanceRegister.js'
 
 const HEADINGS = ['Attendance Date', 'Attendance Day', 'Shift Code', 'Employee ID', 'Employee Name', 'Department', 'Time In', 'Time Out',
-  'Late In', 'Early Out', 'Source', 'Location', 'Branch', 'Status', 'Remarks']
+  'Late In', 'Early Out', 'OT Hours', 'Source', 'Location', 'Branch', 'Status', 'Remarks']
 
 let app: FastifyInstance
 let tA: string, tB: string, locA: string, shiftA: string
@@ -42,10 +42,10 @@ beforeAll(async () => {
   shiftA = (await prisma.hrRecord.create({ data: { tenantId: tA, section: 'shift', formVersion: 0, status: 'approved', data: { name: 'Morning', start: '09:00', end: '17:00' } as never } })).id
   await mkHr('hrA', tA)
   await mkHr('hrB', tB)
-  const dept = await prisma.hrDepartment.create({ data: { tenantId: tA, name: 'Kitchen' } as never }).catch(() => null)
+  const dept = await prisma.department.create({ data: { tenantId: tA, name: 'Kitchen' } })
   const mk = (tenantId: string, code: string, name: string, extra: Record<string, unknown> = {}) =>
     prisma.hrEmployee.create({ data: { tenantId, employeeCode: code, fullName: name, grossSalaryCents: 5_000_000, joiningDate: new Date('2025-01-01'), ...extra } })
-  emp['a1'] = (await mk(tA, 'RA-001', 'Alia Late', dept ? { departmentId: dept.id } : {})).id
+  emp['a1'] = (await mk(tA, 'RA-001', 'Alia Late', { departmentId: dept.id })).id
   emp['a2'] = (await mk(tA, 'RA-002', 'Bilal Manual')).id
   emp['b1'] = (await mk(tB, 'RB-001', 'Other Company')).id
 
@@ -53,6 +53,11 @@ beforeAll(async () => {
     checkIn: '09:40', checkOut: '16:30', lateMinutes: 40, location: locA, remarks: 'Traffic', _source: 'clock',
     _punches: [{ type: 'in', at: '2026-10-05T04:40:00.000Z', source: 'clock', locationId: locA }, { type: 'out', at: '2026-10-05T11:30:00.000Z', source: 'clock', locationId: locA }],
   }, { quantity: 40, refId: shiftA })).id
+  const ot = (hours: number, status: string, data: Record<string, unknown> = {}) =>
+    prisma.hrRecord.create({ data: { tenantId: tA, section: 'overtime', formVersion: 0, employeeId: emp['a1']!, startDate: new Date('2026-10-05T00:00:00.000Z'), quantity: hours, status, data: { otHours: hours, ...data } as never } })
+  await ot(2, 'approved', { approvedHours: 1.5 })
+  await ot(1, 'approved') // no approvedHours: its quantity
+  await ot(4, 'submitted') // not approved: not counted
   rec['a2'] = (await attendance(tA, emp['a2']!, '2026-10-06', 'present', { checkIn: '09:00', checkOut: '17:00', _source: 'hr', _manual: true }, { status: 'submitted' })).id
   rec['b1'] = (await attendance(tB, emp['b1']!, '2026-10-05', 'present', { checkIn: '09:00', checkOut: '17:00', _source: 'clock' })).id
 
@@ -68,7 +73,7 @@ beforeAll(async () => {
 afterAll(async () => { await app?.close() })
 
 describe('attendance register', () => {
-  it('has the owner\'s 15 headings in order, in the JSON and the CSV (no OT Hours)', async () => {
+  it('has the owner\'s 16 headings in order, in the JSON and the CSV', async () => {
     expect([...ATTENDANCE_REGISTER_COLUMNS]).toEqual(HEADINGS)
     const j = await call('hrA', '/hr/attendance/register?from=2026-10-01&to=2026-10-31')
     expect(j.json().columns).toEqual(HEADINGS)
@@ -86,7 +91,7 @@ describe('attendance register', () => {
     const v = Object.fromEntries(HEADINGS.map((h, i) => [h, rows[0]!.values[i]]))
     expect(v).toMatchObject({
       'Attendance Date': '2026-10-05', 'Attendance Day': 'Monday', 'Shift Code': 'Morning', 'Employee Name': 'Alia Late',
-      'Time In': '09:40', 'Time Out': '16:30', 'Late In': '0:40', 'Early Out': '0:30', Source: 'Time clock',
+      'Time In': '09:40', 'Time Out': '16:30', 'Late In': '0:40', 'Early Out': '0:30', 'OT Hours': '2.50', Department: 'Kitchen', Source: 'Time clock',
       Location: 'Reg Branch A', Branch: 'Reg Branch A', Status: 'Late', Remarks: 'Traffic',
     })
     expect(hmm(0)).toBe('')
@@ -97,9 +102,10 @@ describe('attendance register', () => {
     const rows = await registerRows('hrA', 'from=2026-10-06&to=2026-10-06')
     expect(rows).toHaveLength(1)
     const v = rows[0]!.values
-    expect(v[10]).toBe('Manual (HR) — waiting for CEO')
+    expect(v[11]).toBe('Manual (HR) — waiting for CEO')
     expect(v[1]).toBe('Tuesday')
-    expect(v[11]).toBe('')
+    expect(v[12]).toBe('')
+    expect(v[10]).toBe('') // OT
     expect(v[9]).toBe('') // no early out: 17:00 out against a 17:00 end or no shift
   })
 
