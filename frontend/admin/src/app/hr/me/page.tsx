@@ -18,11 +18,14 @@ interface Me {
   payslips: Array<{ id: string; period: string; netCents: number }>
   loans: Array<{ id: string; type: string | null; amountCents: number; outstandingCents: number }>
   canRequest: string[]
+  /** The department a head of department raises manpower requisitions for (null = not an HOD). */
+  hodDepartment?: string | null
 }
 
 const REQUEST_LABEL: Record<string, string> = {
   leave: 'Apply for leave', overtime: 'Submit overtime', attendance_correction: 'Correct attendance',
   shift_swap: 'Swap a shift', training_request: 'Request training', loan: 'Request an advance or loan', resignation: 'Resign',
+  requisition: 'Manpower requisition',
 }
 
 export default function MyHrPage() {
@@ -93,13 +96,13 @@ export default function MyHrPage() {
           </div>
         </div>
       )}
-      {requesting && me && <RequestForm section={requesting} tenantId={me.tenantId} onClose={() => setRequesting(null)} />}
+      {requesting && me && <RequestForm section={requesting} tenantId={me.tenantId} department={me.hodDepartment ?? null} onClose={() => setRequesting(null)} />}
       {slipId && <MySlip id={slipId} onClose={() => setSlipId(null)} />}
     </HrShell>
   )
 }
 
-function RequestForm({ section, tenantId, onClose }: { section: string; tenantId: string; onClose: () => void }) {
+function RequestForm({ section, tenantId, department, onClose }: { section: string; tenantId: string; department: string | null; onClose: () => void }) {
   const qc = useQueryClient()
   const { data: fmt } = useQuery({ queryKey: ['hr-me-form', section], queryFn: () => api.get<HrFormat>(`/hr/me/forms/${section}`) })
   // The request is filed in the employee's own company, so its leave types
@@ -131,8 +134,11 @@ function RequestForm({ section, tenantId, onClose }: { section: string; tenantId
     save.mutate()
   }
   return (
-    <Modal title={REQUEST_LABEL[section] ?? human(section)} wide onClose={onClose} dirty={Object.keys(value).length > 0}>
+    <Modal title={section === 'requisition' && department ? `Manpower requisition — ${department}` : REQUEST_LABEL[section] ?? human(section)} wide onClose={onClose} dirty={Object.keys(value).length > 0}>
       <form ref={formRef} onSubmit={(ev) => void submit(ev)} noValidate>
+        {section === 'requisition' && department && (
+          <p className="text-xs text-white/55 mb-3">For your department, {department}. It goes to HR, then management.</p>
+        )}
         {fmt ? <FormRenderer fields={fields} value={value} errors={errors}
           onChange={(x) => { const nv = withLeaveDays(section, fmt.fields, value, x); setValue(nv); if (Object.keys(errors).length) setErrors(validate(leaveFields(section, fmt.fields, nv), nv)) }} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading…</p>}
         <div className="flex flex-wrap items-center gap-2 mt-5">

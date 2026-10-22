@@ -247,6 +247,16 @@ module id must be placed in a workspace in the same change.
   sign-off on what HR raised. Never a request about the raiser (its HR step
   waits as usual). `actedOnBy` ignores
   `auto` entries, so the raiser can still edit / cancel / recalculate.
+- **HODs raise manpower requisitions for their own department (owner,
+  2026-10-22: "Give manpower requisition option on screen of all HODs, for
+  their own department only").** An HOD = a login whose own active employee
+  record has a department and ≥1 active direct report (`hr/routes.ts
+  hodDepartmentOf`). `/hr/me` lists `requisition` in `canRequest` (+
+  `hodDepartment`) for them only; `GET /hr/me/forms/requisition` hides the
+  Department field and `POST /hr/me/records/requisition` sets it to the HOD's
+  own department whatever is sent (403 for anyone else), files it in the HOD's
+  company, and signs the HOD step by raising (`auto`) — it waits on HR, then
+  management. Tests: `tests/hodRequisition.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,

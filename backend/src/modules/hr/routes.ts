@@ -2734,6 +2734,20 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return me
   }
 
+  /**
+   * A head of department (owner, 2026-10-22: "Give manpower requisition option
+   * on screen of all HODs, for their own department only"): the caller's own
+   * active employee record has a department and at least one active direct
+   * report (the HR reporting line — CLAUDE.md "Team"). Returns that department,
+   * or null. An HOD raises a requisition for THAT department only — the server
+   * sets it, never the client.
+   */
+  async function hodDepartmentOf(me: HrEmployee): Promise<string | null> {
+    if (!me.departmentId || me.status !== 'active') return null
+    const reports = await prisma.hrEmployee.count({ where: { tenantId: me.tenantId, managerId: me.id, status: { in: ['active', 'on_leave'] } } })
+    return reports > 0 ? me.departmentId : null
+  }
+
   fastify.get('/me', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const me = await myEmployee(req)
     await applyDueEffects(me.tenantId)
@@ -2741,7 +2755,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const [label, balances, records, payslips, loans] = await Promise.all([
       employeeLabels(emp.tenantId, [emp]),
       leaveBalancesFor(emp.tenantId, emp.id),
-      prisma.hrRecord.findMany({ where: { employeeId: emp.id, section: { in: [...ESS_SECTIONS, 'roster', 'attendance'] } }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      // Their own requests, plus the manpower requisitions they raised as an HOD.
+      prisma.hrRecord.findMany({
+        where: { tenantId: emp.tenantId, OR: [{ employeeId: emp.id, section: { in: [...ESS_SECTIONS, 'roster', 'attendance'] } }, { section: 'requisition', createdById: req.staffUser!.id }] },
+        orderBy: { createdAt: 'desc' }, take: 100,
+      }),
       prisma.hrPayslip.findMany({ where: { employeeId: emp.id, run: { status: 'locked' } }, include: { run: { select: { period: true } } }, orderBy: { createdAt: 'desc' }, take: 24 }),
       loansFor(emp.tenantId, emp.id),
     ])
@@ -2758,8 +2776,48 @@ export async function hrRoutes(fastify: FastifyInstance) {
       records,
       payslips: payslips.map((p) => ({ id: p.id, period: p.run.period, netCents: p.netCents })),
       loans,
-      canRequest: ESS_SECTIONS,
+      canRequest: (await hodDepartmentOf(emp)) ? [...ESS_SECTIONS, 'requisition'] : ESS_SECTIONS,
+      hodDepartment: await (async () => {
+        const d = await hodDepartmentOf(emp)
+        return d ? (await prisma.department.findFirst({ where: { id: d }, select: { name: true } }))?.name ?? null : null
+      })(),
     }
+  })
+
+  // ── Manpower requisition by an HOD, for their own department only ─────────
+  fastify.get('/me/forms/requisition', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const me = await myEmployee(req)
+    if (!(await hodDepartmentOf(me))) throw new ForbiddenError('Only a head of department raises a manpower requisition here')
+    const fmt = await getFormat(me.tenantId, 'requisition')
+    return { ...fmt, fields: fmt.fields.filter((f) => f.key !== 'department' && !f.readOnly && !(SERVER_OWNED['requisition'] ?? []).includes(f.key)) }
+  })
+
+  fastify.post('/me/records/requisition', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    const me = await myEmployee(req)
+    const dept = await hodDepartmentOf(me)
+    if (!dept) throw new ForbiddenError('Only a head of department raises a manpower requisition here')
+    const body = z.object({ data: z.record(z.unknown()) }).parse(req.body)
+    // Their own department, whatever the client sent; filed in their own company.
+    const rec = await createRecord(req, me.tenantId, 'requisition', { ...body.data, department: dept }, { submit: true })
+    // The HOD raised it, so the HOD step is theirs already: signed by raising (as HR's own step is, signHrStepRaisedByHr).
+    const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
+    const step = fmt.workflow[rec.currentStep]
+    let out = rec
+    if (rec.status === 'submitted' && step?.role === 'hod' && fmt.workflow[rec.currentStep + 1]) {
+      const entry: ApprovalEntry = {
+        step: step.key, role: step.role, decision: 'approved', byUserId: req.staffUser!.id,
+        byName: req.staffUser!.name ?? req.staffUser!.email ?? me.fullName, at: new Date().toISOString(), note: 'Raised by the head of department', auto: true,
+      }
+      const claimed = await prisma.hrRecord.updateMany({
+        where: { id: rec.id, status: 'submitted', currentStep: rec.currentStep },
+        data: { currentStep: rec.currentStep + 1, approvals: [...(rec.approvals as unknown as ApprovalEntry[]), entry] as unknown as Prisma.InputJsonValue },
+      })
+      if (claimed.count) {
+        out = await prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
+        approvalWaiting('hr_request', out.id, { round: `step:${out.currentStep}:${out.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+      }
+    }
+    return reply.status(201).send(out)
   })
 
   fastify.get<{ Params: { section: string } }>('/me/forms/:section', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
