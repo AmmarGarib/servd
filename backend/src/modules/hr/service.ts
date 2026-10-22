@@ -681,8 +681,17 @@ export async function firstPayrollStart(tenantId: string, fallback: Date): Promi
  * An approved full & final pays the records it lists (data._calc.otRecordIds).
  */
 export async function unpaidOvertime(tenantId: string, employeeId: string, from: Date, to: Date, opts: { runStatuses: string[]; exceptRunId?: string; exceptSettlementId?: string }, q: Db = prisma) {
-  const [records, slips, settlements] = await Promise.all([
+  const [records, state] = await Promise.all([
     q.hrRecord.findMany({ where: { tenantId, section: 'overtime', employeeId, status: 'approved', startDate: { gte: from, lte: to } }, orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }] }),
+    overtimePaidState(tenantId, employeeId, opts, q),
+  ])
+  return records.filter((o) => !state.isPaid(o.id, o.startDate))
+}
+
+/** What payslips (on runs of `runStatuses`) and approved full & finals have
+ *  paid: their otRecordIds — approved OT record ids and `punch:<id>` items. */
+async function overtimePaidState(tenantId: string, employeeId: string, opts: { runStatuses: string[]; exceptRunId?: string; exceptSettlementId?: string }, q: Db) {
+  const [slips, settlements] = await Promise.all([
     q.hrPayslip.findMany({
       where: { tenantId, employeeId, run: { status: { in: opts.runStatuses } }, ...(opts.exceptRunId && { runId: { not: opts.exceptRunId } }) },
       select: { inputs: true, run: { select: { period: true } } },
@@ -697,7 +706,39 @@ export async function unpaidOvertime(tenantId: string, employeeId: string, from:
     else legacyPeriods.add(sl.run.period)
   }
   for (const st of settlements) settlementOtIds(st.data).forEach((id) => paid.add(id))
-  return records.filter((o) => !paid.has(o.id) && !(o.startDate && legacyPeriods.has(periodOf(o.startDate))))
+  return { isPaid: (id: string, day: Date | null | undefined) => paid.has(id) || (!!day && legacyPeriods.has(periodOf(day))) }
+}
+
+/**
+ * Every overtime item HR may add for this employee over [from, to], unpaid
+ * (owner, 2026-10-21 opt-in; 2026-10-22 punch OT): approved overtime records
+ * (source 'approved') and punch overtime worked out from the day's punches
+ * against the rota (source 'punch', id `punch:<attendanceRecordId>`,
+ * attendanceDays.ts). An approved request for the same day wins over that
+ * day's punch OT; an approved request for a day whose punch OT is already
+ * paid is not offered — a day's overtime is paid once. Nothing here is paid
+ * until HR adds it (otSelection).
+ */
+export async function availableOvertime(tenantId: string, employeeId: string, from: Date, to: Date, opts: { runStatuses: string[]; exceptRunId?: string; exceptSettlementId?: string }, q: Db = prisma): Promise<OtAvailable[]> {
+  const { punchOvertimeRows } = await import('./attendanceDays.js')
+  const [emp, approved, state, s] = await Promise.all([
+    q.hrEmployee.findFirst({ where: { id: employeeId, tenantId }, select: { id: true, userId: true, grossSalaryCents: true } }),
+    q.hrRecord.findMany({ where: { tenantId, section: 'overtime', employeeId, status: 'approved', startDate: { gte: from, lte: to } }, orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }] }),
+    overtimePaidState(tenantId, employeeId, opts, q),
+    getSettings(tenantId),
+  ])
+  if (!emp) return []
+  const punch = await punchOvertimeRows(tenantId, [emp], from, to, s, q)
+  const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null)
+  const approvedDays = new Set(approved.map((o) => day(o.startDate)).filter((d): d is string => !!d))
+  const punchPaidDays = new Set(punch.filter((p) => state.isPaid(p.id, new Date(`${p.date}T00:00:00.000Z`))).map((p) => p.date))
+  const items: OtAvailable[] = [
+    ...otAvailableOf(approved.filter((o) => !state.isPaid(o.id, o.startDate) && !(o.startDate && punchPaidDays.has(day(o.startDate)!)))),
+    ...punch
+      .filter((p) => !approvedDays.has(p.date) && !state.isPaid(p.id, new Date(`${p.date}T00:00:00.000Z`)))
+      .map((p): OtAvailable => ({ recordId: p.id, date: p.date, hours: p.hours, amountCents: p.amountCents, source: 'punch', basis: p.basis })),
+  ]
+  return items.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
 }
 
 /** The overtime records a full & final chose to pay (owner, 2026-10-21: OT is
@@ -708,8 +749,11 @@ export function settlementOtIds(data: unknown): string[] {
   return Array.isArray(ids) ? ids.map(String) : []
 }
 
-/** One approved overtime record HR may add to a payslip or a full & final. */
-export interface OtAvailable { recordId: string; date: string | null; hours: number; amountCents: number }
+/** One overtime item HR may add to a payslip or a full & final: an approved
+ *  overtime record (`source` 'approved', recordId = the record's id) or punch
+ *  overtime (`source` 'punch', recordId = `punch:<attendanceRecordId>`,
+ *  `basis` after_shift | beyond_standard_day — owner, 2026-10-22). */
+export interface OtAvailable { recordId: string; date: string | null; hours: number; amountCents: number; source: 'approved' | 'punch'; basis?: 'after_shift' | 'beyond_standard_day' }
 
 /** Approved, unpaid overtime as offered to HR — priced exactly as payroll pays
  *  it: the approver's hours (else the hours claimed) and the amount fixed at
@@ -722,6 +766,7 @@ export function otAvailableOf(records: Array<Pick<HrRecord, 'id' | 'startDate' |
       date: o.startDate ? o.startDate.toISOString().slice(0, 10) : null,
       hours: typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : o.quantity ?? 0,
       amountCents: o.amountCents ?? 0,
+      source: 'approved' as const,
     }
   })
 }
@@ -735,7 +780,7 @@ export function otSelection(available: OtAvailable[], ids: string[], strict: boo
   for (const id of new Set(ids)) {
     const a = byId.get(id)
     if (a) chosen.push(a)
-    else if (strict) throw new AppError('OT_NOT_AVAILABLE', 'That overtime is not available to add here — it is not approved, already paid or added elsewhere, or belongs to someone else', 422)
+    else if (strict) throw new AppError('OT_NOT_AVAILABLE', 'That overtime is not available to add here — it is not approved (or not worked), already paid or added elsewhere, or belongs to someone else', 422)
   }
   return {
     otRecordIds: chosen.map((a) => a.recordId),
@@ -760,13 +805,17 @@ export async function attendanceWithin(tenantId: string, employeeId: string, fro
   // own record or leave from the read.
   const dayFrom = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()))
   const dayTo = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate(), 23, 59, 59, 999))
-  const [attendance, leaves, unpaidTypes] = await Promise.all([
+  const { noPunchWorkingDays } = await import('./attendanceDays.js')
+  const emp = await prisma.hrEmployee.findFirst({ where: { id: employeeId, tenantId }, select: { id: true, userId: true, locationId: true } })
+  const [attendance, leaves, unpaidTypes, working] = await Promise.all([
     prisma.hrRecord.findMany({
       where: { tenantId, section: 'attendance', employeeId, status: STANDING_ATTENDANCE, startDate: { gte: dayFrom, lte: dayTo } },
       select: { startDate: true, category: true, quantity: true, createdAt: true },
     }),
     prisma.hrRecord.findMany({ where: { tenantId, section: 'leave', employeeId, status: 'approved', startDate: { lte: dayTo }, endDate: { gte: dayFrom } } }),
     prisma.hrRecord.findMany({ where: { tenantId, section: 'leave_type', category: 'unpaid' }, select: { id: true } }),
+    // Rule A (owner, 2026-10-22): working days with no punch are absent from the HR setting's date.
+    emp ? noPunchWorkingDays(tenantId, [emp], dayFrom, dayTo, s) : Promise.resolve(new Map<string, number[]>()),
   ])
   const unpaid = new Set(unpaidTypes.map((t) => t.id))
   return attendanceInputs(
@@ -774,6 +823,7 @@ export async function attendanceWithin(tenantId: string, employeeId: string, fro
     attendance.filter((a) => a.startDate).map((a) => ({ date: a.startDate!, status: a.category, lateMinutes: a.quantity, createdAt: a.createdAt })),
     leaves.filter((l) => l.startDate && l.endDate).map((l) => ({ startDate: l.startDate!, endDate: l.endDate!, quantity: l.quantity, unpaid: !!l.refId && unpaid.has(l.refId) })),
     s,
+    working.get(employeeId) ?? [],
   )
 }
 
@@ -812,11 +862,11 @@ export async function prefillInputs(tenantId: string, emp: HrEmployee, period: s
   const wTo = emp.lastWorkingDay && emp.lastWorkingDay < to ? emp.lastWorkingDay : to
   const [att, ot, adjustments, loans] = await Promise.all([
     attendanceWithin(tenantId, emp.id, wFrom, wTo, settings),
-    unpaidOvertime(tenantId, emp.id, otFrom, to, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
+    availableOvertime(tenantId, emp.id, otFrom, to, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
     prisma.hrRecord.findMany({ where: { tenantId, section: 'payroll_adjustment', employeeId: emp.id, status: 'approved', effectiveDate: { gte: from, lte: to } } }),
     loansFor(tenantId, emp.id, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId }),
   ])
-  const otAvailable = otAvailableOf(ot)
+  const otAvailable = ot
   const inputs: PrefilledInputs = { ...EMPTY_INPUTS, loans: [], otRecordIds: [], otAvailable }
   Object.assign(inputs, att)
   Object.assign(inputs, otSelection(otAvailable, keepOtIds, false))
@@ -1054,7 +1104,7 @@ export async function setPayslipOvertime(payslipId: string, recordIds: string[],
   const s = await getSettings(slip.tenantId)
   const otFrom = await firstPayrollStart(slip.tenantId, periodStart(slip.run.period))
   const otTo = periodEnd(slip.run.period)
-  const readAvailable = async (q: Db) => otAvailableOf(await unpaidOvertime(slip.tenantId, slip.employeeId, otFrom, otTo, { runStatuses: ALL_RUN_STATUSES, exceptRunId: slip.runId }, q))
+  const readAvailable = (q: Db) => availableOvertime(slip.tenantId, slip.employeeId, otFrom, otTo, { runStatuses: ALL_RUN_STATUSES, exceptRunId: slip.runId }, q)
   otSelection(await readAvailable(prisma), recordIds, true) // fail fast, before any lock
   const cur = slip.inputs as unknown as PrefilledInputs & { salaryCents?: number }
   const salaryCents = typeof cur.salaryCents === 'number' ? cur.salaryCents : await salaryForPeriod(slip.employee, slip.run.period)
@@ -1086,9 +1136,9 @@ export async function addAllOvertime(runId: string, payslipIds: string[] | null,
   const otFrom = await firstPayrollStart(run.tenantId, periodStart(run.period))
   const out: Array<{ payslipId: string; otRecordIds: string[]; otHours: number; otCents: number }> = []
   for (const sl of slips) {
-    const avail = await unpaidOvertime(run.tenantId, sl.employeeId, otFrom, periodEnd(run.period), { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId })
+    const avail = await availableOvertime(run.tenantId, sl.employeeId, otFrom, periodEnd(run.period), { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId })
     if (avail.length === 0) continue
-    const r = await setPayslipOvertime(sl.id, avail.map((o) => o.id), actorId)
+    const r = await setPayslipOvertime(sl.id, avail.map((o) => o.recordId), actorId)
     out.push({ payslipId: sl.id, otRecordIds: r.otRecordIds, otHours: r.otHours, otCents: r.otCents })
   }
   return out

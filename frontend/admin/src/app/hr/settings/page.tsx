@@ -23,6 +23,12 @@ interface HrSettings {
   encashLeaveOnExit: boolean
   employeeCodePrefix: string
   gratuity: Gratuity
+  /** A working day with no check-in is absent from this day (YYYY-MM-DD); null = off. */
+  absentWithoutPunchFrom?: string | null
+  /** Overtime is worked out from check-in / check-out from this day; null = off. */
+  punchOvertimeFrom?: string | null
+  standardDayHours?: number
+  otMinimumMinutes?: number
 }
 
 /** Gratuity at exit (backend hr/logic.ts GratuitySettings, accountant default H6). */
@@ -142,6 +148,15 @@ export default function HrSettingsPage() {
           <Panel title="Attendance">
             <Num label="Grace before late (minutes)" v={s.lateGraceMinutes} onSet={(v) => setS({ ...s, lateGraceMinutes: v })} />
             <Num label="Lates per one day's deduction" help="e.g. 3 = every 3 lates deduct a day's pay. 0 = lates never deduct." v={s.latesPerDeductionDay} onSet={(v) => setS({ ...s, latesPerDeductionDay: v })} />
+            <DateOrOff label="No check-in counts as absent from" help="A working day on the rota (not a weekly off, holiday or approved leave) with no check-in is absent and docked, unless HR corrects it. Off = days with no record are paid."
+              v={s.absentWithoutPunchFrom ?? null} onSet={(v) => setS({ ...s, absentWithoutPunchFrom: v })} />
+          </Panel>
+
+          <Panel title="Overtime from check-in / check-out">
+            <DateOrOff label="Work out overtime from" help="Time after the rota shift ends, or beyond the standard day when there is no shift. It is never paid on its own: HR adds it to each person's payroll."
+              v={s.punchOvertimeFrom ?? null} onSet={(v) => setS({ ...s, punchOvertimeFrom: v })} />
+            <Num label="Standard day (hours)" max={24} step="0.5" help="Used on a day with no shift on the rota." v={s.standardDayHours ?? 9} onSet={(v) => setS({ ...s, standardDayHours: v })} />
+            <Num label="Ignore overtime under (minutes)" v={s.otMinimumMinutes ?? 30} onSet={(v) => setS({ ...s, otMinimumMinutes: v })} />
           </Panel>
 
           <Panel title="Leave">
@@ -237,6 +252,24 @@ function Money({ label, help, v, warn, onSet }: { label: string; help?: string; 
       <NumberField id={id} className={inp} value={v == null ? null : v / 100} decimals={2} min={0} aria-describedby={help ? `${id}-h` : undefined}
         onValueChange={(n) => onSet(n == null ? null : Math.round(n * 100))} />
       {help && <span id={`${id}-h`} className={`block text-xs mt-1 ${warn ? 'text-s-amber' : 'text-white/55'}`}>{help}</span>}
+    </div>
+  )
+}
+
+/** A start date, or off (null). */
+function DateOrOff({ label, help, v, onSet }: { label: string; help?: string; v: string | null; onSet: (v: string | null) => void }) {
+  const id = useId()
+  return (
+    <div>
+      <label htmlFor={id} className="block text-[11px] font-bold text-white/55 mb-1">{label}</label>
+      <div className="flex items-center gap-3">
+        <input id={id} type="date" className={inp} value={v ?? ''} disabled={v == null} onChange={(e) => onSet(e.target.value || null)} aria-describedby={help ? `${id}-h` : undefined} />
+        <label className="flex items-center gap-2 text-sm text-white/80 shrink-0">
+          <input type="checkbox" checked={v != null} onChange={(e) => onSet(e.target.checked ? '2026-11-01' : null)} className="h-4 w-4 accent-primary" />
+          On
+        </label>
+      </div>
+      {help && <span id={`${id}-h`} className="block text-xs text-white/55 mt-1">{help}</span>}
     </div>
   )
 }

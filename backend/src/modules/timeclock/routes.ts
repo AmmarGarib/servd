@@ -12,6 +12,7 @@
 
 import type { FastifyInstance } from 'fastify'
 import type { UserRole } from '@prisma/client'
+import { prisma } from '../../lib/prisma.js'
 import { z } from 'zod'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
@@ -69,8 +70,11 @@ export async function timeClockRoutes(fastify: FastifyInstance) {
       ? myShifts.find((s) => !s.clockOutAt && s.clockInAt === since)
         ?? { id: `${me.id}:open`, staffId: me.id, staffName: me.name ?? '', clockInAt: since!, clockOutAt: null, geofenceOk: true, selfieUrl: null }
       : undefined
+    // Has an HR employee record in the active company: sign-in checks only these people in (owner, 2026-10-22).
+    const hrLinked = !!(me.tenantId && await prisma.hrEmployee.findFirst({ where: { userId: me.id, tenantId: me.tenantId, status: { in: ['active', 'on_leave'] } }, select: { id: true } }))
     return {
       punchedIn,
+      hrLinked,
       shift: open ?? myShifts.filter((s) => s.clockOutAt).pop() ?? myShifts[myShifts.length - 1],
       missedClockOut: openIn?.missed ? { since: openIn.since } : null,
       todayShifts: (seeAll ? rows.flatMap(shiftsOf) : myShifts).sort((a, b) => b.clockInAt.localeCompare(a.clockInAt)),

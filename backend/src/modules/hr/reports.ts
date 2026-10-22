@@ -27,7 +27,8 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { buildXlsx, colName, type XlsxCell } from '../../lib/xlsxWriter.js'
 import { employeeLabelsAcross, managerLabelOf, getSettings, leaveBalancesFor, payableEmployees, STANDING_ATTENDANCE } from './service.js'
-import { attendanceInputs, inclusiveDays, periodOf, periodStart, periodEnd, pktToday, type HrSettings } from './logic.js'
+import { attendanceInputs, daysInPeriod, inclusiveDays, leaveDaysWithin, periodOf, periodStart, periodEnd, pktToday, type HrSettings } from './logic.js'
+import { noPunchWorkingDays, punchOvertimeRows } from './attendanceDays.js'
 import type { HrField } from './forms.js'
 
 export type ReportParam = 'month' | 'status' | 'department' | 'location'
@@ -51,8 +52,9 @@ const LIFECYCLE_KINDS: ColumnKind[] = ['text', 'text', 'text', 'date', 'text', '
 
 /** The owner's out-of-area flag is the ONE column added to Danish's format, at the end. */
 export const OUT_OF_AREA_COL = 'Out-of-area punches'
-const ATTENDANCE_COLS = ['Emp ID', 'Full Name', 'Department', 'Total Days in Month', 'Days Worked', 'Unpaid Leaves', 'Absents', 'Late Arrivals', 'OT Hours', 'Casual Balance', 'Annual Balance', 'Sick Balance', 'Absenteeism %', OUT_OF_AREA_COL]
-const ATTENDANCE_KINDS: ColumnKind[] = ['text', 'text', 'text', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'percent', 'number']
+// Owner, 2026-10-22: leave AVAILED this month beside each balance (Casual / Annual / Sick Availed).
+const ATTENDANCE_COLS = ['Emp ID', 'Full Name', 'Department', 'Total Days in Month', 'Days Worked', 'Unpaid Leaves', 'Absents', 'Late Arrivals', 'OT Hours', 'Casual Availed', 'Casual Balance', 'Annual Availed', 'Annual Balance', 'Sick Availed', 'Sick Balance', 'Absenteeism %', OUT_OF_AREA_COL]
+const ATTENDANCE_KINDS: ColumnKind[] = ['text', 'text', 'text', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'percent', 'number']
 
 /** Added after Net Salary Payable only when some payslip has a deduction with no column of its own. */
 export const OTHER_DEDUCTIONS_COL = 'Other deductions'
@@ -206,8 +208,13 @@ async function lifecycleDues(def: ReportDef, tenantIds: string[]): Promise<Repor
 // ─── 3. Attendance & Leaves ─────────────────────────────────────────────────
 
 export interface MonthAttendance {
+  /** The month's calendar days (28–31), always (owner, 2026-10-22). */
   totalDays: number
+  /** Days with attendance in the month: present / late / early departure /
+   *  missing punch 1, half day 0.5 (owner, 2026-10-22: "as per attendance"). */
   daysWorked: number
+  /** The days payroll pays (employed − absents − unpaid leave, to today). */
+  paidDays: number
   unpaidLeaves: number
   absents: number
   lateArrivals: number
@@ -215,7 +222,11 @@ export interface MonthAttendance {
   casual: number | null
   annual: number | null
   sick: number | null
-  /** Absents ÷ total days; null when the person had no days in the month. */
+  /** Approved leave of that type taken in the month (days); null with no such leave type. */
+  casualAvailed: number | null
+  annualAvailed: number | null
+  sickAvailed: number | null
+  /** Absents ÷ the days employed so far; null when the person had no days in the month. */
   absenteeism: number | null
   outOfArea: number
 }
@@ -233,13 +244,19 @@ function recordOutOfArea(data: unknown): number {
 }
 
 /**
- * The month for each employee, as payroll reads it.
+ * The month for each employee (owner, 2026-10-22).
  *
- * The days counted are the month's days the person was employed, up to today
- * for the month in progress. Absents and Unpaid Leaves are logic.ts
- * `attendanceInputs` — exactly what payroll docks (an absent record = 1, a half
- * day = 0.5; a day covered by leave is never an absence). Days Worked are the
- * paid days, so Danish's identity holds: Absents = Total − (Worked + Unpaid).
+ * Total Days = the month's calendar days. Days Worked = days with attendance
+ * (present / late / early departure / missing punch 1, half day 0.5; the
+ * latest record of a day stands). Absents and Unpaid Leaves are logic.ts
+ * `attendanceInputs` over the days employed up to today — exactly what payroll
+ * docks: an absent record = 1, a half day = 0.5, and from the HR setting
+ * `absentWithoutPunchFrom` a working day with no record (attendanceDays.ts
+ * rule A); a day covered by leave is never an absence. OT Hours = approved
+ * overtime + punch overtime (attendanceDays.ts rule B) on days with no
+ * approved request — whether or not payroll has paid it. Availed = approved
+ * leave of the type taken in the month; balances (leave_adjustment = HR's
+ * allotment) are on the month's last day (today for the month in progress).
  */
 export async function monthAttendance(emps: HrEmployee[], month: string): Promise<Map<string, MonthAttendance>> {
   const out = new Map<string, MonthAttendance>()
@@ -251,7 +268,7 @@ export async function monthAttendance(emps: HrEmployee[], month: string): Promis
   const tenantIds = Array.from(new Set(emps.map((e) => e.tenantId)))
   const userIds = emps.map((e) => e.userId).filter((u): u is string => !!u)
 
-  const [attendance, leaves, unpaidTypes, overtime, clockOut] = await Promise.all([
+  const [attendance, leaves, leaveTypes, overtime, clockOut] = await Promise.all([
     prisma.hrRecord.findMany({
       where: { tenantId: { in: tenantIds }, section: 'attendance', employeeId: { in: ids }, status: STANDING_ATTENDANCE, startDate: { gte: mStart, lte: mEnd } },
       select: { employeeId: true, tenantId: true, startDate: true, category: true, quantity: true, createdAt: true, data: true },
@@ -260,10 +277,10 @@ export async function monthAttendance(emps: HrEmployee[], month: string): Promis
       where: { tenantId: { in: tenantIds }, section: 'leave', employeeId: { in: ids }, status: 'approved', startDate: { lte: mEnd }, endDate: { gte: mStart } },
       select: { employeeId: true, tenantId: true, startDate: true, endDate: true, quantity: true, refId: true },
     }),
-    prisma.hrRecord.findMany({ where: { tenantId: { in: tenantIds }, section: 'leave_type', category: 'unpaid' }, select: { id: true } }),
+    prisma.hrRecord.findMany({ where: { tenantId: { in: tenantIds }, section: 'leave_type' }, select: { id: true, category: true, data: true } }),
     prisma.hrRecord.findMany({
       where: { tenantId: { in: tenantIds }, section: 'overtime', employeeId: { in: ids }, status: 'approved', startDate: { gte: mStart, lte: mEnd } },
-      select: { employeeId: true, tenantId: true, quantity: true, data: true },
+      select: { employeeId: true, tenantId: true, startDate: true, quantity: true, data: true },
     }),
     // Login punches outside every work location (Karachi month).
     userIds.length ? prisma.clockLog.findMany({
@@ -271,10 +288,25 @@ export async function monthAttendance(emps: HrEmployee[], month: string): Promis
       select: { userId: true, tenantId: true },
     }) : Promise.resolve([] as Array<{ userId: string; tenantId: string | null }>),
   ])
-  const unpaid = new Set(unpaidTypes.map((t) => t.id))
+  const unpaid = new Set(leaveTypes.filter((t) => t.category === 'unpaid').map((t) => t.id))
+  const typeName = new Map(leaveTypes.map((t) => [t.id, String(((t.data ?? {}) as Record<string, unknown>)['name'] ?? '')]))
   const settings = new Map<string, HrSettings>()
   for (const t of tenantIds) settings.set(t, await getSettings(t))
   const balanceOn = new Date(Math.min(dayOf(mEnd), dayOf(today)))
+  const monthDays = daysInPeriod(month)
+  // Rule A working days and rule B punch overtime, one read per company.
+  const working = new Map<string, number[]>()
+  const punchOt = new Map<string, Array<{ date: string; hours: number }>>()
+  for (const t of tenantIds) {
+    const mineT = emps.filter((e) => e.tenantId === t)
+    const s = settings.get(t)!
+    const [w, p] = await Promise.all([
+      noPunchWorkingDays(t, mineT, mStart, mEnd, s, today),
+      punchOvertimeRows(t, mineT, mStart, mEnd, s, prisma, today),
+    ])
+    for (const [k, v] of w) working.set(k, v)
+    for (const x of p) punchOt.set(x.employeeId, [...(punchOt.get(x.employeeId) ?? []), { date: x.date, hours: x.hours }])
+  }
 
   for (const e of emps) {
     const mine = <T extends { employeeId: string | null; tenantId: string | null }>(rows: T[]) => rows.filter((r) => r.employeeId === e.id && r.tenantId === e.tenantId)
@@ -282,40 +314,64 @@ export async function monthAttendance(emps: HrEmployee[], month: string): Promis
     let wTo = new Date(dayOf(mEnd))
     if (e.lastWorkingDay && dayOf(e.lastWorkingDay) < wTo.getTime()) wTo = new Date(dayOf(e.lastWorkingDay))
     if (dayOf(today) < wTo.getTime()) wTo = new Date(dayOf(today))
-    const totalDays = wFrom <= wTo ? inclusiveDays(wFrom, wTo) : 0
+    const employedDays = wFrom <= wTo ? inclusiveDays(wFrom, wTo) : 0
     const att = mine(attendance)
+    const myLeaves = mine(leaves).filter((l) => l.startDate && l.endDate)
     let absents = 0, unpaidLeaves = 0, lateArrivals = 0
-    if (totalDays > 0) {
+    if (employedDays > 0) {
       const r = attendanceInputs(
         wFrom, wTo,
         att.filter((a) => a.startDate).map((a) => ({ date: a.startDate!, status: a.category, lateMinutes: a.quantity, createdAt: a.createdAt })),
-        mine(leaves).filter((l) => l.startDate && l.endDate).map((l) => ({ startDate: l.startDate!, endDate: l.endDate!, quantity: l.quantity, unpaid: !!l.refId && unpaid.has(l.refId) })),
+        myLeaves.map((l) => ({ startDate: l.startDate!, endDate: l.endDate!, quantity: l.quantity, unpaid: !!l.refId && unpaid.has(l.refId) })),
         settings.get(e.tenantId)!,
+        working.get(e.id) ?? [],
       )
-      absents = Math.min(r.absentDays, totalDays)
-      unpaidLeaves = Math.min(r.unpaidLeaveDays, Math.max(0, totalDays - absents))
+      absents = r2(Math.min(r.absentDays, employedDays))
+      unpaidLeaves = r2(Math.min(r.unpaidLeaveDays, Math.max(0, employedDays - absents)))
       lateArrivals = r.lateCount
     }
-    const otHours = mine(overtime).reduce((a, o) => {
+    // Days Worked: the latest record of each day.
+    const latest = new Map<number, (typeof att)[number]>()
+    for (const a of att) {
+      if (!a.startDate) continue
+      const cur = latest.get(dayOf(a.startDate))
+      if (!cur || a.createdAt > cur.createdAt) latest.set(dayOf(a.startDate), a)
+    }
+    let daysWorked = 0
+    for (const a of latest.values()) daysWorked += WORKED[a.category ?? ''] ?? 0
+    // OT: approved overtime, plus punch OT on days with no approved request (no day counted twice).
+    const approvedDays = new Set<string>()
+    let otHours = 0
+    for (const o of mine(overtime)) {
       const d = (o.data ?? {}) as Record<string, unknown>
-      return a + (typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : o.quantity ?? 0)
-    }, 0)
+      otHours += typeof d['approvedHours'] === 'number' ? d['approvedHours'] as number : o.quantity ?? 0
+      if (o.startDate) approvedDays.add(o.startDate.toISOString().slice(0, 10))
+    }
+    for (const p of punchOt.get(e.id) ?? []) if (!approvedDays.has(p.date)) otHours += p.hours
     const balances = await leaveBalancesFor(e.tenantId, e.id, balanceOn)
     const bal = (re: RegExp) => { const b = balances.find((x) => re.test(x.name)); return b ? r2(b.balance) : null }
+    const availed = (re: RegExp) => {
+      if (!balances.some((x) => re.test(x.name))) return null
+      return r2(myLeaves.filter((l) => l.refId && re.test(typeName.get(l.refId) ?? ''))
+        .reduce((a, l) => a + leaveDaysWithin({ startDate: l.startDate!, endDate: l.endDate!, quantity: l.quantity }, mStart, mEnd), 0))
+    }
     const outOfArea = e.userId
       ? clockOut.filter((c) => c.userId === e.userId && c.tenantId === e.tenantId).length
       : att.reduce((a, r) => a + recordOutOfArea(r.data), 0)
-    const daysWorked = r2(Math.max(0, totalDays - absents - unpaidLeaves))
     out.set(e.id, {
-      totalDays, daysWorked, unpaidLeaves: r2(unpaidLeaves), absents: r2(totalDays - (daysWorked + r2(unpaidLeaves))),
-      lateArrivals, otHours: r2(otHours),
+      totalDays: monthDays, daysWorked: r2(daysWorked), paidDays: r2(Math.max(0, employedDays - absents - unpaidLeaves)),
+      unpaidLeaves, absents, lateArrivals, otHours: r2(otHours),
       casual: bal(/casual/i), annual: bal(/annual/i), sick: bal(/sick/i),
-      absenteeism: totalDays > 0 ? r2(totalDays - (daysWorked + r2(unpaidLeaves))) / totalDays : null,
+      casualAvailed: availed(/casual/i), annualAvailed: availed(/annual/i), sickAvailed: availed(/sick/i),
+      absenteeism: employedDays > 0 ? absents / employedDays : null,
       outOfArea,
     })
   }
   return out
 }
+
+/** What a day's attendance status counts towards Days Worked (owner, 2026-10-22). */
+const WORKED: Record<string, number> = { present: 1, late: 1, early_departure: 1, missing_punch: 1, half_day: 0.5 }
 
 const pct = (v: number | null) => (v == null ? null : `${(v * 100).toFixed(1)}%`)
 
@@ -332,11 +388,11 @@ async function attendanceLeaves(def: ReportDef, tenantIds: string[], q: ReportQu
     header: ATTENDANCE_COLS, kinds: ATTENDANCE_KINDS,
     rows: emps.map((e) => {
       const a = att.get(e.id)!
-      return [e.employeeCode, e.fullName, labelOf(e.departmentId), a.totalDays, a.daysWorked, a.unpaidLeaves, a.absents, a.lateArrivals, a.otHours, a.casual, a.annual, a.sick, pct(a.absenteeism), a.outOfArea]
+      return [e.employeeCode, e.fullName, labelOf(e.departmentId), a.totalDays, a.daysWorked, a.unpaidLeaves, a.absents, a.lateArrivals, a.otHours, a.casualAvailed, a.casual, a.annualAvailed, a.annual, a.sickAvailed, a.sick, pct(a.absenteeism), a.outOfArea]
     }),
     note: [
-      inProgress ? `${titleCase(monthLabel(month).split(' ')[0]!)} is not over: days are counted to today.` : null,
-      'Days Worked are the paid days; Absents = Total − (Worked + Unpaid), as payroll docks them. A joiner or leaver counts only the days employed. Balances are on the month\'s last day.',
+      inProgress ? `${titleCase(monthLabel(month).split(' ')[0]!)} is not over: absents, leave balances and overtime are counted to today.` : null,
+      'Total Days in Month is the whole month. Days Worked are the days with attendance (a half day counts 0.5). Absents and Unpaid Leaves are what payroll docks: an absent day, half of a half day, and a working day on the rota with no check-in (from the date set in HR settings) — a weekly off, a holiday or a day on approved leave is never an absence. A joiner or leaver is counted only for the days employed. OT Hours are approved overtime plus overtime worked after the rota shift from the punches (they are paid only when HR adds them to payroll). Availed is approved leave taken this month; balances include HR\'s leave adjustments and are on the month\'s last day.',
     ].filter(Boolean).join(' '),
   }
 }
@@ -433,7 +489,7 @@ async function payrollReport(def: ReportDef, tenantIds: string[], q: ReportQuery
 
   const rows: unknown[][] = perSlip.map(({ s, c }) => [
     s.employee.employeeCode, s.employee.fullName, labelOf(s.employee.departmentId), branch(s.employee), costCentreOf(s.employee), d10(s.employee.joiningDate),
-    ...money(c), paidDaysOf(s.inputs) ?? att.get(s.employee.id)?.daysWorked ?? null, ...rest(c),
+    ...money(c), paidDaysOf(s.inputs) ?? att.get(s.employee.id)?.paidDays ?? null, ...rest(c),
   ])
   const sum = (k: keyof Cents) => perSlip.reduce((a, x) => a + x.c[k], 0)
   const tot = Object.fromEntries((['gross', 'earned', 'arrears', 'ot', 'totalEarned', 'late', 'loan', 'unpaid', 'advance', 'tax', 'other', 'totalDed', 'net'] as const).map((k) => [k, sum(k)])) as Cents
@@ -481,7 +537,7 @@ export async function buildReport(key: string, tenantIds: string[], _activeTenan
 const WIDTHS: Record<string, number[]> = {
   employee_master: [12, 24, 23, 19, 14, 12, 16, 30, 19, 18, 29, 19, 14, 24, 12, 19, 23, 28, 24],
   lifecycle_dues: [12, 24, 18, 13, 16, 26, 16, 20, 18, 20, 16],
-  attendance_leaves: [12, 24, 18, 20, 15, 15, 12, 15, 12, 16, 16, 14, 15, 20],
+  attendance_leaves: [12, 24, 18, 20, 15, 15, 12, 15, 12, 15, 16, 15, 16, 14, 14, 15, 20],
   payroll_report: [12, 24, 18, 22, 15, 13, 16, 13, 16, 20, 15, 16, 16, 16, 18, 16, 15, 18, 20, 18],
 }
 

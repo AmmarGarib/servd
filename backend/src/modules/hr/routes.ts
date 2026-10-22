@@ -30,8 +30,8 @@ import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, loanStatement, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
-  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
-  otAvailableOf, otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime,
+  salaryForPeriod, availableOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
+  otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime,
 } from './service.js'
 import {
   mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -94,6 +94,11 @@ const PAYROLL_PAYER_GUARD = [requireAuth(...PAYROLL_PAYERS), financeNeedsAccount
 const PAYROLL_READERS = [...HR_ADMIN, 'finance'] as UserRole[]
 /** Who may edit the Employee Master record linked to their own login. */
 const SELF_EDITORS = ['admin', 'owner'] as UserRole[]
+/** An overtime item HR adds to a payslip / full & final: an approved overtime
+ *  record id, or `punch:<attendance record id>` (punch OT, owner 2026-10-22). */
+const OT_ITEM_ID = z.string().regex(/^(punch:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'Not an overtime item')
+/** A calendar day, YYYY-MM-DD. */
+const HR_DAY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)), 'Not a date')
 
 /** Values only logic or an approver writes. Never taken from a create or an
  *  edit, whatever the format says: approved OT hours come from /decide, the
@@ -741,8 +746,8 @@ async function approveSettlement(tx: Tx, rec: HrRecord, postedBy: string) {
   // and unpaid — a payslip that took it since would pay it twice.
   const otIds = settlementOtIds(d)
   if (otIds.length > 0) {
-    const still = await unpaidOvertime(rec.tenantId, rec.employeeId, new Date(0), new Date(8.64e15), { runStatuses: ALL_RUN_STATUSES, exceptSettlementId: rec.id }, tx)
-    const ok = new Set(still.map((o) => o.id))
+    const still = await availableOvertime(rec.tenantId, rec.employeeId, new Date(0), new Date(8.64e15), { runStatuses: ALL_RUN_STATUSES, exceptSettlementId: rec.id }, tx)
+    const ok = new Set(still.map((o) => o.recordId))
     if (otIds.some((id) => !ok.has(id))) {
       throw new AppError('FNF_STALE', 'Overtime added to this settlement has since been paid on a payroll or is no longer approved — calculate it again', 409)
     }
@@ -1073,9 +1078,21 @@ export async function hrRoutes(fastify: FastifyInstance) {
         partYearOverMonths: z.number().int().min(0).max(11),
         daysPerYear: z.number().int().min(1).max(60),
       }).optional(),
+      // Owner, 2026-10-22 (rules A and B). Optional: a screen that does not
+      // send them keeps what the company has. A date (YYYY-MM-DD) or null = off.
+      absentWithoutPunchFrom: HR_DAY.nullable().optional(),
+      punchOvertimeFrom: HR_DAY.nullable().optional(),
+      standardDayHours: z.number().min(1).max(24).optional(),
+      otMinimumMinutes: z.number().int().min(0).max(240).optional(),
     }).parse(req.body)
     const before = await getSettings(tenantId)
-    const next = mergeSettings({ ...body, gratuity: body.gratuity ?? before.gratuity } as Partial<HrSettings>)
+    const next = mergeSettings({
+      ...body, gratuity: body.gratuity ?? before.gratuity,
+      absentWithoutPunchFrom: body.absentWithoutPunchFrom !== undefined ? body.absentWithoutPunchFrom : before.absentWithoutPunchFrom,
+      punchOvertimeFrom: body.punchOvertimeFrom !== undefined ? body.punchOvertimeFrom : before.punchOvertimeFrom,
+      standardDayHours: body.standardDayHours ?? before.standardDayHours,
+      otMinimumMinutes: body.otMinimumMinutes ?? before.otMinimumMinutes,
+    } as Partial<HrSettings>)
     await saveSettings(tenantId, next)
     await audit({ category: 'identity', action: 'hr.settings.update', entity: 'Setting', entityId: `hr.settings.${tenantId}`, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, before, after: next })
     return next
@@ -2058,7 +2075,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       // Overtime is opt-in (owner, 2026-10-21): the approved, unpaid OT records
       // HR adds to this settlement (replaces the choice; [] = none). Left out:
       // the settlement keeps what it already chose, while still available.
-      otRecordIds: z.array(z.string().uuid()).max(500).optional(),
+      otRecordIds: z.array(OT_ITEM_ID).max(500).optional(),
     }).parse(req.body)
     const found = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } })
     if (!found) throw new NotFoundError('Employee', body.employeeId)
@@ -2083,7 +2100,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const salaryFrom = !body.unpaidMonthSalary ? null : lastRun ? new Date(periodEnd(lastRun.period).getTime() + 1) : periodStart(periodOf(lwd))
     const otFrom = await firstPayrollStart(emp.tenantId, periodStart(periodOf(lwd)))
     const [ot, balances, loans, grossSalaryCents] = await Promise.all([
-      unpaidOvertime(emp.tenantId, emp.id, otFrom, lwd, { runStatuses: ALL_RUN_STATUSES }),
+      availableOvertime(emp.tenantId, emp.id, otFrom, lwd, { runStatuses: ALL_RUN_STATUSES }),
       leaveBalancesFor(emp.tenantId, emp.id, lwd),
       loansFor(emp.tenantId, emp.id, { runStatuses: ALL_RUN_STATUSES, ...(target && { exceptSettlementId: target.id }) }),
       salaryForPeriod(emp, periodOf(lwd)),
@@ -2104,7 +2121,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // Overtime is paid only when HR adds it (owner, 2026-10-21), priced as a
     // payslip prices it. A choice that is no longer available is 422 when sent
     // now, and quietly dropped when it is the settlement's earlier choice.
-    const otAvailable = otAvailableOf(ot)
+    const otAvailable = ot
     const approvals = (target?.approvals ?? []) as unknown as ApprovalEntry[]
     const editable = !!target && (target.status === 'draft' || target.status === 'submitted') && actedOnBy(approvals).length === 0
     if (target && !editable && body.otRecordIds !== undefined) {
@@ -2331,7 +2348,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // each must be approved, unpaid OT of this employee and company (422
   // OT_NOT_AVAILABLE). Same people, module gate and scope as editing a payslip.
   fastify.post<{ Params: { id: string } }>('/payroll/payslips/:id/overtime', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const body = z.object({ recordIds: z.array(z.string().uuid()).max(500) }).parse(req.body)
+    const body = z.object({ recordIds: z.array(OT_ITEM_ID).max(500) }).parse(req.body)
     const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, ...writeTenants(req) }, include: { run: { select: { id: true, tenantId: true, status: true, viaHeadOfficeId: true } } } })
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
     if (isReachOnly(req, slip.run.tenantId)) await assertHoMayPropose(req, slip.run.tenantId, slip.run.status === 'draft', 'editing a payslip on a payroll that is no longer a draft')

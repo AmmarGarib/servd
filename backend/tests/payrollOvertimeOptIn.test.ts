@@ -119,7 +119,7 @@ describe('payroll overtime is added by HR, never on its own', () => {
     expect(s.inputs['otCents']).toBe(0)
     expect(s.inputs['otHours']).toBe(0)
     expect(s.inputs['otRecordIds']).toEqual([])
-    expect(s.inputs['otAvailable']).toEqual([{ recordId: ot1, date: '2027-03-10', hours: 3, amountCents: RS(1500) }])
+    expect(s.inputs['otAvailable']).toEqual([{ recordId: ot1, date: '2027-03-10', hours: 3, amountCents: RS(1500), source: 'approved' }])
     expect(otLine(s)).toBe(0)
   })
 
@@ -221,7 +221,7 @@ describe('full & final: OT opt-in, and the days it pays', () => {
     const f = r.json()
     expect(f.otPayable).toBe(0)
     expect(f.otRecordIds).toEqual([])
-    expect(f.otAvailable).toEqual([{ recordId: ot3, date: '2027-06-03', hours: 2, amountCents: RS(800) }])
+    expect(f.otAvailable).toEqual([{ recordId: ot3, date: '2027-06-03', hours: 2, amountCents: RS(800), source: 'approved' }])
     const basis = { period: '2027-06', from: '2027-06-01', to: '2027-06-10', daysInMonth: 30, employedDays: 10, absentDays: 1.5, unpaidLeaveDays: 0, paidDays: 8.5, salaryCents: RS(17000) }
     expect(f.payBasis).toEqual([expect.objectContaining(basis)])
     expect(f.salaryPayable).toBe(RS(17000))

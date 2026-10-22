@@ -250,22 +250,26 @@ describe('Attendance & Leaves', () => {
   it('Danish\'s columns + the out-of-area count at the end; his arithmetic', async () => {
     const t = await table('hrA', `/reports/attendance_leaves?month=${M}`)
     expect(t.sheetTitle).toBe('MONTHLY TIME, ATTENDANCE, OVERTIME & LEAVE REPORT (SEPTEMBER 2026)')
-    expect(t.header).toEqual(['Emp ID', 'Full Name', 'Department', 'Total Days in Month', 'Days Worked', 'Unpaid Leaves', 'Absents', 'Late Arrivals', 'OT Hours', 'Casual Balance', 'Annual Balance', 'Sick Balance', 'Absenteeism %', OUT_OF_AREA_COL])
+    // Owner, 2026-10-22: leave availed beside each balance.
+    expect(t.header).toEqual(['Emp ID', 'Full Name', 'Department', 'Total Days in Month', 'Days Worked', 'Unpaid Leaves', 'Absents', 'Late Arrivals', 'OT Hours', 'Casual Availed', 'Casual Balance', 'Annual Availed', 'Annual Balance', 'Sick Availed', 'Sick Balance', 'Absenteeism %', OUT_OF_AREA_COL])
     const a1 = rowOf(t, 'a1')
-    // 30 days: absent 1 + half day 0.5 = 1.5 absents, 1 unpaid → 27.5 worked.
+    // Owner, 2026-10-22: Total = the whole month (30); Days Worked = days with
+    // attendance (late 1 + present 1 + half day 0.5 = 2.5 — September is before
+    // rule A, so days with no record are not absences). Absents as payroll docks
+    // them: absent 1 + half day 0.5 = 1.5; 1 unpaid.
     expect(a1).toMatchObject({
-      'Total Days in Month': 30, 'Days Worked': 27.5, 'Unpaid Leaves': 1, Absents: 1.5, 'Late Arrivals': 1, 'OT Hours': 3,
-      'Casual Balance': 8, 'Annual Balance': 14, 'Sick Balance': 8, 'Absenteeism %': '5.0%', [OUT_OF_AREA_COL]: 2,
+      'Total Days in Month': 30, 'Days Worked': 2.5, 'Unpaid Leaves': 1, Absents: 1.5, 'Late Arrivals': 1, 'OT Hours': 3,
+      'Casual Availed': 2, 'Casual Balance': 8, 'Annual Availed': 0, 'Annual Balance': 14, 'Sick Availed': 0, 'Sick Balance': 8,
+      'Absenteeism %': '5.0%', [OUT_OF_AREA_COL]: 2,
     })
-    expect((a1['Total Days in Month'] as number) - ((a1['Days Worked'] as number) + (a1['Unpaid Leaves'] as number))).toBe(a1['Absents'])
-    expect(rowOf(t, 'a2')).toMatchObject({ 'Days Worked': 30, Absents: 0, 'Absenteeism %': '0.0%', [OUT_OF_AREA_COL]: 1 })
+    expect(rowOf(t, 'a2')).toMatchObject({ 'Total Days in Month': 30, 'Days Worked': 1, Absents: 0, 'Absenteeism %': '0.0%', [OUT_OF_AREA_COL]: 1 })
     // A leaver from June is not on September.
     expect(t.rows.some((r) => r[0] === `${P}-a6`)).toBe(false)
   })
   it('a company with no such leave type leaves the balance blank; B sees only B', async () => {
     const t = await table('hrB', `/reports/attendance_leaves?month=${M}`)
     expect(t.rows.map((r) => r[0])).toEqual([`${P}-b1`])
-    expect(rowOf(t, 'b1')).toMatchObject({ 'Casual Balance': null, 'Annual Balance': null, 'Sick Balance': null, [OUT_OF_AREA_COL]: 0 })
+    expect(rowOf(t, 'b1')).toMatchObject({ 'Casual Availed': null, 'Casual Balance': null, 'Annual Balance': null, 'Sick Balance': null, [OUT_OF_AREA_COL]: 0 })
     expect((await get('hrA', '/reports/attendance_leaves?month=2026-13')).statusCode).toBe(400)
   })
 })

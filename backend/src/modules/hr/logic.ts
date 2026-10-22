@@ -47,6 +47,19 @@ export interface HrSettings {
   employeeCodePrefix: string
   /** Gratuity paid at exit (accountant default H6) — see gratuityFor. */
   gratuity: GratuitySettings
+  /** Absent without a punch (owner, 2026-10-22, rule A): from this day
+   *  (YYYY-MM-DD), a WORKING day — a rota shift, not a holiday, not covered
+   *  by approved leave, while employed, and over — with no standing attendance
+   *  record counts as absent (1). null = off (no record = paid, as before).
+   *  Default 2026-11-01: October pays as is (H52). */
+  absentWithoutPunchFrom: string | null
+  /** Punch overtime (owner, 2026-10-22, rule B) is worked out from this day
+   *  (YYYY-MM-DD); null = off. Never paid unless HR adds it (rule C). */
+  punchOvertimeFrom: string | null
+  /** A day with no rota shift: time worked beyond this many hours is overtime. */
+  standardDayHours: number
+  /** Overtime under this many minutes on a day is ignored. */
+  otMinimumMinutes: number
 }
 
 /**
@@ -88,6 +101,10 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   encashLeaveOnExit: true,
   employeeCodePrefix: 'EMP-',
   gratuity: DEFAULT_GRATUITY,
+  absentWithoutPunchFrom: '2026-11-01',
+  punchOvertimeFrom: '2026-11-01',
+  standardDayHours: 9,
+  otMinimumMinutes: 30,
 }
 
 export function mergeSettings(stored: Partial<HrSettings> | null | undefined): HrSettings {
@@ -379,7 +396,7 @@ export interface LeaveSpan { startDate: Date; endDate: Date; quantity: number | 
  * Callers pass only entries that stand (not cancelled, rejected or draft) and
  * only approved leave.
  */
-export function attendanceInputs(from: Date, to: Date, attendance: AttendanceEntry[], leaves: LeaveSpan[], s: HrSettings): { absentDays: number; lateCount: number; unpaidLeaveDays: number } {
+export function attendanceInputs(from: Date, to: Date, attendance: AttendanceEntry[], leaves: LeaveSpan[], s: HrSettings, noPunchWorkingDays: Iterable<Date | number> = []): { absentDays: number; lateCount: number; unpaidLeaveDays: number } {
   const lo = dayUTC(from)
   const hi = dayUTC(to)
   const covered = new Set<number>()
@@ -407,6 +424,16 @@ export function attendanceInputs(from: Date, to: Date, attendance: AttendanceEnt
     if (a.status === 'absent') absentDays += 1
     else if (a.status === 'half_day') absentDays += 0.5
     else if (a.status === 'late' && (a.lateMinutes ?? Infinity) > s.lateGraceMinutes) lateCount += 1
+  }
+  // Rule A (owner, 2026-10-22): a working day (attendanceDays.ts
+  // noPunchWorkingDays — rota shift, not a holiday, from the setting's date,
+  // already over) with no standing record and no approved leave is absent.
+  const seen = new Set<number>()
+  for (const w of noPunchWorkingDays) {
+    const d = typeof w === 'number' ? w : dayUTC(w)
+    if (d < lo || d > hi || seen.has(d)) continue
+    seen.add(d)
+    if (!covered.has(d) && !latest.has(d)) absentDays += 1
   }
   let unpaid = 0
   for (const v of unpaidByDay.values()) unpaid += v
@@ -525,10 +552,12 @@ const fmtRs = (cents: number) => `Rs ${(cents / 100).toLocaleString('en-PK', { m
  *
  * Days before joining or after the last working day are simply not employed —
  * never absences. Weekly off days, holidays, paid leave, lates, early
- * departures, missing punches and days with no attendance record are all paid
- * days: only an `absent` record (1 day; `half_day` 0.5) on a day not covered
- * by approved leave, and approved UNPAID leave, take a day out. Lates (every N
- * lates = one day at the same daily rate) stay a deduction line.
+ * departures and missing punches are paid days: only an `absent` record (1
+ * day; `half_day` 0.5) on a day not covered by approved leave, approved UNPAID
+ * leave and — from the HR setting `absentWithoutPunchFrom` (owner, 2026-10-22,
+ * rule A) — a rota working day with no standing attendance record take a day
+ * out (attendanceDays.ts; before that date a day with no record is paid).
+ * Lates (every N lates = one day at the same daily rate) stay a deduction line.
  */
 export function computePayslip(
   emp: { grossSalaryCents: number; monthlyTaxCents: number; joiningDate: Date | null; lastWorkingDay: Date | null },

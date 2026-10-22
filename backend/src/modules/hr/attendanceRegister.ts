@@ -6,7 +6,8 @@
 //   Attendance Date | Attendance Day | Shift Code | Employee ID | Employee Name | Department | Time In | Time Out |
 //   Late In | Early Out | OT Hours | Source | Location | Branch | Status | Remarks
 // OT Hours = APPROVED overtime records for the employee and date (approvedHours, else quantity — the same reading
-// payroll's prefill uses), whether or not payroll has paid them.
+// payroll's prefill uses), whether or not payroll has paid them; on a day with no approved request, the punch
+// overtime of that day's record (owner, 2026-10-22 — attendanceDays.ts rule B; paid only when HR adds it).
 
 import type { FastifyRequest } from 'fastify'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -14,9 +15,10 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
 import { csv } from '../accounting/csv.js'
 import { fromMatrix, type ReportColumnType } from '../../lib/reportExport.js'
-import { getFormat, employeeLabelsAcross } from './service.js'
+import { getFormat, employeeLabelsAcross, getSettings } from './service.js'
 import { attendanceKeys, minutesLate, flagMissingPunches, type PunchEntry } from './attendance.js'
 import { rotaFor, ymd, toMinutes, type RotaCell } from './rota.js'
+import { punchOvertimeForRecords } from './attendanceDays.js'
 
 export const ATTENDANCE_REGISTER_COLUMNS = [
   'Attendance Date', 'Attendance Day', 'Shift Code', 'Employee ID', 'Employee Name', 'Department', 'Time In', 'Time Out',
@@ -122,6 +124,16 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
     const key = `${o.employeeId}:${ymd(o.startDate)}`
     otHours.set(key, (otHours.get(key) ?? 0) + (typeof a === 'number' ? a : o.quantity ?? 0))
   }
+  // Punch OT of each standing record (a manual day still waiting for the CEO does not count), per company.
+  const punchOt = new Map<string, number>()
+  for (const t of new Set(kept.map((r) => r.tenantId))) {
+    const mine = kept.filter((r) => r.tenantId === t && r.employee && r.status !== 'submitted')
+    if (!mine.length) continue
+    const people = Array.from(new Map(mine.map((r) => [r.employee!.id, r.employee!])).values())
+    const grossOf = new Map((await prisma.hrEmployee.findMany({ where: { tenantId: t, id: { in: people.map((e) => e.id) } }, select: { id: true, grossSalaryCents: true } })).map((e) => [e.id, e.grossSalaryCents]))
+    const found = await punchOvertimeForRecords(t, mine, people.map((e) => ({ id: e.id, userId: e.userId, grossSalaryCents: grossOf.get(e.id) ?? 0 })), await getSettings(t))
+    for (const [recordId, p] of found) punchOt.set(recordId, p.hours)
+  }
   const locName = new Map(locations.map((l) => [l.id, l.name]))
   // Where the person actually was at check-in (owner, 2026-10-21: "It should opt current location of the staff at
   // time of checkin"): the GPS fix the time clock recorded with the punch (ClockLog lat/lng), in the record's company.
@@ -173,7 +185,8 @@ export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQu
     const manual = !!d['_manual']
     const fix = !manual && firstIn?.clockLogId ? fixById.get(firstIn.clockLogId) ?? null : null
     const location = manual || !firstIn ? '' : checkInPlace(fix, firstIn, locName)
-    const otH = r.employee && date ? otHours.get(`${r.employee.id}:${date}`) ?? 0 : 0
+    const approvedH = r.employee && date ? otHours.get(`${r.employee.id}:${date}`) : undefined
+    const otH = approvedH ?? punchOt.get(r.id) ?? 0
     const ot = otH > 0 ? otH.toFixed(2) : ''
     const values = [
       date, r.startDate ? WEEKDAY_NAMES[r.startDate.getUTCDay()]! : '', shiftCode, r.employee?.employeeCode ?? '', r.employee?.fullName ?? '',

@@ -2084,6 +2084,33 @@ on its next recalculation. The F&F stores the days its salary pays as
 `data._payBasis` (one row per month: from–to, days employed, absent, unpaid
 leave, paid days, salary) — shown on the form and printed as "Days paid".
 Tests: `tests/payrollOvertimeOptIn.test.ts`.
+**Absent without a punch, punch overtime, Attendance & Leaves (owner,
+2026-10-22: "Total days … should show days of the whole month, and days worked
+should show as per attendance … calculate accurate Overtime, again OT should
+not include in payroll on auto … add column for availed leaves").**
+`hr/attendanceDays.ts` is the ONE reading (payroll, F&F, the report and the
+register). **Rule A:** from HR setting `absentWithoutPunchFrom` (per company,
+default `2026-11-01`; null = off — October pays as is, H52) a WORKING day — the
+rota (`rotaFor`) gives a shift, not a holiday for the person's branch, not on
+approved leave, employed, and already over (before today PKT) — with no standing
+attendance record is absent (1) and docked (`attendanceInputs`'
+`noPunchWorkingDays`). Any standing record (punch, approved correction, manual
+day the CEO approved) wins; a person with NO rota is never auto-absent.
+**Rule B:** punch OT = time worked (paired punches; a corrected / hand-keyed day
+its check-in → check-out) after the rota shift's end, or beyond
+`standardDayHours` (9) on a day with no shift; under `otMinimumMinutes` (30)
+ignored; priced like approved OT. **Rule C:** never paid on its own —
+`service.ts availableOvertime` (the ONE list; `unpaidOvertime` is approved
+records only) offers it as `{recordId: 'punch:<attendanceRecordId>', source:
+'punch', basis}` beside approved items (`source: 'approved'`); HR adds it
+through the existing opt-in routes (ids accept `punch:<uuid>`); paid once
+(payslip `otRecordIds` / F&F `_calc.otRecordIds`). An approved request for the
+same day wins over that day's punch OT, and is not offered when the day's punch
+OT is already paid. Report: Total Days = calendar days; Days Worked = days with
+attendance (half day 0.5); Absents / Unpaid as payroll docks; OT Hours =
+approved + punch (approved wins per day); Casual / Annual / Sick Availed beside
+the balances (balances include `leave_adjustment`). Tests:
+`tests/hrPunchOvertimeAbsent.test.ts`.
 
 ### Till flow (owner, 2026-10-20)
 

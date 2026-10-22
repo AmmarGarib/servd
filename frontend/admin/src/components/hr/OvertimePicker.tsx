@@ -8,7 +8,15 @@ import { useState } from 'react'
 import { btn, btnGhost, rs, day } from '../../lib/hr'
 
 /** One approved OT record that may be added (backend hr/service.ts OtAvailable). */
-export interface OtAvailable { recordId: string; date: string | null; hours: number; amountCents: number }
+export interface OtAvailable {
+  recordId: string; date: string | null; hours: number; amountCents: number
+  /** 'approved' = an approved OT request (older payslips send none); 'punch' = worked out from check-in / check-out. */
+  source?: 'approved' | 'punch'
+  basis?: 'after_shift' | 'beyond_standard_day'
+}
+const sourceText = (a: OtAvailable) => a.source === 'punch'
+  ? (a.basis === 'beyond_standard_day' ? 'from check-in / out, beyond the standard day' : 'from check-in / out, after the shift')
+  : 'approved request'
 
 const hoursText = (h: number) => `${Math.round(h * 100) / 100} h`
 
@@ -46,7 +54,7 @@ export function OvertimePicker({ available, selected, editable, pending, onSave 
       {added.length > 0
         ? <p className="text-success font-bold">Added: {hoursText(addedHours)} ({rs(addedCents)}) — paid with this.</p>
         : <p className="text-white/60">No overtime added — none is paid unless you add it.</p>}
-      <p className="text-white/70">Overtime available: {hoursText(left.hours)} ({rs(left.cents)}){left.count > 0 ? ` · ${left.count} approved record${left.count === 1 ? '' : 's'}` : ''}</p>
+      <p className="text-white/70">Overtime available: {hoursText(left.hours)} ({rs(left.cents)}){left.count > 0 ? ` · ${left.count} day${left.count === 1 ? '' : 's'}` : ''}</p>
       {editable && !picking && (
         <div className="flex flex-wrap gap-2">
           {available.length > 0 && (
@@ -66,7 +74,7 @@ export function OvertimePicker({ available, selected, editable, pending, onSave 
               <li key={a.recordId}>
                 <label className="flex items-center gap-2 text-white/80">
                   <input type="checkbox" className="h-4 w-4" style={{ accentColor: 'var(--erp-accent)' }} checked={ticked.includes(a.recordId)} onChange={() => toggle(a.recordId)} />
-                  <span>{a.date ? day(a.date) : 'No date'} — {hoursText(a.hours)} — {rs(a.amountCents)}</span>
+                  <span>{a.date ? day(a.date) : 'No date'} — {hoursText(a.hours)} — {rs(a.amountCents)} <span className="text-white/45">({sourceText(a)})</span></span>
                 </label>
               </li>
             ))}
