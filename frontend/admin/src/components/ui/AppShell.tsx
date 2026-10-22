@@ -24,6 +24,7 @@ import { SandboxBanner } from '../SandboxBanner'
 import { NotificationBell } from './NotificationBell'
 import { NavIcon } from './NavIcon'
 import { QuickJump } from './QuickJump'
+import { checkInOncePerDay } from '../../lib/checkInOnSignIn'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -626,6 +627,11 @@ function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
   const { user, token, clearAuth } = useAuthStore()
+  // Staff who stay signed in are checked in once a day too (sign-in does it on a fresh sign-in).
+  useEffect(() => {
+    if (!user?.id) return
+    void checkInOncePerDay(user.id, user.role).then((to) => { if (to) router.push(to) })
+  }, [user?.id, user?.role, router])
 
   const hamburgerRef = useRef<HTMLButtonElement>(null)
   const drawerRef = useRef<HTMLElement>(null)

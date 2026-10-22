@@ -21,12 +21,26 @@ function findPlace(): Promise<{ lat: number; lng: number } | null> {
   })
 }
 
+/** Staff who stay signed in never pass the sign-in page, so the shell runs the
+ *  same check once a Karachi day per login (owner, 2026-10-22: Days Worked
+ *  stayed 0 because nobody signed in again after the release). */
+export async function checkInOncePerDay(userId: string | undefined, role: string | undefined): Promise<string | null> {
+  if (!userId || !role || SKIP_ROLES.includes(role)) return null
+  const day = new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10) // PKT
+  const key = `servd_checkin_day:${userId}`
+  try { if (localStorage.getItem(key) === day) return null; localStorage.setItem(key, day) } catch { /* storage off: the server check still stops repeats */ }
+  return checkInOnSignIn(role, { firstOfDay: true })
+}
+
 /** Returns a page to send the person to ('/time-clock' when a selfie is needed), else null. */
-export async function checkInOnSignIn(role: string | undefined): Promise<string | null> {
+export async function checkInOnSignIn(role: string | undefined, opts: { firstOfDay?: boolean } = {}): Promise<string | null> {
   if (!role || SKIP_ROLES.includes(role)) return null
   try {
-    const status = await api.get<{ punchedIn: boolean; hrLinked?: boolean }>('/time-clock/status')
+    const status = await api.get<{ punchedIn: boolean; hrLinked?: boolean; shift?: unknown }>('/time-clock/status')
     if (status.punchedIn || status.hrLinked === false) return null // no HR record: not checked in
+    // Already signed in (no fresh sign-in): only the day's first check-in, so a
+    // person who checked out today is never checked back in by opening a page.
+    if (opts.firstOfDay && status.shift) return null
     const place = await findPlace()
     const r = await api.post<PunchResult>('/time-clock/punch-in', place ?? {})
     if (r.hrLinked === false || r.alreadyClockedIn) return null // no HR record: no attendance kept, say nothing
