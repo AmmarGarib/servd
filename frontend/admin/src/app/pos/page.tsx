@@ -18,7 +18,7 @@ import { NoChargeDialog } from '../../components/pos/flow/NoChargeDialog'
 import { FlowDialog } from '../../components/pos/flow/ui'
 import { orderRef } from '../../lib/orderRef'
 import { OrderSummary } from '../../components/pos/flow/OrderSummary'
-import { SalesReport } from '../../components/pos/flow/SalesReport'
+import { TillReports } from '../../components/pos/flow/TillReports'
 import { getOrderInfo, flowErrorMessage, type BoardTable, type OrderInfoView } from '../../components/pos/flow/flowApi'
 import { requestSync, listenForSync, getQueuedOrders } from '../../lib/offline-queue'
 import Link from 'next/link'
@@ -414,7 +414,7 @@ export default function PosPage() {
             onRecall={(t, o) => { setSettleOnSplit(!!o?.split); setSettle(t) }}
             onChangeOwner={(t) => void onTicketInfo(t)} />
         )}
-        {view === 'sales_report' && <SalesReport conceptId={conceptId || null} brandName={activeConcept?.name ?? null} onMenu={() => setMenuOpen(true)} />}
+        {view === 'sales_report' && <TillReports conceptId={conceptId || null} brands={concepts.map((c) => ({ id: c.id, name: c.name }))} onMenu={() => setMenuOpen(true)} />}
       </div>
 
       {note && (
