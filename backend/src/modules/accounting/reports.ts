@@ -401,6 +401,9 @@ export async function balanceSheet(tenantIds: string[], asOf: Date): Promise<Bal
       companyName: r.tenantId ? (nameOf.get(r.tenantId) ?? null) : null,
       code: r.code, name: r.name, balanceCents: r.balanceCents,
     }))
+    // An account at zero is not listed (owner, 2026-10-22: "Don't show accounts in balance sheet with
+    // 0 balance") — like the trial balance; totals are unchanged (they are zeros).
+    .filter((r) => r.balanceCents !== 0)
     .sort(byCompanyThenCode)
 
   const assets = section('asset')
