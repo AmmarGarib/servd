@@ -51,6 +51,7 @@ export default function PosPage() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [showTickets, setShowTickets] = useState<false | 'settle' | 'nocharge'>(false)
   const [settle, setSettle] = useState<TillOrder | null>(null)
+  const [settleOnSplit, setSettleOnSplit] = useState(false)
   const [noCharge, setNoCharge] = useState<TillOrder | null>(null)
   const [info, setInfo] = useState<InfoModal | null>(null)
   const [assignPick, setAssignPick] = useState<{ label: string; tickets: TillOrder[] } | null>(null)
@@ -408,7 +409,11 @@ export default function PosPage() {
             onNoCharge={setNoCharge}
           />
         )}
-        {view === 'summary' && <OrderSummary onMenu={() => setMenuOpen(true)} />}
+        {view === 'summary' && (
+          <OrderSummary conceptId={conceptId || null} onMenu={() => setMenuOpen(true)}
+            onRecall={(t, o) => { setSettleOnSplit(!!o?.split); setSettle(t) }}
+            onChangeOwner={(t) => void onTicketInfo(t)} />
+        )}
         {view === 'sales_report' && <SalesReport conceptId={conceptId || null} brandName={activeConcept?.name ?? null} onMenu={() => setMenuOpen(true)} />}
       </div>
 
@@ -459,7 +464,8 @@ export default function PosPage() {
           key={settle.id}
           ticket={settle}
           brand={concepts.find((c) => c.id === settle.conceptId) ?? activeConcept}
-          onClose={(paid) => { setSettle(null); afterClosed(paid) }}
+          startOnSplit={settleOnSplit}
+          onClose={(paid) => { setSettle(null); setSettleOnSplit(false); afterClosed(paid) }}
         />
       )}
 

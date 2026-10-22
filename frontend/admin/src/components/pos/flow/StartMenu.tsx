@@ -1,13 +1,15 @@
 'use client'
 import { useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, BarChart3, ChevronDown, ChevronUp, ClipboardList, FileText, Receipt, Search, ShoppingBag, Tag, Truck, UtensilsCrossed, Wallet, X } from 'lucide-react'
+import { ArrowLeft, BarChart3, CalendarCheck, ChevronDown, ChevronUp, FileText, LayoutDashboard, Receipt, Search, ShoppingBag, Tag, Timer, Truck, UtensilsCrossed, X } from 'lucide-react'
 import { useAuthStore } from '../../../store/auth'
 import { useIsManager } from '../managerRole'
+import { usePermissions } from '../../../hooks/useCan'
+import { canOpenPath } from '../../../lib/moduleCatalog'
 
 export type StartAction = 'dine_in' | 'delivery' | 'no_charge' | 'summary' | 'tickets' | 'takeaway' | 'sales_report'
 
-interface Entry { id: StartAction | 'shift' | 'back' | 'waiter'; label: string; icon: ReactNode; href?: string; badge?: number }
+interface Entry { id: StartAction | 'shift' | 'back' | 'waiter' | 'day_close' | 'dashboard'; label: string; icon: ReactNode; href?: string; badge?: number }
 
 // The till's start menu (owner's flow, step 1): ORDERING · MANAGER · OTHER.
 // Room Service and Take Away are NOT under ORDERING; Takeaway lives in OTHER.
@@ -19,7 +21,7 @@ export function StartMenu({ onPick, ticketCount, active, onClose }: {
   onClose?: () => void
 }) {
   const [q, setQ] = useState('')
-  const [open, setOpen] = useState({ ordering: true, manager: false, other: false })
+  const [open, setOpen] = useState({ ordering: true, manager: true, other: false })
   // Sales report: the report readers (managers, finance, procurement — reports/routes.ts REPORT_READERS).
   const isManager = useIsManager()
   const role = useAuthStore((st) => st.user?.role ?? null)
@@ -31,15 +33,18 @@ export function StartMenu({ onPick, ticketCount, active, onClose }: {
     { id: 'no_charge', label: 'No Charge', icon: <Tag size={18} aria-hidden="true" /> },
     { id: 'summary', label: 'Order Summary', icon: <FileText size={18} aria-hidden="true" /> },
   ]
-  // Manager actions that already exist: open tickets (voids and cancels are inside a ticket),
-  // Raast bank alerts (the till header shows them with their approvals), the shift / close shift.
+  // MANAGER (owner, 2026-10-22): Day Close, Dashboard, Reports, Shift Manager — each the existing page,
+  // shown only when the login may open it (the page guard and the API decide; this only hides dead links).
+  const me = usePermissions().data
+  const opens = (href: string) => !!me && canOpenPath(href, me.role, me.modules ?? [])
   const manager: Entry[] = [
-    { id: 'tickets', label: 'Open tickets', icon: <ClipboardList size={18} aria-hidden="true" />, badge: ticketCount },
-    { id: 'shift', label: 'Shift / close shift', icon: <Wallet size={18} aria-hidden="true" />, href: '/pos/shift' },
+    ...(opens('/finance/night-audit') ? [{ id: 'day_close' as const, label: 'Day Close', icon: <CalendarCheck size={18} aria-hidden="true" />, href: '/finance/night-audit' }] : []),
+    ...(opens('/dashboard/operations') ? [{ id: 'dashboard' as const, label: 'Dashboard', icon: <LayoutDashboard size={18} aria-hidden="true" />, href: '/dashboard/operations' }] : []),
+    ...(seesSales ? [{ id: 'sales_report' as const, label: 'Reports', icon: <BarChart3 size={18} aria-hidden="true" /> }] : []),
+    { id: 'shift', label: 'Shift Manager', icon: <Timer size={18} aria-hidden="true" />, href: '/pos/shift' },
   ]
   const other: Entry[] = [
     { id: 'takeaway', label: 'Takeaway', icon: <ShoppingBag size={18} aria-hidden="true" /> },
-    ...(seesSales ? [{ id: 'sales_report' as const, label: 'Sales report', icon: <BarChart3 size={18} aria-hidden="true" /> }] : []),
     { id: 'waiter', label: 'Waiter ordering', icon: <Receipt size={18} aria-hidden="true" />, href: '/pos/waiter' },
     { id: 'back', label: 'Back to admin', icon: <ArrowLeft size={18} aria-hidden="true" />, href: '/w' },
   ]

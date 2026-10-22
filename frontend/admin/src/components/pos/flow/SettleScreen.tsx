@@ -47,17 +47,19 @@ const pkr = (cents: number) => (cents / 100).toFixed(2).replace(/\.00$/, '')
 //                   tender's own screen / POST /pos/payments with settlementChannel "servd".
 //   Push to Keenu:  POST /pos/orders/:id/keenu-push (+ /check while pending).
 // Every figure is the server's (FOH-02); errors are the server's own words.
-export function SettleScreen({ ticket, brand, onClose }: {
+export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
   ticket: TillOrder
   brand: TillBrand | undefined
   onClose: (paid: boolean) => void
+  /** Order Summary's Split: open on the Split tile. */
+  startOnSplit?: boolean
 }) {
   const qc = useQueryClient()
   const shiftId = usePosStore((s) => s.shiftId)
   const panelRef = useRef<HTMLDivElement>(null)
   const [order, setOrder] = useState<TillOrder>(ticket)
   const [way, setWay] = useState<Way>('servd')
-  const [tile, setTile] = useState<Tile>('cash')
+  const [tile, setTile] = useState<Tile>(startOnSplit ? 'split' : 'cash')
   const [tab, setTab] = useState<'process' | 'summary'>('process')
   const [tipPkr, setTipPkr] = useState('')
   const [tipOpen, setTipOpen] = useState(false)

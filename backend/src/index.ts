@@ -104,6 +104,7 @@ import { paymentsRoutes } from './modules/accounting/paymentsRoutes.js'
 import { nightAuditRoutes } from './modules/nightAudit/routes.js'
 import { servdFilingRoutes } from './modules/accounting/servdFilings.js'
 import { posTillFlowRoutes } from './modules/pos/tillFlowRoutes.js'
+import { orderSummaryRoutes } from './modules/pos/orderSummary.js'
 import { shiftCorrectionRoutes } from './modules/shiftCorrections/routes.js'
 import { intercompanyRoutes } from './modules/intercompany/routes.js'
 import { stockDifferenceRoutes } from './modules/stockDifferences/routes.js'
@@ -410,6 +411,7 @@ async function build() {
       await api.register(posOnAccountRoutes, { prefix: '/pos' })
       // Till flow (owner, 2026-10-20; modules/pos/TILL_FLOW.md)
       await api.register(posTillFlowRoutes, { prefix: '/pos' })
+      await api.register(orderSummaryRoutes, { prefix: '/pos' })
       // Shift corrections (owner, 2026-10-21): finance's fixes on a closed drawer, the CEO approves (module accounting).
       await api.register(shiftCorrectionRoutes, { prefix: '/pos/shift-corrections' })
       // POS connector (spec §8): /connectors (config, module api_pos), /pos

@@ -36,6 +36,15 @@ expected cash / variance). `{ shift: null }` when the caller has no open drawer.
 ```
 (The full Z-report stays `GET /pos/shifts/:id/zreport` — managers + finance.)
 
+### Order Summary list — `GET /pos/orders/summary?conceptId&date&tab&type&q[&format=pdf|xlsx|csv]` — CASHIERS
+(owner, 2026-10-22; `pos/orderSummary.ts`). One brand, one Karachi calendar day. `tab` all | running |
+settled | voided (running = received…ready, settled = completed, voided = cancelled | rejected | refunded);
+`type` all | dine_in | takeout | delivery | no_charge (a paid comp covering the bill). →
+`{ date, counts: { all, running, settled, voided }, rows: [{ id, orderNo, placedAt, time, receiptNo,
+table, type, guest, user, waiter, status, orderStatus, amountCents, compCents }] }`; another company's
+brand 404. Read only: the screen's Recall / Reprint Receipt / Reprint KOT / Void (running: cancel;
+settled: `POST /invoices/orders/:id/credit-note`) / Split / Change Owner call the existing routes.
+
 ## 2. Dine In — the table board
 
 ### `GET /floors/board?conceptId=<uuid>&floorId=<uuid?>` — ALL_STAFF
