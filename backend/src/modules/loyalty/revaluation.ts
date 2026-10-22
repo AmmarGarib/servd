@@ -39,6 +39,8 @@
 // posting_failed (metadata.documentDate) for Reconciliation → Backfill
 // unposted.
 
+import { isLoyaltyPaused } from '../../lib/loyaltyPause.js'
+import { AppError } from '../../lib/errors.js'
 import type { Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { LOYALTY_DEFAULTS, POINT_VALUE_CENTS, type LOYALTY_SETTING_KEYS } from '../../lib/loyaltySettings.js'
@@ -153,6 +155,13 @@ export async function writeLoyaltySettingsWithRevaluation(
   actor: { userId?: string | null; userEmail?: string | null } = {},
 ): Promise<{ revaluation: (RevaluationRecord & { id: string; entryId: string | null; flagged: boolean }) | null }> {
   const changesValue = writes.some(([k]) => k === POINT_VALUE_KEY)
+  // Loyalty paused servd-wide (lib/loyaltyPause.ts): no revaluation entry on 2060 — the value is frozen too.
+  if (changesValue && await isLoyaltyPaused()) {
+    const cur = await pointValueCentsTx(prisma, tenantId)
+    if (writes.some(([k, v]) => k === POINT_VALUE_KEY && v !== cur)) {
+      throw new AppError('LOYALTY_PAUSED', 'Loyalty is paused — the point value cannot change until it is switched back on', 409)
+    }
+  }
 
   const attempt = (post: boolean) => prisma.$transaction(async (db) => {
     if (changesValue) await lockLoyaltyValueTx(db, tenantId, 'exclusive')

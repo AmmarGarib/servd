@@ -23,6 +23,7 @@ import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { postLoyaltyExpire } from '../modules/accounting/loyaltyPosting.js'
+import { isLoyaltyPaused } from '../lib/loyaltyPause.js'
 import { loadLoyaltySettings } from '../lib/loyaltySettings.js'
 const QUEUE_NAME = 'loyalty-expiration'
 const RUN_EVERY_MS = 24 * 60 * 60 * 1000  // daily
@@ -53,6 +54,8 @@ export function startLoyaltyExpirationWorker() {
 }
 
 export async function runExpirationSweep(): Promise<void> {
+  // Loyalty paused servd-wide (lib/loyaltyPause.ts): balances are frozen, nothing expires off 2060.
+  if (await isLoyaltyPaused()) return
   const accounts = await prisma.loyaltyAccount.findMany({
     where: { pointsBalance: { gt: 0 } },
     select: { id: true, tenantId: true, customerId: true, pointsBalance: true },

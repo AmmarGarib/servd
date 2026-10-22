@@ -8,6 +8,8 @@ import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth, requireAuth, MANAGERS, MARKETING_TEAM } from '../auth/middleware.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
+import { readLoyaltyPause, writeLoyaltyPause } from '../../lib/loyaltyPause.js'
+import { audit } from '../../lib/audit.js'
 import {
   LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS, calculatePointsValue, invalidateLoyaltySettings,
 } from '../../lib/loyaltySettings.js'
@@ -99,7 +101,8 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
   // redeem minimum at this brand's company. Checkout and the account page
   // read these instead of hardcoding a value.
   fastify.get<{ Querystring: { conceptSlug?: string } }>('/program', async (req) => {
-    return loyaltyProgram(await companyOfConceptSlug(req.query.conceptSlug))
+    // `paused`: loyalty paused servd-wide (lib/loyaltyPause.ts) — the storefront hides earning and using points.
+    return { ...(await loyaltyProgram(await companyOfConceptSlug(req.query.conceptSlug))), paused: (await readLoyaltyPause()).paused }
   })
 
   // GET /loyalty/status?conceptSlug= — the signed-in customer's balance, its
@@ -121,6 +124,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       pointsValueCents: pointsBalance * program.pointValueCents,
       ...program,
       ...tiers,
+      paused: (await readLoyaltyPause()).paused,
     }
   })
 
@@ -178,7 +182,22 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
   // (POST /earn) stays MANAGERS.
   fastify.get('/settings', { preHandler: marketingGuard }, async (req) => {
     const values = await loadCompanyLoyaltySettings(activeCompany(req))
-    return { values, defaults: LOYALTY_DEFAULTS }
+    return { values, defaults: LOYALTY_DEFAULTS, pause: await readLoyaltyPause() }
+  })
+
+  // PUT /loyalty/pause { paused, reason } — CEO only, servd-wide, audited (owner, 2026-10-22:
+  // "stop the Loyalty points section for now … no amount should go to loyalty points account").
+  fastify.put('/pause', { preHandler: requireAuth('admin') }, async (req) => {
+    const body = z.object({ paused: z.boolean(), reason: z.string().trim().min(10).max(300) }).parse(req.body)
+    const before = await readLoyaltyPause()
+    const after = await writeLoyaltyPause({ paused: body.paused, reason: body.reason, actorId: req.staffUser!.id })
+    await audit({
+      category: 'accounting', action: body.paused ? 'loyalty.pause' : 'loyalty.resume',
+      entity: 'Setting', entityId: 'loyalty.paused',
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: req.staffUser!.tenantId ?? null,
+      before: { paused: before.paused }, after: { paused: after.paused }, metadata: { reason: body.reason },
+    })
+    return after
   })
 
   fastify.patch('/settings', { preHandler: marketingGuard }, async (req) => {

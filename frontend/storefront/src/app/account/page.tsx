@@ -47,6 +47,8 @@ const TIER_COLOR: Record<string, string> = { bronze: '#cd7f32', silver: '#c0c0c0
 // tier ladder the operator configured — tiers unlock on lifetime SPEND (owner
 // decision 13), not points. Nothing here is hardcoded any more.
 interface LoyaltyStatus {
+  /** Loyalty paused servd-wide (owner, 2026-10-22): points are not earned or used for now. */
+  paused?: boolean
   pointsBalance: number
   pointsValueCents: number
   pointValueCents: number
@@ -384,8 +386,11 @@ export default function AccountPage() {
                 <p className="font-black leading-none tabular-nums" style={{ fontSize: 'clamp(2rem, 9vw, 3.2rem)', color: 'var(--servd-ink)' }}>
                   {pts.toLocaleString()}
                 </p>
-                {loyalty && (
+                {loyalty && !loyalty.paused && (
                   <p className="text-[0.6rem] mt-1" style={{ color: 'var(--servd-mute)' }}>≈ {fmt(loyalty.pointsValueCents)} value</p>
+                )}
+                {loyalty?.paused && (
+                  <p className="text-[0.6rem] mt-1" style={{ color: 'var(--servd-mute)' }}>Points are paused for now — your balance is kept.</p>
                 )}
 
                 <div className="mt-auto pt-3">

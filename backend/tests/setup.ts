@@ -57,6 +57,11 @@ beforeAll(async () => {
 
   // The company-less chart (see seedTestAccounts) — not the full demo data.
   await seedTestAccounts(prisma)
+
+  // Loyalty is PAUSED on live while the owner decides (lib/loyaltyPause.ts; absent = paused).
+  // The suite tests the loyalty engine itself, so it runs with loyalty ON; the pause has its
+  // own test (tests/loyaltyPause.test.ts), which switches it off again.
+  await prisma.setting.upsert({ where: { key: 'loyalty.paused' }, create: { key: 'loyalty.paused', value: '{"paused":false}' }, update: { value: '{"paused":false}' } })
 }, 60_000)
 
 afterAll(async () => {

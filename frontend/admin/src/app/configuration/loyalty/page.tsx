@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { useAuthStore } from '../../../store/auth'
 
 // /configuration/loyalty — full operator-managed loyalty system.
 //   1. Global rules: earn rate, redeem rate, minimum redeem, expiry,
@@ -55,6 +56,45 @@ interface LoyaltySettings {
     'loyalty.stamp_threshold':       number
   }
   defaults?: LoyaltySettings['values']
+  /** Loyalty paused servd-wide (owner, 2026-10-22; absent = paused). */
+  pause?: { paused: boolean; reason: string | null; updatedAt: string | null }
+}
+
+/** The CEO's pause switch: while paused nothing is earned, used, expired or revalued (PUT /loyalty/pause). */
+function PausePanel({ pause, onSaved }: { pause: NonNullable<LoyaltySettings['pause']>; onSaved: () => void }) {
+  const isCeo = useAuthStore((s) => s.isRole('admin'))
+  const [reason, setReason] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const flip = useMutation({
+    mutationFn: () => api.put('/loyalty/pause', { paused: !pause.paused, reason }),
+    onSuccess: () => { setReason(''); setErr(null); onSaved() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  return (
+    <section className="rounded-2xl border p-6 space-y-3" style={{ borderColor: pause.paused ? 'var(--erp-warning)' : 'var(--border)', background: 'var(--surface)' }}>
+      <h2 className="text-lg font-bold">{pause.paused ? 'Loyalty is paused' : 'Loyalty is on'}</h2>
+      <p className="text-sm text-s-muted max-w-2xl">
+        {pause.paused
+          ? 'No points are earned or used, nothing expires and the point value is frozen — nothing is booked to the loyalty points account (2060). Customers keep the points they already have.'
+          : 'Customers earn and use points, and the loyalty points account (2060) moves with them.'}
+        {pause.reason ? ` Reason: ${pause.reason}.` : ''}
+      </p>
+      {isCeo ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block flex-1 min-w-[240px]">
+            <span className="block text-xs font-bold text-s-muted mb-1">Reason (at least 10 characters)</span>
+            <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300}
+              className="w-full rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm" />
+          </label>
+          <button type="button" disabled={reason.trim().length < 10 || flip.isPending} onClick={() => flip.mutate()}
+            className="rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
+            {flip.isPending ? 'Saving…' : pause.paused ? 'Switch loyalty on' : 'Pause loyalty'}
+          </button>
+        </div>
+      ) : <p className="text-xs text-s-muted">Only the CEO switches loyalty on or off.</p>}
+      {err && <p className="text-xs" style={{ color: 'var(--erp-danger)' }}>{err}</p>}
+    </section>
+  )
 }
 
 export default function LoyaltyAdminPage() {
@@ -80,6 +120,8 @@ export default function LoyaltyAdminPage() {
           assigned via CRM (or charged once payments are wired).
         </p>
       </header>
+
+      {settings?.pause && <PausePanel pause={settings.pause} onSaved={() => qc.invalidateQueries({ queryKey: ['loyalty-settings'] })} />}
 
       {/* ── Global rules ─────────────────────────────────────────── */}
       <section className="rounded-2xl border border-s-border bg-s-elevated p-6 space-y-4">

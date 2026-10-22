@@ -1475,6 +1475,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   current value, under the shared lock); every other line mirrors the
   original exactly and the difference goes to 6060 in the same entry; same
   value → the plain mirror.
+- **Loyalty is PAUSED servd-wide (owner, 2026-10-22: "stop the Loyalty points section for now, will
+  decide after opening … until then no amount should go to loyalty points account").** `lib/loyaltyPause.ts`,
+  platform Setting `loyalty.paused`, ABSENT = PAUSED. Paused: `creditPointsTx` credits nothing (orders,
+  reservations, reviews, bonuses, stamps), redeeming is 409 `LOYALTY_PAUSED` (quoteRedemption,
+  claimRedemption, redeemPointsOnOrder), the expiry sweep does nothing and the point value cannot change
+  (no revaluation) — nothing is booked to 2060. Balances are frozen, never erased; reversals of points earned
+  before the pause still run. Only the CEO switches it (`PUT /loyalty/pause {paused, reason ≥10}`, audited;
+  Configuration → Loyalty). The storefront hides points while `paused` (`/loyalty/program`, `/loyalty/status`).
+  Tests run with loyalty ON (tests/setup.ts); the pause is `tests/loyaltyPause.test.ts`.
 - **Withholding and statutory payables:** `lib/withholding.ts` is the one WHT
   resolver; `PUT /accounting/withholding/rates` the only writer of a
   company's rates (confirmed by the accountant, H32; withholding stays OFF per

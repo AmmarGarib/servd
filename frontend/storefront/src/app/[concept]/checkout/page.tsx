@@ -207,10 +207,12 @@ export default function CheckoutPage() {
   // The company's redeem minimum (GET /loyalty/program): below it the server
   // refuses the redemption, so the stepper jumps from 0 straight to it.
   const [minRedeemPts, setMinRedeemPts] = useState(0)
+  // Loyalty paused servd-wide (owner, 2026-10-22): points can't be used, so the stepper is hidden.
+  const [loyaltyPaused, setLoyaltyPaused] = useState(true)
   useEffect(() => {
     fetch(`${API_URL}/api/v1/loyalty/program?conceptSlug=${encodeURIComponent(slug)}`)
-      .then((r) => (r.ok ? r.json() as Promise<{ minRedeemPoints: number }> : null))
-      .then((p) => { if (p) setMinRedeemPts(p.minRedeemPoints ?? 0) })
+      .then((r) => (r.ok ? r.json() as Promise<{ minRedeemPoints: number; paused?: boolean }> : null))
+      .then((p) => { if (p) { setMinRedeemPts(p.minRedeemPoints ?? 0); setLoyaltyPaused(p.paused === true) } })
       .catch(() => {})
   }, [slug])
 
@@ -1332,7 +1334,7 @@ export default function CheckoutPage() {
             )}
 
             {/* Loyalty points */}
-            {loyaltyBalance > 0 && loyaltyBalance >= minRedeemPts && (
+            {!loyaltyPaused && loyaltyBalance > 0 && loyaltyBalance >= minRedeemPts && (
               <Panel icon="" label="Redeem Points">
                 <div className="flex items-center justify-between">
                   <p className="text-xs" style={{ color: 'var(--servd-mute)' }}>

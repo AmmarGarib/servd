@@ -33,6 +33,7 @@
 // loyaltyAccountOf / ensureLoyaltyAccountTx — never look an account up by
 // customer alone.
 
+import { isLoyaltyPaused } from '../../lib/loyaltyPause.js'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -155,6 +156,8 @@ export async function creditPointsTx(tx: Tx, input: CreditInput): Promise<Credit
   const none: CreditResult = { credited: false, txId: null, earnedFreeItem: false, stamps: null }
   const points = Math.max(0, Math.floor(input.points))
   if (points <= 0 && !input.stampConceptSlug) return none
+  // Loyalty paused servd-wide (lib/loyaltyPause.ts): nothing is earned, nothing reaches 2060.
+  if (await isLoyaltyPaused()) return none
 
   const tenantId = input.tenantId ?? (input.orderId ? await orderCompanyOf(input.orderId) : null)
   if (!tenantId) {
@@ -342,6 +345,7 @@ export async function quoteRedemption(args: {
   tenantId: string | null
   capCents: number
 }): Promise<RedemptionQuote> {
+  if (Math.floor(args.requestedPoints) > 0) await assertLoyaltyOpen()
   const settings = await loadLoyaltySettings(args.tenantId)
   return quoteWith(settings, args, async () => (await loyaltyAccountOf(args.customerId, args.tenantId))?.pointsBalance ?? 0)
 }
@@ -455,7 +459,13 @@ async function claimRedemptionTx(tx: Tx, args: { customerId: string; orderId: st
  * false when the balance moved and nothing was taken — the caller must then
  * put the discount back on the bill.
  */
+/** Redemption refused while loyalty is paused (lib/loyaltyPause.ts). */
+async function assertLoyaltyOpen(): Promise<void> {
+  if (await isLoyaltyPaused()) throw new AppError('LOYALTY_PAUSED', 'Loyalty points are paused for now — points cannot be used on this order', 409)
+}
+
 export async function claimRedemption(args: { customerId: string; orderId: string; quote: RedemptionQuote }): Promise<boolean> {
+  if (args.quote.points > 0) await assertLoyaltyOpen()
   const txId = await prisma.$transaction((tx) => claimRedemptionTx(tx, args))
   if (!txId) return false
   await bookRedeem(txId)
@@ -525,6 +535,7 @@ export async function redeemPointsOnOrder(args: { customerId: string; orderId: s
     select: { concept: { select: { tenantId: true } } },
   })
   if (!pre) throw new NotFoundError('Order', args.orderId)
+  if (args.points > 0) await assertLoyaltyOpen()
   const tenantId = pre.concept.tenantId
   const settings = await loadLoyaltySettings(tenantId)
 
