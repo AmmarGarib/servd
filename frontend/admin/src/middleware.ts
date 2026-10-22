@@ -5,9 +5,12 @@ import type { NextRequest } from 'next/server'
 // DIFFERENT site from garibsons.app, so the browser never sends them back there:
 // the session lived only in the open page's memory and every refresh / tab
 // reload signed the person out (owner, 2026-10-16). Send everyone to the live
-// address, same path and query. Exact host only — the practice copy
-// (servd-practice.garibsons.app) is its own app and must stay where it is.
-const OLD_ADMIN_HOSTS = new Set(['admin.garibsons.app'])
+// address, same path and query. servd-admin.garibsons.app was a second old
+// address still serving the live admin (owner, 2026-10-22: "whenever we
+// refresh the tab or move to other tab for 5 minutes id gets signed out").
+// The practice copy (servd-practice.garibsons.app) is its own app and must
+// stay where it is.
+const OLD_ADMIN_HOSTS = new Set(['admin.garibsons.app', 'servd-admin.garibsons.app'])
 const LIVE_ADMIN_ORIGIN = 'https://admin.servd.pk'
 
 export function middleware(request: NextRequest) {

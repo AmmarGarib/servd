@@ -46,7 +46,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             too, but only when the tunnel passes the original host; this runs
             in the browser whatever the server saw. Exact host only — the
             practice copy (servd-practice.garibsons.app) stays where it is. */}
-        <script dangerouslySetInnerHTML={{ __html: `if(location.hostname==='admin.garibsons.app'){location.replace('https://admin.servd.pk'+location.pathname+location.search+location.hash)}else if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}` }} />
+        <script dangerouslySetInnerHTML={{ __html: `if(['admin.garibsons.app','servd-admin.garibsons.app'].indexOf(location.hostname)>=0){location.replace('https://admin.servd.pk'+location.pathname+location.search+location.hash)}else if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}` }} />
       </head>
       <body className="bg-s-bg text-s-text antialiased">
         <NextIntlClientProvider locale={locale} messages={MESSAGES[locale]}>
