@@ -265,11 +265,66 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
     if (!locked || NO_SALE.includes(locked.status)) return null
     const { depleted } = await claimsTx(tx, orderId)
     if (depleted) return null
+    return depleteLinesTx(tx, tenantId, orderId, null)
+  }, TX_OPTS)
+  await afterDepletion(tenantId, result)
+}
+
+/**
+ * Stock for lines ADDED to an open till ticket (pos/service addItemsToPosOrder;
+ * owner, 2026-10-22: "add items to a sent bill"). The order's own depletion
+ * claim stays the ONE claim: when it has not run yet, the whole order is
+ * depleted now (deductInventoryForOrder — the added lines are on the order, so
+ * they are in it); once it has, only these lines are drawn — each under its own
+ * sale movement (`order_item.sale:<lineId>`, like every sold line), and a line
+ * that already has one is never drawn twice. Under the order's stock lock, so
+ * a racing first depletion either includes the lines or sees the claim.
+ */
+export async function deductInventoryForAddedLines(orderId: string, lineIds: string[]): Promise<void> {
+  if (lineIds.length === 0) return
+  const head = await prisma.order.findUnique({ where: { id: orderId }, select: { status: true, concept: { select: { tenantId: true } } } })
+  if (!head || NO_SALE.includes(head.status)) return
+  const tenantId = head.concept.tenantId
+  if (!tenantId) return
+  await ensureFifoReady(tenantId)
+  if (!(await readFifoCutoverAt(prisma, tenantId))) return deductInventoryForOrder(orderId)
+  let whole = false
+  const result = await prisma.$transaction(async (tx) => {
+    const locked = await lockOrderForStock(tx, orderId)
+    if (!locked || NO_SALE.includes(locked.status)) return null
+    const { depleted, restored } = await claimsTx(tx, orderId)
+    if (!depleted) { whole = true; return null }
+    if (restored) return null
+    const drawn = await tx.stockMovement.findMany({
+      where: { tenantId, orderId, orderItemId: { in: lineIds }, sourceType: ORDER_STOCK_SOURCE.sale },
+      select: { orderItemId: true },
+    })
+    const done = new Set(drawn.map((m) => m.orderItemId))
+    const todo = lineIds.filter((id) => !done.has(id))
+    if (todo.length === 0) return null
+    return depleteLinesTx(tx, tenantId, orderId, todo)
+  }, TX_OPTS)
+  if (whole) return deductInventoryForOrder(orderId)
+  await afterDepletion(tenantId, result)
+}
+
+/** The audit action of a draw for lines added after the order's own depletion. */
+export const STOCK_DEPLETE_ADDED = 'stock.sale_deplete_added'
+
+type DepletionResult = { ranOut: string[]; excluded: ExcludedItem[]; conceptId: string; fix: Awaited<ReturnType<typeof bookCogsFixTx>> | null }
+
+/**
+ * Draw the sold lines of an order from its lots, inside the caller's
+ * transaction (the order is locked): every live line (`onlyLineIds` null — the
+ * order's ONE depletion, written as its claim STOCK_DEPLETE) or just these
+ * lines (STOCK_DEPLETE_ADDED, never the claim).
+ */
+async function depleteLinesTx(tx: Tx, tenantId: string, orderId: string, onlyLineIds: string[] | null): Promise<DepletionResult> {
     const order = await tx.order.findUniqueOrThrow({
       where: { id: orderId },
       select: {
         id: true, conceptId: true, locationId: true, fulfilmentType: true, placedAt: true, concept: { select: { serviceVessel: true } },
-        items: { select: ORDER_LINE_SELECT, orderBy: { id: 'asc' } },
+        items: { select: ORDER_LINE_SELECT, orderBy: { id: 'asc' }, ...(onlyLineIds && { where: { id: { in: onlyLineIds } } }) },
       },
     })
     const opts = { tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel }
@@ -331,18 +386,22 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
       data: {
         category: 'stock',
         tenantId,
-        action: STOCK_DEPLETE,
+        action: onlyLineIds ? STOCK_DEPLETE_ADDED : STOCK_DEPLETE,
         entity: 'Order',
         entityId: orderId,
         metadata: {
           mode: 'fifo', taken: takenByLine, shortfall, excluded: excluded.map((e) => ({ itemId: e.itemId, reason: e.reason })),
+          ...(onlyLineIds ? { lines: onlyLineIds } : {}),
           ...(late ? { lateCogs: drawnByClass } : {}),
         } as Prisma.InputJsonValue,
       },
     })
-    const fix = late ? await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.late, orderId, null) : null
+    // Lines are added only to an open ticket, whose cost is booked later with everything it drew — no late entry for them.
+    const fix = late && !onlyLineIds ? await bookCogsFixTx(tx, tenantId, ORDER_COGS_FIX.late, orderId, null) : null
     return { ranOut, excluded, conceptId: order.conceptId, fix }
-  }, TX_OPTS)
+}
+
+async function afterDepletion(tenantId: string, result: DepletionResult | null): Promise<void> {
   if (!result) return
   await flagOrderCogsFixFailures([result.fix])
   if (result.excluded.length > 0) await flagForeignStock(tenantId, result.conceptId, result.excluded)

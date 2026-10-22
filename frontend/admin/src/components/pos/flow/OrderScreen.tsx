@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Menu, Receipt, ScanBarcode, Search, ShoppingCart, X } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Category, MenuItem, ModifierGroup } from '../../../lib/api'
+import { ApiError } from '../../../lib/api'
 import { fmtPkr, fmtPkrWhole } from '../../../lib/money'
 import { orderRef } from '../../../lib/orderRef'
 import { useAuthStore } from '../../../store/auth'
@@ -17,7 +18,7 @@ import { CancelTicketDialog } from './CancelTicketDialog'
 import { DiscountDialog } from './DiscountDialog'
 import { ModifierModal } from './ModifierModal'
 import {
-  flowErrorMessage, isOfflinePlaceholder, payServd, saveTicket, searchMenu, useCartTotals, type SearchItem,
+  addItemsToTicket, flowErrorMessage, isOfflinePlaceholder, payServd, saveTicket, searchMenu, useCartTotals, type SearchItem,
 } from './flowApi'
 import { FlowDialog, ghostBtn, primaryBtn } from './ui'
 import { newIdempotencyKey } from '../tillApi'
@@ -144,6 +145,25 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
     if (st.cart.length === 0) return null
     if (st.fulfilment === 'dine_in' && !st.tableId) { setError('Pick a table first (Dine In).'); return null }
     if (st.fulfilment === 'delivery' && !st.delivery) { setError('Enter the delivery details first.'); return null }
+    // Dine-in with a ticket already sent on this table: the items go on THAT ticket (owner, 2026-10-22).
+    // Several open tickets → the cashier picks one. A discount belongs to a new ticket.
+    if (st.fulfilment === 'dine_in' && tickets.length > 0 && st.discountCents === 0) {
+      const target = tickets.length === 1 ? tickets[0]! : await pickTicket(tickets)
+      if (!target) return null
+      setBusy(true); setError(null)
+      try {
+        const r = await addItemsToTicket(target.id, { items: st.lines(), idempotencyKey: st.ensureCheckoutKey() })
+        usePosStore.getState().clearLines()
+        void qc.invalidateQueries({ queryKey: ['pos'] })
+        setSentIds((ids) => (ids.includes(r.id) ? ids : [...ids, r.id]))
+        return r
+      } catch (e) {
+        const code = e instanceof ApiError ? e.code : null
+        if (code !== 'BILL_IN_PAYMENT' && code !== 'ORDER_NOT_OPEN') { setError(flowErrorMessage(e, 'Could not add the items')); return null }
+        const ok = await confirm({ title: 'Send as a new ticket?', body: `Payment has started on ${orderRef(target.id)}, so items cannot be added to it. Send these items as a new ticket on the table?`, confirmLabel: 'New ticket', cancelLabel: 'Go back' })
+        if (!ok) return null
+      } finally { setBusy(false) }
+    }
     setBusy(true); setError(null)
     try {
       const r = await saveTicket({
@@ -151,7 +171,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
         waiter: st.waiter, partySize: st.partySize, guest: st.guest, customerId: st.guest?.customerId ?? st.customerId, delivery: st.delivery,
         discountCents: st.discountCents, discountReason: st.discountReason, discountPin: st.discountPin, items: st.lines(),
       })
-      // Lines go; the table, waiter and pax stay for the next round (a later round is another ticket on the table).
+      // Lines go; the table, waiter and pax stay for the next round (added to this ticket while it is unpaid).
       usePosStore.getState().clearLines()
       void qc.invalidateQueries({ queryKey: ['pos'] })
       if (isOfflinePlaceholder(r)) { setNote('No connection. The order is queued and will reach the kitchen when the till is back online.'); return null }
@@ -375,7 +395,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
           <p className="shrink-0 px-3 pt-2 text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
             {tickets.length > 0 && fulfilment === 'dine_in' ? `New round — ticket ${tickets.length + 1} on ${tableName(tableLabel ?? '')}` : 'New items'}
           </p>
-          {tickets.length > 0 && fulfilment === 'dine_in' && <p className="shrink-0 px-3 pb-1 text-xs text-kds-subtext">Items cannot be added to a ticket already sent. Save makes another ticket on this table; settle each ticket.</p>}
+          {tickets.length > 0 && fulfilment === 'dine_in' && <p className="shrink-0 px-3 pb-1 text-xs text-kds-subtext">Save adds these items to the ticket already sent on this table (pick one if there are several). Once payment has started, they go on a new ticket.</p>}
           <div className="min-h-0 flex-1"><PosCart conceptId={conceptId} /></div>
 
           <button type="button" onClick={() => void onQuickPay()} disabled={busy || !anything} aria-label={`Quick Pay, ${quickTotal != null ? fmtPkr(quickTotal) : ''}`}

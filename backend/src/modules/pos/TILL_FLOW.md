@@ -172,8 +172,19 @@ Errors: 404 foreign order; 409 `ORDER_ENDED` (not open), `TABLE_OCCUPIED`;
   and fires it (existing KDS routing). A LATER ROUND on the same table is
   another `POST /pos/orders` with the same `tableId` (+ waiter / pax) — a
   second ticket on the table, as the till works today (the board lists every
-  open ticket in `openOrderIds`; settle each, or split). Appending lines to an
-  existing ticket is NOT in this release (stock depletion is per ticket).
+  open ticket in `openOrderIds`; settle each, or split).
+- **Add items to a sent ticket** (owner, 2026-10-22): `POST /pos/orders/:orderId/items`
+  `{ items: [<ring-up lines>] (1–50), managerOverridePin?, reason?, idempotencyKey? }` — CASHIERS →
+  201 the order (`RING_UP_INCLUDE`) + `addedItemIds`; the same key again → 200 `replayed: true`.
+  The SAME ticket: only an open till ticket (source `pos`; 409 `ORDER_NOT_OPEN`, 422
+  `NOT_A_TILL_TICKET`) with no money on it yet (409 `BILL_IN_PAYMENT`: a paid / pending
+  payment, a gift card; the active-tender guard's 409s). Lines follow the ring-up rules (add-ons
+  at menu price, 422 `ITEM_NOT_IN_BRAND`, 409 `ITEM_UNAVAILABLE` / `ITEM_NOT_PRICED`, 403
+  `PRICE_OVERRIDE_BLOCKED` without a manager PIN); the bill grows by what the lines add at the
+  ticket's rate and discount; the new lines go to the kitchen (`order:new`, the KDS re-reads the
+  ticket) and only they take stock. Foreign order → 404. The till's Save does this for a dine-in
+  table that already has a sent ticket (picks one if several); once payment has started it offers
+  a new ticket instead.
 - **Discount**: on the ring-up (`discountCents`, `discountReason`, manager PIN above cap) — unchanged.
 - **No Charge**: `POST /pos/orders/:id/comp` — THE comp engine (reason, manager PIN above the comp limit). Unchanged.
 - **Cancel / void**: existing manager-only routes. Unchanged.

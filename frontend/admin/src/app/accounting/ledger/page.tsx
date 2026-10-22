@@ -153,7 +153,7 @@ function LedgerView() {
               <ExportMenu label="Account statement" path={`/accounting/ledger?dateFrom=${from}&dateTo=${to}&accountId=${accountId}&view=statement`}
                 filename={`account-statement-${accounts.find((a) => a.id === accountId)?.code ?? 'account'}-${from}-${to}`} onError={(m) => setCsvError(m)} />
             )}
-            <ExportMenu path={`/accounting/ledger?${query}&limit=1000`} filename={`ledger-${from}-${to}`} onError={(m) => setCsvError(m)} />
+            <ExportMenu path={`/accounting/ledger?${query}&limit=20000`} filename={`ledger-${from}-${to}`} onError={(m) => setCsvError(m)} />
           </div>
         )}
       </header>

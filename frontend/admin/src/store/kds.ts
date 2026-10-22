@@ -60,8 +60,9 @@ export const useKdsStore = create<KdsState>()((set) => ({
 
   addOrder: (order) =>
     set((state) => {
+      // A ticket already on screen is replaced by the fresh copy (items added to a sent bill, owner 2026-10-22).
       const exists = state.orders.some((o) => o.id === order.id)
-      if (exists) return state
+      if (exists) return { orders: state.orders.map((o) => (o.id === order.id ? order : o)) }
       return { orders: [order, ...state.orders] }
     }),
 

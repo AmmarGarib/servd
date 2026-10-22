@@ -252,6 +252,16 @@ export function saveTicket(b: SaveBody): Promise<SavedOrder | OfflinePlaceholder
 }
 export { isOfflinePlaceholder, newIdempotencyKey }
 
+/**
+ * More items on a ticket already sent (owner, 2026-10-22): POST /pos/orders/:id/items — the SAME ticket, the new
+ * lines fire to the kitchen. 409 BILL_IN_PAYMENT once money is on the bill (ring them up on a new ticket instead).
+ */
+export function addItemsToTicket(orderId: string, b: { items: TillLine[]; idempotencyKey: string; managerOverridePin?: string }): Promise<SavedOrder> {
+  return api.post<SavedOrder>(`/pos/orders/${orderId}/items`, {
+    items: b.items, idempotencyKey: b.idempotencyKey, ...(b.managerOverridePin && { managerOverridePin: b.managerOverridePin }),
+  }).then((r) => normaliseRungOrder(r) as SavedOrder)
+}
+
 // ─── Settle ─────────────────────────────────────────────────────────────────
 
 export function setServdChannel(orderId: string): Promise<{ orderId: string; settlementChannel: string }> {

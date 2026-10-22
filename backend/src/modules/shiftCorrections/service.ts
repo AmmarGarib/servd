@@ -226,6 +226,18 @@ async function checkItem(db: Db, shift: ShiftRow, tenantId: string, item: ItemIn
     if (o.payments.some((p) => p.status === 'refunded')) throw err('BILL_NOT_VOIDABLE', `Order ${ref} already has refunds or voided lines — it cannot be voided whole`, 409, o.id)
     const cn = await db.taxInvoice.findFirst({ where: { orderId: o.id, type: 'credit_note' }, select: { id: true } })
     if (cn) throw err('BILL_NOT_VOIDABLE', `Order ${ref} already has a credit note`, 409, o.id)
+    // A tip already shared out (review 2026-10-22): a posted / paid tip pool of the brand covering the bill took
+    // its tip (half-open window on completedAt, as the pool sums it); voiding the bill would take the tip off 2095
+    // while the pool's payout of it stands. A re-issue keeps the tip on the same day, so it is not affected.
+    if (item.kind === 'void_bill' && o.tipCents > 0 && o.completedAt) {
+      const pool = await db.tipPool.findFirst({
+        where: { tenantId, conceptId: o.conceptId, status: { in: ['posted', 'paid'] }, periodStart: { lte: o.completedAt }, periodEnd: { gt: o.completedAt } },
+        select: { id: true, status: true },
+      })
+      if (pool) {
+        throw err('TIP_ALREADY_POOLED', `Order ${ref} carries a tip already ${pool.status === 'paid' ? 'paid out' : 'shared'} in a tip pool — void and re-issue it instead, or correct the pool first`, 409, o.id)
+      }
+    }
     if (item.kind === 'void_reissue') await checkReissue(db, o, tenantId, item)
     return o
   }

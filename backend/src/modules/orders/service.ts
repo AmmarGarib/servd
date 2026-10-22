@@ -194,6 +194,136 @@ export interface IngestCorrection {
   reissueOf: string
 }
 
+/**
+ * The lines of an order, checked and routed (the ONE rule ingestOrder and the
+ * till's add-items (pos/service addItemsToPosOrder) both use): every catalogue
+ * line is the brand's own, live and priced (86'd refused — the till's stock-86
+ * exception included), each line's kitchen station (a retired station falls
+ * back to the pass), the brand's service vessel and the add-on ids kept.
+ */
+export async function prepareOrderLines(
+  conceptId: string,
+  items: OrderDTO['items'],
+  source: OrderDTO['source'],
+  correction?: IngestCorrection,
+) {
+  // Pre-fetch all station mappings in one query to avoid N+1 inside the transaction
+  const menuItemIds = items.map((i) => i.menuItemId).filter(Boolean) as string[]
+  const menuItemStations = menuItemIds.length > 0
+    ? await prisma.menuItem.findMany({
+        where: { id: { in: menuItemIds } },
+        select: {
+          id: true, conceptId: true, stationId: true, priceCents: true, name: true,
+          isAvailable: true, deletedAt: true, updatedAt: true,
+        },
+      })
+    : []
+  const routedStationIds = [...new Set(menuItemStations.map((m) => m.stationId).filter((s): s is string => !!s))]
+  const routedStations = new Map((routedStationIds.length > 0
+    ? await prisma.station.findMany({
+        where: { id: { in: routedStationIds } },
+        select: { id: true, conceptId: true, isActive: true, deletedAt: true },
+      })
+    : []).map((s) => [s.id, s]))
+
+  // Brand consistency — every channel (manual, POS, storefront, WhatsApp)
+  // funnels through here, so this is the one place that guarantees an order
+  // for brand X only carries brand X's items and sits at brand X's table.
+  // A guessed id from another brand (or another company) would otherwise
+  // route the ticket to that brand's station / pin it to that brand's table.
+  // 422 either way — an unknown id and a foreign id read the same, so we
+  // never confirm that a row outside this brand exists.
+  const itemConcept = new Map(menuItemStations.map((m) => [m.id, m.conceptId]))
+  if (menuItemIds.some((id) => itemConcept.get(id) !== conceptId)) {
+    throw new AppError('ITEM_NOT_IN_BRAND', 'One or more items do not belong to this brand', 422)
+  }
+
+  // 86'd / deleted items are refused on EVERY channel (BOH-10). The storefront
+  // already refused them, but the till checked only brand + not-deleted, so a
+  // till holding a menu loaded before the 86 (or an offline-queue resend)
+  // sold food the kitchen had run out of and the depletion clamped at zero.
+  // A retry of an order created before the 86 never gets here — it is
+  // answered by the idempotency check above.
+  //
+  // The till is the one exception, and only for the STOCK's 86 (R2): a dish
+  // the depletion switched off because the counted stock ran out is still
+  // sold at the till — the cashier has the food in front of them, a sale
+  // queued offline has already been handed over and paid, and the counted
+  // stock is often behind reality on day one. It is logged and the stock
+  // clamps at zero, as before BOH-10. A chef's (or manager's) own 86 — or
+  // any change a person made after the auto-86 — is refused everywhere, the
+  // till included; so is a deleted dish. The storefront, group orders and
+  // WhatsApp refuse every 86.
+  const off = correction ? [] : menuItemStations.filter((m) => !m.isAvailable || m.deletedAt !== null)
+  if (off.length > 0) {
+    const tillOverride = source === 'pos'
+      ? await standingAutoEightySix(off.filter((m) => m.deletedAt === null))
+      : new Map<string, Date>()
+    const refused = off.find((m) => !tillOverride.has(m.id))
+    if (refused) {
+      throw new AppError('ITEM_UNAVAILABLE', `"${refused.name}" is not available right now (86'd).`, 409)
+    }
+    console.warn(`[auto-86] till sold ${off.map((m) => `"${m.name}"`).join(', ')} while the stock count says it ran out — recount the ingredients.`)
+  }
+
+  // Routing (BOH-03): a ticket goes to the item's station only while that
+  // station is live — not soft-deleted, not switched off, and the brand's
+  // own. A retired station is on no screen (my-stations and the expo station
+  // list filter it out), so a ticket routed there was cooked by nobody and
+  // expo's fire reported nothing. Those items go to the brand's expo / pass
+  // station when it has one, otherwise they stay unrouted (stationId null):
+  // expo's fire lists them as unroutedItems and GET /kds/unrouted shows them
+  // on the kitchen dashboard with a bump button.
+  const isLive = (stationId: string | null) => {
+    const s = stationId ? routedStations.get(stationId) : undefined
+    return !!s && s.isActive && s.deletedAt === null && s.conceptId === conceptId
+  }
+  // Only a station that EXISTED and is retired falls back (R5). A menu item
+  // with no station at all keeps stationId null: it is either step-routed
+  // (its recipe's service steps put it on Fry / Assembly when it is fired —
+  // parked on the pass before that, the pass cook could bump it pending →
+  // bumped, the fire then skipped it and no station ever cooked it) or it has
+  // nothing to cook (a bottled drink, a market chiller item). Custom lines
+  // (no menu item) have no routing of their own, so they do fall back.
+  const retired = (m: { stationId: string | null }) => !!m.stationId && !isLive(m.stationId)
+  const needsFallback = menuItemStations.some(retired) || items.some((i) => !i.menuItemId)
+  const fallbackStationId = needsFallback ? await passStationOf(conceptId) : null
+  const stationMap = new Map(menuItemStations.map((m) => [m.id, retired(m) ? fallbackStationId : m.stationId]))
+  const dead = menuItemStations.filter(retired)
+  if (dead.length > 0) {
+    console.warn(`[routing] ${dead.map((m) => `"${m.name}"`).join(', ')} routed to a retired station — sent to ${fallbackStationId ? `pass station ${fallbackStationId}` : 'unrouted (expo)'} instead. Fix the routing in /menu.`)
+  }
+
+  // Revenue guard: refuse to take an order for an unpriced (PKR 0) menu item.
+  // Items are staged at 0 before the operator sets prices; they may be visible
+  // ("coming soon") but must never be orderable, or customers get free food.
+  const unpriced = correction ? undefined : menuItemStations.find((m) => (m.priceCents ?? 0) <= 0)
+  if (unpriced) {
+    throw new AppError('ITEM_NOT_PRICED', `"${unpriced.name}" isn't available to order yet.`, 409)
+  }
+
+  // The brand's service vessel at ring-up, snapshotted on every line (owner's
+  // FINAL packaging rule): a later change of the brand's vessel never restates
+  // a line already rung up (lib/recipeCost.ts packagingApplies).
+  const brand = await prisma.concept.findUnique({ where: { id: conceptId }, select: { serviceVessel: true } })
+  const serviceVessel = brand?.serviceVessel === 'packaging' ? 'packaging' : 'plate'
+  // An add-on's id is kept only when it is one of THIS dish's live modifier
+  // groups' modifiers (its modifier recipe is what the sale consumes); any
+  // other id — another dish's, another brand's or company's, a deleted
+  // group's — is stored as null (the name and price still ride on the line).
+  const sentModifierIds = [...new Set(items.flatMap((i) => (i.modifiers ?? []).map((m) => m.modifierId).filter((x): x is string => !!x)))]
+  const modifierDish = new Map((sentModifierIds.length > 0
+    ? await prisma.modifier.findMany({
+        where: { id: { in: sentModifierIds }, group: { deletedAt: null } },
+        select: { id: true, group: { select: { menuItemId: true } } },
+      })
+    : []).map((m) => [m.id, m.group.menuItemId]))
+  const modifierIdFor = (menuItemId: string | null | undefined, modifierId: string | null | undefined): string | null =>
+    modifierId && menuItemId && modifierDish.get(modifierId) === menuItemId ? modifierId : null
+
+  return { stationMap, fallbackStationId, serviceVessel, modifierIdFor }
+}
+
 export async function ingestOrder(dto: IngestOrderDTO, opts: {
   price?: OrderPrice
   /**
@@ -233,92 +363,7 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: {
     }
   }
 
-  // Pre-fetch all station mappings in one query to avoid N+1 inside the transaction
-  const menuItemIds = dto.items.map((i) => i.menuItemId).filter(Boolean) as string[]
-  const menuItemStations = menuItemIds.length > 0
-    ? await prisma.menuItem.findMany({
-        where: { id: { in: menuItemIds } },
-        select: {
-          id: true, conceptId: true, stationId: true, priceCents: true, name: true,
-          isAvailable: true, deletedAt: true, updatedAt: true,
-        },
-      })
-    : []
-  const routedStationIds = [...new Set(menuItemStations.map((m) => m.stationId).filter((s): s is string => !!s))]
-  const routedStations = new Map((routedStationIds.length > 0
-    ? await prisma.station.findMany({
-        where: { id: { in: routedStationIds } },
-        select: { id: true, conceptId: true, isActive: true, deletedAt: true },
-      })
-    : []).map((s) => [s.id, s]))
-
-  // Brand consistency — every channel (manual, POS, storefront, WhatsApp)
-  // funnels through here, so this is the one place that guarantees an order
-  // for brand X only carries brand X's items and sits at brand X's table.
-  // A guessed id from another brand (or another company) would otherwise
-  // route the ticket to that brand's station / pin it to that brand's table.
-  // 422 either way — an unknown id and a foreign id read the same, so we
-  // never confirm that a row outside this brand exists.
-  const itemConcept = new Map(menuItemStations.map((m) => [m.id, m.conceptId]))
-  if (menuItemIds.some((id) => itemConcept.get(id) !== dto.concept_id)) {
-    throw new AppError('ITEM_NOT_IN_BRAND', 'One or more items do not belong to this brand', 422)
-  }
-
-  // 86'd / deleted items are refused on EVERY channel (BOH-10). The storefront
-  // already refused them, but the till checked only brand + not-deleted, so a
-  // till holding a menu loaded before the 86 (or an offline-queue resend)
-  // sold food the kitchen had run out of and the depletion clamped at zero.
-  // A retry of an order created before the 86 never gets here — it is
-  // answered by the idempotency check above.
-  //
-  // The till is the one exception, and only for the STOCK's 86 (R2): a dish
-  // the depletion switched off because the counted stock ran out is still
-  // sold at the till — the cashier has the food in front of them, a sale
-  // queued offline has already been handed over and paid, and the counted
-  // stock is often behind reality on day one. It is logged and the stock
-  // clamps at zero, as before BOH-10. A chef's (or manager's) own 86 — or
-  // any change a person made after the auto-86 — is refused everywhere, the
-  // till included; so is a deleted dish. The storefront, group orders and
-  // WhatsApp refuse every 86.
-  const off = opts.correction ? [] : menuItemStations.filter((m) => !m.isAvailable || m.deletedAt !== null)
-  if (off.length > 0) {
-    const tillOverride = dto.source === 'pos'
-      ? await standingAutoEightySix(off.filter((m) => m.deletedAt === null))
-      : new Map<string, Date>()
-    const refused = off.find((m) => !tillOverride.has(m.id))
-    if (refused) {
-      throw new AppError('ITEM_UNAVAILABLE', `"${refused.name}" is not available right now (86'd).`, 409)
-    }
-    console.warn(`[auto-86] till sold ${off.map((m) => `"${m.name}"`).join(', ')} while the stock count says it ran out — recount the ingredients.`)
-  }
-
-  // Routing (BOH-03): a ticket goes to the item's station only while that
-  // station is live — not soft-deleted, not switched off, and the brand's
-  // own. A retired station is on no screen (my-stations and the expo station
-  // list filter it out), so a ticket routed there was cooked by nobody and
-  // expo's fire reported nothing. Those items go to the brand's expo / pass
-  // station when it has one, otherwise they stay unrouted (stationId null):
-  // expo's fire lists them as unroutedItems and GET /kds/unrouted shows them
-  // on the kitchen dashboard with a bump button.
-  const isLive = (stationId: string | null) => {
-    const s = stationId ? routedStations.get(stationId) : undefined
-    return !!s && s.isActive && s.deletedAt === null && s.conceptId === dto.concept_id
-  }
-  // Only a station that EXISTED and is retired falls back (R5). A menu item
-  // with no station at all keeps stationId null: it is either step-routed
-  // (its recipe's service steps put it on Fry / Assembly when it is fired —
-  // parked on the pass before that, the pass cook could bump it pending →
-  // bumped, the fire then skipped it and no station ever cooked it) or it has
-  // nothing to cook (a bottled drink, a market chiller item). Custom lines
-  // (no menu item) have no routing of their own, so they do fall back.
-  const retired = (m: { stationId: string | null }) => !!m.stationId && !isLive(m.stationId)
-  const needsFallback = menuItemStations.some(retired) || dto.items.some((i) => !i.menuItemId)
-  const fallbackStationId = needsFallback ? await passStationOf(dto.concept_id) : null
-  const stationMap = new Map(menuItemStations.map((m) => [m.id, retired(m) ? fallbackStationId : m.stationId]))
-  const dead = menuItemStations.filter(retired)
-  if (dead.length > 0) {
-    console.warn(`[routing] ${dead.map((m) => `"${m.name}"`).join(', ')} routed to a retired station — sent to ${fallbackStationId ? `pass station ${fallbackStationId}` : 'unrouted (expo)'} instead. Fix the routing in /menu.`)
-  }
+  const { stationMap, fallbackStationId, serviceVessel, modifierIdFor } = await prepareOrderLines(dto.concept_id, dto.items, dto.source, opts.correction)
   if (dto.table_id) {
     const table = await prisma.table.findFirst({
       where: { id: dto.table_id, conceptId: dto.concept_id, deletedAt: null },
@@ -326,40 +371,12 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: {
     })
     if (!table) throw new AppError('TABLE_NOT_IN_BRAND', 'Table does not belong to this brand', 422)
   }
-
-  // Revenue guard: refuse to take an order for an unpriced (PKR 0) menu item.
-  // Items are staged at 0 before the operator sets prices; they may be visible
-  // ("coming soon") but must never be orderable, or customers get free food.
-  const unpriced = opts.correction ? undefined : menuItemStations.find((m) => (m.priceCents ?? 0) <= 0)
-  if (unpriced) {
-    throw new AppError('ITEM_NOT_PRICED', `"${unpriced.name}" isn't available to order yet.`, 409)
-  }
-
   // Decide fulfilment type once, up front. Upstream channels may have
   // already told us (storefront, POS), but most won't — infer from the
   // source + tableId combination. The CEO needs every ticket to clearly
   // show plate vs package, so we never leave this null.
   const fulfilmentType: 'dine_in' | 'takeout' | 'delivery' =
     dto.fulfilment_type ?? (dto.table_id ? 'dine_in' : 'takeout')
-
-  // The brand's service vessel at ring-up, snapshotted on every line (owner's
-  // FINAL packaging rule): a later change of the brand's vessel never restates
-  // a line already rung up (lib/recipeCost.ts packagingApplies).
-  const brand = await prisma.concept.findUnique({ where: { id: dto.concept_id }, select: { serviceVessel: true } })
-  const serviceVessel = brand?.serviceVessel === 'packaging' ? 'packaging' : 'plate'
-  // An add-on's id is kept only when it is one of THIS dish's live modifier
-  // groups' modifiers (its modifier recipe is what the sale consumes); any
-  // other id — another dish's, another brand's or company's, a deleted
-  // group's — is stored as null (the name and price still ride on the line).
-  const sentModifierIds = [...new Set(dto.items.flatMap((i) => (i.modifiers ?? []).map((m) => m.modifierId).filter((x): x is string => !!x)))]
-  const modifierDish = new Map((sentModifierIds.length > 0
-    ? await prisma.modifier.findMany({
-        where: { id: { in: sentModifierIds }, group: { deletedAt: null } },
-        select: { id: true, group: { select: { menuItemId: true } } },
-      })
-    : []).map((m) => [m.id, m.group.menuItemId]))
-  const modifierIdFor = (menuItemId: string | null | undefined, modifierId: string | null | undefined): string | null =>
-    modifierId && menuItemId && modifierDish.get(modifierId) === menuItemId ? modifierId : null
 
   async function runTransaction() {
     return prisma.$transaction(async (tx) => {

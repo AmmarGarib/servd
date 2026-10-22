@@ -55,7 +55,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const { id, accountId, source, dateFrom, dateTo, limit: limitStr, cursor } = req.query
       const format = exportFormatOf(req.query.format)
-      const limit = Math.min(parseInt(limitStr ?? '50', 10), 1000)
+      // An export takes the whole window (review 2026-10-22: a month's GL was cut at 1,000 entries); the screen pages by 1,000.
+      const limit = Math.min(parseInt(limitStr ?? '50', 10) || 50, format ? 20_000 : 1000)
       const { from, to } = resolveDateRange(dateFrom, dateTo)
 
       // ?accountId&view=statement — THE general-ledger account statement

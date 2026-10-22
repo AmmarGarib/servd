@@ -186,6 +186,22 @@ describe('shift corrections', () => {
     expect(wrongKind.json().error.code).toBe('KOT_NOT_OPEN')
   })
 
+  it('refuses to void a tipped bill whose tip a posted tip pool already shared (409 TIP_ALREADY_POOLED)', async () => {
+    const at = (await prisma.order.findUniqueOrThrow({ where: { id: bill1.id }, select: { completedAt: true } })).completedAt!
+    await prisma.order.update({ where: { id: bill1.id }, data: { tipCents: 5_000 } })
+    const pool = await prisma.tipPool.create({
+      data: { tenantId: A.tenantId, conceptId: A.conceptId, name: 'Today', periodStart: new Date(at.getTime() - 3_600_000), periodEnd: new Date(at.getTime() + 3_600_000), status: 'posted', postedAt: new Date(), totalTipsCents: 5_000 },
+    })
+    try {
+      const r = await call()(financeA, 'POST', '/pos/shift-corrections', { shiftId: drawer, reason: REASON, items: [{ orderId: bill1.id, kind: 'void_bill', reason: 'Duplicate bill of table 4' }] })
+      expect(r.statusCode, r.body).toBe(409)
+      expect(r.json().error.code).toBe('TIP_ALREADY_POOLED')
+    } finally {
+      await prisma.tipPool.delete({ where: { id: pool.id } })
+      await prisma.order.update({ where: { id: bill1.id }, data: { tipCents: 0 } })
+    }
+  })
+
   it('finance raises a set (201, bound to the shift\'s company) and NOTHING changes before the CEO approves', async () => {
     const entriesBefore = await prisma.journalEntry.count({ where: { tenantId: A.tenantId } })
     const r = await call()(financeA, 'POST', '/pos/shift-corrections', {

@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../../lib/prisma.js'
-import { ingestOrder } from '../orders/service.js'
+import { ingestOrder, prepareOrderLines, heldAtCreation } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { getRefundPolicy, getOperationsConfig } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
 import { sendEmail } from '../../lib/notify.js'
 import { flagException } from '../../lib/exceptions.js'
-import { emitItemUpdated } from '../../lib/ws.js'
+import { emitItemUpdated, emitOrderNew } from '../../lib/ws.js'
 import { priceOrder, tenderOf, tenderOfPayments, gstRatePct, type OrderPrice, type PricingChannel, type Tender } from '../../lib/pricing.js'
 import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
 import { shiftTenantId, assertShiftOf, shiftOfCompany } from '../../lib/tenantScope.js'
@@ -21,7 +21,7 @@ import { TILL_DELIVERY_CHANNEL } from '../../lib/tillDelivery.js'
 import { tillClearingCodeTx } from '../accounting/tillClearingCode.js'
 import { EXPENSE_PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { wasteSoldLineTx } from '../inventory/voidWaste.js'
-import { ensureOrderDepleted, returnVoidedLineStockTx } from '../orders/stock.js'
+import { ensureOrderDepleted, returnVoidedLineStockTx, deductInventoryForAddedLines } from '../orders/stock.js'
 import { orderStockCostCents } from '../accounting/cogs.js'
 import { MANAGERS } from '../auth/middleware.js'
 import type { OrderDTO } from '@servd/types'
@@ -196,6 +196,53 @@ export async function quotePosOrder(input: {
   }
 }
 
+type PendingFlag = Omit<Parameters<typeof flagException>[0], 'entityType' | 'entityId'>
+
+/**
+ * Lines priced away from the menu (either direction): above the cashier's cap
+ * a manager PIN, always an owner-review flag (returned; written once the order
+ * exists). The ONE price-override rule of a ring-up and of items added to a
+ * ticket (addItemsToPosOrder).
+ */
+async function gatePriceOverrides(
+  input: { items: PosLine[]; conceptId: string; staffId: string; role: string; managerOverridePin?: string | null; reason: string | null },
+  tenantId: string | null,
+  cashierPriceOverrideCap: number,
+): Promise<PendingFlag | null> {
+  const overrides = await detectPriceOverrides({ items: input.items } as PosOrderInput)
+  if (overrides.length === 0) return null
+  const totalOverride = overrides.reduce((s, o) => s + o.deltaCents, 0)
+  // The size of the override is how far the lines move from the menu in
+  // EITHER direction. The gate used to compare the signed sum, so pricing
+  // a dish BELOW the menu (a negative delta) never needed a PIN — and it
+  // only applied to role 'cashier', so the waiter role skipped it.
+  const overrideMagnitude = overrides.reduce((s, o) => s + Math.abs(o.deltaCents), 0)
+  if (!isOverrideApprover(input.role) && overrideMagnitude > cashierPriceOverrideCap) {
+    const approved = await verifyManagerPin(input.managerOverridePin ?? undefined, tenantId, undefined, { actorId: input.staffId, action: 'price_override' })
+    if (!approved && input.managerOverridePin?.trim()) throw invalidManagerPin()
+    if (!approved) {
+      throw new AppError(
+        'PRICE_OVERRIDE_BLOCKED',
+        `Price override on ${overrides.length} item(s) requires manager PIN. Total delta: PKR ${(totalOverride / 100).toFixed(0)}.`,
+        403,
+      )
+    }
+  }
+  // Always flag price overrides for owner review (even when authorized) —
+  // once the order exists, so the flag points at it.
+  return {
+    tenantId,
+    kind: 'price_override',
+    severity: overrideMagnitude > 50000 ? 'high' : 'medium',
+    title: `Price override on POS order`,
+    description: `${overrides.length} item(s) priced differently from menu. Total delta: PKR ${(totalOverride / 100).toFixed(0)}. Reason: ${input.reason ?? 'no reason given'}.`,
+    conceptId: input.conceptId,
+    actorId: input.staffId,
+    amountCents: overrideMagnitude,
+    metadata: { overrides, role: input.role, conceptId: input.conceptId },
+  }
+}
+
 export async function createPosOrder(input: PosOrderInput) {
   // Idempotency: a double-tapped "complete & fire" or an offline-queue resend
   // carries the SAME idempotencyKey. If we've already created that order, return
@@ -288,39 +335,8 @@ export async function createPosOrder(input: PosOrderInput) {
     }
 
     // Price override on line items
-    const overrides = await detectPriceOverrides(input)
-    if (overrides.length > 0) {
-      const totalOverride = overrides.reduce((s, o) => s + o.deltaCents, 0)
-      // The size of the override is how far the lines move from the menu in
-      // EITHER direction. The gate used to compare the signed sum, so pricing
-      // a dish BELOW the menu (a negative delta) never needed a PIN — and it
-      // only applied to role 'cashier', so the waiter role skipped it.
-      const overrideMagnitude = overrides.reduce((s, o) => s + Math.abs(o.deltaCents), 0)
-      if (!isOverrideApprover(role) && overrideMagnitude > cashierPriceOverrideCap) {
-        const approved = await verifyManagerPin(input.managerOverridePin, tenantId, undefined, { actorId: input.staffId, action: 'price_override' })
-        if (!approved && input.managerOverridePin?.trim()) throw invalidManagerPin()
-        if (!approved) {
-          throw new AppError(
-            'PRICE_OVERRIDE_BLOCKED',
-            `Price override on ${overrides.length} item(s) requires manager PIN. Total delta: PKR ${(totalOverride / 100).toFixed(0)}.`,
-            403,
-          )
-        }
-      }
-      // Always flag price overrides for owner review (even when authorized) —
-      // once the order exists, so the flag points at it.
-      pendingFlags.push({
-        tenantId,
-        kind: 'price_override',
-        severity: overrideMagnitude > 50000 ? 'high' : 'medium',
-        title: `Price override on POS order`,
-        description: `${overrides.length} item(s) priced differently from menu. Total delta: PKR ${(totalOverride / 100).toFixed(0)}. Reason: ${input.discountReason ?? 'no reason given'}.`,
-        conceptId: input.conceptId,
-        actorId: input.staffId,
-        amountCents: overrideMagnitude,
-        metadata: { overrides, role, conceptId: input.conceptId },
-      })
-    }
+    const flag = await gatePriceOverrides({ items: input.items, conceptId: input.conceptId, staffId: input.staffId, role, managerOverridePin: input.managerOverridePin, reason: input.discountReason ?? null }, tenantId, cashierPriceOverrideCap)
+    if (flag) pendingFlags.push(flag)
 
     // Always flag big discounts for review even when authorized — after the
     // order is created, so the flag carries its id. FOH-R2-03: a discount is
@@ -425,6 +441,192 @@ export async function createPosOrder(input: PosOrderInput) {
     where: { id: order.id },
     include: RING_UP_INCLUDE,
   })
+}
+
+// ─── Add items to a sent ticket (owner, 2026-10-22) ───────────────────────────
+
+/** The audit action of items added to a ticket (also its idempotency record). */
+export const ITEMS_ADDED_ACTION = 'pos.order.items_added'
+
+export interface AddItemsInput {
+  orderId: string
+  items: PosLine[]
+  staffId: string
+  staffRole: string
+  managerOverridePin?: string | null
+  /** Why lines are priced off the menu (shown on the owner's flag). */
+  reason?: string | null
+  /** Client key for THIS add (a double tap or a resend adds once). */
+  idempotencyKey?: string | null
+}
+
+/**
+ * POST /pos/orders/:orderId/items — more items on a ticket already sent to the
+ * kitchen (owner, 2026-10-22: "Add items to a sent bill"), on the SAME ticket:
+ *
+ *   - only an open till ticket (source 'pos'; 409 ORDER_NOT_OPEN / 422
+ *     NOT_A_TILL_TICKET) with no money on it yet — no paid or pending payment,
+ *     no gift card, no card-machine charge / Raast intent / Keenu push in
+ *     flight (409 BILL_IN_PAYMENT, or the active-tender guard's codes);
+ *   - the lines go through THE ring-up rules: add-ons at menu price
+ *     (resolvePosLines), brand / 86'd / unpriced checks and kitchen routing
+ *     (orders/service prepareOrderLines), the price-override PIN and flag
+ *     (gatePriceOverrides);
+ *   - the bill grows by exactly what the new lines add, through THE pricing
+ *     function at the rate the ticket is billed at with its discount — the
+ *     mirror of a void (voidBillDeltaTx); the tender re-price at payment works
+ *     as before;
+ *   - the new lines fire to the kitchen (the KDS re-reads the ticket) and only
+ *     they take stock (orders/stock deductInventoryForAddedLines); a pre-order
+ *     still held takes them with the rest on release.
+ * Audited ITEMS_ADDED_ACTION (the idempotency record). A pre-bill printed
+ * before stays as printed (it is never a sale); print a new one.
+ */
+export async function addItemsToPosOrder(input: AddItemsInput) {
+  if (input.items.length === 0) throw new AppError('NO_ITEMS', 'Add at least one item', 400)
+  const head = await prisma.order.findUnique({
+    where: { id: input.orderId },
+    select: { id: true, conceptId: true, source: true, status: true, concept: { select: { tenantId: true } } },
+  })
+  if (!head) throw new NotFoundError('Order', input.orderId)
+  if (head.source !== 'pos') throw new AppError('NOT_A_TILL_TICKET', 'Items can be added only to a ticket rung up at the till', 422)
+  if (ENDED.has(head.status)) throw new AppError('ORDER_NOT_OPEN', `This ticket is ${head.status} — ring the items up on a new ticket`, 409)
+  const tenantId = head.concept.tenantId
+
+  const items = await resolvePosLines(input.items)
+  for (const i of items) assertAmountsFit(i.unitPriceCents, i.unitPriceCents * i.quantity)
+  const menuItemIds = Array.from(new Set(items.map((i) => i.menuItemId).filter((x): x is string => !!x)))
+  if (menuItemIds.length > 0) {
+    const owned = await prisma.menuItem.count({ where: { id: { in: menuItemIds }, conceptId: head.conceptId, deletedAt: null } })
+    if (owned !== menuItemIds.length) throw new AppError('ITEM_NOT_IN_BRAND', 'One or more items do not belong to this brand', 422)
+  }
+  const ops = await getOperationsConfig(tenantId)
+  const flag = await gatePriceOverrides(
+    { items, conceptId: head.conceptId, staffId: input.staffId, role: input.staffRole, managerOverridePin: input.managerOverridePin, reason: input.reason ?? null },
+    tenantId, ops?.cashierPriceOverrideCap ?? 0,
+  )
+  const dtoItems: OrderDTO['items'] = items.map((item) => ({
+    externalItemId: item.menuItemId ?? 'pos-item',
+    menuItemId: item.menuItemId,
+    name: item.name,
+    quantity: item.quantity,
+    unitPriceCents: item.unitPriceCents,
+    modifiers: item.modifiers.map((m) => ({ modifierId: m.modifierId, name: m.name, priceDeltaCents: m.priceDeltaCents })),
+    notes: item.notes,
+    course: item.course,
+  }))
+  const lines = await prepareOrderLines(head.conceptId, dtoItems, 'pos')
+  const key = input.idempotencyKey?.trim() || null
+
+  const result = await prisma.$transaction(async (tx) => {
+    await lockOrderTx(tx, input.orderId)
+    if (key) {
+      const seen = await tx.auditLog.findFirst({
+        where: { entity: 'Order', entityId: input.orderId, action: ITEMS_ADDED_ACTION, metadata: { path: ['idempotencyKey'], equals: key } },
+        select: { metadata: true },
+      })
+      if (seen) return { replayed: true as const, addedIds: ((seen.metadata as { itemIds?: string[] } | null)?.itemIds ?? []), stationIds: [] as string[] }
+    }
+    const order = await tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: { concept: { select: { id: true, tenantId: true, taxRateCash: true, taxRateCard: true } } },
+    })
+    if (ENDED.has(order.status)) throw new AppError('ORDER_NOT_OPEN', `This ticket is ${order.status} — ring the items up on a new ticket`, 409)
+    const money = await tx.payment.count({ where: { orderId: order.id, status: { in: ['pending', 'paid'] } } })
+    const cards = await tx.giftCardRedemption.count({ where: { orderId: order.id } })
+    if (money > 0 || cards > 0 || order.promoDiscountCents > 0 || order.walletAmountCents > 0) {
+      throw new AppError('BILL_IN_PAYMENT', 'Payment has started on this bill — ring the extra items up on a new ticket', 409)
+    }
+    await assertNoActiveTerminalChargeTx(tx, order.id)
+
+    // What the new lines add to the bill: the order priced with and without them,
+    // at the rate it is billed at, with its discount (the mirror of voidBillDeltaTx).
+    const live = await tx.orderItem.findMany({
+      where: { orderId: order.id, status: { not: 'voided' } },
+      select: { menuItemId: true, unitPriceCents: true, quantity: true, modifiers: { select: { priceDeltaCents: true } } },
+    })
+    const added = items.map((i) => ({ menuItemId: i.menuItemId ?? null, unitPriceCents: i.unitPriceCents, quantity: i.quantity, modifiers: i.modifiers.map((m) => ({ priceDeltaCents: m.priceDeltaCents })) }))
+    const tender = tenderOfRate(order.concept, order.taxRatePct)
+    const channel = pricingChannelOf(order)
+    const fee = { discountCents: order.discountCents, deliveryFeeCents: order.deliveryFeeCents, db: tx }
+    const was = await priceOrder(live, tender, channel, order.concept, fee)
+    const now = await priceOrder([...live, ...added], tender, channel, order.concept, fee)
+    const itemsAdd = now.itemTotalCents - was.itemTotalCents
+    const taxAdd = Math.max(0, now.taxCents - was.taxCents)
+    const serviceAdd = Math.max(0, now.serviceChargeCents - was.serviceChargeCents)
+    const discountAdd = Math.max(0, now.discountCents - was.discountCents)
+    const addCents = itemsAdd + taxAdd + serviceAdd - discountAdd
+    assertAmountsFit(order.totalCents + addCents)
+
+    const createdIds: string[] = []
+    const stationIds = new Set<string>()
+    for (const item of dtoItems) {
+      const stationId = item.menuItemId ? (lines.stationMap.get(item.menuItemId) ?? null) : lines.fallbackStationId
+      const row = await tx.orderItem.create({
+        data: {
+          orderId: order.id,
+          menuItemId: item.menuItemId,
+          stationId,
+          externalItemId: item.externalItemId,
+          name: item.name,
+          quantity: item.quantity,
+          unitPriceCents: item.unitPriceCents,
+          status: 'pending',
+          notes: item.notes ?? null,
+          course: item.course ?? null,
+          serviceVessel: lines.serviceVessel,
+          modifiers: {
+            create: item.modifiers.map((mod) => ({
+              modifierId: lines.modifierIdFor(item.menuItemId, mod.modifierId),
+              name: mod.name,
+              priceDeltaCents: mod.priceDeltaCents,
+            })),
+          },
+        },
+        select: { id: true, stationId: true },
+      })
+      createdIds.push(row.id)
+      if (row.stationId) stationIds.add(row.stationId)
+    }
+    await tx.order.update({
+      where: { id: order.id },
+      data: {
+        totalCents: order.totalCents + addCents,
+        taxCents: order.taxCents + taxAdd,
+        serviceChargeCents: order.serviceChargeCents + serviceAdd,
+        discountCents: order.discountCents + discountAdd,
+      },
+    })
+    await tx.auditLog.create({
+      data: {
+        category: 'identity', action: ITEMS_ADDED_ACTION, entity: 'Order', entityId: order.id,
+        userId: input.staffId, tenantId: order.concept.tenantId,
+        metadata: {
+          ...(key && { idempotencyKey: key }), itemIds: createdIds, addCents, taxAdd, serviceAdd, discountAdd,
+          totalBefore: order.totalCents, totalAfter: order.totalCents + addCents,
+          lines: items.map((i) => ({ menuItemId: i.menuItemId ?? null, name: i.name, quantity: i.quantity, unitPriceCents: i.unitPriceCents })),
+        } as Prisma.InputJsonValue,
+      },
+    })
+    return { replayed: false as const, addedIds: createdIds, stationIds: [...stationIds], order }
+  })
+
+  if (!result.replayed) {
+    if (flag) await flagException({ ...flag, entityType: 'Order', entityId: input.orderId })
+    const o = result.order
+    if (!heldAtCreation(o)) {
+      // The kitchen re-reads the ticket (the KDS replaces it) and the new lines' stations hear it.
+      emitOrderNew({ orderId: o.id, conceptId: o.conceptId, source: o.source, stationIds: result.stationIds, placedAt: o.placedAt.toISOString() })
+      try {
+        await deductInventoryForAddedLines(o.id, result.addedIds)
+      } catch (err) {
+        const { flagOrderStockFailure } = await import('../orders/stock.js')
+        await flagOrderStockFailure(o.id, 'deplete', err)
+      }
+    }
+  }
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: input.orderId }, include: RING_UP_INCLUDE })
+  return { ...order, addedItemIds: result.addedIds, replayed: result.replayed }
 }
 
 /**
@@ -1254,6 +1456,16 @@ export async function processPayment(input: ProcessPaymentInput, internal: TillP
   // A tender recorded from the card machine names THE charge of this payment.
   if (input.payments.some((p) => p.terminalChargeId && p.terminalChargeId !== input.terminalChargeId)) {
     throw new AppError('TERMINAL_CHARGE_MISMATCH', 'That card-machine charge was not started for this payment', 409)
+  }
+  // A payment lands on an OPEN drawer only (review 2026-10-22): its close has already posted the drawer's
+  // sales, so money recorded on a closed drawer would be filed with the tax authority but never reach the books.
+  // The routes check this; this guards every server path too (a Keenu push settling late). A shift correction's
+  // re-issue is the one exception: it re-posts the drawer's close itself.
+  if (!internal.correction) {
+    const drawer = await prisma.shift.findUnique({ where: { id: input.shiftId }, select: { status: true, closedAt: true } })
+    if (!drawer || drawer.status !== 'open' || drawer.closedAt) {
+      throw new AppError('SHIFT_CLOSED', 'This drawer is closed — take the payment on an open drawer', 409)
+    }
   }
   // W4-AUTH-2: a keyed card reference only where the company allows it.
   if (!internal.correction && input.payments.some((p) => p.method === 'card' && !p.terminalChargeId && !p.keenuPushId)) {

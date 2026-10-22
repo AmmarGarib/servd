@@ -92,6 +92,25 @@ export async function assertShiftHasNoActiveCharges(shiftId: string): Promise<vo
       { charges: rows },
     )
   }
+  // A bill pushed to Keenu from this drawer whose outcome is not in yet (review 2026-10-22): its money lands on
+  // this drawer, so the drawer cannot close before it — even when the cashier confirms open tickets.
+  const pushed = await prisma.order.findMany({
+    where: { settlementChannel: 'keenu', settlementMeta: { path: ['keenu', 'shiftId'], equals: shiftId } },
+    select: { id: true, settlementMeta: true },
+    take: 50,
+  })
+  const waiting = pushed.filter((o) => {
+    const st = (o.settlementMeta as { keenu?: { state?: string } } | null)?.keenu?.state
+    return st === 'pending' || st === 'needs_attention'
+  })
+  if (waiting.length > 0) {
+    throw new AppError(
+      'SHIFT_HAS_KEENU_PUSH',
+      `${waiting.length} bill(s) pushed to Keenu from this drawer have no outcome yet — check them on the till before closing`,
+      409,
+      { orders: waiting.map((o) => o.id) },
+    )
+  }
   const raast = await prisma.raastReceipt.findMany({
     where: { shiftId, status: 'awaiting' },
     select: { id: true, orderId: true, status: true, amountCents: true },

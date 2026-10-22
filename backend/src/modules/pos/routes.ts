@@ -3,7 +3,7 @@ import { zBackdatedReason } from '../nightAudit/backdate.js'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS, FINANCE_TEAM } from '../auth/middleware.js'
-import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement, quoteOrderForTender, quotePosOrder, assertDrawerOperator, openTicketsOnDrawer, keenuQrRetired } from './service.js'
+import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement, quoteOrderForTender, quotePosOrder, assertDrawerOperator, openTicketsOnDrawer, keenuQrRetired, addItemsToPosOrder } from './service.js'
 import { EXPENSE_PAYOUT_CATEGORIES, EXPENSE_PAYOUT_KEYS, type PayoutCategory } from '../accounting/expenseCategories.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -231,6 +231,36 @@ export async function posRoutes(fastify: FastifyInstance) {
       staffRole: req.staffUser!.role,
     })
     return reply.status(201).send(order)
+  })
+
+  // POST /pos/orders/:orderId/items — more items on a ticket already sent to
+  // the kitchen, on the SAME ticket (owner, 2026-10-22; TILL_FLOW.md §4).
+  // Only an open till ticket with no money on it yet; the rules are the
+  // ring-up's (service.ts addItemsToPosOrder). Foreign order → 404.
+  fastify.post<{ Params: { orderId: string } }>('/orders/:orderId/items', { preHandler: requireAuth(...CASHIERS) }, async (req, reply) => {
+    const orderId = z.string().uuid().parse(req.params.orderId)
+    const body = z.object({
+      items: z.array(posItemSchema).min(1).max(50),
+      managerOverridePin: z.string().min(4).max(8).optional(),
+      reason: z.string().trim().max(300).optional(),
+      idempotencyKey: z.string().min(8).max(100).optional(),
+    }).parse(req.body)
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+      select: { id: true, conceptId: true },
+    })
+    if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+    await assertConceptAccess(req.staffUser!, order.conceptId)
+    const r = await addItemsToPosOrder({
+      orderId: order.id,
+      items: body.items,
+      staffId: req.staffUser!.id,
+      staffRole: req.staffUser!.role,
+      managerOverridePin: body.managerOverridePin ?? null,
+      reason: body.reason ?? null,
+      idempotencyKey: body.idempotencyKey ?? null,
+    })
+    return reply.status(r.replayed ? 200 : 201).send(r)
   })
 
   // POST /pos/payments — take tenders at the till for what is due. Returns

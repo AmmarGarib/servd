@@ -2267,8 +2267,21 @@ change a route only together with that file). Binding rules:
 - **Tip from excess cash** (`excessAsTip`): tendered − due → `tipCents` (2095, the tip
   pool), never revenue. Sales reports take `settlement=keenu|servd|none|all`;
   `/reports/by-settlement` combined = the sum. Item codes: `MenuItem.itemCode`
-  (unique per brand). Not in this release: appending lines to an existing ticket
-  (a later round is another ticket on the table).
+  (unique per brand).
+- **Add items to a sent ticket (owner, 2026-10-22).** `POST /pos/orders/:orderId/items`
+  (`pos/service.ts addItemsToPosOrder`, contract in TILL_FLOW.md §4): the SAME open till ticket,
+  only while no money is on it (409 `BILL_IN_PAYMENT`); the lines go through the ring-up's own
+  rules (`orders/service.ts prepareOrderLines` — the ONE line check / routing ingestOrder uses —
+  and `gatePriceOverrides`); the bill grows by the priced difference (the mirror of a void); only
+  the new lines take stock (`orders/stock.ts deductInventoryForAddedLines`, which leaves the
+  order's ONE depletion claim alone); audit `pos.order.items_added` (the idempotency record).
+- **A payment lands on an OPEN drawer only (review, 2026-10-22).** `processPayment` refuses a
+  closed drawer (409 `SHIFT_CLOSED`; a shift correction's re-issue excepted), and a drawer with a
+  Keenu push whose outcome is not in cannot close, even with `confirmOpenTickets` (409
+  `SHIFT_HAS_KEENU_PUSH`, `connectors/terminal/guard.ts`) — a late push used to be filed with the
+  tax authority on a closed drawer and never reach the books. A shift correction refuses to void a
+  tipped bill whose tip a posted / paid tip pool already shared (409 `TIP_ALREADY_POOLED`; void &
+  re-issue keeps the tip).
 
 ### Till Order Summary and Reports (owner, 2026-10-22)
 
