@@ -22,6 +22,7 @@ import { z } from 'zod'
 import { Prisma, type UserRole } from '@prisma/client'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
+import { sumCents } from '../../lib/money.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, APPROVERS } from '../auth/middleware.js'
 import { WORKSPACES, WORKSPACE_OF_MODULE } from '../../lib/workspaces.js'
 import { SCHEDULED_REPORT_MODULES, mayScheduleReport } from '../../lib/moduleAccess.js'
@@ -107,6 +108,17 @@ async function assertAccountMayBeSwitchedOff(acc: { id: string; tenantId: string
   }
   if (SYSTEM_POSTED_CODES.has(acc.code)) {
     throw new AppError('ACCOUNT_IN_USE', `${label} is one of the accounts servd posts to on its own — it cannot be switched off (renaming is fine)`, 422)
+  }
+  // An account still holding a balance (owner, 2026-10-22: 9272 was switched
+  // off with money on it, and a switched-off account refuses every journal —
+  // so nothing could clear it). Clear it to zero first, then switch it off.
+  {
+    const sums = await serviceClient.journalLine.groupBy({ by: ['type'], _sum: { amountCents: true }, where: { accountId: acc.id } })
+    const net = sums.reduce((t, g) => t + (g.type === 'debit' ? 1 : -1) * sumCents(g._sum.amountCents), 0)
+    if (net !== 0) {
+      const pkr = (Math.abs(net) / 100).toLocaleString('en-PK', { minimumFractionDigits: 2 })
+      throw new AppError('ACCOUNT_HAS_BALANCE', `${label} still holds PKR ${pkr} (${net > 0 ? 'debit' : 'credit'}) — move it to the right account with a journal entry first, then switch it off`, 422)
+    }
   }
   if (acc.tenantId) {
     // A live brand's sales account, a live linked bank's chart code, or the

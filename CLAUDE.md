@@ -1182,7 +1182,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   module) and the CEO add and rename accounts (`POST` / `PATCH
   /setup/chart-of-accounts`, `CHART_EDITORS`) and switch accounts off or
   back on (owner, 2026-10-16: "Give access to finance also"; the books'
-  guards ACCOUNT_IN_USE / ACCOUNT_CONTROLLED still refuse). A duplicate code in the company is 409
+  guards ACCOUNT_IN_USE / ACCOUNT_CONTROLLED still refuse). **An account
+  holding a balance cannot be switched off** (owner, 2026-10-22, the 9272
+  case: a switched-off account refuses every journal, so its balance was stuck)
+  — 422 `ACCOUNT_HAS_BALANCE` until a journal clears it to zero. A duplicate code in the company is 409
   `ACCOUNT_CODE_TAKEN`. 1400–1599, 2012, 2100–2199, 6200–6249 and 6990–6999
   are refused for everyone, the CEO included (422 `ACCOUNT_CODE_RESERVED`; the
   leading four digits decide): only their own modules create them.

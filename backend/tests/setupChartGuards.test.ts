@@ -73,6 +73,25 @@ afterAll(async () => {
 })
 
 describe('PATCH /setup/chart-of-accounts/:id — switching off', () => {
+  it('an account still holding a balance → 422 ACCOUNT_HAS_BALANCE; once cleared to zero it switches off', async () => {
+    const acc = await prisma.account.create({ data: { tenantId: tenantA, code: '9471', name: 'Garibsons Pvt Ltd (old)', type: 'liability' } })
+    const other = await accountId(tenantA, '2210')
+    const post = (debitId: string, creditId: string, ref: string) => prisma.journalEntry.create({
+      data: {
+        tenantId: tenantA, reference: `${P}:${ref}`, description: ref, entryDate: new Date(), postedBy: 'test',
+        lines: { create: [{ accountId: debitId, type: 'debit', amountCents: 20_000_000 }, { accountId: creditId, type: 'credit', amountCents: 20_000_000 }] },
+      },
+    })
+    await post(other, acc.id, 'in')
+    const res = await off('ceoA', acc.id)
+    expect(res.statusCode, res.body).toBe(422)
+    expect(res.json().error.code).toBe('ACCOUNT_HAS_BALANCE')
+    expect(res.json().error.message).toContain('200,000.00')
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: acc.id } })).isActive).toBe(true)
+    await post(acc.id, other, 'out')
+    expect((await off('ceoA', acc.id)).statusCode).toBe(200)
+  })
+
   it('a REQUIRED code (2210 Due to Garibsons) → 422 ACCOUNT_IN_USE; renaming it works', async () => {
     const id = await accountId(tenantA, '2210')
     const res = await off('ceoA', id)
