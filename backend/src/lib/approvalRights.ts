@@ -1273,7 +1273,8 @@ async function hrStepApprovers(id: string): Promise<string[]> {
       ])
       : [null, null]
     const prior = Array.isArray(rec.approvals) ? (rec.approvals as Array<{ byUserId?: string }>).map((a) => a?.byUserId).filter((x): x is string => typeof x === 'string') : []
-    const subject = { employeeUserId: emp?.userId ?? null, managerUserId: managerUserId ?? null, createdById: rec.createdById, priorApproverIds: prior }
+    const raiser = rec.createdById ? await serviceClient.user.findUnique({ where: { id: rec.createdById }, select: { role: true } }) : null
+    const subject = { employeeUserId: emp?.userId ?? null, managerUserId: managerUserId ?? null, createdById: rec.createdById, priorApproverIds: prior, raisedByHr: raiser?.role === 'hr' }
     const ids = uniq([
       ...(await staffOfCompanies([rec.tenantId], HR_STEP_ROLES)),
       ...(managerUserId ? [managerUserId] : []),

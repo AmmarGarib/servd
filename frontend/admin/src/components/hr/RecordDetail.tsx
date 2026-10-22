@@ -96,12 +96,12 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
   // A staff advance moved from an unsettled cash request (backend
   // hr/advanceLoan.ts): the cash request owns it — no edit, no cancel here.
   const fromCashRequest = record.section === 'loan' && record.data['paidFrom'] === 'cash_request'
-  const editable = admin && !fromCashRequest && (format.workflow.length === 0 || ((record.status === 'draft' || record.status === 'submitted') && record.approvals.length === 0))
+  const editable = admin && !fromCashRequest && (format.workflow.length === 0 || ((record.status === 'draft' || record.status === 'submitted') && record.approvals.every((a) => a.auto)))
   // What POST /cancel allows: HR cancels anything not yet in effect; anyone
   // else only their own request, before an approver has acted on it.
   const cancellable = !fromCashRequest && (isHrAdmin
     ? !['approved', 'cancelled', 'rejected'].includes(record.status) || (record.status === 'approved' && !record.appliedAt)
-    : record.createdById === userId && ['draft', 'submitted'].includes(record.status) && record.approvals.length === 0)
+    : record.createdById === userId && ['draft', 'submitted'].includes(record.status) && record.approvals.every((a) => a.auto))
   // Decisions recorded outside the format's steps (a cash request's advance is
   // approved by the CEO when it is moved) — shown under the steps.
   const otherApprovals = record.approvals.filter((a) => !format.workflow.some((w) => w.key === a.step))
@@ -281,6 +281,9 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
       {pending && (
         <div className="rounded-xl p-3 space-y-2" style={{ background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
           <p className="text-xs font-bold text-s-amber">Waiting on: {step.label}</p>
+          {step.role === 'hr' && record.currentStep >= format.workflow.length - 1 && (
+            <p className="text-[11px] text-white/50">If HR raised this request, the CEO gives this last sign-off, not HR.</p>
+          )}
           {record.section === 'overtime' && (
             <label className="block text-xs text-white/60">Approved hours
               <NumberField className={`${inp} mt-1`} decimals={2} min={0} value={hours === '' ? null : Number(hours)} onValueChange={(n) => setHours(n == null ? '' : String(n))} />

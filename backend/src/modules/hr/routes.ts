@@ -568,7 +568,9 @@ function recordLabel(rec: HrRecord & { employee?: { fullName: string } | null },
 /** Who a record is about and who has already had a hand in it — everything
  *  canActOnStep needs to keep requester and approvers apart. */
 async function approvalSubject(rec: HrRecord) {
-  const done = { createdById: rec.createdById, priorApproverIds: (rec.approvals as unknown as ApprovalEntry[]).map((a) => a.byUserId) }
+  // raisedByHr: decideRight sends the LAST 'hr' step of an HR-raised request to the CEO.
+  const raiser = rec.createdById ? await prisma.user.findUnique({ where: { id: rec.createdById }, select: { role: true } }) : null
+  const done = { createdById: rec.createdById, priorApproverIds: (rec.approvals as unknown as ApprovalEntry[]).map((a) => a.byUserId), raisedByHr: raiser?.role === 'hr' }
   if (!rec.employeeId) return { employeeUserId: null, managerUserId: null, ...done }
   // The direct reporting manager's login — service.ts managerUserIdOfEmployee,
   // the ONE HOD rule (the cash requests read it through directManagerUserIdOf).

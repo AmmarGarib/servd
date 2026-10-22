@@ -831,12 +831,20 @@ describe('HR through the API', () => {
   })
 
   it('keeps requester and approvers apart: nobody approves what they raised, or two steps of one request', async () => {
-    // payroll_adjustment has a single HR step — the HR user who raised it cannot clear it.
+    // payroll_adjustment has a single HR step — raised by HR, that last step is the CEO's
+    // (owner, 2026-10-22): neither the HR raiser nor another HR approver clears it.
     const bonus = (await call('hr', 'POST', '/records/payroll_adjustment', { data: { employee: cookEmp, month: '2027-01-01', kind: 'bonus', amount: RS(500000) } })).json()
     const self = await call('hr', 'POST', `/records/payroll_adjustment/${bonus.id}/decide`, { decision: 'approved' })
     expect(self.statusCode).toBe(403)
-    expect(self.json().error.message).toMatch(/own request/)
+    expect(self.json().error.message).toMatch(/CEO/)
     expect((await call('hr', 'GET', '/approvals')).json().map((r: { id: string }) => r.id)).not.toContain(bonus.id)
+    const otherHr = await call('mgmt', 'POST', `/records/payroll_adjustment/${bonus.id}/decide`, { decision: 'approved' })
+    expect(otherHr.statusCode).toBe(403)
+    expect((await call('mgmt', 'GET', '/approvals')).json().map((r: { id: string }) => r.id)).not.toContain(bonus.id)
+    expect((await call('ceo', 'GET', '/approvals')).json().map((r: { id: string }) => r.id)).toContain(bonus.id)
+    const byCeo = (await call('ceo', 'POST', `/records/payroll_adjustment/${bonus.id}/decide`, { decision: 'rejected', note: 'test' })).json()
+    expect(byCeo.status).toBe('rejected')
+    expect(byCeo.approvals[0].override).toBeUndefined()
 
     // Management is an HR approver too, but one person signs off one step.
     // Raised by a second admin (not HR), so its HR step still waits (an HR raiser would have signed it by raising).

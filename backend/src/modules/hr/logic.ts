@@ -968,7 +968,7 @@ export async function decideRight(
   step: { role: 'hod' | 'hr' | 'management' | 'ceo' },
   isLast: boolean,
   ctx: {
-    subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] }
+    subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[]; raisedByHr?: boolean }
     decision: 'approved' | 'rejected' | null
     through?: string[]
     /** The companies an hr_request hand-over of the caller covers
@@ -978,6 +978,10 @@ export async function decideRight(
     delegatedTenants?: Set<string>
   },
 ): Promise<DecideRight> {
+  // A request HR raised whose HR step is the LAST step goes to the CEO (owner,
+  // 2026-10-22: "Send last-step HR requests to the CEO") — HR never gives the
+  // final sign-off on what HR raised. Treated exactly as a CEO step.
+  if (step.role === 'hr' && isLast && ctx.subject.raisedByHr) step = { role: 'ceo' }
   const actor: DecideActor | undefined = req.staffUser
   const notFound: DecideRight = { ok: false, status: 404, code: 'NOT_FOUND', message: 'HR record not found' }
   if (!actor) return notFound

@@ -239,9 +239,13 @@ module id must be placed in a workspace in the same change.
   (create, submit, after each decision, and a boot sweep): an `hr` step that a
   non-HR step follows, on a record raised by an active `hr` login holding
   `staff_hr`, is signed in the raiser's name (`ApprovalEntry.auto`, "Raised by
-  HR") and the record moves to the next approver. Never the LAST step (HR would
-  then approve its own bonus / leave / OT alone — it still waits on another HR
-  login or the CEO), never a request about the raiser. `actedOnBy` ignores
+  HR") and the record moves to the next approver. Never the LAST step: **the
+  last `hr` step of a request an `hr` login raised is the CEO's (owner,
+  2026-10-22: "Send last-step HR requests to the CEO")** — `decideRight` treats
+  it as a CEO step (`subject.raisedByHr`, read in `approvalSubject` and
+  `hrStepApprovers`), so no HR login, management included, gives the final
+  sign-off on what HR raised. Never a request about the raiser (its HR step
+  waits as usual). `actedOnBy` ignores
   `auto` entries, so the raiser can still edit / cancel / recalculate.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
