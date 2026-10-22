@@ -25,7 +25,7 @@ interface Segment { start: string; end: string; shiftId: string | null; shiftNam
 interface Cell {
   employeeId: string; date: string
   kind: 'shift' | 'off' | 'leave' | 'none'
-  source: 'roster' | 'swap' | 'exception' | 'leave' | 'none'
+  source: 'roster' | 'swap' | 'exception' | 'leave' | 'default' | 'none'
   segments: Segment[]; offExceptionId: string | null; minutes: number
   /** The approved leave record, on a 'leave' day. */
   leaveId?: string | null
@@ -35,9 +35,9 @@ interface WeekView { weekStart: string; weekEnd: string; staff: StaffMember[]; c
 interface LaborCost { totalCents: number; totalHours: number; basis: string; byEmployee: Array<{ employeeId: string; name: string; hours: number; totalCents: number; rateUnset: boolean }> }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', leave: 'approved', none: '' }
+const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', leave: 'approved', default: 'company default', none: '' }
 const SOURCE_TONE: Record<Cell['source'], string> = {
-  roster: 'rgb(var(--erp-primary-rgb) / 0.12)', swap: 'rgb(var(--ink-rgb) / 0.18)', exception: 'rgba(245,158,11,0.16)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', none: 'transparent',
+  roster: 'rgb(var(--erp-primary-rgb) / 0.12)', swap: 'rgb(var(--ink-rgb) / 0.18)', exception: 'rgba(245,158,11,0.16)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', default: 'rgb(var(--erp-primary-rgb) / 0.06)', none: 'transparent',
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)

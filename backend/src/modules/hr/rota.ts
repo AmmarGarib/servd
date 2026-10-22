@@ -88,7 +88,7 @@ export interface RotaCell {
   employeeId: string
   date: string // YYYY-MM-DD
   kind: 'shift' | 'off' | 'leave' | 'none'
-  source: 'roster' | 'swap' | 'exception' | 'leave' | 'none'
+  source: 'roster' | 'swap' | 'exception' | 'leave' | 'default' | 'none'
   segments: RotaSegment[]
   /** The day-off exception row, when an exception took the day off. */
   offExceptionId: string | null
@@ -163,13 +163,24 @@ export async function rotaFor(tenantId: string, emps: Emp[], from: string, to: s
     }),
   ])
   const fullDayLeaves = leaves.filter((l) => !isHalfDayLeave(l))
+  // The company default rota (HR settings): anyone with no roster of their own.
+  const { getSettings } = await import('./service.js') // lazily: service.ts sits above this file
+  const dflt = (await getSettings(tenantId)).defaultRota
+  const dfltSegment: RotaSegment | null = dflt && toMinutes(dflt.start) != null && toMinutes(dflt.end) != null
+    ? { start: dflt.start, end: dflt.end, shiftId: null, shiftName: 'Company default', breakMinutes: dflt.breakMinutes, exceptionId: null, conceptId: null, role: null, notes: null }
+    : null
 
   const baseCell = (employeeId: string, date: string): RotaCell => {
     const d = dayDate(date)
     const covering = rosters.filter((r) => r.employeeId === employeeId && r.startDate && r.startDate <= d && (!r.endDate || r.endDate >= d))
     const r = covering[covering.length - 1]
     const cell: RotaCell = { employeeId, date, kind: 'none', source: 'none', segments: [], offExceptionId: null }
-    if (!r) return cell
+    if (!r) {
+      if (!dfltSegment) return cell
+      return dflt!.weeklyOff.includes(WEEKDAYS[d.getUTCDay()]!)
+        ? { ...cell, kind: 'off', source: 'default' }
+        : { ...cell, kind: 'shift', source: 'default', segments: [{ ...dfltSegment }] }
+    }
     const offs = (r.data as Record<string, unknown>)['weeklyOff']
     if (Array.isArray(offs) && offs.includes(WEEKDAYS[d.getUTCDay()]!)) return { ...cell, kind: 'off', source: 'roster' }
     const s = r.refId ? shifts.get(r.refId) : undefined

@@ -60,7 +60,22 @@ export interface HrSettings {
   standardDayHours: number
   /** Overtime under this many minutes on a day is ignored. */
   otMinimumMinutes: number
+  /** The company default rota (owner, 2026-10-22: "Put all staff on the rota
+   *  before 1 Nov" — 11:00–19:00, Monday off): anyone with no roster of their
+   *  own on a day works this shift, off on these weekdays (rota.ts rotaFor).
+   *  Their own roster, a swap, a /scheduling change or leave wins. null = off. */
+  defaultRota: DefaultRota | null
 }
+
+export interface DefaultRota {
+  start: string // HH:MM
+  end: string // HH:MM (at or before start = past midnight)
+  breakMinutes: number
+  /** Lower-case weekday names ('monday' …), rota.ts WEEKDAYS. */
+  weeklyOff: string[]
+}
+
+export const DEFAULT_ROTA: DefaultRota = { start: '11:00', end: '19:00', breakMinutes: 0, weeklyOff: ['monday'] }
 
 /**
  * Gratuity at exit (accountant default H6, 2026-10-13; Hasnain may change it —
@@ -105,6 +120,7 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   punchOvertimeFrom: '2026-11-01',
   standardDayHours: 9,
   otMinimumMinutes: 30,
+  defaultRota: DEFAULT_ROTA,
 }
 
 export function mergeSettings(stored: Partial<HrSettings> | null | undefined): HrSettings {
@@ -118,6 +134,10 @@ export function mergeSettings(stored: Partial<HrSettings> | null | undefined): H
     sessi: { ...DEFAULT_HR_SETTINGS.sessi, ...(s.sessi ?? {}) },
     // A stored list replaces the default one; a missing or broken one keeps it.
     gratuity: { ...g, eligibleTypes: Array.isArray(g.eligibleTypes) ? [...g.eligibleTypes] : [...DEFAULT_GRATUITY.eligibleTypes] },
+    // A stored null switches the default rota off; a missing one takes the default.
+    defaultRota: s.defaultRota === null ? null
+      : s.defaultRota ? { ...DEFAULT_ROTA, ...s.defaultRota, weeklyOff: Array.isArray(s.defaultRota.weeklyOff) ? [...s.defaultRota.weeklyOff] : [...DEFAULT_ROTA.weeklyOff] }
+      : { ...DEFAULT_ROTA, weeklyOff: [...DEFAULT_ROTA.weeklyOff] },
   }
 }
 

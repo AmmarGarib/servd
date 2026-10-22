@@ -1084,6 +1084,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
       punchOvertimeFrom: HR_DAY.nullable().optional(),
       standardDayHours: z.number().min(1).max(24).optional(),
       otMinimumMinutes: z.number().int().min(0).max(240).optional(),
+      // The company default rota (owner, 2026-10-22); null = off, omitted = keep.
+      defaultRota: z.object({
+        start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 11:00'),
+        end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 19:00'),
+        breakMinutes: z.number().int().min(0).max(240),
+        weeklyOff: z.array(z.enum(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'])).max(6),
+      }).nullable().optional(),
     }).parse(req.body)
     const before = await getSettings(tenantId)
     const next = mergeSettings({
@@ -1092,6 +1099,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       punchOvertimeFrom: body.punchOvertimeFrom !== undefined ? body.punchOvertimeFrom : before.punchOvertimeFrom,
       standardDayHours: body.standardDayHours ?? before.standardDayHours,
       otMinimumMinutes: body.otMinimumMinutes ?? before.otMinimumMinutes,
+      defaultRota: body.defaultRota !== undefined ? body.defaultRota : before.defaultRota,
     } as Partial<HrSettings>)
     await saveSettings(tenantId, next)
     await audit({ category: 'identity', action: 'hr.settings.update', entity: 'Setting', entityId: `hr.settings.${tenantId}`, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, before, after: next })

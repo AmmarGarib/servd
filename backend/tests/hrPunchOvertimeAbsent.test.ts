@@ -22,7 +22,9 @@ import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { hrRoutes } from '../src/modules/hr/routes.js'
 import { punchOvertimeMinutes } from '../src/modules/hr/attendanceDays.js'
-import { DEFAULT_HR_SETTINGS } from '../src/modules/hr/logic.js'
+import { DEFAULT_HR_SETTINGS, mergeSettings } from '../src/modules/hr/logic.js'
+import { saveSettings } from '../src/modules/hr/service.js'
+import { rotaFor } from '../src/modules/hr/rota.js'
 
 const RS = (r: number) => r * 100
 const stamp = Date.now()
@@ -82,6 +84,8 @@ beforeAll(async () => {
   vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-05T07:00:00.000Z'), shouldAdvanceTime: true })
   tenantA = (await prisma.tenant.create({ data: { name: `PO A ${stamp}`, slug: `po-a-${stamp}` } })).id
   tenantB = (await prisma.tenant.create({ data: { name: `PO B ${stamp}`, slug: `po-b-${stamp}` } })).id
+  // These cases test people with and without their own roster, so the company default rota (on by default) starts off; the 'default rota' test switches it on.
+  for (const t of [tenantA, tenantB]) await saveSettings(t, mergeSettings({ defaultRota: null }))
   for (const t of [tenantA, tenantB]) await ensureChartOfAccounts(t)
   await mkUser('hrA', 'hr', tenantA)
   await mkUser('hrB', 'hr', tenantB)
@@ -177,6 +181,27 @@ describe('rule A — absent without a punch', () => {
     expect(s.inputs['payBasis']).toMatchObject({ daysInMonth: 30, employedDays: 30, absentDays: 1, paidDays: 29 })
     expect(line(s, 'salary')).toBe(Math.round(RS(240000) * 29 / 30))
     // Someone with no rota is never absent by rule A (their weekly off is unknown).
+    expect((await slipOf('hrA', run, emps['a-norota']!)).inputs['absentDays']).toBe(0)
+  })
+
+  it('the company default rota (11:00–19:00, Monday off) puts someone with no roster on the rota', async () => {
+    const cur = (await call('hrA', 'GET', '/settings')).json()
+    expect(cur.defaultRota).toBeNull()
+    const put = await call('hrA', 'PUT', '/settings', { ...cur, defaultRota: { start: '11:00', end: '19:00', breakMinutes: 0, weeklyOff: ['monday'] } })
+    expect(put.statusCode, put.body).toBe(200)
+    const emp = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emps['a-norota']! } })
+    const cells = await rotaFor(tenantA, [emp], '2026-11-02', '2026-11-03') // Monday, Tuesday
+    expect(cells.map((c) => [c.kind, c.source])).toEqual([['off', 'default'], ['shift', 'default']])
+    expect(cells[1]!.segments[0]).toMatchObject({ start: '11:00', end: '19:00' })
+    // Now the November run docks their working days with no punch (Mondays are off).
+    const run = (await prisma.hrPayrollRun.findFirstOrThrow({ where: { tenantId: tenantA, period: '2026-11' } })).id
+    const recalc = async () => expect((await call('hrA', 'POST', `/payroll/runs/${run}/recalculate`)).statusCode).toBe(200)
+    await recalc()
+    expect(Number((await slipOf('hrA', run, emps['a-norota']!)).inputs['absentDays'])).toBeGreaterThan(0)
+    // Company B is untouched; switch A back off (and recalculate) for the cases below.
+    expect((await call('hrB', 'GET', '/settings')).json().defaultRota).toBeNull()
+    expect((await call('hrA', 'PUT', '/settings', { ...cur, defaultRota: null })).statusCode).toBe(200)
+    await recalc()
     expect((await slipOf('hrA', run, emps['a-norota']!)).inputs['absentDays']).toBe(0)
   })
 

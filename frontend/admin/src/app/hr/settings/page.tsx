@@ -29,7 +29,10 @@ interface HrSettings {
   punchOvertimeFrom?: string | null
   standardDayHours?: number
   otMinimumMinutes?: number
+  /** Company default rota for anyone with no roster of their own; null = off. */
+  defaultRota?: { start: string; end: string; breakMinutes: number; weeklyOff: string[] } | null
 }
+const WEEKDAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 
 /** Gratuity at exit (backend hr/logic.ts GratuitySettings, accountant default H6). */
 interface Gratuity { enabled: boolean; eligibleTypes: string[]; minServiceMonths: number; partYearOverMonths: number; daysPerYear: number }
@@ -150,6 +153,35 @@ export default function HrSettingsPage() {
             <Num label="Lates per one day's deduction" help="e.g. 3 = every 3 lates deduct a day's pay. 0 = lates never deduct." v={s.latesPerDeductionDay} onSet={(v) => setS({ ...s, latesPerDeductionDay: v })} />
             <DateOrOff label="No check-in counts as absent from" help="A working day on the rota (not a weekly off, holiday or approved leave) with no check-in is absent and docked, unless HR corrects it. Off = days with no record are paid."
               v={s.absentWithoutPunchFrom ?? null} onSet={(v) => setS({ ...s, absentWithoutPunchFrom: v })} />
+          </Panel>
+
+          <Panel title="Company default rota">
+            <p className="text-xs text-white/55">Everyone with no rota of their own works this shift. A person&apos;s own rota, a swap or a schedule change wins. Off = people with no rota are never marked absent.</p>
+            <label className="flex items-center gap-2 text-sm text-white/80">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={!!s.defaultRota}
+                onChange={(e) => setS({ ...s, defaultRota: e.target.checked ? { start: '11:00', end: '19:00', breakMinutes: 0, weeklyOff: ['monday'] } : null })} />
+              Use a company default rota
+            </label>
+            {s.defaultRota && <>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="block text-[11px] font-bold text-white/55 mb-1">Shift starts</span>
+                  <input type="time" className={inp} value={s.defaultRota.start} onChange={(e) => setS({ ...s, defaultRota: { ...s.defaultRota!, start: e.target.value } })} /></label>
+                <label className="block"><span className="block text-[11px] font-bold text-white/55 mb-1">Shift ends</span>
+                  <input type="time" className={inp} value={s.defaultRota.end} onChange={(e) => setS({ ...s, defaultRota: { ...s.defaultRota!, end: e.target.value } })} /></label>
+              </div>
+              <div>
+                <span className="block text-[11px] font-bold text-white/55 mb-1">Weekly off</span>
+                <div className="flex flex-wrap gap-3">
+                  {WEEKDAY_KEYS.map((d) => (
+                    <label key={d} className="flex items-center gap-1.5 text-sm text-white/80">
+                      <input type="checkbox" className="h-4 w-4 accent-primary" checked={s.defaultRota!.weeklyOff.includes(d)}
+                        onChange={(e) => setS({ ...s, defaultRota: { ...s.defaultRota!, weeklyOff: e.target.checked ? [...s.defaultRota!.weeklyOff, d] : s.defaultRota!.weeklyOff.filter((x) => x !== d) } })} />
+                      {d[0]!.toUpperCase() + d.slice(1, 3)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>}
           </Panel>
 
           <Panel title="Overtime from check-in / check-out">

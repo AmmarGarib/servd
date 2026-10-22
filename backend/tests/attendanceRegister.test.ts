@@ -7,6 +7,8 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { hrRoutes } from '../src/modules/hr/routes.js'
+import { mergeSettings } from '../src/modules/hr/logic.js'
+import { saveSettings } from '../src/modules/hr/service.js'
 import { ATTENDANCE_REGISTER_COLUMNS, hmm } from '../src/modules/hr/attendanceRegister.js'
 
 const HEADINGS = ['Attendance Date', 'Attendance Day', 'Shift Code', 'Employee ID', 'Employee Name', 'Department', 'Time In', 'Time Out',
@@ -38,6 +40,8 @@ const attendance = (tenantId: string, employeeId: string, date: string, category
 beforeAll(async () => {
   tA = (await prisma.tenant.create({ data: { name: 'Reg Co A', slug: `reg-a-${stamp}` } })).id
   tB = (await prisma.tenant.create({ data: { name: 'Reg Co B', slug: `reg-b-${stamp}` } })).id
+  // These rows are read against their own shift or none: the company default rota is off here.
+  for (const t of [tA, tB]) await saveSettings(t, mergeSettings({ defaultRota: null }))
   locA = (await prisma.location.create({ data: { slug: `reg-loc-${stamp}`, name: 'Reg Branch A', tenantId: tA } })).id
   shiftA = (await prisma.hrRecord.create({ data: { tenantId: tA, section: 'shift', formVersion: 0, status: 'approved', data: { name: 'Morning', start: '09:00', end: '17:00' } as never } })).id
   await mkHr('hrA', tA)

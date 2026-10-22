@@ -2112,6 +2112,15 @@ approved + punch (approved wins per day); Casual / Annual / Sick Availed beside
 the balances (balances include `leave_adjustment`). Tests:
 `tests/hrPunchOvertimeAbsent.test.ts`.
 
+**Company default rota (owner, 2026-10-22: "Put all staff on the rota before
+1 Nov" — 11:00–19:00, Monday off).** HR setting `defaultRota {start, end,
+breakMinutes, weeklyOff}` (per company, default ON at those values; null =
+off; HR → Settings → "Company default rota"). `hr/rota.ts rotaFor`: a person
+with NO roster of their own on a day works the default shift (source
+`default`) or is off on its weekly-off days; their own roster, a swap, a
+/scheduling change or leave wins. So the absent-without-punch rule and punch
+overtime cover everyone. Tests: `tests/hrPunchOvertimeAbsent.test.ts`.
+
 ### Till flow (owner, 2026-10-20)
 
 Contract: `backend/src/modules/pos/TILL_FLOW.md` (the screens build against it —
