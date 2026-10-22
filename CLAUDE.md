@@ -2250,7 +2250,7 @@ change a route only together with that file). Binding rules:
   money only for FINANCIALS_VIEWERS, every brand through `assertConceptOwned`) on `reports/service.ts`
   (`SalesQuery.conceptIds` / `extra`). Contract: `reports/TILL_REPORTS.md`. Screen
   `components/pos/flow/TillReports.tsx` reads the catalog — a new report is a catalog entry + its builder,
-  never a hard-coded screen. "terminal" = the cashier's drawer (Shift). Menu subgroup is NOT in servd's data.
+  never a hard-coded screen. "terminal" = the cashier's drawer (Shift). Menu subgroup is not wanted (owner, 2026-10-22: "No need for menu subgroup").
 - **Sub-categories and sessions (owner, 2026-10-22: "Yes, add sub-categories and sessions"; sessions per brand,
   a SEPARATE list from the reservation dayparts).** Sub-category = `Category.parentId` (ONE level, a main category
   of the same brand — 422 `PARENT_NOT_IN_BRAND` / `PARENT_IS_SUBCATEGORY` / `PARENT_IS_SELF`; a category with

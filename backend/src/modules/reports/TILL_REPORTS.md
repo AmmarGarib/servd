@@ -107,7 +107,7 @@ holds its `placedAt` Karachi time (`sessionResolver`), else "No session"; switch
 Filters `subCategories`, `sessions`; options `subCategory`, `session` (Cashier Sales Detail; `subCategory` also on
 Category Wise Tax Collection). Sales Detail has a Session column; Menu Item Sales Summary a Sub category column.
 Lookups add `subCategories [{id,name,parentId,conceptId}]` and `sessions [{id,name,conceptId,startTime,endTime}]`;
-`categories` lists main categories only. Not in servd's data (do NOT invent): menu subgroup.
+`categories` lists main categories only. Menu subgroup: not wanted (owner, 2026-10-22: "No need for menu subgroup") — do not build it.
 
 ## GET /reports/till/lookups?conceptIds=a,b&dateFrom&dateTo
 `{ outlets: [{id,name}], users: [{id,name}], waiters: [{id,name}], categories: [{id,name,conceptId}], menuItems: [{id,name,categoryId}], terminals: [{id,label}] /* drawers: "<cashier> · <opened PKT>" */, sources: [{id,label}], paymentMethods: [{id,label}], orderTypes: [{id,label}], items: [{id,name}] }` — `outlets` = the caller's brands (no conceptIds needed); the rest scoped to the given brands.
