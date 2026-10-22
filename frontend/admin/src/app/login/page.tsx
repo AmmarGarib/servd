@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/auth'
 import { STOREFRONT_URL } from '../../lib/content'
 import { PracticeCode } from '../../components/SandboxBanner'
 import { PasswordInput } from '../../components/ui/PasswordInput'
+import { checkInOnSignIn } from '../../lib/checkInOnSignIn'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 
@@ -138,7 +139,8 @@ export default function StaffLoginPage() {
       // reissued) password is flagged on the login response, and lands on the
       // page that replaces it — but it is signed in, and can skip it. Blocking
       // on this flag is how people get stranded on deploy day.
-      router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : '/w')
+      const punchPage = await checkInOnSignIn(d.user?.role)
+      router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : punchPage ?? '/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invalid credentials')
     } finally {
@@ -163,7 +165,8 @@ export default function StaffLoginPage() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
       setAuth(d.user, d.accessToken, d.refreshToken)
-      router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : '/w')
+      const punchPage = await checkInOnSignIn(d.user?.role)
+      router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : punchPage ?? '/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That code did not work')
       setTimeout(() => mfaRef.current?.select(), 0)
@@ -280,7 +283,8 @@ export default function StaffLoginPage() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
       setAuth(d.user, d.accessToken, d.refreshToken)
-      router.replace('/w')
+      const punchPage = await checkInOnSignIn(d.user?.role)
+      router.replace(punchPage ?? '/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That code did not work')
       setTimeout(() => codeRef.current?.select(), 0)
