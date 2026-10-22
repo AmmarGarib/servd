@@ -2146,6 +2146,23 @@ checked in by themselves; the Check in button works anywhere as before.
 `clockIn` writes an 'in' under a per-login advisory lock, so racing tabs never
 stack two. Tests: `tests/officeNetwork.test.ts`.
 
+**Attendance in bulk (owner, 2026-10-22: "Build the mark-present-for-a-date-
+range option"; "HR could enter an employee's manual data in one go, instead of
+one by one for each day").** HR → Attendance → "Enter days in bulk" (one
+person: `GET /hr/attendance/bulk-days/preview` lists every day of ≤62 with the
+rota's hours and what is already recorded; HR edits the grid; `POST
+/hr/attendance/bulk-days {employeeId, remarks, days:[{date, status, checkIn,
+checkOut, shiftId}]}`) and "Mark present for dates" (many people: `POST
+/hr/attendance/mark-present {employeeIds, from, to, remarks, dryRun}` — every
+WORKING day (`attendanceDays.ts workingDaysBetween`, rule A's reading), inside
+the days employed, up to today, with no attendance row yet, becomes present at
+the rota's hours; ≤3,000 days a call). Both `HR_BACK_OFFICE`, active company
+only (other company's employee 404), and create each day through
+`createRecord` — a hand-keyed day (`_manual`) that waits for the CEO, who
+approves them together in the inbox (bulk approve). A day already recorded
+(pending counts) is never written twice; refused per day, the rest go in.
+Admin `components/hr/BulkAttendance.tsx`. Tests: `tests/hrBulkAttendance.test.ts`.
+
 ### Till flow (owner, 2026-10-20)
 
 Contract: `backend/src/modules/pos/TILL_FLOW.md` (the screens build against it —

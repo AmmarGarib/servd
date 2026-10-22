@@ -78,7 +78,24 @@ export async function noPunchWorkingDays(
   if (start == null || !emps.length) return out
   const lo = Math.max(dayUTC(from), start)
   const hi = Math.min(dayUTC(to), dayUTC(today) - DAY_MS)
-  if (lo > hi) return out
+  for (const [id, days] of await workingDaysBetween(tenantId, emps, lo, hi)) out.set(id, days.map((d) => d.day))
+  return out
+}
+
+/**
+ * Each employee's WORKING days in [lo, hi] (UTC-midnight ms, one company): the
+ * rota gives a shift and it is not a holiday for their branch — rule A's
+ * reading of a working day, with the rota cell (its hours). The caller clips
+ * the window (setting date, days employed, past days). Mark present for a date
+ * range (routes.ts) reads the same days, so the two never disagree.
+ */
+export async function workingDaysBetween(
+  tenantId: string,
+  emps: Array<Emp & { locationId: string | null }>,
+  lo: number, hi: number,
+): Promise<Map<string, Array<{ day: number; cell: RotaCell }>>> {
+  const out = new Map<string, Array<{ day: number; cell: RotaCell }>>()
+  if (!emps.length || lo > hi) return out
   const [holidays, holidayFmt, workLocs, cells] = await Promise.all([
     prisma.hrRecord.findMany({
       where: { tenantId, section: 'holiday', status: 'approved', startDate: { gte: new Date(lo), lte: new Date(hi + DAY_MS - 1) } },
@@ -101,13 +118,13 @@ export async function noPunchWorkingDays(
   }
   for (const e of emps) {
     const branches = new Set<string>([...(e.locationId ? [e.locationId] : []), ...workLocs.filter((w) => w.employeeId === e.id).map((w) => w.locationId)])
-    const days: number[] = []
+    const days: Array<{ day: number; cell: RotaCell }> = []
     for (let d = lo; d <= hi; d += DAY_MS) {
       const cell = cells.get(`${e.id}:${ymd(new Date(d))}`)
       if (cell?.kind !== 'shift') continue
       const hol = holidayAt.get(d)
       if (hol && (hol.has('*') || Array.from(branches).some((b) => hol.has(b)))) continue
-      days.push(d)
+      days.push({ day: d, cell })
     }
     out.set(e.id, days)
   }

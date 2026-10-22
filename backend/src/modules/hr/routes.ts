@@ -32,7 +32,7 @@ import {
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, loanStatement, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, availableOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
-  otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime,
+  otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, ATTENDANCE_DAY_TAKEN,
 } from './service.js'
 import {
   mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -47,8 +47,9 @@ import {
   lockSettlement, FNF_ACCRUAL, FNF_PAYMENT, type PayrollPayFrom,
 } from './ledger.js'
 import { reverseJournalEntry } from '../accounting/journal.js'
-import { applyAttendanceCorrection, flagMissingPunches } from './attendance.js'
-import { approvedLeaveOn, leaveSpan, isHalfDayLeave, OFF_MARK, ymd as rotaYmd } from './rota.js'
+import { applyAttendanceCorrection, flagMissingPunches, attendanceKeys } from './attendance.js'
+import { workingDaysBetween } from './attendanceDays.js'
+import { approvedLeaveOn, leaveSpan, isHalfDayLeave, OFF_MARK, ymd as rotaYmd, rotaFor } from './rota.js'
 import { hasKioskPin, setKioskPin, clearKioskPin } from './kioskPin.js'
 import { loginsToDeactivate, deactivateLeftLogins } from './separations.js'
 import { accountStateOf } from '../auth/accountStatus.js'
@@ -1707,6 +1708,185 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }
     const via = await viaFor(req, tenantId)
     return reply.status(201).send(await createRecord(req, tenantId, req.params.section, body.data, { submit: body.submit, viaHeadOfficeId: via }))
+  })
+
+  // One hand-keyed attendance day's form data, keyed by the company's own
+  // attendance format (attendance.ts attendanceKeys). Both bulk routes below.
+  const attendanceDayData = (fmt: Awaited<ReturnType<typeof getFormat>>, d: { employeeId: string; date: string; status: string; checkIn?: string | null; checkOut?: string | null; shiftId?: string | null; remarks: string }) => {
+    const keys = attendanceKeys(fmt.fields)
+    const has = (k: string) => fmt.fields.some((f) => f.key === k)
+    const remarksKey = fmt.fields.find((f) => f.key === 'remarks')?.key ?? fmt.fields.find((f) => f.type === 'textarea')?.key
+    const data: Record<string, unknown> = { [keys.employee]: d.employeeId, [keys.date]: d.date, [keys.status]: d.status }
+    if (d.checkIn && has(keys.checkIn)) data[keys.checkIn] = d.checkIn
+    if (d.checkOut && has(keys.checkOut)) data[keys.checkOut] = d.checkOut
+    if (d.shiftId && has(keys.shift)) data[keys.shift] = d.shiftId
+    if (remarksKey) data[remarksKey] = d.remarks
+    return data
+  }
+
+  // Mark present for a date range (owner, 2026-10-22: "Build the
+  // mark-present-for-a-date-range option"). HR picks people and dates; every
+  // WORKING day of each (the rota gives a shift, not a holiday for their
+  // branch — attendanceDays.ts workingDaysBetween, rule A's reading), inside
+  // the days they were employed and up to today, that has no attendance row
+  // yet (a pending one counts) becomes ONE hand-keyed attendance day through
+  // createRecord: present, the rota's hours, marked manual, waiting for the
+  // CEO — who approves them together in the inbox (bulk approve). Nothing
+  // counts for payroll before that approval. `dryRun` returns the plan only.
+  // Active company only; an employee of another company is 404.
+  fastify.post('/attendance/mark-present', { preHandler: HR_BACK_OFFICE }, async (req) => {
+    const DAY = /^\d{4}-\d{2}-\d{2}$/
+    const body = z.object({
+      employeeIds: z.array(z.string().min(1).max(64)).min(1).max(300),
+      from: z.string().regex(DAY), to: z.string().regex(DAY),
+      remarks: z.string().trim().min(5, 'Say why (at least 5 characters)').max(300),
+      dryRun: z.boolean().default(false),
+    }).parse(req.body)
+    const tenantId = activeTenant(req)
+    const fmt = await getFormat(tenantId, 'attendance')
+    if (isReachOnly(req, tenantId)) await assertHoMayPropose(req, tenantId, fmt.workflow.length > 0, 'attendance days with no approval step')
+    const DAY_MS = 86_400_000
+    const lo = Date.parse(`${body.from}T00:00:00.000Z`)
+    const hi = Math.min(Date.parse(`${body.to}T00:00:00.000Z`), pktToday().getTime())
+    if (Number.isNaN(lo) || Number.isNaN(hi) || lo > Date.parse(`${body.to}T00:00:00.000Z`)) throw new AppError('BAD_RANGE', 'The start date must be on or before the end date', 400)
+    if (lo > pktToday().getTime()) throw new AppError('FUTURE_RANGE', 'Pick days up to today — a day still to come cannot be marked present', 400)
+    if ((hi - lo) / DAY_MS > 61) throw new AppError('RANGE_TOO_LONG', 'Pick at most 62 days at a time', 400)
+    const ids = [...new Set(body.employeeIds)]
+    const emps = await prisma.hrEmployee.findMany({
+      where: { tenantId, id: { in: ids } },
+      select: { id: true, userId: true, locationId: true, fullName: true, employeeCode: true, joiningDate: true, lastWorkingDay: true, status: true },
+    })
+    if (emps.length !== ids.length) throw new NotFoundError('Employee', ids.find((i) => !emps.some((e) => e.id === i)) ?? '')
+    const dayOf = (d: Date | null) => (d ? Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) : null)
+    const working = await workingDaysBetween(tenantId, emps, lo, hi)
+    const taken = await prisma.hrRecord.findMany({
+      where: { tenantId, section: 'attendance', employeeId: { in: ids }, status: ATTENDANCE_DAY_TAKEN, startDate: { gte: new Date(lo), lte: new Date(hi) } },
+      select: { employeeId: true, startDate: true },
+    })
+    const takenKey = new Set(taken.map((t) => `${t.employeeId}:${t.startDate?.toISOString().slice(0, 10)}`))
+    type Plan = { employeeId: string; date: string; data: Record<string, unknown> }
+    const plan: Plan[] = []
+    const people: Array<{ employeeId: string; name: string; code: string; days: number; alreadyRecorded: number; notEmployed: number }> = []
+    for (const e of emps) {
+      const join = dayOf(e.joiningDate); const last = dayOf(e.lastWorkingDay)
+      let days = 0; let already = 0; let notEmployed = 0
+      for (const { day, cell } of working.get(e.id) ?? []) {
+        if ((join != null && day < join) || (last != null && day > last)) { notEmployed++; continue }
+        const date = new Date(day).toISOString().slice(0, 10)
+        if (takenKey.has(`${e.id}:${date}`)) { already++; continue }
+        const segs = cell.segments
+        const data = attendanceDayData(fmt, { employeeId: e.id, date, status: 'present', checkIn: segs[0]?.start, checkOut: segs[segs.length - 1]?.end, shiftId: segs[0]?.shiftId, remarks: body.remarks })
+        plan.push({ employeeId: e.id, date, data })
+        days++
+      }
+      people.push({ employeeId: e.id, name: e.fullName, code: e.employeeCode, days, alreadyRecorded: already, notEmployed })
+    }
+    if (plan.length > 3000) throw new AppError('TOO_MANY_DAYS', `That is ${plan.length} days — pick fewer people or a shorter range (at most 3,000 at a time)`, 422)
+    if (body.dryRun) return { dryRun: true, toMark: plan.length, people }
+    const via = await viaFor(req, tenantId)
+    let created = 0
+    const failed: Array<{ employeeId: string; date: string; message: string }> = []
+    for (const p of plan) {
+      try {
+        await createRecord(req, tenantId, 'attendance', p.data, { submit: true, viaHeadOfficeId: via })
+        created++
+      } catch (err) {
+        failed.push({ employeeId: p.employeeId, date: p.date, message: (err as Error).message })
+      }
+    }
+    await audit({
+      category: 'identity', action: 'hr.attendance.mark_present', entity: 'HrRecord', entityId: `mark-present:${body.from}:${body.to}`,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+      after: { from: body.from, to: body.to, employees: ids.length, created, failed: failed.length, remarks: body.remarks },
+    })
+    return { dryRun: false, created, failed, people }
+  })
+
+  // One employee's days in one go (owner, 2026-10-22: "HR could enter an
+  // employee's manual data in one go, instead of one by one for each day").
+  // The preview lists every day of the range with the rota's hours and what is
+  // already recorded; HR edits the grid and submits it once. Each day is its
+  // own hand-keyed attendance record through createRecord (manual, waiting for
+  // the CEO, approved together in the inbox). Active company only (404).
+  fastify.get<{ Querystring: { employeeId?: string; from?: string; to?: string } }>('/attendance/bulk-days/preview', { preHandler: HR_BACK_OFFICE }, async (req) => {
+    const q = z.object({ employeeId: z.string().min(1).max(64), from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(req.query)
+    const tenantId = activeTenant(req)
+    const e = await prisma.hrEmployee.findFirst({ where: { tenantId, id: q.employeeId }, select: { id: true, userId: true, locationId: true, fullName: true, employeeCode: true, joiningDate: true, lastWorkingDay: true } })
+    if (!e) throw new NotFoundError('Employee', q.employeeId)
+    const DAY_MS = 86_400_000
+    const lo = Date.parse(`${q.from}T00:00:00.000Z`); const hi = Date.parse(`${q.to}T00:00:00.000Z`)
+    if (lo > hi) throw new AppError('BAD_RANGE', 'The start date must be on or before the end date', 400)
+    if ((hi - lo) / DAY_MS > 61) throw new AppError('RANGE_TOO_LONG', 'Pick at most 62 days at a time', 400)
+    const today = pktToday().getTime()
+    const [cells, working, existing] = await Promise.all([
+      rotaFor(tenantId, [e], q.from, q.to),
+      workingDaysBetween(tenantId, [e], lo, hi),
+      prisma.hrRecord.findMany({
+        where: { tenantId, section: 'attendance', employeeId: e.id, status: ATTENDANCE_DAY_TAKEN, startDate: { gte: new Date(lo), lte: new Date(hi) } },
+        select: { id: true, startDate: true, category: true, status: true },
+      }),
+    ])
+    const workSet = new Set((working.get(e.id) ?? []).map((w) => w.day))
+    const dayOf = (d: Date | null) => (d ? Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) : null)
+    const join = dayOf(e.joiningDate); const last = dayOf(e.lastWorkingDay)
+    const days = cells.map((c) => {
+      const t = Date.parse(`${c.date}T00:00:00.000Z`)
+      const ex = existing.find((r) => r.startDate?.toISOString().slice(0, 10) === c.date)
+      const kind = c.kind === 'shift' ? (workSet.has(t) ? 'working' : 'holiday') : c.kind
+      return {
+        date: c.date, kind,
+        start: c.segments[0]?.start ?? null, end: c.segments[c.segments.length - 1]?.end ?? null, shiftId: c.segments[0]?.shiftId ?? null,
+        employed: !((join != null && t < join) || (last != null && t > last)),
+        future: t > today,
+        existing: ex ? { id: ex.id, status: ex.category, state: ex.status } : null,
+      }
+    })
+    return { employee: { id: e.id, name: e.fullName, code: e.employeeCode }, days }
+  })
+
+  fastify.post('/attendance/bulk-days', { preHandler: HR_BACK_OFFICE }, async (req) => {
+    const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
+    const body = z.object({
+      employeeId: z.string().min(1).max(64),
+      remarks: z.string().trim().min(5, 'Say why (at least 5 characters)').max(300),
+      days: z.array(z.object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        status: z.string().min(1).max(40),
+        checkIn: z.string().regex(TIME).nullable().optional(),
+        checkOut: z.string().regex(TIME).nullable().optional(),
+        shiftId: z.string().max(64).nullable().optional(),
+      })).min(1).max(62),
+    }).parse(req.body)
+    const tenantId = activeTenant(req)
+    const fmt = await getFormat(tenantId, 'attendance')
+    if (isReachOnly(req, tenantId)) await assertHoMayPropose(req, tenantId, fmt.workflow.length > 0, 'attendance days with no approval step')
+    const e = await prisma.hrEmployee.findFirst({ where: { tenantId, id: body.employeeId }, select: { id: true } })
+    if (!e) throw new NotFoundError('Employee', body.employeeId)
+    if (new Set(body.days.map((d) => d.date)).size !== body.days.length) throw new AppError('DAY_LISTED_TWICE', 'A day is listed twice', 400)
+    const today = pktToday().getTime()
+    if (body.days.some((d) => Date.parse(`${d.date}T00:00:00.000Z`) > today)) throw new AppError('FUTURE_DAY', 'A day still to come cannot be entered', 400)
+    const taken = new Set((await prisma.hrRecord.findMany({
+      where: { tenantId, section: 'attendance', employeeId: e.id, status: ATTENDANCE_DAY_TAKEN, startDate: { in: body.days.map((d) => new Date(`${d.date}T00:00:00.000Z`)) } },
+      select: { startDate: true },
+    })).map((r) => r.startDate?.toISOString().slice(0, 10)))
+    const via = await viaFor(req, tenantId)
+    let created = 0
+    const failed: Array<{ date: string; message: string }> = []
+    for (const d of [...body.days].sort((a, b) => a.date.localeCompare(b.date))) {
+      if (taken.has(d.date)) { failed.push({ date: d.date, message: 'Already recorded — open that day to change it' }); continue }
+      try {
+        await createRecord(req, tenantId, 'attendance', attendanceDayData(fmt, { ...d, employeeId: e.id, remarks: body.remarks }), { submit: true, viaHeadOfficeId: via })
+        created++
+      } catch (err) {
+        failed.push({ date: d.date, message: (err as Error).message })
+      }
+    }
+    await audit({
+      category: 'identity', action: 'hr.attendance.bulk_days', entity: 'HrEmployee', entityId: e.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+      after: { days: body.days.length, created, failed: failed.length, remarks: body.remarks },
+    })
+    return { created, failed }
   })
 
   fastify.patch<{ Params: { section: string; id: string } }>('/records/:section/:id', { preHandler: HR_BACK_OFFICE }, async (req) => {

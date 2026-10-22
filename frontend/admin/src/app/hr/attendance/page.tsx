@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { card, inp, btnGhost, human, type PunchRow } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
+import { BulkAttendanceButtons } from '../../../components/hr/BulkAttendance'
 import { Select } from '@/components/ui/Select'
 
 const STATUS_TONE: Record<string, string> = {
@@ -319,6 +320,7 @@ function Attendance() {
   }
   return (
     <HrShell title="Attendance tracking" subtitle="Punches come from the time clock (login on a phone, or the outlet tablet with a PIN), measured against each person's work locations. Out-of-area punches are allowed and flagged.">
+      <BulkAttendanceButtons />
       <div role="tablist" aria-label="Attendance views" className="flex gap-1 mb-5 overflow-x-auto">
         {TABS.map(([k, label], i) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} tabIndex={tab === k ? 0 : -1} onKeyDown={(ev) => onKey(ev, i)} onClick={() => pick(k)}
