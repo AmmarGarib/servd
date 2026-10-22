@@ -2212,6 +2212,22 @@ change a route only together with that file). Binding rules:
   (unique per brand). Not in this release: appending lines to an existing ticket
   (a later round is another ticket on the table).
 
+### Till Order Summary and Reports (owner, 2026-10-22)
+
+- **Order Summary** (till menu → Ordering): `GET /pos/orders/summary` (`pos/orderSummary.ts`, read only) —
+  one brand, one Karachi day, All / Running / Settled / Voided with counts; Recall, Reprint Receipt / KOT,
+  Void (running: cancel; settled: credit note), Split, Change Owner (= waiter) and Download PDF call the
+  EXISTING routes. Contract: `pos/TILL_FLOW.md`.
+- **MANAGER menu** = Day Close (night audit), Dashboard (operations), Reports, Shift Manager (`/pos/shift`),
+  each shown only when `canOpenPath` lets the login open it.
+- **Reports** (till menu → MANAGER → Reports) replaced the 20 Oct till Sales report screen. ONE engine:
+  `reports/tillReports.ts` + `tillReportsRoutes.ts` (`/reports/till/catalog|lookups|run/:id`, REPORT_READERS,
+  money only for FINANCIALS_VIEWERS, every brand through `assertConceptOwned`) on `reports/service.ts`
+  (`SalesQuery.conceptIds` / `extra`). Contract: `reports/TILL_REPORTS.md`. Screen
+  `components/pos/flow/TillReports.tsx` reads the catalog — a new report is a catalog entry + its builder,
+  never a hard-coded screen. Sub category, menu subgroup and session are NOT in servd's data (waiting on
+  the owner); "terminal" = the cashier's drawer (Shift).
+
 ### Shift corrections (owner, 2026-10-21)
 
 "A shift closed by staff/cashier, Finance should have access to reopen the

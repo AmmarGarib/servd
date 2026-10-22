@@ -93,6 +93,7 @@ import { startStaffNotificationsWorker } from './workers/staffNotifications.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
+import { tillReportRoutes } from './modules/reports/tillReportsRoutes.js'
 import foodCostRoutes from './modules/reports/foodCostRoutes.js'
 import { directorRoutes } from './modules/director/routes.js'
 import { managementRoutes } from './modules/management/routes.js'
@@ -436,6 +437,8 @@ async function build() {
       // /recipes/food-cost is gone). Before reportRoutes; gated on module
       // food_cost (accounting may read it) in moduleAccess.ts.
       await api.register(foodCostRoutes, { prefix: '/reports/food-cost' })
+      // The till's Reports (owner, 2026-10-22; reports/TILL_REPORTS.md) — same readers and '/reports' module gate as /reports/till-sales.
+      await api.register(tillReportRoutes, { prefix: '/reports/till' })
       await api.register(reportRoutes, { prefix: '/reports' })
       // Director logins (owner, 2026-10-18): the read-only brand view.
       await api.register(directorRoutes, { prefix: '/director' })

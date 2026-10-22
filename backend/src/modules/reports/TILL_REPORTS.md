@@ -39,6 +39,60 @@ Report ids (title):
 - `stock_ledger` Stock Ledger — stock movements (lib/stockLedger.ts) per item: opening, in, out, closing qty (+ value for financials viewers).
 - `closing_stock` Closing Stock — per item at the end date: qty and value (FIFO lots).
 Stock reports take the outlets' LOCATIONS (the brands' locations) — the agent decides the exact link and documents it here.
+  **Decided (2026-10-22):** Stock Transfer Summary lists transfers whose from OR to location is one of the selected brands'
+  `ConceptLocation` rows, both ends inside the brands' companies, by request date; qty = received qty once received; value =
+  qty × the item's current FIFO head cost (an estimate — transfers do not move lots yet, stockLedger.ts reserves
+  `transfer_in/out`). Stock Ledger and Closing Stock read the COMPANY pool of the selected brands' companies
+  (`StockMovement.tenantId`): FIFO lots are company-wide today (per-outlet pools are the next build), so a per-outlet cut
+  would not add up (opening + in − out ≠ closing). Closing = Σ movements up to the end of `dateTo` (= the lots as at then).
+
+Back office group (owner, 2026-10-22; key `back_office`, title "Back office report") — Payment Summary and City Ledger
+Detail are ONE id each, listed in both groups:
+- `settlement_detail` Settlement Detail — one row per sold bill: order no, time, receipt no, order type, order by, settle by
+  (drawer owners of its payments), closed by (`Order.settlementChannel`: Pushed to Keenu / Closed in servd / Online), bill
+  total (incl. wallet + gift card), one column per tender used. Options `showCurrency`, `includeNoCharge` (default off).
+- `settlement_summary` Settlement Summary — sections "By tender" (= `salesByTender`: tenders, comp and refunds apart) and
+  "By channel" (= `salesBySettlement`), the till's filters ANDed in.
+- `payment_detail` Payment Detail — one row per payment (same rows as Payment Summary's `detail`).
+- `discount_detail` Discount Detail — bills with a discount or promo: gross, discount, promo, promo code, %, reason (only
+  where the till raised a `discount_above_cap` flag, which carries the cashier's reason); servd stores no approver per discount.
+- `tax_collection` Tax Collection — per Karachi day × brand: GST as charged (`Order.taxCents`), split by the tax class the bill
+  was settled at (`lib/pricing.ts tenderOfPayments`: cash or a mix = cash rate; wholly card / Raast / wallet = card rate).
+  Never `concept.taxRate`. Taxable = bill ex-GST, ex-tip. Refunds are not netted.
+- `tax_analysis` Tax Analysis — per stored `Order.taxRatePct`: bills, taxable value, GST, total.
+- `category_tax_collection` Category Wise Tax Collection — each bill's GST (less the delivery fee's) shared across its lines
+  after discount with `allocateTaxCents`, summed per category.
+- `city_ledger_summary` City Ledger Summary — per client: bills, charges (selected brands, less refunds), statement payments
+  in the period, balance now (`exposureOfTx`: owed − credit). `city_ledger_detail` = one section per client with every
+  charge / refund / payment line, the total line = balance now.
+- `fiscal` Fiscal — `FiscalDocument` rows of the brands created in the period: order, kind, closed by, status, reason
+  (`servd_channel` / manual_required …), fiscal number, authority, filed, test, amount.
+- `driver_efficiency` / `driver_deliveries` Driver Efficiency / Deliveries — own-fleet riders on the brands' SOLD orders with a
+  `riderId` (assigned → accepted → picked up → delivered from the Order timestamps; delivered = deliveredAt ?? code time ??
+  completedAt), plus offers / declines / time-outs from `RiderJobEvent` (the order's company). Times over 10 h are dropped from
+  averages.
+
+Decisions the contract left open (2026-10-22):
+- Every sales report reads `soldOrderWhere` with the filters passed as `SalesQuery.extra` (and `conceptIds`) — the same
+  engine as /reports. No Charge = a paid comp covering the bill (pos/orderSummary.ts rule); orderTypes `dine_in` etc. exclude
+  No Charge bills, `no_charge` picks them. `includeNoCharge` exists on Cashier Sales Detail, Settlement Detail / Summary and
+  the tax reports; elsewhere No Charge bills are included unless the orderTypes filter leaves them out.
+- Line figures (menu item / category reports): gross = menu price × qty (voided lines out, as `topItems`); the bill's
+  discount and GST (less the delivery fee's GST) are shared by `allocateTaxCents`. A bill refunded later stays sold.
+- Filters a report does not list are ignored; a malformed value of any filter is 400 `INVALID_FILTER`; `groupBy` on a report
+  without one is 400. Missing dates = today; > 92 days 400 `RANGE_TOO_LONG`; no conceptIds 400 `CONCEPTS_REQUIRED`.
+- `paymentType` on order reports: `refund` alone keeps bills with a refund; `orderBy` = `Order.posStaffId`; `settleBy` = a paid
+  payment in a drawer of that user. On Payment Summary / Detail they apply to the payments.
+- Cashier Sales Detail sections: one per user (title = name; online orders under "No user (online)"), then "All users"; each
+  has columns breakdown / line / count / amount — "Summary" lines (orders, gross, discount, GST, net = `salesTotals`, payments
+  received) then one block per ticked option. `userWise` adds a leading "By user" table. `vouchers` = payouts (expense) and
+  pay-ins (income) of drawers in the brands' companies, by drawer owner.
+- `showCurrency` only adds "(PKR)" to money column labels; cells stay paisa numbers.
+- Lookups: users = who rang the brands' orders + drawer owners in the window (default last 31 days); waiters = waiters on
+  those orders, of the brands' companies; terminals = drawers of the brands' companies overlapping the window that took a
+  payment for the brands or sit at one of their outlets; items = the companies' stock items.
+- Export: one section = one table; several = one table with a `Section` column (`sectionKey`) over the union of columns.
+- `GET /reports/till-sales` (reports/tillSales.ts) is left unchanged as the old route.
 
 FilterKey: `users` (who rang: Order.posStaffId) · `waiters` (Order.waiterEmployeeId) · `orderTypes` (dine_in|takeout|delivery|no_charge) · `categories` · `menuItems` · `sources` (Order.source + till delivery: servd|pos|cart|manual) · `terminals` (= drawers: Shift ids of the period) · `paymentMethods` (cash|card|raast|on_account|comp|…) · `paymentType` (sale|refund) · `orderBy` (users) · `settleBy` (users = the drawer owner, Shift.userId of the payment's shift) · `q` (search: order no / receipt no / guest) · `items` (stock items, stock reports).
 OptionKey (Cashier Sales Detail): `orderType` · `category` · `menuItem` · `tax` · `extraCharge` (service charge + delivery fee) · `discount` · `payment` · `businessSource` · `waiterWise` · `userWise` · `taxableValue` (show ex-tax value) · `includeNoCharge` (comped orders counted; default off) · `vouchers` (the drawers' cash movements: payouts = expense, pay-ins = income). Payment Summary option: `showCurrency` (prefix PKR) · `detail`.
