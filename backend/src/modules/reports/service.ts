@@ -63,8 +63,16 @@ export interface SalesQuery {
   /** Company scope — scopeTenantWhere(req, 'read'), or `{ tenantId }` in a worker. */
   company: TenantIdWhere
   conceptId?: string | null
+  /** Several brands (the till's Reports, reports/tillReports.ts) — each already checked with assertConceptOwned. */
+  conceptIds?: string[] | null
   locationId?: string | null
   channel?: string | null
+  /**
+   * Extra order filters ANDed into the scope (the till's Reports: who rang it,
+   * waiter, order type, source, drawer, payment method, search). They only
+   * narrow — the company scope above still applies.
+   */
+  extra?: Prisma.OrderWhereInput | null
   /**
    * Till flow (owner, 2026-10-20): how the bill was closed — 'keenu' (pushed to
    * Keenu), 'servd' (closed in servd), 'none' (legacy / non-till: no channel),
@@ -129,15 +137,17 @@ function conceptScope(q: SalesQuery): Prisma.ConceptWhereInput {
 }
 
 /** The brand / kitchen / channel filters, inside the company scope. */
-function orderScope(q: SalesQuery): Prisma.OrderWhereInput {
-  return {
+export function orderScope(q: SalesQuery): Prisma.OrderWhereInput {
+  const base: Prisma.OrderWhereInput = {
     ...(q.conceptId && { conceptId: q.conceptId }),
+    ...(!q.conceptId && q.conceptIds && { conceptId: { in: q.conceptIds } }),
     ...(q.locationId && { locationId: q.locationId }),
     // An unknown channel matches nothing (it used to be a free-text column).
     ...(q.channel && { source: ORDER_SOURCES.has(q.channel) ? (q.channel as OrderSource) : { in: [] } }),
     ...(q.settlement && q.settlement !== 'all' && { settlementChannel: q.settlement === 'none' ? null : q.settlement }),
     concept: conceptScope(q),
   }
+  return q.extra ? { AND: [base, q.extra] } : base
 }
 
 /** When an order counts as sold: its completion, or (older rows) when it was placed. */
