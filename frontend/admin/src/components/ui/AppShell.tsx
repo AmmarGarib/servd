@@ -627,10 +627,19 @@ function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
   const { user, token, clearAuth } = useAuthStore()
-  // Staff who stay signed in are checked in once a day too (sign-in does it on a fresh sign-in).
+  // Staff who stay signed in are checked in once a day too, on an office network only (sign-in does it on a fresh sign-in).
   useEffect(() => {
     if (!user?.id) return
-    void checkInOncePerDay(user.id, user.role).then((to) => { if (to) router.push(to) })
+    let last = 0
+    const run = () => {
+      // Asked again when the person comes back to the tab (at most every 10 minutes), so arriving on the office Wi-Fi counts.
+      if (document.visibilityState !== 'visible' || Date.now() - last < 10 * 60_000) return
+      last = Date.now()
+      void checkInOncePerDay(user.id, user.role).then((to) => { if (to) router.push(to) })
+    }
+    run()
+    document.addEventListener('visibilitychange', run)
+    return () => document.removeEventListener('visibilitychange', run)
   }, [user?.id, user?.role, router])
 
   const hamburgerRef = useRef<HTMLButtonElement>(null)

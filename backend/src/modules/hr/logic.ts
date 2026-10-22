@@ -65,6 +65,9 @@ export interface HrSettings {
    *  own on a day works this shift, off on these weekdays (rota.ts rotaFor).
    *  Their own roster, a swap, a /scheduling change or leave wins. null = off. */
   defaultRota: DefaultRota | null
+  /** Office networks (owner, 2026-10-22): the automatic check-in (sign-in and
+   *  the shell's daily one) runs only from one of these (lib/officeNetwork.ts). */
+  officeNetworks: { address: string; label: string }[]
 }
 
 export interface DefaultRota {
@@ -121,6 +124,7 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   standardDayHours: 9,
   otMinimumMinutes: 30,
   defaultRota: DEFAULT_ROTA,
+  officeNetworks: [],
 }
 
 export function mergeSettings(stored: Partial<HrSettings> | null | undefined): HrSettings {
@@ -138,6 +142,7 @@ export function mergeSettings(stored: Partial<HrSettings> | null | undefined): H
     defaultRota: s.defaultRota === null ? null
       : s.defaultRota ? { ...DEFAULT_ROTA, ...s.defaultRota, weeklyOff: Array.isArray(s.defaultRota.weeklyOff) ? [...s.defaultRota.weeklyOff] : [...DEFAULT_ROTA.weeklyOff] }
       : { ...DEFAULT_ROTA, weeklyOff: [...DEFAULT_ROTA.weeklyOff] },
+    officeNetworks: Array.isArray(s.officeNetworks) ? s.officeNetworks.map((n) => ({ address: n.address, label: n.label })) : [],
   }
 }
 

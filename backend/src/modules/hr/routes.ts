@@ -7,6 +7,7 @@
 //   /hr/approvals  requests waiting on THEM, as a reporting manager
 // Neither can read anyone else's salary.
 
+import { networkKey, onOfficeNetwork } from '../../lib/officeNetwork.js'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { classificationOf, classifyPaymentTx, classificationsOfReferences, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import type { Prisma, UserRole, HrEmployee, HrRecord } from '@prisma/client'
@@ -1048,6 +1049,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // ── Settings ──────────────────────────────────────────────────────────────
   fastify.get('/settings', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => getSettings(activeTenant(req)))
 
+  // The network the caller is on now, for "Add the network I'm on now" (HR settings).
+  fastify.get('/settings/current-network', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const settings = await getSettings(activeTenant(req))
+    return { address: networkKey(req.ip) ? req.ip.replace(/^::ffff:/, '') : null, registered: onOfficeNetwork(req.ip, settings.officeNetworks) }
+  })
+
   fastify.put('/settings', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const tenantId = activeTenant(req)
     const body = z.object({
@@ -1091,6 +1098,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
         breakMinutes: z.number().int().min(0).max(240),
         weeklyOff: z.array(z.enum(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'])).max(6),
       }).nullable().optional(),
+      // Office networks for the automatic check-in; omitted = keep.
+      officeNetworks: z.array(z.object({
+        address: z.string().trim().max(64).refine((a) => networkKey(a) !== null, 'Not an internet address'),
+        label: z.string().trim().min(1).max(60),
+      })).max(20).optional(),
     }).parse(req.body)
     const before = await getSettings(tenantId)
     const next = mergeSettings({
@@ -1100,6 +1112,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       standardDayHours: body.standardDayHours ?? before.standardDayHours,
       otMinimumMinutes: body.otMinimumMinutes ?? before.otMinimumMinutes,
       defaultRota: body.defaultRota !== undefined ? body.defaultRota : before.defaultRota,
+      officeNetworks: body.officeNetworks ?? before.officeNetworks,
     } as Partial<HrSettings>)
     await saveSettings(tenantId, next)
     await audit({ category: 'identity', action: 'hr.settings.update', entity: 'Setting', entityId: `hr.settings.${tenantId}`, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, before, after: next })

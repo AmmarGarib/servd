@@ -31,6 +31,35 @@ interface HrSettings {
   otMinimumMinutes?: number
   /** Company default rota for anyone with no roster of their own; null = off. */
   defaultRota?: { start: string; end: string; breakMinutes: number; weeklyOff: string[] } | null
+  /** Office networks: servd checks people in by itself only from one of these. */
+  officeNetworks?: OfficeNetwork[]
+}
+interface OfficeNetwork { address: string; label: string }
+
+/** Office networks (owner, 2026-10-22: check in by itself only on the office Wi-Fi). Saved with the page. */
+function OfficeNetworksPanel({ value, onSet }: { value: OfficeNetwork[]; onSet: (v: OfficeNetwork[]) => void }) {
+  const cur = useQuery({ queryKey: ['hr-current-network'], queryFn: () => api.get<{ address: string | null; registered: boolean }>('/hr/settings/current-network') })
+  const here = cur.data?.address ?? null
+  const listed = !!here && value.some((n) => n.address === here)
+  return (
+    <Panel title="Office networks (automatic check-in)">
+      <p className="text-xs text-white/55">servd checks staff in by itself, the first time they open it each day, only when they are on one of these networks. Add the office Wi-Fi while you are connected to it. A browser cannot read the Wi-Fi name, so servd uses the office internet address. If the internet provider changes that address, add it again. Away from these networks staff check in with the Check in button.</p>
+      {value.length === 0 && <p className="text-sm text-white/45">No office network yet, so nobody is checked in by themselves.</p>}
+      {value.map((n, i) => (
+        <div key={`${n.address}-${i}`} className="flex flex-wrap items-center gap-2">
+          <input className={`${inp} flex-1 min-w-[160px]`} aria-label="Name" value={n.label} maxLength={60}
+            onChange={(e) => onSet(value.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+          <span className="text-xs font-mono text-white/55">{n.address}{n.address === here ? ' · you are on it' : ''}</span>
+          <button type="button" className="text-xs font-bold text-s-red hover:underline" onClick={() => onSet(value.filter((_, j) => j !== i))}>Remove</button>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className={btn} disabled={!here || listed || value.length >= 20}
+          onClick={() => here && onSet([...value, { address: here, label: 'Office Wi-Fi' }])}>Add the network I&apos;m on now</button>
+        <span className="text-xs text-white/45">{cur.isLoading ? 'Finding your network…' : here ? (listed ? 'The network you are on is listed.' : `You are on ${here}.`) : 'Could not read your network.'}</span>
+      </div>
+    </Panel>
+  )
 }
 const WEEKDAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 
@@ -154,6 +183,8 @@ export default function HrSettingsPage() {
             <DateOrOff label="No check-in counts as absent from" help="A working day on the rota (not a weekly off, holiday or approved leave) with no check-in is absent and docked, unless HR corrects it. Off = days with no record are paid."
               v={s.absentWithoutPunchFrom ?? null} onSet={(v) => setS({ ...s, absentWithoutPunchFrom: v })} />
           </Panel>
+
+          <OfficeNetworksPanel value={s.officeNetworks ?? []} onSet={(v) => setS({ ...s, officeNetworks: v })} />
 
           <Panel title="Company default rota">
             <p className="text-xs text-white/55">Everyone with no rota of their own works this shift. A person&apos;s own rota, a swap or a schedule change wins. Off = people with no rota are never marked absent.</p>

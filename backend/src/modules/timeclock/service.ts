@@ -77,12 +77,21 @@ export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
   const emp = await prisma.hrEmployee.findFirst({ where: { userId: actor.id, tenantId } })
   const verdict = await enforceClockInPolicy(tenantId, actor.role, body, { employeeId: emp?.id ?? null, kind: 'in' })
   if (open?.missed) await closeMissedOutFor(actor.id, now)
-  const log = await prisma.clockLog.create({
-    data: {
-      userId: actor.id, type: 'in', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null,
-      ipAddress: ip ?? null, tenantId, ...verdictCols(verdict),
-    },
+  // One check-in at a time per login: two tabs (or the sign-in and the shell's
+  // daily check) racing must not both write an 'in'. Re-read the last punch
+  // under a per-login lock before writing.
+  const log = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'clock-in:' + actor.id}))`
+    const last = await tx.clockLog.findFirst({ where: { userId: actor.id }, orderBy: { recordedAt: 'desc' }, select: { type: true, recordedAt: true } })
+    if (last?.type === 'in' && !isMissedClockOut(last.recordedAt, now)) return { already: last.recordedAt }
+    return tx.clockLog.create({
+      data: {
+        userId: actor.id, type: 'in', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null,
+        ipAddress: ip ?? null, tenantId, ...verdictCols(verdict),
+      },
+    })
   })
+  if ('already' in log) return { alreadyClockedIn: true, since: log.already }
   const att = emp
     ? await recordPunch({
         tenantId, employeeId: emp.id, kind: 'in', at: log.recordedAt, source: 'clock', actorUserId: actor.id, clockLogId: log.id,

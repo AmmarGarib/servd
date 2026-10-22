@@ -2121,6 +2121,21 @@ with NO roster of their own on a day works the default shift (source
 /scheduling change or leave wins. So the absent-without-punch rule and punch
 overtime cover everyone. Tests: `tests/hrPunchOvertimeAbsent.test.ts`.
 
+**Check-in by itself, office network only (owner, 2026-10-22: "It should
+happen only when someone open servd on Office wifi").** The admin checks a
+person with an HR record in at sign-in AND once a Karachi day while they stay
+signed in (AppShell → `lib/checkInOnSignIn.ts`; asked again on return to the
+tab, at most every 10 minutes; only the day's FIRST in — never re-checks in
+someone who checked out today), but ONLY when `GET /time-clock/status`
+answers `onOfficeNetwork`. A browser cannot read the Wi-Fi name, so an office
+network is the public address the API sees (`req.ip`): HR settings
+`officeNetworks` (per company, ≤20; HR → Settings → "Office networks", "Add the
+network I'm on now" via `GET /hr/settings/current-network`), matched by
+`lib/officeNetwork.ts` (IPv4 exact, IPv6 /64). No network listed = nobody is
+checked in by themselves; the Check in button works anywhere as before.
+`clockIn` writes an 'in' under a per-login advisory lock, so racing tabs never
+stack two. Tests: `tests/officeNetwork.test.ts`.
+
 ### Till flow (owner, 2026-10-20)
 
 Contract: `backend/src/modules/pos/TILL_FLOW.md` (the screens build against it —

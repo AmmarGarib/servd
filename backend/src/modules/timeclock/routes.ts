@@ -17,6 +17,8 @@ import { z } from 'zod'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { pktToday } from '../hr/logic.js'
+import { getSettings } from '../hr/service.js'
+import { onOfficeNetwork } from '../../lib/officeNetwork.js'
 import { clockIn, clockOut, kioskPunch, openClockIn, punchReport, spans, type Actor } from './service.js'
 
 const PUNCH_REPORT_ROLES = Array.from(new Set([...MANAGERS, 'hr'])) as UserRole[]
@@ -72,9 +74,12 @@ export async function timeClockRoutes(fastify: FastifyInstance) {
       : undefined
     // Has an HR employee record in the active company: sign-in checks only these people in (owner, 2026-10-22).
     const hrLinked = !!(me.tenantId && await prisma.hrEmployee.findFirst({ where: { userId: me.id, tenantId: me.tenantId, status: { in: ['active', 'on_leave'] } }, select: { id: true } }))
+    // On a registered office network: only then does the admin check people in by itself (owner, 2026-10-22).
+    const officeNetwork = !!me.tenantId && onOfficeNetwork(req.ip, (await getSettings(me.tenantId)).officeNetworks)
     return {
       punchedIn,
       hrLinked,
+      onOfficeNetwork: officeNetwork,
       shift: open ?? myShifts.filter((s) => s.clockOutAt).pop() ?? myShifts[myShifts.length - 1],
       missedClockOut: openIn?.missed ? { since: openIn.since } : null,
       todayShifts: (seeAll ? rows.flatMap(shiftsOf) : myShifts).sort((a, b) => b.clockInAt.localeCompare(a.clockInAt)),
