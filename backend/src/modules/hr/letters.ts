@@ -220,21 +220,77 @@ export function sanitizeLetterHtml(input: string): string {
   return out
 }
 
-/** Fill {{a.b}} placeholders. Unknown placeholders are left visible as [a.b]
+// ─── Fields HR types in plain words (owner, 2026-10-22: "We don't know HTML") ─
+//
+// In a Word file or the letter box HR types {{Employee Name}}; the older
+// {{employee.fullName}} form still works. Names are matched ignoring case,
+// spaces and punctuation. A request's own fields are matched by their label
+// on the request form ({{Revised gross}}), passed in as `aliases`.
+
+export const LETTER_FIELDS: Array<{ path: string; label: string }> = [
+  { path: 'today', label: 'Date' },
+  { path: 'company.name', label: 'Company Name' },
+  { path: 'employee.fullName', label: 'Employee Name' },
+  { path: 'employee.employeeCode', label: 'Employee Code' },
+  { path: 'employee.cnic', label: 'CNIC' },
+  { path: 'employee.designation', label: 'Designation' },
+  { path: 'employee.department', label: 'Department' },
+  { path: 'employee.branch', label: 'Branch' },
+  { path: 'employee.manager', label: 'Manager' },
+  { path: 'employee.employmentType', label: 'Employment Type' },
+  { path: 'employee.joiningDate', label: 'Joining Date' },
+  { path: 'employee.confirmationDate', label: 'Confirmation Date' },
+  { path: 'employee.lastWorkingDay', label: 'Last Working Day' },
+  { path: 'employee.grossSalary', label: 'Gross Salary' },
+  { path: 'employee.basicSalary', label: 'Basic Salary' },
+]
+const EXTRA_NAMES: Record<string, string> = { today: 'today', todaysdate: 'today', name: 'employee.fullName', employeeid: 'employee.employeeCode', company: 'company.name', salary: 'employee.grossSalary' }
+
+export const fieldKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/** The context path a placeholder name points at, or null. */
+export function placeholderPath(name: string, aliases: Record<string, string> = {}): string | null {
+  const n = name.trim()
+  if (/^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)+$/.test(n) || n === 'today') return n
+  const k = fieldKey(n)
+  return LETTER_FIELDS.find((f) => fieldKey(f.label) === k)?.path ?? EXTRA_NAMES[k] ?? aliases[k] ?? null
+}
+
+/** Body with {{employee.fullName}} shown as {{Employee Name}} (record paths via `labels`). */
+export function toFriendly(body: string, labels: Record<string, string> = {}): string {
+  return body.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (m, p: string) => {
+    const label = LETTER_FIELDS.find((f) => f.path === p)?.label ?? labels[p]
+    return label ? `{{${label}}}` : m
+  })
+}
+
+function valueAt(path: string, ctx: Record<string, unknown>): unknown {
+  return path.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined), ctx)
+}
+
+/** One placeholder's text for the letter, or null when it has none. */
+export function placeholderValue(name: string, ctx: Record<string, unknown>, aliases: Record<string, string> = {}): string | null {
+  const path = placeholderPath(name, aliases)
+  const v = path ? valueAt(path, ctx) : undefined
+  return v === undefined || v === null || v === '' || typeof v === 'object' ? null : String(v)
+}
+
+/** Fill {{placeholders}}. Unknown or empty ones are left visible as [name]
  *  so a mistyped placeholder is noticed on the page, not silently blank. The
  *  result is sanitised: a template stored before sanitising, or a value placed
  *  in an attribute, prints as formatting only. */
-export function renderLetter(body: string, ctx: Record<string, unknown>): { html: string; missing: string[] } {
+export function renderLetter(body: string, ctx: Record<string, unknown>, aliases: Record<string, string> = {}): { html: string; missing: string[] } {
   const missing: string[] = []
-  const html = body.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_m, path: string) => {
-    const v = path.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined), ctx)
-    if (v === undefined || v === null || v === '') { missing.push(path); return `[${path}]` }
-    return escapeHtml(String(v))
+  const html = body.replace(/\{\{([^{}<>\n]{1,80})\}\}/g, (_m, raw: string) => {
+    const name = raw.trim()
+    const v = placeholderValue(name, ctx, aliases)
+    if (v === null) { missing.push(name); return `[${escapeHtml(name)}]` }
+    return escapeHtml(v)
   })
   return { html: sanitizeLetterHtml(html), missing }
 }
 
 /** Every placeholder a template uses — shown in the editor. */
 export function placeholdersIn(body: string): string[] {
-  return Array.from(new Set(Array.from(body.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g)).map((m) => m[1]!)))
+  return Array.from(new Set(Array.from(body.matchAll(/\{\{([^{}<>\n]{1,80})\}\}/g)).map((m) => m[1]!.trim())))
 }

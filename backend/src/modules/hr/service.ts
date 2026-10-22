@@ -1285,5 +1285,8 @@ export async function letterContext(tenantId: string, emp: HrEmployee | null, re
       employmentType: emp.employmentType,
     } : {},
     record: recordCtx,
+    // A request's fields by their form label ({{Revised gross}}) — HR types
+    // plain words in a Word letter (owner, 2026-10-22). Keyed by fieldKey.
+    _aliases: Object.fromEntries((fmt?.fields ?? []).map((fl) => [fl.label.toLowerCase().replace(/[^a-z0-9]/g, ''), `record.${fl.key}`])) as Record<string, string>,
   }
 }

@@ -39,7 +39,12 @@ import {
   nextPeriod, settlementParts, settlementNet, settlementSalaryStart,
   type ApprovalEntry, actedOnBy, type HrSettings, type SettlementPayBasis,
 } from './logic.js'
-import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml, withLetterSystemRows } from './letters.js'
+import { DEFAULT_LETTERS, LETTER_FIELDS, renderLetter, placeholdersIn, placeholderValue, sanitizeLetterHtml, toFriendly, withLetterSystemRows } from './letters.js'
+import { docxToHtml, docxPlaceholders, fillDocx, htmlToDocx } from '../../lib/docx.js'
+import { decodeEvidenceFile } from '../../lib/evidenceFile.js'
+import { randomBytes } from 'node:crypto'
+
+const safeDocxPlaceholders = (b: Buffer): string[] => { try { return docxPlaceholders(b) } catch { return [] } }
 import { CASH_REQUEST_PAID_FROM } from './advanceLoan.js'
 import { REPORTS, buildReport, reportXlsx, resolver, type ReportQuery } from './reports.js'
 import {
@@ -2758,34 +2763,136 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // ── Letters ───────────────────────────────────────────────────────────────
+  //
+  // A letter is the built-in wording, HR's own wording typed in the letter
+  // box, or HR's own Word file (owner, 2026-10-22: "It should give option to
+  // HR to add letter in word file … employee details should be picked through
+  // selected employee field on auto basis"). HR may also add letters of its
+  // own (key `custom_<hex>`). Fields are typed in plain words — {{Employee
+  // Name}} — see letters.ts LETTER_FIELDS. All per company (active company
+  // for editing; a printed letter uses the employee's company).
+
+  const WORD_MAX_BYTES = 700 * 1024 // fits the Trash snapshot (1 MB, base64)
+  const WORD_BODY_LIMIT = 2 * 1024 * 1024 // a 700 KB file as base64, with room for a too-large one to get its own message
+  const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  const zWordFile = z.object({ fileName: z.string().min(1).max(200), mime: z.string().max(200), dataBase64: z.string().min(1) })
+
+  /** An uploaded Word letter, checked (type, size, readable) before any write. */
+  const decodeWordLetter = (f: z.infer<typeof zWordFile>) => {
+    if (!/\.docx$/i.test(f.fileName)) throw new AppError('BAD_WORD_FILE', 'Upload a Word file (.docx). An older .doc file: open it in Word and "Save as" .docx first', 400)
+    let file
+    try {
+      file = decodeEvidenceFile(f.dataBase64, f.mime || DOCX_MIME, { allowOffice: true, fileName: f.fileName, maxBytes: WORD_MAX_BYTES })
+    } catch (e) {
+      if (e instanceof AppError && /larger/.test(e.message)) throw new AppError('WORD_FILE_TOO_LARGE', 'The Word file is over 700 KB — make the logo picture smaller (in Word: Picture Format → Compress Pictures) and upload it again', 400)
+      throw e
+    }
+    if (file.mime !== DOCX_MIME) throw new AppError('BAD_WORD_FILE', 'Upload a Word file (.docx)', 400)
+    docxToHtml(file.bytes) // readable, or 400 BAD_WORD_FILE
+    return { bytes: file.bytes, fileName: file.fileName }
+  }
+
+  /** The letter as stored for this company, or the built-in one; 404 otherwise. */
+  const letterOf = async (tenantId: string, key: string) => {
+    const def = DEFAULT_LETTERS.find((d) => d.key === key) ?? null
+    const row = await prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key } } })
+    if (!def && !row?.custom) throw new NotFoundError('Letter', key)
+    return { def, row }
+  }
+  const letterBody = (key: string, def: { body: string } | null, row: { body: string; wordFile: Uint8Array | null } | null) =>
+    row?.wordFile ? '' : row ? withLetterSystemRows(key, sanitizeLetterHtml(row.body)) : def!.body
+  const wordName = (title: string) => `${title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'letter'}.docx`
+
+  fastify.get('/letters/fields', { preHandler: requireAuth(...HR_ADMIN) }, async () => LETTER_FIELDS)
+
   fastify.get('/letters', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const stored = await prisma.hrLetterTemplate.findMany({ where: { tenantId: activeTenant(req) } })
-    return DEFAULT_LETTERS.map((d) => {
-      const s = stored.find((x) => x.key === d.key)
+    const stored = await prisma.hrLetterTemplate.findMany({ where: { tenantId: activeTenant(req) }, orderBy: { title: 'asc' } })
+    const view = (key: string, def: { title: string; body: string } | null, s: (typeof stored)[number] | undefined) => {
       // A company's own version gets the rows its statement must show (the
       // F&F Gratuity row) — the stored template is not changed.
-      const body = s ? withLetterSystemRows(d.key, sanitizeLetterHtml(s.body)) : d.body
-      return { key: d.key, title: s?.title ?? d.title, body, isDefault: !s, version: s?.version ?? 0, placeholders: placeholdersIn(body) }
+      const body = letterBody(key, def, s ?? null)
+      return {
+        key, title: s?.title ?? def!.title, body, isDefault: !s, custom: !!s?.custom, version: s?.version ?? 0,
+        hasWord: !!s?.wordFile, wordFileName: s?.wordFileName ?? null,
+        placeholders: s?.wordFile ? safeDocxPlaceholders(Buffer.from(s.wordFile)) : placeholdersIn(body),
+      }
+    }
+    return [
+      ...DEFAULT_LETTERS.map((d) => view(d.key, d, stored.find((x) => x.key === d.key))),
+      ...stored.filter((s) => s.custom).map((s) => view(s.key, null, s)),
+    ]
+  })
+
+  // HR adds a letter of its own: a Word file, or typed wording.
+  fastify.post('/letters', { preHandler: requireAuth(...HR_ADMIN), bodyLimit: WORD_BODY_LIMIT }, async (req, reply) => {
+    const tenantId = activeTenant(req)
+    const body = z.object({ title: z.string().trim().min(1).max(160), body: z.string().max(100_000).optional(), file: zWordFile.optional() })
+      .refine((b) => !!b.file || !!b.body?.trim(), { message: 'Upload a Word file or type the letter' }).parse(req.body)
+    const word = body.file ? decodeWordLetter(body.file) : null
+    const html = word ? '' : sanitizeLetterHtml(body.body!)
+    if (!word && !html.trim()) throw new AppError('EMPTY_LETTER', 'The letter is empty', 400)
+    const row = await prisma.hrLetterTemplate.create({
+      data: { tenantId, key: `custom_${randomBytes(5).toString('hex')}`, title: body.title, body: html, custom: true, wordFile: word?.bytes, wordFileName: word?.fileName, updatedById: req.staffUser!.id },
+      select: { key: true, title: true, version: true },
     })
+    await audit({ category: 'identity', action: 'hr.letter.create', entity: 'HrLetterTemplate', entityId: row.key, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { title: row.title, word: !!word } })
+    return reply.status(201).send(row)
   })
 
   fastify.put<{ Params: { key: string } }>('/letters/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const tenantId = activeTenant(req)
-    if (!DEFAULT_LETTERS.some((d) => d.key === req.params.key)) throw new NotFoundError('Letter', req.params.key)
-    const body = z.object({ title: z.string().min(1).max(160), body: z.string().min(1).max(100_000) }).parse(req.body)
-    // Stored as formatting only — see sanitizeLetterHtml. What was cut is
-    // gone; the response carries what was kept.
-    const html = sanitizeLetterHtml(body.body)
-    if (!html.trim()) throw new AppError('EMPTY_LETTER', 'Nothing is left of this letter once scripts and unsupported tags are removed', 400)
-    const cur = await prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key: req.params.key } } })
+    const { def, row } = await letterOf(tenantId, req.params.key)
+    const body = z.object({ title: z.string().trim().min(1).max(160), body: z.string().max(100_000).optional() }).parse(req.body)
+    // While a Word file is the letter only its title changes here.
+    if (row?.wordFile && body.body !== undefined) throw new AppError('WORD_FILE_IS_THE_LETTER', 'This letter is a Word file — change it in Word and upload it again, or remove the Word file to type the letter here', 409)
+    let html: string | undefined
+    if (body.body !== undefined) {
+      // Stored as formatting only — see sanitizeLetterHtml. What was cut is
+      // gone; the response carries what was kept.
+      html = sanitizeLetterHtml(body.body)
+      if (!html.trim()) throw new AppError('EMPTY_LETTER', 'Nothing is left of this letter once scripts and unsupported tags are removed', 400)
+    }
     return prisma.hrLetterTemplate.upsert({
       where: { tenantId_key: { tenantId, key: req.params.key } },
-      create: { tenantId, key: req.params.key, title: body.title, body: html, updatedById: req.staffUser!.id },
-      update: { title: body.title, body: html, version: (cur?.version ?? 1) + 1, updatedById: req.staffUser!.id },
+      create: { tenantId, key: req.params.key, title: body.title, body: html ?? def!.body, updatedById: req.staffUser!.id },
+      update: { title: body.title, ...(html !== undefined && { body: html }), version: (row?.version ?? 1) + 1, updatedById: req.staffUser!.id },
+      select: { key: true, title: true, version: true, body: true },
     })
   })
 
-  // Back to the built-in default: the company's own version is removed.
+  // The Word file becomes the letter (built-in or HR's own).
+  fastify.put<{ Params: { key: string } }>('/letters/:key/word', { preHandler: requireAuth(...HR_ADMIN), bodyLimit: WORD_BODY_LIMIT }, async (req) => {
+    const tenantId = activeTenant(req)
+    const { def, row } = await letterOf(tenantId, req.params.key)
+    const { file } = z.object({ file: zWordFile }).parse(req.body)
+    const word = decodeWordLetter(file)
+    const saved = await prisma.hrLetterTemplate.upsert({
+      where: { tenantId_key: { tenantId, key: req.params.key } },
+      create: { tenantId, key: req.params.key, title: def!.title, body: '', wordFile: word.bytes, wordFileName: word.fileName, updatedById: req.staffUser!.id },
+      update: { body: '', wordFile: word.bytes, wordFileName: word.fileName, version: (row?.version ?? 1) + 1, updatedById: req.staffUser!.id },
+      select: { key: true, title: true, version: true, wordFileName: true },
+    })
+    await audit({ category: 'identity', action: 'hr.letter.word', entity: 'HrLetterTemplate', entityId: saved.key, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { fileName: word.fileName, version: saved.version } })
+    return { ...saved, placeholders: safeDocxPlaceholders(word.bytes) }
+  })
+
+  // Stop using the Word file: its text (pictures included) goes into the letter box.
+  fastify.delete<{ Params: { key: string } }>('/letters/:key/word', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const tenantId = activeTenant(req)
+    const { row } = await letterOf(tenantId, req.params.key)
+    if (!row?.wordFile) return reply.status(204).send()
+    const html = sanitizeLetterHtml(docxToHtml(Buffer.from(row.wordFile)))
+    await prisma.hrLetterTemplate.update({ where: { id: row.id }, data: { body: html.trim() ? html : '<p></p>', wordFile: null, wordFileName: null, version: row.version + 1, updatedById: req.staffUser!.id } })
+    return reply.status(204).send()
+  })
+
+  // The print copy of a Word letter, fields shown as they are typed.
+  fastify.get<{ Params: { key: string } }>('/letters/:key/preview', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const { def, row } = await letterOf(activeTenant(req), req.params.key)
+    return { html: row?.wordFile ? sanitizeLetterHtml(docxToHtml(Buffer.from(row.wordFile))) : letterBody(req.params.key, def, row) }
+  })
+
+  // Back to the built-in default (or, for HR's own letter, removed): parked in the Trash.
   fastify.delete<{ Params: { key: string } }>('/letters/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const tenantId = activeTenant(req)
     const row = await prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key: req.params.key } } })
@@ -2801,29 +2908,56 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  fastify.post('/letters/render', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const body = z.object({ key: z.string(), employeeId: z.string().uuid().optional(), recordId: z.string().uuid().optional() }).parse(req.body)
-    const def = DEFAULT_LETTERS.find((d) => d.key === body.key)
-    if (!def) throw new NotFoundError('Letter', body.key)
+  /** Employee + record + company of a letter print — the employee's company issues it. */
+  const letterSubject = async (req: FastifyRequest, key: string, employeeId?: string, recordId?: string) => {
     const [emp, rec] = await Promise.all([
-      body.employeeId ? prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } }) : null,
-      body.recordId ? prisma.hrRecord.findFirst({ where: { id: body.recordId, ...writeTenants(req) } }) : null,
+      employeeId ? prisma.hrEmployee.findFirst({ where: { id: employeeId, ...writeTenants(req) } }) : null,
+      recordId ? prisma.hrRecord.findFirst({ where: { id: recordId, ...writeTenants(req) } }) : null,
     ])
-    if (body.employeeId && !emp) throw new NotFoundError('Employee', body.employeeId)
-    if (body.recordId && !rec) throw new NotFoundError('HR record', body.recordId)
+    if (employeeId && !emp) throw new NotFoundError('Employee', employeeId)
+    if (recordId && !rec) throw new NotFoundError('HR record', recordId)
     if (emp && rec && emp.tenantId !== rec.tenantId) throw new AppError('COMPANY_MISMATCH', 'That employee and that record belong to different companies', 422)
     // The letter is issued by the employee's own company: its name, its
     // template, its org units and the format the record was saved with —
     // whichever company happens to be active.
     const tenantId = emp?.tenantId ?? rec?.tenantId ?? activeTenant(req)
-    const [tpl, employee] = await Promise.all([
-      prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key: body.key } } }),
-      emp ?? (rec?.employeeId ? prisma.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId } }) : null),
-    ])
-    const ctx = await letterContext(tenantId, employee, rec)
-    const out = renderLetter(tpl ? withLetterSystemRows(body.key, tpl.body) : def.body, ctx)
+    const { def, row } = await letterOf(tenantId, key)
+    const employee = emp ?? (rec?.employeeId ? await prisma.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId } }) : null)
+    const { _aliases: aliases, ...ctx } = await letterContext(tenantId, employee, rec)
+    return { tenantId, def, row, employee, rec, ctx, aliases }
+  }
+
+  fastify.post('/letters/render', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const body = z.object({ key: z.string().max(80), employeeId: z.string().min(1).max(100).optional(), recordId: z.string().min(1).max(100).optional() }).parse(req.body)
+    const { tenantId, def, row, employee, rec, ctx, aliases } = await letterSubject(req, body.key, body.employeeId, body.recordId)
+    const source = row?.wordFile ? docxToHtml(Buffer.from(row.wordFile)) : letterBody(body.key, def, row)
+    const out = renderLetter(source, ctx, aliases)
     await audit({ category: 'identity', action: 'hr.letter.render', entity: 'HrLetterTemplate', entityId: body.key, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { employeeId: employee?.id ?? null, recordId: rec?.id ?? null } })
-    return { title: tpl?.title ?? def.title, ...out }
+    return { title: row?.title ?? def!.title, ...out }
+  })
+
+  // The letter as a Word file. With an employee (or a request) its fields are
+  // filled in; without, the blank letter for HR to change in Word (a letter
+  // with no Word file yet comes out with its fields as {{Employee Name}}).
+  fastify.get<{ Params: { key: string }; Querystring: { employeeId?: string; recordId?: string } }>('/letters/:key/word', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const q = z.object({ employeeId: z.string().min(1).max(100).optional(), recordId: z.string().min(1).max(100).optional() }).parse(req.query)
+    const filled = !!(q.employeeId || q.recordId)
+    const { tenantId, def, row, employee, rec, ctx, aliases } = await letterSubject(req, req.params.key, q.employeeId, q.recordId)
+    const title = row?.title ?? def!.title
+    let bytes: Buffer
+    if (row?.wordFile) {
+      bytes = filled ? fillDocx(Buffer.from(row.wordFile), (name) => placeholderValue(name, ctx, aliases)) : Buffer.from(row.wordFile)
+    } else {
+      const body = letterBody(req.params.key, def, row)
+      bytes = htmlToDocx(filled ? renderLetter(body, ctx, aliases).html : toFriendly(body))
+    }
+    if (filled) await audit({ category: 'identity', action: 'hr.letter.render', entity: 'HrLetterTemplate', entityId: req.params.key, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { employeeId: employee?.id ?? null, recordId: rec?.id ?? null, format: 'word' } })
+    const name = filled && employee ? `${title} - ${employee.fullName}` : title
+    return reply
+      .header('Content-Type', DOCX_MIME)
+      .header('Content-Disposition', `attachment; filename="${wordName(name)}"`)
+      .header('Cache-Control', 'no-store')
+      .send(bytes)
   })
 
   // ── Dashboard & reports ───────────────────────────────────────────────────

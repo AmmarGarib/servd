@@ -7328,9 +7328,14 @@ model HrPayslip {
 model HrLetterTemplate {
   id          String   @id @default(uuid())
   tenantId    String
-  key         String // offer_letter | confirmation_letter | …
+  key         String // offer_letter | confirmation_letter | … | custom_<hex> (HR's own letter)
   title       String
-  body        String
+  body        String // '' while a Word file is the letter
+  // HR's own Word file (owner, 2026-10-22): when set it IS the letter — its
+  // {{placeholders}} are filled for the chosen employee; print copy derived.
+  wordFile     Bytes?
+  wordFileName String?
+  custom       Boolean @default(false) // a letter HR added (not a built-in one)
   version     Int      @default(1)
   updatedById String?
   createdAt   DateTime @default(now())

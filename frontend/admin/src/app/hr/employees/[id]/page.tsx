@@ -334,7 +334,16 @@ function LettersTab({ p }: { p: Profile }) {
   return (
     <div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-        {letters.map((l) => <button key={l.key} className="rounded-xl p-3 text-left text-sm font-bold text-white/80 hover:bg-white/[0.05]" style={card} onClick={() => render.mutate(l.key)}>{l.title}</button>)}
+        {letters.map((l) => (
+          <div key={l.key} className="rounded-xl p-3 flex items-center justify-between gap-2" style={card}>
+            <span className="text-sm font-bold text-white/80">{l.title}</span>
+            <span className="flex gap-1.5 shrink-0">
+              <button className="text-xs font-bold text-white/60 hover:text-white" onClick={() => render.mutate(l.key)}>Print</button>
+              <button className="text-xs font-bold text-white/60 hover:text-white"
+                onClick={() => api.download(`/hr/letters/${l.key}/word?employeeId=${p.employee.id}`, `${`${l.title} ${p.employee.fullName}`.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-')}.docx`).catch((e: Error) => setMsg(e.message))}>Word</button>
+            </span>
+          </div>
+        ))}
       </div>
       {msg && <p className="text-xs text-s-amber mt-3">{msg}</p>}
     </div>

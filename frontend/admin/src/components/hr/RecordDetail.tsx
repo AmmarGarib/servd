@@ -329,7 +329,10 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
           <button className={btn} disabled={hire.isPending} onClick={() => hire.mutate()}>Create employee</button>
         )}
         {admin && (LETTERS_FOR[record.section] ?? []).map((k) => (
-          <button key={k} className={btnGhost} disabled={letter.isPending} onClick={() => letter.mutate(k)}>Print {human(k).toLowerCase()}</button>
+          <span key={k} className="inline-flex gap-1">
+            <button className={btnGhost} disabled={letter.isPending} onClick={() => letter.mutate(k)}>Print {human(k).toLowerCase()}</button>
+            <button className={btnGhost} title="The same letter as a Word file" onClick={() => api.download(`/hr/letters/${k}/word?recordId=${record.id}`, `${k.replace(/_/g, '-')}.docx`).catch(fail)}>Word</button>
+          </span>
         ))}
         {cancellable ? (
           <button className="ml-auto text-xs text-white/40 hover:text-s-red" disabled={cancel.isPending}

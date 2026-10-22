@@ -257,6 +257,22 @@ module id must be placed in a workspace in the same change.
   own department whatever is sent (403 for anyone else), files it in the HOD's
   company, and signs the HOD step by raising (`auto`) — it waits on HR, then
   management. Tests: `tests/hodRequisition.test.ts`.
+- **HR letters from Word files (owner, 2026-10-22: "It should give option to
+  HR to add letter in word file … employee details should be picked through
+  selected employee field on auto basis"; "We don't know HTML language").**
+  The ONE letters store stays `HrLetterTemplate` (per company): a letter is
+  the built-in wording, HR's typed wording (a normal text editor on HR →
+  Letters — never an HTML box) or HR's own Word file (`wordFile`, ≤700 KB,
+  so the Trash snapshot fits). HR may add its own letters (`custom`, key
+  `custom_<hex>`). Fields are typed in plain words — `{{Employee Name}}`
+  (`letters.ts LETTER_FIELDS`; a request's fields by their form label; the
+  old `{{employee.fullName}}` form still works). `lib/docx.ts` (no library)
+  fills a Word file across split runs in body, headers and footers and keeps
+  everything else byte-for-byte; it also makes the print copy and turns a
+  typed letter into Word. Routes: `POST /hr/letters`, `PUT|DELETE
+  /hr/letters/:key/word`, `GET /hr/letters/:key/word?employeeId|recordId`
+  (filled; none = the blank file), `GET /:key/preview`, `GET /letters/fields`.
+  Tests: `tests/hrLetterWord.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,
