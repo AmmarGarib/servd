@@ -151,7 +151,13 @@ async function record(section: string, data: Record<string, unknown>, co: SimCom
 async function decide(section: string, id: string, who: SimUser, extra: Record<string, unknown> = {}) {
   return ok(await sim.as(who, sim.A).post(`/hr/records/${section}/${id}/decide`, { decision: 'approved', ...extra }), 200)
 }
-const att = (employee: string, date: string, status: string) => record('attendance', { employee, date, status })
+/** A day HR keys by hand counts for payroll only once the CEO approves it (owner, 2026-10-20). */
+const att = async (employee: string, date: string, status: string) => {
+  const r = await record('attendance', { employee, date, status })
+  expect(r.status).toBe('submitted')
+  expect((await decide('attendance', r.id, sim.ceo)).status).toBe('approved')
+  return r
+}
 
 // ─── Expectations built as it goes ──────────────────────────────────────────
 
@@ -229,7 +235,10 @@ describe('Farah\'s loan and resignation (1 Oct)', () => {
     // HR raised it — HR cannot approve its own request.
     const own = await hr().post(`/hr/records/loan/${loan.id}/decide`, { decision: 'approved' })
     expect(own.statusCode, own.body).toBe(403)
-    await decide('loan', loan.id, sim.ceo)
+    // HR's own (non-last) step is signed by raising it (signHrStepRaisedByHr,
+    // owner 2026-10-21): the second person is management, at the last step,
+    // naming the bank (two banks).
+    expect((loan as { approvals?: Array<{ auto?: boolean }> }).approvals?.some((a) => a.auto), 'HR step signed by the raiser').toBe(true)
     const done = await decide('loan', loan.id, people.mgmtA!, { paidFrom: 'bank', bankAccountId: A.banks.main.id })
     expect(done.status).toBe('approved')
     st.loanId = loan.id
@@ -378,10 +387,12 @@ describe('Farah\'s full & final (21 Oct)', () => {
     expect((await hr(sim.B).post('/hr/final-settlement/calculate', { employeeId: emps['farah'], lastWorkingDay: '2026-10-20' })).statusCode).toBe(404)
   })
 
-  it('approved by the CEO (HR step) and management; the accrual balances and recovers the loan', async () => {
+  it('HR\'s step signed by raising it, approved by management; the accrual balances and recovers the loan', async () => {
     const { A } = sim
     ok(await hr().patch(`/hr/records/final_settlement/${st.fnfId}`, { data: st.fnf }), 200)
-    await decide('final_settlement', st.fnfId!, sim.ceo)
+    // HR raised it: its own (non-last) HR step is signed by raising it
+    // (signHrStepRaisedByHr, owner 2026-10-21); HR cannot decide the rest.
+    expect((await hr().post(`/hr/records/final_settlement/${st.fnfId}/decide`, { decision: 'approved' })).statusCode).toBe(403)
     const done = await decide('final_settlement', st.fnfId!, people.mgmtA!)
     expect(done.status).toBe('approved')
     const f = st.fnf!
