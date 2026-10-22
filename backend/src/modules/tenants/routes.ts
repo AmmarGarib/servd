@@ -734,6 +734,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.paymentClassification,
     // Shift corrections (2026-10-21): a set and its items follow their shift's company.
     tx.shiftCorrection, tx.shiftCorrectionItem,
+    // Sales sessions (2026-10-22): per brand, follow the brand's company.
+    tx.menuSession,
     // Customer money.
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
     // HR back office.

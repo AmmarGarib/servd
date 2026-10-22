@@ -147,9 +147,11 @@ describe('PPL-R2-01 Module Access closes the HR record back office', () => {
     expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id: bonusId } })).status).toBe('submitted')
     // Company B's HR sees nothing of A's record.
     expect((await call('hrB', 'POST', `/hr/records/payroll_adjustment/${bonusId}/decide`, { decision: 'approved' })).statusCode).toBe(404)
-    // HR who holds the module approves it.
-    expect(((await call('hina', 'GET', '/hr/approvals')).json() as Array<{ id: string }>).some((r) => r.id === bonusId)).toBe(true)
-    const ok = await call('hina', 'POST', `/hr/records/payroll_adjustment/${bonusId}/decide`, { decision: 'approved' })
+    // HR raised it, so its last HR step is the CEO's (owner, 2026-10-22: "Send last-step HR requests to the
+    // CEO"): another HR login, even holding the module, does not list or decide it; the CEO approves it.
+    expect(((await call('hina', 'GET', '/hr/approvals')).json() as Array<{ id: string }>).some((r) => r.id === bonusId)).toBe(false)
+    expect((await call('hina', 'POST', `/hr/records/payroll_adjustment/${bonusId}/decide`, { decision: 'approved' })).statusCode).toBe(403)
+    const ok = await call('ceo', 'POST', `/hr/records/payroll_adjustment/${bonusId}/decide`, { decision: 'approved' })
     expect(ok.statusCode).toBe(200)
     expect(ok.json().status).toBe('approved')
   })

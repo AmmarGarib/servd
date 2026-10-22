@@ -28,9 +28,9 @@ import type { ReportColumn, ReportRow, ReportTable } from '../../lib/reportExpor
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────
 
-export const FILTER_KEYS = ['users', 'waiters', 'orderTypes', 'categories', 'menuItems', 'sources', 'terminals', 'paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'q', 'items'] as const
+export const FILTER_KEYS = ['users', 'waiters', 'orderTypes', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals', 'paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'q', 'items', 'sessions'] as const
 export type FilterKey = (typeof FILTER_KEYS)[number]
-export const OPTION_KEYS = ['orderType', 'category', 'menuItem', 'tax', 'extraCharge', 'discount', 'payment', 'businessSource', 'waiterWise', 'userWise', 'taxableValue', 'includeNoCharge', 'vouchers', 'showCurrency', 'detail'] as const
+export const OPTION_KEYS = ['orderType', 'session', 'category', 'subCategory', 'menuItem', 'tax', 'extraCharge', 'discount', 'payment', 'businessSource', 'waiterWise', 'userWise', 'taxableValue', 'includeNoCharge', 'vouchers', 'showCurrency', 'detail'] as const
 export type OptionKey = (typeof OPTION_KEYS)[number]
 export const GROUP_BY_KEYS = ['payment_method', 'payment_type', 'order_by', 'settle_by', 'terminal', 'order_type'] as const
 export type GroupByKey = (typeof GROUP_BY_KEYS)[number]
@@ -65,21 +65,21 @@ export interface TillReportDef {
   printable: boolean
 }
 
-const SALES_FILTERS: FilterKey[] = ['users', 'waiters', 'orderTypes', 'categories', 'menuItems', 'sources', 'terminals', 'paymentMethods']
-const SETTLEMENT_FILTERS: FilterKey[] = ['paymentType', 'paymentMethods', 'orderBy', 'settleBy', 'terminals', 'orderTypes', 'q']
+const SALES_FILTERS: FilterKey[] = ['users', 'waiters', 'orderTypes', 'sessions', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals', 'paymentMethods']
+const SETTLEMENT_FILTERS: FilterKey[] = ['paymentType', 'paymentMethods', 'orderBy', 'settleBy', 'terminals', 'orderTypes', 'sessions', 'q']
 
 export const TILL_REPORTS: Record<TillReportId, TillReportDef> = {
   menu_item_sales_summary: { id: 'menu_item_sales_summary', title: 'Menu Item Sales Summary', filters: SALES_FILTERS, options: [], groupBy: null, printable: false },
   sales_detail: { id: 'sales_detail', title: 'Sales Detail', filters: [...SALES_FILTERS, 'q'], options: [], groupBy: null, printable: false },
   cashier_sales_detail: {
-    id: 'cashier_sales_detail', title: 'Cashier Sales Detail', filters: ['users', 'waiters', 'orderTypes', 'sources', 'terminals', 'paymentMethods'],
-    options: ['orderType', 'category', 'menuItem', 'tax', 'extraCharge', 'discount', 'payment', 'businessSource', 'waiterWise', 'userWise', 'taxableValue', 'includeNoCharge', 'vouchers'],
+    id: 'cashier_sales_detail', title: 'Cashier Sales Detail', filters: ['users', 'waiters', 'orderTypes', 'sessions', 'sources', 'terminals', 'paymentMethods'],
+    options: ['orderType', 'session', 'category', 'subCategory', 'menuItem', 'tax', 'extraCharge', 'discount', 'payment', 'businessSource', 'waiterWise', 'userWise', 'taxableValue', 'includeNoCharge', 'vouchers'],
     groupBy: null, printable: true,
   },
-  no_charge_item_detail: { id: 'no_charge_item_detail', title: 'No Charge Menu Item Sales Detail', filters: ['users', 'waiters', 'categories', 'menuItems', 'sources', 'terminals', 'q'], options: [], groupBy: null, printable: false },
-  no_charge_item_summary: { id: 'no_charge_item_summary', title: 'No Charge Menu Item Sales Summary', filters: ['users', 'waiters', 'categories', 'menuItems', 'sources', 'terminals'], options: [], groupBy: null, printable: false },
+  no_charge_item_detail: { id: 'no_charge_item_detail', title: 'No Charge Menu Item Sales Detail', filters: ['users', 'waiters', 'sessions', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals', 'q'], options: [], groupBy: null, printable: false },
+  no_charge_item_summary: { id: 'no_charge_item_summary', title: 'No Charge Menu Item Sales Summary', filters: ['users', 'waiters', 'sessions', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals'], options: [], groupBy: null, printable: false },
   payment_summary: {
-    id: 'payment_summary', title: 'Payment Summary', filters: ['paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'terminals', 'orderTypes', 'sources'],
+    id: 'payment_summary', title: 'Payment Summary', filters: ['paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'terminals', 'orderTypes', 'sessions', 'sources'],
     options: ['showCurrency', 'detail'], groupBy: [...GROUP_BY_KEYS], printable: false,
   },
   city_ledger_detail: { id: 'city_ledger_detail', title: 'City Ledger Detail', filters: ['q'], options: [], groupBy: null, printable: false },
@@ -88,13 +88,13 @@ export const TILL_REPORTS: Record<TillReportId, TillReportDef> = {
   closing_stock: { id: 'closing_stock', title: 'Closing Stock', filters: ['items'], options: [], groupBy: null, printable: false },
   settlement_detail: { id: 'settlement_detail', title: 'Settlement Detail', filters: SETTLEMENT_FILTERS, options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
   settlement_summary: { id: 'settlement_summary', title: 'Settlement Summary', filters: SETTLEMENT_FILTERS.filter((k) => k !== 'q'), options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
-  payment_detail: { id: 'payment_detail', title: 'Payment Detail', filters: ['paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'terminals', 'orderTypes', 'sources', 'q'], options: ['showCurrency'], groupBy: null, printable: false },
-  discount_detail: { id: 'discount_detail', title: 'Discount Detail', filters: ['users', 'waiters', 'orderTypes', 'sources', 'terminals', 'q'], options: ['showCurrency'], groupBy: null, printable: false },
-  tax_collection: { id: 'tax_collection', title: 'Tax Collection', filters: ['orderTypes', 'sources', 'terminals'], options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
-  tax_analysis: { id: 'tax_analysis', title: 'Tax Analysis', filters: ['orderTypes', 'sources', 'terminals'], options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
+  payment_detail: { id: 'payment_detail', title: 'Payment Detail', filters: ['paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'terminals', 'orderTypes', 'sessions', 'sources', 'q'], options: ['showCurrency'], groupBy: null, printable: false },
+  discount_detail: { id: 'discount_detail', title: 'Discount Detail', filters: ['users', 'waiters', 'orderTypes', 'sessions', 'sources', 'terminals', 'q'], options: ['showCurrency'], groupBy: null, printable: false },
+  tax_collection: { id: 'tax_collection', title: 'Tax Collection', filters: ['orderTypes', 'sessions', 'sources', 'terminals'], options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
+  tax_analysis: { id: 'tax_analysis', title: 'Tax Analysis', filters: ['orderTypes', 'sessions', 'sources', 'terminals'], options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
   city_ledger_summary: { id: 'city_ledger_summary', title: 'City Ledger Summary', filters: ['q'], options: ['showCurrency'], groupBy: null, printable: false },
   fiscal: { id: 'fiscal', title: 'Fiscal', filters: ['q'], options: [], groupBy: null, printable: false },
-  category_tax_collection: { id: 'category_tax_collection', title: 'Category Wise Tax Collection', filters: ['categories', 'orderTypes', 'sources', 'terminals'], options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
+  category_tax_collection: { id: 'category_tax_collection', title: 'Category Wise Tax Collection', filters: ['categories', 'subCategories', 'orderTypes', 'sessions', 'sources', 'terminals'], options: ['subCategory', 'showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
   driver_efficiency: { id: 'driver_efficiency', title: 'Driver Efficiency', filters: [], options: [], groupBy: null, printable: false },
   driver_deliveries: { id: 'driver_deliveries', title: 'Driver Deliveries', filters: ['q'], options: ['showCurrency'], groupBy: null, printable: false },
 }
@@ -125,7 +125,7 @@ export interface TillSection { title: string | null; columns: TillColumn[]; rows
 export interface TillReport { id: TillReportId; title: string; period: string; outlets: string[]; sections: TillSection[]; notes: string[] }
 
 export interface TillFilters {
-  users?: string[]; waiters?: string[]; orderTypes?: OrderTypeKey[]; categories?: string[]; menuItems?: string[]
+  users?: string[]; waiters?: string[]; orderTypes?: OrderTypeKey[]; categories?: string[]; subCategories?: string[]; menuItems?: string[]; sessions?: string[]
   sources?: string[]; terminals?: string[]; paymentMethods?: string[]; paymentType?: Array<'sale' | 'refund'>
   orderBy?: string[]; settleBy?: string[]; q?: string; items?: string[]
 }
@@ -191,7 +191,10 @@ async function orderFilter(sq: SalesQuery, f: TillFilters, applies: FilterKey[],
   if (on('sources') && has(f.sources)) and.push({ source: { in: f.sources as never } })
   if (on('terminals') && has(f.terminals)) and.push({ OR: [{ shiftId: { in: f.terminals } }, { payments: { some: { shiftId: { in: f.terminals } } } }] })
   if (on('paymentMethods') && has(f.paymentMethods)) and.push({ payments: { some: { status: 'paid', method: { in: f.paymentMethods as PaymentMethod[] } } } })
-  if (on('categories') && has(f.categories)) and.push({ items: { some: { status: { not: 'voided' }, menuItem: { categoryId: { in: f.categories } } } } })
+  // A main category takes in its sub-categories (2026-10-22).
+  if (on('categories') && has(f.categories)) and.push({ items: { some: { status: { not: 'voided' }, menuItem: { OR: [{ categoryId: { in: f.categories } }, { category: { parentId: { in: f.categories } } }] } } } })
+  if (on('subCategories') && has(f.subCategories)) and.push({ items: { some: { status: { not: 'voided' }, menuItem: { categoryId: { in: f.subCategories } } } } })
+  if (on('sessions') && has(f.sessions)) and.push({ id: { in: await orderIdsInSessions(sq, f.sessions) } })
   if (on('menuItems') && has(f.menuItems)) and.push({ items: { some: { status: { not: 'voided' }, menuItemId: { in: f.menuItems } } } })
   if (on('q') && f.q) {
     const q = f.q.trim()
@@ -234,7 +237,7 @@ const ORDER_SELECT = {
   waiter: { select: { fullName: true } },
   items: {
     where: { status: { not: 'voided' as const } },
-    select: { id: true, name: true, quantity: true, unitPriceCents: true, menuItemId: true, menuItem: { select: { categoryId: true, category: { select: { name: true } } } } },
+    select: { id: true, name: true, quantity: true, unitPriceCents: true, menuItemId: true, menuItem: { select: { categoryId: true, category: { select: { name: true, parentId: true, parent: { select: { name: true } } } } } } },
   },
   payments: { where: { status: 'paid' as const, method: { not: 'split' as const } }, select: { method: true, amountCents: true, gatewayMeta: true, shift: { select: { user: { select: { name: true } } } } } },
   giftCardRedemptions: { where: { amountCents: { gt: 0 } }, select: { amountCents: true } },
@@ -251,7 +254,7 @@ async function loadOrders(sq: SalesQuery, notes: string[]): Promise<SoldOrder[]>
   return rows
 }
 
-interface Line { orderId: string; itemKey: string; menuItemId: string | null; categoryId: string | null; name: string; category: string; qty: number; gross: number; discount: number; tax: number }
+interface Line { orderId: string; itemKey: string; menuItemId: string | null; categoryId: string | null; parentCategoryId: string | null; name: string; category: string; subCategory: string; qty: number; gross: number; discount: number; tax: number }
 
 /**
  * An order's live lines with the bill's discount and GST shared across them
@@ -268,14 +271,53 @@ function linesOf(o: SoldOrder): Line[] {
     const d = discounts[n]!, t = taxes[n]!
     return {
       orderId: o.id, itemKey: i.menuItemId ?? `name:${i.name}`, menuItemId: i.menuItemId, categoryId: i.menuItem?.categoryId ?? null,
-      name: i.name, category: i.menuItem?.category?.name ?? 'Uncategorised', qty: i.quantity, gross: gross[n]!, discount: d, tax: t,
+      parentCategoryId: i.menuItem?.category?.parentId ?? null,
+      // Category = the main category; Sub category = the item's own when it sits under one (2026-10-22).
+      name: i.name, category: i.menuItem?.category?.parent?.name ?? i.menuItem?.category?.name ?? 'Uncategorised',
+      subCategory: i.menuItem?.category?.parent ? i.menuItem.category.name : NO_SUB,
+      qty: i.quantity, gross: gross[n]!, discount: d, tax: t,
     }
   })
 }
 function lineFilter(f: TillFilters, applies: FilterKey[]) {
   const cats = applies.includes('categories') && has(f.categories) ? new Set(f.categories) : null
+  const subs = applies.includes('subCategories') && has(f.subCategories) ? new Set(f.subCategories) : null
   const items = applies.includes('menuItems') && has(f.menuItems) ? new Set(f.menuItems) : null
-  return (l: Line) => (!cats || (l.categoryId != null && cats.has(l.categoryId))) && (!items || (l.menuItemId != null && items.has(l.menuItemId)))
+  return (l: Line) => (!cats || (l.categoryId != null && cats.has(l.categoryId)) || (l.parentCategoryId != null && cats.has(l.parentCategoryId)))
+    && (!subs || (l.categoryId != null && subs.has(l.categoryId)))
+    && (!items || (l.menuItemId != null && items.has(l.menuItemId)))
+}
+
+const NO_SUB = '—'
+
+// ─── Sessions (2026-10-22): named times of day per brand (menu/routes.ts) ────
+
+export const NO_SESSION = 'No session'
+type SessionOf = (conceptId: string, at: Date) => { id: string; name: string } | null
+/** Minute of the Karachi day (UTC+5, no DST). */
+const pktMinute = (d: Date) => ((Math.floor(d.getTime() / 60_000) + 300) % 1440 + 1440) % 1440
+const hm = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
+/** The session a sale falls into, by the Karachi time it was placed; the brands' ACTIVE sessions (they never overlap). */
+export async function sessionResolver(conceptIds: string[]): Promise<SessionOf> {
+  const rows = await prisma.menuSession.findMany({ where: { conceptId: { in: conceptIds }, isActive: true }, select: { id: true, conceptId: true, name: true, startTime: true, endTime: true } })
+  const by = new Map<string, typeof rows>()
+  for (const r of rows) by.set(r.conceptId, [...(by.get(r.conceptId) ?? []), r])
+  return (conceptId, at) => {
+    const m = pktMinute(at)
+    const hit = (by.get(conceptId) ?? []).find((r) => {
+      const a = hm(r.startTime), b = hm(r.endTime)
+      return a < b ? m >= a && m < b : m >= a || m < b
+    })
+    return hit ? { id: hit.id, name: hit.name } : null
+  }
+}
+/** The sold orders in scope (no other filter) placed inside one of the given sessions. */
+async function orderIdsInSessions(sq: SalesQuery, sessionIds: string[]): Promise<string[]> {
+  const conceptIds = sq.conceptIds ?? (sq.conceptId ? [sq.conceptId] : [])
+  const of = await sessionResolver(conceptIds)
+  const want = new Set(sessionIds)
+  const rows = await prisma.order.findMany({ where: soldOrderWhere({ ...sq, extra: null }), select: { id: true, conceptId: true, placedAt: true } })
+  return rows.filter((o) => { const s = of(o.conceptId, o.placedAt); return !!s && want.has(s.id) }).map((o) => o.id)
 }
 
 const receiptNoOf = (o: SoldOrder) => o.fiscalDocuments[0]?.fiscalNumber ?? o.taxInvoices[0]?.invoiceNumber ?? ''
@@ -334,19 +376,19 @@ async function scopedQuery(input: TillReportInput, def: TillReportDef, nc: NcMod
 async function menuItemSummary(input: TillReportInput, def: TillReportDef, notes: string[]): Promise<TillSection[]> {
   const orders = await loadOrders(await scopedQuery(input, def, 'any'), notes)
   const keep = lineFilter(input.filters, def.filters)
-  const by = new Map<string, { category: string; item: string; qty: number; gross: number; discount: number; tax: number }>()
+  const by = new Map<string, { category: string; subCategory: string; item: string; qty: number; gross: number; discount: number; tax: number }>()
   for (const o of orders) for (const l of linesOf(o)) {
     if (!keep(l)) continue
-    const k = `${l.category}\u0000${l.itemKey}`
-    const s = by.get(k) ?? { category: l.category, item: l.name, qty: 0, gross: 0, discount: 0, tax: 0 }
+    const k = `${l.category}\u0000${l.subCategory}\u0000${l.itemKey}`
+    const s = by.get(k) ?? { category: l.category, subCategory: l.subCategory, item: l.name, qty: 0, gross: 0, discount: 0, tax: 0 }
     s.qty += l.qty; s.gross += l.gross; s.discount += l.discount; s.tax += l.tax
     by.set(k, s)
   }
-  const columns = [col('item', 'Menu item'), col('qty', 'Qty', 'number'), col('grossCents', 'Gross', 'cents'), col('discountCents', 'Discount', 'cents'), col('netCents', 'Net', 'cents'), col('taxCents', 'Tax', 'cents')]
+  const columns = [col('item', 'Menu item'), col('subCategory', 'Sub category'), col('qty', 'Qty', 'number'), col('grossCents', 'Gross', 'cents'), col('discountCents', 'Discount', 'cents'), col('netCents', 'Net', 'cents'), col('taxCents', 'Tax', 'cents')]
   const cats = new Map<string, Array<Record<string, Cell>>>()
-  for (const s of [...by.values()].sort((a, b) => byLabel(a.category, b.category) || b.qty - a.qty || byLabel(a.item, b.item))) {
+  for (const s of [...by.values()].sort((a, b) => byLabel(a.category, b.category) || byLabel(a.subCategory, b.subCategory) || b.qty - a.qty || byLabel(a.item, b.item))) {
     const rows = cats.get(s.category) ?? []
-    rows.push({ item: s.item, qty: s.qty, grossCents: s.gross, discountCents: s.discount, netCents: s.gross - s.discount, taxCents: s.tax })
+    rows.push({ item: s.item, subCategory: s.subCategory, qty: s.qty, grossCents: s.gross, discountCents: s.discount, netCents: s.gross - s.discount, taxCents: s.tax })
     cats.set(s.category, rows)
   }
   const tot = (rows: Array<Record<string, Cell>>, label: string): Record<string, Cell> => ({
@@ -356,7 +398,7 @@ async function menuItemSummary(input: TillReportInput, def: TillReportDef, notes
   const all = [...cats.values()].flat()
   sections.push({
     title: 'All categories',
-    columns: [col('category', 'Category'), ...columns.slice(1)],
+    columns: [col('category', 'Category'), ...columns.slice(2)],
     rows: [...cats].map(([category, rows]) => { const t = tot(rows, category); return { category, qty: t.qty, grossCents: t.grossCents, discountCents: t.discountCents, netCents: t.netCents, taxCents: t.taxCents } }),
     totals: (() => { const t = tot(all, 'TOTAL'); return { category: 'TOTAL', qty: t.qty, grossCents: t.grossCents, discountCents: t.discountCents, netCents: t.netCents, taxCents: t.taxCents } })(),
   })
@@ -366,12 +408,13 @@ async function menuItemSummary(input: TillReportInput, def: TillReportDef, notes
 
 async function salesDetail(input: TillReportInput, def: TillReportDef, notes: string[]): Promise<TillSection[]> {
   const orders = await loadOrders(await scopedQuery(input, def, 'any'), notes)
+  const sessionOf = await sessionResolver(input.conceptIds)
   const rows = orders.map((o) => {
     const lines = linesOf(o)
     const methods = [...new Set(o.payments.map((p) => tenderLabel(p.method)))]
     if (o.walletAmountCents > 0) methods.push(tenderLabel('wallet'))
     return {
-      orderNo: orderRefOf(o.id), dateTime: pktStamp(o.completedAt ?? o.placedAt), receiptNo: receiptNoOf(o), orderType: ORDER_TYPE_LABEL[typeOf(o)],
+      orderNo: orderRefOf(o.id), dateTime: pktStamp(o.completedAt ?? o.placedAt), session: sessionOf(o.conceptId, o.placedAt)?.name ?? NO_SESSION, receiptNo: receiptNoOf(o), orderType: ORDER_TYPE_LABEL[typeOf(o)],
       table: o.table?.label ?? '', guest: guestOf(o), user: o.posStaff?.name ?? '', waiter: o.waiter?.fullName ?? '',
       items: lines.reduce((s, l) => s + l.qty, 0),
       grossCents: lines.reduce((s, l) => s + l.gross, 0), discountCents: o.discountCents + o.promoDiscountCents,
@@ -385,7 +428,7 @@ async function salesDetail(input: TillReportInput, def: TillReportDef, notes: st
   return [{
     title: null,
     columns: [
-      col('orderNo', 'Order No'), col('dateTime', 'Date / time'), col('receiptNo', 'Receipt No'), col('orderType', 'Order type'), col('table', 'R/T No'),
+      col('orderNo', 'Order No'), col('dateTime', 'Date / time'), col('session', 'Session'), col('receiptNo', 'Receipt No'), col('orderType', 'Order type'), col('table', 'R/T No'),
       col('guest', 'Guest'), col('user', 'User'), col('waiter', 'Waiter'), col('items', 'Items', 'number'), col('grossCents', 'Gross', 'cents'),
       col('discountCents', 'Discount', 'cents'), col('serviceChargeCents', 'Service charge', 'cents'), col('deliveryFeeCents', 'Delivery fee', 'cents'),
       col('taxCents', 'Tax', 'cents'), col('totalCents', 'Total', 'cents'), col('payments', 'Payment methods'),
@@ -409,6 +452,7 @@ async function cashierDetail(input: TillReportInput, def: TillReportDef, notes: 
   userIds.sort((a, b) => byLabel(names.get(a)!, names.get(b)!))
 
   const movements = o.has('vouchers') ? await drawerMovements(input) : []
+  const sessionOf = await sessionResolver(input.conceptIds)
   const block = async (uid: string | null | undefined, list: SoldOrder[]): Promise<Array<Record<string, Cell>>> => {
     const userExtra: Prisma.OrderWhereInput | null = uid === undefined ? null : { posStaffId: uid }
     const extra = [sq.extra, userExtra].filter((x): x is Prisma.OrderWhereInput => !!x)
@@ -433,7 +477,9 @@ async function cashierDetail(input: TillReportInput, def: TillReportDef, notes: 
       for (const [line, s] of [...g].sort((a, b) => byLabel(a[0], b[0]))) rows.push({ breakdown, line, count: s.count, amountCents: s.amount })
     }
     if (o.has('orderType')) group('Order type', (x) => ORDER_TYPE_LABEL[typeOf(x)])
+    if (o.has('session')) group('Session', (x) => sessionOf(x.conceptId, x.placedAt)?.name ?? NO_SESSION)
     if (o.has('category')) lineGroup('Category', (l) => l.category)
+    if (o.has('subCategory')) lineGroup('Sub category', (l) => (l.subCategory === NO_SUB ? `${l.category} (no sub category)` : `${l.category} › ${l.subCategory}`))
     if (o.has('menuItem')) lineGroup('Menu item', (l) => l.name)
     if (o.has('tax')) group('Tax', (x) => (x.taxRatePct != null ? `GST @ ${x.taxRatePct}%` : 'GST'), (x) => x.taxCents)
     if (o.has('taxableValue')) rows.push({ breakdown: 'Taxable value', line: 'Sales ex-GST, ex-tip', count: list.length, amountCents: list.reduce((s, x) => s + x.totalCents + x.walletAmountCents - x.taxCents - x.tipCents, 0) })
@@ -941,19 +987,22 @@ async function taxAnalysis(input: TillReportInput, def: TillReportDef, notes: st
 async function categoryTax(input: TillReportInput, def: TillReportDef, notes: string[]): Promise<TillSection[]> {
   const orders = await loadOrders(await scopedQuery(input, def, ncModeOf(input, def)), notes)
   const keep = lineFilter(input.filters, def.filters)
-  const by = new Map<string, { category: string; qty: number; gross: number; discount: number; tax: number }>()
+  // "Sub category" ticked (2026-10-22): one row per main category › sub category.
+  const bySub = input.opts.has('subCategory')
+  const by = new Map<string, { category: string; subCategory: string; qty: number; gross: number; discount: number; tax: number }>()
   for (const o of orders) for (const l of linesOf(o)) {
     if (!keep(l)) continue
-    const s = by.get(l.category) ?? { category: l.category, qty: 0, gross: 0, discount: 0, tax: 0 }
+    const k = bySub ? `${l.category}\u0000${l.subCategory}` : l.category
+    const s = by.get(k) ?? { category: l.category, subCategory: bySub ? l.subCategory : '', qty: 0, gross: 0, discount: 0, tax: 0 }
     s.qty += l.qty; s.gross += l.gross; s.discount += l.discount; s.tax += l.tax
-    by.set(l.category, s)
+    by.set(k, s)
   }
-  const rows = [...by.values()].sort((a, b) => byLabel(a.category, b.category))
-    .map((s) => ({ category: s.category, qty: s.qty, grossCents: s.gross, discountCents: s.discount, taxableCents: s.gross - s.discount, taxCents: s.tax }))
+  const rows = [...by.values()].sort((a, b) => byLabel(a.category, b.category) || byLabel(a.subCategory, b.subCategory))
+    .map((s) => ({ category: s.category, ...(bySub && { subCategory: s.subCategory }), qty: s.qty, grossCents: s.gross, discountCents: s.discount, taxableCents: s.gross - s.discount, taxCents: s.tax }))
   notes.push('Each bill’s GST (less the delivery fee’s GST) is shared across its lines by value after discount (lib/pricing.ts allocateTaxCents), then summed per category.')
   return [{
     title: null,
-    columns: [col('category', 'Category'), col('qty', 'Qty', 'number'), col('grossCents', 'Gross', 'cents'), col('discountCents', 'Discount', 'cents'), col('taxableCents', 'Taxable value', 'cents'), col('taxCents', 'GST', 'cents')],
+    columns: [col('category', 'Category'), ...(bySub ? [col('subCategory', 'Sub category')] : []), col('qty', 'Qty', 'number'), col('grossCents', 'Gross', 'cents'), col('discountCents', 'Discount', 'cents'), col('taxableCents', 'Taxable value', 'cents'), col('taxCents', 'GST', 'cents')],
     rows, totals: { category: 'TOTAL', ...Object.fromEntries(['qty', 'grossCents', 'discountCents', 'taxableCents', 'taxCents'].map((k) => [k, sumKey(rows, k)])) },
   }]
 }

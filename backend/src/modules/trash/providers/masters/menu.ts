@@ -127,6 +127,7 @@ const category: TrashProvider = {
   async references(tx, entry) {
     return live([
       ref('Menu items (including deleted)', await tx.menuItem.count({ where: { categoryId: entry.entityId } })),
+      ref('Sub-categories (including deleted)', await tx.category.count({ where: { parentId: entry.entityId } })),
       ref('Section discounts', await tx.sectionDiscount.count({ where: { categoryId: entry.entityId } })),
     ])
   },

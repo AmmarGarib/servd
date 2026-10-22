@@ -79,16 +79,16 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
     const company = await scopeTenantWhere(req, 'read')
     const outlets = await prisma.concept.findMany({ where: { deletedAt: null, ...company }, select: { id: true, name: true }, orderBy: { name: 'asc' } })
     const { conceptIds, tenantIds } = await ownedBrands(req, q['conceptIds'], false)
-    const empty = { users: [], waiters: [], categories: [], menuItems: [], terminals: [], items: [] }
+    const empty = { users: [], waiters: [], categories: [], subCategories: [], sessions: [], menuItems: [], terminals: [], items: [] }
     if (conceptIds.length === 0) return { outlets, ...empty, ...STATIC_LOOKUPS }
     // Users / waiters / drawers are read from the brands' orders in the window (default: the last 31 days).
     const { from, to } = reportDateRange(q['dateFrom'], q['dateTo'], 31)
     const window = { placedAt: { gte: from, lte: to } }
     const orderWhere = { conceptId: { in: conceptIds }, deletedAt: null, ...window }
-    const [staff, waiters, categories, menuItems, shifts, items] = await Promise.all([
+    const [staff, waiters, allCategories, menuItems, shifts, items, sessions] = await Promise.all([
       prisma.order.findMany({ where: { ...orderWhere, posStaffId: { not: null } }, distinct: ['posStaffId'], select: { posStaff: { select: { id: true, name: true } } } }),
       prisma.order.findMany({ where: { ...orderWhere, waiterEmployeeId: { not: null } }, distinct: ['waiterEmployeeId'], select: { waiter: { select: { id: true, fullName: true, tenantId: true } } } }),
-      prisma.category.findMany({ where: { conceptId: { in: conceptIds }, deletedAt: null }, select: { id: true, name: true, conceptId: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+      prisma.category.findMany({ where: { conceptId: { in: conceptIds }, deletedAt: null }, select: { id: true, name: true, conceptId: true, parentId: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
       prisma.menuItem.findMany({ where: { conceptId: { in: conceptIds }, deletedAt: null }, select: { id: true, name: true, categoryId: true }, orderBy: { name: 'asc' } }),
       prisma.shift.findMany({
         where: {
@@ -99,7 +99,12 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
         orderBy: { openedAt: 'desc' }, take: 500,
       }),
       prisma.inventoryItem.findMany({ where: { tenantId: { in: tenantIds }, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      // Sales sessions (2026-10-22): the brands' active ones.
+      prisma.menuSession.findMany({ where: { conceptId: { in: conceptIds }, isActive: true }, select: { id: true, name: true, conceptId: true, startTime: true, endTime: true }, orderBy: [{ sortOrder: 'asc' }, { startTime: 'asc' }] }),
     ])
+    // Categories = main categories; sub-categories carry their main category (parentId).
+    const categories = allCategories.filter((c) => !c.parentId).map(({ parentId: _p, ...c }) => c)
+    const subCategories = allCategories.filter((c) => c.parentId)
     const users = new Map<string, string>()
     for (const s of staff) if (s.posStaff) users.set(s.posStaff.id, s.posStaff.name)
     for (const s of shifts) users.set(s.user.id, s.user.name)
@@ -109,7 +114,7 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
       // A waiter is an HR employee of the order's company — never another company's.
       waiters: waiters.map((w) => w.waiter).filter((w): w is NonNullable<typeof w> => !!w && tenantIds.includes(w.tenantId))
         .map((w) => ({ id: w.id, name: w.fullName })).sort((a, b) => a.name.localeCompare(b.name)),
-      categories, menuItems,
+      categories, subCategories, sessions, menuItems,
       terminals: shifts.map((s) => ({ id: s.id, label: terminalLabel(s) })),
       items,
       ...STATIC_LOOKUPS,
@@ -125,7 +130,7 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
     const brands = await ownedBrands(req, q['conceptIds'], true)
 
     const filters: TillFilters = {
-      users: ids(q, 'users'), waiters: ids(q, 'waiters'), categories: ids(q, 'categories'), menuItems: ids(q, 'menuItems'),
+      users: ids(q, 'users'), waiters: ids(q, 'waiters'), categories: ids(q, 'categories'), subCategories: ids(q, 'subCategories'), sessions: ids(q, 'sessions'), menuItems: ids(q, 'menuItems'),
       terminals: ids(q, 'terminals'), orderBy: ids(q, 'orderBy'), settleBy: ids(q, 'settleBy'), items: ids(q, 'items'),
       orderTypes: oneOf<OrderTypeKey>(q, 'orderTypes', ORDER_TYPES), sources: oneOf(q, 'sources', SOURCES),
       paymentMethods: oneOf(q, 'paymentMethods', PAYMENT_METHODS), paymentType: oneOf(q, 'paymentType', PAYMENT_TYPES),

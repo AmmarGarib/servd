@@ -44,7 +44,67 @@ const createCategorySchema = z.object({
   sortOrder: z.number().int().default(0),
   timeRestrictionStart: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   timeRestrictionEnd: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  // Sub-category (2026-10-22): the top-level category of the same brand it sits under; null = top level.
+  parentId: z.string().min(1).max(100).nullable().optional(), // resolved inside the brand (assertParentOk)
 })
+
+/**
+ * A sub-category's parent: a live, TOP-LEVEL category of the same brand, never
+ * itself, and only for a category with no sub-categories of its own (one
+ * level). Another brand's or company's category reads as not found (422).
+ */
+async function assertParentOk(conceptId: string, parentId: string | null | undefined, selfId?: string): Promise<void> {
+  if (!parentId) return
+  if (parentId === selfId) throw new AppError('PARENT_IS_SELF', 'A category cannot sit under itself', 422)
+  const parent = await prisma.category.findFirst({ where: { id: parentId, conceptId, deletedAt: null }, select: { parentId: true } })
+  if (!parent) throw new AppError('PARENT_NOT_IN_BRAND', 'Pick a category of the same brand to put this under', 422)
+  if (parent.parentId) throw new AppError('PARENT_IS_SUBCATEGORY', 'A sub-category cannot have sub-categories of its own — pick a main category', 422)
+  if (selfId && await prisma.category.count({ where: { parentId: selfId, deletedAt: null } })) {
+    throw new AppError('CATEGORY_HAS_SUBCATEGORIES', 'This category has sub-categories of its own, so it cannot go under another one', 422)
+  }
+}
+
+/** The partial unique index (one live name per brand) → 409, not a 500. */
+async function createSessionOr409<T>(fn: () => Promise<T>): Promise<T> {
+  try { return await fn() } catch (e) {
+    if ((e as { code?: string }).code === 'P2002' || /menu_sessions_concept_name_active/.test(String((e as Error).message))) {
+      throw new AppError('SESSION_NAME_TAKEN', 'This brand already has a session with that name', 409)
+    }
+    throw e
+  }
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
+const sessionSchema = z.object({
+  conceptId: z.string().uuid(),
+  name: z.string().trim().min(1).max(60),
+  startTime: z.string().regex(HHMM, 'Use HH:MM, 24-hour'),
+  endTime: z.string().regex(HHMM, 'Use HH:MM, 24-hour'),
+  sortOrder: z.number().int().min(0).max(999).default(0),
+  isActive: z.boolean().default(true),
+})
+const minutesOf = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
+/** The minutes of the day a session covers, as [from, to) spans (one, or two when it runs past midnight). */
+function spansOf(start: string, end: string): Array<[number, number]> {
+  const a = minutesOf(start), b = minutesOf(end)
+  return a < b ? [[a, b]] : [[a, 1440], [0, b]]
+}
+/** 409 SESSION_NAME_TAKEN when another live session of the brand has the name (any case); the partial unique index backs it. */
+async function assertNameFree(conceptId: string, name: string, selfId?: string): Promise<void> {
+  const clash = await prisma.menuSession.findFirst({ where: { conceptId, isActive: true, name: { equals: name.trim(), mode: 'insensitive' }, ...(selfId && { id: { not: selfId } }) }, select: { id: true } })
+  if (clash) throw new AppError('SESSION_NAME_TAKEN', 'This brand already has a session with that name', 409)
+}
+
+/** 422 SESSION_OVERLAP when the times cross another live session of the brand. */
+async function assertNoOverlap(conceptId: string, start: string, end: string, selfId?: string): Promise<void> {
+  const others = await prisma.menuSession.findMany({ where: { conceptId, isActive: true, ...(selfId && { id: { not: selfId } }) } })
+  const mine = spansOf(start, end)
+  for (const o of others) {
+    if (spansOf(o.startTime, o.endTime).some(([a, b]) => mine.some(([c, d]) => a < d && c < b))) {
+      throw new AppError('SESSION_OVERLAP', `These times overlap "${o.name}" (${o.startTime}–${o.endTime}). Sessions of a brand cannot overlap.`, 422)
+    }
+  }
+}
 
 const createModifierGroupSchema = z.object({
   menuItemId: z.string().uuid(),
@@ -285,6 +345,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
     // row in a company that isn't their primary (head-office staff servicing
     // multiple restaurants — common pattern for procurement + finance).
     await assertConceptOwned(req, body.conceptId, 'create')
+    await assertParentOk(body.conceptId, body.parentId)
     const category = await prisma.category.create({ data: body })
     return reply.status(201).send(category)
   })
@@ -304,6 +365,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in a company you have access to' } })
       const { conceptId, ...data } = body
       assertSameConcept(owned.conceptId, conceptId)
+      if (data.parentId !== undefined) await assertParentOk(owned.conceptId, data.parentId, owned.id)
       return prisma.category.update({ where: { id: req.params.id }, data })
     },
   )
@@ -322,13 +384,19 @@ export async function menuRoutes(fastify: FastifyInstance) {
           deletedAt: null,
           concept: { tenantId: { in: req.staffUser!.memberTenantIds }, deletedAt: null },
         },
-        include: { _count: { select: { items: { where: { deletedAt: null } } } }, concept: { select: { tenantId: true } } },
+        include: { _count: { select: { items: { where: { deletedAt: null } }, children: { where: { deletedAt: null } } } }, concept: { select: { tenantId: true } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in a company you have access to' } })
       if (owned._count.items > 0) {
         return reply.status(409).send({ error: {
           code: 'CATEGORY_NOT_EMPTY',
           message: `Delete or move the ${owned._count.items} item(s) in this category first.`,
+        }})
+      }
+      if (owned._count.children > 0) {
+        return reply.status(409).send({ error: {
+          code: 'CATEGORY_HAS_SUBCATEGORIES',
+          message: `Delete or move the ${owned._count.children} sub-categor${owned._count.children === 1 ? 'y' : 'ies'} under this category first.`,
         }})
       }
       await prisma.$transaction(async (tx) => {
@@ -341,6 +409,39 @@ export async function menuRoutes(fastify: FastifyInstance) {
       return reply.status(204).send()
     },
   )
+
+  // ─── Sales sessions (2026-10-22) ───────────────────────────────────────────
+  // Per brand. Read by anyone who reads the brand's menu (the till's reports
+  // read them too); written by managers. No delete: switch a session off.
+
+  fastify.get<{ Querystring: { conceptId?: string } }>('/sessions', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const { conceptId } = z.object({ conceptId: z.string().uuid() }).parse(req.query)
+    await assertConceptOwned(req, conceptId, 'read')
+    return prisma.menuSession.findMany({ where: { conceptId }, orderBy: [{ isActive: 'desc' }, { sortOrder: 'asc' }, { startTime: 'asc' }] })
+  })
+
+  fastify.post('/sessions', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+    const body = sessionSchema.parse(req.body)
+    const concept = await assertConceptOwned(req, body.conceptId, 'create')
+    if (body.startTime === body.endTime) throw new AppError('SESSION_EMPTY', 'Start and end cannot be the same time', 422)
+    if (body.isActive) { await assertNameFree(body.conceptId, body.name); await assertNoOverlap(body.conceptId, body.startTime, body.endTime) }
+    if (!concept.tenantId) throw new AppError('BRAND_HAS_NO_COMPANY', 'This brand has no company yet', 422)
+    const tenantId = concept.tenantId
+    const row = await createSessionOr409(() => prisma.menuSession.create({ data: { ...body, tenantId } }))
+    return reply.status(201).send(row)
+  })
+
+  fastify.patch<{ Params: { id: string } }>('/sessions/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const body = sessionSchema.partial().parse(req.body)
+    const owned = await prisma.menuSession.findFirst({ where: { id: req.params.id, tenantId: { in: req.staffUser!.memberTenantIds } } })
+    if (!owned) throw new NotFoundError('Session', req.params.id)
+    const { conceptId, ...data } = body
+    assertSameConcept(owned.conceptId, conceptId)
+    const next = { ...owned, ...data }
+    if (next.startTime === next.endTime) throw new AppError('SESSION_EMPTY', 'Start and end cannot be the same time', 422)
+    if (next.isActive) { await assertNameFree(owned.conceptId, next.name, owned.id); await assertNoOverlap(owned.conceptId, next.startTime, next.endTime, owned.id) }
+    return createSessionOr409(() => prisma.menuSession.update({ where: { id: owned.id }, data }))
+  })
 
   // ─── Modifier groups ───────────────────────────────────────────────────────
 

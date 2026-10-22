@@ -462,9 +462,9 @@ export const ordersApi = {
 
 export const menuApi = {
   getMenu: (conceptId: string) => api.get<Category[]>(`/menu/${conceptId}`),
-  createCategory: (body: { conceptId: string; name: string; sortOrder?: number }) =>
+  createCategory: (body: { conceptId: string; name: string; sortOrder?: number; parentId?: string | null }) =>
     api.post<Category>('/menu/categories', body),
-  updateCategory: (id: string, body: Partial<{ name: string; sortOrder: number }>) =>
+  updateCategory: (id: string, body: Partial<{ name: string; sortOrder: number; parentId: string | null }>) =>
     api.patch<Category>(`/menu/categories/${id}`, body),
   deleteCategory: (id: string) => api.delete<void>(`/menu/categories/${id}`),
   createItem: (body: unknown) => api.post<MenuItem>('/menu/items', body),
@@ -587,6 +587,8 @@ export interface Category {
   id: string
   name: string
   sortOrder: number
+  /** Sub-category (2026-10-22): the main category it sits under; null = a main category. */
+  parentId?: string | null
   items: MenuItem[]
 }
 

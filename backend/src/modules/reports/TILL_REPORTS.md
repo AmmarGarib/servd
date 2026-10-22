@@ -97,7 +97,17 @@ Decisions the contract left open (2026-10-22):
 FilterKey: `users` (who rang: Order.posStaffId) · `waiters` (Order.waiterEmployeeId) · `orderTypes` (dine_in|takeout|delivery|no_charge) · `categories` · `menuItems` · `sources` (Order.source + till delivery: servd|pos|cart|manual) · `terminals` (= drawers: Shift ids of the period) · `paymentMethods` (cash|card|raast|on_account|comp|…) · `paymentType` (sale|refund) · `orderBy` (users) · `settleBy` (users = the drawer owner, Shift.userId of the payment's shift) · `q` (search: order no / receipt no / guest) · `items` (stock items, stock reports).
 OptionKey (Cashier Sales Detail): `orderType` · `category` · `menuItem` · `tax` · `extraCharge` (service charge + delivery fee) · `discount` · `payment` · `businessSource` · `waiterWise` · `userWise` · `taxableValue` (show ex-tax value) · `includeNoCharge` (comped orders counted; default off) · `vouchers` (the drawers' cash movements: payouts = expense, pay-ins = income). Payment Summary option: `showCurrency` (prefix PKR) · `detail`.
 GroupByKey (Payment Summary "Select Payment"): `payment_method` (default) · `payment_type` · `order_by` · `settle_by` · `terminal` · `order_type`.
-Not in servd's data (owner asked; do NOT invent): sub category, menu subgroup, session. Leave them out of the catalog.
+**Sub category and session (owner, 2026-10-22: "Yes, add sub-categories and sessions").** Sub category = a
+`Category` with `parentId` (one level, same brand; menu/routes.ts). In every line report Category = the MAIN
+category (the parent when there is one) and Sub category = the item's own category when it sits under one ("—"
+otherwise). The `categories` filter takes a main category's sub-categories in; `subCategories` picks sub-categories
+only. Session = `MenuSession` (per brand, HH:MM–HH:MM Karachi, may cross midnight, active ones never overlap;
+a separate list from the reservation dayparts, owner's choice): a bill falls into the session of its brand that
+holds its `placedAt` Karachi time (`sessionResolver`), else "No session"; switched-off sessions are not used.
+Filters `subCategories`, `sessions`; options `subCategory`, `session` (Cashier Sales Detail; `subCategory` also on
+Category Wise Tax Collection). Sales Detail has a Session column; Menu Item Sales Summary a Sub category column.
+Lookups add `subCategories [{id,name,parentId,conceptId}]` and `sessions [{id,name,conceptId,startTime,endTime}]`;
+`categories` lists main categories only. Not in servd's data (do NOT invent): menu subgroup.
 
 ## GET /reports/till/lookups?conceptIds=a,b&dateFrom&dateTo
 `{ outlets: [{id,name}], users: [{id,name}], waiters: [{id,name}], categories: [{id,name,conceptId}], menuItems: [{id,name,categoryId}], terminals: [{id,label}] /* drawers: "<cashier> · <opened PKT>" */, sources: [{id,label}], paymentMethods: [{id,label}], orderTypes: [{id,label}], items: [{id,name}] }` — `outlets` = the caller's brands (no conceptIds needed); the rest scoped to the given brands.

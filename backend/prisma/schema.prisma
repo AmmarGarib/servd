@@ -399,6 +399,7 @@ model Concept {
 
   @@index([tenantId])
   @@map("concepts")
+  menuSessions MenuSession[]
 }
 
 // ─── Station ──────────────────────────────────────────────────────────────────
@@ -429,16 +430,48 @@ model Category {
   sortOrder            Int       @default(0)
   timeRestrictionStart String? // HH:MM (e.g. "08:00")
   timeRestrictionEnd   String? // HH:MM (e.g. "11:00")
+  // Sub-category (owner, 2026-10-22): a category may sit under ONE top-level
+  // category of the same brand (one level only). Its items keep their own
+  // category; reports read Category = the parent, Sub category = this one.
+  parentId             String?
   isActive             Boolean   @default(true)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   deletedAt            DateTime?
 
   concept          Concept           @relation(fields: [conceptId], references: [id])
+  parent           Category?         @relation("CategorySub", fields: [parentId], references: [id], onDelete: SetNull)
+  children         Category[]        @relation("CategorySub")
   items            MenuItem[]
   sectionDiscounts SectionDiscount[]
 
+  @@index([parentId])
   @@map("categories")
+}
+
+// Sales sessions (owner, 2026-10-22: "add sub-categories and sessions"):
+// named times of day per brand — Breakfast 08:00–11:00, Dinner 18:00–00:00 —
+// that a sale falls into by the Karachi time it was placed (reports only; a
+// separate list from the reservation dayparts, owner's choice). A session may
+// cross midnight (end ≤ start). Active sessions of a brand never overlap.
+// Never deleted — switched off (isActive false), so old reports keep the name.
+model MenuSession {
+  id        String   @id @default(uuid())
+  tenantId  String
+  conceptId String
+  name      String
+  startTime String // HH:MM, Karachi
+  endTime   String // HH:MM, Karachi; ≤ startTime = runs past midnight
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  concept Concept @relation(fields: [conceptId], references: [id])
+
+  @@index([tenantId])
+  @@index([conceptId])
+  @@map("menu_sessions")
 }
 
 // ─── MenuItem ─────────────────────────────────────────────────────────────────

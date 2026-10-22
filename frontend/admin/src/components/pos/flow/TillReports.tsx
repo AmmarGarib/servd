@@ -13,9 +13,9 @@ import { ErrorLine, ghostBtn, inputCls, labelCls, primaryBtn } from './ui'
 // backend/src/modules/reports/TILL_REPORTS.md: /reports/till/catalog,
 // /lookups and /run/:reportId (?format=pdf|xlsx|csv for downloads). Read only.
 
-type FilterKey = 'users' | 'waiters' | 'orderTypes' | 'categories' | 'menuItems' | 'sources' | 'terminals'
-  | 'paymentMethods' | 'paymentType' | 'orderBy' | 'settleBy' | 'q' | 'items'
-type OptionKey = 'orderType' | 'category' | 'menuItem' | 'tax' | 'extraCharge' | 'discount' | 'payment'
+type FilterKey = 'users' | 'waiters' | 'orderTypes' | 'categories' | 'subCategories' | 'menuItems' | 'sources' | 'terminals'
+  | 'paymentMethods' | 'paymentType' | 'orderBy' | 'settleBy' | 'q' | 'items' | 'sessions'
+type OptionKey = 'orderType' | 'session' | 'category' | 'subCategory' | 'menuItem' | 'tax' | 'extraCharge' | 'discount' | 'payment'
   | 'businessSource' | 'waiterWise' | 'userWise' | 'taxableValue' | 'includeNoCharge' | 'vouchers' | 'showCurrency' | 'detail'
 type GroupByKey = 'payment_method' | 'payment_type' | 'order_by' | 'settle_by' | 'terminal' | 'order_type'
 
@@ -25,6 +25,8 @@ interface Named { id: string; name: string }
 interface Labelled { id: string; label: string }
 interface Lookups {
   outlets: Named[]; users: Named[]; waiters: Named[]; categories: Array<Named & { conceptId?: string }>
+  subCategories?: Array<Named & { parentId: string | null; conceptId?: string }>
+  sessions?: Array<Named & { conceptId: string; startTime: string; endTime: string }>
   menuItems: Array<Named & { categoryId?: string }>; terminals: Labelled[]; sources: Labelled[]
   paymentMethods: Labelled[]; orderTypes: Labelled[]; items: Named[]
 }
@@ -34,12 +36,12 @@ interface Section { title: string | null; columns: Col[]; rows: Array<Record<str
 interface RunResult { id: string; title: string; period: string; outlets: string[]; sections: Section[]; notes: string[] }
 
 const FILTER_LABEL: Record<FilterKey, string> = {
-  users: 'User', waiters: 'Waiter', orderTypes: 'Order type', categories: 'Category', menuItems: 'Menu item',
+  users: 'User', waiters: 'Waiter', orderTypes: 'Order type', categories: 'Category', subCategories: 'Sub Category', menuItems: 'Menu item', sessions: 'Session',
   sources: 'Business Source', terminals: 'Terminal', paymentMethods: 'Payment Method', paymentType: 'Payment Type',
   orderBy: 'Order By', settleBy: 'Settle By', q: 'Search text', items: 'Item',
 }
 const OPTION_LABEL: Record<OptionKey, string> = {
-  orderType: 'Order type', category: 'Category', menuItem: 'Menu item', tax: 'Tax', extraCharge: 'Extra charge',
+  orderType: 'Order type', session: 'Session', category: 'Category', subCategory: 'Sub Category', menuItem: 'Menu item', tax: 'Tax', extraCharge: 'Extra charge',
   discount: 'Discount', payment: 'Payment', businessSource: 'Business Source', waiterWise: 'Waiter Wise Sales',
   userWise: 'User Wise Sales', taxableValue: 'Show Taxable value of Sales', includeNoCharge: 'Include No Charge',
   vouchers: 'Expense/Income Voucher', showCurrency: 'Show Currency', detail: 'Show detail',
@@ -63,6 +65,16 @@ function optionsFor(k: FilterKey, l: Lookups | undefined): Array<{ id: string; l
     case 'users': case 'orderBy': case 'settleBy': return named(l.users)
     case 'waiters': return named(l.waiters)
     case 'categories': return named(l.categories)
+    case 'subCategories': {
+      // "Burgers › Beef" — the main category first, so subs of the same name read apart.
+      const main = new Map(l.categories.map((c) => [c.id, c.name]))
+      return (l.subCategories ?? []).map((c) => ({ id: c.id, label: `${main.get(c.parentId ?? '') ?? '—'} › ${c.name}` }))
+    }
+    case 'sessions': {
+      const brand = new Map(l.outlets.map((o) => [o.id, o.name]))
+      const many = new Set((l.sessions ?? []).map((x) => x.conceptId)).size > 1
+      return (l.sessions ?? []).map((x) => ({ id: x.id, label: `${many ? `${brand.get(x.conceptId) ?? ''} · ` : ''}${x.name} (${x.startTime}–${x.endTime})` }))
+    }
     case 'menuItems': return named(l.menuItems)
     case 'items': return named(l.items)
     case 'terminals': return l.terminals

@@ -20,8 +20,15 @@ interface ConceptTab { id: string; name: string; tenantId?: string | null; tenan
 // does not carry the storefront time window.
 type WindowedCategory = Category & { timeRestrictionStart?: string | null; timeRestrictionEnd?: string | null }
 
-type MenuView = 'items' | 'availability' | 'windows'
-const VIEW_LABEL: Record<MenuView, string> = { items: 'Items', availability: 'Availability (86)', windows: 'Time windows' }
+type MenuView = 'items' | 'availability' | 'windows' | 'sessions'
+const VIEW_LABEL: Record<MenuView, string> = { items: 'Items', availability: 'Availability (86)', windows: 'Time windows', sessions: 'Sessions' }
+
+/** Main categories in menu order, each followed by its sub-categories (2026-10-22). */
+function withSubsAfterParent<T extends { id: string; parentId?: string | null }>(cats: T[]): T[] {
+  const ids = new Set(cats.map((c) => c.id))
+  const mains = cats.filter((c) => !c.parentId || !ids.has(c.parentId))
+  return mains.flatMap((m) => [m, ...cats.filter((c) => c.parentId === m.id)])
+}
 
 export default function MenuPage() {
   const [view, setView] = useState<MenuView>('items')
@@ -83,6 +90,15 @@ export default function MenuPage() {
   const [editingCatId, setEditingCatId]   = useState<string | null>(null)
   const [editingCatName, setEditingCatName] = useState('')
   const [catError, setCatError]           = useState<string | null>(null)
+
+  // Sub-category (2026-10-22): put a category under a main one, or back to the top.
+  const moveCategory = useMutation({
+    mutationFn: ({ id, parentId }: { id: string; parentId: string | null }) => menuApi.updateCategory(id, { parentId }),
+    onSuccess: () => { setCatError(null); void qc.invalidateQueries({ queryKey: ['menu', conceptId] }) },
+    onError: (e: Error) => setCatError(e.message ?? 'Could not move the category'),
+  })
+  const mains = categories.filter((c) => !c.parentId)
+  const nameOf = new Map(categories.map((c) => [c.id, c.name]))
 
   const renameCategory = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
@@ -169,12 +185,15 @@ export default function MenuPage() {
         />
       )}
 
+      {view === 'sessions' && conceptId && <SessionsPanel conceptId={conceptId} />}
+
       {view === 'items' && (<>
       {/* Add category form */}
       {addingCategory && (
         <AddCategoryForm
           conceptId={conceptId}
           sortOrder={categories.length}
+          mains={mains}
           onSaved={() => { void qc.invalidateQueries({ queryKey: ['menu', conceptId] }); setAddingCategory(false) }}
           onCancel={() => setAddingCategory(false)}
         />
@@ -184,8 +203,8 @@ export default function MenuPage() {
 
       {/* Categories + Items */}
       <div className="space-y-8">
-        {categories.map((cat) => (
-          <section key={cat.id}>
+        {withSubsAfterParent(categories).map((cat) => (
+          <section key={cat.id} className={cat.parentId ? 'ml-6 border-l-2 border-s-border pl-4' : undefined}>
             <div className="flex items-center justify-between mb-3 border-b border-s-border pb-2 gap-3">
               {editingCatId === cat.id ? (
                 /* Inline edit mode — rename input + Save/Cancel/Delete row. */
@@ -223,6 +242,18 @@ export default function MenuPage() {
                     className="rounded-lg border border-s-border text-s-muted px-3 py-1.5 text-xs hover:text-s-text [@media(pointer:coarse)]:min-h-11">
                     Cancel
                   </button>
+                  <label className="flex items-center gap-2 text-xs text-s-muted">
+                    Sub-category of
+                    <select
+                      aria-label="Main category"
+                      value={cat.parentId ?? ''}
+                      disabled={moveCategory.isPending}
+                      onChange={(e) => moveCategory.mutate({ id: cat.id, parentId: e.target.value || null })}
+                      className="rounded-lg bg-s-bg border border-s-border px-2 py-1.5 text-xs text-s-text focus:border-primary focus:outline-none">
+                      <option value="">— none (main category) —</option>
+                      {mains.filter((m) => m.id !== cat.id).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </label>
                   <button
                     type="button"
                     onClick={async () => {
@@ -250,7 +281,9 @@ export default function MenuPage() {
                     onClick={() => { setEditingCatId(cat.id); setEditingCatName(cat.name); setCatError(null) }}
                     className="group flex items-center gap-2 text-left hover:opacity-80"
                     title="Click to rename or delete">
-                    <h2 className="text-lg font-bold text-s-text">{cat.name}</h2>
+                    <h2 className="text-lg font-bold text-s-text">
+                      {cat.parentId && <span className="text-s-muted font-semibold">{nameOf.get(cat.parentId) ?? ''} › </span>}{cat.name}
+                    </h2>
                     <span className="text-xs text-s-muted opacity-0 group-hover:opacity-100 transition-opacity">
                       ✎ Edit
                     </span>
@@ -492,12 +525,13 @@ function TimeWindowRow({ cat, onSaved }: { cat: WindowedCategory; onSaved: () =>
   )
 }
 
-function AddCategoryForm({ conceptId, sortOrder, onSaved, onCancel }: {
-  conceptId: string; sortOrder: number; onSaved: () => void; onCancel: () => void
+function AddCategoryForm({ conceptId, sortOrder, mains, onSaved, onCancel }: {
+  conceptId: string; sortOrder: number; mains: Category[]; onSaved: () => void; onCancel: () => void
 }) {
   const [name, setName] = useState('')
+  const [parentId, setParentId] = useState('')
   const mutation = useMutation({
-    mutationFn: () => menuApi.createCategory({ conceptId, name: name.trim(), sortOrder }),
+    mutationFn: () => menuApi.createCategory({ conceptId, name: name.trim(), sortOrder, parentId: parentId || null }),
     onSuccess: onSaved,
     onError: (e) => console.error('create category failed', e),
   })
@@ -524,7 +558,14 @@ function AddCategoryForm({ conceptId, sortOrder, onSaved, onCancel }: {
           className="w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none"
         />
       </FormField>
-      {mutation.isError && <p role="alert" className="text-s-red text-sm">Failed to create — make sure you&apos;re logged in as admin/manager.</p>}
+      <FormField label="Sub-category of (optional)">
+        <select value={parentId} onChange={(e) => setParentId(e.target.value)}
+          className="w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text focus:border-primary focus:outline-none">
+          <option value="">— none: this is a main category —</option>
+          {mains.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+      </FormField>
+      {mutation.isError && <p role="alert" className="text-s-red text-sm">{(mutation.error as Error)?.message || 'Could not create the category.'}</p>}
       <div className="flex gap-2">
         <button
           type="submit"
@@ -802,5 +843,95 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
         {save.isError && <p role="alert" className="text-sm text-s-red">Save failed{(save.error as Error)?.message ? `: ${(save.error as Error).message}` : ''}</p>}
       </form>
     </Modal>
+  )
+}
+
+// ── Sessions (2026-10-22) ──────────────────────────────────────────────────
+// Named times of day per brand (Breakfast 08:00–11:00…). A sale falls into a
+// session by the Karachi time it was placed; the till's Reports filter and
+// break down by them. A session may run past midnight (end before start).
+// Sessions are switched off, never deleted, so old reports keep their names.
+
+interface MenuSession { id: string; name: string; startTime: string; endTime: string; sortOrder: number; isActive: boolean }
+
+function SessionsPanel({ conceptId }: { conceptId: string }) {
+  const qc = useQueryClient()
+  const key = ['menu-sessions', conceptId]
+  const { data: sessions = [], isLoading } = useQuery({ queryKey: key, queryFn: () => api.get<MenuSession[]>(`/menu/sessions?conceptId=${conceptId}`) })
+  const refresh = () => void qc.invalidateQueries({ queryKey: key })
+  return (
+    <div className="max-w-3xl space-y-4">
+      <p className="text-sm text-s-muted">
+        Times of day for this brand&apos;s sales reports. A bill counts in the session it was placed in (Karachi time).
+        Sessions can&apos;t overlap; a session can run past midnight (for example 18:00 to 02:00).
+      </p>
+      {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
+      <div className="space-y-2">
+        {sessions.map((s) => <SessionRow key={`${s.id}:${s.name}:${s.startTime}:${s.endTime}:${s.isActive}`} session={s} onSaved={refresh} />)}
+        {!isLoading && sessions.length === 0 && <p className="text-sm text-s-muted">No sessions yet — add the first one below.</p>}
+      </div>
+      <SessionForm conceptId={conceptId} sortOrder={sessions.length} onSaved={refresh} />
+    </div>
+  )
+}
+
+const timeInput = 'rounded-lg bg-s-bg border border-s-border px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none'
+
+function SessionRow({ session, onSaved }: { session: MenuSession; onSaved: () => void }) {
+  const [name, setName] = useState(session.name)
+  const [start, setStart] = useState(session.startTime)
+  const [end, setEnd] = useState(session.endTime)
+  const save = useMutation({
+    mutationFn: (body: Partial<MenuSession>) => api.patch(`/menu/sessions/${session.id}`, body),
+    onSuccess: onSaved,
+  })
+  const dirty = name.trim() !== session.name || start !== session.startTime || end !== session.endTime
+  return (
+    <div className={`rounded-xl border border-s-border bg-s-surface p-3 flex flex-wrap items-end gap-3 ${session.isActive ? '' : 'opacity-60'}`}>
+      <label className="block flex-1 min-w-[160px] text-xs text-s-muted">Name
+        <input value={name} onChange={(e) => setName(e.target.value)} className={`${timeInput} w-full mt-1`} />
+      </label>
+      <label className="block text-xs text-s-muted">From
+        <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className={`${timeInput} mt-1 block`} />
+      </label>
+      <label className="block text-xs text-s-muted">To
+        <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={`${timeInput} mt-1 block`} />
+      </label>
+      <button disabled={!dirty || !name.trim() || save.isPending} onClick={() => save.mutate({ name: name.trim(), startTime: start, endTime: end })}
+        className="rounded-lg bg-primary text-primary-on font-bold px-3 py-2 text-xs disabled:opacity-40">Save</button>
+      <button disabled={save.isPending} onClick={() => save.mutate({ isActive: !session.isActive })}
+        className="rounded-lg border border-s-border text-s-muted px-3 py-2 text-xs hover:text-s-text">
+        {session.isActive ? 'Switch off' : 'Switch on'}
+      </button>
+      {!session.isActive && <span className="text-xs text-s-muted">Off — not used in reports</span>}
+      {save.error && <p role="alert" className="basis-full text-xs text-s-red">{(save.error as Error).message}</p>}
+    </div>
+  )
+}
+
+function SessionForm({ conceptId, sortOrder, onSaved }: { conceptId: string; sortOrder: number; onSaved: () => void }) {
+  const [name, setName] = useState('')
+  const [start, setStart] = useState('')
+  const [end, setEnd] = useState('')
+  const add = useMutation({
+    mutationFn: () => api.post('/menu/sessions', { conceptId, name: name.trim(), startTime: start, endTime: end, sortOrder }),
+    onSuccess: () => { setName(''); setStart(''); setEnd(''); onSaved() },
+  })
+  return (
+    <form className="rounded-xl border border-primary bg-s-surface p-3 flex flex-wrap items-end gap-3"
+      onSubmit={(e) => { e.preventDefault(); if (name.trim() && start && end && !add.isPending) add.mutate() }}>
+      <label className="block flex-1 min-w-[160px] text-xs text-s-muted">New session
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Breakfast, Lunch, Dinner" className={`${timeInput} w-full mt-1`} />
+      </label>
+      <label className="block text-xs text-s-muted">From
+        <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className={`${timeInput} mt-1 block`} />
+      </label>
+      <label className="block text-xs text-s-muted">To
+        <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={`${timeInput} mt-1 block`} />
+      </label>
+      <button type="submit" disabled={!name.trim() || !start || !end || add.isPending}
+        className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-40">{add.isPending ? 'Adding…' : 'Add session'}</button>
+      {add.error && <p role="alert" className="basis-full text-xs text-s-red">{(add.error as Error).message}</p>}
+    </form>
   )
 }

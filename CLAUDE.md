@@ -2250,8 +2250,16 @@ change a route only together with that file). Binding rules:
   money only for FINANCIALS_VIEWERS, every brand through `assertConceptOwned`) on `reports/service.ts`
   (`SalesQuery.conceptIds` / `extra`). Contract: `reports/TILL_REPORTS.md`. Screen
   `components/pos/flow/TillReports.tsx` reads the catalog — a new report is a catalog entry + its builder,
-  never a hard-coded screen. Sub category, menu subgroup and session are NOT in servd's data (waiting on
-  the owner); "terminal" = the cashier's drawer (Shift).
+  never a hard-coded screen. "terminal" = the cashier's drawer (Shift). Menu subgroup is NOT in servd's data.
+- **Sub-categories and sessions (owner, 2026-10-22: "Yes, add sub-categories and sessions"; sessions per brand,
+  a SEPARATE list from the reservation dayparts).** Sub-category = `Category.parentId` (ONE level, a main category
+  of the same brand — 422 `PARENT_NOT_IN_BRAND` / `PARENT_IS_SUBCATEGORY` / `PARENT_IS_SELF`; a category with
+  subs cannot be nested or deleted, `CATEGORY_HAS_SUBCATEGORIES`); set on Menu → Items. Session = `MenuSession`
+  (`tenantId` = the brand's company, RLS, merge repoint; `/menu/sessions` GET any staff of the brand, POST/PATCH
+  managers; 422 `SESSION_OVERLAP`, 409 `SESSION_NAME_TAKEN`; switched off, never deleted; Menu → Sessions). A bill
+  falls into its brand's active session by its `placedAt` Karachi time (`tillReports.ts sessionResolver`) — nothing
+  is stored on the order. Reports read them as in `reports/TILL_REPORTS.md`. Tests:
+  `tests/menuSubcategoriesSessions.test.ts`.
 
 ### Shift corrections (owner, 2026-10-21)
 
