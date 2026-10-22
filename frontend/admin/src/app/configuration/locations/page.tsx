@@ -8,6 +8,7 @@ import { useViewAllTenants } from '../../../components/ui/TenantSwitcher'
 import { Modal } from '../../../components/ui/Modal'
 import { FormField } from '../../../components/ui/FormField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { useAuthStore } from '../../../store/auth'
 
 interface TenantLite { id: string; name: string; slug: string }
 interface ConceptLite { id: string; name: string; slug: string; tenantId?: string | null; tenant?: TenantLite | null }
@@ -22,11 +23,56 @@ interface Location {
   phone: string | null
   latitude: number | null
   longitude: number | null
+  /** Time-clock radius (metres); null = the company's. */
+  geofenceRadiusMetres?: number | null
+  /** The pin + radius the CEO approved (the time clock measures from these). */
+  fenceLatitude?: number | null
+  fenceLongitude?: number | null
+  fenceRadiusMetres?: number | null
+  fencePinApprovedAt?: string | null
+  fencePinRejected?: { lat: number; lng: number; radius: number | null; note?: string } | null
   isActive: boolean
   tenantId: string | null
   tenant?: TenantLite | null
   concepts: ConceptLink[]
   _count: { orders: number; shifts: number }
+}
+
+/** The time-clock pin's state (owner, 2026-10-22: each pin and radius is approved by the CEO). Same rule as the
+ *  server's fencePinPending. */
+function pinState(l: Location): 'none' | 'approved' | 'pending' | 'rejected' {
+  if (l.latitude == null || l.longitude == null) return 'none'
+  const r = l.geofenceRadiusMetres ?? null
+  if (l.fenceLatitude === l.latitude && l.fenceLongitude === l.longitude && (l.fenceRadiusMetres ?? null) === r) return 'approved'
+  const x = l.fencePinRejected
+  if (x && x.lat === l.latitude && x.lng === l.longitude && (x.radius ?? null) === r) return 'rejected'
+  return 'pending'
+}
+
+function PinLine({ loc, isCeo, onDone }: { loc: Location; isCeo: boolean; onDone: () => void }) {
+  const state = pinState(loc)
+  const approve = useMutation({
+    mutationFn: () => api.post(`/locations/${loc.id}/fence-pin/approve`, { latitude: loc.latitude, longitude: loc.longitude, radiusMetres: loc.geofenceRadiusMetres ?? null }),
+    onSuccess: onDone,
+  })
+  const radius = loc.geofenceRadiusMetres != null ? `${loc.geofenceRadiusMetres} m` : 'company radius'
+  const text = state === 'none' ? 'Time clock: no map pin yet'
+    : state === 'approved' ? `Time clock: pin approved by the CEO (${radius})`
+    : state === 'rejected' ? `Time clock: the CEO rejected this pin${loc.fencePinRejected?.note ? ` — ${loc.fencePinRejected.note}` : ''}${loc.fenceLatitude != null ? '. The earlier approved pin is still used.' : ''}`
+    : `Time clock: pin waiting for the CEO's approval (${radius})${loc.fenceLatitude != null ? '. The earlier approved pin is used until then.' : '. Clock-ins here go to the manager until it is approved.'}`
+  const color = state === 'approved' ? 'var(--erp-success)' : state === 'none' ? undefined : 'var(--erp-warning)'
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <p className="text-xs" style={color ? { color } : undefined}>{text}</p>
+      {isCeo && state === 'pending' && (
+        <button type="button" disabled={approve.isPending} onClick={() => approve.mutate()}
+          className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
+          {approve.isPending ? 'Approving…' : 'Approve pin'}
+        </button>
+      )}
+      {approve.isError && <p role="alert" className="text-xs text-red-700">{errorText(approve.error)}</p>}
+    </div>
+  )
 }
 
 function errorText(err: unknown): string {
@@ -41,6 +87,7 @@ export default function LocationsPage() {
   const [editing, setEditing] = useState<Location | null>(null)
   const [adding, setAdding] = useState(false)
   const confirm = useConfirm()
+  const isCeo = useAuthStore((s) => s.isRole('admin'))
 
   // Both reads are company-scoped server-side: single-company view returns
   // only that company's locations and brands; "All companies" returns every
@@ -162,6 +209,7 @@ export default function LocationsPage() {
                 <p className="text-xs text-white/35 mt-2">
                   {loc._count.orders.toLocaleString()} orders · {loc._count.shifts} shifts
                 </p>
+                <PinLine loc={loc} isCeo={isCeo} onDone={() => void qc.invalidateQueries({ queryKey: ['locations'] })} />
                 {loc.concepts.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {loc.concepts.map((cl) => (
@@ -229,6 +277,7 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
     lat: location?.latitude ?? null, lng: location?.longitude ?? null,
   })
   const [isActive, setIsActive] = useState(location?.isActive ?? true)
+  const [radius, setRadius] = useState(location?.geofenceRadiusMetres != null ? String(location.geofenceRadiusMetres) : '')
   const [conceptIds, setConceptIds] = useState<string[]>(
     location?.concepts.map((c) => c.conceptId) ?? [],
   )
@@ -248,6 +297,7 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
         city: city.trim() || undefined,
         phone: phone.trim() || undefined,
         latitude: coords.lat, longitude: coords.lng,
+        geofenceRadiusMetres: radius.trim() ? Math.round(Number(radius)) : null,
         isActive,
         conceptIds,
       }
@@ -264,6 +314,7 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
   const dirty = name !== (location?.name ?? '') || address !== (location?.address ?? '') || city !== (location?.city ?? '')
     || phone !== (location?.phone ?? '') || isActive !== (location?.isActive ?? true)
     || coords.lat !== (location?.latitude ?? null) || coords.lng !== (location?.longitude ?? null)
+    || radius !== (location?.geofenceRadiusMetres != null ? String(location.geofenceRadiusMetres) : '')
     || conceptIds.slice().sort().join(',') !== (location?.concepts.map((c) => c.conceptId) ?? []).sort().join(',')
   const inputCls = 'w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2.5 text-sm text-white/85 focus:border-primary focus:outline-none'
 
@@ -312,6 +363,14 @@ function LocationModal({ location, concepts, inPortfolio, onClose, onSaved }: {
           </p>
           <MapPin value={coords} onChange={setCoords} height={240} />
         </div>
+
+        <FormField label="Time-clock radius (metres)">
+          <input value={radius} onChange={(e) => setRadius(e.target.value.replace(/[^0-9]/g, ''))} inputMode="numeric"
+            name="location-radius" autoComplete="off" placeholder="Blank = the company's radius (100 m)" className={inputCls} />
+        </FormField>
+        <p className="text-[10px] text-white/35 -mt-2">
+          Clock-ins are accepted inside this circle around the pin. A new or moved pin, or a new radius, is used only after the CEO approves it.
+        </p>
 
         <fieldset>
           <legend className="text-xs text-white/55">Brands operated at this location</legend>

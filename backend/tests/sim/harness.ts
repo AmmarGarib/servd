@@ -503,7 +503,7 @@ async function buildWorld(prisma: PrismaClient, as: Sim['as']): Promise<{ A: Sim
 
   const mkCompany = async (key: 'A' | 'B', tenantId: string, name: string): Promise<SimCompany> => {
     const k = key.toLowerCase()
-    const locationId = (await prisma.location.create({ data: { slug: `sim-outlet-${k}`, name: `${name} Clifton`, tenantId, latitude: 24.8138, longitude: 67.0300 } })).id
+    const locationId = (await prisma.location.create({ data: { slug: `sim-outlet-${k}`, name: `${name} Clifton`, tenantId, latitude: 24.8138, longitude: 67.0300, fenceLatitude: 24.8138, fenceLongitude: 67.0300 } })).id
     const mkBrand = async (authority: 'srb' | 'fbr', bname: string, prices: [number, number, number, number]): Promise<SimBrand> => {
       // Real brand slugs where servd has them: the legacy brands keep their codes
       // (accounting/journal.ts CONCEPT_REVENUE_CODE — simmer 4001, stackd 4002, flipd 4004);

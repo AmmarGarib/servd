@@ -1,8 +1,11 @@
-import type { FastifyInstance } from 'fastify'
-import type { Prisma } from '@prisma/client'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma, serviceClient } from '../../lib/prisma.js'
-import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval, fencePinPending } from '../../lib/approvalRights.js'
+import { approvalWaiting } from '../approvals/notify.js'
+import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
@@ -84,6 +87,36 @@ const conceptInclude = {
   },
 }
 
+const PIN_SELECT = {
+  id: true, latitude: true, longitude: true, geofenceRadiusMetres: true,
+  fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true, fencePinRejected: true,
+} as const
+
+/**
+ * After a location's pin or radius changes: the CEO's own edit is the approval (there is no one above); anyone else's
+ * waits for the CEO (bell + approvals inbox). Never throws into the save.
+ */
+async function afterPinChange(req: FastifyRequest, id: string) {
+  try {
+    const l = await prisma.location.findUnique({ where: { id }, select: { ...PIN_SELECT, tenantId: true, updatedAt: true } })
+    if (!l || !fencePinPending(l)) return
+    if (req.staffUser!.role === 'admin') {
+      await prisma.location.update({
+        where: { id },
+        data: { fenceLatitude: l.latitude, fenceLongitude: l.longitude, fenceRadiusMetres: l.geofenceRadiusMetres, fencePinApprovedAt: new Date(), fencePinApprovedById: req.staffUser!.id, fencePinRejected: Prisma.DbNull },
+      })
+      await audit({
+        category: 'identity', action: 'location.fence_pin.approve', entity: 'Location', entityId: id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: l.tenantId,
+        metadata: { latitude: l.latitude, longitude: l.longitude, radiusMetres: l.geofenceRadiusMetres, via: 'ceo_edit' },
+      })
+      return
+    }
+    approvalWaiting('location_pin', id, { round: l.updatedAt.toISOString(), actorId: req.staffUser!.id })
+  } catch (err) {
+    console.warn('[locations] pin approval hook failed:', (err as Error).message)
+  }
+}
+
 export async function locationRoutes(fastify: FastifyInstance) {
   // GET /locations — this company's locations (portfolio view: every company
   // the operator belongs to). Brand chips are restricted to brands of the
@@ -140,6 +173,7 @@ export async function locationRoutes(fastify: FastifyInstance) {
       phone:   z.string().max(50).optional(),
       latitude:  z.number().nullable().optional(),
       longitude: z.number().nullable().optional(),
+      geofenceRadiusMetres: z.number().int().min(10).max(5000).nullable().optional(),
       isActive:  z.boolean().optional(),
       conceptIds: z.array(z.string().uuid()).default([]),
     }).parse(req.body)
@@ -158,6 +192,7 @@ export async function locationRoutes(fastify: FastifyInstance) {
       data: {
         slug, name: body.name, address: body.address, city: body.city,
         phone: body.phone, latitude: body.latitude, longitude: body.longitude,
+        geofenceRadiusMetres: body.geofenceRadiusMetres ?? null,
         isActive: body.isActive ?? true,
         tenantId,
         // First linked brand becomes the primary — it's what orders fall
@@ -167,6 +202,7 @@ export async function locationRoutes(fastify: FastifyInstance) {
       include: conceptInclude,
     })
     await syncConceptLocationMirror(conceptIds)
+    await afterPinChange(req, location.id)
     return reply.status(201).send(location)
   })
 
@@ -182,6 +218,7 @@ export async function locationRoutes(fastify: FastifyInstance) {
         phone:    z.string().max(50).optional(),
         latitude:  z.number().nullable().optional(),
         longitude: z.number().nullable().optional(),
+        geofenceRadiusMetres: z.number().int().min(10).max(5000).nullable().optional(),
         isActive: z.boolean().optional(),
         conceptIds: z.array(z.string().uuid()).optional(),
       }).parse(req.body)
@@ -229,9 +266,85 @@ export async function locationRoutes(fastify: FastifyInstance) {
       // The brands linked now, plus any just unlinked (their primary kitchen
       // may have changed to another location).
       await syncConceptLocationMirror([...updated.concepts.map((c) => c.conceptId), ...previouslyLinked])
+      await afterPinChange(req, updated.id)
       return updated
     },
   )
+
+  // ── Time-clock map pins (owner's card, 2026-10-22: "each location gets a map pin and a radius, approved by the
+  // CEO"). The time clock measures from the APPROVED pin (Location.fence*); an edited pin waits here and the old
+  // approved one stays in force meanwhile. Approval type location_pin: the CEO only, never handed over.
+
+  // GET /locations/fence-pins — every located location of the caller's companies with its live and approved pin;
+  // ?status=pending = only those waiting for the CEO (the approvals inbox reads this).
+  fastify.get<{ Querystring: { status?: string } }>('/fence-pins', { preHandler: requireAuth(...MANAGERS, 'hr') }, async (req) => {
+    const scope = await scopeTenantWhere(req, 'read')
+    const rows = await prisma.location.findMany({
+      where: { deletedAt: null, ...scope, latitude: { not: null }, longitude: { not: null } },
+      select: { ...PIN_SELECT, name: true, tenantId: true, updatedAt: true, fencePinApprovedAt: true, fencePinApprovedById: true },
+      orderBy: { name: 'asc' },
+    })
+    const items = rows.map((l) => ({
+      id: l.id, name: l.name, tenantId: l.tenantId, updatedAt: l.updatedAt,
+      pin: { latitude: l.latitude, longitude: l.longitude, radiusMetres: l.geofenceRadiusMetres },
+      approved: l.fenceLatitude != null ? { latitude: l.fenceLatitude, longitude: l.fenceLongitude, radiusMetres: l.fenceRadiusMetres, at: l.fencePinApprovedAt, byId: l.fencePinApprovedById } : null,
+      rejected: l.fencePinRejected ?? null,
+      pending: fencePinPending(l),
+    }))
+    return { items: req.query.status === 'pending' ? items.filter((i) => i.pending) : items }
+  })
+
+  const pinDecision = z.object({
+    // The pin the CEO is looking at: refused (409 PIN_CHANGED) if it has moved since.
+    latitude: z.number(), longitude: z.number(), radiusMetres: z.number().int().nullable(),
+    note: z.string().trim().max(500).optional(),
+  })
+
+  async function pinForDecision(req: FastifyRequest, id: string, body: z.infer<typeof pinDecision>) {
+    const l = await prisma.location.findFirst({ where: { id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) }, select: { ...PIN_SELECT, tenantId: true, updatedAt: true } })
+    if (!l || !l.tenantId) throw new NotFoundError('Location', id)
+    const s = await approvalSubject('location_pin', l.id)
+    if (!s) throw new NotFoundError('Location', id)
+    const grant = await assertCanApprove(req, approvalInputOf('location_pin', l.id, s))
+    if (!fencePinPending(l)) throw new AppError('PIN_NOT_PENDING', 'This map pin is not waiting for approval', 409)
+    if (l.latitude !== body.latitude || l.longitude !== body.longitude || (l.geofenceRadiusMetres ?? null) !== body.radiusMetres) {
+      throw new AppError('PIN_CHANGED', 'The map pin was changed while you were looking — open it again', 409)
+    }
+    return { l, grant }
+  }
+
+  // POST /locations/:id/fence-pin/approve — the CEO approves the pin and radius as they are now.
+  fastify.post<{ Params: { id: string } }>('/:id/fence-pin/approve', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = pinDecision.parse(req.body ?? {})
+    const { l, grant } = await pinForDecision(req, req.params.id, body)
+    const n = await prisma.location.updateMany({
+      where: { id: l.id, latitude: body.latitude, longitude: body.longitude, geofenceRadiusMetres: body.radiusMetres },
+      data: { fenceLatitude: body.latitude, fenceLongitude: body.longitude, fenceRadiusMetres: body.radiusMetres, fencePinApprovedAt: new Date(), fencePinApprovedById: req.staffUser!.id, fencePinRejected: Prisma.DbNull },
+    })
+    if (n.count === 0) throw new AppError('PIN_CHANGED', 'The map pin was changed while you were looking — open it again', 409)
+    await auditApproval(req, {
+      type: 'location_pin', id: l.id, tenantId: l.tenantId, decision: 'approve', grant, entity: 'Location',
+      metadata: { latitude: body.latitude, longitude: body.longitude, radiusMetres: body.radiusMetres, before: { latitude: l.fenceLatitude, longitude: l.fenceLongitude, radiusMetres: l.fenceRadiusMetres }, note: body.note ?? null },
+    })
+    return { id: l.id, approved: true }
+  })
+
+  // POST /locations/:id/fence-pin/reject {note} — the CEO turns the new pin down: the approved one stays in force,
+  // and this pin leaves the queue until it is changed again.
+  fastify.post<{ Params: { id: string } }>('/:id/fence-pin/reject', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = pinDecision.extend({ note: z.string().trim().min(3).max(500) }).parse(req.body ?? {})
+    const { l, grant } = await pinForDecision(req, req.params.id, body)
+    const n = await prisma.location.updateMany({
+      where: { id: l.id, latitude: body.latitude, longitude: body.longitude, geofenceRadiusMetres: body.radiusMetres },
+      data: { fencePinRejected: { lat: body.latitude, lng: body.longitude, radius: body.radiusMetres, at: new Date().toISOString(), byId: req.staffUser!.id, note: body.note } },
+    })
+    if (n.count === 0) throw new AppError('PIN_CHANGED', 'The map pin was changed while you were looking — open it again', 409)
+    await auditApproval(req, {
+      type: 'location_pin', id: l.id, tenantId: l.tenantId, decision: 'reject', grant, entity: 'Location',
+      metadata: { latitude: body.latitude, longitude: body.longitude, radiusMetres: body.radiusMetres, note: body.note },
+    })
+    return { id: l.id, rejected: true }
+  })
 
   // DELETE /locations/:id (soft delete — keeps historical orders/shifts intact)
   fastify.delete<{ Params: { id: string } }>(

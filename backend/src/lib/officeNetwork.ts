@@ -7,7 +7,7 @@
 // on the same Wi-Fi gets its own address inside it).
 import { isIP } from 'node:net'
 
-export interface OfficeNetwork { address: string; label: string }
+export interface OfficeNetwork { address: string; label: string; locationId?: string | null }
 
 /** The network an address belongs to: the IPv4 address, or the IPv6 /64 prefix. null = not an address. */
 export function networkKey(raw: string | null | undefined): string | null {
@@ -23,6 +23,12 @@ export function networkKey(raw: string | null | undefined): string | null {
   const t = tail !== undefined && tail ? tail.split(':') : []
   const groups = tail === undefined ? h : [...h, ...Array(8 - h.length - t.length).fill('0'), ...t]
   return `${groups.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':')}::/64`
+}
+
+/** The registered office network an address is on, or null. */
+export function officeNetworkOf<N extends OfficeNetwork>(ip: string | null | undefined, networks: N[] | null | undefined): N | null {
+  const key = networkKey(ip)
+  return key ? (networks ?? []).find((n) => networkKey(n.address) === key) ?? null : null
 }
 
 export function onOfficeNetwork(ip: string | null | undefined, networks: OfficeNetwork[] | null | undefined): boolean {

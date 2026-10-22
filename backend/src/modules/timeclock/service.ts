@@ -16,6 +16,7 @@
 // out of area is recorded on the ClockLog (tenantId, locationId, outOfArea) and
 // on the day's attendance, and flagged for HR when the geofence is on.
 
+import type { Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { requireTenantId } from '../../lib/tenantScope.js'
@@ -24,9 +25,10 @@ import { verifyKioskPin } from '../hr/kioskPin.js'
 import { getFormat, STANDING_ATTENDANCE, ATTENDANCE_DAY_TAKEN } from '../hr/service.js'
 import { pktToday } from '../hr/logic.js'
 import { enforceClockInPolicy, flagOutOfArea, type ClockInVerdict } from './policy.js'
+import { approvalWaiting } from '../approvals/notify.js'
 
 export interface Actor { id: string; role: string; tenantId: string | null; name?: string | null }
-export interface PunchBody { lat?: number; lng?: number; selfieUrl?: string }
+export interface PunchBody { lat?: number; lng?: number; selfieUrl?: string; accuracyM?: number; reason?: string }
 
 const activeCompany = (actor: Actor): string => requireTenantId(actor.tenantId, 'a punch belongs to one company')
 
@@ -41,7 +43,19 @@ const verdictCols = (v: ClockInVerdict | null) => ({
   locationId: v?.locationId ?? null, outOfArea: v?.outOfArea ?? null,
 })
 
-const attendanceOut = (r: PunchResult | null) => r && r.recordId ? { recordId: r.recordId, status: r.status, lateMinutes: r.lateMinutes, ...(r.skipped && { note: r.skipped }) } : null
+/** What the attendance day needs to hold an out-of-area punch for the HOD (hr/attendance.ts holdDay). */
+const holdCols = (v: ClockInVerdict | null, body: PunchBody) => v?.outOfArea
+  ? { outOfAreaWhere: { distanceM: v.geofenceDistanceM, location: v.locationName, radiusM: v.radiusM }, holdReason: body.reason?.trim() || null }
+  : {}
+
+/** The bell for the HOD when a punch has just held a day (queued, after the commit). */
+function heldNotice(r: PunchResult | null, actorId: string | null) {
+  if (r?.held && r.recordId) approvalWaiting('hr_request', r.recordId, { round: `ooa:${r.recordId}:${Date.now()}`, actorId })
+}
+
+const HOLD_NOTE = 'You are outside your work location, so this punch waits for your manager to approve it. It does not count for pay until then.'
+
+const attendanceOut = (r: PunchResult | null) => r && r.recordId ? { recordId: r.recordId, status: r.status, lateMinutes: r.lateMinutes, ...(r.skipped && { note: r.skipped }), ...(r.held && { held: true, holdNote: HOLD_NOTE }) } : null
 
 /**
  * This login's open clock-in — the last punch-log row when it is an in — and
@@ -56,13 +70,13 @@ export async function openClockIn(userId: string, now = new Date()): Promise<{ s
 }
 
 /** Close the day a forgotten clock-out left open, in every company this
- *  login is an employee of: missing_punch, no hours, for HR to correct. */
+ *  login is an employee of: clocked out by servd at 12:00 AM, flagged for HR. */
 async function closeMissedOutFor(userId: string, at: Date) {
   const emps = await prisma.hrEmployee.findMany({ where: { userId, status: { in: ['active', 'on_leave'] } }, select: { id: true, tenantId: true } })
   for (const e of emps) await closeMissedDays(e.tenantId, e.id, at)
 }
 
-const MISSED_OUT_NOTE = 'Your last clock-in was never clocked out. That day is flagged for HR as a missed punch and counts no hours until it is corrected.'
+const MISSED_OUT_NOTE = 'Your last clock-in was never clocked out, so servd clocked you out at 12:00 AM that night and told HR. Ask HR to correct the time if you left earlier or later.'
 
 export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
   const tenantId = activeCompany(actor)
@@ -75,7 +89,7 @@ export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
   if (open && !open.missed) return { alreadyClockedIn: true, since: open.since }
 
   const emp = await prisma.hrEmployee.findFirst({ where: { userId: actor.id, tenantId } })
-  const verdict = await enforceClockInPolicy(tenantId, actor.role, body, { employeeId: emp?.id ?? null, kind: 'in' })
+  const verdict = await enforceClockInPolicy(tenantId, actor.role, body, { employeeId: emp?.id ?? null, kind: 'in', ip })
   if (open?.missed) await closeMissedOutFor(actor.id, now)
   // One check-in at a time per login: two tabs (or the sign-in and the shell's
   // daily check) racing must not both write an 'in'. Re-read the last punch
@@ -95,9 +109,10 @@ export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
   const att = emp
     ? await recordPunch({
         tenantId, employeeId: emp.id, kind: 'in', at: log.recordedAt, source: 'clock', actorUserId: actor.id, clockLogId: log.id,
-        ...verdictCols(verdict), outOfAreaReason: verdict.outOfAreaReason, selfieUrl: body.selfieUrl ?? null,
+        ...verdictCols(verdict), outOfAreaReason: verdict.outOfAreaReason, selfieUrl: body.selfieUrl ?? null, ...holdCols(verdict, body),
       })
     : null
+  heldNotice(att, actor.id)
   await flagOutOfArea({ tenantId, employeeId: emp?.id ?? null, userId: actor.id, name: emp?.fullName ?? actor.name ?? null, kind: 'in', at: log.recordedAt, verdict })
   return {
     clockedInAt: log.recordedAt, geofenceMatched: verdict.geofenceMatched, geofenceDistanceM: verdict.geofenceDistanceM,
@@ -121,7 +136,7 @@ export async function clockOut(actor: Actor, body: PunchBody = {}, ip?: string) 
   const tenantId = open.tenantId ?? actor.tenantId
   const emps = await prisma.hrEmployee.findMany({ where: { userId: actor.id, status: { in: ['active', 'on_leave'] } } })
   const empThere = tenantId ? emps.find((e) => e.tenantId === tenantId) ?? null : null
-  const verdict = tenantId ? await enforceClockInPolicy(tenantId, actor.role, body, { employeeId: empThere?.id ?? null, kind: 'out' }) : null
+  const verdict = tenantId ? await enforceClockInPolicy(tenantId, actor.role, body, { employeeId: empThere?.id ?? null, kind: 'out', ip }) : null
   const log = await prisma.clockLog.create({
     data: {
       userId: actor.id, type: 'out', lat: body.lat ?? null, lng: body.lng ?? null, selfieUrl: body.selfieUrl ?? null, ipAddress: ip ?? null,
@@ -136,10 +151,11 @@ export async function clockOut(actor: Actor, body: PunchBody = {}, ip?: string) 
     const measured = e.tenantId === tenantId ? verdict : null
     const r = await recordPunch({
       tenantId: e.tenantId, employeeId: e.id, kind: 'out', at: log.recordedAt, source: 'clock', actorUserId: actor.id, clockLogId: log.id,
-      ...verdictCols(measured), outOfAreaReason: measured?.outOfAreaReason ?? null,
+      ...verdictCols(measured), outOfAreaReason: measured?.outOfAreaReason ?? null, ...holdCols(measured, body),
     })
     if (r.recordId) { att = r; break }
   }
+  heldNotice(att, actor.id)
   if (tenantId && verdict) await flagOutOfArea({ tenantId, employeeId: empThere?.id ?? null, userId: actor.id, name: empThere?.fullName ?? actor.name ?? null, kind: 'out', at: log.recordedAt, verdict })
   return { clockedOutAt: log.recordedAt, where: whereOut(verdict), attendance: attendanceOut(att) }
 }
@@ -164,7 +180,7 @@ async function openDayState(tenantId: string, employeeId: string, now = new Date
   return open.length ? 'missed' : 'none'
 }
 
-const KIOSK_MISSED_OUT = 'Your last clock-in was never clocked out, so this punch cannot close it — that day is flagged for HR to correct. If you are starting a shift now, punch again to clock in.'
+const KIOSK_MISSED_OUT = 'Your last clock-in was never clocked out, so servd clocked you out at 12:00 AM that night and told HR. If you are starting a shift now, punch again to clock in.'
 
 /**
  * A kiosk punch by someone without a login: in if their day is not open, out
@@ -176,23 +192,43 @@ const KIOSK_MISSED_OUT = 'Your last clock-in was never clocked out, so this punc
  * HR and the person is told to punch again if they are starting a shift. Only
  * when nothing is open is the punch an in.
  */
-export async function kioskPunch(device: Actor, body: PunchBody & { employeeCode: string; pin: string; action?: 'in' | 'out' }) {
+export async function kioskPunch(device: Actor, body: PunchBody & { employeeCode: string; pin: string; action?: 'in' | 'out' }, ip?: string) {
   const tenantId = activeCompany(device)
   const emp = await verifyKioskPin(tenantId, body.employeeCode, body.pin)
   if (emp.userId) throw new AppError('HAS_LOGIN', 'You have a servd login — clock in with it instead of the kiosk PIN', 409)
   const kind = body.action ?? ((await openDayState(tenantId, emp.id)) === 'none' ? 'in' : 'out')
   // The tablet's GPS (lat/lng in the body) is measured against the
   // employee's own work locations, for an in and — when it sent a fix — an out.
-  const verdict = await enforceClockInPolicy(tenantId, null, body, { employeeId: emp.id, kind })
+  const verdict = await enforceClockInPolicy(tenantId, null, body, { employeeId: emp.id, kind, ip })
   const at = new Date()
   const r = await recordPunch({
     tenantId, employeeId: emp.id, kind, at, source: 'kiosk', actorUserId: device.id,
-    ...verdictCols(verdict), outOfAreaReason: verdict.outOfAreaReason, selfieUrl: body.selfieUrl ?? null,
+    ...verdictCols(verdict), outOfAreaReason: verdict.outOfAreaReason, selfieUrl: body.selfieUrl ?? null, ...holdCols(verdict, body),
   })
+  heldNotice(r, null)
   if (kind === 'out' && r.skipped === 'no_open_day') throw new AppError('NOT_CLOCKED_IN', 'You are not clocked in today', 409)
   if (kind === 'out' && r.skipped === 'missed_out') throw new AppError('MISSED_CLOCK_OUT', KIOSK_MISSED_OUT, 409, { recordId: r.recordId })
   if (r.recordId) await flagOutOfArea({ tenantId, employeeId: emp.id, userId: null, name: emp.fullName, kind, at, verdict })
   return { employee: { id: emp.id, fullName: emp.fullName, employeeCode: emp.employeeCode }, action: kind, at, attendance: attendanceOut(r), location: verdict.locationName ?? null, where: whereOut(verdict) }
+}
+
+/** The person's reason for their own out-of-area day waiting for the HOD (POST /time-clock/hold-reason). */
+export async function setHoldReason(actor: Actor, recordId: string, reason: string) {
+  const tenantId = activeCompany(actor)
+  const emp = await prisma.hrEmployee.findFirst({ where: { userId: actor.id, tenantId }, select: { id: true } })
+  const rec = emp ? await prisma.hrRecord.findFirst({ where: { id: recordId, tenantId, section: 'attendance', employeeId: emp.id, status: 'submitted' } }) : null
+  const d = (rec?.data ?? {}) as Record<string, unknown>
+  const hold = d['_outOfAreaHold'] as { punches?: Array<{ reason: string | null }> } | undefined
+  if (!rec || !hold?.punches?.length || d['_manual']) throw new AppError('NOT_FOUND', 'No day of yours is waiting for your manager', 404)
+  const punches = hold.punches.map((p) => ({ ...p }))
+  const target = [...punches].reverse().find((p) => !p.reason) ?? punches[punches.length - 1]!
+  target.reason = reason
+  const n = await prisma.hrRecord.updateMany({
+    where: { id: rec.id, status: 'submitted', updatedAt: rec.updatedAt },
+    data: { data: { ...d, _outOfAreaHold: { ...hold, punches } } as Prisma.InputJsonValue },
+  })
+  if (n.count === 0) throw new AppError('CHANGED', 'That day just changed — try again', 409)
+  return { recordId: rec.id, saved: true }
 }
 
 // ─── The punch report ────────────────────────────────────────────────────────

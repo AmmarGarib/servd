@@ -76,9 +76,9 @@ beforeAll(async () => {
   stackd = (await prisma.concept.create({ data: { name: 'Stackd', slug: `stackd-ppl-${stamp}`, type: 'restaurant', tenantId: tenantA } })).id
   flipd = (await prisma.concept.create({ data: { name: 'Flipd', slug: `flipd-ppl-${stamp}`, type: 'restaurant', tenantId: tenantA } })).id
   bunKebab = (await prisma.concept.create({ data: { name: 'Bun Kebab Co', slug: `bk-ppl-${stamp}`, type: 'restaurant', tenantId: tenantB } })).id
-  clifton = (await prisma.location.create({ data: { slug: `clifton-${stamp}`, name: 'Clifton Block 5', tenantId: tenantA, latitude: 24.8138, longitude: 67.0300 } })).id
-  dha = (await prisma.location.create({ data: { slug: `dha-${stamp}`, name: 'DHA Phase 6 Kitchen', tenantId: tenantA, latitude: 24.7900, longitude: 67.0650 } })).id
-  saddar = (await prisma.location.create({ data: { slug: `saddar-${stamp}`, name: 'Saddar', tenantId: tenantB, latitude: 24.8600, longitude: 67.0100 } })).id
+  clifton = (await prisma.location.create({ data: { slug: `clifton-${stamp}`, name: 'Clifton Block 5', tenantId: tenantA, latitude: 24.8138, longitude: 67.0300, fenceLatitude: 24.8138, fenceLongitude: 67.0300 } })).id
+  dha = (await prisma.location.create({ data: { slug: `dha-${stamp}`, name: 'DHA Phase 6 Kitchen', tenantId: tenantA, latitude: 24.7900, longitude: 67.0650, fenceLatitude: 24.7900, fenceLongitude: 67.0650 } })).id
+  saddar = (await prisma.location.create({ data: { slug: `saddar-${stamp}`, name: 'Saddar', tenantId: tenantB, latitude: 24.8600, longitude: 67.0100, fenceLatitude: 24.8600, fenceLongitude: 67.0100 } })).id
   await prisma.conceptLocation.create({ data: { conceptId: stackd, locationId: clifton } })
   await prisma.conceptLocation.create({ data: { conceptId: flipd, locationId: dha } })
   await prisma.conceptLocation.create({ data: { conceptId: bunKebab, locationId: saddar } })
@@ -142,10 +142,11 @@ describe('PPL-03 a missed clock-out is a flagged day, never a 25-hour shift', ()
     expect(inn.json().missedClockOut.since).toBe(staleAt.toISOString())
     expect(inn.json().attendance.recordId).not.toBe(day1.recordId)
 
+    // Owner, 2026-10-22: the forgotten clock-out is clocked out by servd at 12:00 AM (flagged for HR), the day counts.
     const flagged = await prisma.hrRecord.findUniqueOrThrow({ where: { id: day1.recordId! } })
-    expect(flagged.category).toBe('missing_punch')
-    expect((flagged.data as Record<string, unknown>)['_missedOut']).toBeTruthy()
-    expect((flagged.data as Record<string, unknown>)['checkOut']).toBeNull()
+    expect(flagged.category).toBe(day1.status)
+    expect((flagged.data as Record<string, unknown>)['_autoClockedOut']).toBeTruthy()
+    expect((flagged.data as Record<string, unknown>)['checkOut']).toBe('00:00')
 
     const during = await call('ali', 'GET', '/time-clock/status')
     expect(during.json()).toMatchObject({ punchedIn: true, missedClockOut: null })
@@ -154,10 +155,10 @@ describe('PPL-03 a missed clock-out is a flagged day, never a 25-hour shift', ()
     const out = await call('ali', 'POST', '/time-clock/clock-out', {})
     expect(out.statusCode).toBe(200)
     expect(out.json().attendance.recordId).toBe(inn.json().attendance.recordId) // today's day, not yesterday's
-    // Yesterday stays open-ended for HR: no out was paired with it.
+    // Yesterday keeps servd's 12:00 AM out: today's out was not paired with it.
     const still = await prisma.hrRecord.findUniqueOrThrow({ where: { id: day1.recordId! } })
-    expect((still.data as Record<string, unknown>)['checkOut']).toBeNull()
-    expect(((still.data as Record<string, unknown>)['_punches'] as unknown[]).length).toBe(1)
+    expect((still.data as Record<string, unknown>)['checkOut']).toBe('00:00')
+    expect(((still.data as Record<string, unknown>)['_punches'] as Array<{ source: string }>).map((p) => p.source)).toEqual(['clock', 'auto'])
   })
 
   it('a clock-out the next day does not pair with yesterday\'s in', async () => {
@@ -168,11 +169,12 @@ describe('PPL-03 a missed clock-out is a flagged day, never a 25-hour shift', ()
     expect(out.json()).toMatchObject({ notClockedIn: true, missedClockOut: { since: staleAt.toISOString() } })
     expect(await prisma.clockLog.count({ where: { userId: users['zara']!.id, type: 'out' } })).toBe(0)
     const rec = await prisma.hrRecord.findUniqueOrThrow({ where: { id: day1.recordId! } })
-    expect(rec.category).toBe('missing_punch')
+    expect(rec.category).toBe(day1.status) // clocked out by servd at 12:00 AM
+    expect((rec.data as Record<string, unknown>)['checkOut']).toBe('00:00')
     // …and the attendance writer refuses it on its own too (kiosk path).
     const late = await recordPunch({ tenantId: tenantA, employeeId: emps['Zara']!, kind: 'out', source: 'kiosk' })
     expect(late.skipped === 'missed_out' || late.skipped === 'no_open_day').toBe(true)
-    expect(((await prisma.hrRecord.findUniqueOrThrow({ where: { id: day1.recordId! } })).data as Record<string, unknown>)['checkOut']).toBeNull()
+    expect(((await prisma.hrRecord.findUniqueOrThrow({ where: { id: day1.recordId! } })).data as Record<string, unknown>)['checkOut']).toBe('00:00')
   })
 
   it('a shift still in progress is still "already clocked in"', async () => {

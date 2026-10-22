@@ -34,28 +34,36 @@ interface HrSettings {
   /** Office networks: servd checks people in by itself only from one of these. */
   officeNetworks?: OfficeNetwork[]
 }
-interface OfficeNetwork { address: string; label: string }
+interface OfficeNetwork { address: string; label: string; locationId?: string | null }
 
 /** Office networks (owner, 2026-10-22: check in by itself only on the office Wi-Fi). Saved with the page. */
 function OfficeNetworksPanel({ value, onSet }: { value: OfficeNetwork[]; onSet: (v: OfficeNetwork[]) => void }) {
   const cur = useQuery({ queryKey: ['hr-current-network'], queryFn: () => api.get<{ address: string | null; registered: boolean }>('/hr/settings/current-network') })
   const here = cur.data?.address ?? null
   const listed = !!here && value.some((n) => n.address === here)
+  // The location a check-in from the network counts as being at (owner, 2026-10-22: "Office Wi-Fi = Head Office location").
+  const locs = useQuery({ queryKey: ['locations'], queryFn: () => api.get<Array<{ id: string; name: string }>>('/locations') })
+  const headOffice = (locs.data ?? []).find((l) => /head\s*office/i.test(l.name))?.id ?? null
   return (
     <Panel title="Office networks (automatic check-in)">
-      <p className="text-xs text-white/55">servd checks staff in by itself, the first time they open it each day, only when they are on one of these networks. Add the office Wi-Fi while you are connected to it. A browser cannot read the Wi-Fi name, so servd uses the office internet address. If the internet provider changes that address, add it again. Away from these networks staff check in with the Check in button.</p>
+      <p className="text-xs text-white/55">servd checks staff in by itself, the first time they open it each day, only when they are on one of these networks. Add the office Wi-Fi while you are connected to it. A browser cannot read the Wi-Fi name, so servd uses the office internet address. If the internet provider changes that address, add it again. Away from these networks staff check in with the Check in button. A network that counts as a location (the Head Office) places a check-in there without a map reading — accepted for staff who work at that location, sent to their manager otherwise.</p>
       {value.length === 0 && <p className="text-sm text-white/45">No office network yet, so nobody is checked in by themselves.</p>}
       {value.map((n, i) => (
         <div key={`${n.address}-${i}`} className="flex flex-wrap items-center gap-2">
           <input className={`${inp} flex-1 min-w-[160px]`} aria-label="Name" value={n.label} maxLength={60}
             onChange={(e) => onSet(value.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
           <span className="text-xs font-mono text-white/55">{n.address}{n.address === here ? ' · you are on it' : ''}</span>
+          <select className={`${inp} min-w-[160px]`} aria-label="Counts as being at" value={n.locationId ?? ''}
+            onChange={(e) => onSet(value.map((x, j) => (j === i ? { ...x, locationId: e.target.value || null } : x)))}>
+            <option value="">Not a location (check-in only)</option>
+            {(locs.data ?? []).map((l) => <option key={l.id} value={l.id}>Counts as at {l.name}</option>)}
+          </select>
           <button type="button" className="text-xs font-bold text-s-red hover:underline" onClick={() => onSet(value.filter((_, j) => j !== i))}>Remove</button>
         </div>
       ))}
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" className={btn} disabled={!here || listed || value.length >= 20}
-          onClick={() => here && onSet([...value, { address: here, label: 'Office Wi-Fi' }])}>Add the network I&apos;m on now</button>
+          onClick={() => here && onSet([...value, { address: here, label: 'Office Wi-Fi', locationId: headOffice }])}>Add the network I&apos;m on now</button>
         <span className="text-xs text-white/45">{cur.isLoading ? 'Finding your network…' : here ? (listed ? 'The network you are on is listed.' : `You are on ${here}.`) : 'Could not read your network.'}</span>
       </div>
     </Panel>

@@ -151,7 +151,10 @@ export function isManualEntry(r: { section?: string; data?: unknown }): boolean 
 }
 /** The status words of a record; a manual attendance day waiting says who it waits for. */
 export function recordStatusText(r: { section?: string; status: string; data?: unknown }): string {
-  return isManualEntry(r) && r.status === 'submitted' ? 'Waiting for CEO' : human(r.status)
+  if (isManualEntry(r) && r.status === 'submitted') return 'Waiting for CEO'
+  // An out-of-area punch day waiting for the reporting manager (owner, 2026-10-22).
+  if (r.section === 'attendance' && r.status === 'submitted' && (r.data as Record<string, unknown> | undefined)?.['_outOfAreaHold']) return 'Outside work location — waiting for manager'
+  return human(r.status)
 }
 
 export const STATUS_COLOR: Record<string, string> = {

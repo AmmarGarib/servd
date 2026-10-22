@@ -11,6 +11,12 @@
 // employee per Karachi day (flagOutOfArea). With the switch off the verdict is only stored. Geofence-exempt roles
 // (isGeofenceExempt) are not measured at all. The selfie rule is unchanged: required at clock-in when the company
 // asks for it.
+//
+// Geo-fenced attendance (owner, 2026-10-22): anchors are the pin + radius the CEO APPROVED (Location.fence*); a
+// reading less accurate than MAX_FIX_ACCURACY_M is out of area ('poor_fix'); a punch from a registered office network
+// that names a location counts as being AT that location (owner: "Office Wi-Fi = Head Office location"), no map
+// reading needed — in area when that location is one of the person's work locations (or they have none). An
+// out-of-area punch of an employee is HELD for their HOD (hr/attendance.ts), never refused.
 
 import { AppError } from '../../lib/errors.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -19,6 +25,8 @@ import { flagException, kindsMatching } from '../../lib/exceptions.js'
 import { isGeofenceExempt } from '../../lib/roles.js'
 import { haversineMeters } from '../../lib/geo.js'
 import { pktToday } from '../hr/logic.js'
+import { getSettings } from '../hr/service.js'
+import { officeNetworkOf } from '../../lib/officeNetwork.js'
 
 /** The anchor nearest a point, with its distance. */
 export function nearestAnchor(anchors: GeofenceAnchor[], lat: number, lng: number): { anchor: GeofenceAnchor; distanceM: number } | null {
@@ -31,7 +39,10 @@ export function nearestAnchor(anchors: GeofenceAnchor[], lat: number, lng: numbe
 }
 
 /** Why a punch is out of area: outside every anchor, no location fix from the device, or nothing to measure from. */
-export type OutOfAreaReason = 'outside' | 'no_fix' | 'no_anchor'
+export type OutOfAreaReason = 'outside' | 'no_fix' | 'no_anchor' | 'poor_fix'
+
+/** A location reading less accurate than this (metres) cannot place a punch inside a fence (owner's card). */
+export const MAX_FIX_ACCURACY_M = 50
 
 export interface ClockInVerdict {
   /** true inside the nearest anchor's radius, false outside, null = not measured. */
@@ -49,6 +60,10 @@ export interface ClockInVerdict {
   enforced: boolean
   /** Measured from the employee's own work locations (false = the company's locations). */
   fromWorkLocations: boolean
+  /** Placed by a registered office network (no map reading). */
+  viaOfficeNetwork?: boolean
+  /** The device's reported accuracy (metres), when it sent one. */
+  accuracyM?: number | null
 }
 
 const NOT_JUDGED: ClockInVerdict = {
@@ -60,21 +75,24 @@ const NOT_JUDGED: ClockInVerdict = {
  * The anchors a punch by this employee is measured from: their own work locations that are live and have a map
  * pin, in the punch's company; none → every located location of the company.
  */
-export async function anchorsFor(tenantId: string, employeeId: string | null, companyAnchors: GeofenceAnchor[]): Promise<{ anchors: GeofenceAnchor[]; fromWorkLocations: boolean }> {
+export async function anchorsFor(tenantId: string, employeeId: string | null, companyAnchors: GeofenceAnchor[]): Promise<{ anchors: GeofenceAnchor[]; fromWorkLocations: boolean; workLocationIds?: string[] }> {
   if (employeeId) {
     const rows = await prisma.hrWorkLocation.findMany({
       where: {
         tenantId, employeeId,
-        location: { tenantId, isActive: true, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
+        location: { tenantId, isActive: true, deletedAt: null },
       },
-      include: { location: { select: { id: true, name: true, latitude: true, longitude: true, geofenceRadiusMetres: true } } },
+      include: { location: { select: { id: true, name: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true } } },
     })
     if (rows.length) {
+      // Measured from the CEO-approved pins only; a work location with no approved pin is still the person's place
+      // (an office network naming it places them there).
       return {
         fromWorkLocations: true,
-        anchors: rows.map((r) => ({
-          locationId: r.location.id, name: r.location.name, lat: r.location.latitude!, lng: r.location.longitude!,
-          radiusM: r.radiusMetres ?? r.location.geofenceRadiusMetres ?? null,
+        workLocationIds: rows.map((r) => r.location.id),
+        anchors: rows.filter((r) => r.location.fenceLatitude != null && r.location.fenceLongitude != null).map((r) => ({
+          locationId: r.location.id, name: r.location.name, lat: r.location.fenceLatitude!, lng: r.location.fenceLongitude!,
+          radiusM: r.radiusMetres ?? r.location.fenceRadiusMetres ?? null,
         })),
       }
     }
@@ -82,7 +100,7 @@ export async function anchorsFor(tenantId: string, employeeId: string | null, co
   return { anchors: companyAnchors, fromWorkLocations: false }
 }
 
-export interface PunchWhere { lat?: number; lng?: number; selfieUrl?: string }
+export interface PunchWhere { lat?: number; lng?: number; selfieUrl?: string; accuracyM?: number }
 
 /**
  * Judge a punch against the company's policy. Throws only for the selfie rule (clock-in, when the company requires
@@ -94,7 +112,7 @@ export async function enforceClockInPolicy(
   tenantId: string,
   role: string | null,
   body: PunchWhere,
-  opts: { employeeId?: string | null; kind?: 'in' | 'out' } = {},
+  opts: { employeeId?: string | null; kind?: 'in' | 'out'; ip?: string | null } = {},
 ): Promise<ClockInVerdict> {
   if (isGeofenceExempt(role)) return NOT_JUDGED
   const kind = opts.kind ?? 'in'
@@ -104,14 +122,30 @@ export async function enforceClockInPolicy(
     throw new AppError('SELFIE_REQUIRED', 'Snap a selfie to clock in. Buddy-punching is blocked.', 403)
   }
 
+  // A registered office network that names a location: the punch is AT that location (no map reading).
+  const net = opts.ip ? officeNetworkOf(opts.ip, (await getSettings(tenantId)).officeNetworks) : null
   const hasFix = body.lat != null && body.lng != null
-  if (kind === 'out' && !hasFix) return { ...NOT_JUDGED, enforced: cfg.enforced }
+  if (kind === 'out' && !hasFix && !net?.locationId) return { ...NOT_JUDGED, enforced: cfg.enforced }
 
-  const { anchors, fromWorkLocations } = await anchorsFor(tenantId, opts.employeeId ?? null, cfg.anchors)
+  const { anchors, fromWorkLocations, workLocationIds } = await anchorsFor(tenantId, opts.employeeId ?? null, cfg.anchors)
+  if (net?.locationId) {
+    const loc = await prisma.location.findFirst({ where: { id: net.locationId, tenantId, deletedAt: null }, select: { id: true, name: true } })
+    if (loc) {
+      const theirs = workLocationIds ? workLocationIds.includes(loc.id) : true
+      return {
+        geofenceMatched: theirs, geofenceDistanceM: null, locationId: loc.id, locationName: loc.name, radiusM: null,
+        outOfArea: cfg.enforced && !theirs, outOfAreaReason: theirs ? null : 'outside', enforced: cfg.enforced,
+        fromWorkLocations, viaOfficeNetwork: true, accuracyM: body.accuracyM ?? null,
+      }
+    }
+  }
   const near = hasFix ? nearestAnchor(anchors, body.lat!, body.lng!) : null
   const radiusM = near ? (near.anchor.radiusM ?? cfg.radiusM) : null
-  const matched = near ? near.distanceM <= radiusM! : null
-  const reason: OutOfAreaReason | null = !hasFix ? 'no_fix' : !near ? 'no_anchor' : matched ? null : 'outside'
+  const inside = near ? near.distanceM <= radiusM! : null
+  // A reading the device itself says is worse than 50 m cannot prove the punch is inside (an old client sends none).
+  const poorFix = hasFix && body.accuracyM != null && body.accuracyM > MAX_FIX_ACCURACY_M
+  const matched = inside == null ? null : inside && !poorFix
+  const reason: OutOfAreaReason | null = !hasFix ? 'no_fix' : !near ? 'no_anchor' : !inside ? 'outside' : poorFix ? 'poor_fix' : null
   return {
     geofenceMatched: matched,
     geofenceDistanceM: near ? Math.round(near.distanceM) : null,
@@ -122,6 +156,7 @@ export async function enforceClockInPolicy(
     outOfAreaReason: reason,
     enforced: cfg.enforced,
     fromWorkLocations,
+    accuracyM: body.accuracyM ?? null,
   }
 }
 
@@ -131,7 +166,8 @@ export const OUT_OF_AREA_KIND = 'attendance_out_of_area' as const
 const REASON_TEXT: Record<OutOfAreaReason, string> = {
   outside: 'outside their work locations',
   no_fix: 'with no location from the device',
-  no_anchor: 'where no work location has a map pin to measure from',
+  no_anchor: 'where no work location has an approved map pin to measure from',
+  poor_fix: 'with a location reading too rough to place them (worse than 50 m)',
 }
 
 /**
@@ -188,7 +224,7 @@ export async function flagOutOfArea(input: {
         title: `Punch out of area${input.name ? `: ${input.name}` : ''}`,
         description: `${input.name ?? 'A staff member'} punched ${input.kind} ${REASON_TEXT[v.outOfAreaReason!]}`
           + (v.geofenceDistanceM != null && v.locationName ? ` — ${v.geofenceDistanceM} m from ${v.locationName} (allowed ${v.radiusM} m)` : '')
-          + '. The punch was recorded; HR may check it.',
+          + '. The punch was recorded; the day waits for their manager (HOD) to approve it in the approvals inbox and does not count for pay until then.',
         entityType: subjectType,
         entityId: subjectId,
         actorId: input.userId,

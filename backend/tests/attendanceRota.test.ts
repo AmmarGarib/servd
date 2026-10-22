@@ -121,8 +121,8 @@ beforeAll(async () => {
   tenantId = (await prisma.tenant.create({ data: { name: 'Rota Co', slug: `rota-co-${Date.now()}` } })).id
   otherTenantId = (await prisma.tenant.create({ data: { name: 'Rota Other Co', slug: `rota-other-${Date.now()}` } })).id
   conceptId = (await prisma.concept.create({ data: { name: 'rota brand', slug: `rota-brand-${Date.now()}`, type: 'restaurant', tenantId } as never })).id
-  locA = (await prisma.location.create({ data: { slug: `rota-a-${Date.now()}`, name: 'Branch A', tenantId, latitude: 24.8607, longitude: 67.0011 } })).id
-  await prisma.location.create({ data: { slug: `rota-b-${Date.now()}`, name: 'Branch B', tenantId, latitude: 24.9, longitude: 67.1 } })
+  locA = (await prisma.location.create({ data: { slug: `rota-a-${Date.now()}`, name: 'Branch A', tenantId, latitude: 24.8607, longitude: 67.0011, fenceLatitude: 24.8607, fenceLongitude: 67.0011 } })).id
+  await prisma.location.create({ data: { slug: `rota-b-${Date.now()}`, name: 'Branch B', tenantId, latitude: 24.9, longitude: 67.1, fenceLatitude: 24.9, fenceLongitude: 67.1 } })
   await prisma.conceptLocation.create({ data: { conceptId, locationId: locA } })
 
   await mkUser('ceo', 'admin')
@@ -196,11 +196,20 @@ describe('punches write attendance', () => {
     expect(o.recordId).toBe(r.recordId)
   })
 
-  it('turns an in with no out into a missing punch, which the out still closes', async () => {
+  it('clocks a forgotten clock-out out at 12:00 AM and flags it for HR (owner, 2026-10-22)', async () => {
     const r = await recordPunch({ tenantId, employeeId: emps['Cook']!, kind: 'in', at: pkt('2026-09-22', '09:00'), source: 'clock' })
     expect(r.status).toBe('present')
     expect(await flagMissingPunches(tenantId, new Date('2026-09-23T06:00:00Z'))).toBeGreaterThanOrEqual(1)
-    expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id: r.recordId! } })).category).toBe('missing_punch')
+    const rec = await prisma.hrRecord.findUniqueOrThrow({ where: { id: r.recordId! } })
+    expect(rec.category).toBe('present') // the day counts, clocked out at midnight
+    const d = rec.data as Record<string, unknown>
+    expect(d['checkOut']).toBe('00:00')
+    expect((d['_autoClockedOut'] as { outAt: string }).outAt).toBe('2026-09-22T19:00:00.000Z') // 12:00 AM Karachi
+    expect((d['_punches'] as Array<{ type: string; source: string }>).at(-1)).toMatchObject({ type: 'out', source: 'auto' })
+    expect(await prisma.exceptionFlag.count({ where: { tenantId, kind: 'attendance_auto_clock_out', entityId: r.recordId! } })).toBe(1)
+    // Idempotent: run again, nothing more.
+    await flagMissingPunches(tenantId, new Date('2026-09-23T08:00:00Z'))
+    expect(await prisma.exceptionFlag.count({ where: { tenantId, kind: 'attendance_auto_clock_out', entityId: r.recordId! } })).toBe(1)
   })
 
   it('never overwrites a day HR keyed or edited by hand', async () => {

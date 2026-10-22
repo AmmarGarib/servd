@@ -655,6 +655,21 @@ export async function loanStatement(tenantId: string, employeeId: string) {
 
 // ─── Payroll ────────────────────────────────────────────────────────────────
 
+/** An out-of-area punch day waiting for the HOD (owner, 2026-10-22; hr/attendance.ts holdDay). */
+export function isOutOfAreaHold(rec: { section: string; data: unknown }): boolean {
+  const d = (rec.data ?? {}) as Record<string, unknown>
+  return rec.section === 'attendance' && !!d['_outOfAreaHold'] && !d['_manual']
+}
+
+/** The one step an out-of-area punch day waits on: the person's reporting manager (HR when they have none). */
+export const OUT_OF_AREA_WORKFLOW: WorkflowStep[] = [{ key: 'hod_location', label: 'HOD — punch outside the work location', role: 'hod' }]
+
+/** The approval steps of a record: its format's, except an out-of-area punch day, which waits on the HOD only. Every
+ *  reader of a record's steps (decide, the waiting list, the bell, approvalRights) goes through this. */
+export function workflowOf(rec: { section: string; data: unknown }, fmt: { workflow: WorkflowStep[] }): WorkflowStep[] {
+  return isOutOfAreaHold(rec) ? OUT_OF_AREA_WORKFLOW : fmt.workflow
+}
+
 /** Attendance entries that stand. Draft, rejected and cancelled entries never
  *  reach payroll, a report or the dashboard. */
 /** Attendance that counts (payroll, reports, the dashboard): punches and approved days. A day HR keyed or edited

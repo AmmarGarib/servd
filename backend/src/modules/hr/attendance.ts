@@ -12,11 +12,15 @@
 //   no out      a day whose in is 16 h old with no out becomes missing_punch.
 //   missed out  an in left open past isMissedClockOut() — 16 h, or 12 h once
 //               the business day has turned at 06:00 Karachi (a closing shift
-//               past midnight still pairs) — is a forgotten clock-out, never a
-//               shift: the day is closed as missing_punch (data._missedOut)
-//               with NO hours, the next in opens a new day, and a late out
-//               does not pair with it (that booked 25-hour shifts — audit
-//               PPL-03). HR fixes it with an attendance_correction.
+//               past midnight that is clocked out still pairs) — is a
+//               forgotten clock-out: servd clocks the day out at 12:00 AM
+//               after the in's day (owner, 2026-10-22; data._autoClockedOut,
+//               an 'auto' out punch), the day keeps its status and its hours
+//               to midnight, HR gets a flag, the next in opens a new day, and
+//               a late out does not pair with it (that booked 25-hour shifts —
+//               audit PPL-03). HR corrects the time with an
+//               attendance_correction. Old rows closed as missing_punch
+//               (data._missedOut) stay as they are.
 //
 // HR corrects exceptions through an approved attendance_correction, which
 // rewrites the day. A row HR keyed or edited by hand is never overwritten by a
@@ -29,7 +33,7 @@
 
 import type { Prisma, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
-import { getFormat, getSettings, STANDING_ATTENDANCE, ATTENDANCE_DAY_TAKEN } from './service.js'
+import { getFormat, getSettings, ATTENDANCE_DAY_TAKEN } from './service.js'
 import { pktToday } from './logic.js'
 import { rotaDay, toMinutes, ymd, type RotaCell } from './rota.js'
 import type { HrField } from './forms.js'
@@ -143,20 +147,63 @@ function isOpenDay(r: HrRecord, checkOutKey: string): boolean {
   return isPunchOwned(r) && !d[checkOutKey] && !d['_missedOut']
 }
 
-/** The write that closes a day as a missed clock-out: missing_punch, no out,
- *  and a note of the in that was never closed (HR corrects it). */
-function missedOutData(d: Record<string, unknown>, statusKey: string, lastIn: Date, at: Date, refusedOut: boolean) {
+/** 12:00 AM Karachi after the in's day — when a forgotten clock-out is closed (owner, 2026-10-22: "it should auto
+ *  log-out at 12:00 AM"); never later than `at`, when the close runs. */
+export function autoClockOutAt(lastIn: Date, at: Date): Date {
+  const midnight = new Date(pktToday(lastIn).getTime() + 86_400_000 - 5 * 3_600_000)
+  return midnight.getTime() < at.getTime() ? midnight : at
+}
+
+/** HH:MM Karachi time of an instant. */
+const pktClock = (d: Date) => new Date(d.getTime() + 5 * 3_600_000).toISOString().slice(11, 16)
+
+/**
+ * The write that closes a forgotten clock-out (owner, 2026-10-22): the day is clocked out by itself at 12:00 AM
+ * after the in's day (autoClockOutAt) — an 'out' punch with source 'auto', the check-out 00:00 — so the day keeps
+ * its present / late status and counts its hours up to midnight. `_autoClockedOut` marks it for HR (one exception
+ * flag, raised by the caller) and keeps it out of punch overtime. Replaces the old "missing punch, no hours" close.
+ */
+function autoClockOutData(d: Record<string, unknown>, k: { status: string; checkOut: string }, lastIn: Date, at: Date, refusedOut: boolean) {
+  const outAt = autoClockOutAt(lastIn, at)
+  const inStatus = String(d['_inStatus'] ?? d[k.status] ?? 'present')
+  const status = inStatus === 'missing_punch' ? 'present' : inStatus
+  const out: PunchEntry = { type: 'out', at: outAt.toISOString(), source: 'auto' }
   return {
-    ...d,
-    [statusKey]: 'missing_punch',
-    _missedOut: { lastIn: lastIn.toISOString(), flaggedAt: at.toISOString(), ...(refusedOut && { refusedOutAt: at.toISOString() }) },
+    category: status,
+    data: {
+      ...d,
+      [k.status]: status,
+      [k.checkOut]: pktClock(outAt),
+      _punches: [...((d['_punches'] as PunchEntry[] | undefined) ?? []), out],
+      _autoClockedOut: { lastIn: lastIn.toISOString(), outAt: outAt.toISOString(), flaggedAt: at.toISOString(), ...(refusedOut && { refusedOutAt: at.toISOString() }) },
+    },
+  }
+}
+
+/** The exception kind HR sees for a day servd clocked out by itself. */
+export const AUTO_CLOCK_OUT_KIND = 'attendance_auto_clock_out' as const
+
+/** Flag a day servd clocked out by itself, for HR. Never throws. */
+async function flagAutoClockOut(r: Pick<HrRecord, 'id' | 'tenantId' | 'employeeId' | 'startDate'>, outAt: Date) {
+  try {
+    const emp = r.employeeId ? await prisma.hrEmployee.findFirst({ where: { id: r.employeeId, tenantId: r.tenantId }, select: { fullName: true } }) : null
+    const { flagException } = await import('../../lib/exceptions.js')
+    await flagException({
+      tenantId: r.tenantId, kind: AUTO_CLOCK_OUT_KIND, severity: 'low',
+      title: `Clocked out by servd at 12:00 AM${emp ? `: ${emp.fullName}` : ''}`,
+      description: `${emp?.fullName ?? 'A staff member'} did not clock out on ${r.startDate ? ymd(r.startDate) : 'the day'}; servd clocked them out at ${pktClock(outAt)}. HR may correct the time with an attendance correction.`,
+      entityType: 'HrRecord', entityId: r.id,
+      metadata: { day: r.startDate ? ymd(r.startDate) : null, outAt: outAt.toISOString() },
+    })
+  } catch (err) {
+    console.warn('[attendance] auto clock-out flag failed:', (err as Error).message)
   }
 }
 
 /**
- * Close every open day of this employee whose last in is a missed clock-out
- * by `at` (isMissedClockOut). Runs before a new in, so today's in opens a new
- * day instead of being swallowed by yesterday's. Returns the closed record ids.
+ * Clock out every open day of this employee whose last in is a forgotten clock-out by `at` (isMissedClockOut):
+ * closed at 12:00 AM (autoClockOutData). Runs before a new in, so today's in opens a new day instead of being
+ * swallowed by yesterday's. Returns the closed record ids.
  */
 export async function closeMissedDays(tenantId: string, employeeId: string, at = new Date()): Promise<string[]> {
   const today = pktToday(at)
@@ -170,11 +217,12 @@ export async function closeMissedDays(tenantId: string, employeeId: string, at =
     if (!isOpenDay(r, k.checkOut)) continue
     const lastIn = lastInOf(r)
     if (!isMissedClockOut(lastIn, at)) continue
+    const w = autoClockOutData(r.data as Record<string, unknown>, k, lastIn, at, false)
     const n = await prisma.hrRecord.updateMany({
       where: { id: r.id, updatedAt: r.updatedAt },
-      data: { category: 'missing_punch', data: missedOutData(r.data as Record<string, unknown>, k.status, lastIn, at, false) as Prisma.InputJsonValue },
+      data: { category: w.category, data: w.data as Prisma.InputJsonValue },
     })
-    if (n.count) closed.push(r.id)
+    if (n.count) { closed.push(r.id); await flagAutoClockOut(r, autoClockOutAt(lastIn, at)) }
   }
   return closed
 }
@@ -205,6 +253,10 @@ export interface PunchInput {
   selfieUrl?: string | null
   outOfArea?: boolean | null
   outOfAreaReason?: string | null
+  /** Where the out-of-area punch was measured (for the HOD): distance, the location, the radius. */
+  outOfAreaWhere?: { distanceM: number | null; location: string | null; radiusM: number | null } | null
+  /** The person's typed reason for an out-of-area punch (may come later: POST /time-clock/hold-reason). */
+  holdReason?: string | null
 }
 
 export interface PunchResult {
@@ -212,6 +264,46 @@ export interface PunchResult {
   status: string | null
   lateMinutes: number | null
   skipped?: 'not_employed' | 'hand_keyed' | 'no_open_day' | 'missed_out'
+  /** A forgotten clock-out this punch found: servd clocked the day out at this time (12:00 AM). */
+  autoClockedOutAt?: Date
+  /** The day now waits for the HOD (an out-of-area punch; owner, 2026-10-22). */
+  held?: boolean
+}
+
+// ─── Out of area → the HOD (owner, 2026-10-22) ──────────────────────────────
+//
+// A punch outside the person's work locations (the company's geofence on) is never refused: it is saved and the
+// DAY is held — status 'submitted' with data._outOfAreaHold — so it is out of payroll, overtime and tip-pool hours
+// (STANDING_ATTENDANCE) until the person's reporting manager (HOD) approves it in the approvals inbox, through the
+// HR request engine with the one-step workflow OUT_OF_AREA_WORKFLOW (service.ts workflowOf). Rejected = the day
+// does not count. Another out-of-area punch on a day already approved holds it again (the earlier decision moves
+// to _outOfAreaHold.history). A hand-keyed day is never a punch day, so never held.
+
+export interface OutOfAreaPunch {
+  at: string
+  kind: 'in' | 'out'
+  why: string | null
+  distanceM: number | null
+  location: string | null
+  radiusM: number | null
+  reason: string | null
+}
+
+/** Hold the day for the HOD: the punch goes on _outOfAreaHold, and the status columns to write. */
+function holdDay(d: Record<string, unknown>, rec: Pick<HrRecord, 'status' | 'approvals'> | null, p: PunchInput, at: Date) {
+  const cur = (d['_outOfAreaHold'] ?? {}) as { since?: string; punches?: OutOfAreaPunch[]; history?: unknown[] }
+  const punch: OutOfAreaPunch = {
+    at: at.toISOString(), kind: p.kind, why: p.outOfAreaReason ?? null,
+    distanceM: p.outOfAreaWhere?.distanceM ?? null, location: p.outOfAreaWhere?.location ?? null, radiusM: p.outOfAreaWhere?.radiusM ?? null,
+    reason: p.holdReason?.trim() || null,
+  }
+  const decided = rec && rec.status !== 'submitted' && Array.isArray(rec.approvals) && (rec.approvals as unknown[]).length
+  d['_outOfAreaHold'] = {
+    since: rec?.status === 'submitted' && cur.since ? cur.since : at.toISOString(),
+    punches: [...(cur.punches ?? []), punch],
+    history: decided ? [...(cur.history ?? []), { approvals: rec!.approvals, at: at.toISOString() }] : (cur.history ?? []),
+  }
+  return { status: 'submitted', currentStep: 0, ...(rec && rec.status !== 'submitted' && { approvals: [] as Prisma.InputJsonValue[] }) }
 }
 
 /** Write one punch into the day's attendance record. */
@@ -257,8 +349,9 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
           delete d['_missedOut']
         }
         const category = cur.category === 'missing_punch' ? String(d['_inStatus'] ?? 'present') : cur.category
-        await tx.hrRecord.update({ where: { id: cur.id }, data: { category, data: d as Prisma.InputJsonValue } })
-        return { recordId: cur.id, status: category, lateMinutes: cur.quantity }
+        const hold = p.outOfArea ? holdDay(d, cur, p, at) : null
+        await tx.hrRecord.update({ where: { id: cur.id }, data: { category, data: d as Prisma.InputJsonValue, ...hold } })
+        return { recordId: cur.id, status: category, lateMinutes: cur.quantity, held: !!hold }
       }
       const { status, lateMinutes } = statusFor(hhmm, cell, settings.lateGraceMinutes)
       const firstShift = cell.kind === 'shift' ? cell.segments[0] : undefined
@@ -273,21 +366,22 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
         _expected: cell.kind === 'shift' ? { start: firstShift?.start, end: firstShift?.end, source: cell.source } : { kind: cell.kind },
         ...(p.outOfArea && { _outOfArea: true }),
       }
+      const hold = p.outOfArea ? holdDay(data, null, p, at) : null
       const rec = await tx.hrRecord.create({
         data: {
           tenantId: p.tenantId, section: 'attendance', formVersion: fmt.version, employeeId: emp.id,
           startDate: today, category: status, quantity: lateMinutes, refId: firstShift?.shiftId ?? null,
-          status: 'approved', data: data as Prisma.InputJsonValue, createdById: p.actorUserId ?? null,
+          status: hold ? 'submitted' : 'approved', data: data as Prisma.InputJsonValue, createdById: p.actorUserId ?? null,
         },
       })
-      return { recordId: rec.id, status, lateMinutes }
+      return { recordId: rec.id, status, lateMinutes, held: !!hold }
     })
   }
 
   // out: close the open day — today's, or yesterday's for a shift that ran
   // past midnight.
   const yesterday = new Date(today.getTime() - 86_400_000)
-  return prisma.$transaction(async (tx) => {
+  const res: PunchResult = await prisma.$transaction(async (tx) => {
     // Oldest day first, the same order an in takes its one lock in.
     await lockDay(tx, emp.id, ymd(yesterday))
     await lockDay(tx, emp.id, ymd(today))
@@ -300,13 +394,11 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
     const lastIn = lastInOf(cur)
     if (isMissedClockOut(lastIn, at)) {
       // A forgotten clock-out: this out does not pair with an in that old
-      // (it booked a 25-hour shift). The day is closed as missing_punch with
-      // no hours, and the out is not added to its punches.
-      await tx.hrRecord.update({
-        where: { id: cur.id },
-        data: { category: 'missing_punch', data: missedOutData(cur.data as Record<string, unknown>, k.status, lastIn, at, true) as Prisma.InputJsonValue },
-      })
-      return { recordId: cur.id, status: 'missing_punch', lateMinutes: cur.quantity, skipped: 'missed_out' as const }
+      // (it booked a 25-hour shift). The day is clocked out at 12:00 AM by
+      // servd and flagged for HR; this late out is not added to its punches.
+      const w = autoClockOutData(cur.data as Record<string, unknown>, k, lastIn, at, true)
+      await tx.hrRecord.update({ where: { id: cur.id }, data: { category: w.category, data: w.data as Prisma.InputJsonValue } })
+      return { recordId: cur.id, status: w.category, lateMinutes: cur.quantity, skipped: 'missed_out' as const, autoClockedOutAt: autoClockOutAt(lastIn, at) }
     }
     const d = { ...(cur.data as Record<string, unknown>) }
     d['_punches'] = [...((d['_punches'] as PunchEntry[] | undefined) ?? []), entry]
@@ -314,38 +406,37 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
     markOutOfArea(d)
     const category = cur.category === 'missing_punch' ? String(d['_inStatus'] ?? 'present') : cur.category
     d[k.status] = category
-    await tx.hrRecord.update({ where: { id: cur.id }, data: { category, data: d as Prisma.InputJsonValue } })
-    return { recordId: cur.id, status: category, lateMinutes: cur.quantity }
+    const hold = p.outOfArea ? holdDay(d, cur, p, at) : null
+    await tx.hrRecord.update({ where: { id: cur.id }, data: { category, data: d as Prisma.InputJsonValue, ...hold } })
+    return { recordId: cur.id, status: category, lateMinutes: cur.quantity, held: !!hold }
   })
+  if (res.autoClockedOutAt && res.recordId) await flagAutoClockOut({ id: res.recordId, tenantId: p.tenantId, employeeId: emp.id, startDate: null }, res.autoClockedOutAt)
+  return res
 }
 
 /**
- * Days with an in and no out, whose last in is at least 16 hours old, become
- * missing_punch — HR sees them as exceptions and the person corrects them
- * with an attendance_correction. A later out never closes them
- * (isMissedClockOut). Idempotent; run before attendance is read and before
- * payroll is calculated.
+ * Forgotten clock-outs, company-wide: every punched day with an in and no out whose last in is a missed clock-out by
+ * `now` (isMissedClockOut) is clocked out at 12:00 AM (autoClockOutData; owner, 2026-10-22) and flagged for HR.
+ * Days waiting for the HOD (out of area) are closed too. Idempotent; runs daily, before attendance is read and
+ * before payroll is calculated. The name is historical (it used to mark them missing_punch with no hours).
  */
 export async function flagMissingPunches(tenantId: string, now = new Date()): Promise<number> {
   const since = new Date(pktToday(now).getTime() - 40 * 86_400_000)
   const rows = await prisma.hrRecord.findMany({
-    where: { tenantId, section: 'attendance', status: STANDING_ATTENDANCE, category: { in: ['present', 'late'] }, startDate: { gte: since } },
+    where: { tenantId, section: 'attendance', status: ATTENDANCE_DAY_TAKEN, category: { in: ['present', 'late'] }, startDate: { gte: since } },
   })
-  const candidates = rows.filter(isPunchOwned)
-  if (candidates.length === 0) return 0
   const k = attendanceKeys((await getFormat(tenantId, 'attendance')).fields)
+  const candidates = rows.filter((r) => isOpenDay(r, k.checkOut))
   let n = 0
   for (const r of candidates) {
-    const d = r.data as Record<string, unknown>
-    if (d[k.checkOut]) continue
-    const ins = ((d['_punches'] as PunchEntry[] | undefined) ?? []).filter((x) => x.type === 'in')
-    const lastIn = ins.length ? new Date(ins[ins.length - 1]!.at) : r.createdAt
-    if (now.getTime() - lastIn.getTime() < MISSING_PUNCH_AFTER_MS) continue
+    const lastIn = lastInOf(r)
+    if (!isMissedClockOut(lastIn, now)) continue
+    const w = autoClockOutData(r.data as Record<string, unknown>, k, lastIn, now, false)
     const claimed = await prisma.hrRecord.updateMany({
-      where: { id: r.id, category: r.category, updatedAt: r.updatedAt },
-      data: { category: 'missing_punch', data: { ...d, [k.status]: 'missing_punch' } as Prisma.InputJsonValue },
+      where: { id: r.id, updatedAt: r.updatedAt },
+      data: { category: w.category, data: w.data as Prisma.InputJsonValue },
     })
-    n += claimed.count
+    if (claimed.count) { n += 1; await flagAutoClockOut(r, autoClockOutAt(lastIn, now)) }
   }
   return n
 }

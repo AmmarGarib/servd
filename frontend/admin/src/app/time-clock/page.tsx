@@ -43,7 +43,7 @@ export default function TimeClockPage() {
   const pinRef = useRef<HTMLDivElement>(null)
   const inFlight = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const coordsRef = useRef<{ lat: number; lng: number } | null>(null)
+  const coordsRef = useRef<{ lat: number; lng: number; accuracyM?: number } | null>(null)
   const idLabelId = useId()
 
   const [mode, setMode] = useState<Mode>('me')
@@ -90,7 +90,7 @@ export default function TimeClockPage() {
     if (coordsRef.current) return resolve('')
     if (!('geolocation' in navigator)) return resolve(locationProblem(null))
     navigator.geolocation.getCurrentPosition(
-      (pos) => { const c = { lat: pos.coords.latitude, lng: pos.coords.longitude }; coordsRef.current = c; setCoords(c); resolve('') },
+      (pos) => { const c = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: Number.isFinite(pos.coords.accuracy) ? Math.round(pos.coords.accuracy) : undefined }; coordsRef.current = c; setCoords(c); resolve('') },
       (err) => resolve(locationProblem(err)),
       { enableHighAccuracy: true, timeout: 6000 },
     )
@@ -138,7 +138,7 @@ export default function TimeClockPage() {
     setStage('working'); setFeedback(''); setFlagged(false); setStep('Recording…')
     try {
       const msg = await fn()
-      setFlagged(msg.includes('flagged for HR'))
+      setFlagged(msg.includes('waits for your manager'))
       setFeedback(msg)
       setStage('success')
       void qc.invalidateQueries({ queryKey: ['time-clock-status'] })
@@ -153,7 +153,7 @@ export default function TimeClockPage() {
     }
   }
 
-  const where = () => ({ ...(coordsRef.current && { lat: coordsRef.current.lat, lng: coordsRef.current.lng }) })
+  const where = () => ({ ...(coordsRef.current && { lat: coordsRef.current.lat, lng: coordsRef.current.lng, ...(coordsRef.current.accuracyM != null && { accuracyM: coordsRef.current.accuracyM }) }) })
 
   const canPunch = code.trim().length > 0 && pin.length >= 4
   const punchKiosk = () => {

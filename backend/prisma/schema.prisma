@@ -5528,6 +5528,17 @@ model Location {
   isActive             Boolean   @default(true)
   // Time-clock radius for this place (metres); null = the company's OperationsConfig.geofenceRadiusMetres.
   geofenceRadiusMetres Int?
+  // The time-clock fence the CEO APPROVED (owner, 2026-10-22: "each location gets a map pin and a radius, approved by
+  // the CEO"). Punches are measured from these, never from latitude / longitude directly: an edited pin waits for the
+  // CEO (approval type location_pin) and the old approved one stays in force meanwhile. fenceRadiusMetres null = the
+  // company's radius. fencePinRejected = the pin the CEO turned down ({lat, lng, radius, at, byId, note}), so it
+  // leaves the queue until the pin is changed again.
+  fenceLatitude        Float?
+  fenceLongitude       Float?
+  fenceRadiusMetres    Int?
+  fencePinApprovedAt   DateTime?
+  fencePinApprovedById String?
+  fencePinRejected     Json?
   // Company that owns this physical location. Locations are company master
   // data: GS Foods' Bukhari kitchen must never appear in GSX Viva's Locations
   // page, and a location may only link brands of its own company. Nullable

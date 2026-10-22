@@ -56,7 +56,11 @@ function sourceText(d: Record<string, unknown>, status: string, punches: PunchEn
     s = p === 'tablet' ? 'Tablet' : p === 'kiosk' ? 'Kiosk PIN' : p === 'clock' ? 'Time clock' : src === 'tablet' ? 'Tablet' : src ? 'Time clock' : 'Manual (HR)'
   }
   // The admin's wording (lib/hr.ts recordStatusText): a manual day waiting for the CEO.
-  return d['_manual'] && status === 'submitted' ? `${s} — waiting for CEO` : s
+  if (d['_manual'] && status === 'submitted') return `${s} — waiting for CEO`
+  // An out-of-area punch day waiting for the HOD (owner, 2026-10-22); a day servd clocked out at 12:00 AM.
+  if (d['_outOfAreaHold'] && status === 'submitted') return `${s} — outside the work location, waiting for the manager`
+  if (d['_autoClockedOut']) return `${s} — clocked out by servd at 12:00 AM`
+  return s
 }
 
 export async function buildAttendanceRegister(req: FastifyRequest, q: RegisterQuery = {}): Promise<Register> {

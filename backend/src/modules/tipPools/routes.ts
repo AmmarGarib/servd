@@ -131,7 +131,9 @@ const punchLocation = (p: Pick<PunchEntry, 'locationId' | 'geofenceMatched'>) =>
  */
 function dayWork(rec: { startDate: Date | null; data: unknown }, keys: { checkIn: string; checkOut: string }): { spans: WorkedSpan[]; openIn: { at: Date; locationId: string | null } | null } {
   const d = (rec.data ?? {}) as Record<string, unknown>
+  // An 'auto' out is servd closing a forgotten clock-out at 12:00 AM (hr/attendance.ts): never worked hours here.
   const punches = ((d['_punches'] as PunchEntry[] | undefined) ?? [])
+    .filter((p) => p.source !== 'auto')
     .map((p) => ({ type: p.type, at: new Date(p.at), locationId: punchLocation(p) }))
     .sort((a, b) => a.at.getTime() - b.at.getTime())
   if (d['_source'] === 'correction' && rec.startDate) {
@@ -268,7 +270,7 @@ export async function hoursAtBrand(concept: { id: string; tenantId: string }, fr
   // Everyone with attendance in the window: login holders, and kiosk-only
   // staff (no login) — they are reported, never silently left out.
   const attendance = await prisma.hrRecord.findMany({
-    where: { tenantId, section: 'attendance', employeeId: { not: null }, startDate: { gte: dayFrom, lte: to }, status: { notIn: ['draft', 'rejected', 'cancelled'] } },
+    where: { tenantId, section: 'attendance', employeeId: { not: null }, startDate: { gte: dayFrom, lte: to }, status: { notIn: ['draft', 'rejected', 'cancelled', 'submitted'] } }, // standing days only: an out-of-area day waiting for the HOD, or a hand-keyed day waiting for the CEO, gives no hours
     select: { employeeId: true, startDate: true, data: true },
   })
   const userIds = new Set(users.map((u) => u.id))

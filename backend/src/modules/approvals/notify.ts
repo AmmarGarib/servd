@@ -143,6 +143,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   ho_recharge: spec((id) => `/accounting/intercompany?tab=recharges&run=${encodeURIComponent(id)}`),
   connector_change: spec(() => '/connectors/pos?tab=changes'),
   shift_correction: spec((id) => `/finance/shift-corrections?id=${encodeURIComponent(id)}`),
+  location_pin: spec(() => '/configuration/locations'),
 }
 
 /** The inbox, filtered to the type (every login may open it). */
@@ -251,6 +252,10 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
     case 'connector_change': {
       const c = await db.posConnectorChange.findUnique({ where: { id }, select: { kind: true } })
       return c && { ref: `POS connector change (${human(String(c.kind))})` }
+    }
+    case 'location_pin': {
+      const l = await db.location.findUnique({ where: { id }, select: { name: true } })
+      return l && { ref: `Time-clock map pin of ${l.name}` }
     }
     case 'shift_correction': {
       const c = await db.shiftCorrection.findUnique({ where: { id }, select: { shiftId: true, businessDay: true, _count: { select: { items: true } } } })
@@ -410,13 +415,13 @@ async function nextStepLabel(type: ApprovalType, id: string): Promise<string | n
   if (type === 'cash_request_finance') return 'the CEO'
   if (type !== 'hr_request') return null
   try {
-    const rec = await serviceClient.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, formVersion: true, currentStep: true, status: true } })
+    const rec = await serviceClient.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, formVersion: true, currentStep: true, status: true, data: true } })
     if (!rec || rec.status !== 'submitted') return null
     const { runWithRlsContext } = await import('../../lib/rlsContext.js')
     return await runWithRlsContext({ tenantIds: [rec.tenantId], customerId: null, staffUserId: null }, async () => {
-      const { getFormat } = await import('../hr/service.js')
+      const { getFormat, workflowOf } = await import('../hr/service.js')
       const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
-      const step = fmt.workflow[rec.currentStep]
+      const step = workflowOf(rec, fmt)[rec.currentStep]
       if (!step) return null
       return step.role === 'hod' ? 'the reporting manager' : step.role === 'hr' ? 'HR' : step.role === 'ceo' ? 'the CEO' : 'management'
     })

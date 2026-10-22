@@ -23,6 +23,7 @@ import { APPROVAL_RIGHTS, recipeCompaniesBatch, recipeOwnerOf, sectionOf } from 
 import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } from './types.js'
 import { onAccountClients } from './onAccountProvider.js'
 import { shiftCorrections } from '../shiftCorrections/approvalProvider.js'
+import { locationPins } from '../locations/approvalProvider.js'
 import { karachiDay } from '../../connectors/util.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -313,6 +314,20 @@ const recipes: ApprovalProvider = {
   },
 }
 
+/** The HOD's facts for an out-of-area punch day: each punch's place and the person's reason. */
+function outOfAreaFacts(d: Record<string, unknown>): Array<[string, string | null]> {
+  const hold = d['_outOfAreaHold'] as { punches?: Array<{ at: string; kind: string; why: string | null; distanceM: number | null; location: string | null; radiusM: number | null; reason: string | null }> } | undefined
+  if (!hold?.punches?.length) return []
+  const WHY: Record<string, string> = { outside: 'outside the work location', no_fix: 'no location from the device', no_anchor: 'no approved map pin to measure from', poor_fix: 'location reading worse than 50 m' }
+  const time = (iso: string) => new Date(Date.parse(iso) + 5 * 3_600_000).toISOString().slice(11, 16)
+  return hold.punches.map((p, i): [string, string | null] => [
+    `Punch ${i + 1}`,
+    `${p.kind === 'in' ? 'In' : 'Out'} at ${time(p.at)} — ${WHY[p.why ?? ''] ?? 'out of area'}`
+      + (p.distanceM != null && p.location ? ` (${p.distanceM} m from ${p.location}${p.radiusM != null ? `, allowed ${p.radiusM} m` : ''})` : '')
+      + `. Reason: ${p.reason ?? 'none given'}`,
+  ])
+}
+
 // ── HR requests (leave, overtime, corrections, swaps, loans, …) ──────────────
 // hr/routes.ts: GET /hr/approvals (the ONE "what is waiting on me" resolver —
 // canActOnStep per record: reporting manager, HR, or management), POST
@@ -362,6 +377,8 @@ const hrRequests: ApprovalProvider = {
           ['Employee', r.employee ? `${r.employee.fullName} (${r.employee.employeeCode})` : null],
           ['Dates', r.startDate ? (r.endDate && ymd(r.endDate) !== ymd(r.startDate) ? `${ymd(r.startDate)} to ${ymd(r.endDate)}` : ymd(r.startDate)) : null],
           ['Quantity', r.quantity != null ? String(r.quantity) : null],
+          // An out-of-area punch day (owner, 2026-10-22): where each punch was, and the person's reason.
+          ...outOfAreaFacts(d),
         ]),
         waitingSince: iso(r.createdAt),
         link: loanNeedsSource ? `/hr/s/loan` : null,
@@ -1219,6 +1236,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   stockDifferences,
   connectorChanges,
   shiftCorrections,
+  locationPins,
 ]
 
 export type { ProviderContext }

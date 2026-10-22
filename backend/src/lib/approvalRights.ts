@@ -41,6 +41,19 @@ import { ADMIN_ONLY, APPROVERS, MANAGERS, usesOtpLogin } from '../modules/auth/m
 
 type Db = PrismaClient | Prisma.TransactionClient
 
+/** Does a location's map pin / radius differ from the one the CEO approved, and from the one the CEO turned down?
+ *  (Geo-fenced attendance, owner 2026-10-22.) A location with no pin waits for nothing. */
+export function fencePinPending(l: {
+  latitude: number | null; longitude: number | null; geofenceRadiusMetres: number | null
+  fenceLatitude: number | null; fenceLongitude: number | null; fenceRadiusMetres: number | null; fencePinRejected?: unknown
+}): boolean {
+  if (l.latitude == null || l.longitude == null) return false
+  const same = (a: { lat: unknown; lng: unknown; radius: unknown }) => a.lat === l.latitude && a.lng === l.longitude && (a.radius ?? null) === (l.geofenceRadiusMetres ?? null)
+  if (same({ lat: l.fenceLatitude, lng: l.fenceLongitude, radius: l.fenceRadiusMetres })) return false
+  const r = l.fencePinRejected as { lat?: unknown; lng?: unknown; radius?: unknown } | null | undefined
+  return !(r && same({ lat: r.lat, lng: r.lng, radius: r.radius }))
+}
+
 // ─── Types and sections ─────────────────────────────────────────────────────
 
 /** Every approval type the inbox knows. `approvals/types.ts` re-exports it. */
@@ -70,6 +83,8 @@ export const APPROVAL_TYPES = [
   'connector_change',      // an IT change to a company's POS connector settings
   // Shift corrections (owner, 2026-10-21).
   'shift_correction',      // finance's set of fixes on a closed drawer (void bills / cancel KOTs) — CEO only
+  // Geo-fenced attendance (owner, 2026-10-22).
+  'location_pin',          // a location's time-clock map pin / radius waiting for the CEO
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -227,6 +242,12 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // POST /pos/shift-corrections/:id/approve | reject (modules/shiftCorrections): the CEO only, never handed
     // over; the CEO may approve a set the CEO raised (there is no one above); finance never approves.
     label: 'Shift corrections', section: 'ceo', queueModule: 'accounting', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  location_pin: {
+    // POST /locations/:id/fence-pin/approve | reject (modules/locations): the CEO only, never handed over (owner's
+    // card, 2026-10-22: "each location gets a map pin and a radius, approved by the CEO").
+    label: 'Time-clock map pins', section: 'ceo', queueModule: 'business_info', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
 }
@@ -1006,6 +1027,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
         submitterIds: [r.preparedById, r.submittedById, ...r.preparedByIds], viaHeadOfficeId: null, status: r.status, submittedAt: r.submittedAt, kind: r.kind,
       })
     }
+    case 'location_pin': {
+      const l = await db.location.findUnique({ where: { id }, select: { tenantId: true, deletedAt: true, updatedAt: true, latitude: true, longitude: true, geofenceRadiusMetres: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true, fencePinRejected: true } })
+      return l?.tenantId ? subject({ companyIds: [l.tenantId], ownerTenantId: l.tenantId, submitterIds: [], viaHeadOfficeId: null, status: !l.deletedAt && fencePinPending(l) ? 'pending' : 'settled', submittedAt: l.updatedAt }) : null
+    }
     case 'shift_correction': {
       const c = await db.shiftCorrection.findUnique({ where: { id }, select: { tenantId: true, requestedById: true, status: true, createdAt: true } })
       return c && subject({ companyIds: [c.tenantId], ownerTenantId: c.tenantId, submitterIds: [c.requestedById], viaHeadOfficeId: null, status: c.status, submittedAt: c.createdAt })
@@ -1106,6 +1131,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   ho_recharge: ['submitted'],
   connector_change: ['submitted'],
   shift_correction: ['submitted'],
+  location_pin: ['pending'],
 }
 
 /**
@@ -1260,12 +1286,13 @@ async function hrStepApprovers(id: string): Promise<string[]> {
   if (!rec || rec.status !== 'submitted') return []
   // The record's company only: getFormat / the HR helpers read through it.
   return runWithRlsContext({ tenantIds: [rec.tenantId], customerId: null, staffUserId: null }, async () => {
-    const { getFormat, managerUserIdOfEmployee } = await import('../modules/hr/service.js')
+    const { getFormat, managerUserIdOfEmployee, workflowOf } = await import('../modules/hr/service.js')
     const { decideRight } = await import('../modules/hr/logic.js')
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
-    const step = fmt.workflow[rec.currentStep]
+    const steps = workflowOf(rec, fmt)
+    const step = steps[rec.currentStep]
     if (!step) return []
-    const isLast = rec.currentStep >= fmt.workflow.length - 1
+    const isLast = rec.currentStep >= steps.length - 1
     const [emp, managerUserId] = rec.employeeId
       ? await Promise.all([
         serviceClient.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { userId: true } }),

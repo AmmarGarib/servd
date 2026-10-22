@@ -17,7 +17,7 @@ import { useAuthStore } from '../../store/auth'
 type Stage = 'idle' | 'working' | 'success' | 'error'
 
 interface PresignedUpload { uploadUrl: string; publicUrl: string }
-interface Status { punchedIn: boolean; shift?: { clockInAt: string; clockOutAt: string | null; geofenceOk: boolean }; missedClockOut?: { since: string } | null }
+interface Status { punchedIn: boolean; shift?: { clockInAt: string; clockOutAt: string | null; geofenceOk: boolean }; missedClockOut?: { since: string } | null; heldDay?: { recordId: string; hasReason: boolean } | null }
 export interface PunchResult {
   alreadyClockedIn?: boolean
   notClockedIn?: boolean
@@ -27,7 +27,8 @@ export interface PunchResult {
   /** Where the punch was taken; outOfArea = outside every work location (recorded and flagged, never refused). */
   where?: { location?: string | null; outOfArea?: boolean; matched?: boolean | null; distanceM?: number | null; flagged?: boolean } | null
   hrLinked?: boolean
-  attendance?: { status: string | null; lateMinutes: number | null } | null
+  /** held = outside the work location: the day waits for the manager (HOD) and is out of pay until approved. */
+  attendance?: { recordId?: string; status: string | null; lateMinutes: number | null; held?: boolean; holdNote?: string } | null
   action?: 'in' | 'out'
   employee?: { fullName: string }
 }
@@ -43,7 +44,7 @@ export const attendanceLine = (r: PunchResult) => {
 export const whereLine = (r: PunchResult) => {
   const w = r.where
   if (!w) return ''
-  if (w.outOfArea) return ' Outside your work location — recorded and flagged for HR.'
+  if (w.outOfArea) return ' Outside your work location — this punch waits for your manager to approve it.'
   if (w.matched) return ` At ${w.location ?? r.location ?? 'your work location'}.`
   return ''
 }
@@ -84,7 +85,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
   const streamRef = useRef<MediaStream | null>(null)
   const inFlight = useRef(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const coordsRef = useRef<{ lat: number; lng: number } | null>(null)
+  const coordsRef = useRef<{ lat: number; lng: number; accuracyM?: number } | null>(null)
 
   const [stage, setStage] = useState<Stage>('idle')
   const [feedback, setFeedback] = useState('')
@@ -93,6 +94,8 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [asked, setAsked] = useState(false)
   const [mediaNote, setMediaNote] = useState('')
+  /** The day an out-of-area punch just held for the manager: ask why (POST /time-clock/hold-reason). */
+  const [holdId, setHoldId] = useState<string | null>(null)
 
   const status = useQuery({
     queryKey: ['time-clock-status'],
@@ -124,7 +127,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
     if (coordsRef.current) return resolve('')
     if (!('geolocation' in navigator)) return resolve(locationProblem(null))
     navigator.geolocation.getCurrentPosition(
-      (pos) => { const c = { lat: pos.coords.latitude, lng: pos.coords.longitude }; coordsRef.current = c; setCoords(c); resolve('') },
+      (pos) => { const c = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: Number.isFinite(pos.coords.accuracy) ? Math.round(pos.coords.accuracy) : undefined }; coordsRef.current = c; setCoords(c); resolve('') },
       (err) => resolve(locationProblem(err)),
       { enableHighAccuracy: true, timeout: 6000 },
     )
@@ -172,7 +175,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
     setStage('working'); setFeedback(''); setFlagged(false); setStep('Recording…')
     try {
       const msg = await fn()
-      setFlagged(msg.includes('flagged for HR'))
+      setFlagged(msg.includes('waits for your manager'))
       setFeedback(msg)
       setStage('success')
       void qc.invalidateQueries({ queryKey: ['time-clock-status'] })
@@ -187,7 +190,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
     }
   }
 
-  const where = () => ({ ...(coordsRef.current && { lat: coordsRef.current.lat, lng: coordsRef.current.lng }) })
+  const where = () => ({ ...(coordsRef.current && { lat: coordsRef.current.lat, lng: coordsRef.current.lng, ...(coordsRef.current.accuracyM != null && { accuracyM: coordsRef.current.accuracyM }) }) })
 
   const punchMe = (dir: 'in' | 'out') => run(async () => {
     setStep(dir === 'in' ? 'Starting camera and location…' : 'Finding your location…')
@@ -197,6 +200,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
     const r = await api.post<PunchResult>(`/time-clock/punch-${dir}`, { ...where(), ...(dir === 'in' && { selfieUrl: selfie }) })
     const branch = r.where?.location ?? r.location
     if (branch) onBranch?.(branch)
+    setHoldId(r.attendance?.held && r.attendance.recordId ? r.attendance.recordId : null)
     if (!full) { streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null } // card: camera off once the punch is recorded
     if (full) {
       if (r.alreadyClockedIn) return 'You are already clocked in.'
@@ -215,6 +219,9 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
   })
 
   const punchedIn = status.data?.punchedIn ?? false
+  // Today's day waiting for the manager with no reason yet (e.g. the automatic check-in): ask here too.
+  const held = holdId ?? (status.data?.heldDay && !status.data.heldDay.hasReason ? status.data.heldDay.recordId : null)
+  const doneHold = () => { setHoldId(null); void qc.invalidateQueries({ queryKey: ['time-clock-status'] }) }
 
   // Card: nothing while loading, nothing when this login has no time clock.
   if (!full && (status.isLoading || status.isError || !status.data)) return null
@@ -257,7 +264,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
               {status.isLoading ? '…' : punchedIn ? `On shift since ${clockTime(status.data!.shift!.clockInAt)}` : 'Not clocked in'}
               {!punchedIn && status.data?.missedClockOut && (
                 <span className="block text-xs text-white/50 mt-1">
-                  Your clock-in of {clockStamp(status.data.missedClockOut.since)} was never clocked out — HR will correct that day.
+                  Your clock-in of {clockStamp(status.data.missedClockOut.since)} was never clocked out — servd clocked you out at 12:00 AM. Ask HR to correct the time if needed.
                 </span>
               )}
             </p>
@@ -269,6 +276,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
         <div role="status" aria-live="polite">
           {stage === 'working' && <p className="text-center py-6 text-sm text-white/85 animate-pulse">{step || 'Recording…'}</p>}
           {feedbackBox}
+          {held && <HoldReasonBox recordId={held} onDone={doneHold} />}
           {noteBox}
         </div>
       </>
@@ -285,7 +293,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
             {punchedIn ? `Checked in at ${clockTime(status.data!.shift!.clockInAt)}` : 'Not checked in'}
           </p>
           {missed && status.data?.missedClockOut && (
-            <p className="text-xs text-white/50 mt-0.5">Your check-in of {clockStamp(status.data.missedClockOut.since)} was never checked out. HR will correct that day.</p>
+            <p className="text-xs text-white/50 mt-0.5">Your check-in of {clockStamp(status.data.missedClockOut.since)} was never checked out — servd checked you out at 12:00 AM. Ask HR to correct the time if needed.</p>
           )}
         </div>
         {stage === 'working'
@@ -303,8 +311,39 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
       <canvas ref={canvasRef} className="hidden" />
       <div role="status" aria-live="polite">
         {feedbackBox}
+        {held && <HoldReasonBox recordId={held} onDone={doneHold} />}
         {noteBox}
       </div>
     </section>
+  )
+}
+
+/** Why the person is outside their work location — shown to their manager with the held day. */
+export function HoldReasonBox({ recordId, onDone }: { recordId: string; onDone: () => void }) {
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function save() {
+    if (reason.trim().length < 3) { setError('Write a few words.'); return }
+    setBusy(true); setError('')
+    try {
+      await api.post('/time-clock/hold-reason', { recordId, reason: reason.trim() })
+      onDone()
+    } catch (err) {
+      setError((err as Error).message || 'Could not save. Try again.')
+    } finally { setBusy(false) }
+  }
+  return (
+    <div className="rounded-xl px-4 py-3 mt-2 text-left" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.12)' }}>
+      <label htmlFor={`hold-${recordId}`} className="block text-xs font-bold text-white/85 mb-1">Why are you outside your work location? Your manager sees this.</label>
+      <textarea id={`hold-${recordId}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} rows={2}
+        className="w-full rounded-lg px-3 py-2 text-sm text-white bg-transparent" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.15)' }}
+        placeholder="For example: buying supplies at the market" />
+      {error && <p className="text-xs mt-1" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+      <div className="mt-2 flex gap-2">
+        <button type="button" disabled={busy} onClick={() => void save()} className="rounded-lg px-4 min-h-11 text-sm font-bold" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>{busy ? 'Saving…' : 'Send to my manager'}</button>
+        <button type="button" onClick={onDone} className="rounded-lg px-4 min-h-11 text-sm font-bold text-white/70 border border-white/15">Later</button>
+      </div>
+    </div>
   )
 }

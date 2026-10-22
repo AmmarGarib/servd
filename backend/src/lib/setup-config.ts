@@ -104,18 +104,22 @@ export interface GeofenceConfig {
   anchors: GeofenceAnchor[]
 }
 
+/** The default fence (owner's card, 2026-10-22: 100 m) when the company has not set one. */
+export const DEFAULT_GEOFENCE_RADIUS_M = 100
+
 export async function getGeofenceConfig(tenantId: string): Promise<GeofenceConfig> {
   const ops = await getOperationsConfig(tenantId)
+  // Only the pin and radius the CEO approved count (owner, 2026-10-22) — an edited pin waits in the approvals inbox.
   const locs = await prisma.location.findMany({
-    where: { tenantId, isActive: true, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
-    select: { id: true, name: true, latitude: true, longitude: true, geofenceRadiusMetres: true },
+    where: { tenantId, isActive: true, deletedAt: null, fenceLatitude: { not: null }, fenceLongitude: { not: null } },
+    select: { id: true, name: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true },
     orderBy: { name: 'asc' },
   })
   return {
     enforced: ops?.geofenceEnforced ?? false,
-    radiusM: ops?.geofenceRadiusMetres ?? 150,
+    radiusM: ops?.geofenceRadiusMetres ?? DEFAULT_GEOFENCE_RADIUS_M,
     selfieRequired: ops?.selfieRequiredAtClockIn ?? false,
-    anchors: locs.map((l) => ({ locationId: l.id, name: l.name, lat: l.latitude!, lng: l.longitude!, radiusM: l.geofenceRadiusMetres })),
+    anchors: locs.map((l) => ({ locationId: l.id, name: l.name, lat: l.fenceLatitude!, lng: l.fenceLongitude!, radiusM: l.fenceRadiusMetres })),
   }
 }
 

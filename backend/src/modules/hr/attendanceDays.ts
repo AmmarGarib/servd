@@ -227,7 +227,9 @@ export async function punchOvertimeForRecords(
   if (start == null) return out
   const last = dayUTC(today) - DAY_MS
   const empById = new Map(emps.map((e) => [e.id, e]))
-  const mine = records.filter((r) => r.startDate && r.employeeId && empById.has(r.employeeId) && dayUTC(r.startDate) >= start && dayUTC(r.startDate) <= last)
+  // A day servd clocked out at 12:00 AM (a forgotten clock-out) has no punch overtime: its out is not a real one.
+  const mine = records.filter((r) => r.startDate && r.employeeId && empById.has(r.employeeId) && dayUTC(r.startDate) >= start && dayUTC(r.startDate) <= last
+    && !((r.data ?? {}) as Record<string, unknown>)['_autoClockedOut'])
   if (!mine.length) return out
   const keys = attendanceKeys((await getFormat(tenantId, 'attendance')).fields)
   const withTime = mine.map((r) => ({ r, iv: workedIntervals(r, keys) })).filter((x) => x.iv.length)

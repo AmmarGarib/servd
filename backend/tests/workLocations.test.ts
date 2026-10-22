@@ -47,7 +47,7 @@ async function setOps(tenantId: string, data: Record<string, unknown>) {
   invalidateSetupCache()
 }
 async function loc(tenantId: string, name: string, at: { lat: number; lng: number } | null) {
-  return (await prisma.location.create({ data: { slug: `wl-${++seq}-${RUN}`, name, tenantId, latitude: at?.lat ?? null, longitude: at?.lng ?? null } })).id
+  return (await prisma.location.create({ data: { slug: `wl-${++seq}-${RUN}`, name, tenantId, latitude: at?.lat ?? null, longitude: at?.lng ?? null, fenceLatitude: at?.lat ?? null, fenceLongitude: at?.lng ?? null } })).id
 }
 async function emp(tenantId: string, key: string, userId: string | null = null) {
   const e = await prisma.hrEmployee.create({

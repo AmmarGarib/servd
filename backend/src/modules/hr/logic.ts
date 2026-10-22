@@ -67,7 +67,9 @@ export interface HrSettings {
   defaultRota: DefaultRota | null
   /** Office networks (owner, 2026-10-22): the automatic check-in (sign-in and
    *  the shell's daily one) runs only from one of these (lib/officeNetwork.ts). */
-  officeNetworks: { address: string; label: string }[]
+  /** Office networks; `locationId` = the location the network counts as being AT (owner, 2026-10-22: "Office Wi-Fi =
+   *  Head Office location") — a check-in from it needs no map reading. */
+  officeNetworks: { address: string; label: string; locationId?: string | null }[]
 }
 
 export interface DefaultRota {
@@ -142,7 +144,7 @@ export function mergeSettings(stored: Partial<HrSettings> | null | undefined): H
     defaultRota: s.defaultRota === null ? null
       : s.defaultRota ? { ...DEFAULT_ROTA, ...s.defaultRota, weeklyOff: Array.isArray(s.defaultRota.weeklyOff) ? [...s.defaultRota.weeklyOff] : [...DEFAULT_ROTA.weeklyOff] }
       : { ...DEFAULT_ROTA, weeklyOff: [...DEFAULT_ROTA.weeklyOff] },
-    officeNetworks: Array.isArray(s.officeNetworks) ? s.officeNetworks.map((n) => ({ address: n.address, label: n.label })) : [],
+    officeNetworks: Array.isArray(s.officeNetworks) ? s.officeNetworks.map((n) => ({ address: n.address, label: n.label, locationId: n.locationId ?? null })) : [],
   }
 }
 

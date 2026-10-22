@@ -2171,6 +2171,39 @@ checked in by themselves; the Check in button works anywhere as before.
 `clockIn` writes an 'in' under a per-login advisory lock, so racing tabs never
 stack two. Tests: `tests/officeNetwork.test.ts`.
 
+**Geo-fenced attendance (owner's card + answers, 2026-10-22).** Builds on the
+15 Oct time clock (`timeclock/policy.ts`, work locations) — never a second one.
+(1) The clock measures ONLY from the pin + radius the CEO approved
+(`Location.fenceLatitude / fenceLongitude / fenceRadiusMetres`, migration
+`20261022190000`; companies whose geofence was already on had their pins carried
+over). A new / moved pin or radius (`latitude` / `longitude` /
+`geofenceRadiusMetres`, edited on Locations) waits: approval type `location_pin`
+(CEO only, never delegated; `GET /locations/fence-pins`, `POST
+/locations/:id/fence-pin/approve|reject` with the pin shown — 409 `PIN_CHANGED`
+if it moved; `fencePinPending` in `lib/approvalRights.ts` is the one rule). The
+CEO's own edit is the approval. Company default radius 100 m. (2) A reading the
+device says is worse than 50 m (`accuracyM`, `MAX_FIX_ACCURACY_M`) is out of
+area (`poor_fix`); the in-store tablet does not send accuracy (indoor GPS). (3)
+An office network in HR settings may name a location (`officeNetworks[].locationId`;
+owner: "Office Wi-Fi = Head Office location"): a punch from it is AT that
+location with no map reading — in area for that location's staff, out of area
+for everyone else. (4) While the company's geofence is on, an employee's
+out-of-area punch is saved and the DAY is held for their HOD
+(`hr/attendance.ts holdDay`: status `submitted` + `data._outOfAreaHold`), so it
+is out of payroll, overtime and tip-pool hours (`STANDING_ATTENDANCE`; tip pools
+read standing days only) until approved. It goes through the HR request engine
+— `service.ts workflowOf` gives such a day the one step `OUT_OF_AREA_WORKFLOW`
+(HOD; HR when no manager); every reader of a record's steps uses `workflowOf`.
+The person adds a reason with the punch (`reason`) or later (`POST
+/time-clock/hold-reason`, own day only; the card asks). No new exempt roles (CEO
+and co-owners only). (5) **A forgotten clock-out is clocked out by servd at
+12:00 AM** after the in's day (owner: "it should auto log-out at 12:00 AM";
+`autoClockOutData`: an `auto` out punch, check-out 00:00, the day keeps its
+status, `_autoClockedOut`, flag `attendance_auto_clock_out` for HR; no punch
+overtime and no tip-pool hours from it). Not built (needs the tablet / a native
+app): fake-GPS detection, one registered phone per login, "tablet first".
+Tests: `tests/geofenceAttendance.test.ts`.
+
 **Attendance in bulk (owner, 2026-10-22: "Build the mark-present-for-a-date-
 range option"; "HR could enter an employee's manual data in one go, instead of
 one by one for each day").** HR → Attendance → "Enter days in bulk" (one

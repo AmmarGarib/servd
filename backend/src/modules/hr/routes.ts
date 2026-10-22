@@ -32,7 +32,7 @@ import {
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, loanStatement, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, availableOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
-  otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, ATTENDANCE_DAY_TAKEN,
+  otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, ATTENDANCE_DAY_TAKEN, workflowOf, isOutOfAreaHold,
 } from './service.js'
 import {
   mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -610,8 +610,8 @@ export async function signHrStepRaisedByHr(recordId: string): Promise<HrRecord |
   const rec = await prisma.hrRecord.findUnique({ where: { id: recordId } })
   if (!rec || rec.status !== 'submitted' || !rec.createdById) return rec
   const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
-  const step: WorkflowStep | undefined = fmt.workflow[rec.currentStep]
-  const next: WorkflowStep | undefined = fmt.workflow[rec.currentStep + 1]
+  const step: WorkflowStep | undefined = workflowOf(rec, fmt)[rec.currentStep]
+  const next: WorkflowStep | undefined = workflowOf(rec, fmt)[rec.currentStep + 1]
   if (!step || step.role !== 'hr' || !next || next.role === 'hr') return rec
   const raiser = await prisma.user.findUnique({ where: { id: rec.createdById }, select: { id: true, role: true, name: true, email: true, accountStatus: true, moduleAllow: true, moduleDeny: true } })
   if (!raiser || raiser.role !== 'hr' || raiser.accountStatus !== 'active') return rec
@@ -1108,8 +1108,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
       officeNetworks: z.array(z.object({
         address: z.string().trim().max(64).refine((a) => networkKey(a) !== null, 'Not an internet address'),
         label: z.string().trim().min(1).max(60),
+        // The location a check-in from this network counts as being at (the Head Office location).
+        locationId: z.string().min(1).max(100).nullable().optional(),
       })).max(20).optional(),
     }).parse(req.body)
+    const netLocs = Array.from(new Set((body.officeNetworks ?? []).map((n) => n.locationId).filter((x): x is string => !!x)))
+    if (netLocs.length) {
+      const found = await prisma.location.count({ where: { id: { in: netLocs }, tenantId, deletedAt: null } })
+      if (found !== netLocs.length) throw new AppError('LOCATION_NOT_IN_COMPANY', 'Pick a location of this company for each office network', 422)
+    }
     const before = await getSettings(tenantId)
     const next = mergeSettings({
       ...body, gratuity: body.gratuity ?? before.gratuity,
@@ -2011,10 +2018,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!rec || !(await mayReachForDecision(req, rec.tenantId))) throw new NotFoundError('HR record', id)
     if (rec.status !== 'submitted') throw new AppError('NOT_PENDING', 'This request is not waiting for approval', 409)
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
-    const step: WorkflowStep | undefined = fmt.workflow[rec.currentStep]
+    const step: WorkflowStep | undefined = workflowOf(rec, fmt)[rec.currentStep]
     if (!step) throw new AppError('NO_STEP', 'This request has no approval step left', 409)
     const subject = await approvalSubject(rec)
-    const isLast = rec.currentStep >= fmt.workflow.length - 1
+    const isLast = rec.currentStep >= workflowOf(rec, fmt).length - 1
     // canActOnStep plus the head-office rules (logic.ts decideRight).
     const right = await decideRight(req, rec, step, isLast, { subject, decision: body.decision })
     if (!right.ok) throw right.status === 404 ? new NotFoundError('HR record', id) : new AppError(right.code, right.message, right.status)
@@ -3046,10 +3053,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     let staffHr: boolean | null = null
     for (const [i, rec] of pending.entries()) {
       const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
-      const step = fmt.workflow[rec.currentStep]
+      const step = workflowOf(rec, fmt)[rec.currentStep]
       if (!step) continue
       const subject = await approvalSubject(rec)
-      const isLast = rec.currentStep >= fmt.workflow.length - 1
+      const isLast = rec.currentStep >= workflowOf(rec, fmt).length - 1
       const who = await decideRight(req, rec, step, isLast, { subject, decision: null, through: through[i] ?? [], delegatedTenants: delegated.get('hr_request') ?? new Set<string>() })
       // An admin override is possible on everything; only list it for the CEO
       // when it is genuinely theirs, or nothing would ever leave their queue.
@@ -3058,7 +3065,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
         if (staffHr === null) staffHr = await holdsStaffHr(req)
         if (!staffHr) continue
       }
-      out.push({ ...rec, label: recordLabel(rec, fmt.fields), sectionTitle: sectionByKey(rec.section)?.title ?? rec.section, step, format: fmt, waitingOnPartner: swapAwaitsPartner(rec) })
+      out.push({ ...rec, label: recordLabel(rec, fmt.fields), sectionTitle: isOutOfAreaHold(rec) ? 'Punch outside the work location' : (sectionByKey(rec.section)?.title ?? rec.section), step, format: { ...fmt, workflow: workflowOf(rec, fmt) }, waitingOnPartner: swapAwaitsPartner(rec) })
     }
     return out
   }

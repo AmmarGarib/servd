@@ -14,11 +14,11 @@ const SKIP_ROLES = ['admin', 'director']
 const OFF_NETWORK = 'off-network'
 let inFlight: Promise<string | null> | null = null
 
-function findPlace(): Promise<{ lat: number; lng: number } | null> {
+function findPlace(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
   return new Promise((resolve) => {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return resolve(null)
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, ...(Number.isFinite(pos.coords.accuracy) && { accuracyM: Math.round(pos.coords.accuracy) }) }),
       () => resolve(null), // refused or slow: check in without a location
       { enableHighAccuracy: true, timeout: 8000 },
     )
@@ -61,6 +61,10 @@ async function tryCheckIn(role: string | undefined, firstOfDay: boolean): Promis
     const place = await findPlace()
     const r = await api.post<PunchResult>('/time-clock/punch-in', place ?? {})
     if (r.hrLinked === false || r.alreadyClockedIn) return null // no HR record: no attendance kept, say nothing
+    if (r.attendance?.held) {
+      toast.message(`Checked in at ${clockTime(new Date().toISOString())} — outside your work location, so it waits for your manager. Say why on your home screen.`)
+      return null
+    }
     toast.success(`Checked in at ${clockTime(new Date().toISOString())}`)
     return null
   } catch (err) {

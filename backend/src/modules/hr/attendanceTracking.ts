@@ -15,7 +15,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { AppError } from '../../lib/errors.js'
 import { scopeTenantWhere, type TenantIdWhere } from '../../lib/tenantScope.js'
-import { getFormat, employeeLabelsAcross, STANDING_ATTENDANCE } from './service.js'
+import { getFormat, employeeLabelsAcross, ATTENDANCE_DAY_TAKEN, isOutOfAreaHold } from './service.js'
 import { pktToday } from './logic.js'
 import { attendanceKeys, isMissedClockOut, lastInOf, type PunchEntry } from './attendance.js'
 import { isHalfDayLeave } from './rota.js'
@@ -77,7 +77,7 @@ export async function todayBoard(tenantIds: string[], opts: { locationId?: strin
   const empIds = emps.map((e) => e.id)
   const [records, leaves, label] = await Promise.all([
     empIds.length ? prisma.hrRecord.findMany({
-      where: { tenantId: { in: tenantIds }, section: 'attendance', employeeId: { in: empIds }, status: STANDING_ATTENDANCE, startDate: { in: [today, yesterday] } },
+      where: { tenantId: { in: tenantIds }, section: 'attendance', employeeId: { in: empIds }, status: ATTENDANCE_DAY_TAKEN, startDate: { in: [today, yesterday] } }, // incl. days waiting for the manager / the CEO: the board shows who is in
       orderBy: { createdAt: 'desc' },
     }) : [],
     empIds.length ? prisma.hrRecord.findMany({
@@ -120,6 +120,8 @@ export async function todayBoard(tenantIds: string[], opts: { locationId?: strin
       checkOut: (d[k.checkOut] as string | null | undefined) ?? null,
       carriedFromYesterday: !!carried,
       outOfArea: !!d['_outOfArea'] || punches.some((p) => p.outOfArea),
+      /** An out-of-area day waiting for the manager (HOD) — not in pay until approved. */
+      waitingForManager: !!rec && rec.status === 'submitted' && isOutOfAreaHold(rec),
       onLeave,
       punches,
     }
@@ -156,7 +158,7 @@ export async function punchLog(tenantIds: string[], q: { from: string; to: strin
   const toAt = new Date(toDay.getTime() + DAY_MS - 5 * 3_600_000 - 1)
   const records = await prisma.hrRecord.findMany({
     where: {
-      tenantId: { in: tenantIds }, section: 'attendance', status: STANDING_ATTENDANCE, startDate: { gte: fromDay, lte: toDay },
+      tenantId: { in: tenantIds }, section: 'attendance', status: ATTENDANCE_DAY_TAKEN, startDate: { gte: fromDay, lte: toDay },
       ...(q.employeeId && { employeeId: q.employeeId }),
     },
     include: { employee: { select: { id: true, employeeCode: true, fullName: true, userId: true } } },

@@ -111,6 +111,7 @@ export type ExceptionKind =
   | 'card_payout_unmatched'      // a card machine's sales with no matching bank payout
   | 'gift_card_breakage_held'    // a sold gift card expired but its breakage could not be booked yet
   // Attendance by work location (owner, 2026-10-15). Plain String column — no migration.
+  | 'attendance_auto_clock_out'  // a forgotten clock-out servd closed at 12:00 AM (owner, 2026-10-22) — HR may correct the time
   | 'attendance_out_of_area'     // a punch outside the employee's work locations (or with no location) — allowed, flagged once a day
   // Night audit (owner, 2026-10-16; SALES module only — modules/nightAudit). Plain String column — no migration.
   | 'night_audit_override'       // the CEO ran / settled a sales day over its blocks, with a reason
