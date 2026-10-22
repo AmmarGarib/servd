@@ -324,6 +324,16 @@ module id must be placed in a workspace in the same change.
   companies' active brands); plain `/concepts` stays managers/till. Line
   cooks and finance never get costs/codes they don't need (`costsHidden`,
   masked gift-card codes).
+- **Bulk approve (owner, 2026-10-22: "It should go for approval in bulk, not
+  individually").** The inbox has a tick per item, "Select all N" per type and
+  "Approve N selected". HR requests go in ONE call per company to `POST
+  /hr/records/decide-many {items:[{section,id}] ≤200, decision, note?}`, which
+  runs each through `decideOne` — the single decide route's own body (company,
+  step, right, separation of duties, claim) — and answers per item (one refusal
+  never stops the rest; a loan is never in bulk, `LOAN_NOT_IN_BULK`). Every
+  other type calls its own approve route item by item. An item whose approve
+  needs input, options, a payment classification or is disabled is never
+  selectable. Tests: `tests/hrBulkDecide.test.ts`.
 - **User audit log** (`/configuration/audit-log`, module `audit_log`):
   identity trail incl. `auth.login`, `auth.login_failed`, `auth.otp_login`,
   `auth.2fa_failed`, `auth.logout`. The books' trail

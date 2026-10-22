@@ -11,6 +11,10 @@
 // EXISTING route (the item carries method + path), and that route's own guard
 // decides. HR requests open in the HR record view (overtime hours, swaps) —
 // this page replaces "My approvals" (/hr/approvals now redirects here).
+// Bulk (owner, 2026-10-22): tick items (or "Select all") and "Approve
+// selected" — HR requests in one call per company to /hr/records/decide-many,
+// everything else through its own approve route; items that need input are
+// never in a bulk approve.
 
 import { Suspense, useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -66,6 +70,54 @@ function waited(iso: string | null): string {
   return `${d} day${d === 1 ? '' : 's'} waiting`
 }
 
+/** The approve button an item can take in bulk: one click, nothing to type or
+ *  pick, not disabled, and never a loan (its last approval pays it out). */
+function bulkApprove(i: Item): Action | null {
+  const a = i.actions.find((x) => x.kind === 'approve')
+  if (!a || a.disabledReason || a.classification || (a.options?.length ?? 0) > 0 || a.input?.required) return null
+  if (i.type === 'hr_request' && i.record?.section === 'loan') return null
+  return a
+}
+const keyOf = (i: { type: string; id: string }) => `${i.type}:${i.id}`
+
+interface BulkResult { decided: number; failed: Array<{ title: string; message: string }> }
+
+/** Approve many (owner, 2026-10-22: "It should go for approval in bulk, not
+ *  individually"). HR requests go in one call per company to
+ *  /hr/records/decide-many, which decides each record with the single route's
+ *  own rules; every other type calls its own approve route, one by one. */
+async function approveMany(rows: Item[]): Promise<BulkResult> {
+  const out: BulkResult = { decided: 0, failed: [] }
+  const hr = rows.filter((r) => r.type === 'hr_request' && r.record)
+  const byCompany = new Map<string, Item[]>()
+  for (const r of hr) byCompany.set(r.tenantId ?? '', [...(byCompany.get(r.tenantId ?? '') ?? []), r])
+  for (const [tenantId, list] of byCompany) {
+    for (let k = 0; k < list.length; k += 200) {
+      const chunk = list.slice(k, k + 200)
+      try {
+        const r = await api.post<{ decided: number; results: Array<{ id: string; ok: boolean; message?: string }> }>('/hr/records/decide-many',
+          { decision: 'approved', items: chunk.map((i) => ({ section: i.record!.section, id: i.id })) }, tenantId ? { tenantId } : undefined)
+        out.decided += r.decided
+        for (const x of r.results) if (!x.ok) out.failed.push({ title: chunk.find((i) => i.id === x.id)?.title ?? x.id, message: x.message ?? 'Not approved' })
+      } catch (e) {
+        for (const i of chunk) out.failed.push({ title: i.title, message: (e as Error).message })
+      }
+    }
+  }
+  for (const i of rows.filter((r) => !(r.type === 'hr_request' && r.record))) {
+    const a = bulkApprove(i)
+    if (!a) continue
+    try {
+      const extra = i.tenantId ? { tenantId: i.tenantId } : undefined
+      await (a.method === 'PATCH' ? api.patch(a.path, a.body, extra) : api.post(a.path, a.body, extra))
+      out.decided += 1
+    } catch (e) {
+      out.failed.push({ title: i.title, message: (e as Error).message })
+    }
+  }
+  return out
+}
+
 export default function ApprovalsPage() {
   return (
     <Suspense fallback={<div className="p-8 text-sm text-white/40">Loading…</div>}>
@@ -79,7 +131,10 @@ function ApprovalsInbox() {
   const [filter, setFilter] = useState<string>(params?.get('type') ?? 'all')
   const [openHr, setOpenHr] = useState<Item | null>(null)
   const [doneMsg, setDoneMsg] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkFailed, setBulkFailed] = useState<BulkResult['failed']>([])
   const qc = useQueryClient()
+  const confirmBulk = useConfirm()
 
   const { data, isLoading, error } = useQuery({
     queryKey: APPROVALS_INBOX_KEY,
@@ -113,6 +168,32 @@ function ApprovalsInbox() {
   const companies = new Set([...(data?.items ?? []), ...(data?.handedOverItems ?? [])].map((i) => i.tenantId).filter(Boolean))
   const showCompany = companies.size > 1
   const typeLabel = (t: string) => data?.types.find((x) => x.type === t)?.label ?? t
+  // Only what is on screen and can be approved in bulk counts as selected.
+  const chosen = items.filter((i) => selected.has(keyOf(i)) && bulkApprove(i))
+  const toggle = (rows: Item[], on: boolean) => setSelected((prev) => {
+    const next = new Set(prev)
+    for (const r of rows) if (bulkApprove(r)) { if (on) next.add(keyOf(r)); else next.delete(keyOf(r)) }
+    return next
+  })
+  const bulk = useMutation({
+    mutationFn: (rows: Item[]) => approveMany(rows),
+    onSuccess: (r) => {
+      setSelected(new Set())
+      setBulkFailed(r.failed)
+      setDoneMsg(`Approved ${r.decided}${r.failed.length ? ` · ${r.failed.length} could not be approved (listed below)` : ''}`)
+      refresh()
+    },
+  })
+  function approveSelected() {
+    const rows = chosen
+    if (rows.length === 0) return
+    const overtime = rows.some((r) => r.record?.section === 'overtime')
+    void confirmBulk({
+      title: `Approve ${rows.length} request${rows.length === 1 ? '' : 's'}?`,
+      body: `Each one is approved exactly as its own Approve button would.${overtime ? ' Overtime is approved at the hours claimed.' : ''}`,
+      confirmLabel: `Approve ${rows.length}`,
+    }).then((ok) => { if (ok) bulk.mutate(rows) })
+  }
 
   function refresh() {
     // The inbox, its badge, and the module queues that share a cache key.
@@ -185,6 +266,12 @@ function ApprovalsInbox() {
               {doneMsg}
             </p>
           )}
+          {bulkFailed.length > 0 && (
+            <ul className="mt-2 rounded-xl px-3 py-2 text-xs space-y-0.5" style={{ border: '1px solid var(--erp-danger)', color: 'var(--erp-danger)' }}>
+              {bulkFailed.slice(0, 20).map((f, k) => <li key={k} className="break-words"><b>{f.title}</b>: {f.message}</li>)}
+              {bulkFailed.length > 20 && <li>…and {bulkFailed.length - 20} more</li>}
+            </ul>
+          )}
         </div>
         {isLoading && <p className="text-sm text-white/40">Loading…</p>}
         {error && <p className="text-sm" style={{ color: 'var(--erp-danger)' }}>Could not load approvals: {(error as Error).message}</p>}
@@ -206,14 +293,29 @@ function ApprovalsInbox() {
         ))}
         {groups.map(([type, rows]) => (
           <section key={type} className="space-y-3">
-            {(groups.length > 1 || showTabs) && (
-              <h2 className="text-xs font-black uppercase tracking-wider text-white/50 pt-1">
-                {typeLabel(type)} <span className="text-white/35">{rows.length}</span>
-              </h2>
-            )}
+            {(() => {
+              const able = rows.filter((r) => bulkApprove(r))
+              const all = able.length > 0 && able.every((r) => selected.has(keyOf(r)))
+              return (
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  {(groups.length > 1 || showTabs) && (
+                    <h2 className="text-xs font-black uppercase tracking-wider text-white/50">
+                      {typeLabel(type)} <span className="text-white/35">{rows.length}</span>
+                    </h2>
+                  )}
+                  {able.length > 1 && (
+                    <label className="flex items-center gap-2 text-xs font-bold text-white/70 cursor-pointer">
+                      <input type="checkbox" className="h-4 w-4 accent-primary" checked={all} onChange={(e) => toggle(able, e.target.checked)} />
+                      Select all {able.length}
+                    </label>
+                  )}
+                </div>
+              )
+            })()}
             {rows.map((i) => (
               <ItemCard key={`${i.type}:${i.id}`} item={i} typeLabel={typeLabel(i.type)} viaName={i.viaHeadOfficeName ?? hoName(i.viaHeadOfficeId)}
-                showCompany={showCompany} onDone={refresh} onDecided={setDoneMsg} onOpenHr={() => setOpenHr(i)} />
+                showCompany={showCompany} onDone={refresh} onDecided={setDoneMsg} onOpenHr={() => setOpenHr(i)}
+                selectable={!!bulkApprove(i)} selected={selected.has(keyOf(i))} onSelect={(on) => toggle([i], on)} />
             ))}
           </section>
         ))}
@@ -239,6 +341,17 @@ function ApprovalsInbox() {
           </div>
         )}
       </div>
+
+      {chosen.length > 0 && (
+        <div className="sticky bottom-3 mt-4 rounded-2xl px-4 py-3 flex flex-wrap items-center gap-3 shadow-lg" style={{ ...card, border: '1px solid var(--erp-primary)' }}>
+          <span className="text-sm font-black text-white/85">{chosen.length} selected</span>
+          <button onClick={approveSelected} disabled={bulk.isPending}
+            className="rounded-lg px-5 py-2.5 text-sm font-black disabled:opacity-50" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
+            {bulk.isPending ? `Approving ${chosen.length}…` : `Approve ${chosen.length} selected`}
+          </button>
+          <button onClick={() => setSelected(new Set())} disabled={bulk.isPending} className="text-xs font-bold text-white/60 hover:underline">Clear</button>
+        </div>
+      )}
 
       {openHr?.record && <HrRecordModal item={openHr} onClose={() => setOpenHr(null)} onChanged={() => { setOpenHr(null); refresh() }} />}
     </div>
@@ -276,9 +389,10 @@ function doneVerb(a: Action): string {
   return a.kind === 'approve' ? 'Approved' : a.kind === 'return' ? 'Returned' : 'Rejected'
 }
 
-function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onDecided, onOpenHr }: {
+function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onDecided, onOpenHr, selectable, selected, onSelect }: {
   item: Item; typeLabel: string; viaName: string | null; showCompany: boolean; onDone: () => void
   onDecided: (msg: string) => void; onOpenHr: () => void
+  selectable?: boolean; selected?: boolean; onSelect?: (on: boolean) => void
 }) {
   const confirm = useConfirm()
   const [pending, setPending] = useState<Action | null>(null)
@@ -313,6 +427,10 @@ function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onDecided, on
   return (
     <div className="rounded-2xl p-4" style={card}>
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+        {selectable && onSelect && (
+          <input type="checkbox" className="h-4 w-4 mt-0.5 accent-primary" aria-label={`Select ${item.title}`}
+            checked={!!selected} onChange={(e) => onSelect(e.target.checked)} />
+        )}
         <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
           style={{ background: 'rgb(var(--fg-rgb) / 0.06)', color: 'rgb(var(--fg-rgb) / 0.6)' }}>{typeLabel}</span>
         {showCompany && item.companyName && (

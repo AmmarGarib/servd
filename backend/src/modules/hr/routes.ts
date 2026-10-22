@@ -1806,7 +1806,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // POST /hr/records/:section/:id/decide — approve or reject the current step.
-  fastify.post<{ Params: { section: string; id: string } }>('/records/:section/:id/decide', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+  // One decision on one HR record — the single route and the inbox's bulk
+  // approve (owner, 2026-10-22: "It should go for approval in bulk, not
+  // individually") both come here, so every rule is checked per record.
+  const decideOne = async (req: FastifyRequest, section: string, id: string, raw: unknown) => {
     const body = z.object({
       decision: z.enum(['approved', 'rejected']),
       note: z.string().max(500).optional(),
@@ -1815,12 +1818,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
       // approver can see the company's banks; HR raising it may not).
       paidFrom: z.enum(['bank', 'cash']).optional(),
       bankAccountId: z.string().min(1).max(64).nullable().optional(),
-    }).parse(req.body)
+    }).parse(raw)
     // Loaded by id, then its company decides who may see it (D3 §7.4.5): a
     // member, a head-office member who reaches it, or an HR hand-over's
     // delegate. Anyone else gets 404 before anything about it is said.
-    const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section } })
-    if (!rec || !(await mayReachForDecision(req, rec.tenantId))) throw new NotFoundError('HR record', req.params.id)
+    const rec = await prisma.hrRecord.findFirst({ where: { id: id, section: section } })
+    if (!rec || !(await mayReachForDecision(req, rec.tenantId))) throw new NotFoundError('HR record', id)
     if (rec.status !== 'submitted') throw new AppError('NOT_PENDING', 'This request is not waiting for approval', 409)
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
     const step: WorkflowStep | undefined = fmt.workflow[rec.currentStep]
@@ -1829,7 +1832,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const isLast = rec.currentStep >= fmt.workflow.length - 1
     // canActOnStep plus the head-office rules (logic.ts decideRight).
     const right = await decideRight(req, rec, step, isLast, { subject, decision: body.decision })
-    if (!right.ok) throw right.status === 404 ? new NotFoundError('HR record', req.params.id) : new AppError(right.code, right.message, right.status)
+    if (!right.ok) throw right.status === 404 ? new NotFoundError('HR record', id) : new AppError(right.code, right.message, right.status)
     const who = { ok: true, override: right.override }
     // HR's step (or HR standing in for a missing HOD) is the back office: the
     // CEO's untick of 'staff_hr' closes it (PPL-R2-01). A reporting manager's
@@ -1882,7 +1885,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
       if (nextStatus === 'approved') {
-        await finalApproval(tx, { ...rec, data: data as Prisma.JsonValue, ...(hoursOnQuantity && { quantity: hours }) }, { approvedHours: hours, actorId: req.staffUser!.id, classification: classificationOf(req.body) })
+        await finalApproval(tx, { ...rec, data: data as Prisma.JsonValue, ...(hoursOnQuantity && { quantity: hours }) }, { approvedHours: hours, actorId: req.staffUser!.id, classification: classificationOf(raw) })
       }
       return tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
     })
@@ -1908,6 +1911,33 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // The bell: an approved step that has a next step is now waiting on its approver(s).
     if (updated.status === 'submitted') approvalWaiting('hr_request', updated.id, { round: `step:${updated.currentStep}:${updated.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
     return updated
+  }
+
+  fastify.post<{ Params: { section: string; id: string } }>('/records/:section/:id/decide', { preHandler: requireAuth(...ALL_STAFF) }, async (req) =>
+    decideOne(req, req.params.section, req.params.id, req.body))
+
+  // Approve / reject many at once (≤200). Each record is decided on its own
+  // through decideOne (own company, step, right, separation of duties); one
+  // refused record does not stop the rest. A loan is never decided in bulk
+  // (its last approval pays it out and names the money account).
+  fastify.post('/records/decide-many', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const body = z.object({
+      items: z.array(z.object({ section: z.string().min(1).max(60), id: z.string().min(1).max(64) })).min(1).max(200),
+      decision: z.enum(['approved', 'rejected']),
+      note: z.string().max(500).optional(),
+    }).parse(req.body)
+    const results: Array<{ section: string; id: string; ok: boolean; status?: string; code?: string; message?: string }> = []
+    for (const it of body.items) {
+      if (it.section === 'loan') { results.push({ ...it, ok: false, code: 'LOAN_NOT_IN_BULK', message: 'Open the loan to decide it' }); continue }
+      try {
+        const r = await decideOne(req, it.section, it.id, { decision: body.decision, ...(body.note && { note: body.note }) })
+        results.push({ ...it, ok: true, status: r.status })
+      } catch (err) {
+        const e = err as { code?: string; message?: string }
+        results.push({ ...it, ok: false, code: e.code ?? 'FAILED', message: e.message ?? 'Could not decide this request' })
+      }
+    }
+    return { decided: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results }
   })
 
   fastify.post<{ Params: { section: string; id: string } }>('/records/:section/:id/stage', { preHandler: HR_BACK_OFFICE }, async (req) => {
