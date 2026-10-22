@@ -207,10 +207,9 @@ describe('reports', () => {
 
   it('Cashier Sales Detail breaks down by session and by sub category', async () => {
     const s = sectionsOf(await run('cashier_sales_detail', '&opts=session,subCategory'))
-    const all = s.find((x) => x.title === 'All users')!
-    const sess = all.rows.filter((x) => x.breakdown === 'Session').map((x) => [x.line, x.count])
+    const sess = s.find((x) => x.title === 'Session Summary')!.rows.map((x) => [x.line, x.count])
     expect(sess).toEqual([['Breakfast', 1], ['Dinner', 2], ['Lunch', 1], ['No session', 1]])
-    const subs = all.rows.filter((x) => x.breakdown === 'Sub category').map((x) => x.line)
+    const subs = s.find((x) => x.title === 'Sub Category Summary')!.rows.map((x) => x.line)
     expect(subs).toEqual(expect.arrayContaining(['Burgers › Beef', 'Burgers › Chicken', 'Drinks (no sub category)']))
   })
 

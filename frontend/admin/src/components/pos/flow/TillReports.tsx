@@ -33,7 +33,7 @@ interface Lookups {
 interface Col { key: string; label: string; type: 'text' | 'number' | 'cents' }
 type Cell = string | number | null
 interface Section { title: string | null; columns: Col[]; rows: Array<Record<string, Cell>>; totals: Record<string, Cell> | null }
-interface RunResult { id: string; title: string; period: string; outlets: string[]; sections: Section[]; notes: string[] }
+interface RunResult { id: string; title: string; period: string; outlets: string[]; sections: Section[]; notes: string[]; printedBy?: string; printedAt?: string }
 
 const FILTER_LABEL: Record<FilterKey, string> = {
   users: 'User', waiters: 'Waiter', orderTypes: 'Order type', categories: 'Category', subCategories: 'Sub Category', menuItems: 'Menu item', sessions: 'Session',
@@ -139,14 +139,15 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 function showCell(c: Col, v: Cell | undefined, currency: boolean): string {
   if (v == null || v === '') return '—'
   if (c.type === 'cents') return currency ? fmtPkr(Number(v)) : fmtPkr(Number(v)).replace(/^PKR\s*/i, '')
-  if (c.type === 'number') return Number(v).toLocaleString('en-PK')
+  // Whole counts plain; a figure with paisa (Sales Per Pax) to 2 decimals, like the printout.
+  if (c.type === 'number') { const n = Number(v); return Number.isInteger(n) ? n.toLocaleString('en-PK') : n.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
   return String(v)
 }
 
 function resultHtml(r: RunResult, currency: boolean): string {
   const body = r.sections.map((s) => `
     ${s.title ? `<h3>${esc(s.title)}</h3>` : ''}
-    <table><thead><tr>${s.columns.map((c) => `<th class="${c.type !== 'text' ? 'n' : ''}">${esc(c.label)}</th>`).join('')}</tr></thead><tbody>
+    <table>${s.columns.some((c) => c.label) ? `<thead><tr>${s.columns.map((c) => `<th class="${c.type !== 'text' ? 'n' : ''}">${esc(c.label)}</th>`).join('')}</tr></thead>` : ''}<tbody>
     ${s.rows.map((row) => `<tr>${s.columns.map((c) => `<td class="${c.type !== 'text' ? 'n' : ''}">${esc(showCell(c, row[c.key], currency))}</td>`).join('')}</tr>`).join('')}
     ${s.totals ? `<tr class="t">${s.columns.map((c) => `<td class="${c.type !== 'text' ? 'n' : ''}">${s.totals![c.key] == null ? '' : esc(showCell(c, s.totals![c.key], currency))}</td>`).join('')}</tr>` : ''}
     </tbody></table>`).join('')
@@ -154,7 +155,7 @@ function resultHtml(r: RunResult, currency: boolean): string {
     body{font-family:sans-serif;font-size:12px;padding:16px} h1{font-size:18px;margin:0} h3{margin:16px 0 4px}
     p{margin:2px 0;color:#444} table{border-collapse:collapse;width:100%} th,td{border-bottom:1px solid #ccc;padding:4px 6px;text-align:left}
     .n{text-align:right} .t td{font-weight:bold;border-top:2px solid #000}</style></head><body>
-    <h1>${esc(r.title)}</h1><p>${esc(r.period)} · ${esc(r.outlets.join(', '))}</p>${body}
+    <h1>${esc(r.title)}</h1>${r.printedBy ? `<p>Printed By : ${esc(r.printedBy)} at ${esc(r.printedAt ?? '')}</p>` : ''}<p>Date: ${esc(r.period.replace(' to ', ' To '))}; Outlet: ${esc(r.outlets.join(', '))}</p>${body}<p style="text-align:center">---- End ----</p>
     ${r.notes.map((n) => `<p>${esc(n)}</p>`).join('')}</body></html>`
 }
 
@@ -248,7 +249,7 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
   }
   async function print() {
     if (!result) return
-    try { await printHtml(async () => resultHtml(result, true), { width: 900, height: 700 }) }
+    try { await printHtml(async () => resultHtml(result, result.id !== 'cashier_sales_detail'), { width: 900, height: 700 }) }
     catch (e) { setErr(flowErrorMessage(e, 'Could not print')) }
   }
 
@@ -307,7 +308,8 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
     </nav>
   )
 
-  const currency = true
+  // The Cashier Sales Report prints plain figures (owner's printout); the others show PKR.
+  const currency = result?.id !== 'cashier_sales_detail'
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-kds-border bg-kds-card px-3 py-2">
@@ -338,16 +340,17 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
                 {result ? (
                   <div className="mt-3">
                     <button type="button" onClick={() => setResult(null)} className="flex min-h-11 items-center gap-2 text-sm font-semibold text-kds-green"><ArrowLeft size={16} aria-hidden="true" />Back to filters</button>
-                    <p className="text-sm text-kds-subtext">{result.period} · {result.outlets.join(', ')}</p>
+                    {result.printedBy && <p className="text-sm text-kds-subtext">Printed By : {result.printedBy} at {result.printedAt}</p>}
+                    <p className="text-sm text-kds-subtext">Date: {result.period.replace(' to ', ' To ')}; Outlet: {result.outlets.join(', ')}</p>
                     {result.sections.length === 0 && <p className="mt-4 text-sm text-kds-subtext">Nothing in these dates.</p>}
                     {result.sections.map((s, si) => (
                       <div key={si} className="mt-4">
                         {s.title && <h3 className="mb-1 text-sm font-bold text-kds-text">{s.title}</h3>}
                         <div className="overflow-x-auto rounded-xl border border-kds-border">
                           <table className="w-full min-w-[32rem] text-sm">
-                            <thead className="bg-kds-card text-left text-xs uppercase tracking-wider text-kds-subtext">
+                            {s.columns.some((c) => c.label) && <thead className="bg-kds-card text-left text-xs uppercase tracking-wider text-kds-subtext">
                               <tr>{s.columns.map((c) => <th key={c.key} scope="col" className={`px-3 py-2 font-semibold ${c.type !== 'text' ? 'text-right' : ''}`}>{c.label}</th>)}</tr>
-                            </thead>
+                            </thead>}
                             <tbody>
                               {s.rows.length === 0 && <tr><td colSpan={s.columns.length} className="px-3 py-6 text-center text-kds-subtext">No rows.</td></tr>}
                               {s.rows.map((row, i) => (

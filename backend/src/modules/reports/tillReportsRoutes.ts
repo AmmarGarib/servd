@@ -151,6 +151,9 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
       conceptIds: brands.conceptIds, tenantIds: brands.tenantIds, outlets: brands.names,
       filters, groupBy, opts, money,
     })
+    // "Printed By : <name> at <time>" (the Cashier Sales Report's header).
+    report.printedBy = req.staffUser!.name ?? req.staffUser!.email ?? ''
+    report.printedAt = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Karachi', hour12: true, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(',', '')
     const format = exportFormatOf(q['format'])
     if (format) return sendReportFor(req, reply, format, { base: `till-${id.replace(/_/g, '-')}`, suffix: report.period.replace(/ to /, '-to-') }, tillReportTable(report))
     return report

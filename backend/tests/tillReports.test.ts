@@ -211,21 +211,54 @@ describe('run', () => {
     expect((await run('finA', 'sales_detail', '&groupBy=settle_by')).statusCode).toBe(400)
   })
 
-  it('cashier sales detail: a section per user, No Charge only when ticked', async () => {
-    const s = sectionsOf(await run('finA', 'cashier_sales_detail'))
-    expect(s.map((x) => x.title)).toEqual(['cashier1', 'cashier2', 'All users'])
-    const line = (sec: Section, l: string) => sec.rows.find((r) => r.line === l)
-    expect(line(s[0]!, 'Orders')!.count).toBe(1)
-    expect(line(s[0]!, 'Gross sales (incl. GST)')!.amountCents).toBe(2300_00)
-    expect(line(s[2]!, 'Orders')!.count).toBe(2)
-    expect(line(s[2]!, 'Payments received')!.amountCents).toBe(3380_00)
-    const withNc = sectionsOf(await run('finA', 'cashier_sales_detail', '&opts=includeNoCharge,orderType,payment,category,userWise'))
-    expect(withNc.map((x) => x.title)).toEqual(['By user', 'cashier1', 'cashier2', 'All users'])
-    const c1 = withNc[1]!
-    expect(line(c1, 'Orders')!.count).toBe(2)
-    expect(c1.rows.filter((r) => r.breakdown === 'Order type').map((r) => r.line).sort()).toEqual(['Dine In', 'No Charge'])
-    expect(c1.rows.find((r) => r.breakdown === 'Payment' && r.line === 'Cash')!.amountCents).toBe(2300_00)
-    expect(withNc[0]!.totals).toMatchObject({ orders: 3 })
+  // Cashier Sales Report (owner, 2026-10-22): the printout's four sections, every bill PLACED in the period —
+  // running ones too (Balance) — a cancelled one a void receipt; No Charge only when ticked.
+  it('cashier sales report: receipt, sales, category and payment summaries, line for line', async () => {
+    await prisma.order.update({ where: { id: O.o1! }, data: { partySize: 4 } })
+    const o4 = await prisma.order.create({
+      data: {
+        conceptId: C.A!, source: 'pos', externalId: `${P}-o4`, status: 'preparing', placedAt: at('13:00'), totalCents: 500_00, partySize: 2, posStaffId: U.cashier1,
+        items: { create: [{ menuItemId: M.cola!, name: 'Cola', quantity: 1, unitPriceCents: 500_00 }] },
+      } as never,
+    })
+    O.o4 = o4.id
+    const r = await run('finA', 'cashier_sales_detail')
+    expect(r.json().title).toBe('Cashier Sales Report')
+    expect(r.json().printedBy).toBe('finA')
+    const s = sectionsOf(r)
+    expect(s.map((x) => x.title)).toEqual(['Receipt Summary', 'Sales Summary', 'Category Summary', 'Payment Summary'])
+    const v = (sec: Section, l: string) => sec.rows.find((x) => x.line === l)!.value
+    // Bills o1, o2 and the running o4; the cancelled bill is a void receipt; o3 (No Charge) left out.
+    expect(v(s[0]!, '#Pax')).toBe(6)
+    expect(v(s[0]!, '#Payments')).toBe(2)
+    expect(v(s[0]!, '#Receipts')).toBe(3)
+    expect(v(s[0]!, 'Sales Per Pax')).toBeCloseTo(583.33, 2) // Net Sales 3,500 ÷ 6
+    expect(v(s[0]!, 'Sales Per Receipt')).toBeCloseTo(1166.67, 2)
+    expect(v(s[0]!, '#Void Receipts')).toBe(1)
+    expect(Object.fromEntries(s[1]!.rows.map((x) => [x.line, x.value]))).toEqual({
+      Discount: 200_00, 'Extra charge': 0, 'Round Off': 0, Tax: 380_00, Tip: 0,
+      'Total Amount': 3700_00, 'Net Sales': 3500_00, 'Total Sales:': 3880_00, 'Total Sales without Tip': 3880_00,
+      Balance: 500_00, Settled: 3380_00,
+    })
+    expect(s[2]!.rows.map((x) => [x.category, x.qty])).toEqual([['Drinks', 2], ['Mains', 3]])
+    expect(s[2]!.totals).toMatchObject({ qty: 5, amountCents: 3500_00 })
+    expect(s[3]!.rows.map((x) => [x.count, x.amountCents])).toEqual(expect.arrayContaining([[1, 2300_00], [1, 1080_00]]))
+    expect(s[3]!.totals).toMatchObject({ count: 2, amountCents: 3380_00 })
+    // A volume-only reader sees no money.
+    expect(sectionsOf(await run('mgrA', 'cashier_sales_detail'))[0]!.rows.find((x) => x.line === 'Sales Per Pax')!.value).toBeDefined()
+    // No Charge ticked: o3 counts, its comp is a "No Charge" payment; options add their breakdowns below.
+    const nc = sectionsOf(await run('finA', 'cashier_sales_detail', '&opts=includeNoCharge,orderType,userWise'))
+    expect(nc.map((x) => x.title)).toEqual(['Receipt Summary', 'Sales Summary', 'Category Summary', 'Payment Summary', 'Order Type Summary', 'User Wise Sales'])
+    expect(v(nc[0]!, '#Receipts')).toBe(4)
+    expect(nc[3]!.rows.find((x) => x.method === 'No Charge')).toMatchObject({ count: 1, amountCents: 400_00 })
+    expect(nc[4]!.rows.map((x) => x.line).sort()).toEqual(['Dine In', 'No Charge', 'Takeaway'])
+    expect(nc[5]!.rows.find((x) => x.line === 'cashier2')).toMatchObject({ count: 1, amountCents: 1080_00 })
+    // Who rang it: cashier2 only.
+    const c2 = sectionsOf(await run('finA', 'cashier_sales_detail', `&users=${U.cashier2}`))
+    expect(v(c2[0]!, '#Receipts')).toBe(1)
+    await prisma.orderItem.deleteMany({ where: { orderId: o4.id } })
+    await prisma.order.delete({ where: { id: o4.id } })
+    delete O.o4
   })
 
   it('No Charge reports pick only the comped bill', async () => {

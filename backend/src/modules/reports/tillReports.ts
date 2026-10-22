@@ -15,7 +15,7 @@
 // Money cells are null for callers outside FINANCIALS_VIEWERS (the same rule
 // as /reports/till-sales); counts and quantities stay.
 
-import type { Prisma, PaymentMethod } from '@prisma/client'
+import type { Prisma, PaymentMethod, OrderStatus } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { tenderLabel } from '../../lib/tenders.js'
@@ -122,7 +122,7 @@ export function tillCatalog() {
 export type Cell = string | number | null
 export interface TillColumn { key: string; label: string; type: 'text' | 'number' | 'cents' }
 export interface TillSection { title: string | null; columns: TillColumn[]; rows: Array<Record<string, Cell>>; totals: Record<string, Cell> | null }
-export interface TillReport { id: TillReportId; title: string; period: string; outlets: string[]; sections: TillSection[]; notes: string[] }
+export interface TillReport { id: TillReportId; title: string; period: string; outlets: string[]; sections: TillSection[]; notes: string[]; printedBy?: string; printedAt?: string }
 
 export interface TillFilters {
   users?: string[]; waiters?: string[]; orderTypes?: OrderTypeKey[]; categories?: string[]; subCategories?: string[]; menuItems?: string[]; sessions?: string[]
@@ -316,7 +316,8 @@ async function orderIdsInSessions(sq: SalesQuery, sessionIds: string[]): Promise
   const conceptIds = sq.conceptIds ?? (sq.conceptId ? [sq.conceptId] : [])
   const of = await sessionResolver(conceptIds)
   const want = new Set(sessionIds)
-  const rows = await prisma.order.findMany({ where: soldOrderWhere({ ...sq, extra: null }), select: { id: true, conceptId: true, placedAt: true } })
+  // Sold in the window, or placed in it (the Cashier Sales report counts running bills too).
+  const rows = await prisma.order.findMany({ where: { OR: [soldOrderWhere({ ...sq, extra: null }), { AND: [orderScope({ ...sq, extra: null }), { placedAt: { gte: sq.from, lte: sq.to } }] }] }, select: { id: true, conceptId: true, placedAt: true } })
   return rows.filter((o) => { const s = of(o.conceptId, o.placedAt); return !!s && want.has(s.id) }).map((o) => o.id)
 }
 
@@ -359,7 +360,8 @@ export async function runTillReport(id: TillReportId, input: TillReportInput): P
     sections = sections.map((sec) => ({ ...sec, columns: sec.columns.map((c) => (c.type === 'cents' && !/PKR/.test(c.label) ? { ...c, label: `${c.label} (PKR)` } : c)) }))
   }
   return {
-    id, title: def.title, period: `${fmtPktDate(input.sq.from)} to ${fmtPktDate(input.sq.to)}`, outlets: input.outlets,
+    // The printout's own heading (owner, 2026-10-22); the list keeps the report's name.
+    id, title: id === 'cashier_sales_detail' ? 'Cashier Sales Report' : def.title, period: `${fmtPktDate(input.sq.from)} to ${fmtPktDate(input.sq.to)}`, outlets: input.outlets,
     sections: sections.map((s) => maskSection(s, input.money)), notes,
   }
 }
@@ -437,96 +439,128 @@ async function salesDetail(input: TillReportInput, def: TillReportDef, notes: st
   }]
 }
 
-// ─── Cashier Sales Detail ────────────────────────────────────────────────────
+// ─── Cashier Sales Report (owner, 2026-10-22: "This is how i want cashier Sales details report, same line of
+// items and it should fetch all the data as per requirement and accurate") ───────────────────────────────────
+//
+// The owner's printout, line for line — Receipt Summary, Sales Summary, Category Summary, Payment Summary.
+// The bills are every bill PLACED in the period (Karachi days) — running ones too, so "Balance" shows what is
+// still to be settled; a cancelled, rejected or credit-noted bill is a void receipt and counts nowhere else.
+//   Total Sales      = Σ bill as charged (Order.totalCents + wallet + gift card: GST, extra charges and tip in)
+//   Tip / Tax / Discount / Extra charge (service charge + delivery fee) = the stored order figures; Round off 0
+//   Net Sales        = Total Sales − Tax − Extra charge − Round off − Tip      Total Amount = Net Sales + Discount
+//   Settled          = money received on those bills (paid tenders, wallet, gift card)   Balance = Total − Settled
+//   Sales per pax / receipt = Net Sales ÷ #Pax / #Receipts      Category Summary = Net Sales shared across the
+//   bills' live lines by value (lib/pricing.ts allocateTaxCents), per main category, with the items' quantity.
+// Ticked options add their breakdowns after the four sections (the 22 Oct options).
 
-const CASHIER_COLUMNS = [col('breakdown', 'Breakdown'), col('line', 'Line'), col('count', 'Count', 'number'), col('amountCents', 'Amount', 'cents')]
+const CASHIER_VOID: OrderStatus[] = ['cancelled', 'rejected', 'refunded']
+const kv = (label: string, value: Cell): Record<string, Cell> => ({ line: label, value })
+const KV_COLUMNS = [col('line', ''), col('value', '', 'number')]
+const KV_MONEY = [col('line', ''), col('value', '', 'cents')]
 
 async function cashierDetail(input: TillReportInput, def: TillReportDef, notes: string[]): Promise<TillSection[]> {
   const o = input.opts
   const ncIds = await noChargeOrderIds(input.sq)
-  const sq = await scopedQuery(input, def, o.has('includeNoCharge') ? 'any' : 'exclude', ncIds)
-  const orders = await loadOrders(sq, notes)
-  // The people who rang the orders (Order.posStaffId); online orders have none.
-  const userIds = [...new Set(orders.map((x) => x.posStaffId))]
-  const names = new Map(orders.map((x) => [x.posStaffId, x.posStaff?.name ?? (x.posStaffId ? 'Unknown user' : 'No user (online)')]))
-  userIds.sort((a, b) => byLabel(names.get(a)!, names.get(b)!))
+  const extra = await orderFilter(input.sq, input.filters, def.filters, o.has('includeNoCharge') ? 'any' : 'exclude', ncIds)
+  const scope: Prisma.OrderWhereInput = { AND: [orderScope({ ...input.sq, extra }), { placedAt: { gte: input.sq.from, lte: input.sq.to } }] }
+  const [bills, voids] = await Promise.all([
+    prisma.order.findMany({
+      where: { AND: [scope, { status: { notIn: CASHIER_VOID } }] }, take: MAX_ORDERS + 1, orderBy: { placedAt: 'asc' },
+      select: { ...ORDER_SELECT, partySize: true },
+    }),
+    prisma.order.count({ where: { AND: [scope, { status: { in: CASHIER_VOID } }] } }),
+  ])
+  if (bills.length > MAX_ORDERS) { notes.push(`Only the first ${MAX_ORDERS.toLocaleString('en')} bills are counted — narrow the dates or filters.`); bills.length = MAX_ORDERS }
 
-  const movements = o.has('vouchers') ? await drawerMovements(input) : []
-  const sessionOf = await sessionResolver(input.conceptIds)
-  const block = async (uid: string | null | undefined, list: SoldOrder[]): Promise<Array<Record<string, Cell>>> => {
-    const userExtra: Prisma.OrderWhereInput | null = uid === undefined ? null : { posStaffId: uid }
-    const extra = [sq.extra, userExtra].filter((x): x is Prisma.OrderWhereInput => !!x)
-    const t = await salesTotals({ ...sq, extra: extra.length ? { AND: extra } : null })
-    const paid = list.flatMap((x) => x.payments).filter((p) => p.method !== 'comp')
-    const rows: Array<Record<string, Cell>> = [
-      { breakdown: 'Summary', line: 'Orders', count: t.orders, amountCents: null },
-      { breakdown: 'Summary', line: 'Gross sales (incl. GST)', count: null, amountCents: t.gross },
-      { breakdown: 'Summary', line: 'Discount', count: null, amountCents: t.discount },
-      { breakdown: 'Summary', line: 'GST', count: null, amountCents: t.tax },
-      { breakdown: 'Summary', line: 'Net sales (ex-GST)', count: null, amountCents: t.net },
-      { breakdown: 'Summary', line: 'Payments received', count: paid.length, amountCents: paid.reduce((s, p) => s + p.amountCents, 0) + list.reduce((s, x) => s + x.walletAmountCents, 0) },
-    ]
-    const group = (breakdown: string, keyOf: (x: SoldOrder) => string, amount: (x: SoldOrder) => number = (x) => x.totalCents + x.walletAmountCents) => {
-      const g = new Map<string, { count: number; amount: number }>()
-      for (const x of list) { const k = keyOf(x); const s = g.get(k) ?? { count: 0, amount: 0 }; s.count++; s.amount += amount(x); g.set(k, s) }
-      for (const [line, s] of [...g].sort((a, b) => byLabel(a[0], b[0]))) rows.push({ breakdown, line, count: s.count, amountCents: s.amount })
-    }
-    const lineGroup = (breakdown: string, keyOf: (l: Line) => string) => {
-      const g = new Map<string, { count: number; amount: number }>()
-      for (const l of list.flatMap(linesOf)) { const k = keyOf(l); const s = g.get(k) ?? { count: 0, amount: 0 }; s.count += l.qty; s.amount += l.gross; g.set(k, s) }
-      for (const [line, s] of [...g].sort((a, b) => byLabel(a[0], b[0]))) rows.push({ breakdown, line, count: s.count, amountCents: s.amount })
-    }
-    if (o.has('orderType')) group('Order type', (x) => ORDER_TYPE_LABEL[typeOf(x)])
-    if (o.has('session')) group('Session', (x) => sessionOf(x.conceptId, x.placedAt)?.name ?? NO_SESSION)
-    if (o.has('category')) lineGroup('Category', (l) => l.category)
-    if (o.has('subCategory')) lineGroup('Sub category', (l) => (l.subCategory === NO_SUB ? `${l.category} (no sub category)` : `${l.category} › ${l.subCategory}`))
-    if (o.has('menuItem')) lineGroup('Menu item', (l) => l.name)
-    if (o.has('tax')) group('Tax', (x) => (x.taxRatePct != null ? `GST @ ${x.taxRatePct}%` : 'GST'), (x) => x.taxCents)
-    if (o.has('taxableValue')) rows.push({ breakdown: 'Taxable value', line: 'Sales ex-GST, ex-tip', count: list.length, amountCents: list.reduce((s, x) => s + x.totalCents + x.walletAmountCents - x.taxCents - x.tipCents, 0) })
-    if (o.has('extraCharge')) {
-      rows.push({ breakdown: 'Extra charges', line: 'Service charge', count: list.filter((x) => x.serviceChargeCents > 0).length, amountCents: list.reduce((s, x) => s + x.serviceChargeCents, 0) })
-      rows.push({ breakdown: 'Extra charges', line: 'Delivery fee', count: list.filter((x) => x.deliveryFeeCents > 0).length, amountCents: list.reduce((s, x) => s + x.deliveryFeeCents, 0) })
-    }
-    if (o.has('discount')) {
-      rows.push({ breakdown: 'Discount', line: 'Discount', count: list.filter((x) => x.discountCents > 0).length, amountCents: list.reduce((s, x) => s + x.discountCents, 0) })
-      rows.push({ breakdown: 'Discount', line: 'Promo code', count: list.filter((x) => x.promoDiscountCents > 0).length, amountCents: list.reduce((s, x) => s + x.promoDiscountCents, 0) })
-    }
-    if (o.has('payment')) {
-      const g = new Map<string, { count: number; amount: number }>()
-      for (const p of list.flatMap((x) => x.payments)) { const k = tenderLabel(p.method); const s = g.get(k) ?? { count: 0, amount: 0 }; s.count++; s.amount += p.amountCents; g.set(k, s) }
-      const wallet = list.filter((x) => x.walletAmountCents > 0)
-      if (wallet.length) g.set(tenderLabel('wallet'), { count: wallet.length, amount: wallet.reduce((s, x) => s + x.walletAmountCents, 0) })
-      for (const [line, s] of [...g].sort((a, b) => byLabel(a[0], b[0]))) rows.push({ breakdown: 'Payment', line, count: s.count, amountCents: s.amount })
-    }
-    if (o.has('businessSource')) group('Business source', (x) => SOURCE_LABEL[x.source] ?? x.source)
-    if (o.has('waiterWise')) group('Waiter', (x) => x.waiter?.fullName ?? 'No waiter')
-    if (o.has('vouchers')) {
-      const mine = uid === undefined ? movements : movements.filter((m) => m.userId === uid)
-      for (const m of mine) rows.push({ breakdown: m.kind === 'expense' ? 'Vouchers — expense' : 'Vouchers — income', line: `${m.when} ${m.reason}`.trim(), count: 1, amountCents: m.amountCents })
-    }
-    return rows
+  const giftOf = (x: SoldOrder) => x.giftCardRedemptions.reduce((s, g) => s + g.amountCents, 0)
+  const sum = (f: (x: (typeof bills)[number]) => number) => bills.reduce((s, x) => s + f(x), 0)
+  const totalSales = sum((x) => x.totalCents + x.walletAmountCents + giftOf(x))
+  const tip = sum((x) => x.tipCents)
+  const tax = sum((x) => x.taxCents)
+  const discount = sum((x) => x.discountCents + x.promoDiscountCents)
+  const extraCharge = sum((x) => x.serviceChargeCents + x.deliveryFeeCents)
+  const roundOff = 0
+  const netSales = totalSales - tax - extraCharge - roundOff - tip
+  const totalAmount = netSales + discount
+  // Money received: paid tenders (No Charge comps only when ticked in), wallet and gift card.
+  type Pay = { label: string; amount: number }
+  const pays: Pay[] = []
+  for (const x of bills) {
+    for (const p of x.payments) if (p.amountCents > 0 && (p.method !== 'comp' || o.has('includeNoCharge'))) pays.push({ label: p.method === 'comp' ? 'No Charge' : tenderLabel(p.method), amount: p.amountCents })
+    if (x.walletAmountCents > 0) pays.push({ label: tenderLabel('wallet'), amount: x.walletAmountCents })
+    if (giftOf(x) > 0) pays.push({ label: tenderLabel('gift_card'), amount: giftOf(x) })
   }
+  const settled = pays.reduce((s, p) => s + p.amount, 0)
+  const pax = sum((x) => x.partySize ?? 0)
+  const receipts = bills.length
+  // Sales per pax / receipt in rupees (2 decimals, like the printout); money only for financial readers.
+  const per = (n: number): Cell => (!input.money ? null : n > 0 ? Math.round(netSales / n) / 100 : 0)
 
-  const sections: TillSection[] = []
-  if (o.has('userWise')) {
-    const rows: Array<Record<string, Cell>> = []
-    for (const uid of userIds) {
-      const list = orders.filter((x) => x.posStaffId === uid)
-      const t = await salesTotals({ ...sq, extra: { AND: [...(sq.extra ? [sq.extra] : []), { posStaffId: uid }] } })
-      rows.push({ user: names.get(uid)!, orders: t.orders, grossCents: t.gross, discountCents: t.discount, taxCents: t.tax, netCents: t.net, paymentsCents: list.flatMap((x) => x.payments).filter((p) => p.method !== 'comp').reduce((s, p) => s + p.amountCents, 0) + list.reduce((s, x) => s + x.walletAmountCents, 0) })
-    }
-    sections.push({
-      title: 'By user',
-      columns: [col('user', 'User'), col('orders', 'Orders', 'number'), col('grossCents', 'Gross', 'cents'), col('discountCents', 'Discount', 'cents'), col('taxCents', 'GST', 'cents'), col('netCents', 'Net', 'cents'), col('paymentsCents', 'Payments', 'cents')],
-      rows,
-      totals: { user: 'TOTAL', ...Object.fromEntries(['orders', 'grossCents', 'discountCents', 'taxCents', 'netCents', 'paymentsCents'].map((k) => [k, sumKey(rows, k)])) },
-    })
+  // Category Summary: Net Sales shared across the live lines by value, per main category.
+  const lines = bills.flatMap(linesOf)
+  const shares = lines.length ? allocateTaxCents(lines.map((l) => Math.max(0, l.gross)), Math.max(0, netSales)) : []
+  const cats = new Map<string, { qty: number; amount: number }>()
+  lines.forEach((l, n) => { const c = cats.get(l.category) ?? { qty: 0, amount: 0 }; c.qty += l.qty; c.amount += shares[n] ?? 0; cats.set(l.category, c) })
+  const payBy = new Map<string, { count: number; amount: number }>()
+  for (const p of pays) { const s = payBy.get(p.label) ?? { count: 0, amount: 0 }; s.count++; s.amount += p.amount; payBy.set(p.label, s) }
+
+  const sections: TillSection[] = [
+    {
+      title: 'Receipt Summary', columns: KV_COLUMNS, totals: null,
+      rows: [kv('#Pax', pax), kv('#Payments', pays.length), kv('#Receipts', receipts), kv('Sales Per Pax', per(pax)), kv('Sales Per Receipt', per(receipts)), kv('#Void Receipts', voids)],
+    },
+    {
+      title: 'Sales Summary', columns: KV_MONEY, totals: null,
+      rows: [
+        kv('Discount', discount), kv('Extra charge', extraCharge), kv('Round Off', roundOff), kv('Tax', tax), kv('Tip', tip),
+        kv('Total Amount', totalAmount), kv('Net Sales', netSales), kv('Total Sales:', totalSales),
+        kv('Total Sales without Tip', totalSales - tip), kv('Balance', totalSales - settled), kv('Settled', settled),
+      ],
+    },
+    {
+      title: 'Category Summary', columns: [col('category', ''), col('qty', '', 'number'), col('amountCents', '', 'cents')],
+      rows: [...cats].sort((a, b) => byLabel(a[0], b[0])).map(([category, c]) => ({ category, qty: c.qty, amountCents: c.amount })),
+      totals: { category: 'Total', qty: [...cats.values()].reduce((s, c) => s + c.qty, 0), amountCents: [...cats.values()].reduce((s, c) => s + c.amount, 0) },
+    },
+    {
+      title: 'Payment Summary', columns: [col('method', ''), col('count', '', 'number'), col('amountCents', '', 'cents')],
+      rows: [...payBy].sort((a, b) => byLabel(a[0], b[0])).map(([method, s]) => ({ method, count: s.count, amountCents: s.amount })),
+      totals: { method: 'Total', count: pays.length, amountCents: settled },
+    },
+  ]
+
+  // The ticked options (22 Oct) add their breakdowns below.
+  const asOrders = bills as SoldOrder[]
+  const breakdown = (title: string, keyOf: (x: SoldOrder) => string, amount: (x: SoldOrder) => number = (x) => x.totalCents + x.walletAmountCents + giftOf(x)) => {
+    const g = new Map<string, { count: number; amount: number }>()
+    for (const x of asOrders) { const k = keyOf(x); const s = g.get(k) ?? { count: 0, amount: 0 }; s.count++; s.amount += amount(x); g.set(k, s) }
+    const rows = [...g].sort((a, b) => byLabel(a[0], b[0])).map(([line, s]) => ({ line, count: s.count, amountCents: s.amount }))
+    sections.push({ title, columns: [col('line', ''), col('count', 'Count', 'number'), col('amountCents', 'Amount', 'cents')], rows, totals: { line: 'Total', count: sumKey(rows, 'count'), amountCents: sumKey(rows, 'amountCents') } })
   }
-  for (const uid of userIds) sections.push({ title: names.get(uid)!, columns: CASHIER_COLUMNS, rows: await block(uid, orders.filter((x) => x.posStaffId === uid)), totals: null })
-  sections.push({ title: 'All users', columns: CASHIER_COLUMNS, rows: await block(undefined, orders), totals: null })
-  notes.push('Users = who rang the order. Summary figures come from the sales engine (net = P&L net revenue, after refunds in the period).')
-  if (!o.has('includeNoCharge')) notes.push('No Charge orders are left out (tick “Include no charge” to count them).')
-  if (o.has('vouchers')) notes.push('Vouchers = the drawers’ cash payouts (expense) and pay-ins (income), by drawer owner.')
+  const lineBreakdown = (title: string, keyOf: (l: Line) => string) => {
+    const g = new Map<string, { qty: number; amount: number }>()
+    lines.forEach((l, n) => { const k = keyOf(l); const s = g.get(k) ?? { qty: 0, amount: 0 }; s.qty += l.qty; s.amount += shares[n] ?? 0; g.set(k, s) })
+    const rows = [...g].sort((a, b) => byLabel(a[0], b[0])).map(([line, s]) => ({ line, count: s.qty, amountCents: s.amount }))
+    sections.push({ title, columns: [col('line', ''), col('count', 'Qty', 'number'), col('amountCents', 'Net sales', 'cents')], rows, totals: { line: 'Total', count: sumKey(rows, 'count'), amountCents: sumKey(rows, 'amountCents') } })
+  }
+  if (o.has('orderType')) breakdown('Order Type Summary', (x) => ORDER_TYPE_LABEL[typeOf(x)])
+  if (o.has('session')) { const sessionOf = await sessionResolver(input.conceptIds); breakdown('Session Summary', (x) => sessionOf(x.conceptId, x.placedAt)?.name ?? NO_SESSION) }
+  if (o.has('subCategory')) lineBreakdown('Sub Category Summary', (l) => (l.subCategory === NO_SUB ? `${l.category} (no sub category)` : `${l.category} › ${l.subCategory}`))
+  if (o.has('menuItem')) lineBreakdown('Menu Item Summary', (l) => l.name)
+  if (o.has('tax')) breakdown('Tax Summary', (x) => (x.taxRatePct != null ? `GST @ ${x.taxRatePct}%` : 'GST'), (x) => x.taxCents)
+  if (o.has('taxableValue')) sections.push({ title: 'Taxable Value', columns: KV_MONEY, totals: null, rows: [kv('Sales ex-GST, ex-tip', totalSales - tax - tip)] })
+  if (o.has('extraCharge')) sections.push({ title: 'Extra Charges', columns: KV_MONEY, totals: null, rows: [kv('Service charge', sum((x) => x.serviceChargeCents)), kv('Delivery fee', sum((x) => x.deliveryFeeCents))] })
+  if (o.has('discount')) sections.push({ title: 'Discount Summary', columns: KV_MONEY, totals: null, rows: [kv('Discount', sum((x) => x.discountCents)), kv('Promo code', sum((x) => x.promoDiscountCents))] })
+  if (o.has('payment')) breakdown('Bills by Payment', (x) => [...new Set(x.payments.map((p) => tenderLabel(p.method)))].join(' + ') || 'Not settled')
+  if (o.has('businessSource')) breakdown('Business Source Summary', (x) => SOURCE_LABEL[x.source] ?? x.source)
+  if (o.has('waiterWise')) breakdown('Waiter Wise Sales', (x) => x.waiter?.fullName ?? 'No waiter')
+  if (o.has('userWise')) breakdown('User Wise Sales', (x) => x.posStaff?.name ?? (x.posStaffId ? 'Unknown user' : 'No user (online)'))
+  if (o.has('vouchers')) {
+    const rows = (await drawerMovements(input)).map((m) => ({ line: `${m.kind === 'expense' ? 'Expense' : 'Income'} · ${m.when} ${m.reason}`.trim(), count: 1, amountCents: m.amountCents }))
+    sections.push({ title: 'Expense / Income Vouchers', columns: [col('line', ''), col('count', 'Count', 'number'), col('amountCents', 'Amount', 'cents')], rows, totals: { line: 'Total', count: rows.length, amountCents: sumKey(rows, 'amountCents') } })
+  }
+  notes.push('Bills placed in the period (running ones too, so Balance = what is still to be settled). A cancelled, rejected or credit-noted bill is a void receipt. Total Sales = the bills as charged (GST, extra charges and tip in); Net Sales = Total Sales − Tax − Extra charge − Round off − Tip; Total Amount = Net Sales + Discount. Sales per pax / receipt use Net Sales.')
+  if (!o.has('includeNoCharge')) notes.push('No Charge bills are left out (tick “Include No Charge” to count them).')
   return sections
 }
 

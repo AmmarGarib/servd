@@ -30,7 +30,15 @@ id, 'read')` (foreign → 404); lookups list only the caller's companies' rows.
 Report ids (title):
 - `menu_item_sales_summary` Menu Item Sales Summary — per menu item within category: qty, gross, discount, net, tax.
 - `sales_detail` Sales Detail — one row per sold order: order no (orderRefOf), date/time, receipt no (fiscal ?? tax invoice), order type, R/T no, guest, user, waiter, items, gross, discount, service charge, delivery fee, tax, total, payment methods.
-- `cashier_sales_detail` Cashier Sales Detail — one section per user (who rang it), each with the breakdowns the ticked options ask for (below), plus a totals section.
+- `cashier_sales_detail` Cashier Sales Detail — printed as **"Cashier Sales Report"** (owner, 2026-10-22: "same line of
+  items … accurate"): header "Printed By : <login> at <time>", "Date: <from> To <to>; Outlet: <brands>"; then Receipt
+  Summary (#Pax = Σ partySize, #Payments, #Receipts, Sales Per Pax / Per Receipt = Net Sales ÷ them in rupees,
+  #Void Receipts), Sales Summary (Discount, Extra charge = service charge + delivery fee, Round Off 0, Tax, Tip, Total
+  Amount = Net Sales + Discount, Net Sales = Total Sales − Tax − Extra − Round off − Tip, Total Sales = Σ bills as
+  charged incl. wallet / gift card, Total Sales without Tip, Balance = Total Sales − Settled, Settled = money received),
+  Category Summary (main category: qty, Net Sales shared across lines by value), Payment Summary (tender: count,
+  amount). Bills = every bill PLACED in the period that is not cancelled / rejected / credit-noted (running ones too);
+  those three are void receipts. Ticked options add their own sections after these four.
 - `no_charge_item_detail` No Charge Menu Item Sales Detail — comped orders' lines: order no, time, guest, item, qty, value, reason / approver if stored.
 - `no_charge_item_summary` No Charge Menu Item Sales Summary — per item: qty, value.
 - `payment_summary` Payment Summary — payments in the period grouped by the chosen `groupBy`, with count and amount per group + grand total; rows can be expanded server-side as detail (order no, time, method, amount, order by, settle by, terminal) when `opts=detail`.
@@ -83,9 +91,8 @@ Decisions the contract left open (2026-10-22):
   without one is 400. Missing dates = today; > 92 days 400 `RANGE_TOO_LONG`; no conceptIds 400 `CONCEPTS_REQUIRED`.
 - `paymentType` on order reports: `refund` alone keeps bills with a refund; `orderBy` = `Order.posStaffId`; `settleBy` = a paid
   payment in a drawer of that user. On Payment Summary / Detail they apply to the payments.
-- Cashier Sales Detail sections: one per user (title = name; online orders under "No user (online)"), then "All users"; each
-  has columns breakdown / line / count / amount — "Summary" lines (orders, gross, discount, GST, net = `salesTotals`, payments
-  received) then one block per ticked option. `userWise` adds a leading "By user" table. `vouchers` = payouts (expense) and
+- Cashier Sales Report: the four sections above for the selection; filter `users` for one cashier. `userWise` adds
+  "User Wise Sales" below. `vouchers` = payouts (expense) and
   pay-ins (income) of drawers in the brands' companies, by drawer owner.
 - `showCurrency` only adds "(PKR)" to money column labels; cells stay paisa numbers.
 - Lookups: users = who rang the brands' orders + drawer owners in the window (default last 31 days); waiters = waiters on
