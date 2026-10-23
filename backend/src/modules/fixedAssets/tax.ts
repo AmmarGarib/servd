@@ -1,5 +1,5 @@
-// Tax depreciation (H23) and the deferred-tax report (H24) — reports only,
-// never posted.
+// Tax depreciation (H23) — a report only, never posted. No deferred tax
+// anywhere (H24): the deferred-tax report was removed.
 //
 // ITO 2001 Third Schedule, written-down value per asset, per income-tax year
 // (1 July – 30 June, named by the year it ends in — accounting/fiscalYear.ts
@@ -22,17 +22,13 @@
 // A pool layer split off by a unit transfer is not a new addition — its tax
 // WDV stays on the layer it came from; partial pool write-offs do not move
 // the tax WDV (accountant to confirm).
-//
-// Deferred tax (H24) compares the register's NBV with the tax WDV per class at
-// the tax year end, at the company's policy rate (29%). Report only.
 
 import type { FixedAsset, FixedAssetClass } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { toCents } from '../../lib/money.js'
 import { taxYearOf } from '../accounting/fiscalYear.js'
-import { getAssetClasses, getFixedAssetPolicy, type Db } from './classes.js'
-import { nbvAt } from './schedule.js'
+import { getAssetClasses, type Db } from './classes.js'
 
 export interface TaxAssetRow {
   assetId: string
@@ -261,65 +257,6 @@ export async function freezeTaxYear(tenantId: string, taxYear: number, frozenByI
     }
     return { taxYear, assets: rows.length, totals }
   }, { timeout: 120_000, maxWait: 30_000 })
-}
-
-export interface DeferredTaxResult {
-  tenantId: string
-  taxYear: number
-  asOf: Date
-  rateBp: number
-  byClass: Array<{ classKey: string; label: string; nbvCents: number; taxWdvCents: number; differenceCents: number; deferredTaxCents: number }>
-  totals: { nbvCents: number; taxWdvCents: number; differenceCents: number; deferredTaxCents: number }
-}
-
-/**
- * Deferred tax at the tax year end (H24, report only): register NBV − tax WDV
- * per class × the policy rate. Positive = a deferred tax liability.
- */
-export async function deferredTax(tenantId: string, taxYear: number, db: Db = serviceClient): Promise<DeferredTaxResult> {
-  const { end } = taxYearBounds(taxYear)
-  const policy = await getFixedAssetPolicy(tenantId)
-  const schedule = await taxSchedule(tenantId, taxYear, db)
-  const assets = await db.fixedAsset.findMany({ where: { tenantId, status: { not: 'voided' } } })
-  const ids = assets.map((a) => a.id)
-  const [charges, events] = await Promise.all([
-    db.fixedAssetDepreciation.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, period: true, amountCents: true, reversedAt: true } }),
-    db.fixedAssetEvent.findMany({ where: { assetId: { in: ids }, status: 'posted' }, select: { assetId: true, kind: true, status: true, effectiveDate: true, amountCents: true, costOutCents: true, accumOutCents: true } }),
-  ])
-  const nbvByClass = new Map<string, number>()
-  for (const a of assets) {
-    const r = nbvAt(
-      {
-        originalCostCents: toCents(a.originalCostCents), costCents: toCents(a.costCents), carriedAccumulatedCents: toCents(a.carriedAccumulatedCents),
-        inServiceAt: a.inServiceAt ?? a.acquiredAt, status: a.status, disposedAt: a.disposedAt, splitFromAssetId: a.splitFromAssetId, createdAt: a.createdAt,
-      },
-      events.filter((e) => e.assetId === a.id).map((e) => ({
-        kind: e.kind, status: e.status, effectiveDate: e.effectiveDate,
-        amountCents: toCents(e.amountCents), costOutCents: toCents(e.costOutCents), accumOutCents: toCents(e.accumOutCents),
-      })),
-      charges.filter((c) => c.assetId === a.id).map((c) => ({ period: c.period, amountCents: toCents(c.amountCents), reversedAt: c.reversedAt })),
-      end,
-    )
-    nbvByClass.set(a.category, (nbvByClass.get(a.category) ?? 0) + r.nbvCents)
-  }
-  const wdvByClass = new Map(schedule.byClass.map((c) => [c.classKey, c.closingWdvCents]))
-  const classes = await getAssetClasses(tenantId, db)
-  const byClass = classes
-    .filter((c) => nbvByClass.has(c.key) || wdvByClass.has(c.key))
-    .map((c) => {
-      const nbv = nbvByClass.get(c.key) ?? 0
-      const wdv = wdvByClass.get(c.key) ?? 0
-      const diff = nbv - wdv
-      return { classKey: c.key, label: c.label, nbvCents: nbv, taxWdvCents: wdv, differenceCents: diff, deferredTaxCents: bp(diff, policy.deferredTaxRateBp) }
-    })
-  const totals = byClass.reduce(
-    (t, c) => ({
-      nbvCents: t.nbvCents + c.nbvCents, taxWdvCents: t.taxWdvCents + c.taxWdvCents,
-      differenceCents: t.differenceCents + c.differenceCents, deferredTaxCents: t.deferredTaxCents + c.deferredTaxCents,
-    }),
-    { nbvCents: 0, taxWdvCents: 0, differenceCents: 0, deferredTaxCents: 0 },
-  )
-  return { tenantId, taxYear, asOf: end, rateBp: policy.deferredTaxRateBp, byClass, totals }
 }
 
 /**

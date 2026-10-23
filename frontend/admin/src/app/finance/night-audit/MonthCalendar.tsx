@@ -18,7 +18,7 @@ export function dayChip(d: CalendarDay): { cls: string; label: string } {
 
 function Markers({ d }: { d: CalendarDay }) {
   return (
-    <span className="flex flex-wrap gap-x-2 text-[10px] text-s-muted">
+    <span className="flex flex-wrap gap-x-2 text-xs text-s-muted">
       {d.overridden && <span>Override</span>}
       {d.reopenCount > 0 && <span>Reopened ×{d.reopenCount}</span>}
       {d.inClosedPeriod && <span>Period closed</span>}
@@ -53,7 +53,7 @@ export function MonthCalendar({ month, days, selected, onSelect }: {
         <span className="flex items-center justify-between gap-1">
           <span className={`text-sm font-semibold ${d.isToday ? 'text-primary-ink' : 'text-s-text'}`}>{Number(d.day.slice(8))}</span>
         </span>
-        {chip.label && <span className={`${chip.cls} text-[10px] leading-tight self-start`}>{chip.label}</span>}
+        {chip.label && <span className={`${chip.cls} text-xs leading-tight self-start`}>{chip.label}</span>}
         <Markers d={d} />
       </button>
     )
@@ -62,7 +62,7 @@ export function MonthCalendar({ month, days, selected, onSelect }: {
   return (
     <>
       <div className="hidden sm:grid grid-cols-7 gap-2" role="grid" aria-label={`Business days of ${month}`}>
-        {heads.map((h) => <div key={h} className="text-[11px] text-s-muted text-center">{h}</div>)}
+        {heads.map((h) => <div key={h} className="text-xs text-s-muted text-center">{h}</div>)}
         {Array.from({ length: lead }).map((_, i) => <div key={`pad${i}`} />)}
         {days.map(cell)}
       </div>
@@ -85,7 +85,7 @@ export function MonthCalendar({ month, days, selected, onSelect }: {
                   </span>
                   <Markers d={d} />
                 </span>
-                {chip.label && <span className={`${chip.cls} text-[11px] whitespace-nowrap`}>{chip.label}</span>}
+                {chip.label && <span className={`${chip.cls} text-xs whitespace-nowrap`}>{chip.label}</span>}
               </button>
             </li>
           )

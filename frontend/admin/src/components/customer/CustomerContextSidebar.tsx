@@ -13,6 +13,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
+import { NavIcon } from '../ui/NavIcon'
 
 interface CustomerContext {
   id: string
@@ -98,16 +99,16 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
       {/* ── Identity + lifetime ────────────────────────────────────────── */}
       <div className="rounded-xl p-4 border" style={{
         background: 'rgb(var(--fg-rgb) / 0.025)',
-        borderColor: data.isBlacklisted ? 'rgba(239,68,68,0.45)' : 'rgb(var(--fg-rgb) / 0.06)',
+        borderColor: data.isBlacklisted ? 'color-mix(in srgb, var(--erp-danger) 45%, transparent)' : 'rgb(var(--fg-rgb) / 0.06)',
       }}>
         <div className="flex items-center justify-between gap-2">
           <div className="font-bold text-white/90 truncate">{data.name}</div>
           <div className="flex items-center gap-1.5 shrink-0">
-            {isBanned && <Badge color="rose" label="🚫 BANNED" />}
-            {isStriking && <Badge color="rose" label={`⚠ ${data.strikeCount}/3 strikes`} />}
-            {isVip && <Badge color="amber" label="★ VIP" />}
-            {isRisky && !isBanned && !isStriking && <Badge color="rose" label="⚠ Risk" />}
-            {data.isBlacklisted && !isBanned && <Badge color="rose" label="🚫 Blacklisted" />}
+            {isBanned && <Badge color="rose" label="BANNED" />}
+            {isStriking && <Badge color="rose" label={`${data.strikeCount}/3 strikes`} />}
+            {isVip && <Badge color="amber" label="VIP" />}
+            {isRisky && !isBanned && !isStriking && <Badge color="rose" label="Risk" />}
+            {data.isBlacklisted && !isBanned && <Badge color="rose" label="Blacklisted" />}
             {isLapsed && <Badge color="slate" label="Lapsed" />}
           </div>
         </div>
@@ -139,14 +140,14 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
           label="Reviews"
           count={data.reviewCount}
           accent={data.avgReviewRating != null && data.avgReviewRating <= 2.5 ? 'rose' : 'mute'}
-          subtitle={data.avgReviewRating != null ? `${data.avgReviewRating.toFixed(1)}★ avg` : null} />
+          subtitle={data.avgReviewRating != null ? `${data.avgReviewRating.toFixed(1)} avg` : null} />
       </div>
 
       {/* ── Open complaints (always front-and-center if any) ──────────── */}
       {data.recent.openComplaints.length > 0 && (
-        <div className="rounded-xl p-3 border border-rose-500/30" style={{ background: 'rgba(244,63,94,0.06)' }}>
+        <div className="rounded-xl p-3 border border-rose-500/30" style={{ background: 'color-mix(in srgb, var(--erp-danger) 6%, transparent)' }}>
           <div className="text-[10px] font-bold uppercase tracking-wider text-rose-700 mb-1.5">
-            ⚠ {data.recent.openComplaints.length} unresolved issue{data.recent.openComplaints.length === 1 ? '' : 's'}
+            <NavIcon name="warn" size={11} className="mr-1 inline" />{data.recent.openComplaints.length} unresolved issue{data.recent.openComplaints.length === 1 ? '' : 's'}
           </div>
           {data.recent.openComplaints.map((c) => (
             <div key={c.id} className="text-[11px] text-white/70 mb-0.5">
@@ -205,12 +206,12 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
       {/* ── Naughty list — strikes + ban context ───────────────────────── */}
       {(isBanned || data.strikeCount > 0) && data.recent.strikes.length > 0 && (
         <div className="rounded-xl p-3 border" style={{
-          background: isBanned ? 'rgba(244,63,94,0.08)' : 'rgba(245,158,11,0.06)',
-          borderColor: isBanned ? 'rgba(244,63,94,0.35)' : 'rgba(245,158,11,0.25)',
+          background: isBanned ? 'color-mix(in srgb, var(--erp-danger) 8%, transparent)' : 'color-mix(in srgb, var(--erp-warning) 6%, transparent)',
+          borderColor: isBanned ? 'color-mix(in srgb, var(--erp-danger) 35%, transparent)' : 'color-mix(in srgb, var(--erp-warning) 25%, transparent)',
         }}>
           <div className="flex items-center justify-between mb-2">
             <div className="text-[10px] font-bold uppercase tracking-wider"
-              style={{ color: isBanned ? '#b42318' : '#a15c00' }}>
+              style={{ color: isBanned ? 'var(--erp-danger)' : 'var(--erp-warning)' }}>
               {isBanned ? 'Banned across servd' : `Strikes across servd (${data.strikeCount}/3)`}
             </div>
             <a href="/crm/naughty-list"
@@ -254,8 +255,8 @@ function Counter({ label, count, accent, subtitle, lastAt }: {
   lastAt?: string | null;
 }) {
   const colors = {
-    rose:  { bg: 'rgba(244,63,94,0.08)',  border: 'rgba(244,63,94,0.25)',  text: '#b42318' },
-    amber: { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)', text: '#a15c00' },
+    rose:  { bg: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)',  border: 'color-mix(in srgb, var(--erp-danger) 25%, transparent)',  text: 'var(--erp-danger)' },
+    amber: { bg: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)', border: 'color-mix(in srgb, var(--erp-warning) 25%, transparent)', text: 'var(--erp-warning)' },
     mute:  { bg: 'rgb(var(--fg-rgb) / 0.025)', border: 'rgb(var(--fg-rgb) / 0.06)', text: 'rgb(var(--fg-rgb) / 0.55)' },
   }[accent]
   return (
@@ -271,11 +272,12 @@ function Counter({ label, count, accent, subtitle, lastAt }: {
 }
 
 function Badge({ color, label }: { color: 'amber' | 'rose' | 'slate' | 'green'; label: string }) {
+  const tint = (v: string) => `color-mix(in srgb, ${v} 15%, transparent)`
   const styles = {
-    amber: { bg: 'rgba(245,158,11,0.15)', text: '#a15c00' },
-    rose:  { bg: 'rgba(244,63,94,0.15)',  text: '#b42318' },
-    slate: { bg: 'rgba(100,116,139,0.15)', text: '#cbd5e1' },
-    green: { bg: 'rgba(34,197,94,0.15)',  text: '#3f7d20' },
+    amber: { bg: tint('var(--erp-warning)'), text: 'var(--erp-warning)' },
+    rose:  { bg: tint('var(--erp-danger)'),  text: 'var(--erp-danger)' },
+    slate: { bg: tint('var(--muted)'),       text: 'var(--muted)' },
+    green: { bg: tint('var(--erp-accent)'),  text: 'var(--erp-success)' },
   }[color]
   return (
     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: styles.bg, color: styles.text }}>
@@ -310,7 +312,7 @@ function RecentTimeline({ data }: { data: CustomerContext }) {
         {events.map((e, i) => (
           <div key={i} className="flex items-start gap-2">
             <span className="text-[10px] mt-0.5 shrink-0">
-              {e.kind === 'order' ? '🛍' : '🍽'}
+              <NavIcon name={e.kind === 'order' ? 'bag' : 'utensils'} size={12} />
             </span>
             <div className="min-w-0 flex-1">
               <div className="text-[11px] text-white/80 truncate">{e.label}</div>

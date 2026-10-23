@@ -1,4 +1,5 @@
 'use client'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
@@ -62,7 +63,7 @@ export default function ParSheetPage() {
             <h1 className="text-2xl font-black text-white/95">Master Par Sheet</h1>
             <p className="text-xs text-white/45 mt-0.5 max-w-2xl">
               Sub-recipes your brands use and what was made today. Made comes from prep batches — log a batch on{' '}
-              <Link href="/inventory/prep" className="text-indigo-700 underline">Prep</Link> and it shows here.
+              <Link href="/inventory/prep" className="text-primary-ink underline">Prep</Link> and it shows here.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -77,7 +78,7 @@ export default function ParSheetPage() {
             {rows.length > 0 && (
               <div className="rounded-xl px-3 py-2 text-center"
                 style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
-                <p className="text-[9px] uppercase tracking-wider font-black text-s-red">Not made</p>
+                <p className="text-xs uppercase tracking-wider font-black text-s-red">Not made</p>
                 <p className="text-xl font-black text-s-red leading-none mt-0.5">{notMade}</p>
               </div>
             )}
@@ -93,7 +94,7 @@ export default function ParSheetPage() {
         <div className="flex gap-1 flex-wrap">
           {([['all', `All (${rows.length})`], ['not-made', 'Not made'], ['made', 'Made']] as const).map(([k, label]) => (
             <button key={k} onClick={() => setMadeFilter(k)}
-              className="rounded-full px-3 py-1 text-[11px] font-bold transition-colors"
+              className="rounded-full px-3 py-1 text-xs font-bold transition-colors"
               style={madeFilter === k
                 ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', boxShadow: 'inset 0 0 0 1px var(--erp-accent)' }
                 : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
@@ -107,18 +108,10 @@ export default function ParSheetPage() {
         {isLoading && <p className="text-sm text-white/40">Loading…</p>}
 
         {!isLoading && filtered.length === 0 && (
-          <div className="rounded-2xl p-10 text-center"
-            style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="text-sm font-bold text-white/75">
-              {rows.length === 0 ? 'None of your brands’ plates use a sub-recipe yet' : 'Nothing matches the filter'}
-            </p>
-            {rows.length === 0 && (
-              <p className="text-xs text-white/40 mt-1">
-                Sub-recipes live in the <Link href="/accounting/recipes" className="text-indigo-700 underline">recipe library</Link>.
-                They appear here once a plate of one of your brands uses them.
-              </p>
-            )}
-          </div>
+          <CompactEmptyState
+            message={rows.length === 0 ? 'No sub-recipes in use yet. They appear once a plate of one of your brands uses one.' : 'Nothing matches the filter.'}
+            action={rows.length === 0 ? { label: 'Open recipe library', href: '/accounting/recipes' } : undefined}
+          />
         )}
 
         {filtered.length > 0 && (
@@ -128,7 +121,7 @@ export default function ParSheetPage() {
               <thead>
                 <tr style={{ background: 'var(--elevated)' }}>
                   {['Sub-recipe', 'One batch', 'Made', 'Batches', 'Last batch', ''].map((h, i) => (
-                    <th key={i} className={`${i === 0 ? 'text-left px-4' : 'text-center px-3'} py-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/45`}
+                    <th key={i} className={`${i === 0 ? 'text-left px-4' : 'text-center px-3'} py-3 text-xs font-black uppercase tracking-[0.2em] text-white/45`}
                       style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>{h}</th>
                   ))}
                 </tr>
@@ -139,7 +132,7 @@ export default function ParSheetPage() {
                     style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.03)' }}>
                     <td className="px-4 py-2.5">
                       <p className="font-semibold text-white/90">{r.name}</p>
-                      {r.category && <p className="text-[10px] text-white/40 capitalize">{r.category.replace('_', ' ')}</p>}
+                      {r.category && <p className="text-xs text-white/40 capitalize">{r.category.replace('_', ' ')}</p>}
                     </td>
                     <td className="px-3 py-2.5 text-center text-white/60 tabular-nums">{grams(r.batchYieldGrams)}</td>
                     <td className="px-3 py-2.5 text-center font-bold tabular-nums"
@@ -147,12 +140,12 @@ export default function ParSheetPage() {
                       {r.batches > 0 ? grams(r.madeGrams) : 'Nothing made'}
                     </td>
                     <td className="px-3 py-2.5 text-center text-white/60 tabular-nums">{r.batches}</td>
-                    <td className="px-3 py-2.5 text-center text-[11px] text-white/40">
+                    <td className="px-3 py-2.5 text-center text-xs text-white/40">
                       {r.lastBatchAt ? new Date(r.lastBatchAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) : '—'}
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       <Link href={`/inventory/prep?recipeId=${r.recipeId}`}
-                        className="text-[11px] font-bold px-2 py-1 rounded"
+                        className="text-xs font-bold px-2 py-1 rounded"
                         style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>
                         Log batch
                       </Link>
@@ -167,7 +160,7 @@ export default function ParSheetPage() {
         <div className="rounded-xl p-4 mt-4 text-xs text-white/45 leading-relaxed"
           style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.15)' }}>
           Planning which trims and by-products each base ingredient can feed? The{' '}
-          <Link href="/par-sheet/components" className="text-indigo-700 underline">component matrix</Link>{' '}
+          <Link href="/par-sheet/components" className="text-primary-ink underline">component matrix</Link>{' '}
           (hero / supporting / trim-waste per ingredient) is kept as a read-only reference.
         </div>
       </div>

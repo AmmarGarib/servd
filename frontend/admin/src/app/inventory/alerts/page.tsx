@@ -3,6 +3,7 @@
 // Low-stock & out-of-stock dashboard. Surfaces the items the kitchen risks
 // 86ing tonight, sorted by urgency.
 
+import { ArrowLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -35,7 +36,7 @@ export default function InventoryAlertsPage() {
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between">
         <div>
-          <Link href="/inventory" className="text-xs text-s-muted hover:text-s-text">← Inventory</Link>
+          <Link href="/inventory" className="inline-flex min-h-11 items-center gap-1.5 text-xs text-s-muted hover:text-s-text"><ArrowLeft size={14} aria-hidden="true" />Inventory</Link>
           <h1 className="text-xl font-bold text-s-text">Stock alerts</h1>
         </div>
         <button onClick={() => refetch()} className="s-btn-secondary text-xs">Refresh</button>
@@ -47,17 +48,17 @@ export default function InventoryAlertsPage() {
           <div className="s-card p-4 border-l-4 border-s-red">
             <p className="text-xs text-s-muted">Out of stock</p>
             <p className="text-2xl font-bold text-s-red">{out.length}</p>
-            <p className="text-[11px] text-s-dim">orders will fail / 86 immediately</p>
+            <p className="text-xs text-s-dim">orders will fail / 86 immediately</p>
           </div>
           <div className="s-card p-4 border-l-4 border-s-amber">
             <p className="text-xs text-s-muted">Low stock</p>
             <p className="text-2xl font-bold text-s-amber">{low.length}</p>
-            <p className="text-[11px] text-s-dim">below par level</p>
+            <p className="text-xs text-s-dim">below par level</p>
           </div>
           <div className="s-card p-4 border-l-4 border-accent">
             <p className="text-xs text-s-muted">Healthy</p>
             <p className="text-2xl font-bold text-success">{ok.length}</p>
-            <p className="text-[11px] text-s-dim">no action needed</p>
+            <p className="text-xs text-s-dim">no action needed</p>
           </div>
         </div>
 
@@ -117,7 +118,7 @@ function Section({ title, rows, loading, severity }: { title: string; rows: Inve
                   </div>
                 </td>
                 <td className="px-4 py-2 text-right">
-                  <Link href="/inventory/count" className="text-xs text-primary-ink hover:underline">Count →</Link>
+                  <Link href="/inventory/count" className="inline-flex min-h-11 items-center text-xs text-primary-ink hover:underline">Count</Link>
                 </td>
               </tr>
             )

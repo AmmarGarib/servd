@@ -34,10 +34,8 @@ import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { RecordFiles } from '@/components/files/RecordFiles'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
-import {
-  Dialog, ErrorBanner as SharedErrorBanner, Field, Hint, SectionCard, StickyActionBar, StickySummary,
-  dangerBtn, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce,
-} from '../../../components/finance/ui'
+import { Button, CheckLabel, dangerBtn, dateBounds, Dialog, ErrorBanner as SharedErrorBanner, Field, fieldCls, FieldLabel, firstMissing, focusField, Hint, Input, LinkButton, primaryBtn, SectionCard, StickyActionBar, StickySummary, Textarea, useSubmitOnce } from '../../../components/finance/ui'
+import { FIcon, categoryIcon } from '../../../components/finance/ui/icons'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
 
@@ -186,19 +184,19 @@ const CADENCE_DAYS: Record<Cadence, number> = {
   monthly: 30, quarterly: 90, annual: 365, per_use: 0,
 }
 
-const PRESET_CATEGORIES: { name: string; emoji: string }[] = [
-  { name: 'Rent / lease',        emoji: '🏢' },
-  { name: 'Payroll',             emoji: '👥' },
-  { name: 'Utilities',           emoji: '⚡' },
-  { name: 'Software',            emoji: '💻' },
-  { name: 'Marketing',           emoji: '📣' },
-  { name: 'Insurance',           emoji: '🛡' },
-  { name: 'Cleaning',            emoji: '🧽' },
-  { name: 'Maintenance',         emoji: '🔧' },
-  { name: 'Bank fees',           emoji: '🏦' },
-  { name: 'Professional services', emoji: '⚖️' },
-  { name: 'Licenses',            emoji: '📑' },
-  { name: 'Loan / debt',         emoji: '💸' },
+const PRESET_CATEGORIES: { name: string }[] = [
+  { name: 'Rent / lease' },
+  { name: 'Payroll' },
+  { name: 'Utilities' },
+  { name: 'Software' },
+  { name: 'Marketing' },
+  { name: 'Insurance' },
+  { name: 'Cleaning' },
+  { name: 'Maintenance' },
+  { name: 'Bank fees' },
+  { name: 'Professional services' },
+  { name: 'Licenses' },
+  { name: 'Loan / debt' },
 ]
 
 const PKR = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
@@ -359,7 +357,7 @@ export default function OpexTrackerPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 sm:px-7 py-5 border-b border-white/[0.05]">
-        <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
+        <Link href="/finance" className="text-xs text-s-muted hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-1 flex-wrap">
           <div>
             <h1 className="text-2xl font-black text-white/90">OpEx Tracker</h1>
@@ -367,7 +365,7 @@ export default function OpexTrackerPage() {
               Every recurring expense — rent, payroll, utilities, software, marketing. System tracks expected vs actual and flags vendor invoices that jump unexpectedly.
             </p>
           </div>
-          <button onClick={() => setCreatingCategory(true)} className="s-btn-primary px-4 py-2.5">+ New category</button>
+          <Button type="submit" onClick={() => setCreatingCategory(true)}>+ New category</Button>
         </div>
       </header>
 
@@ -381,20 +379,20 @@ export default function OpexTrackerPage() {
             style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)' }}>
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
+                <span className="text-xs font-black uppercase tracking-wider rounded px-1.5 py-0.5"
                   style={{ background: 'rgb(var(--erp-primary-rgb) / 0.20)', color: 'var(--erp-primary-ink)' }}>
                   Joint venture
                 </span>
                 <span className="text-sm text-white/85 font-bold">{activeTenant.name}</span>
-                <span className="text-xs text-white/40">- every cost line below splits as:</span>
+                <span className="text-xs text-s-muted">- every cost line below splits as:</span>
                 {jvPartners.map((p, i) => (
-                  <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
+                  <span key={i} className="text-xs font-bold rounded px-2 py-0.5"
                     style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
                     {p.label} {p.pct}%
                   </span>
                 ))}
               </div>
-              <span className="text-[11px] text-white/45 hover:underline">Edit JV config →</span>
+              <span className="text-xs text-s-muted hover:underline">Edit JV config →</span>
             </div>
           </Link>
         )}
@@ -428,7 +426,7 @@ export default function OpexTrackerPage() {
           <section className="rounded-2xl p-5"
             style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
             <h2 className="text-sm font-black text-white/85">Pick the categories you actually pay for</h2>
-            <p className="text-xs text-white/55 mt-1 mb-3">Tap one to add it. You can rename, set a monthly budget, and add lines underneath.</p>
+            <p className="text-xs text-s-muted mt-1 mb-3">Tap one to add it. You can rename, set a monthly budget, and add lines underneath.</p>
             <div className="flex flex-wrap gap-1.5">
               {PRESET_CATEGORIES.map((p) => (
                 <PresetButton key={p.name} preset={p} onAdd={() => qc.invalidateQueries({ queryKey: ['opex-categories'] })} />
@@ -473,16 +471,16 @@ export default function OpexTrackerPage() {
   )
 }
 
-function PresetButton({ preset, onAdd }: { preset: { name: string; emoji: string }; onAdd: () => void }) {
+function PresetButton({ preset, onAdd }: { preset: { name: string }; onAdd: () => void }) {
   const add = useMutation({
-    mutationFn: () => api.post('/opex/categories', { name: preset.name, emoji: preset.emoji }),
+    mutationFn: () => api.post('/opex/categories', { name: preset.name, emoji: null }),
     onSuccess: onAdd,
   })
   return (
     <button onClick={() => add.mutate()} disabled={add.isPending}
       className="text-xs font-bold px-3 py-2 rounded-full"
       style={{ background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.75)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-      {preset.emoji} {preset.name}
+      <FIcon name={categoryIcon(preset.name)} size={14} /> {preset.name}
     </button>
   )
 }
@@ -490,9 +488,9 @@ function PresetButton({ preset, onAdd }: { preset: { name: string; emoji: string
 function CashBucket({ label, rows, total }: { label: string; rows: CashflowItem[]; total: number }) {
   return (
     <div className="rounded-xl p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-      <p className="text-[10px] font-black uppercase tracking-wider text-white/45">{label}</p>
+      <p className="text-xs font-black uppercase tracking-wider text-white/45">{label}</p>
       <p className="text-lg font-black text-white/90 mt-1">{PKR(total)}</p>
-      <p className="text-[11px] text-white/45">{rows.length} payments</p>
+      <p className="text-xs text-s-muted">{rows.length} payments</p>
     </div>
   )
 }
@@ -509,12 +507,12 @@ function Stat({ label, value, accent, jvPartners }: {
   })()
   return (
     <div className="rounded-xl p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/35">{label}</p>
+      <p className="text-xs font-black uppercase tracking-[0.18em] text-white/35">{label}</p>
       <p className="text-base font-black mt-1" style={{ color: accent }}>{value}</p>
       {jvPartners && jvPartners.length > 0 && rawCents > 0 && (
         <div className="mt-1.5 flex gap-1.5 flex-wrap">
           {jvPartners.map((p, i) => (
-            <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
+            <span key={i} className="text-xs font-mono rounded px-1.5 py-0.5"
               style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
               {p.label}: {PKR(Math.round(rawCents * p.pct / 100))}
             </span>
@@ -546,10 +544,10 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
       <header className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap"
         style={{ background: 'rgb(var(--fg-rgb) / 0.02)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.04)' }}>
         <div className="flex items-center gap-2">
-          {category.emoji && <span className="text-2xl">{category.emoji}</span>}
+          <span className="text-s-muted"><FIcon name={categoryIcon(category.name)} size={24} /></span>
           <div>
             <p className="font-black text-white/90 text-sm">{category.name}</p>
-            <p className="text-[11px] text-white/45">
+            <p className="text-xs text-s-muted">
               {category.lineCount} line{category.lineCount === 1 ? '' : 's'} · {PKR(category.monthlyExpectedCents)}/mo
               {category.budgetMonthlyCents > 0 && (
                 <span style={{ color: overBudget ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
@@ -559,16 +557,16 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
             </p>
             {!category.isPayroll && (
               category.expenseAccountCode
-                ? <p className="text-[11px] text-white/45">Booked to {accountLabel(category.expenseAccountCode)}</p>
+                ? <p className="text-xs text-s-muted">Booked to {accountLabel(category.expenseAccountCode)}</p>
                 : category.suggestedExpenseAccountCode
-                  ? <p className="text-[11px] text-white/45">No account set — payments use the suggested {accountLabel(category.suggestedExpenseAccountCode)}</p>
-                  : <p className="text-[11px]" style={{ color: 'var(--erp-warning)' }}>No expense account yet — set it under Edit category</p>
+                  ? <p className="text-xs text-s-muted">No account set — payments use the suggested {accountLabel(category.suggestedExpenseAccountCode)}</p>
+                  : <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>No expense account yet — set it under Edit category</p>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={onEditCategory} className="text-xs text-white/55 hover:text-white">Edit category</button>
-          <button onClick={onAddLine} className="s-btn-primary px-3 py-1.5 text-xs">+ Line</button>
+          <LinkButton tone="muted" type="button" onClick={onEditCategory}>Edit category</LinkButton>
+          <Button size="sm" type="submit" onClick={onAddLine}>+ Line</Button>
         </div>
       </header>
 
@@ -578,13 +576,13 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
           style={{ background: 'rgb(var(--erp-primary-rgb) / 0.04)' }}>
           <div className="flex items-center justify-between mb-3">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-wider text-primary-ink">Budgeted payroll · from workforce</p>
-              <p className="text-[10px] text-white/40 mt-0.5">
+              <p className="text-xs font-black uppercase tracking-wider text-primary-ink">Budgeted payroll · from workforce</p>
+              <p className="text-xs text-s-muted mt-0.5">
                 {payrollSnap.budget.headcount} ppl
                 {payrollSnap.budget.openSeats > 0 && ` · ${payrollSnap.budget.openSeats} open`}
               </p>
             </div>
-            <Link href="/workforce/positions" className="text-[11px] text-primary-ink hover:underline">Manage positions →</Link>
+            <Link href="/workforce/positions" className="text-xs text-primary-ink hover:underline">Manage positions →</Link>
           </div>
 
           {/* Gross / contributions / net stack. Mirrors the JV card on
@@ -607,11 +605,11 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                     {c.direction === 'incoming' ? '<--' : '-->'}
                   </span>
                   {c.label}
-                  <span className="text-[10px] text-white/35">
+                  <span className="text-xs text-s-muted">
                     ({c.direction === 'incoming' ? 'from' : 'to'}{' '}
                     {c.direction === 'incoming' ? c.sourceTenant.name : c.destinationTenant.name})
                   </span>
-                  {ended && <span className="text-[10px] uppercase tracking-wider font-bold text-white/40">ended</span>}
+                  {ended && <span className="text-xs uppercase tracking-wider font-bold text-white/40">ended</span>}
                 </span>
                 <span className="font-bold"
                   style={ended ? undefined : { color: c.direction === 'incoming' ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
@@ -630,7 +628,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
               <div key={`${h.headOfficeId}:${h.companyTenantId}`} className="flex justify-between items-baseline">
                 <span className="text-white/55">
                   {payrollSnap.budget?.labels?.headOfficeCharges ?? 'Head office charges (plan)'}
-                  <span className="text-[10px] text-white/35"> ({h.name})</span>
+                  <span className="text-xs text-s-muted"> ({h.name})</span>
                 </span>
                 <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>+ {PKR(h.monthlyCents)}</span>
               </div>
@@ -650,7 +648,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
                 {jvPartners && jvPartners.length > 0 && (
                   <div className="mt-1 flex gap-1.5 flex-wrap justify-end">
                     {jvPartners.map((p, i) => (
-                      <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
+                      <span key={i} className="text-xs font-mono rounded px-1.5 py-0.5"
                         style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
                         {p.label} {p.pct}%: {PKR(Math.round(payrollSnap.budget!.netMonthlyCents * p.pct / 100))}
                       </span>
@@ -668,15 +666,15 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
         <div className="px-5 py-3 border-b border-white/[0.04]"
           style={{ background: 'rgb(var(--ink-rgb) / 0.04)' }}>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-black uppercase tracking-wider text-primary-ink">Posted runs · last 6 months</p>
-            <Link href="/hr/payroll" className="text-[11px] text-primary-ink hover:underline">Open payroll →</Link>
+            <p className="text-xs font-black uppercase tracking-wider text-primary-ink">Posted runs · last 6 months</p>
+            <Link href="/hr/payroll" className="text-xs text-primary-ink hover:underline">Open payroll →</Link>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {payrollSnap.runs.slice(0, 6).map((r) => (
               <div key={r.id} className="rounded-lg p-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                <p className="text-[10px] text-white/45">{new Date(r.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</p>
+                <p className="text-xs text-s-muted">{new Date(r.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</p>
                 <p className="text-xs font-bold text-white/85 mt-0.5">{PKR(r.totalGrossCents)}</p>
-                <p className="text-[10px] text-white/35">{r.lineCount} staff · {r.status}</p>
+                <p className="text-xs text-s-muted">{r.lineCount} staff · {r.status}</p>
               </div>
             ))}
           </div>
@@ -684,7 +682,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
       )}
       {isPayroll && (!payrollSnap || payrollSnap.runs.length === 0) && (
         <div className="px-5 py-3 border-b border-white/[0.04]" style={{ background: 'rgb(var(--ink-rgb) / 0.04)' }}>
-          <p className="text-xs text-white/55">
+          <p className="text-xs text-s-muted">
             No payroll runs yet. <Link href="/hr/payroll" className="text-primary-ink hover:underline">Run payroll</Link> to see actuals here, or
             <Link href="/settings" className="text-primary-ink hover:underline ml-1">add staff</Link> to start tracking hours.
           </p>
@@ -693,7 +691,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
 
       {/* Lines */}
       {category.lines.length === 0 ? (
-        <p className="px-5 py-5 text-xs text-white/30 italic">No lines yet. Add one to start tracking spend.</p>
+        <p className="px-5 py-5 text-xs text-s-muted italic">No lines yet. Add one to start tracking spend.</p>
       ) : (
         <div className="divide-y divide-white/[0.04]">
           {category.lines.map((l) => <LineRow key={l.id} line={l} onClick={() => onEditLine(l)} />)}
@@ -714,28 +712,28 @@ function LineRow({ line, onClick }: { line: Line; onClick: () => void }) {
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-bold text-white/90 truncate">{line.name}</p>
             {line.source !== 'manual' && (
-              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>
+              <span className="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'rgb(var(--ink-rgb) / 0.12)', color: 'var(--erp-primary-ink)' }}>
                 {line.source}
               </span>
             )}
           </div>
-          <p className="text-[11px] text-white/45 mt-0.5">
+          <p className="text-xs text-s-muted mt-0.5">
             {line.vendor ?? <em>no vendor</em>}
             {lastPaid && <span> · last paid {new Date(lastPaid.paidAt!).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
           </p>
         </div>
 
         <div className="text-right whitespace-nowrap">
-          <p className="text-sm font-mono text-white/85">{PKR(line.amountCents)}<span className="text-[10px] text-white/45">{CADENCE_LABELS[line.cadence]}</span></p>
+          <p className="text-sm font-mono text-white/85">{PKR(line.amountCents)}<span className="text-xs text-s-muted">{CADENCE_LABELS[line.cadence]}</span></p>
         </div>
 
         <div className="text-right whitespace-nowrap">
-          <p className="text-[11px]" style={{ color: dueSoon ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
+          <p className="text-xs" style={{ color: dueSoon ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.45)' }}>
             {line.nextDueDate ? `due ${new Date(line.nextDueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
           </p>
         </div>
 
-        <span className="text-white/30 text-xs">›</span>
+        <span className="text-s-muted text-xs">›</span>
       </div>
     </button>
   )
@@ -745,7 +743,6 @@ function LineRow({ line, onClick }: { line: Line; onClick: () => void }) {
 
 function CategoryModal({ category, activeTenantId, onClose, onSaved }: { category?: Category; activeTenantId: string | null; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(category?.name ?? '')
-  const [emoji, setEmoji] = useState(category?.emoji ?? '')
   const [budgetMonthlyCents, setBudget] = useState(category?.budgetMonthlyCents ?? 0)
   const [notes, setNotes] = useState(category?.notes ?? '')
   const [expenseAccountCode, setExpenseAccountCode] = useState(category?.expenseAccountCode ?? '')
@@ -757,7 +754,7 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
 
   const save = useMutation({
     mutationFn: () => {
-      const payload: Record<string, unknown> = { name, emoji: emoji || null, budgetMonthlyCents, notes: notes || null }
+      const payload: Record<string, unknown> = { name, emoji: category?.emoji ?? null, budgetMonthlyCents, notes: notes || null }
       if (category) {
         // Only when changed — clearing it is allowed (the next payment asks).
         if (!category.isPayroll && expenseAccountCode !== (category.expenseAccountCode ?? '')) payload.expenseAccountCode = expenseAccountCode || null
@@ -783,13 +780,12 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
     save.mutate()
     return true
   })
-  const dirty = !save.isPending && (name !== (category?.name ?? '') || emoji !== (category?.emoji ?? '') || budgetMonthlyCents !== (category?.budgetMonthlyCents ?? 0) || notes !== (category?.notes ?? ''))
+  const dirty = !save.isPending && (name !== (category?.name ?? '') || budgetMonthlyCents !== (category?.budgetMonthlyCents ?? 0) || notes !== (category?.notes ?? ''))
 
   return <ModalShell title={category ? 'Edit category' : 'New OpEx category'} onClose={onClose} dirty={dirty}>
     <form id="opex-cat-form" onSubmit={submit} className="space-y-4" noValidate>
-    <div className="grid grid-cols-[80px_1fr] gap-3">
-      <Field label="Emoji"><input value={emoji} onChange={(e) => setEmoji(e.target.value)} placeholder="🏢" className={fieldCls + ' text-center text-2xl'} /></Field>
-      <Field label="Name *" error={nameErr}><input id="opex-cat-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Rent / lease" className={fieldCls} autoFocus /></Field>
+    <div className="grid grid-cols-1 gap-3">
+      <Field label="Name *" error={nameErr}><Input id="opex-cat-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Rent / lease" className={fieldCls} autoFocus /></Field>
     </div>
     <Field label="Monthly budget (PKR)">
       <MoneyInput value={budgetMonthlyCents} onChange={setBudget} className={fieldCls} />
@@ -799,32 +795,32 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
       <Hint>Payroll is booked by HR payroll, so this category has no expense account here.</Hint>
     ) : (
       <div>
-        <label htmlFor="opex-cat-account" className="text-xs text-white/55">Expense account</label>
+        <FieldLabel htmlFor="opex-cat-account">Expense account</FieldLabel>
         <div className="mt-1">
           <ExpenseAccountSelect id="opex-cat-account" tenantId={tenantId} value={expenseAccountCode} onChange={setExpenseAccountCode}
             emptyLabel={category ? '— not set —' : '— suggest from the name —'} />
         </div>
         {category && !expenseAccountCode && suggested && (
-          <p className="text-[11px] text-white/45 mt-1">
+          <p className="text-xs text-s-muted mt-1">
             Suggested from the name: {accountLabel(suggested)}.{' '}
-            <button type="button" onClick={() => setExpenseAccountCode(suggested)} className="text-primary-ink hover:underline">Use it</button>
+            <LinkButton size="md" type="button" onClick={() => setExpenseAccountCode(suggested)}>Use it</LinkButton>
           </p>
         )}
         <Hint>Every payment in this category is booked to this account. Changing it affects new payments only.</Hint>
       </div>
     )}
-    <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
+    <Field label="Notes"><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
     </form>
     {save.error && <ErrorBanner error={save.error} />}
     {del.error && <ErrorBanner error={del.error} />}
     <ModalFooter onCancel={onClose}>
       {category && (
-        <button type="button" onClick={async () => { if (await confirm({ title: `Archive ${category.name}?`, body: 'The category and its lines are hidden from OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
-          className={dangerBtn + ' mr-auto text-xs'}>Archive</button>
+        <Button variant="danger" type="button" onClick={async () => { if (await confirm({ title: `Archive ${category.name}?`, body: 'The category and its lines are hidden from OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
+          className="mr-auto">Archive</Button>
       )}
-      <button type="submit" form="opex-cat-form" disabled={save.isPending} className={primaryBtn}>
+      <Button type="submit" form="opex-cat-form" disabled={save.isPending}>
         {save.isPending ? 'Saving…' : category ? 'Save' : 'Create category'}
-      </button>
+      </Button>
     </ModalFooter>
   </ModalShell>
 }
@@ -911,17 +907,17 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
     <form id="opex-line-form" onSubmit={submit} className="space-y-4" noValidate>
     <Section heading="What it is">
     <Field label="Name *" error={shown('opex-line-name')}>
-      <input id="opex-line-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Office rent — DHA Phase 5" className={fieldCls} autoFocus />
+      <Input id="opex-line-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Office rent — DHA Phase 5" className={fieldCls} autoFocus />
     </Field>
     {payroll ? (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Vendor"><input value={vendor} onChange={(e) => setVendor(e.target.value)} className={fieldCls} /></Field>
-        <Field label="Contact"><input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="+92 300 1234567" className={fieldCls} /></Field>
+        <Field label="Vendor"><Input value={vendor} onChange={(e) => setVendor(e.target.value)} className={fieldCls} /></Field>
+        <Field label="Contact"><Input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="+92 300 1234567" className={fieldCls} /></Field>
       </div>
     ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label htmlFor={`opex-vendor-${line?.id ?? 'new'}`} className="text-xs text-white/55">Vendor (supplier)</label>
+          <FieldLabel htmlFor={`opex-vendor-${line?.id ?? 'new'}`}>Vendor (supplier)</FieldLabel>
           <div className="mt-1">
             <Select id={`opex-vendor-${line?.id ?? 'new'}`} aria-invalid={shown('opex-line-supplier') ? true : undefined} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls} disabled={vendors.isLoading}>
               <option value="">{vendors.isError ? 'Suppliers unavailable' : '— no supplier picked —'}</option>
@@ -940,12 +936,12 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
             <Hint><Link href="/procurement" className="text-primary-ink hover:underline">Not listed? Add it in Procurement →</Link></Hint>
           )}
         </div>
-        <Field label="Contact"><input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="+92 300 1234567" className={fieldCls} /></Field>
+        <Field label="Contact"><Input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="+92 300 1234567" className={fieldCls} /></Field>
       </div>
     )}
     {!payroll && !supplierId && (
       <Field label="Vendor name (no supplier record)">
-        <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Landlord name" className={fieldCls} />
+        <Input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Landlord name" className={fieldCls} />
       </Field>
     )}
     </Section>
@@ -965,7 +961,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
       </Field>
     </div>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      <Field label="Next due" error={shown('opex-line-due')}><input id="opex-line-due" type="date" min={bounds.min} max={bounds.max} value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls} /></Field>
+      <Field label="Next due" error={shown('opex-line-due')}><Input id="opex-line-due" type="date" min={bounds.min} max={bounds.max} value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls} /></Field>
       <Field label="Payment method">
         <Select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={fieldCls}>
           <option value="">—</option>
@@ -1005,11 +1001,11 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
           Withholding needs the supplier picked above: its filer status and exemption certificate decide the rate (Accounting → Sales tax return → Withholding rates).
           A rent paid months ahead is marked &ldquo;prepaid&rdquo; on the payment; a refundable deposit is recorded in CapEx.
         </Hint>
-        {whtSection && !supplierId && <p role={tried ? 'alert' : undefined} className="text-[11px] text-s-amber">Pick the supplier — a withholding section needs one.</p>}
+        {whtSection && !supplierId && <p role={tried ? 'alert' : undefined} className="text-xs text-s-amber">Pick the supplier — a withholding section needs one.</p>}
       </Section>
     )}
     <Section heading="Notes">
-    <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
+    <Field label="Notes"><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
     </Section>
     </form>
 
@@ -1021,12 +1017,12 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
 
     <ModalFooter onCancel={onClose}>
       {line && (
-        <button type="button" onClick={async () => { if (await confirm({ title: `Archive ${line.name}?`, body: 'The line stops appearing in OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
-          className={dangerBtn + ' mr-auto text-xs'}>Archive</button>
+        <Button variant="danger" type="button" onClick={async () => { if (await confirm({ title: `Archive ${line.name}?`, body: 'The line stops appearing in OpEx. Past payments stay in the books.', confirmLabel: 'Archive', danger: true })) del.mutate() }}
+          className="mr-auto">Archive</Button>
       )}
-      <button type="submit" form="opex-line-form" disabled={save.isPending} className={primaryBtn}>
+      <Button type="submit" form="opex-line-form" disabled={save.isPending}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
-      </button>
+      </Button>
     </ModalFooter>
   </ModalShell>
 }
@@ -1059,14 +1055,14 @@ function PaymentHistory({ line, category, onChange }: { line: Line; category: Ca
           <div key={p.id} className="rounded-lg p-3"
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="text-xs text-white/55">{new Date(p.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</span>
+              <span className="text-xs text-s-muted">{new Date(p.periodStart).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })}</span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-mono text-white/85">
                   {p.actualCents != null ? PKR(a ? a.invoiceCents : p.actualCents) : <em className="text-white/45">unpaid</em>}
-                  {p.actualCents != null && a && a.invoiceCents !== a.cashCents && <span className="text-[10px] text-white/45 font-sans"> invoice</span>}
+                  {p.actualCents != null && a && a.invoiceCents !== a.cashCents && <span className="text-xs text-s-muted font-sans"> invoice</span>}
                 </p>
                 {spent != null && Math.abs(variancePct) >= 5 && (
-                  <p className="text-[11px]" style={{ color: variance > 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
+                  <p className="text-xs" style={{ color: variance > 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
                     {variance > 0 ? '+' : ''}{variancePct.toFixed(0)}% vs expected
                   </p>
                 )}
@@ -1074,23 +1070,22 @@ function PaymentHistory({ line, category, onChange }: { line: Line; category: Ca
               {posted && p.classification && <ClassificationChip value={p.classification} />}
               {p.paidAt && (
                 posted
-                  ? <span className="text-[10px] font-black text-success">PAID · ON THE BOOKS</span>
+                  ? <span className="text-xs font-black text-success">PAID · ON THE BOOKS</span>
                   : p.ledger?.status === 'payroll'
-                    ? <span className="text-[10px] font-black text-white/55" title="HR payroll books wages">PAID · VIA PAYROLL</span>
-                    : <span className="text-[10px] font-black text-s-amber" title="Paid before payments posted to the books — an admin can post it from 'Post old payments' at the foot of this page">PAID · NOT POSTED</span>
+                    ? <span className="text-xs font-black text-white/55" title="HR payroll books wages">PAID · VIA PAYROLL</span>
+                    : <span className="text-xs font-black text-s-amber" title="Paid before payments posted to the books — an admin can post it from 'Post old payments' at the foot of this page">PAID · NOT POSTED</span>
               )}
-              <button onClick={() => setEditingId(editingId === p.id ? null : p.id)}
-                className="text-[11px] text-primary-ink hover:underline">
+              <LinkButton type="button" onClick={() => setEditingId(editingId === p.id ? null : p.id)}>
                 {editingId === p.id ? 'Close' : p.paidAt ? 'Correct' : 'Mark paid'}
-              </button>
+              </LinkButton>
             </div>
             {(details.length > 0 || p.receiptUrl) && (
-              <p className="text-[11px] text-white/45 mt-1 break-words">
+              <p className="text-xs text-s-muted mt-1 break-words">
                 {details.join(' · ')}
                 {p.receiptUrl && <>{details.length > 0 && ' · '}<a href={p.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-primary-ink hover:underline">Receipt ↗</a></>}
               </p>
             )}
-            {p.whtOverrideReason && <p className="text-[11px] text-white/45 mt-0.5">Withholding stated by hand: {p.whtOverrideReason}</p>}
+            {p.whtOverrideReason && <p className="text-xs text-s-muted mt-0.5">Withholding stated by hand: {p.whtOverrideReason}</p>}
             {editingId === p.id && (
               <PaymentForm line={line} category={category} payment={p}
                 onCancel={() => setEditingId(null)} onDone={() => { setEditingId(null); onChange() }} />
@@ -1102,10 +1097,10 @@ function PaymentHistory({ line, category, onChange }: { line: Line; category: Ca
     {adding ? (
       <PaymentForm line={line} category={category} onCancel={() => setAdding(false)} onDone={() => { setAdding(false); onChange() }} />
     ) : (
-      <button onClick={() => setAdding(true)}
-        className="w-full rounded-lg border-2 border-dashed border-white/10 px-3 py-2 text-xs text-white/55 hover:text-white hover:border-white/30 mt-2">
+      <Button variant="secondary" size="sm" type="submit" onClick={() => setAdding(true)}
+        className="w-full mt-2">
         + Record this period&apos;s payment
-      </button>
+      </Button>
     )}
   </Section>
 }
@@ -1347,15 +1342,15 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
     <form onSubmit={submit} noValidate className="rounded-xl p-3 mt-2 space-y-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
-          <label htmlFor={`ps-${idp}`} className="text-[11px] text-white/55">Period from</label>
-          <input id={`ps-${idp}`} type="date" min={bounds.min} max={bounds.max} value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={fieldCls} />
+          <FieldLabel htmlFor={`ps-${idp}`}>Period from</FieldLabel>
+          <Input id={`ps-${idp}`} type="date" min={bounds.min} max={bounds.max} value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={fieldCls} />
         </div>
         <div>
-          <label htmlFor={`pe-${idp}`} className="text-[11px] text-white/55">Period to</label>
-          <input id={`pe-${idp}`} type="date" min={bounds.min} max={bounds.max} value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={fieldCls} />
+          <FieldLabel htmlFor={`pe-${idp}`}>Period to</FieldLabel>
+          <Input id={`pe-${idp}`} type="date" min={bounds.min} max={bounds.max} value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={fieldCls} />
         </div>
         <div>
-          <span className="block text-[11px] text-white/55">{payroll ? 'Amount paid (PKR)' : 'Invoice amount, incl. sales tax (PKR)'}</span>
+          <span className="block text-xs text-s-muted">{payroll ? 'Amount paid (PKR)' : 'Invoice amount, incl. sales tax (PKR)'}</span>
           <MoneyInput id={`inv-${idp}`} value={invoiceCents} onChange={setInvoice} className={fieldCls} ariaLabel={payroll ? 'Amount paid (PKR)' : 'Invoice amount (PKR)'} />
         </div>
       </div>
@@ -1364,18 +1359,18 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
         <div className="rounded-lg p-2.5 space-y-2" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div>
-              <span className="block text-[11px] text-white/55">Sales tax on the invoice (PKR)</span>
+              <span className="block text-xs text-s-muted">Sales tax on the invoice (PKR)</span>
               <MoneyInput value={inputTaxCents} onChange={setInputTax} className={fieldCls} ariaLabel="Sales tax on the invoice (PKR)" />
             </div>
             <div>
-              <label htmlFor={`auth-${idp}`} className="text-[11px] text-white/55">Charged by</label>
+              <FieldLabel htmlFor={`auth-${idp}`}>Charged by</FieldLabel>
               <Select id={`auth-${idp}`} value={authority} onChange={(e) => setAuthority(e.target.value as Authority | '')} className={fieldCls}>
                 <option value="">{inputTaxCents > 0 ? '— pick who charged it —' : '— no sales tax —'}</option>
                 {(Object.keys(AUTHORITY_LABEL) as Authority[]).map((k) => <option key={k} value={k}>{AUTHORITY_LABEL[k]}</option>)}
               </Select>
             </div>
             <div>
-              <label htmlFor={`sec-${idp}`} className="text-[11px] text-white/55">Income tax withheld</label>
+              <FieldLabel htmlFor={`sec-${idp}`}>Income tax withheld</FieldLabel>
               <Select id={`sec-${idp}`} value={section} onChange={(e) => setSection(e.target.value as SectionChoice)} className={fieldCls}>
                 {!wasPaid && <option value="usual">{usualSection ? `The line's usual — ${WHT_SECTION_LABEL[usualSection]}` : 'The line\'s usual — none'}</option>}
                 <option value="none">None</option>
@@ -1383,30 +1378,30 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
               </Select>
             </div>
           </div>
-          {inputTaxCents > 0 && <p className="text-[11px] text-white/45">The sales tax is input tax, set off only against {authority ? AUTHORITY_LABEL[authority] : 'the authority that charged it'}.</p>}
+          {inputTaxCents > 0 && <p className="text-xs text-s-muted">The sales tax is input tax, set off only against {authority ? AUTHORITY_LABEL[authority] : 'the authority that charged it'}.</p>}
 
           {/* The server's quote */}
           {wasPaid && !moneyRestated && payment?.amounts && (
-            <p className="text-[11px] text-white/55">
+            <p className="text-xs text-s-muted">
               Paid: cash {PKR(payment.amounts.cashCents)}{payment.amounts.whtCents > 0 && <> + withheld {PKR(payment.amounts.whtCents)}{payment.whtRateBps != null && ` at ${payment.whtRateBps / 100}%`}</>}
               {payment.filerStatus && <> · {FILER_LABEL[payment.filerStatus] ?? payment.filerStatus}</>}. Change an amount or the section to work it out again.
             </p>
           )}
-          {quoteReady && quote.isLoading && <p className="text-[11px] text-white/45">Working out the withholding…</p>}
-          {quoteReady && quote.error && <p className="text-[11px] text-s-red">{opexErrorText(quote.error)}</p>}
+          {quoteReady && quote.isLoading && <p className="text-xs text-s-muted">Working out the withholding…</p>}
+          {quoteReady && quote.error && <p className="text-xs text-s-red">{opexErrorText(quote.error)}</p>}
           {quoteReady && quote.data && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               <span className="text-white/70">
                 {quote.data.section
                   ? <>Withheld {PKR(quote.data.whtCents)} at {quote.data.rateBps / 100}% ({WHT_SECTION_LABEL[quote.data.section]})</>
                   : <>No income tax withheld</>}
               </span>
               {quote.data.section && (
-                <span className={quote.data.exempt ? 's-badge-muted text-[10px]' : 's-badge-purple text-[10px]'}>
+                <span className={quote.data.exempt ? 's-badge-muted text-xs' : 's-badge-purple text-xs'}>
                   {quote.data.exempt ? 'Exempt (certificate)' : FILER_LABEL[quote.data.filerStatus] ?? quote.data.filerStatus}
                 </span>
               )}
-              {quote.data.needsAtlCheck && <span className="s-badge-amber text-[10px]" title="The supplier's filer status is not known: the non-filer rate is used until it is confirmed. Check FBR's Active Taxpayers List and update the supplier.">Check ATL status</span>}
+              {quote.data.needsAtlCheck && <span className="s-badge-amber text-xs" title="The supplier's filer status is not known: the non-filer rate is used until it is confirmed. Check FBR's Active Taxpayers List and update the supplier.">Check ATL status</span>}
               <span className="text-white/85 font-semibold">Cash to pay {PKR(quote.data.cashCents)}</span>
               <span className="text-white/45">Expense {PKR(quote.data.expenseCents)}</span>
               {wasPaid && <span className="text-white/45">(today&apos;s rate; a paid payment keeps the filer status it was paid under)</span>}
@@ -1415,16 +1410,16 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
 
           {(shownSection || overrideOn) && (
             <div className="space-y-1.5">
-              <label className="flex items-center gap-2 text-[11px] text-white/70">
+              <CheckLabel className="flex items-center gap-2 text-xs text-white/70">
                 <input type="checkbox" className="accent-accent" checked={overrideOn} onChange={(e) => { setOverrideOn(e.target.checked); if (e.target.checked && quote.data) setOverrideCents(quote.data.whtCents) }} />
                 Withhold a different amount
-              </label>
+              </CheckLabel>
               {overrideOn && (
                 <div className="grid grid-cols-1 sm:grid-cols-[10rem_1fr] gap-2">
                   <MoneyInput value={overrideCents} onChange={setOverrideCents} className={fieldCls} ariaLabel="Withholding (PKR)" />
-                  <input id={`ovr-${idp}`} aria-label="Why a different amount is withheld" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} maxLength={500}
+                  <Input id={`ovr-${idp}`} aria-label="Why a different amount is withheld" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} maxLength={500}
                     placeholder="Why (e.g. the vendor's certificate covers part of the year)" className={fieldCls} />
-                  <p className="sm:col-span-2 text-[11px] text-white/45">The cash paid is the invoice less this. The reason (10 characters or more) is on the withholding register for the CA.</p>
+                  <p className="sm:col-span-2 text-xs text-s-muted">The cash paid is the invoice less this. The reason (10 characters or more) is on the withholding register for the CA.</p>
                 </div>
               )}
             </div>
@@ -1432,7 +1427,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
             <div>
-              <label htmlFor={`tr-${idp}`} className="text-[11px] text-white/55">This payment is</label>
+              <FieldLabel htmlFor={`tr-${idp}`}>This payment is</FieldLabel>
               <Select id={`tr-${idp}`} value={treatment} onChange={(e) => setTreatment(e.target.value as 'expense' | 'prepaid')} className={fieldCls}>
                 <option value="expense">An expense of this period</option>
                 <option value="prepaid">Paid ahead (e.g. a rent advance)</option>
@@ -1441,30 +1436,30 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
             {treatment === 'prepaid' && (
               <>
                 <div>
-                  <label htmlFor={`cf-${idp}`} className="text-[11px] text-white/55">Covers from (month)</label>
-                  <input id={`cf-${idp}`} type="month" value={coversFrom} onChange={(e) => setCoversFrom(e.target.value)} className={fieldCls} />
+                  <FieldLabel htmlFor={`cf-${idp}`}>Covers from (month)</FieldLabel>
+                  <Input id={`cf-${idp}`} type="month" value={coversFrom} onChange={(e) => setCoversFrom(e.target.value)} className={fieldCls} />
                 </div>
                 <div>
-                  <label htmlFor={`cm-${idp}`} className="text-[11px] text-white/55">For how many months</label>
+                  <FieldLabel htmlFor={`cm-${idp}`}>For how many months</FieldLabel>
                   <NumberField id={`cm-${idp}`} min={1} max={120} value={coversMonths === '' ? null : Number(coversMonths)} onValueChange={(n) => setCoversMonths(n == null ? '' : String(n))} className={fieldCls} />
                 </div>
               </>
             )}
           </div>
           {treatment === 'prepaid'
-            ? <p className="text-[11px] text-white/45">Booked to prepaid expenses (1310) and moved to the expense one month at a time.</p>
-            : <p className="text-[11px] text-white/45">A refundable deposit (money we get back) is not an expense — record it in CapEx as a deposit.</p>}
+            ? <p className="text-xs text-s-muted">Booked to prepaid expenses (1310) and moved to the expense one month at a time.</p>
+            : <p className="text-xs text-s-muted">A refundable deposit (money we get back) is not an expense — record it in CapEx as a deposit.</p>}
         </div>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
-          <label htmlFor={`pd-${idp}`} className="text-[11px] text-white/55">Paid on</label>
-          <input id={`pd-${idp}`} type="date" min={bounds.min} value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} />
+          <FieldLabel htmlFor={`pd-${idp}`}>Paid on</FieldLabel>
+          <Input id={`pd-${idp}`} type="date" min={bounds.min} value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} />
         </div>
         <div>
-          <label htmlFor={`ref-${idp}`} className="text-[11px] text-white/55">Reference (cheque / transfer no.)</label>
-          <input id={`ref-${idp}`} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} maxLength={120} className={fieldCls} />
+          <FieldLabel htmlFor={`ref-${idp}`}>Reference (cheque / transfer no.)</FieldLabel>
+          <Input id={`ref-${idp}`} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} maxLength={120} className={fieldCls} />
         </div>
         {paysNow && (
           <div id={`cls-${idp}`} className="sm:col-span-3">
@@ -1478,16 +1473,16 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
             <PendingFilesPicker ownerType="opex_payment" label="Receipts" value={files} onChange={setFiles} />
           )}
           {payment?.receiptUrl && /^https?:\/\//i.test(payment.receiptUrl) && (
-            <a href={payment.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-primary-ink hover:underline">Old receipt link ↗</a>
+            <a href={payment.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-ink hover:underline">Old receipt link ↗</a>
           )}
           {uploadErr && <p role="alert" className="text-xs" style={{ color: 'var(--erp-danger)' }}>{uploadErr}</p>}
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
-        <label className="flex items-center gap-2 text-xs text-white/70">
+        <CheckLabel className="flex items-center gap-2 text-xs text-white/70">
           <input type="checkbox" checked={cash} onChange={(e) => { setCash(e.target.checked); setMoneyTouched(true) }} />
           Paid in cash
-        </label>
+        </CheckLabel>
         {!cash && (
           <BankAccountSelect tenantId={category.tenantId} value={bankAccountId} onChange={(v) => { setBankAccountId(v); setMoneyTouched(true) }}
             id={`bank-${idp}`} label="Paid from" className={fieldCls} />
@@ -1495,21 +1490,21 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
       </div>
       {showAccount ? (
         <div>
-          <label htmlFor={`exp-${idp}`} className="text-[11px] text-white/55">
+          <FieldLabel htmlFor={`exp-${idp}`}>
             {needsAccount ? 'Expense account — remembered for this category' : 'Book this payment to'}
-          </label>
+          </FieldLabel>
           <ExpenseAccountSelect id={`exp-${idp}`} tenantId={category.tenantId} value={expenseAccountCode} onChange={setExpenseAccountCode}
             emptyLabel={needsAccount ? '— pick the expense account —' : '— the category\'s account —'} />
         </div>
       ) : !category.isPayroll && (
-        <p className="text-[11px] text-white/45">
+        <p className="text-xs text-s-muted">
           Booked to {accountLabel(category.expenseAccountCode)}.{' '}
-          <button type="button" onClick={() => setOverrideAccount(true)} className="text-primary-ink hover:underline">Book this one elsewhere</button>
+          <LinkButton size="md" type="button" onClick={() => setOverrideAccount(true)}>Book this one elsewhere</LinkButton>
         </p>
       )}
-      {problem && <p role="alert" className="text-[11px] font-bold text-s-red">{problem}</p>}
+      {problem && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
       {err && (
-        <div role="alert" className="text-[11px] text-s-red space-y-1">
+        <div role="alert" className="text-xs text-s-red space-y-1">
           <p>{opexErrorText(err)}</p>
           {equipment && canOpenCapex && (
             <p><Link href="/finance/capex?quickBuy=1" className="text-primary-ink hover:underline">Buy it through CapEx → Quick buy</Link></p>
@@ -1518,27 +1513,26 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
       )}
       {equipment?.matched && (
         <div className="space-y-1.5">
-          <label className="flex items-center gap-2 text-[11px] text-white/70">
+          <CheckLabel className="flex items-center gap-2 text-xs text-white/70">
             <input type="checkbox" className="accent-accent" checked={notEquipment} onChange={(e) => setNotEquipment(e.target.checked)} />
             It is not equipment (&ldquo;{equipment.matched}&rdquo; matched) — finance or the CEO only
-          </label>
+          </CheckLabel>
           {notEquipment && (
-            <input id={`ne-${idp}`} aria-label="Why it is an expense" value={notEquipmentReason} onChange={(e) => setNotEquipmentReason(e.target.value)} maxLength={500}
+            <Input id={`ne-${idp}`} aria-label="Why it is an expense" value={notEquipmentReason} onChange={(e) => setNotEquipmentReason(e.target.value)} maxLength={500}
               placeholder="Why it is an expense (10 characters or more)" className={fieldCls} />
           )}
         </div>
       )}
       <div className="flex flex-wrap justify-end gap-2">
         {payment?.paidAt && (
-          <button type="button" onClick={async () => { if (await confirm({ title: `Mark ${line.name} unpaid?`, body: 'The payment goes back to unpaid and its ledger entry is reversed.', confirmLabel: 'Mark unpaid', danger: true })) unpay.mutate() }} disabled={unpay.isPending}
-            className="text-xs text-s-red/80 hover:text-s-red mr-auto">Mark unpaid</button>
+          <LinkButton type="button" onClick={async () => { if (await confirm({ title: `Mark ${line.name} unpaid?`, body: 'The payment goes back to unpaid and its ledger entry is reversed.', confirmLabel: 'Mark unpaid', danger: true })) unpay.mutate() }} disabled={unpay.isPending}
+            className="mr-auto">Mark unpaid</LinkButton>
         )}
-        <button type="button" onClick={onCancel} className="text-xs text-white/55 hover:text-white">Cancel</button>
-        <button type="submit"
-          disabled={save.isPending}
-          className="s-btn-primary px-3 py-1.5 text-xs">
+        <LinkButton tone="muted" type="button" onClick={onCancel}>Cancel</LinkButton>
+        <Button size="sm" type="submit"
+          disabled={save.isPending}>
           {save.isPending ? 'Saving…' : payment ? (payment.paidAt ? 'Save correction' : 'Mark paid') : '+ Record'}
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -1588,24 +1582,22 @@ function PostOldPayments({ onEditCategory, onPosted }: { onEditCategory: (catego
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-xl">
           <h2 className="text-sm font-black text-white/85">Post old payments</h2>
-          <p className="text-xs text-white/50 mt-1">
+          <p className="text-xs text-s-muted mt-1">
             Payments marked paid before OpEx posted to the books. Preview first: it says which will post and which need an
             expense account, a bank, or sit in a closed month. Closed months are never reopened.
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => run.mutate(true)} disabled={run.isPending}
-            className="s-btn-secondary px-3 py-1.5 text-xs">Preview</button>
-          <button onClick={() => run.mutate(false)} disabled={run.isPending || postable === 0}
-            className="s-btn-primary px-3 py-1.5 text-xs">
+          <Button size="sm" variant="secondary" type="submit" onClick={() => run.mutate(true)} disabled={run.isPending}>Preview</Button>
+          <Button size="sm" type="submit" onClick={() => run.mutate(false)} disabled={run.isPending || postable === 0}>
             Post{postable > 0 ? ` ${postable}` : ''}
-          </button>
+          </Button>
         </div>
       </div>
       {run.error && <p role="alert" className="text-xs text-s-red">{opexErrorText(run.error)}</p>}
       {result && (
         rows.length === 0
-          ? <p className="text-xs text-white/50">Every paid OpEx payment is on the books.</p>
+          ? <p className="text-xs text-s-muted">Every paid OpEx payment is on the books.</p>
           : (
             <div className="space-y-1.5">
               {rows.map((r) => (
@@ -1619,7 +1611,7 @@ function PostOldPayments({ onEditCategory, onPosted }: { onEditCategory: (catego
                     {BACKFILL_LABEL[r.outcome] ?? r.outcome}{(r.outcome === 'failed' || r.outcome === 'needs_tax_details') && r.reason ? ` — ${r.code && OPEX_ERROR_TEXT[r.code] ? OPEX_ERROR_TEXT[r.code] : r.reason}` : ''}
                   </span>
                   {r.outcome === 'needs_account' && (
-                    <button onClick={() => onEditCategory(r.categoryId)} className="text-primary-ink hover:underline">Set account</button>
+                    <LinkButton size="md" type="button" onClick={() => onEditCategory(r.categoryId)}>Set account</LinkButton>
                   )}
                 </div>
               ))}

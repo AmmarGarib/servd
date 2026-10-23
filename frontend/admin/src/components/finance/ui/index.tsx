@@ -7,9 +7,12 @@
 
 import {
   Children, cloneElement, isValidElement, useEffect, useId, useRef,
+  type CSSProperties,
   type ButtonHTMLAttributes, type FormEvent, type InputHTMLAttributes, type ReactElement, type ReactNode, type TextareaHTMLAttributes,
 } from 'react'
-import { Modal as SharedModal } from '../../ui/Modal'
+import { createPortal } from 'react-dom'
+import { Modal as SharedModal, useDialog } from '../../ui/Modal'
+import { FIcon } from './icons'
 
 // ── class strings (for controls that stay <input>/<Select>/<MoneyInput>) ────
 export const fieldCls = 's-input'
@@ -29,10 +32,29 @@ export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const { className = '', ...rest } = props
   return <textarea {...rest} className={`s-input ${className}`.trim()} />
 }
-export function Button({ variant = 'primary', className = '', type = 'button', ...rest }:
-  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' | 'ghost' }) {
-  const cls = variant === 'primary' ? primaryBtn : variant === 'secondary' ? secondaryBtn : variant === 'danger' ? dangerBtn : cancelBtn
+export function Button({ variant = 'primary', size = 'md', className = '', type = 'button', ...rest }:
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' | 'ghost'; size?: 'sm' | 'md' }) {
+  const base = variant === 'primary' ? 's-btn-primary' : variant === 'secondary' ? 's-btn-secondary' : variant === 'danger' ? 's-btn-danger' : 's-btn-ghost'
+  const cls = size === 'sm' ? `${base} px-3 py-1.5 text-xs font-semibold` : variant === 'primary' ? primaryBtn : variant === 'secondary' ? secondaryBtn : variant === 'danger' ? dangerBtn : cancelBtn
   return <button type={type} {...rest} className={`${cls} ${className}`.trim()} />
+}
+
+/** A text-only action (open, edit, hide, dismiss): no box, ink by tone. */
+export function LinkButton({ tone = 'primary', size = 'sm', className = '', type = 'button', ...rest }:
+  ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'primary' | 'muted' | 'danger'; size?: 'sm' | 'md' }) {
+  const ink = tone === 'danger' ? 'text-s-red' : tone === 'muted' ? 'text-s-muted hover:text-s-text' : 'text-primary-ink'
+  return <button type={type} {...rest}
+    className={`${size === 'sm' ? 'text-xs' : 'text-sm'} font-semibold hover:underline disabled:opacity-40 [@media(pointer:coarse)]:min-h-11 ${ink} ${className}`.trim()} />
+}
+
+/** A bare label in the Field style, for a control that sits apart from it (htmlFor wires it). */
+export function FieldLabel({ children, htmlFor, className = '' }: { children: ReactNode; htmlFor?: string; className?: string }) {
+  return <label htmlFor={htmlFor} className={`text-xs font-medium ${className}`.trim()} style={{ color: 'var(--muted)' }}>{children}</label>
+}
+
+/** Yes/no row: a checkbox (or radio) with its words, in the Field text style. */
+export function CheckLabel({ children, className = '', ...rest }: { children: ReactNode; className?: string } & Omit<React.LabelHTMLAttributes<HTMLLabelElement>, 'children' | 'className'>) {
+  return <label {...rest} className={`flex items-center gap-2 text-xs cursor-pointer ${className}`.trim()} style={{ color: 'var(--text)' }}>{children}</label>
 }
 
 // ── Field: label above, hint / error wired ──────────────────────────────────
@@ -41,7 +63,7 @@ export function Button({ variant = 'primary', className = '', type = 'button', .
  * The first element child that is not a <p> is the control and gets the id; a
  * custom widget that ignores `id` is harmless. Extra children render after it.
  */
-export function Field({ label, hint, error, required, children }: { label: string; hint?: ReactNode; error?: ReactNode; required?: boolean; children: ReactNode }) {
+export function Field({ label, hint, error, required, children }: { label: ReactNode; hint?: ReactNode; error?: ReactNode; required?: boolean; children: ReactNode }) {
   const uid = useId()
   const kids = Children.toArray(children)
   const at = kids.findIndex((k) => isValidElement(k) && k.type !== 'p' && k.type !== 'div')
@@ -173,4 +195,39 @@ export function dateBounds(): { min: string; max: string } {
   const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi', year: 'numeric', month: '2-digit', day: '2-digit' })
     .format(new Date()).split('-').map(Number) as [number, number, number]
   return { min: '2000-01-01', max: new Date(Date.UTC(y + 1, m - 1, d)).toISOString().slice(0, 10) }
+}
+
+
+// ── Side panel / bottom sheet ───────────────────────────────────────────────
+/**
+ * A panel that slides in from the right (or a sheet from the bottom) with the
+ * Modal's keyboard / focus / scroll-lock behaviour. For detail views that are
+ * read next to the list; use Dialog for a form.
+ */
+export function SidePanel({ title, subtitle, onClose, children, side = 'right', wide, ariaLabel, flush }:
+  { flush?: boolean; title: ReactNode; subtitle?: ReactNode; onClose: () => void; children: ReactNode; side?: 'right' | 'bottom'; wide?: boolean; ariaLabel?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  useDialog(ref, { onClose })
+  if (typeof document === 'undefined') return null
+  const box: CSSProperties = side === 'right'
+    ? { background: 'var(--surface)', borderLeft: '1px solid var(--border)' }
+    : { background: 'var(--surface)', borderTop: '1px solid var(--border)' }
+  return createPortal(
+    <div className={`fixed inset-0 z-50 flex bg-secondary/40 ${side === 'right' ? 'justify-end' : 'items-end justify-center'}`} onClick={onClose}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-label={ariaLabel} aria-labelledby={ariaLabel ? undefined : titleId}
+        className={`${side === 'right' ? `h-full w-full ${wide ? 'max-w-xl' : 'max-w-md'}` : `w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90dvh] rounded-t-2xl`} overflow-y-auto outline-none`}
+        style={box} onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-3" style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+          <div className="min-w-0">
+            <h2 id={titleId} className="font-black truncate" style={{ color: 'var(--text)' }}>{title}</h2>
+            {subtitle && <p className="text-xs" style={{ color: 'var(--muted)' }}>{subtitle}</p>}
+          </div>
+          <button type="button" data-dialog-close onClick={onClose} aria-label="Close" className="s-btn-ghost flex h-9 w-9 items-center justify-center"><FIcon name="x" size={16} /></button>
+        </div>
+        <div className={flush ? '' : 'p-5'}>{children}</div>
+      </div>
+    </div>,
+    document.body,
+  )
 }

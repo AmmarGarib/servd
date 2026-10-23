@@ -414,8 +414,15 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
   const nameOf = (id: string | null) => (id ? (userName.get(id) ?? null) : null)
   const bankIds = [...new Set(rows.flatMap((v) => [v.payBankAccountId, v.plannedBankAccountId]).filter((x): x is string => !!x))]
   const bankRows = bankIds.length
-    ? await prisma.bankAccount.findMany({ where: { id: { in: bankIds }, tenantId: { in: [...tenantIds] } }, select: { id: true, name: true, tenantId: true } })
+    ? await prisma.bankAccount.findMany({ where: { id: { in: bankIds }, tenantId: { in: [...tenantIds] } }, select: { id: true, name: true, tenantId: true, deletedAt: true } })
     : []
+  // A voucher paid (or planned) from a bank account since deleted still names
+  // it — that is the account the money left — marked "(removed)". Never
+  // another company's account (tenant-matched).
+  const bankNameOf = (id: string | null, tenantId: string) => {
+    const b = id ? bankRows.find((x) => x.id === id && x.tenantId === tenantId) : null
+    return b ? (b.deletedAt ? `${b.name} (removed)` : b.name) : null
+  }
   const now = Date.now()
   return Promise.all(rows.map(async (v) => {
     const { box, attachments, ...voucher } = v
@@ -446,7 +453,7 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       /** "To pay from" (2026-10-19): the plan set at raise, the supplier (credit) and the planned bank's name. */
       payFrom: v.plannedPaySource,
       payFromBankAccountId: v.plannedBankAccountId,
-      payFromBankName: v.plannedBankAccountId ? (bankRows.find((b) => b.id === v.plannedBankAccountId && b.tenantId === v.tenantId)?.name ?? null) : null,
+      payFromBankName: bankNameOf(v.plannedBankAccountId, v.tenantId),
       supplierName: v.supplierId ? (supplierName.get(v.supplierId) ?? null) : null,
       /** Internal payment classification chosen at raise (2026-10-20) — prefills the pay step. */
       classification: v.plannedClassification,
@@ -472,7 +479,7 @@ export async function present(rows: VoucherRow[], viewer: Viewer) {
       /** Where the cash came from once paid: the box's name, "Cash on hand" or the bank's name (owner, 2026-10-16). */
       paidFrom: paidFromLabel(v, {
         boxName: box?.name ?? null,
-        bankName: bankRows.find((b) => b.id === v.payBankAccountId && b.tenantId === v.tenantId)?.name ?? null,
+        bankName: bankNameOf(v.payBankAccountId, v.tenantId),
         supplierName: v.supplierId ? (supplierName.get(v.supplierId) ?? null) : null,
       }),
       custodianId: box?.custodianId ?? null,

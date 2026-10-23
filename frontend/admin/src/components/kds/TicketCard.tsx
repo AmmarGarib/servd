@@ -35,7 +35,7 @@ const UR = {
   fire: 'شروع',
   course: 'کورس',
   notes: 'نوٹ',
-  allClear: 'سب ٹھیک ✓',
+  allClear: 'سب ٹھیک',
   instructions: 'ہدایات',
   close: 'بند',
   noInstructions: 'کوئی ہدایات نہیں',

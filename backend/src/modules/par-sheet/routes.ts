@@ -32,8 +32,8 @@ function dayKey(input?: string): Date {
 
 /**
  * Sub-recipe ids used by the company's brands: every component recipe that a
- * plate of one of the company's brands uses, directly or through another
- * sub-recipe. Plates count whether they are on the menu or still in testing
+ * plate — or an add-on (modifier recipe) of a dish — of one of the company's
+ * brands uses, directly or through another sub-recipe. Plates count whether they are on the menu or still in testing
  * (the pending menu item names the brand).
  */
 export async function subRecipeIdsForCompany(tenantId: string): Promise<Set<string>> {
@@ -55,6 +55,21 @@ export async function subRecipeIdsForCompany(tenantId: string): Promise<Set<stri
     },
     select: { ingredients: { select: { prepRecipeId: true } } },
   })
+  // Add-on (modifier) recipes of the company's dishes: a sub-recipe used only
+  // by an add-on is still prepped (orders/stock.ts depletes it through the
+  // modifier's recipe — lib/recipeCost.ts consumptionPerLine). The company is
+  // the brand's, via modifier → group → menu item.
+  const addOns = await prisma.recipe.findMany({
+    where: {
+      kind: 'modifier',
+      isActive: true,
+      modifier: {
+        deletedAt: null,
+        group: { deletedAt: null, menuItem: { conceptId: { in: conceptIds }, deletedAt: null } },
+      },
+    },
+    select: { ingredients: { select: { prepRecipeId: true } } },
+  })
 
   // Sub-recipe → the sub-recipes it is built from.
   const components = await prisma.recipe.findMany({
@@ -64,7 +79,7 @@ export async function subRecipeIdsForCompany(tenantId: string): Promise<Set<stri
   const children = new Map(components.map((c) => [c.id, c.ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x)]))
 
   const used = new Set<string>()
-  const queue = plates.flatMap((p) => p.ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x))
+  const queue = [...plates, ...addOns].flatMap((p) => p.ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x))
   while (queue.length) {
     const id = queue.pop()!
     if (used.has(id)) continue

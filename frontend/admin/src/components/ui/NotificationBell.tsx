@@ -20,6 +20,7 @@ import {
   relativeTime, severityColor, useInbox, useMarkAllRead, useMarkRead, useNotificationSocket, useUnreadCount,
   type NotificationItem,
 } from '../../lib/notificationsData'
+import { CompactEmptyState } from './CompactEmptyState'
 
 interface MyTenant { id: string; isActive?: boolean }
 
@@ -183,7 +184,7 @@ export function NotificationBell({ variant = 'sidebar' }: { variant?: 'sidebar' 
         {inbox.isLoading && <p className="px-3 py-6 text-center text-xs text-white/40">Loading…</p>}
         {inbox.isError && <p className="px-3 py-6 text-center text-xs" style={{ color: 'var(--erp-danger)' }}>Could not load notifications.</p>}
         {!inbox.isLoading && !inbox.isError && items.length === 0 && (
-          <p className="px-3 py-6 text-center text-xs text-white/40">Nothing yet. Approvals, night audit reports and warnings sent to you appear here.</p>
+          <CompactEmptyState message="Nothing yet. Approvals, night audit reports and warnings sent to you appear here." />
         )}
         {items.map((n) => <NotificationRow key={n.id} n={n} showCompany={multi} onOpen={openItem} />)}
       </div>

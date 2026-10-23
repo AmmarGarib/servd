@@ -16,6 +16,7 @@
 // is open. Revoke asks for a reason. A charge whose sale is not booked yet
 // reads "not billed yet" (it cannot go on a statement until the drawer closes).
 
+import { Button, CheckLabel, Dialog, Field, Input, LinkButton, Textarea } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -26,6 +27,7 @@ import { orderRef } from '../../../../../lib/orderRef'
 import { useAuthStore } from '../../../../../store/auth'
 import { OnAccountCardPrint } from '../../../../../components/finance/OnAccountCardPrint'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { FIcon } from '../../../../../components/finance/ui/icons'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -71,7 +73,7 @@ interface TieOut {
 interface IssuedCard { code: string; label: string }
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
-const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
+const inp = 's-input w-full'
 const toPaisa = (rupees: string) => Math.round((Number(rupees) || 0) * 100)
 const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong — try again')
 const STATUS_COLOR: Record<ClientStatus, string> = {
@@ -79,18 +81,10 @@ const STATUS_COLOR: Record<ClientStatus, string> = {
 }
 
 function L({ t, children }: { t: string; children: React.ReactNode }) {
-  return <label className="block"><span className="text-[11px] font-bold text-white/50">{t}</span>{children}</label>
+  return <Field label={t}>{children}</Field>
 }
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
-        style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
-        <p className="text-lg font-black text-white/90 mb-4">{title}</p>
-        {children}
-      </div>
-    </div>
-  )
+  return <Dialog title={title} onClose={onClose} wide>{children}</Dialog>
 }
 function Err({ msg }: { msg: string | null }) {
   return msg ? <p role="alert" className="mt-3 text-sm font-bold" style={{ color: 'var(--erp-danger)' }}>{msg}</p> : null
@@ -103,10 +97,10 @@ function Dlg({ title, busy, disabled, label, error, onGo, onClose, children }: {
       {children}
       <Err msg={error} />
       <div className="flex gap-2 mt-5">
-        <button onClick={onGo} disabled={busy || disabled} className="s-btn-primary px-4 py-2">
+        <Button type="submit" onClick={onGo} disabled={busy || disabled}>
           {busy ? 'Working…' : label}
-        </button>
-        <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
+        </Button>
+        <Button variant="ghost" type="submit" onClick={onClose}>Cancel</Button>
       </div>
     </Modal>
   )
@@ -116,7 +110,7 @@ const Btn = ({ onClick, children, danger }: { onClick: () => void; children: Rea
     style={{ color: danger ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{children}</button>
 )
 const Th = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
-  <th className={`py-2 pr-3 text-[10px] uppercase tracking-wider font-bold text-white/40 ${right ? 'text-right' : 'text-left'}`}>{children}</th>
+  <th className={`py-2 pr-3 text-xs uppercase tracking-wider font-bold text-white/40 ${right ? 'text-right' : 'text-left'}`}>{children}</th>
 )
 const Td = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
   <td className={`py-2 pr-3 text-sm text-white/85 ${right ? 'text-right' : ''}`}>{children}</td>
@@ -198,17 +192,17 @@ export default function OnAccountClientPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 md:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/accounting/receivables/clients" className="text-xs text-white/40 hover:text-white/70">← On-account clients</Link>
+        <Link href="/accounting/receivables/clients" className="text-xs text-s-muted hover:text-white/70">← On-account clients</Link>
         <div className="flex flex-wrap items-start justify-between gap-4 mt-2">
           <div>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-success">{c.number}{c.companyName ? ` · ${c.companyName}` : ''}</p>
+            <p className="text-xs uppercase tracking-wider font-bold text-success">{c.number}{c.companyName ? ` · ${c.companyName}` : ''}</p>
             <h1 className="text-2xl font-black text-white/90">{c.legalName}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+              <span className="rounded-full px-2 py-0.5 text-xs font-black uppercase"
                 style={{ background: `color-mix(in srgb, ${STATUS_COLOR[c.status]} 16%, transparent)`, color: STATUS_COLOR[c.status] }}>{c.status}</span>
-              {c.statusReason && <span className="text-xs text-white/50">{c.statusReason}</span>}
+              {c.statusReason && <span className="text-xs text-s-muted">{c.statusReason}</span>}
               {c.overdue && (
-                <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+                <span className="rounded-full px-2 py-0.5 text-xs font-black uppercase"
                   style={{ background: 'color-mix(in srgb, var(--erp-danger) 16%, transparent)', color: 'var(--erp-danger)' }}>
                   Overdue · {c.overdue.number} · {fmtPkrWhole(c.overdue.balanceCents)}
                 </span>
@@ -233,7 +227,7 @@ export default function OnAccountClientPage() {
           <div role="status" className="flex items-start justify-between gap-3 rounded-2xl p-4 text-sm"
             style={{ background: 'color-mix(in srgb, var(--erp-success) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-success) 35%, transparent)' }}>
             <span className="text-white/85">{notice}</span>
-            <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 text-white/50 hover:text-white">×</button>
+            <LinkButton tone="muted" size="md" type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0"><FIcon name="x" size={14} /></LinkButton>
           </div>
         )}
 
@@ -246,8 +240,7 @@ export default function OnAccountClientPage() {
             {(c.canApprove || c.canReject) && (
               <div className="flex gap-2 mt-3">
                 {c.canApprove && (
-                  <button onClick={() => act.mutate({ path: '/approve', body: { expectedUpdatedAt: c.updatedAt, ...(c.pending === 'limit_increase' && c.requestedCreditLimitCents != null ? { creditLimitCents: c.requestedCreditLimitCents } : {}) }, ok: 'Approved.' })}
-                    className="s-btn-primary px-4 py-2">Approve</button>
+                  <Button type="submit" onClick={() => act.mutate({ path: '/approve', body: { expectedUpdatedAt: c.updatedAt, ...(c.pending === 'limit_increase' && c.requestedCreditLimitCents != null ? { creditLimitCents: c.requestedCreditLimitCents } : {}) }, ok: 'Approved.' })}>Approve</Button>
                 )}
                 {c.canReject && <Btn danger onClick={() => setDialog({ kind: 'reject' })}>Reject</Btn>}
               </div>
@@ -266,7 +259,7 @@ export default function OnAccountClientPage() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {([['Limit', c.creditLimitCents], ['Exposure', c.exposureCents], ['Available', c.availableCents], ['Unbilled', c.unbilledCents], ['On statements', c.invoicesDueCents]] as const).map(([l, v]) => (
             <div key={l} className="rounded-2xl p-4" style={card}>
-              <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{l}</p>
+              <p className="text-xs uppercase tracking-wider text-white/40 font-bold">{l}</p>
               <p className="text-lg font-black text-white/90 mt-1">{fmtPkrWhole(v)}</p>
             </div>
           ))}
@@ -295,7 +288,7 @@ export default function OnAccountClientPage() {
               <div key={k.id} className="flex flex-wrap items-center gap-3 text-sm" style={{ opacity: k.active ? 1 : 0.55 }}>
                 <span className="font-bold text-white/90">{k.label}</span>
                 <span className="font-mono text-white/60">…{k.hint ?? '----'}</span>
-                <span className="text-xs text-white/40">
+                <span className="text-xs text-s-muted">
                   {k.active ? (k.lastUsedAt ? `last used ${k.lastUsedAt.slice(0, 10)}` : 'not used yet') : `revoked${k.revokedReason ? `: ${k.revokedReason}` : ''}`}
                 </span>
                 {k.active && !closed && (
@@ -306,13 +299,13 @@ export default function OnAccountClientPage() {
                 )}
               </div>
             ))}
-            {activeCards.length === 0 && c.cards.length > 0 && <p className="text-xs text-white/50">No active card: nothing can be charged at the till.</p>}
+            {activeCards.length === 0 && c.cards.length > 0 && <p className="text-xs text-s-muted">No active card: nothing can be charged at the till.</p>}
           </div>
         </section>
 
         <section>
           <h2 className="text-base font-black text-white/90 mb-2">Unbilled bills</h2>
-          <p className="text-xs text-white/50 mb-2">
+          <p className="text-xs text-s-muted mb-2">
             Booked {fmtPkrWhole(c.unbilled.bookedCents)} — goes on the next statement. Not billed yet {fmtPkrWhole(c.unbilled.notBookedCents)} — waits for the drawer to close.
           </p>
           <div className="rounded-2xl p-4 overflow-x-auto" style={card}>
@@ -435,7 +428,7 @@ function ReasonDialog({ title, label, min, error, busy, onClose, onGo }: {
   const [reason, setReason] = useState('')
   return (
     <Dlg title={title} label={label} busy={busy} error={error} disabled={reason.trim().length < min} onClose={onClose} onGo={() => onGo(reason.trim())}>
-      <L t="Why"><textarea className={inp} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></L>
+      <L t="Why"><Textarea className={inp} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></L>
     </Dlg>
   )
 }
@@ -444,8 +437,8 @@ function LabelDialog({ error, busy, onClose, onGo }: { error: string | null; bus
   const [label, setLabel] = useState('')
   return (
     <Dlg title="Issue a card" label="Issue card" busy={busy} error={error} disabled={!label.trim()} onClose={onClose} onGo={() => onGo(label.trim())}>
-      <L t="Card label (who carries it)"><input className={inp} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Finance desk" /></L>
-      <p className="text-xs text-white/50 mt-2">The code is shown once — print now.</p>
+      <L t="Card label (who carries it)"><Input className={inp} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Finance desk" /></L>
+      <p className="text-xs text-s-muted mt-2">The code is shown once — print now.</p>
     </Dlg>
   )
 }
@@ -454,8 +447,8 @@ function StatementDialog({ error, busy, onClose, onGo }: { error: string | null;
   const [periodTo, setPeriodTo] = useState(previousMonthEnd())
   return (
     <Dlg title="Issue a statement" label="Issue statement" busy={busy} error={error} disabled={!/^\d{4}-\d{2}-\d{2}$/.test(periodTo)} onClose={onClose} onGo={() => onGo(periodTo)}>
-      <L t="Charges up to (inclusive)"><input type="date" className={inp} value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} /></L>
-      <p className="text-xs text-white/50 mt-2">Only bills already booked go on it. A statement is not a tax invoice.</p>
+      <L t="Charges up to (inclusive)"><Input type="date" className={inp} value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} /></L>
+      <p className="text-xs text-s-muted mt-2">Only bills already booked go on it. A statement is not a tax invoice.</p>
     </Dlg>
   )
 }
@@ -465,8 +458,8 @@ function LimitDialog({ c, error, busy, onClose, onSave }: { c: Client; error: st
   const cents = toPaisa(v)
   return (
     <Dlg title="Change credit limit" label="Save limit" busy={busy} error={error} disabled={cents <= 0 || cents === c.creditLimitCents} onClose={onClose} onGo={() => onSave(cents)}>
-      <L t="Credit limit (PKR)"><input inputMode="decimal" className={inp} value={v} onChange={(e) => setV(e.target.value)} /></L>
-      <p className="text-xs text-white/50 mt-2">A lower limit applies at once. A higher one waits for the CEO.</p>
+      <L t="Credit limit (PKR)"><Input inputMode="decimal" className={inp} value={v} onChange={(e) => setV(e.target.value)} /></L>
+      <p className="text-xs text-s-muted mt-2">A lower limit applies at once. A higher one waits for the CEO.</p>
     </Dlg>
   )
 }
@@ -479,7 +472,7 @@ function EditDialog({ c, error, busy, onClose, onSave }: { c: Client; error: str
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((p) => ({ ...p, [k]: v }))
   const text = (k: 'legalName' | 'tradeName' | 'ntn' | 'strn' | 'address' | 'contactName' | 'contactPhone' | 'contactEmail', t: string) => (
-    <L t={t}><input className={inp} value={f[k]} onChange={(e) => set(k, e.target.value)} /></L>
+    <L t={t}><Input className={inp} value={f[k]} onChange={(e) => set(k, e.target.value)} /></L>
   )
   return (
     <Dlg title="Edit client" label="Save" busy={busy} error={error} disabled={f.legalName.trim().length < 2}
@@ -491,14 +484,14 @@ function EditDialog({ c, error, busy, onClose, onSave }: { c: Client; error: str
         {text('address', 'Address')}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{text('contactName', 'Contact name')}{text('contactPhone', 'Contact phone')}{text('contactEmail', 'Contact email')}</div>
         <div className="grid grid-cols-2 gap-3">
-          <L t="Terms (days)"><input inputMode="numeric" className={inp} value={f.termsDays} onChange={(e) => set('termsDays', e.target.value)} /></L>
-          <L t="Overdue grace (days)"><input inputMode="numeric" className={inp} value={f.overdueGraceDays} onChange={(e) => set('overdueGraceDays', e.target.value)} /></L>
+          <L t="Terms (days)"><Input inputMode="numeric" className={inp} value={f.termsDays} onChange={(e) => set('termsDays', e.target.value)} /></L>
+          <L t="Overdue grace (days)"><Input inputMode="numeric" className={inp} value={f.overdueGraceDays} onChange={(e) => set('overdueGraceDays', e.target.value)} /></L>
         </div>
-        <label className="flex items-center gap-2 text-sm text-white/80">
+        <CheckLabel className="flex items-center gap-2 text-sm text-white/80">
           <input type="checkbox" checked={f.requiresReference} onChange={(e) => set('requiresReference', e.target.checked)} />
           Every bill needs a reference
-        </label>
-        <L t="Notes"><textarea className={inp} rows={2} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></L>
+        </CheckLabel>
+        <L t="Notes"><Textarea className={inp} rows={2} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></L>
       </div>
     </Dlg>
   )

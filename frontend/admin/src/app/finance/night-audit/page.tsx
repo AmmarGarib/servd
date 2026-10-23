@@ -2,6 +2,7 @@
 // Night audit — lock each business day, close it when its money settles.
 // Contract: backend/src/modules/nightAudit/README.md. Finance runs it, the CEO
 // pushes through a block with a reason. Month close needs every sales day closed.
+import { Button, FieldLabel, Input } from '@/components/finance/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Suspense, useState } from 'react'
 import Link from 'next/link'
@@ -77,9 +78,9 @@ function NightAudit() {
 
         <div className="flex flex-wrap items-center justify-between gap-2 na-noprint">
           <div className="flex items-center gap-2">
-            <button type="button" className="s-btn-secondary text-sm" disabled={!shownMonth} onClick={() => go(shiftMonth(shownMonth, -1))} aria-label="Previous month">‹</button>
+            <Button variant="secondary" type="button"  disabled={!shownMonth} onClick={() => go(shiftMonth(shownMonth, -1))} aria-label="Previous month">‹</Button>
             <span className="text-base font-semibold text-s-text min-w-[9rem] text-center">{shownMonth ? monthLabel(shownMonth) : ''}</span>
-            <button type="button" className="s-btn-secondary text-sm" disabled={!shownMonth} onClick={() => go(shiftMonth(shownMonth, 1))} aria-label="Next month">›</button>
+            <Button variant="secondary" type="button"  disabled={!shownMonth} onClick={() => go(shiftMonth(shownMonth, 1))} aria-label="Next month">›</Button>
           </div>
           <p className="text-xs text-s-muted">
             Month close needs every sales day closed. <Link href="/accounting/period-close" className="text-primary-ink underline">Period close</Link>
@@ -95,7 +96,7 @@ function NightAudit() {
               ['Not run', s.overdue, s.overdue > 0 ? 'text-s-red' : ''],
             ].map(([k, v, cls]) => (
               <div key={k as string} className="s-card p-3">
-                <p className="text-[11px] text-s-muted">{k}</p>
+                <p className="text-xs text-s-muted">{k}</p>
                 <p className={`text-xl font-bold tabular-nums ${cls || 'text-s-text'}`}>{v}</p>
               </div>
             ))}
@@ -123,19 +124,19 @@ function NightAudit() {
             <p className="text-xs text-s-muted">Month close only requires days from this date. Move it back only to bring older days under the audit. It cannot be after the earliest audited day.</p>
             <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
               <div>
-                <label htmlFor="na-start" className="block text-xs text-s-muted">Start day</label>
-                <input id="na-start" type="date" value={startDay || data.startDay || ''} onChange={(e) => setStartDay(e.target.value)}
-                  className="bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+                <FieldLabel htmlFor="na-start" className="block">Start day</FieldLabel>
+                <Input className="w-auto px-3 py-2 text-sm" id="na-start" type="date" value={startDay || data.startDay || ''} onChange={(e) => setStartDay(e.target.value)}
+                   />
               </div>
               <div className="flex-1">
-                <label htmlFor="na-start-reason" className="block text-xs text-s-muted">Reason (at least {MIN_REASON} characters)</label>
-                <input id="na-start-reason" type="text" value={startReason} onChange={(e) => setStartReason(e.target.value)}
-                  className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+                <FieldLabel htmlFor="na-start-reason" className="block">Reason (at least {MIN_REASON} characters)</FieldLabel>
+                <Input id="na-start-reason" type="text" value={startReason} onChange={(e) => setStartReason(e.target.value)}
+                  className="w-full" />
               </div>
-              <button type="button" className="s-btn-secondary text-sm" disabled={saveStart.isPending || startReason.trim().length < MIN_REASON || !(startDay || data.startDay)}
+              <Button variant="secondary" type="button"  disabled={saveStart.isPending || startReason.trim().length < MIN_REASON || !(startDay || data.startDay)}
                 onClick={() => saveStart.mutate()}>
                 {saveStart.isPending ? 'Saving…' : 'Save start day'}
-              </button>
+              </Button>
             </div>
           </div>
         )}

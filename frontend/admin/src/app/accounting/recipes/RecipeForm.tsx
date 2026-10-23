@@ -16,6 +16,7 @@
 // cost (MC) readout and the warnings come from the server's
 // POST /recipes/costing-preview — the same costing everything else uses.
 
+import { Button, Field, FieldLabel, Input, LinkButton, Textarea } from '@/components/finance/ui'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -26,6 +27,7 @@ import { fmtPkrWhole } from '../../../lib/money'
 import { useKitchenRole } from '../../inventory/kitchenView'
 import { PACKAGING_USED_WHEN } from './KitchenRecipe'
 import { Select } from '@/components/ui/Select'
+import { FIcon } from '../../../components/finance/ui/icons'
 
 type Kind = 'plate' | 'component' | 'modifier'
 type LineSection = 'ingredients' | 'packaging'
@@ -529,7 +531,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
     const isPack = section === 'packaging'
     const pickable = inventory.filter((it) => isPackagingItem(it) === isPack)
     if (isPack && indexed.length === 0) {
-      return <p className="text-[11px] text-s-dim">No packaging on this dish. A dish served only on a plate needs none.</p>
+      return <p className="text-xs text-s-muted">No packaging on this dish. A dish served only on a plate needs none.</p>
     }
     return (
       <div className="overflow-x-auto rounded-lg border border-s-border">
@@ -624,7 +626,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                     <button onClick={() => setIngs(ings.filter((r) => r.key !== row.key))}
                       disabled={!isPack && indexed.length === 1}
                       aria-label="Remove line"
-                      className="text-s-red hover:bg-s-red/10 rounded px-2 disabled:opacity-30">×</button>
+                      className="text-s-red hover:bg-s-red/10 rounded px-2 disabled:opacity-30"><FIcon name="x" size={14} /></button>
                   </td>
                 </tr>
               )
@@ -655,7 +657,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
         <div className="lg:col-span-2 space-y-6">
           {/* Type picker */}
           <section className="rounded-xl border border-s-border bg-s-surface p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-2">Recipe type</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-s-muted mb-2">Recipe type</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {([
                 { v: 'plate' as Kind,     label: 'Finished plate', hint: 'Menu Item' },
@@ -670,11 +672,11 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                     borderColor: kind === t.v ? 'var(--erp-accent)' : 'rgb(var(--fg-rgb) / 0.08)',
                   }}>
                   <div className="text-sm font-bold">{t.label}</div>
-                  <div className="text-[10px] text-s-muted">{t.hint}</div>
+                  <div className="text-xs text-s-muted">{t.hint}</div>
                 </button>
               ))}
             </div>
-            {isEdit && <p className="text-[10px] text-s-dim mt-2">Kind is locked on edit — to change it, delete and re-create.</p>}
+            {isEdit && <p className="text-xs text-s-muted mt-2">Kind is locked on edit — to change it, delete and re-create.</p>}
           </section>
 
           {/* Lifecycle status — edit mode only. Iteration recipes can be
@@ -683,24 +685,23 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
             <section className="rounded-xl border border-s-border bg-s-surface p-4">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-s-muted">Status</span>
-                  <span className="text-[10px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                  <span className="text-xs font-bold uppercase tracking-wider text-s-muted">Status</span>
+                  <span className="text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                     style={{ background: recipeStatusMeta[initial.status].bg, color: recipeStatusMeta[initial.status].color }}>
                     {recipeStatusMeta[initial.status].label}
                   </span>
                 </div>
                 {initial.status === 'iteration' && (
-                  <button type="button" onClick={() => submitForProd.mutate()} disabled={submitForProd.isPending}
-                    className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
+                  <Button size="sm" type="button" onClick={() => submitForProd.mutate()} disabled={submitForProd.isPending}>
                     {submitForProd.isPending ? 'Submitting…' : 'Submit for production'}
-                  </button>
+                  </Button>
                 )}
                 {initial.status === 'pending_approval' && (
-                  <span className="text-[11px] text-s-muted">Submitted — awaiting CEO approval.</span>
+                  <span className="text-xs text-s-muted">Submitted — awaiting CEO approval.</span>
                 )}
               </div>
               {initial.status === 'iteration' && initial.rejectionReason && (
-                <p className="mt-2 text-[11px]" style={{ color: 'var(--erp-warning)' }}>
+                <p className="mt-2 text-xs" style={{ color: 'var(--erp-warning)' }}>
                   Previously sent back by the CEO: “{initial.rejectionReason}”
                 </p>
               )}
@@ -723,18 +724,18 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
               {kind === 'plate' ? (
                 (isEdit && initial?.menuItemId) ? (
                   <Field label="Menu item">
-                    <input value={menuItems.find((m) => m.id === menuItemId)?.name ?? '—'} disabled className={inputCls}/>
+                    <Input value={menuItems.find((m) => m.id === menuItemId)?.name ?? '—'} disabled className={inputCls}/>
                   </Field>
                 ) : (
                   <Field label="Menu item name *">
-                    <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)}
+                    <Input value={newItemName} onChange={(e) => setNewItemName(e.target.value)}
                       placeholder="e.g. Chimi Shimi" className={inputCls}/>
                   </Field>
                 )
               ) : kind === 'modifier' ? (
                 (isEdit && initial?.modifierPath) ? (
                   <Field label="Add-on">
-                    <input value={initial.modifierPath.label} disabled className={inputCls}/>
+                    <Input value={initial.modifierPath.label} disabled className={inputCls}/>
                   </Field>
                 ) : (
                   <Field label="Dish *" hint={brandId ? 'The menu item the add-on belongs to' : 'Pick a brand first'}>
@@ -747,7 +748,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                 )
               ) : (
                 <Field label="Recipe name *">
-                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Burger sauce" className={inputCls}/>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Burger sauce" className={inputCls}/>
                 </Field>
               )}
 
@@ -782,7 +783,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                   </Field>
                   <div className="md:col-span-2">
                     <Field label="Menu description (optional)" hint="Shows under the item on the customer menu">
-                      <input value={newItemDescription} onChange={(e) => setNewItemDescription(e.target.value)}
+                      <Input value={newItemDescription} onChange={(e) => setNewItemDescription(e.target.value)}
                         placeholder="e.g. House Brioche | Smash Beef | Chimichurri | American Cheese" className={inputCls}/>
                     </Field>
                   </div>
@@ -810,20 +811,20 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
             ? 'What ONE of this add-on adds to the dish — or takes off it (pick "Removes", e.g. "No onion"). Costed per add-on.'
             : 'Raw items pull cost from the latest PO; components (sub-recipes) pull their cost-per-gram. Yield raises cost — to get the recipe qty you buy qty ÷ yield.'}>
             {lineTable('ingredients')}
-            <button onClick={() => setIngs([...ings, blankRow()])}
-              className="mt-2 text-xs text-primary-ink hover:underline font-bold">+ Add ingredient</button>
+            <LinkButton type="button" onClick={() => setIngs([...ings, blankRow()])}
+              className="mt-2">+ Add ingredient</LinkButton>
 
             {/* Recipe-level rollup + pricing knobs (folded in from the old Section 3) */}
             <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 pt-3 border-t border-s-border">
-              <div className="text-[11px]">
+              <div className="text-xs">
                 <p className="text-s-dim">Recipe weight</p>
                 <p className="font-mono font-bold text-s-text">{computed.recipeWeightG.toLocaleString('en', { maximumFractionDigits: 0 })} g</p>
               </div>
-              <div className="text-[11px]">
+              <div className="text-xs">
                 <p className="text-s-dim">Portion size {kind === 'plate' ? `(÷ ${portions})` : ''}</p>
                 <p className="font-mono font-bold text-s-text">{computed.portionSizeG.toLocaleString('en', { maximumFractionDigits: 1 })} g</p>
               </div>
-              <div className="text-[11px]">
+              <div className="text-xs">
                 <p className="text-s-dim">Total recipe cost</p>
                 <p className="font-mono font-bold text-s-text">{fmtPkrWhole(computed.totalRecipe)}</p>
               </div>
@@ -839,9 +840,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
               </div>
             </div>
             {allAllergens.length > 0 && (
-              <div className="mt-3 text-[11px] text-s-muted">
+              <div className="mt-3 text-xs text-s-muted">
                 Allergens (auto): {allAllergens.map((a) => (
-                  <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-[10px]"
+                  <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-xs"
                     style={{ background: 'color-mix(in srgb, var(--erp-warning) 15%, transparent)', color: 'var(--erp-warning)' }}>{a}</span>
                 ))}
               </div>
@@ -852,10 +853,10 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
           {kind === 'plate' && (
             <Section title="Packaging" subtitle={PACKAGING_USED_WHEN}>
               {lineTable('packaging')}
-              <button onClick={() => setIngs([...ings, blankRow('packaging')])}
-                className="mt-2 text-xs text-primary-ink hover:underline font-bold">+ Add packaging</button>
+              <LinkButton type="button" onClick={() => setIngs([...ings, blankRow('packaging')])}
+                className="mt-2">+ Add packaging</LinkButton>
               {computed.packagingTotal !== 0 && (
-                <p className="mt-2 text-[11px] text-s-muted">
+                <p className="mt-2 text-xs text-s-muted">
                   Packaging per portion: <span className="font-mono font-bold text-s-text">{fmtPkrWhole(Math.round(computed.packagingTotal / Math.max(portions ?? 1, 1)))}</span>
                 </p>
               )}
@@ -870,7 +871,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
               ? 'How the kitchen adds (or leaves out) this add-on — optional.'
               : 'General method of preparation (MOP) for this sub-recipe.'}>
             {kind !== 'plate' ? (
-              <textarea value={method} onChange={(e) => setMethod(e.target.value)} rows={5}
+              <Textarea value={method} onChange={(e) => setMethod(e.target.value)} rows={5}
                 placeholder="e.g. Blend garlic, lemon and olive oil; season; rest 30 min…"
                 className={inputCls + ' min-h-[120px]'}/>
             ) : (
@@ -879,18 +880,18 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                   {brandStations.map((s) => <option key={s.id} value={s.name} />)}
                 </datalist>
                 {methodSteps.length === 0 && (
-                  <p className="text-[11px] text-s-dim">No steps yet — add the first stop on the plate's journey through the kitchen.</p>
+                  <p className="text-xs text-s-muted">No steps yet — add the first stop on the plate's journey through the kitchen.</p>
                 )}
                 {methodSteps.map((step, i) => (
                   <div key={i} className="flex items-start gap-2">
-                    <span className="mt-2 text-[11px] font-mono text-s-dim w-5 text-right shrink-0">{i + 1}.</span>
-                    <input list="station-suggestions" value={step.station}
+                    <span className="mt-2 text-xs font-mono text-s-muted w-5 text-right shrink-0">{i + 1}.</span>
+                    <Input list="station-suggestions" value={step.station}
                       onChange={(e) => {
                         const next = [...methodSteps]; next[i] = { ...next[i]!, station: e.target.value }; setMethodSteps(next)
                       }}
                       placeholder="Station (e.g. Grill)"
                       className={controlCls + ' w-40 shrink-0'}/>
-                    <textarea value={step.instruction} rows={2}
+                    <Textarea value={step.instruction} rows={2}
                       onChange={(e) => {
                         const next = [...methodSteps]; next[i] = { ...next[i]!, instruction: e.target.value }; setMethodSteps(next)
                       }}
@@ -906,11 +907,11 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                     </div>
                     <button type="button" title="Remove step"
                       onClick={() => setMethodSteps(methodSteps.filter((_, j) => j !== i))}
-                      className="mt-1 text-s-red hover:bg-red-400/10 rounded px-2 shrink-0">×</button>
+                      className="mt-1 text-s-red hover:bg-s-red/10 rounded px-2 shrink-0"><FIcon name="x" size={14} /></button>
                   </div>
                 ))}
-                <button type="button" onClick={() => setMethodSteps([...methodSteps, { station: '', instruction: '' }])}
-                  className="mt-1 text-xs text-primary-ink hover:underline font-bold">+ Add step</button>
+                <LinkButton type="button" onClick={() => setMethodSteps([...methodSteps, { station: '', instruction: '' }])}
+                  className="mt-1">+ Add step</LinkButton>
               </div>
             )}
           </Section>
@@ -932,7 +933,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
             <div className="rounded-xl border p-3 text-xs" style={dangerBox}>{previewError}</div>
           )}
           <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} mc={preview.data ?? null} loading={preview.isFetching} />
-          {kind === 'plate' && <div className="rounded-xl border border-s-border bg-s-surface p-4 text-[11px] text-s-muted">
+          {kind === 'plate' && <div className="rounded-xl border border-s-border bg-s-surface p-4 text-xs text-s-muted">
             <strong className="text-s-text">Heads-up:</strong> Live Opex/Portion isn't shown until save.
             The backend reads current OpexLine entries for {activeConcept?.name ?? 'your brand'} and divides by{' '}
             <strong className="text-s-text">forecast portions/month</strong> ({activeConcept?.forecastPortionsPerMonth ?? '—'}).
@@ -942,14 +943,14 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
             <div className="rounded-xl border p-3 text-xs" style={dangerBox}>{err}</div>
           )}
           <div className="flex gap-2">
-            <button onClick={() => router.push('/accounting/recipes')}
-              className="flex-1 rounded-lg border border-s-border text-s-text py-2.5 text-sm font-bold hover:bg-s-bg">
+            <Button variant="secondary" type="submit" onClick={() => router.push('/accounting/recipes')}
+              className="flex-1">
               Cancel
-            </button>
-            <button onClick={submit} disabled={save.isPending}
-              className="flex-1 rounded-lg bg-primary text-primary-on py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">
+            </Button>
+            <Button type="submit" onClick={submit} disabled={save.isPending}
+              className="flex-1">
               {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Save recipe'}
-            </button>
+            </Button>
           </div>
         </aside>
       </main>
@@ -963,22 +964,13 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
   return (
     <section className="rounded-xl border border-s-border bg-s-surface p-5">
       <h2 className="text-base font-black">{title}</h2>
-      {subtitle && <p className="text-[11px] text-s-muted mt-0.5 mb-3">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-s-muted mt-0.5 mb-3">{subtitle}</p>}
       {!subtitle && <div className="mb-3"/>}
       {children}
     </section>
   )
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-s-muted block mb-1">{label}</span>
-      {children}
-      {hint && <span className="text-[10px] text-s-dim block mt-1">{hint}</span>}
-    </label>
-  )
-}
 
 interface ComputedShape {
   totalIngredient: number; packagingTotal: number; qFactorCents: number; totalRecipe: number; plateCost: number
@@ -1037,25 +1029,24 @@ function NoCompanyItems({ items, defaultTenantId, onAssigned }: {
                 {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </Select>
               {holdsStock && (
-                <label className="text-[11px] text-s-muted">Opening cost (PKR per {it.unit})
-                  <input type="number" min={0} step="any" value={p.costPkr}
+                <FieldLabel>Opening cost (PKR per {it.unit})
+                  <Input type="number" min={0} step="any" value={p.costPkr}
                     onChange={(e) => setPick({ ...pick, [it.id]: { ...p, costPkr: e.target.value } })}
-                    className="ml-1 w-24 rounded-lg border border-s-border bg-s-surface px-2 py-1 text-xs text-s-text" />
-                </label>
+                    className="ml-1 w-24" />
+                </FieldLabel>
               )}
-              <button type="button" disabled={!ready || assign.isPending}
+              <Button type="button" disabled={!ready || assign.isPending}
                 onClick={() => {
                   setErr({ ...err, [it.id]: '' })
                   assign.mutate(
                     { id: it.id, body: { tenantId: p.tenantId, ...(holdsStock ? { unitCostCents: Math.round(Number(p.costPkr) * 100) } : {}) } },
                     { onSuccess: onAssigned, onError: (e: Error) => setErr({ ...err, [it.id]: e.message || 'Could not assign the company' }) },
                   )
-                }}
-                className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 disabled:opacity-50">
+                }}>
                 {assign.isPending ? 'Assigning…' : 'Assign company'}
-              </button>
+              </Button>
             </div>
-            {holdsStock && <p className="text-[11px] opacity-80">It holds {it.currentStock} {it.unit}: that stock is booked as an opening count in the company you pick.</p>}
+            {holdsStock && <p className="text-xs opacity-80">It holds {it.currentStock} {it.unit}: that stock is booked as an opening count in the company you pick.</p>}
             {err[it.id] && <p role="alert" className="font-bold">{err[it.id]}</p>}
           </div>
         )
@@ -1130,7 +1121,7 @@ export function McBreakdown({ mc, kind }: { mc: McFields; kind: Kind }) {
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Per portion</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-s-muted mb-1">Per portion</p>
         <Line label="Food" value={fmtPkrWhole(mc.stockByClass.food)} />
         <Line label="Drinks" value={fmtPkrWhole(mc.stockByClass.beverage)} />
         <Line label="Plate MC (food + drinks)" value={fmtPkrWhole(mc.standardCents)} bold />
@@ -1138,11 +1129,11 @@ export function McBreakdown({ mc, kind }: { mc: McFields; kind: Kind }) {
         <Line label="Q allowance — in menu pricing, not stock" value={fmtPkrWhole(mc.qCents)} dim />
       </div>
       <div>
-        <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Target MC by order type</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-s-muted mb-1">Target MC by order type</p>
         <Line label="Dine-in" value={fmtPkrWhole(mc.targetMcCents.dine_in)} highlight highlightColor="var(--erp-success)" />
         <Line label="Takeaway" value={fmtPkrWhole(mc.targetMcCents.takeout)} highlight highlightColor="var(--erp-success)" />
         <Line label="Delivery" value={fmtPkrWhole(mc.targetMcCents.delivery)} highlight highlightColor="var(--erp-success)" />
-        <p className="text-[10px] text-s-dim mt-1">Food + drinks + the packaging where that order type uses it. A dine-in box handed over (Box given) shows in actual cost, not here.</p>
+        <p className="text-xs text-s-muted mt-1">Food + drinks + the packaging where that order type uses it. A dine-in box handed over (Box given) shows in actual cost, not here.</p>
       </div>
     </div>
   )
@@ -1166,19 +1157,19 @@ function CostPanel({ computed, kind, yieldGrams, mc, loading }: {
     return (
       <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
         <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(var(--ink-rgb) / 0.10)' }}>
-          <p className="text-[10px] uppercase tracking-wider text-s-muted">Sub recipe</p>
+          <p className="text-xs uppercase tracking-wider text-s-muted">Sub recipe</p>
           <p className="text-base font-black mt-0.5" style={{ color: 'var(--erp-primary-ink)' }}>Costed per gram — not sold directly</p>
         </header>
         <div className="p-4 space-y-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Batch cost build-up</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-s-muted mb-1">Batch cost build-up</p>
             <Line label="Total ingredient" value={fmtPkrWhole(v.totalIngredient)} />
             <Line label="Q factor" value={fmtPkrWhole(v.qFactorCents)} dim />
             <Line label="Batch cost" value={fmtPkrWhole(v.totalRecipe)} bold />
             <Line label="Batch yield" value={yieldGrams && yieldGrams > 0 ? `${yieldGrams.toLocaleString('en')} g` : 'set batch yield'} dim />
             <Line label="Cost per gram" value={cpg != null ? fmtPkrPerG(cpg) : '—'} bold highlight />
           </div>
-          <p className="text-[10px] text-s-dim">
+          <p className="text-xs text-s-muted">
             This cost-per-gram flows automatically into any plate or sub recipe that uses this component.
           </p>
         </div>
@@ -1189,7 +1180,7 @@ function CostPanel({ computed, kind, yieldGrams, mc, loading }: {
   return (
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
       <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.08)' }}>
-        <p className="text-[10px] uppercase tracking-wider text-s-muted">{kind === 'modifier' ? 'Add-on cost' : 'Material cost (MC)'}</p>
+        <p className="text-xs uppercase tracking-wider text-s-muted">{kind === 'modifier' ? 'Add-on cost' : 'Material cost (MC)'}</p>
         <p className="text-base font-black mt-0.5" style={{ color: 'var(--erp-success)' }}>
           {fmtPkrWhole(mc ? mc.standardCents : v.plateCost)} {kind === 'modifier' ? '/ add-on' : '/ plate'}
         </p>
@@ -1203,8 +1194,8 @@ function CostPanel({ computed, kind, yieldGrams, mc, loading }: {
             <Line label="Q allowance — in menu pricing, not stock" value={fmtPkrWhole(v.qFactorCents)} dim />
           </div>
         )}
-        {loading && <p className="text-[10px] text-s-dim">Updating…</p>}
-        <p className="text-[10px] text-s-dim">
+        {loading && <p className="text-xs text-s-muted">Updating…</p>}
+        <p className="text-xs text-s-muted">
           Selling price, contribution margin and profitability live in{' '}
           <Link href="/menu-engineering" className="text-primary-ink hover:underline">Menu Engineering</Link>.
         </p>
@@ -1239,7 +1230,7 @@ function NumInput({ value, onChange, placeholder, className }: {
   const [buf, setBuf] = useState<string | null>(null)
   const shown = buf ?? (value == null || Number.isNaN(value) ? '' : String(value))
   return (
-    <input
+    <Input
       type="text"
       inputMode="decimal"
       value={shown}
@@ -1253,13 +1244,13 @@ function NumInput({ value, onChange, placeholder, className }: {
         if (Number.isFinite(n)) onChange(n)
       }}
       onBlur={() => setBuf(null)}
-      className={className}
+      className={`${`${className} w-auto`} w-auto`}
     />
   )
 }
 
-const inputCls = 'w-full rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-primary focus:outline-none'
+const inputCls = 's-input w-full'
 // Same as inputCls but WITHOUT w-full — for controls inside a flex row where
 // width is governed by flex (w-40/flex-1). w-full there fights flex sizing and
 // collapses siblings (the method-step instruction box was being crushed).
-const controlCls = 'rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-primary focus:outline-none'
+const controlCls = 's-input'

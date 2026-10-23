@@ -16,6 +16,7 @@ import { cleanFontFamily } from './kitCatalog'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '@/components/ui/Modal'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { CompactEmptyState } from '../ui/CompactEmptyState'
 
 export type LibraryAsset = {
   id: string
@@ -295,12 +296,7 @@ export function LibraryPanel({
       {isLoading && <p className="text-sm text-s-muted">Loading library…</p>}
       {isError && <p className="text-sm text-s-red">Could not load the library.</p>}
       {!isLoading && !isError && assets.length === 0 && (
-        <div className="rounded-xl border border-dashed border-s-border py-14 text-center">
-          <p className="text-sm font-semibold text-s-text">Nothing here yet</p>
-          <p className="mt-1 text-xs text-s-muted">
-            {q || tag || brand ? 'No asset matches these filters.' : 'Upload a file or add a copy snippet to start the library.'}
-          </p>
-        </div>
+        <CompactEmptyState message="Nothing here yet" detail={q || tag || brand ? 'No asset matches these filters.' : 'Upload a file or add a copy snippet to start the library.'} />
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">

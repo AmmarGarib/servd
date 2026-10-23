@@ -307,7 +307,7 @@ export default function GroupOrderRoom() {
       <span className="sr-only">Loading group…</span>
     </div>
   )
-  if (go.status === 'submitted' && go.orderId) return <div className="container-narrow section text-center"><h1 className="text-2xl font-bold mb-3">Group submitted!</h1><MagneticLink href={`/${go.concept.slug}/order/${go.orderId}`} className="servd-btn-primary">Track order →</MagneticLink></div>
+  if (go.status === 'submitted' && go.orderId) return <div className="container-narrow section text-center"><h1 className="text-2xl font-bold mb-3">Group submitted!</h1><MagneticLink href={`/${go.concept.slug}/order/${go.orderId}`} className="servd-btn-rect servd-btn-primary">Track order →</MagneticLink></div>
 
   return (
     <div className="container section pb-28 md:pb-12">
@@ -412,7 +412,7 @@ export default function GroupOrderRoom() {
           </div>
           {/* Submit accepts an open group, and a locked one (submit closes the
               cart itself); a refused submit reopens it. */}
-          <button type="button" onClick={submit} disabled={busy || go.items.length === 0 || (go.status !== 'open' && go.status !== 'locked')} className="servd-btn-primary w-full">
+          <button type="button" onClick={submit} disabled={busy || go.items.length === 0 || (go.status !== 'open' && go.status !== 'locked')} className="servd-btn-rect servd-btn-primary w-full">
             {busy ? 'Sending…' : 'Send group order'}
           </button>
         </aside>
@@ -424,7 +424,7 @@ export default function GroupOrderRoom() {
         <div className="md:hidden fixed left-0 right-0 bottom-0 z-40 px-4 pt-3"
           style={{ background: 'var(--servd-bg)', borderTop: '1px solid var(--servd-line)', paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
           <button type="button" onClick={() => { const el = document.getElementById('group-cart'); smoothScrollTo(el); el?.focus({ preventScroll: true }) }}
-            className="servd-btn-primary w-full flex items-center justify-between"
+            className="servd-btn-rect servd-btn-primary w-full flex items-center justify-between"
             aria-label={`Group cart, ${go.items.length} item${go.items.length === 1 ? '' : 's'}, ${fmt(quote?.totalCents ?? 0)}. View cart`}>
             <span>Group cart · {go.items.length} item{go.items.length === 1 ? '' : 's'}</span>
             <span>{fmt(quote?.totalCents ?? 0)} · View</span>

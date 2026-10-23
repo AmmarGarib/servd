@@ -1,6 +1,7 @@
 'use client'
 // One business day: status, the live checks for its step, run / settle /
 // push-through, the report, reopen and history.
+import { Button } from '@/components/finance/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import Link from 'next/link'
@@ -32,7 +33,7 @@ function ProblemCard({ p, canFix, onFix, fixing }: { p: CloseProblem; canFix: bo
   return (
     <div className="rounded-lg border border-s-border p-3 space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className={`${p.severity === 'block' ? 's-badge-red' : 's-badge-amber'} text-[11px]`}>{p.severity === 'block' ? 'Blocks' : 'Warning'}</span>
+        <span className={`${p.severity === 'block' ? 's-badge-red' : 's-badge-amber'} text-xs`}>{p.severity === 'block' ? 'Blocks' : 'Warning'}</span>
         <span className="text-sm font-medium text-s-text">{p.title}</span>
         <span className="text-xs text-s-muted">{p.count}{p.cents ? ` · ${fmtPkr(p.cents)}` : ''}</span>
       </div>
@@ -40,7 +41,7 @@ function ProblemCard({ p, canFix, onFix, fixing }: { p: CloseProblem; canFix: bo
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <Link href={p.link} className="text-primary-ink underline">Fix it</Link>
         {p.fix && canFix && (
-          <button type="button" onClick={() => onFix(p)} disabled={fixing} className="s-btn-secondary text-xs">{p.fix.label}</button>
+          <Button size="sm" variant="secondary" type="button" onClick={() => onFix(p)} disabled={fixing}>{p.fix.label}</Button>
         )}
       </div>
     </div>
@@ -141,11 +142,11 @@ export function DayPanel({ day, onClose, notify }: {
       <div className="flex items-start justify-between gap-2 na-noprint">
         <div>
           <h3 className="text-base font-semibold text-s-text">{fmtDayLong(day)}</h3>
-          {d && <span className={`${statusChip(d).cls} text-[11px] mt-1 inline-block`}>{statusChip(d).label}</span>}
+          {d && <span className={`${statusChip(d).cls} text-xs mt-1 inline-block`}>{statusChip(d).label}</span>}
         </div>
-        <button type="button" onClick={onClose} className="s-btn-secondary text-xs">Close</button>
+        <Button size="sm" variant="secondary" type="button" onClick={onClose}>Close</Button>
       </div>
-      <p className="text-[11px] text-s-muted na-noprint">Sales only: bills, payments and tenders, voids, refunds, till shifts and cash drops. Purchases, payroll, petty cash and other modules are not part of the night audit.</p>
+      <p className="text-xs text-s-muted na-noprint">Sales only: bills, payments and tenders, voids, refunds, till shifts and cash drops. Purchases, payroll, petty cash and other modules are not part of the night audit.</p>
 
       {isLoading && <p className="text-xs text-s-muted">Loading…</p>}
       {error && <p role="alert" className="text-xs text-s-red">{(error as Error).message}</p>}
@@ -187,7 +188,7 @@ export function DayPanel({ day, onClose, notify }: {
                     {d.checks.phase === 'night' ? 'Night run — sales tills, cash, Raast, COD and tenders' : 'Settlement — card payout, cash banked, bank side of sales'}
                   </p>
                   {d.checks.blocks.length === 0 && d.checks.problems.length === 0 && (
-                    <div className="flex items-center gap-2 text-xs"><span className="s-badge-green text-[11px]">Clear</span><span className="text-s-text">Nothing blocks this step.</span></div>
+                    <div className="flex items-center gap-2 text-xs"><span className="s-badge-green text-xs">Clear</span><span className="text-s-text">Nothing blocks this step.</span></div>
                   )}
                   {[...d.checks.blocks, ...d.checks.warnings].map((p) => (
                     <ProblemCard key={p.key} p={p} canFix={d.canRun} onFix={(x) => fix.mutate(x)} fixing={fix.isPending} />
@@ -199,42 +200,42 @@ export function DayPanel({ day, onClose, notify }: {
 
               {d.status === 'open' && d.checks && d.canRun && (
                 <div className="space-y-2">
-                  <button type="button" className="s-btn-primary text-sm w-full"
+                  <Button type="button" className="w-full"
                     disabled={run.isPending || d.earlierOpenDays.length > 0 || d.inClosedPeriod || d.checks.blocks.length > 0}
                     onClick={() => run.mutate(undefined)}>
                     {run.isPending ? 'Running…' : 'Run night audit'}
-                  </button>
+                  </Button>
                   {d.checks.blocks.length > 0 && d.canOverride && d.earlierOpenDays.length === 0 && !d.inClosedPeriod && (
                     <PushThrough blocks={d.checks.blocks} busy={run.isPending} label="Run night audit over these blocks" onGo={(a) => run.mutate(a)} />
                   )}
-                  {d.checks.blocks.length > 0 && !d.canOverride && <p className="text-[11px] text-s-muted">Only the CEO can push the day through a block, with a written reason.</p>}
+                  {d.checks.blocks.length > 0 && !d.canOverride && <p className="text-xs text-s-muted">Only the CEO can push the day through a block, with a written reason.</p>}
                 </div>
               )}
               {d.status === 'open' && !d.canRun && d.checks && !d.inClosedPeriod && (
                 <p className="text-xs text-s-muted">{d.day >= todayKarachi() ? 'The night audit can be run once this day has ended (Pakistan time).' : 'Finance or the CEO runs the night audit.'}</p>
               )}
               {d.status !== 'open' && d.locked && (
-                <p className="text-[11px] text-s-muted">This sales day is locked. A sale, payment, void, cancel or refund dated into it is refused (DAY_AUDITED); only the CEO can reopen the day and make back-dated sales changes, with a written reason.</p>
+                <p className="text-xs text-s-muted">This sales day is locked. A sale, payment, void, cancel or refund dated into it is refused (DAY_AUDITED); only the CEO can reopen the day and make back-dated sales changes, with a written reason.</p>
               )}
 
               {d.status === 'audited' && canSettle && !d.inClosedPeriod && (
                 <div className="space-y-2">
-                  <button type="button" className="s-btn-primary text-sm w-full" disabled={settle.isPending} onClick={() => settle.mutate(undefined)}>
+                  <Button type="button" className="w-full" disabled={settle.isPending} onClick={() => settle.mutate(undefined)}>
                     {settle.isPending ? 'Checking…' : 'Check settlement now'}
-                  </button>
+                  </Button>
                   {d.checks && d.checks.blocks.length > 0 && d.canOverride && (
                     <PushThrough blocks={d.checks.blocks} busy={settle.isPending} label="Close over these blocks" onGo={(a) => settle.mutate(a)} />
                   )}
-                  {d.checks && d.checks.blocks.length > 0 && !d.canOverride && <p className="text-[11px] text-s-muted">Only the CEO can close the day over a block, with a written reason.</p>}
-                  <p className="text-[11px] text-s-muted">The day also closes by itself once its card payout and bank lines match.</p>
+                  {d.checks && d.checks.blocks.length > 0 && !d.canOverride && <p className="text-xs text-s-muted">Only the CEO can close the day over a block, with a written reason.</p>}
+                  <p className="text-xs text-s-muted">The day also closes by itself once its card payout and bank lines match.</p>
                 </div>
               )}
 
               {d.canReopen && (
                 <div className="pt-3 border-t border-s-border">
-                  <button type="button" className="s-btn-danger text-sm" disabled={reopen.isPending} onClick={() => void doReopen()}>
+                  <Button variant="danger" type="button"  disabled={reopen.isPending} onClick={() => void doReopen()}>
                     {reopen.isPending ? 'Reopening…' : 'Reopen day (CEO)'}
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -244,7 +245,7 @@ export function DayPanel({ day, onClose, notify }: {
             <div className="space-y-3">
               {report ? (
                 <>
-                  <button type="button" onClick={() => window.print()} className="s-btn-secondary text-xs na-noprint">Print</button>
+                  <Button size="sm" variant="secondary" type="button" onClick={() => window.print()} className="na-noprint">Print</Button>
                   <DailyReportView report={report} preview={live} />
                 </>
               ) : (

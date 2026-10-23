@@ -3,11 +3,20 @@
 // freshly seeded company-less chart of accounts. The suite assumes
 // DATABASE_URL points at a disposable test database.
 
+// First import, on purpose: TEST_RLS swaps the connection before src/lib/prisma.ts loads.
+import './rls/enter.js'
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { beforeAll, afterAll } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { CHART_OF_ACCOUNTS } from '../src/lib/chartOfAccounts.js'
+import { isRlsMode, ownerUrl, applyRlsMode } from './rls/rlsMode.js'
+
+// TEST_RLS=1: the schema is built as the owner, the migrations' row-level
+// security is replayed onto it, and the app connects as a plain role with
+// RLS_ENFORCE=1 — the live company lock (tests/rls/rlsMode.ts; the swap
+// itself happens in ./rls/enter.js, the first import above).
+const RLS_MODE = isRlsMode()
 
 declare global {
   // eslint-disable-next-line no-var
@@ -15,8 +24,10 @@ declare global {
 }
 
 beforeAll(async () => {
-  if (!process.env.DATABASE_URL?.includes('test')) {
-    throw new Error(`Refusing to run tests against non-test DATABASE_URL: ${process.env.DATABASE_URL}`)
+  // The owner's URL: DATABASE_URL itself, or (TEST_RLS) the one the run started with.
+  const dbUrl = RLS_MODE ? ownerUrl() : process.env.DATABASE_URL
+  if (!dbUrl?.includes('test')) {
+    throw new Error(`Refusing to run tests against non-test DATABASE_URL: ${dbUrl}`)
   }
 
   // Build the schema straight from schema.prisma rather than replaying the
@@ -38,12 +49,12 @@ beforeAll(async () => {
   // gets `db push` instead. (The migration history still can't rebuild a
   // database from scratch — that's a real disaster-recovery gap, and fixing it
   // means a new migration that repairs the old ones, not an edit in place.)
-  execSync('pnpm exec prisma db push --force-reset --skip-generate --accept-data-loss', {
+  execSync('npx prisma db push --force-reset --skip-generate --accept-data-loss', {
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, DATABASE_URL: dbUrl },
   })
 
-  const prisma = new PrismaClient()
+  const prisma = new PrismaClient({ datasourceUrl: dbUrl })
   globalThis.__TEST_PRISMA__ = prisma
 
   // `db push` builds only what schema.prisma can express. The raw-SQL objects
@@ -62,6 +73,9 @@ beforeAll(async () => {
   // The suite tests the loyalty engine itself, so it runs with loyalty ON; the pause has its
   // own test (tests/loyaltyPause.test.ts), which switches it off again.
   await prisma.setting.upsert({ where: { key: 'loyalty.paused' }, create: { key: 'loyalty.paused', value: '{"paused":false}' }, update: { value: '{"paused":false}' } })
+
+  // TEST_RLS: policies on, app role granted (after every object above exists).
+  if (RLS_MODE) await applyRlsMode(prisma)
 }, 60_000)
 
 afterAll(async () => {

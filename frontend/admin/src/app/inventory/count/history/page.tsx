@@ -5,6 +5,8 @@
 // whose posting was refused is flagged posting_failed; finance re-posts it from
 // Reconciliation → Backfill unposted.
 
+import { CompactEmptyState } from '../../../../components/ui/CompactEmptyState'
+import { ArrowLeft } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -53,7 +55,7 @@ export default function CountHistoryPage() {
   return (
     <div className="min-h-screen bg-s-bg">
       <header className="px-4 sm:px-7 py-5 border-b border-s-border">
-        <Link href="/inventory/count" className="text-xs text-s-muted hover:text-s-text">← Physical count</Link>
+        <Link href="/inventory/count" className="inline-flex min-h-11 items-center gap-1.5 text-xs text-s-muted hover:text-s-text"><ArrowLeft size={14} aria-hidden="true" />Physical count</Link>
         <h1 className="text-2xl font-black text-s-text mt-2">Count history</h1>
         <p className="text-sm text-s-muted mt-1 max-w-2xl">
           Every count with what was found, what it was worth and whether it reached the books. The latest 50 are shown.
@@ -82,10 +84,7 @@ export default function CountHistoryPage() {
         {error && <p role="alert" className="text-xs text-s-red">{stockErrorText(error, 'The counts could not be loaded')}</p>}
         {isLoading && <p className="text-sm text-s-muted">Loading…</p>}
         {!isLoading && !error && counts.length === 0 && (
-          <div className="rounded-xl border border-s-border p-8 text-center">
-            <p className="font-semibold text-s-text">No counts yet</p>
-            <p className="text-sm text-s-muted mt-1">Spot counts and opening counts appear here once they are saved.</p>
-          </div>
+          <CompactEmptyState message="No counts yet. Spot counts and opening counts appear here once saved." />
         )}
 
         <div className="space-y-3">
@@ -157,13 +156,13 @@ export default function CountHistoryPage() {
                                   <td className="py-2 pr-3 text-right font-mono whitespace-nowrap"
                                     style={{ color: Math.abs(diff) <= EPS ? 'rgb(var(--fg-rgb) / 0.45)' : diff < 0 ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
                                     {Math.abs(diff) <= EPS ? '—' : `${diff > 0 ? '+' : ''}${qtyText(diff)}`}
-                                    {l.variancePct != null && Math.abs(diff) > EPS && <span className="text-[10px] ml-1">({(l.variancePct * 100).toFixed(1)}%)</span>}
+                                    {l.variancePct != null && Math.abs(diff) > EPS && <span className="text-xs ml-1">({(l.variancePct * 100).toFixed(1)}%)</span>}
                                   </td>
                                 )}
                                 {!hidden && (
                                   <td className="py-2 pr-3 text-right whitespace-nowrap text-s-text">
                                     {l.valueCents == null || l.valueCents === 0 ? '—' : fmtPkrWhole(l.valueCents)}
-                                    {l.unitCostCents != null && l.valueCents ? <span className="block text-[10px] text-s-muted">at {fmtPkr(l.unitCostCents)} / {l.unit ?? 'unit'}</span> : null}
+                                    {l.unitCostCents != null && l.valueCents ? <span className="block text-xs text-s-muted">at {fmtPkr(l.unitCostCents)} / {l.unit ?? 'unit'}</span> : null}
                                   </td>
                                 )}
                                 <td className="py-2 text-xs text-s-muted min-w-[8rem]">{l.reason ?? '—'}</td>

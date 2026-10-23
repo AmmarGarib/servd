@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react'
-import { ArrowRight, Check, TriangleAlert } from 'lucide-react'
+import { ArrowRight, TriangleAlert } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Modifier } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
@@ -20,7 +20,7 @@ import { orderRef } from '../../lib/orderRef'
 import { OrderSummary } from '../../components/pos/flow/OrderSummary'
 import { TillReports } from '../../components/pos/flow/TillReports'
 import { getOrderInfo, flowErrorMessage, type BoardTable, type OrderInfoView } from '../../components/pos/flow/flowApi'
-import { requestSync, listenForSync, getQueuedOrders } from '../../lib/offline-queue'
+import { OfflineQueueBar } from '../../components/pos/OfflineQueue'
 import Link from 'next/link'
 import { useCurrentShift } from '../../hooks/useCurrentShift'
 import { useDialog } from '../../components/ui/Modal'
@@ -55,30 +55,13 @@ export default function PosPage() {
   const [noCharge, setNoCharge] = useState<TillOrder | null>(null)
   const [info, setInfo] = useState<InfoModal | null>(null)
   const [assignPick, setAssignPick] = useState<{ label: string; tickets: TillOrder[] } | null>(null)
-  const [isOnline, setIsOnline] = useState(true)
-  const [queuedCount, setQueuedCount] = useState(0)
-  const [syncedCount, setSyncedCount] = useState(0)
   const [note, setNote] = useState<string | null>(null)
   const confirm = useConfirm()
 
+  // The service worker only caches pages; offline orders are kept and replayed by the page
+  // (OfflineQueueBar → lib/offline-queue.ts) with this cashier's session.
   useEffect(() => {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
-    setIsOnline(navigator.onLine)
-    const handleOnline = () => { setIsOnline(true); requestSync() }
-    const handleOffline = () => setIsOnline(false)
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
-    getQueuedOrders().then(orders => setQueuedCount(orders.length)).catch(() => {})
-    const unsub = listenForSync((count) => {
-      setSyncedCount(count)
-      setQueuedCount(0)
-      setTimeout(() => setSyncedCount(0), 4000)
-    })
-    return () => {
-      window.removeEventListener('online', handleOnline)
-      window.removeEventListener('offline', handleOffline)
-      unsub()
-    }
   }, [])
 
   const storedConceptId = usePosStore((s) => s.conceptId)
@@ -309,18 +292,7 @@ export default function PosPage() {
   return (
     <div className="erp-kitchen-dark flex h-screen h-dvh flex-col overflow-hidden bg-kds-bg">
       {/* Banners */}
-      {!isOnline && (
-        <div className="flex items-center gap-2 border-b border-kds-amber/40 bg-kds-amber/15 px-3 py-2">
-          <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-kds-amber" />
-          <span className="flex-1 text-sm font-semibold text-kds-amber">Offline — orders will be queued and synced when connection returns</span>
-          {queuedCount > 0 && <span className="text-xs font-bold text-kds-amber">{queuedCount} queued</span>}
-        </div>
-      )}
-      {syncedCount > 0 && (
-        <div className="flex items-center gap-2 border-b border-kds-green/30 bg-kds-green/15 px-3 py-2">
-          <span className="flex items-center gap-1.5 text-sm font-semibold text-kds-green"><Check size={16} aria-hidden="true" /> {syncedCount} offline order{syncedCount !== 1 ? 's' : ''} synced</span>
-        </div>
-      )}
+      <OfflineQueueBar />
       {!shiftId && (
         <div className="flex items-center justify-between border-b border-kds-red bg-kds-red/20 px-3 py-2">
           <span className="flex items-center gap-1.5 text-sm font-semibold text-kds-red"><TriangleAlert size={16} aria-hidden="true" /> No shift open — payments will be blocked</span>

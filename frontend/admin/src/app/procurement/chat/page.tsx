@@ -1,8 +1,10 @@
 'use client'
+import { Button, Dialog, FieldLabel, Input, Textarea } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { FIcon, type FIconName } from '@/components/finance/ui/icons'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,10 +42,10 @@ interface Message {
 }
 
 // Channel display metadata — keeps the chip render code declarative.
-const CHANNEL_META: Record<string, { icon: string; label: string; color: string }> = {
-  web_portal: { icon: '🌐', label: 'Portal',   color: 'text-s-muted' },
-  email:      { icon: '📧', label: 'Email',    color: 'text-blue-700' },
-  whatsapp:   { icon: '💬', label: 'WhatsApp', color: 'text-[#25D366]' },
+const CHANNEL_META: Record<string, { icon: FIconName; label: string; color: string }> = {
+  web_portal: { icon: 'globe', label: 'Portal',   color: 'text-s-muted' },
+  email:      { icon: 'mail', label: 'Email',    color: 'text-s-blue' },
+  whatsapp:   { icon: 'chat', label: 'WhatsApp', color: 'text-success' },
 }
 
 interface PortalToken {
@@ -56,27 +58,27 @@ interface PortalToken {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORY_PRESETS: Array<{ value: string; label: string; emoji: string; example: string }> = [
-  { value: 'meat',       label: 'Meat & Poultry', emoji: '🥩', example: 'e.g. Mubarak Meat House' },
-  { value: 'produce',    label: 'Vegetables & Produce', emoji: '🥬', example: 'e.g. Sabzi Mandi' },
-  { value: 'dairy',      label: 'Dairy & Eggs', emoji: '🥚', example: 'e.g. Olpers Distributor' },
-  { value: 'dry_goods',  label: 'Dry Goods & Spices', emoji: '🌾', example: 'e.g. Karachi Spice Co' },
-  { value: 'beverages',  label: 'Beverages', emoji: '🥤', example: 'e.g. Coca-Cola Lahore' },
-  { value: 'packaging',  label: 'Packaging', emoji: '📦', example: 'e.g. EcoBox Pakistan' },
-  { value: 'cleaning',   label: 'Cleaning Supplies', emoji: '🧴', example: 'e.g. CleanPro' },
-  { value: 'other',      label: 'Other', emoji: '🏷',  example: 'e.g. Equipment, services…' },
+const CATEGORY_PRESETS: Array<{ value: string; label: string; icon: FIconName; example: string }> = [
+  { value: 'meat',       label: 'Meat & Poultry', icon: 'meat', example: 'e.g. Mubarak Meat House' },
+  { value: 'produce',    label: 'Vegetables & Produce', icon: 'produce', example: 'e.g. Sabzi Mandi' },
+  { value: 'dairy',      label: 'Dairy & Eggs', icon: 'egg', example: 'e.g. Olpers Distributor' },
+  { value: 'dry_goods',  label: 'Dry Goods & Spices', icon: 'grain', example: 'e.g. Karachi Spice Co' },
+  { value: 'beverages',  label: 'Beverages', icon: 'drink', example: 'e.g. Coca-Cola Lahore' },
+  { value: 'packaging',  label: 'Packaging', icon: 'box', example: 'e.g. EcoBox Pakistan' },
+  { value: 'cleaning',   label: 'Cleaning Supplies', icon: 'clean', example: 'e.g. CleanPro' },
+  { value: 'other',      label: 'Other', icon: 'tag',  example: 'e.g. Equipment, services…' },
 ]
 
 const MESSAGE_TEMPLATES = [
-  { label: '📋 Weekly order',  subject: 'Weekly order',
+  { label: 'Weekly order',  subject: 'Weekly order',
     body: 'Hi! Would like to place this week\'s order. Please confirm availability and prices for:\n\n- \n- \n\nDelivery preferred by [day].' },
-  { label: '💰 Price check',   subject: 'Price inquiry',
+  { label: 'Price check',   subject: 'Price inquiry',
     body: 'Hi, can you share your latest prices for:\n\n- \n- \n\nThanks!' },
-  { label: '🆕 New product',   subject: 'New product inquiry',
+  { label: 'New product',   subject: 'New product inquiry',
     body: 'Hi, do you stock [product]? If yes, what are your minimum order quantities and lead time?' },
-  { label: '⏰ Delivery delay', subject: 'Delivery follow-up',
+  { label: 'Delivery delay', subject: 'Delivery follow-up',
     body: 'Hi, checking on order ref [#]. When can we expect delivery?' },
-  { label: '⭐ Quality issue',  subject: 'Quality concern',
+  { label: 'Quality issue',  subject: 'Quality concern',
     body: 'Hi, we noticed an issue with the recent delivery — [describe]. Can we discuss?' },
 ]
 
@@ -148,12 +150,10 @@ export default function SupplierChatPage() {
             <h1 className="font-black text-s-text">Suppliers</h1>
             <p className="text-xs text-s-muted mt-0.5">{conversations.length} active · {suppliers.length} total</p>
           </div>
-          <button
-            onClick={() => setShowWizard(true)}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on hover:opacity-90"
-          >
+          <Button size="sm" type="submit"
+            onClick={() => setShowWizard(true)}>
             + Add
-          </button>
+          </Button>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -177,7 +177,7 @@ export default function SupplierChatPage() {
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-sm text-s-text truncate">{c.supplier.name}</p>
                       {c.supplier.category && (
-                        <span className="shrink-0 text-[10px] uppercase tracking-wider text-s-muted">
+                        <span className="shrink-0 text-xs uppercase tracking-wider text-s-muted">
                           {c.supplier.category}
                         </span>
                       )}
@@ -191,7 +191,7 @@ export default function SupplierChatPage() {
                     )}
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="text-[10px] text-s-muted">
+                    <p className="text-xs text-s-muted">
                       {isToday
                         ? lastDate.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })
                         : lastDate.toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}
@@ -218,7 +218,7 @@ export default function SupplierChatPage() {
 
           {!convLoading && conversations.length === 0 && suppliers.length > 0 && (
             <div className="p-6 text-center">
-              <p className="text-3xl mb-2">💬</p>
+              <p className="mb-2 flex justify-center text-s-muted"><FIcon name="chat" size={28} /></p>
               <p className="text-sm font-semibold text-s-text">Start your first conversation</p>
               <p className="text-xs text-s-muted mt-1">Pick a supplier above to begin chatting.</p>
             </div>
@@ -240,7 +240,7 @@ export default function SupplierChatPage() {
         ) : (
           <div className="flex flex-1 items-center justify-center bg-s-bg/40">
             <div className="text-center max-w-sm px-6">
-              <p className="text-5xl mb-3">💬</p>
+              <p className="mb-3 flex justify-center text-s-muted"><FIcon name="chat" size={44} /></p>
               <p className="font-bold text-s-text">Pick a conversation to read</p>
               <p className="text-sm text-s-muted mt-1">
                 Or hit <span className="font-bold text-primary-ink">+ Add</span> to onboard a new supplier in 30 seconds.
@@ -274,7 +274,7 @@ function FirstRunHero({ onAddSupplier }: { onAddSupplier: () => void }) {
     <div className="flex h-screen flex-col items-center justify-center bg-s-bg p-8">
       <div className="max-w-2xl w-full">
         <div className="text-center mb-10">
-          <span className="text-6xl">🏭</span>
+          <span className="inline-flex text-s-muted"><FIcon name="factory" size={56} /></span>
           <h1 className="mt-4 text-3xl font-black text-s-text">Connect with your suppliers</h1>
           <p className="mt-3 text-s-muted max-w-md mx-auto leading-relaxed">
             Skip the WhatsApp scramble. Add your meat, produce, and dry-goods suppliers — they get a private portal link, you get every order in one thread.
@@ -285,7 +285,7 @@ function FirstRunHero({ onAddSupplier }: { onAddSupplier: () => void }) {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8">
           {CATEGORY_PRESETS.slice(0, 3).map((cat) => (
             <div key={cat.value} className="rounded-xl border border-s-border bg-s-surface/50 p-4">
-              <p className="text-3xl mb-2">{cat.emoji}</p>
+              <p className="mb-2 text-s-muted"><FIcon name={cat.icon} size={28} /></p>
               <p className="font-bold text-sm text-s-text">{cat.label}</p>
               <p className="text-xs text-s-muted mt-0.5">{cat.example}</p>
             </div>
@@ -311,12 +311,11 @@ function FirstRunHero({ onAddSupplier }: { onAddSupplier: () => void }) {
           </ol>
         </div>
 
-        <button
+        <Button type="submit"
           onClick={onAddSupplier}
-          className="w-full rounded-xl bg-primary py-4 font-black text-primary-on hover:opacity-90 transition-opacity"
-        >
+          className="w-full">
           Add your first supplier →
-        </button>
+        </Button>
         <p className="text-center text-xs text-s-muted mt-3">
           Takes about 30 seconds. You can edit details later.
         </p>
@@ -379,9 +378,9 @@ function ConversationView({
   // Resolved channels we'll fan-out to when staff hits send. Drives the
   // "Will reach via" hint above the input so operators know what's happening.
   const willReach = [
-    '🌐 Portal',
-    supplier.email ? '📧 ' + supplier.email : null,
-    (supplier.whatsappPhone ?? supplier.phone) ? '💬 WhatsApp' : null,
+    'Portal',
+    supplier.email ? 'Email ' + supplier.email : null,
+    (supplier.whatsappPhone ?? supplier.phone) ? 'WhatsApp' : null,
   ].filter(Boolean) as string[]
 
   return (
@@ -397,17 +396,17 @@ function ConversationView({
               chip is a quick-edit affordance; click "+ add" if missing. */}
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {supplier.email && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-[10px] text-blue-700">
-                📧 {supplier.email}
+              <span className="inline-flex items-center gap-1 rounded-full bg-s-blue/10 border border-s-blue/30 px-2 py-0.5 text-xs text-s-blue">
+                <FIcon name="mail" size={12} /> {supplier.email}
               </span>
             )}
             {(supplier.whatsappPhone ?? supplier.phone) && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#25D366]/10 border border-[#25D366]/30 px-2 py-0.5 text-[10px] text-[#25D366]">
-                💬 {supplier.whatsappPhone ?? supplier.phone}
+              <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 border border-accent/30 px-2 py-0.5 text-xs text-success">
+                <FIcon name="chat" size={12} /> {supplier.whatsappPhone ?? supplier.phone}
               </span>
             )}
             {!supplier.email && !supplier.whatsappPhone && !supplier.phone && (
-              <span className="text-[10px] text-s-muted italic">
+              <span className="text-xs text-s-muted italic">
                 No email or WhatsApp on file — only the portal link works.
               </span>
             )}
@@ -449,7 +448,7 @@ function ConversationView({
                       are reaching suppliers through real channels. */}
                   {channelMeta && (
                     <span className={`inline-flex items-center gap-0.5 ${channelMeta.color}`} title={`Replied via ${channelMeta.label}`}>
-                      · {channelMeta.icon} {channelMeta.label}
+                      · <FIcon name={channelMeta.icon} size={12} /> {channelMeta.label}
                     </span>
                   )}
                 </p>
@@ -459,7 +458,7 @@ function ConversationView({
         })}
         {messages.length === 0 && (
           <div className="text-center mt-12">
-            <p className="text-3xl mb-2">📬</p>
+            <p className="mb-2 flex justify-center text-s-muted"><FIcon name="inbox" size={28} /></p>
             <p className="text-sm text-s-muted">No messages yet — pick a template below to start.</p>
           </div>
         )}
@@ -469,13 +468,12 @@ function ConversationView({
       {newMessage.trim().length === 0 && messages.length < 5 && (
         <div className="border-t border-s-border bg-s-surface/60 px-3 pt-2 pb-1 flex gap-1.5 overflow-x-auto">
           {MESSAGE_TEMPLATES.map((tpl) => (
-            <button
+            <Button variant="secondary" size="sm" type="submit"
               key={tpl.label}
               onClick={() => setNewMessage(tpl.body)}
-              className="shrink-0 rounded-full border border-s-border bg-s-bg px-3 py-1 text-xs text-s-muted hover:text-s-text hover:border-primary transition-colors"
-            >
+              className="shrink-0">
               {tpl.label}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -483,31 +481,29 @@ function ConversationView({
       {/* Channel reach hint — surfaces which channels this message will fan
           out to. Reduces "did the supplier actually get this?" anxiety, and
           when a channel is missing it nudges operators to add the contact info. */}
-      <div className="border-t border-s-border bg-s-surface/40 px-4 py-1.5 flex items-center justify-between text-[10px]">
+      <div className="border-t border-s-border bg-s-surface/40 px-4 py-1.5 flex items-center justify-between text-xs">
         <span className="text-s-muted">
           On send: <span className="text-s-text font-semibold">{willReach.join(' · ')}</span>
         </span>
         {willReach.length === 1 && (
-          <span className="text-s-amber">⚠ Only the portal — supplier sees nothing until they open the link.</span>
+          <span className="text-s-amber">Only the portal — supplier sees nothing until they open the link.</span>
         )}
       </div>
 
       <div className="border-t border-s-border bg-s-surface p-3 flex gap-2">
-        <textarea
+        <Textarea
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && newMessage.trim()) { e.preventDefault(); onSend() } }}
           placeholder="Type a message… (Enter to send)"
           rows={2}
-          className="flex-1 resize-none rounded-xl border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none"
+          className="flex-1"
         />
-        <button
+        <Button type="submit"
           onClick={onSend}
-          disabled={!newMessage.trim() || sending}
-          className="rounded-xl bg-primary px-4 py-2 font-bold text-primary-on disabled:opacity-50 hover:opacity-90"
-        >
-          {sending ? '…' : '➤'}
-        </button>
+          disabled={!newMessage.trim() || sending}>
+          {sending ? '…' : <FIcon name="send" size={16} />}
+        </Button>
       </div>
     </>
   )
@@ -557,13 +553,11 @@ function PortalTokenButton({
 
   if (!link) {
     return (
-      <button
+      <Button variant="secondary" size="sm" type="submit"
         onClick={() => generate.mutate()}
-        disabled={generate.isPending}
-        className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-muted hover:text-s-text"
-      >
-        {generate.isPending ? 'Generating…' : '🔗 Invite supplier'}
-      </button>
+        disabled={generate.isPending}>
+        {generate.isPending ? 'Generating…' : <><FIcon name="link" size={14} /> Invite supplier</>}
+      </Button>
     )
   }
 
@@ -574,9 +568,9 @@ function PortalTokenButton({
           href={waUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="rounded-lg bg-[#25D366] text-bone px-3 py-1.5 text-xs font-bold hover:opacity-90"
+          className="rounded-lg bg-accent text-accent-on px-3 py-1.5 text-xs font-bold hover:opacity-90"
         >
-          📱 WhatsApp
+          <FIcon name="phone" size={14} /> WhatsApp
         </a>
       )}
       <button
@@ -585,7 +579,7 @@ function PortalTokenButton({
           copied ? 'border-accent text-success' : 'border-s-border text-s-muted hover:text-s-text'
         }`}
       >
-        {copied ? '✓ Copied' : '📋 Copy link'}
+        {copied ? <><FIcon name="check" size={14} /> Copied</> : <><FIcon name="clipboard" size={14} /> Copy link</>}
       </button>
     </div>
   )
@@ -701,11 +695,8 @@ function SupplierOnboardingWizard({
     : null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-secondary/50 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-2xl bg-s-surface border border-s-border shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog title="Add a supplier" onClose={onClose} wide>
+      <div>
         {/* Step indicator */}
         <div className="flex items-center justify-between border-b border-s-border px-5 py-3">
           <div className="flex items-center gap-2">
@@ -720,13 +711,12 @@ function SupplierOnboardingWizard({
                       : 'bg-s-bg text-s-muted border border-s-border'
                   }`}
                 >
-                  {step > n ? '✓' : n}
+                  {step > n ? <FIcon name="check" size={14} /> : n}
                 </div>
                 {n < 3 && <div className={`h-px w-8 ${step > n ? 'bg-accent' : 'bg-s-border'}`} />}
               </div>
             ))}
           </div>
-          <button onClick={onClose} className="text-s-muted text-2xl leading-none hover:text-s-text">✕</button>
         </div>
 
         <div className="p-5 max-h-[70vh] overflow-y-auto">
@@ -757,7 +747,7 @@ function SupplierOnboardingWizard({
 
               {mode === 'existing' ? (
                 <div>
-                  <label className="text-xs text-s-muted">Supplier *</label>
+                  <FieldLabel>Supplier *</FieldLabel>
                   <Select
                     value={supplierId}
                     onChange={(e) => setSupplierId(e.target.value)}
@@ -774,17 +764,17 @@ function SupplierOnboardingWizard({
               ) : (
                 <>
                   <div>
-                    <label className="text-xs text-s-muted">Supplier name *</label>
-                    <input
+                    <FieldLabel>Supplier name *</FieldLabel>
+                    <Input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="e.g. Mubarak Meat House"
-                      className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2.5 text-s-text focus:border-primary focus:outline-none text-sm"
+                      className="w-full mt-1"
                       autoFocus
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-s-muted">Category</label>
+                    <FieldLabel>Category</FieldLabel>
                     <div className="grid grid-cols-2 gap-1.5 mt-1">
                       {CATEGORY_PRESETS.map((cat) => (
                         <button
@@ -796,7 +786,7 @@ function SupplierOnboardingWizard({
                               : 'border-s-border text-s-muted hover:text-s-text'
                           }`}
                         >
-                          <span className="text-base">{cat.emoji}</span>
+                          <FIcon name={cat.icon} size={16} />
                           {cat.label}
                         </button>
                       ))}
@@ -804,8 +794,8 @@ function SupplierOnboardingWizard({
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs text-s-muted">Phone (calls)</label>
-                      <input
+                      <FieldLabel>Phone (calls)</FieldLabel>
+                      <Input
                         value={phone}
                         onChange={(e) => {
                           setPhone(e.target.value)
@@ -815,30 +805,30 @@ function SupplierOnboardingWizard({
                           if (!whatsappPhone) setWhatsappPhone(e.target.value)
                         }}
                         placeholder="+92 300 1234567"
-                        className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2.5 text-s-text focus:border-primary focus:outline-none text-sm"
+                        className="w-full mt-1"
                       />
                     </div>
                     <div>
-                      <label className="text-xs text-s-muted">Email</label>
-                      <input
+                      <FieldLabel>Email</FieldLabel>
+                      <Input
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         placeholder="orders@supplier.com"
-                        className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2.5 text-s-text focus:border-primary focus:outline-none text-sm"
+                        className="w-full mt-1"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs text-s-muted">WhatsApp number <span className="text-s-muted/60">(if different from phone)</span></label>
-                    <input
+                    <FieldLabel>WhatsApp number <span className="text-s-muted/60">(if different from phone)</span></FieldLabel>
+                    <Input
                       value={whatsappPhone}
                       onChange={(e) => setWhatsappPhone(e.target.value)}
                       placeholder="+92 300 1234567"
-                      className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2.5 text-s-text focus:border-primary focus:outline-none text-sm"
+                      className="w-full mt-1"
                     />
                   </div>
                   <p className="text-xs text-s-muted">
-                    💡 Email and WhatsApp both auto-deliver every message — supplier replies route back here as a chat.
+                    <FIcon name="idea" size={14} /> Email and WhatsApp both auto-deliver every message — supplier replies route back here as a chat.
                   </p>
                 </>
               )}
@@ -856,7 +846,7 @@ function SupplierOnboardingWizard({
               </div>
 
               <div className="rounded-xl border border-s-border bg-s-bg p-3">
-                <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">Portal link</p>
+                <p className="text-xs uppercase tracking-wider text-s-muted font-bold">Portal link</p>
                 <p className="text-xs font-mono text-primary-ink break-all mt-1">{portalLink}</p>
               </div>
 
@@ -866,36 +856,34 @@ function SupplierOnboardingWizard({
                     href={waUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 rounded-xl bg-[#25D366] text-bone py-3 font-black hover:opacity-90"
+                    className="flex items-center justify-center gap-2 rounded-xl bg-accent text-accent-on py-3 font-black hover:opacity-90"
                   >
-                    📱 Send via WhatsApp
+                    <FIcon name="phone" size={16} /> Send via WhatsApp
                   </a>
                 ) : (
                   <div className="rounded-xl border border-dashed border-s-border p-3 text-center text-xs text-s-muted">
                     No phone on file — copy the link below or add a phone in step 1 to enable WhatsApp.
                   </div>
                 )}
-                <button
+                <Button variant="secondary" type="submit"
                   onClick={() => {
                     if (!portalLink) return
                     navigator.clipboard.writeText(portalLink)
-                  }}
-                  className="rounded-xl border border-s-border py-2.5 text-sm text-s-muted hover:text-s-text"
-                >
-                  📋 Copy link to clipboard
-                </button>
+                  }}>
+                  <FIcon name="clipboard" size={16} /> Copy link to clipboard
+                </Button>
                 {email && (
                   <a
                     href={`mailto:${email}?subject=${encodeURIComponent('Your supplier portal')}&body=${encodeURIComponent(waMessage)}`}
                     className="rounded-xl border border-s-border py-2.5 text-sm text-s-muted hover:text-s-text text-center"
                   >
-                    ✉ Email the link instead
+                    <FIcon name="mail" size={16} /> Email the link instead
                   </a>
                 )}
               </div>
 
               <p className="text-xs text-s-muted text-center">
-                Skip this if you'd rather invite later — they'll get a link when you tap <span className="font-bold">🔗 Invite</span> in the chat.
+                Skip this if you'd rather invite later — they'll get a link when you tap <span className="font-bold">Invite</span> in the chat.
               </p>
             </div>
           )}
@@ -910,33 +898,31 @@ function SupplierOnboardingWizard({
 
               <div className="flex gap-1.5 flex-wrap">
                 {MESSAGE_TEMPLATES.map((tpl) => (
-                  <button
+                  <Button variant="secondary" size="sm" type="submit"
                     key={tpl.label}
-                    onClick={() => { setSubject(tpl.subject); setMessage(tpl.body) }}
-                    className="rounded-full border border-s-border bg-s-bg px-3 py-1 text-xs text-s-muted hover:text-s-text hover:border-primary transition-colors"
-                  >
+                    onClick={() => { setSubject(tpl.subject); setMessage(tpl.body) }}>
                     {tpl.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
 
               <div>
-                <label className="text-xs text-s-muted">Subject (optional)</label>
-                <input
+                <FieldLabel>Subject (optional)</FieldLabel>
+                <Input
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                   placeholder="Weekly order, Price query…"
-                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm"
+                  className="w-full mt-1"
                 />
               </div>
               <div>
-                <label className="text-xs text-s-muted">Message *</label>
-                <textarea
+                <FieldLabel>Message *</FieldLabel>
+                <Textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   rows={6}
                   placeholder="Hi! Would like to place this week's order…"
-                  className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none"
+                  className="w-full mt-1"
                 />
               </div>
             </div>
@@ -948,40 +934,32 @@ function SupplierOnboardingWizard({
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-s-border bg-s-bg/40 p-4">
-          <button
-            onClick={() => (step === 1 ? onClose() : setStep((step - 1) as 1 | 2 | 3))}
-            className="rounded-xl border border-s-border px-4 py-2.5 text-sm text-s-muted hover:text-s-text"
-          >
+          <Button variant="secondary" type="submit"
+            onClick={() => (step === 1 ? onClose() : setStep((step - 1) as 1 | 2 | 3))}>
             {step === 1 ? 'Cancel' : '← Back'}
-          </button>
+          </Button>
           {step === 1 && (
-            <button
+            <Button type="submit"
               onClick={handleStep1Next}
-              disabled={busy}
-              className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"
-            >
+              disabled={busy}>
               {busy ? 'Saving…' : 'Next: Send invite →'}
-            </button>
+            </Button>
           )}
           {step === 2 && (
-            <button
-              onClick={() => setStep(3)}
-              className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90"
-            >
+            <Button type="submit"
+              onClick={() => setStep(3)}>
               Next: First message →
-            </button>
+            </Button>
           )}
           {step === 3 && (
-            <button
+            <Button type="submit"
               onClick={handleStep3Finish}
-              disabled={busy || !message.trim()}
-              className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50"
-            >
+              disabled={busy || !message.trim()}>
               {busy ? 'Starting…' : 'Send & open chat'}
-            </button>
+            </Button>
           )}
         </div>
       </div>
-    </div>
+    </Dialog>
   )
 }

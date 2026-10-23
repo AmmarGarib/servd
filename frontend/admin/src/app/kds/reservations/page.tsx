@@ -91,7 +91,7 @@ export default function KitchenReservationTracker() {
             <RefreshCw size={16} aria-hidden="true" /> Refresh
           </button>
           {dataUpdatedAt > 0 && (
-            <span className="text-[10px] text-kds-subtext">
+            <span className="text-xs text-kds-subtext">
               updated {new Date(dataUpdatedAt).toLocaleTimeString('en-GB', { hour12: false })}
             </span>
           )}
@@ -140,12 +140,12 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
         </div>
         <div className="flex items-center gap-2">
           {bucket.vip > 0 && (
-            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">
+            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-bold uppercase text-amber-700">
               <Star size={11} aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />{bucket.vip} VIP
             </span>
           )}
           {bucket.hasNotes && (
-            <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">
+            <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-bold uppercase text-rose-700">
               <Flag size={11} aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />notes
             </span>
           )}
@@ -161,11 +161,11 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
                 <span className="text-kds-subtext">·</span>
                 <span className="font-bold text-kds-green">×{r.partySize}</span>
                 {r.isVip && (
-                  <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-700"><Star size={10}  aria-hidden="true" /></span>
+                  <span className="rounded-full bg-amber-500/20 px-1.5 text-xs font-bold text-amber-700"><Star size={10}  aria-hidden="true" /></span>
                 )}
-                <span className={`rounded-full px-1.5 text-[10px] font-bold uppercase ${
-                  r.status === 'confirmed' ? 'bg-teal-500/20 text-teal-700' :
-                  r.status === 'seated'    ? 'bg-indigo-500/20 text-indigo-700' :
+                <span className={`rounded-full px-1.5 text-xs font-bold uppercase ${
+                  r.status === 'confirmed' ? 'bg-kds-green/20 text-kds-green' :
+                  r.status === 'seated'    ? 'bg-kds-blue/20 text-kds-blue' :
                                              'bg-blue-500/20 text-blue-700'
                 }`}>
                   {r.status}
@@ -174,7 +174,7 @@ function SlotCard({ bucket }: { bucket: Bucket }) {
               {r.notes && (
                 <div className="mt-0.5 text-xs italic text-rose-700"><Flag size={11} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{r.notes}</div>
               )}
-              <div className="mt-0.5 text-[11px] text-kds-subtext">
+              <div className="mt-0.5 text-xs text-kds-subtext">
                 {r.concept.name}
                 {r.table && <> · table {r.table.label}</>}
                 {' · '}

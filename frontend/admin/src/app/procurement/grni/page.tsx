@@ -13,6 +13,7 @@
 // write-off moves the value from 2015 to cost of sales and leaves the stock where
 // it is. Reads: GET /procurement/grni (procurement + accounting modules).
 
+import { Button, CheckLabel, FieldLabel, LinkButton, Textarea } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -22,6 +23,8 @@ import { useAuthStore } from '../../../store/auth'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { stockErrorText } from '../../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
+import { FIcon } from '../../../components/finance/ui/icons'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 interface GrniLine {
   receiptLineId: string; receiptId: string; tenantId: string | null
@@ -48,7 +51,7 @@ interface GrniResponse {
 }
 interface SupplierLite { id: string; name: string; tenantId?: string | null }
 
-const fi = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none'
+const fi = 's-input w-full'
 const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: '2-digit' })
 const qty = (n: number) => String(Math.round(n * 1000) / 1000)
 
@@ -134,7 +137,7 @@ export default function GrniPage() {
           <div role="status" className="rounded-xl px-4 py-3 text-sm font-semibold flex items-center justify-between gap-3"
             style={{ background: 'rgb(var(--erp-accent-rgb) / 0.14)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.45)', color: 'var(--erp-success)' }}>
             <span>{notice}</span>
-            <button onClick={() => setNotice(null)} className="text-xs text-s-muted hover:text-s-text" aria-label="Dismiss">✕</button>
+            <LinkButton tone="muted" type="button" onClick={() => setNotice(null)}  aria-label="Dismiss"><FIcon name="x" size={14} /></LinkButton>
           </div>
         )}
 
@@ -150,20 +153,20 @@ export default function GrniPage() {
         {/* Filters */}
         <div className="flex flex-wrap items-end gap-3">
           {multi && (
-            <label className="text-xs text-s-muted">Company
+            <FieldLabel>Company
               <Select value={tenantId} onChange={(e) => { setTenantId(e.target.value); setSupplierId('') }} className={fi + ' mt-1 min-w-[10rem]'}>
                 <option value="">All my companies</option>
                 {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </Select>
-            </label>
+            </FieldLabel>
           )}
-          <label className="text-xs text-s-muted">Supplier
+          <FieldLabel>Supplier
             <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fi + ' mt-1 min-w-[10rem]'}>
               <option value="">All suppliers</option>
               {suppliers.filter((s) => !tenantId || s.tenantId === tenantId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
-          </label>
-          <label className="text-xs text-s-muted">Waiting for
+          </FieldLabel>
+          <FieldLabel>Waiting for
             <Select value={olderThan} onChange={(e) => setOlderThan(e.target.value)} className={fi + ' mt-1'}>
               <option value="">Any time</option>
               <option value="7">over 7 days</option>
@@ -171,11 +174,11 @@ export default function GrniPage() {
               <option value="60">over 60 days</option>
               <option value="90">over 90 days</option>
             </Select>
-          </label>
-          <label className="flex items-center gap-2 text-xs text-s-text pb-2 cursor-pointer">
+          </FieldLabel>
+          <CheckLabel className="flex items-center gap-2 text-xs text-s-text pb-2 cursor-pointer">
             <input type="checkbox" className="accent-accent" checked={requestedOnly} onChange={(e) => setRequestedOnly(e.target.checked)} />
             Write-off requested only
-          </label>
+          </CheckLabel>
         </div>
 
         {error && <p role="alert" className="text-sm text-s-red">{stockErrorText(error, 'The list could not be loaded')}</p>}
@@ -184,10 +187,7 @@ export default function GrniPage() {
         {/* Open lines */}
         {!isLoading && !error && (
           lines.length === 0 ? (
-            <div className="rounded-xl border border-s-border p-8 text-center">
-              <p className="font-semibold text-success">Everything received has been billed</p>
-              <p className="text-sm text-s-muted mt-1">{requestedOnly ? 'No write-off request is waiting.' : 'Deliveries appear here until their bill is recorded.'}</p>
-            </div>
+            <CompactEmptyState message={requestedOnly ? 'No write-off request is waiting.' : 'Everything received has been billed.'} />
           ) : (
             <div className="rounded-xl border border-s-border overflow-hidden">
               <div className="overflow-x-auto">
@@ -224,7 +224,7 @@ export default function GrniPage() {
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap font-mono">
                             <p className="text-s-text">{qty(l.openQty)} {l.unit}</p>
-                            <p className="text-[11px] text-s-muted">{qty(l.receivedQty)} received − {qty(l.billedQty)} billed</p>
+                            <p className="text-xs text-s-muted">{qty(l.receivedQty)} received − {qty(l.billedQty)} billed</p>
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap font-semibold text-s-text">{fmtPkrWhole(l.openValueCents)}</td>
                           <td className="px-4 py-3 min-w-[14rem]">
@@ -240,14 +240,12 @@ export default function GrniPage() {
                                       onCancel={() => { setPanel(null); setText('') }} />
                                   ) : (
                                     <div className="flex gap-2 flex-wrap">
-                                      <button disabled={busy} onClick={() => approve.mutate(l.receiptLineId)}
-                                        className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-bold disabled:opacity-50">
+                                      <Button size="sm" type="submit" disabled={busy} onClick={() => approve.mutate(l.receiptLineId)}>
                                         Approve write-off
-                                      </button>
-                                      <button disabled={busy} onClick={() => { setPanel({ id: l.receiptLineId, mode: 'reject' }); setText(''); setRowError(null) }}
-                                        className="rounded-lg border border-s-border px-3 py-1.5 text-xs font-bold text-s-red hover:bg-s-elevated disabled:opacity-50">
+                                      </Button>
+                                      <Button variant="danger" size="sm" type="submit" disabled={busy} onClick={() => { setPanel({ id: l.receiptLineId, mode: 'reject' }); setText(''); setRowError(null) }}>
                                         Reject
-                                      </button>
+                                      </Button>
                                     </div>
                                   )
                                 ) : (
@@ -262,10 +260,9 @@ export default function GrniPage() {
                                   onSubmit={() => ask.mutate({ id: l.receiptLineId, reason: text.trim() })}
                                   onCancel={() => { setPanel(null); setText('') }} />
                               ) : (
-                                <button onClick={() => { setPanel({ id: l.receiptLineId, mode: 'ask' }); setText(''); setRowError(null) }}
-                                  className="rounded-lg border border-s-border px-3 py-1.5 text-xs font-bold text-s-text hover:border-primary hover:text-primary-ink">
+                                <Button variant="secondary" size="sm" type="submit" onClick={() => { setPanel({ id: l.receiptLineId, mode: 'ask' }); setText(''); setRowError(null) }}>
                                   {canApprove ? 'Write off' : 'Ask to write off'}
-                                </button>
+                                </Button>
                               )
                             ) : <span className="text-xs text-s-muted">—</span>}
                             {failed && <p role="alert" className="text-xs text-s-red mt-1.5">{failed}</p>}
@@ -346,15 +343,15 @@ function NotePanel({ label, text, setText, busy, submitLabel, tone, onSubmit, on
   const ok = text.trim().length >= 3
   return (
     <div className="space-y-1.5">
-      <label className="block text-[11px] text-s-muted">{label}
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={500} autoFocus className={fi + ' mt-1'} />
-      </label>
+      <FieldLabel className="block">{label}
+        <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={500} autoFocus className={fi + ' mt-1'} />
+      </FieldLabel>
       <div className="flex gap-2">
         <button disabled={!ok || busy} onClick={onSubmit}
           className={`rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50 ${tone === 'danger' ? 'bg-s-red text-bone' : 'bg-primary text-primary-on'}`}>
           {busy ? 'Saving…' : submitLabel}
         </button>
-        <button onClick={onCancel} className="rounded-lg border border-s-border px-3 py-1.5 text-xs text-s-muted">Cancel</button>
+        <Button variant="secondary" size="sm" type="submit" onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   )

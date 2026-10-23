@@ -22,6 +22,8 @@ import { useMemo } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { FIcon, type FIconName } from '../../../components/finance/ui/icons'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 // ─── Types — mirrors what /finance/capex returns from withRollups ───────────
 
@@ -80,18 +82,18 @@ interface Project {
   books?: { capitalisedCents: number; disposedCents?: number; advancedCents: number; notYetCapitalisedCents: number; prepaidCents: number; expensedCents: number }
 }
 
-const SCOPE_META: Record<string, { emoji: string; label: string; color: string }> = {
-  BOH:        { emoji: '🍳', label: 'Back of House',  color: 'var(--erp-warning)' },
-  FOH:        { emoji: '🪑', label: 'Front of House', color: 'var(--erp-secondary)' },
-  AG:         { emoji: '✨', label: 'AG / Finishing', color: 'var(--erp-secondary)' },
-  Equipment:  { emoji: '🛠', label: 'Small wares',    color: 'var(--erp-primary-ink)' },
-  MEP:        { emoji: '⚡', label: 'MEP',            color: 'var(--erp-warning)' },
-  Civil:      { emoji: '🏗', label: 'Civil',          color: 'var(--muted)' },
-  Tech:       { emoji: '💻', label: 'Tech',           color: 'var(--erp-primary-ink)' },
-  Branding:   { emoji: '🎨', label: 'Branding',       color: 'var(--erp-danger)' },
-  Permits:    { emoji: '📑', label: 'Permits',        color: 'var(--erp-success)' },
-  SoftCosts:  { emoji: '📐', label: 'Soft costs',     color: 'var(--erp-success)' },
-  Other:      { emoji: '📦', label: 'Other',          color: 'var(--muted)' },
+const SCOPE_META: Record<string, { icon: FIconName; label: string; color: string }> = {
+  BOH:        { icon: 'chef', label: 'Back of House',  color: 'var(--erp-warning)' },
+  FOH:        { icon: 'seat', label: 'Front of House', color: 'var(--erp-secondary)' },
+  AG:         { icon: 'sparkles', label: 'AG / Finishing', color: 'var(--erp-secondary)' },
+  Equipment:  { icon: 'tools', label: 'Small wares',    color: 'var(--erp-primary-ink)' },
+  MEP:        { icon: 'bolt', label: 'MEP',            color: 'var(--erp-warning)' },
+  Civil:      { icon: 'civil', label: 'Civil',          color: 'var(--muted)' },
+  Tech:       { icon: 'laptop', label: 'Tech',           color: 'var(--erp-primary-ink)' },
+  Branding:   { icon: 'palette', label: 'Branding',       color: 'var(--erp-danger)' },
+  Permits:    { icon: 'doc', label: 'Permits',        color: 'var(--erp-success)' },
+  SoftCosts:  { icon: 'ruler', label: 'Soft costs',     color: 'var(--erp-success)' },
+  Other:      { icon: 'box', label: 'Other',          color: 'var(--muted)' },
 }
 
 const PHASE_META: Record<Project['phase'], { label: string; bg: string; fg: string }> = {
@@ -202,12 +204,12 @@ export default function InvestmentDashboardPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
-        <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
+        <div className="flex items-center gap-2 text-xs text-s-muted mb-2">
           <Link href="/finance" className="hover:text-white/70">← Finance</Link>
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-black text-white/90">📊 Investment Dashboard</h1>
+            <h1 className="text-2xl font-black text-white/90"><FIcon name="chart" size={22} /> Investment Dashboard</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Roll-up of every project in Project Tracker — total ask, paid, committed, burn rate,
               spend by scope, top vendors. Read-only by design: log every PKR out in
@@ -229,19 +231,7 @@ export default function InvestmentDashboardPage() {
       <div className="px-7 py-6 max-w-6xl mx-auto space-y-6">
         {/* ── Empty state ───────────────────────────────────────────────── */}
         {!isLoading && projects.length === 0 && (
-          <div className="rounded-2xl p-12 text-center"
-            style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-            <p className="text-4xl mb-2">📊</p>
-            <p className="font-bold text-white/85">Nothing to roll up yet</p>
-            <p className="text-sm text-white/45 mt-1 mb-4">
-              Spin up a project — kitchen build, refurb, expansion — and every line + payment
-              you log there shows up here.
-            </p>
-            <Link href="/finance/capex"
-              className="s-btn-primary inline-block px-4 py-2.5">
-              + Start a project
-            </Link>
-          </div>
+          <CompactEmptyState message="Nothing to roll up yet. Start a project and its lines and payments show up here." action={{ label: '+ Start a project', href: '/finance/capex' }} />
         )}
 
         {projects.length > 0 && (
@@ -321,7 +311,7 @@ export default function InvestmentDashboardPage() {
                 </div>
               )
             })()}
-            <p className="text-[11px] text-white/40 -mt-3">
+            <p className="text-xs text-s-muted -mt-3">
               The register lives in{' '}
               <Link href="/accounting/fixed-assets" className="text-primary-ink font-bold hover:opacity-80">Accounting &rarr; Fixed assets</Link>.
               Equipment owned before servd is not entered; new equipment reaches it through CapEx only.
@@ -332,8 +322,8 @@ export default function InvestmentDashboardPage() {
               <div className="rounded-2xl p-4"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex justify-between items-baseline mb-2">
-                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">Deployment vs total ask</p>
-                  <p className="text-xs text-white/55">
+                  <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45">Deployment vs total ask</p>
+                  <p className="text-xs text-s-muted">
                     <span className="text-success font-bold">{PKR_LAKHS(agg.paid)} paid</span> ·
                     <span className="text-primary-ink font-bold ml-1.5">{PKR_LAKHS(agg.committed)} committed</span> ·
                     <span className="text-white/50 ml-1.5">{PKR_LAKHS(agg.totalAsk - agg.committed)} unallocated</span>
@@ -351,13 +341,13 @@ export default function InvestmentDashboardPage() {
               {/* Monthly burn chart */}
               <div className="rounded-2xl p-5"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-4">Monthly paid · last 6 months</p>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45 mb-4">Monthly paid · last 6 months</p>
                 <div className="flex items-end gap-2 h-32">
                   {agg.last6Months.map((m) => {
                     const h = m.cents > 0 ? Math.max(4, Math.round((m.cents / max6mo) * 100)) : 0
                     return (
                       <div key={m.key} className="flex-1 flex flex-col items-center gap-1">
-                        <div className="text-[9px] text-white/40 font-mono">
+                        <div className="text-xs text-s-muted font-mono">
                           {m.cents > 0 ? PKR_LAKHS(m.cents) : '—'}
                         </div>
                         <div className="w-full rounded-t-md transition-all"
@@ -367,7 +357,7 @@ export default function InvestmentDashboardPage() {
                               ? 'linear-gradient(180deg, var(--erp-accent) 0%, rgb(var(--erp-accent-rgb) / 0.4) 100%)'
                               : 'rgb(var(--fg-rgb) / 0.04)',
                           }} />
-                        <div className="text-[10px] text-white/50 font-bold uppercase">{m.label}</div>
+                        <div className="text-xs text-white/50 font-bold uppercase">{m.label}</div>
                       </div>
                     )
                   })}
@@ -378,8 +368,8 @@ export default function InvestmentDashboardPage() {
               <div className="rounded-2xl p-5"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex justify-between items-baseline mb-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45">Projects ({projects.length})</p>
-                  <Link href="/finance/capex" className="text-[10px] text-primary-ink font-bold hover:opacity-80">Manage →</Link>
+                  <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45">Projects ({projects.length})</p>
+                  <Link href="/finance/capex" className="text-xs text-primary-ink font-bold hover:opacity-80">Manage →</Link>
                 </div>
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                   {projects.map((p) => {
@@ -392,7 +382,7 @@ export default function InvestmentDashboardPage() {
                         style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                         <div className="flex items-start justify-between gap-2">
                           <p className="font-bold text-sm text-white/90 truncate flex-1">{p.name}</p>
-                          <span className="shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
+                          <span className="shrink-0 text-xs font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
                             style={{ background: phaseM.bg, color: phaseM.fg }}>{phaseM.label}</span>
                         </div>
                         <div className="flex items-center gap-2 mt-1.5">
@@ -400,11 +390,11 @@ export default function InvestmentDashboardPage() {
                             <div className="h-full"
                               style={{ width: `${pct}%`, background: over ? 'var(--erp-danger)' : pct > 70 ? 'var(--erp-warning)' : 'var(--erp-accent)' }} />
                           </div>
-                          <p className="text-[10px] text-white/55 shrink-0 font-mono">
+                          <p className="text-xs text-s-muted shrink-0 font-mono">
                             {PKR_LAKHS(p.rollups.paidCents)} / {PKR_LAKHS(p.budgetEnvelopeCents || p.rollups.totalAskCents)}
                           </p>
                         </div>
-                        <p className="text-[10px] text-white/40 mt-1">
+                        <p className="text-xs text-s-muted mt-1">
                           {p.lines.length} lines · {p.rollups.committedCents > 0 ? `${PKR_LAKHS(p.rollups.committedCents)} committed` : 'no commitments yet'}
                           {over && <span className="text-s-red font-bold"> · over by {PKR_LAKHS(p.rollups.varianceVsEnvelopeCents)}</span>}
                         </p>
@@ -419,15 +409,15 @@ export default function InvestmentDashboardPage() {
             {agg.topScopes.length > 0 && (
               <div className="rounded-2xl p-5"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Spend by scope (across all projects)</p>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45 mb-3">Spend by scope (across all projects)</p>
                 <div className="space-y-2">
                   {agg.topScopes.map((s) => {
-                    const meta = SCOPE_META[s.scope] ?? { emoji: '·', label: s.scope, color: 'var(--muted)' }
+                    const meta = SCOPE_META[s.scope] ?? { icon: 'tag' as FIconName, label: s.scope, color: 'var(--muted)' }
                     const pct = (s.cents / maxScope) * 100
                     return (
                       <div key={s.scope} className="flex items-center gap-3">
                         <div className="w-32 shrink-0 flex items-center gap-1.5 text-xs text-white/70">
-                          <span>{meta.emoji}</span>
+                          <FIcon name={meta.icon} size={14} />
                           <span className="font-bold">{meta.label}</span>
                         </div>
                         <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.05)' }}>
@@ -446,9 +436,9 @@ export default function InvestmentDashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <div className="rounded-2xl p-5"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Top vendors by spend</p>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45 mb-3">Top vendors by spend</p>
                 {agg.topVendors.length === 0 ? (
-                  <p className="text-xs text-white/40">No vendor payments recorded yet.</p>
+                  <p className="text-xs text-s-muted">No vendor payments recorded yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {agg.topVendors.map((v) => (
@@ -456,7 +446,7 @@ export default function InvestmentDashboardPage() {
                         style={{ background: 'rgb(var(--fg-rgb) / 0.025)' }}>
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-white/85 truncate">{v.name}</p>
-                          <p className="text-[10px] text-white/45">
+                          <p className="text-xs text-s-muted">
                             {v.lines} line{v.lines === 1 ? '' : 's'} · {v.projects} project{v.projects === 1 ? '' : 's'}
                           </p>
                         </div>
@@ -469,23 +459,23 @@ export default function InvestmentDashboardPage() {
 
               <div className="rounded-2xl p-5"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Recent payments</p>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45 mb-3">Recent payments</p>
                 {agg.recentPayments.length === 0 ? (
-                  <p className="text-xs text-white/40">No payments logged yet. Add one from a line in Project Tracker.</p>
+                  <p className="text-xs text-s-muted">No payments logged yet. Add one from a line in Project Tracker.</p>
                 ) : (
                   <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
                     {agg.recentPayments.map((r) => (
                       <div key={r.payment.id} className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs"
                         style={{ background: 'rgb(var(--fg-rgb) / 0.02)' }}>
-                        <span className="text-white/45 font-mono text-[10px] w-16 shrink-0">
+                        <span className="text-s-muted font-mono text-xs w-16 shrink-0">
                           {new Date(r.payment.paidAt!).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}
                         </span>
                         <span className="font-mono font-bold text-success shrink-0 w-20 text-right">
                           {PKR_LAKHS(r.payment.paidAmountCents ?? 0)}
                         </span>
                         <span className="text-white/80 truncate flex-1">{r.line.item}</span>
-                        <span className="text-white/35 text-[10px] shrink-0 hidden sm:inline">{r.projectName}</span>
-                        <span className="text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5 shrink-0"
+                        <span className="text-s-muted text-xs shrink-0 hidden sm:inline">{r.projectName}</span>
+                        <span className="text-xs uppercase tracking-wider font-bold rounded px-1.5 py-0.5 shrink-0"
                           style={{
                             background: r.payment.label === 'deposit' ? 'rgb(var(--ink-rgb) / 0.15)'
                                       : r.payment.label === 'balance' ? 'rgb(var(--erp-accent-rgb) / 0.15)'
@@ -518,10 +508,10 @@ function KpiTile({
 }: { label: string; hint: string; value: string; subValue: string; bg: string; border: string; color: string }) {
   return (
     <div className="rounded-2xl p-4" style={{ background: bg, border: `1px solid ${border}` }}>
-      <p className="text-[10px] font-black uppercase tracking-[0.24em]" style={{ color }}>{label}</p>
+      <p className="text-xs font-black uppercase tracking-[0.24em]" style={{ color }}>{label}</p>
       <p className="text-2xl font-black mt-1.5" style={{ color }}>{value}</p>
-      <p className="text-[10px] text-white/45 mt-1">{subValue}</p>
-      <p className="text-[9px] text-white/35 mt-0.5">{hint}</p>
+      <p className="text-xs text-s-muted mt-1">{subValue}</p>
+      <p className="text-xs text-s-muted mt-0.5">{hint}</p>
     </div>
   )
 }

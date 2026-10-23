@@ -1,9 +1,10 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { NavIcon } from '../ui/NavIcon'
 
 interface TourStep {
-  emoji: string
+  icon: string
   title: string
   body: string
   cta?: { label: string; href: string }
@@ -11,36 +12,36 @@ interface TourStep {
 
 const STEPS: TourStep[] = [
   {
-    emoji: '👋',
+    icon: 'wave',
     title: 'Welcome to servd',
     body: "You're looking at the Operations Dashboard — your live cockpit. Orders, revenue, low-stock alerts, top items — all on one screen, no clicks needed.",
   },
   {
-    emoji: '🖥',
+    icon: 'monitor',
     title: 'Kitchen runs on the KDS',
     body: 'The Kitchen Display System replaces paper tickets. Tap items to bump, hold, or recall. Tap a dish to see cooking steps + ingredient list. Voice control: say "bump 47".',
     cta: { label: 'Peek at the KDS', href: '/kds' },
   },
   {
-    emoji: '💳',
+    icon: 'card',
     title: 'POS for in-store + waiter ordering',
     body: 'Cashiers use /pos. Waiters use /pos/waiter (mobile-first, table-aware). Both feed the same order pipeline as the online storefront and WhatsApp.',
     cta: { label: 'Open POS', href: '/pos' },
   },
   {
-    emoji: '🎛',
+    icon: 'sliders',
     title: 'One place to configure everything',
     body: 'Tax rates, payment methods, loyalty, hours, integrations, audit log — all live in the Configuration Hub. The dashboard checklist nudges you through what\'s left.',
     cta: { label: 'Open Configuration Hub', href: '/configuration' },
   },
   {
-    emoji: '💬',
+    icon: 'chat',
     title: 'Suppliers chat in one thread',
     body: 'Skip WhatsApp scramble across staff phones. Add a supplier, send them a portal link via WhatsApp, and every order conversation lives in one searchable thread.',
     cta: { label: 'Open Supplier Chat', href: '/procurement/chat' },
   },
   {
-    emoji: '🎉',
+    icon: 'party',
     title: "That's the tour",
     body: "Need help? Tap the Help link anytime. The first-run checklist on the dashboard will walk you through the rest. Let's go.",
   },
@@ -122,7 +123,7 @@ export function FirstRunTour() {
             className="text-7xl mb-5 mx-auto inline-block"
             style={{ animation: 'tour-bounce 1.6s ease-in-out infinite' }}
           >
-            {s.emoji}
+            <span className="text-primary-ink"><NavIcon name={s.icon} size={64} /></span>
           </div>
           <h2 className="text-2xl font-black text-white/95">{s.title}</h2>
           <p className="text-sm text-white/55 mt-3 leading-relaxed max-w-md mx-auto">

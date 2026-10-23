@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface DnsRecord {
   type: string
@@ -39,11 +40,11 @@ interface Domain {
   dnsInstructions: DnsInstructions
 }
 
-const STATUS_META: Record<Domain['status'], { label: string; color: string; bg: string }> = {
-  pending:  { label: 'Pending DNS', color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.1)' },
+const STATUS_META: Record<Domain['status'], { label: string; color: string; bg: string; check?: boolean }> = {
+  pending:  { label: 'Pending DNS', color: 'var(--erp-warning)', bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)' },
   verified: { label: 'Verified',    color: 'var(--erp-success)', bg: 'var(--erp-accent-dim)' },
-  active:   { label: '✓ Live',      color: 'var(--erp-on-accent)', bg: 'var(--erp-accent)' },
-  failed:   { label: 'DNS not found', color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.1)' },
+  active:   { label: 'Live',      color: 'var(--erp-on-accent)', bg: 'var(--erp-accent)', check: true },
+  failed:   { label: 'DNS not found', color: 'var(--erp-danger)', bg: 'color-mix(in srgb, var(--erp-danger) 12%, transparent)' },
   disabled: { label: 'Disabled',    color: 'var(--muted)', bg: 'rgb(var(--fg-rgb) / 0.05)' },
 }
 
@@ -69,7 +70,7 @@ export default function DomainsPage() {
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🌐 Custom Domains</h1>
+            <h1 className="text-2xl font-black text-white/90">Custom Domains</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Point your own domains (e.g. <code className="font-mono text-xs text-white/65">order.mubarakbiryani.pk</code>) at servd. Each domain maps to a brand. SSL is automatic once DNS verifies.
               This list is the only one: once a domain is <span className="text-white/65">Live</span>, the storefront serves the brand on it and
@@ -102,7 +103,7 @@ export default function DomainsPage() {
         {!isLoading && domains.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="text-4xl mb-3">🌐</p>
+            <span className="mb-3 inline-block text-s-muted"><NavIcon name="globe" size={32} /></span>
             <p className="font-bold text-white/85">No custom domains yet</p>
             <p className="text-sm text-white/45 mt-1 max-w-sm mx-auto">
               Out of the box, customers reach you at <code className="font-mono text-xs">servd.pk/your-brand</code>. Add a custom domain to get them on your URL.
@@ -168,7 +169,7 @@ function DomainCard({ domain, concepts, expanded, onToggle, onChange }: {
             <p className="font-mono text-base font-bold text-white/90 truncate">{domain.hostname}</p>
             <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
               style={{ background: status.bg, color: status.color }}>
-              {status.label}
+              {status.check && <NavIcon name="check" size={12} className="mr-0.5 inline" />}{status.label}
             </span>
           </div>
           <p className="text-xs text-white/45 mt-0.5">
@@ -190,7 +191,7 @@ function DomainCard({ domain, concepts, expanded, onToggle, onChange }: {
               <DnsRecordCard label="Traffic routing (CNAME)" record={domain.dnsInstructions.cname} />
             </div>
             <p className="text-[11px] text-white/35 mt-2 leading-relaxed">{domain.dnsInstructions.apexNote}</p>
-            <p className="text-[11px] text-white/35 mt-1 leading-relaxed">🔒 {domain.dnsInstructions.sslNote}</p>
+            <p className="text-[11px] text-white/35 mt-1 leading-relaxed"><NavIcon name="lock" size={11} className="mr-1 inline" />{domain.dnsInstructions.sslNote}</p>
           </div>
 
           {/* Verify + manage */}
@@ -201,7 +202,7 @@ function DomainCard({ domain, concepts, expanded, onToggle, onChange }: {
                 disabled={verify.isPending}
                 className="rounded-xl bg-primary text-primary-on px-4 py-2 text-xs font-black hover:opacity-90 disabled:opacity-50"
               >
-                {verify.isPending ? 'Checking DNS…' : '🔍 Verify now'}
+                {verify.isPending ? 'Checking DNS…' : 'Verify now'}
               </button>
               {domain.lastCheckedAt && (
                 <span className="text-[10px] text-white/35">
@@ -246,13 +247,13 @@ function DnsRecordCard({ label, record }: { label: string; record: DnsRecord }) 
         <code className="font-mono text-white/85 truncate">{record.host}</code>
         <button onClick={() => copy(record.host, 'host')}
           className={`text-[10px] font-bold hover:underline ${copied === 'host' ? 'text-success' : 'text-primary-ink'}`}>
-          {copied === 'host' ? '✓ Copied' : 'Copy'}
+          {copied === 'host' ? <><NavIcon name="check" size={12} className="mr-0.5 inline" />Copied</> : 'Copy'}
         </button>
         <span className="text-white/40 uppercase font-bold tracking-wider">Value:</span>
         <code className="font-mono text-white/85 truncate">{record.value}</code>
         <button onClick={() => copy(record.value, 'value')}
           className={`text-[10px] font-bold hover:underline ${copied === 'value' ? 'text-success' : 'text-primary-ink'}`}>
-          {copied === 'value' ? '✓ Copied' : 'Copy'}
+          {copied === 'value' ? <><NavIcon name="check" size={12} className="mr-0.5 inline" />Copied</> : 'Copy'}
         </button>
         <span className="text-white/40 uppercase font-bold tracking-wider">TTL:</span>
         <code className="font-mono text-white/85">{record.ttl}</code>
@@ -326,7 +327,7 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">Add custom domain</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-4">
           <div>
@@ -353,8 +354,8 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
             <label className="text-xs text-white/55 block mb-1">Purpose</label>
             <div className="flex gap-2">
               {[
-                { key: 'order',           label: '🛍 Order flow',     desc: 'Customers place orders' },
-                { key: 'brand_microsite', label: '📖 Brand microsite', desc: 'About / story page' },
+                { key: 'order',           label: 'Order flow',     desc: 'Customers place orders' },
+                { key: 'brand_microsite', label: 'Brand microsite', desc: 'About / story page' },
               ].map((opt) => (
                 <button key={opt.key} onClick={() => setPurpose(opt.key as 'order' | 'brand_microsite')}
                   className="flex-1 rounded-lg px-3 py-2 text-left transition-colors"
@@ -371,7 +372,7 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
 
           {error && (
             <div className="rounded-lg px-3 py-2 text-xs text-s-red"
-              style={{ background: 'rgba(255,77,79,0.08)', border: '1px solid rgba(255,77,79,0.25)' }}>
+              style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 25%, transparent)' }}>
               {error}
             </div>
           )}

@@ -8,8 +8,10 @@ import Link from 'next/link'
 import { useCurrentShift } from '../../../hooks/useCurrentShift'
 import {
   newIdempotencyKey, isOfflinePlaceholder, preBillErrorMessage, printPreBill, tillErrorMessage,
-  type TillBrand, type TillOrder, type OfflinePlaceholder,
+  type TillBrand, type TillOrder,
 } from '../../../components/pos/tillApi'
+import { postOrderOrQueue, summariseLines } from '../../../lib/offline-queue'
+import { OfflineQueueBar } from '../../../components/pos/OfflineQueue'
 import { useAuthStore } from '../../../store/auth'
 
 type Step = 'table' | 'menu' | 'confirm' | 'done'
@@ -99,7 +101,9 @@ export default function WaiterPage() {
       if (submission.current?.signature !== signature) {
         submission.current = { signature, key: newIdempotencyKey() }
       }
-      return api.post<TillOrder | OfflinePlaceholder>('/pos/orders', { ...body, idempotencyKey: submission.current.key })
+      // Offline: kept on this device with the same key and sent later (lib/offline-queue.ts).
+      return postOrderOrQueue<TillOrder>({ ...body, idempotencyKey: submission.current.key },
+        summariseLines(body.items, { label: selectedTable ? `Table ${selectedTable.label}` : 'Waiter', brandName: concepts.find((c) => c.id === conceptId)?.name ?? null }))
     },
     onSuccess: (order) => {
       // Sent: the next submission — even an identical round — is a new order.
@@ -138,10 +142,10 @@ export default function WaiterPage() {
     return (
       <div className="erp-kitchen-dark flex flex-col items-center justify-center h-screen h-dvh gap-6 bg-kds-bg px-6 text-center">
         {queuedOffline ? <Clock size={56} aria-hidden="true" className="text-kds-amber" /> : <CircleCheck size={56} aria-hidden="true" className="text-kds-green" />}
-        <h1 className="text-2xl font-black text-kds-text">{queuedOffline ? 'Queued offline' : 'Order Sent!'}</h1>
+        <h1 className="text-2xl font-black text-kds-text">{queuedOffline ? 'Kept on this device — not sent yet' : 'Order Sent!'}</h1>
         <p className="text-kds-subtext">
           Table {selectedTable?.label} · {cart.reduce((s, c) => s + c.qty, 0)} items
-          {queuedOffline ? ' will reach the kitchen when the connection returns' : ' sent to kitchen'}
+          {queuedOffline ? ' are NOT in the kitchen yet. They are sent when the connection is back — check "waiting to sync" on the till.' : ' sent to kitchen'}
         </p>
         {!queuedOffline && submittedOrderId && (
           <div className="w-full max-w-xs space-y-2">
@@ -184,6 +188,7 @@ export default function WaiterPage() {
 
   return (
     <div className="erp-kitchen-dark flex flex-col h-screen h-dvh bg-kds-bg overflow-hidden">
+      <OfflineQueueBar />
 
       {/* Header */}
       <div className="flex items-center gap-3 h-12 px-4 border-b border-kds-border bg-kds-card shrink-0">

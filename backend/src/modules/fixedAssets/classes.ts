@@ -151,8 +151,6 @@ export interface FixedAssetPolicy {
   capexUncapitalisedAlertDays: number
   /** Flag an undelivered CapEx advance this many days past its expected delivery (worker). */
   capexAdvanceOverdueDays: number
-  /** H24: the deferred-tax report's rate, basis points (report only). */
-  deferredTaxRateBp: number
   /** Asset tag prefix ('FA-' → FA-00001). */
   assetTagPrefix: string
 }
@@ -166,7 +164,6 @@ export async function getFixedAssetPolicy(tenantId: string): Promise<FixedAssetP
   return {
     capexUncapitalisedAlertDays: cfg?.capexUncapitalisedAlertDays ?? 30,
     capexAdvanceOverdueDays: cfg?.capexAdvanceOverdueDays ?? 45,
-    deferredTaxRateBp: cfg?.deferredTaxRateBp ?? 2900,
     assetTagPrefix: (cfg?.assetTagPrefix ?? 'FA-').trim() || 'FA-',
   }
 }

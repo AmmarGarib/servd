@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
 interface Account {
@@ -17,10 +18,10 @@ interface Account {
 
 const TYPE_COLOR: Record<AccountType, { bg: string; fg: string }> = {
   asset:     { bg: 'rgb(var(--erp-primary-rgb) / 0.12)', fg: 'var(--erp-primary)' },
-  liability: { bg: 'rgba(245,158,11,0.12)', fg: 'var(--erp-warning)' },
+  liability: { bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', fg: 'var(--erp-warning)' },
   equity:    { bg: 'rgb(var(--ink-rgb) / 0.12)', fg: 'var(--erp-primary-ink)' },
   revenue:   { bg: 'rgb(var(--erp-accent-rgb) / 0.18)', fg: 'var(--erp-success)' },
-  expense:   { bg: 'rgba(239,68,68,0.12)', fg: 'var(--erp-danger)' },
+  expense:   { bg: 'color-mix(in srgb, var(--erp-danger) 12%, transparent)', fg: 'var(--erp-danger)' },
 }
 
 export default function ChartOfAccountsPage() {
@@ -41,7 +42,7 @@ export default function ChartOfAccountsPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">📒 Chart of accounts</h1>
+            <h1 className="text-2xl font-black text-white/90">Chart of accounts</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               The ledger codes the platform posts against. Add custom accounts (e.g. <code className="text-primary-ink">6210 — Marketing software</code>) to mirror your accountant's tree.
             </p>
@@ -104,7 +105,7 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{account ? 'Edit account' : 'New account'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-3">
           <div className="grid grid-cols-[120px_1fr] gap-3">

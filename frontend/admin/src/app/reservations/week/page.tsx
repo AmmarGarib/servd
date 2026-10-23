@@ -38,7 +38,7 @@ function startOfWeek(iso: string): Date {
 const STATUS_DOT: Record<string, string> = {
   booked:    'bg-blue-500',
   confirmed: 'bg-s-teal',
-  seated:    'bg-indigo-500',
+  seated:    'bg-primary',
   completed: 'bg-gray-400',
   no_show:   'bg-s-red',
   cancelled: 'bg-gray-300',
@@ -107,7 +107,7 @@ export default function ReservationsWeekPage() {
                 onClick={() => router.push(`/reservations?date=${pktYmd(d)}`)}
                 className="px-2 py-3 text-center hover:bg-s-bg-soft"
               >
-                <p className="text-[10px] uppercase text-s-muted tracking-wider">
+                <p className="text-xs uppercase text-s-muted tracking-wider">
                   {d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: KHI })}
                 </p>
                 <p className="text-sm font-bold text-s-text">{pktYmd(d).slice(8)}</p>
@@ -117,7 +117,7 @@ export default function ReservationsWeekPage() {
 
           {hours.map((h) => (
             <div key={h} className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b border-s-border min-h-[44px]">
-              <div className="px-2 py-1 text-[11px] text-s-muted font-mono border-r border-s-border">
+              <div className="px-2 py-1 text-xs text-s-muted font-mono border-r border-s-border">
                 {String(h).padStart(2, '0')}:00
               </div>
               {days.map((d, idx) => {
@@ -129,7 +129,7 @@ export default function ReservationsWeekPage() {
                       <div
                         key={r.id}
                         title={`${r.guestName} · ${r.partySize}p · ${r.table?.label ?? 'unseated'}`}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-s-surface border border-s-border truncate flex items-center gap-1"
+                        className="text-xs px-1.5 py-0.5 rounded bg-s-surface border border-s-border truncate flex items-center gap-1"
                       >
                         <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[r.status] ?? 'bg-gray-400'}`} />
                         <span className="truncate">{r.isVip && <Star size={10} aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />}{r.guestName} · {r.partySize}p</span>

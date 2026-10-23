@@ -12,6 +12,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useConfirm } from './ConfirmDialog'
+import { NavIcon } from './NavIcon'
 
 const FOCUSABLE =
   'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"]),[contenteditable="true"]'
@@ -163,7 +164,7 @@ export function Modal({
           <h2 id={titleId} className="font-black text-white/90">{title}</h2>
           {dismissible && (
             <button type="button" data-dialog-close onClick={() => void requestClose()} aria-label="Close"
-              className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/80 text-xl">✕</button>
+              className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/80 text-xl"><NavIcon name="x" size={16} /></button>
           )}
         </div>
         <div className="p-5 space-y-3 overflow-y-auto min-h-0 flex-1" style={{ overscrollBehavior: 'contain' }}>{children}</div>

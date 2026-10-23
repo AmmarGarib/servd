@@ -11,6 +11,7 @@ import DeliveryPin, { type LatLng } from '../../../components/checkout/DeliveryP
 import { BlockedNotice } from '../../../components/account/BlockedNotice'
 import { fulfilmentFor, type FulfilmentOption } from '../../../lib/fulfilment'
 import { smoothScrollTo, prefersReducedMotion } from '../../../lib/scroll'
+import { CheckIcon } from '../../../components/ui/Icons'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -510,7 +511,7 @@ export default function CheckoutPage() {
       <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>Your order is placed.</p>
       <p role="alert" className="text-sm max-w-sm" style={{ color: 'var(--servd-danger)' }}>{placedNotice.message}</p>
       <Link href={`/${slug}/order/${placedNotice.orderId}`}
-        className="rounded-2xl font-black px-8 py-4 text-sm"
+        className="rounded-[var(--servd-btn-radius)] font-black px-8 py-4 text-sm"
         style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)' }}>
         Track your order
       </Link>
@@ -534,7 +535,7 @@ export default function CheckoutPage() {
         </p>
       </div>
       <Link href={`/${slug}`}
-        className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
+        className="mt-1 rounded-[var(--servd-btn-radius)] font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
         style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 6px 18px rgba(61,31,59,0.28)' }}>
         See the {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : ''} menu
       </Link>
@@ -547,7 +548,7 @@ export default function CheckoutPage() {
         <div className="flex gap-2 flex-wrap justify-center">
           {['stackd', 'simmer', 'flipd'].filter((s) => s !== slug).map((s) => (
             <Link key={s} href={`/${s}`}
-              className="rounded-xl px-4 py-2 text-xs font-bold transition-colors"
+              className="rounded-[var(--servd-btn-radius)] px-4 py-2 text-xs font-bold transition-colors"
               style={{
                 background: 'var(--servd-surface)',
                 color: 'var(--servd-ink)',
@@ -1285,7 +1286,7 @@ export default function CheckoutPage() {
               </div>
               {promoStatus === 'valid' && promoMessage && (
                 <p role="status" className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
-                  ✓ {promoMessage} · saving {fmt(promoDiscountCents)}
+                  <CheckIcon size={12} /> {promoMessage} · saving {fmt(promoDiscountCents)}
                 </p>
               )}
               {promoStatus === 'invalid' && promoMessage && (
@@ -1397,7 +1398,7 @@ export default function CheckoutPage() {
                   <button
                     type="button"
                     onClick={() => { setPaymentMethod(opt.id); setPaymentNotice('') }}
-                    className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 transition-all"
+                    className="w-full flex items-center gap-3 rounded-[var(--servd-btn-radius)] px-3.5 py-3 transition-all"
                     style={isSelected
                       ? { background: 'rgba(135,197,64,0.06)', border: '1.5px solid rgba(135,197,64,0.35)' }
                       : { background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.07)' }}>
@@ -1476,7 +1477,7 @@ export default function CheckoutPage() {
         style={{ ...(fieldFocused && { visibility: 'hidden', transform: 'translateY(100%)' }), background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         <button
           type="submit" form="checkout" disabled={loading || brandClosed}
-          className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
+          className="flex items-center justify-between w-full max-w-lg mx-auto rounded-[var(--servd-btn-radius)] py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
           style={{
             background: loading || brandClosed ? 'var(--servd-line)' : 'var(--servd-green)',
             color: loading || brandClosed ? 'var(--servd-mute)' : 'var(--servd-on-green)',

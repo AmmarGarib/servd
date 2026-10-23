@@ -10,6 +10,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface FeedbackRow {
   id: string
@@ -97,7 +98,7 @@ export default function MessagesPage() {
         {isLoading && <p className="px-4 py-6 text-center text-s-muted">Loading…</p>}
         {isError && <p className="px-4 py-6 text-center text-s-red">Could not load messages.</p>}
         {!isLoading && !isError && rows.length === 0 && (
-          <p className="px-4 py-10 text-center text-s-muted">No messages yet</p>
+          <CompactEmptyState message="No messages yet" />
         )}
         {rows.map((r) => {
           const who = r.contactName ?? r.customer?.name ?? 'Anonymous'

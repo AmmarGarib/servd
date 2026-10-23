@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useState } from 'react'
 import { api } from '../../lib/api'
+import { NavIcon } from '../ui/NavIcon'
 
 interface ChecklistItem {
   key: string
@@ -149,7 +150,7 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
                   item.done ? 'bg-primary text-primary-on' : 'border border-white/20 text-white/30'
                 }`}
               >
-                {item.done ? '✓' : ''}
+                {item.done ? <NavIcon name="check" size={12} /> : null}
               </span>
               <div className="min-w-0 flex-1">
                 <p className={`text-sm font-bold ${item.done ? 'text-white/65 line-through decoration-white/30' : 'text-white/85'}`}>

@@ -7,6 +7,8 @@ import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 // Completed orders (GET /reports/sales): gross = order value incl. GST, before
 // refunds; net = the P&L's net revenue for them (ex-GST, after discounts,
@@ -697,9 +699,6 @@ function Skeleton() {
 
 function Empty() {
   return (
-    <div className="text-center py-16 text-s-dim">
-      <p className="text-3xl mb-2">📊</p>
-      <p>No data for this period</p>
-    </div>
+    <CompactEmptyState icon={<NavIcon name="chart" size={28} />} message="No data for this period" />
   )
 }

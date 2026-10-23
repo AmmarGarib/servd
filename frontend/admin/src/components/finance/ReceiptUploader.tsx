@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
 import { EVIDENCE_MAX_BYTES, fetchEvidenceUrl, kb, prepareReceiptFile } from '../../lib/photoPrep'
+import { FIcon } from './ui/icons'
 
 const MAX_PHOTO_BYTES = 30 * 1024 * 1024 // photos are compressed in the browser first
 
@@ -116,8 +117,8 @@ export function ReceiptUploader({
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-white/55">{label}{required ? ' *' : ''}</span>
-        <span className="text-[10px] text-white/35">{receipts.length} of {max}</span>
+        <span className="text-xs text-s-muted">{label}{required ? ' *' : ''}</span>
+        <span className="text-xs text-s-muted">{receipts.length} of {max}</span>
       </div>
       <div className="mt-1 flex flex-wrap gap-2">
         {receipts.map((r) => (
@@ -127,16 +128,16 @@ export function ReceiptUploader({
               {r.previewUrl
                 // eslint-disable-next-line @next/next/no-img-element
                 ? <img src={r.previewUrl} alt="Receipt" className="w-full h-full object-cover" />
-                : <span className="text-[10px] font-bold text-white/55 px-1 text-center">{r.mime === 'application/pdf' ? 'PDF' : 'Photo'}<br />{kb(r.sizeBytes)}</span>}
+                : <span className="text-xs font-bold text-white/55 px-1 text-center">{r.mime === 'application/pdf' ? 'PDF' : 'Photo'}<br />{kb(r.sizeBytes)}</span>}
             </button>
             <button type="button" onClick={() => remove(r)} aria-label="Remove receipt"
-              className="absolute top-0.5 right-0.5 rounded-full w-5 h-5 text-[11px] leading-5 text-center"
-              style={{ background: 'var(--surface)', color: 'var(--erp-danger)', border: '1px solid rgb(var(--fg-rgb) / 0.12)' }}>×</button>
+              className="absolute top-0.5 right-0.5 rounded-full w-5 h-5 text-xs leading-5 text-center"
+              style={{ background: 'var(--surface)', color: 'var(--erp-danger)', border: '1px solid rgb(var(--fg-rgb) / 0.12)' }}><FIcon name="x" size={14} /></button>
           </div>
         ))}
         {receipts.length < max && (
           <button type="button" onClick={() => input.current?.click()} disabled={busy}
-            className="w-20 h-20 rounded-lg text-[11px] font-bold disabled:opacity-50"
+            className="w-20 h-20 rounded-lg text-xs font-bold disabled:opacity-50"
             style={{ border: '1px dashed rgb(var(--erp-primary-rgb) / 0.5)', color: 'var(--erp-primary)' }}>
             {busy ? 'Adding…' : '+ Photo'}
           </button>
@@ -144,8 +145,8 @@ export function ReceiptUploader({
       </div>
       <input ref={input} type="file" accept="image/*,application/pdf" capture="environment" multiple className="hidden"
         onChange={(e) => void add(e.target.files)} />
-      {uploading && <p role="status" className="text-[11px] mt-1 text-white/70">{uploading}</p>}
-      {error && <p role="alert" className="text-[11px] mt-1" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+      {uploading && <p role="status" className="text-xs mt-1 text-white/70">{uploading}</p>}
+      {error && <p role="alert" className="text-xs mt-1" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
     </div>
   )
 }

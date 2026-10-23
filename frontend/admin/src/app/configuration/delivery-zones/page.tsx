@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal'
 import { NumberField } from '@/components/ui/NumberField'
 import { FormField } from '@/components/ui/FormField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 // The zone fee is the price BEFORE sales tax: checkout adds GST on top at the
 // order's tender rate (backend lib/pricing.ts) — the page never works it out.
@@ -74,10 +75,7 @@ export default function DeliveryZonesPage() {
           </div>
         )}
         {!isLoading && !isError && zones.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">No delivery zones yet</p>
-            <p className="text-sm text-white/45 mt-1">Add your first zone to start charging delivery fees correctly.</p>
-          </div>
+          <CompactEmptyState message="No delivery zones yet" detail="Add your first zone to start charging delivery fees correctly." />
         )}
         {zones.map((z) => {
           const concept = concepts.find((c) => c.id === z.conceptId)

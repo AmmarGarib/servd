@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { fmtPkrWhole, todayPktIso, startOfMonthPktIso } from '../../lib/money'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 interface Brand { id: string; name: string; slug: string }
 interface Head { brand: { id: string; name: string } | null; period: { dateFrom: string; dateTo: string } }
@@ -123,10 +124,7 @@ export default function DirectorPage() {
   if (!brandsLoading && brands.length === 0) {
     return (
       <div className="min-h-full flex items-center justify-center p-6">
-        <div className="max-w-md w-full rounded-2xl border border-s-border bg-s-surface p-6 text-center">
-          <p className="text-base font-bold text-s-text">No brand to show yet</p>
-          <p className="mt-2 text-sm text-s-muted">Your login has no brand on it. Ask the CEO to add the brand you are a director of.</p>
-        </div>
+        <CompactEmptyState message="No brand to show yet" detail="Your login has no brand on it. Ask the CEO to add the brand you are a director of." />
       </div>
     )
   }
@@ -405,7 +403,7 @@ function Table({ head, rows }: { head: string[]; rows: Array<Array<string | numb
 }
 
 function Empty() {
-  return <p className="py-6 text-center text-sm text-s-muted">Nothing in this period.</p>
+  return <CompactEmptyState message="Nothing in this period." />
 }
 
 function Loading() {

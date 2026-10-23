@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import { canOpenPath } from '../../../lib/moduleCatalog'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 // Mirrors GET /api/v1/integrations/social/status. `configured` tells us
 // whether the backend has FACEBOOK_APP_ID/SECRET set — the operator's
@@ -70,19 +71,19 @@ export default function IntegrationsPage() {
 
       {socialConnected && (
         <div className="mb-6 rounded-xl border border-accent bg-accent-dim p-4">
-          <p className="font-bold text-success">✓ Connected to Facebook Page: {decodeURIComponent(socialConnected)}</p>
+          <p className="font-bold text-success"><NavIcon name="check" size={13} className="mr-1 inline" />Connected to Facebook Page: {decodeURIComponent(socialConnected)}</p>
           <p className="text-sm text-s-muted mt-1">Instagram and Facebook posting are now enabled in the Content Calendar.</p>
         </div>
       )}
       {socialError && (
         <div className="mb-6 rounded-xl border border-s-red bg-s-red/10 p-4">
-          <p className="font-bold text-s-red">⚠ Connection failed: {decodeURIComponent(socialError)}</p>
+          <p className="font-bold text-s-red"><NavIcon name="warn" size={13} className="mr-1 inline" />Connection failed: {decodeURIComponent(socialError)}</p>
           <p className="text-sm text-s-muted mt-1">Try again or check your Facebook App settings.</p>
         </div>
       )}
       {connectErr && (
         <div className="mb-6 rounded-xl border border-s-red bg-s-red/10 p-4">
-          <p className="font-bold text-s-red">⚠ Could not start Meta connect</p>
+          <p className="font-bold text-s-red"><NavIcon name="warn" size={13} className="mr-1 inline" />Could not start Meta connect</p>
           <p className="text-sm text-s-muted mt-1">{connectErr}</p>
           <p className="text-xs text-s-muted/70 mt-2">
             Most often this means <code className="bg-s-border px-1 rounded">FACEBOOK_APP_ID</code> /
@@ -96,7 +97,7 @@ export default function IntegrationsPage() {
         <div className="rounded-xl border border-s-border bg-s-surface p-5">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <span className="text-3xl">📘</span>
+              <span className="text-primary-ink"><NavIcon name="facebook" size={32} /></span>
               <div>
                 <h2 className="font-bold text-s-text">Facebook & Instagram</h2>
                 <p className="text-sm text-s-muted">Schedule and publish posts directly from the Content Calendar.</p>
@@ -120,7 +121,7 @@ export default function IntegrationsPage() {
               than discovering it on click. Links to the runbook. */}
           {status && !status.configured && (
             <div className="mt-4 rounded-lg border border-s-amber/30 bg-s-amber/5 p-3 text-xs space-y-1.5">
-              <p className="font-bold text-s-amber">⚠ Meta App not configured</p>
+              <p className="font-bold text-s-amber"><NavIcon name="warn" size={13} className="mr-1 inline" />Meta App not configured</p>
               <p className="text-s-muted">
                 <code className="bg-s-border px-1 rounded">FACEBOOK_APP_ID</code> and
                 <code className="bg-s-border px-1 rounded ml-1">FACEBOOK_APP_SECRET</code> aren&apos;t
@@ -145,21 +146,21 @@ export default function IntegrationsPage() {
           {status?.connected && (
             <div className="mt-4 space-y-2">
               <div className="flex items-center gap-3 rounded-lg bg-s-bg p-3">
-                <span className="text-xl">📘</span>
+                <span className="text-primary-ink"><NavIcon name="facebook" size={22} /></span>
                 <div>
                   <p className="text-sm font-semibold text-s-text">Facebook Page</p>
                   <p className="text-xs text-success">
-                    ✓ {status.page?.name ?? 'Page'} (ID: {status.page?.id})
+                    <NavIcon name="check" size={13} className="mr-1 inline" />{status.page?.name ?? 'Page'} (ID: {status.page?.id})
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-3 rounded-lg bg-s-bg p-3">
-                <span className="text-xl">📸</span>
+                <span className="text-primary-ink"><NavIcon name="instagram" size={22} /></span>
                 <div>
                   <p className="text-sm font-semibold text-s-text">Instagram Business</p>
                   {status.ig
-                    ? <p className="text-xs text-success">✓ Connected (User ID: {status.ig.userId})</p>
-                    : <p className="text-xs text-s-amber">⚠ No Instagram Business account found on this Page</p>
+                    ? <p className="text-xs text-success"><NavIcon name="check" size={13} className="mr-1 inline" />Connected (User ID: {status.ig.userId})</p>
+                    : <p className="text-xs text-s-amber"><NavIcon name="warn" size={13} className="mr-1 inline" />No Instagram Business account found on this Page</p>
                   }
                 </div>
               </div>
@@ -221,7 +222,7 @@ export default function IntegrationsPage() {
         {/* Supplier Portal — SaaS pitch */}
         <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-5">
           <div className="flex items-start gap-3">
-            <span className="text-3xl">🏭</span>
+            <span className="text-secondary"><NavIcon name="factory" size={32} /></span>
             <div>
               <h2 className="font-bold text-s-text">Supplier Portal <span className="ml-2 rounded-full bg-purple-500/20 px-2 py-0.5 text-xs text-purple-700">SaaS</span></h2>
               <p className="text-sm text-s-muted mt-0.5">
@@ -229,7 +230,7 @@ export default function IntegrationsPage() {
                 Each supplier gets a unique URL — no login required.
               </p>
               <p className="text-xs text-purple-700 mt-2">
-                💡 This can be white-labelled and sold as a SaaS add-on to other restaurants.
+                <NavIcon name="bulb" size={13} className="mr-1 inline" />This can be white-labelled and sold as a SaaS add-on to other restaurants.
                 Each restaurant&apos;s suppliers only see their own conversations.
               </p>
             </div>

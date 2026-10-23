@@ -1,6 +1,8 @@
 'use client'
 // New correction: pick a CLOSED drawer, tick the bills / open tickets to fix, give each a reason,
 // send ONE set to the CEO. Nothing changes until the CEO approves.
+import { Select } from '@/components/ui/Select'
+import { Button, CheckLabel, FieldLabel, Input, Textarea } from '@/components/finance/ui'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { api } from '../../../lib/api'
@@ -33,7 +35,7 @@ export function NewCorrection({ onCreated, onCancel }: { onCreated: (set: Correc
     <div className="s-card p-4 space-y-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-s-text">New correction</h2>
-        <button type="button" className="s-btn-secondary text-sm" onClick={onCancel}>Back to the list</button>
+        <Button variant="secondary" type="button"  onClick={onCancel}>Back to the list</Button>
       </div>
 
       {!shiftId && (
@@ -41,12 +43,12 @@ export function NewCorrection({ onCreated, onCancel }: { onCreated: (set: Correc
           <p className="text-xs text-s-muted">Pick the closed shift that has the mistake. Only shifts the cashier has already closed can be corrected.</p>
           <div className="flex flex-wrap gap-2 items-end">
             <div>
-              <label htmlFor="sc-from" className="block text-xs text-s-muted">Opened from</label>
-              <input id="sc-from" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+              <FieldLabel htmlFor="sc-from" className="block">Opened from</FieldLabel>
+              <Input className="w-auto px-3 py-2 text-sm" id="sc-from" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)}  />
             </div>
             <div>
-              <label htmlFor="sc-to" className="block text-xs text-s-muted">Opened to</label>
-              <input id="sc-to" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+              <FieldLabel htmlFor="sc-to" className="block">Opened to</FieldLabel>
+              <Input className="w-auto px-3 py-2 text-sm" id="sc-to" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)}  />
             </div>
           </div>
           {list.isLoading && <p className="text-xs text-s-muted">Loading shifts…</p>}
@@ -137,7 +139,7 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
           <p className="text-sm font-semibold text-s-text">{sh.cashierName ?? 'Cashier'}{sh.locationName ? ` · ${sh.locationName}` : ''}</p>
           <p className="text-xs text-s-muted">Business day {fmtDay(sh.businessDay)} · opened {fmtDateTime(sh.openedAt)} · closed {fmtDateTime(sh.closedAt)}</p>
         </div>
-        <button type="button" className="s-btn-secondary text-sm" onClick={onBack}>Pick another shift</button>
+        <Button variant="secondary" type="button"  onClick={onBack}>Pick another shift</Button>
       </div>
 
       {blocked && <div role="alert" className="rounded-lg border border-s-border p-3 text-sm text-s-red">{blocked.message}</div>}
@@ -149,7 +151,7 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
           const canPick = !!o.kind && !o.blockedBy && !blocked
           return (
             <li key={o.orderId} className={`rounded-lg border p-3 ${p ? 'border-primary' : 'border-s-border'}`}>
-              <label className="flex items-start gap-3">
+              <CheckLabel className="flex items-start gap-3">
                 <input type="checkbox" className="accent-primary mt-1" checked={!!p} disabled={!canPick} onChange={() => toggle(o.orderId)} aria-label={`Fix order ${o.orderRef}`} />
                 <span className="flex-1 min-w-0">
                   <span className="flex flex-wrap items-center justify-between gap-2">
@@ -164,57 +166,57 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
                   {o.blockedBy && <span className="block text-xs text-s-red mt-0.5">Cannot be fixed: {o.blockedBy.message}</span>}
                   {o.raastStatus === 'matched' && !o.blockedBy && <span className="block text-xs text-s-muted mt-0.5">The Raast money reached the bank: it can only be voided with &quot;Money was handed back&quot; ticked.</span>}
                 </span>
-              </label>
+              </CheckLabel>
               {p && o.kind && (
                 <div className="mt-3 ml-7 space-y-2">
                   <div>
-                    <label htmlFor={`sc-r-${o.orderId}`} className="block text-xs text-s-muted">Why is this being fixed? (at least {MIN_REASON} characters)</label>
-                    <textarea id={`sc-r-${o.orderId}`} rows={2} value={p.reason} onChange={(e) => patch(o.orderId, { reason: e.target.value })}
-                      className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+                    <FieldLabel htmlFor={`sc-r-${o.orderId}`} className="block">Why is this being fixed? (at least {MIN_REASON} characters)</FieldLabel>
+                    <Textarea id={`sc-r-${o.orderId}`} rows={2} value={p.reason} onChange={(e) => patch(o.orderId, { reason: e.target.value })}
+                      className="w-full" />
                   </div>
                   {o.kind === 'void_bill' && (
                     <fieldset className="space-y-1">
                       <legend className="text-xs text-s-muted">What should happen to this bill?</legend>
-                      <label className="flex items-center gap-2 text-xs text-s-text">
+                      <CheckLabel className="flex items-center gap-2 text-xs text-s-text">
                         <input type="radio" className="accent-primary" name={`sc-a-${o.orderId}`} checked={p.action === 'void'} onChange={() => patch(o.orderId, { action: 'void' })} />
                         Void the bill
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-s-text">
+                      </CheckLabel>
+                      <CheckLabel className="flex items-center gap-2 text-xs text-s-text">
                         <input type="radio" className="accent-primary" name={`sc-a-${o.orderId}`} checked={p.action === 'reissue'} onChange={() => patch(o.orderId, { action: 'reissue', moneyReturned: false, foodMade: false })} />
                         Wrong payment method: void and re-issue
-                      </label>
+                      </CheckLabel>
                     </fieldset>
                   )}
                   {o.kind === 'void_bill' && p.action === 'void' && (
                     <div className="flex flex-col gap-1">
-                      <label className="flex items-center gap-2 text-xs text-s-text">
+                      <CheckLabel className="flex items-center gap-2 text-xs text-s-text">
                         <input type="checkbox" className="accent-primary" checked={p.moneyReturned} onChange={(e) => patch(o.orderId, { moneyReturned: e.target.checked })} />
                         Money was handed back to the customer
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-s-text">
+                      </CheckLabel>
+                      <CheckLabel className="flex items-center gap-2 text-xs text-s-text">
                         <input type="checkbox" className="accent-primary" checked={p.foodMade} onChange={(e) => patch(o.orderId, { foodMade: e.target.checked })} />
                         Food was made (waste it)
-                      </label>
+                      </CheckLabel>
                     </div>
                   )}
                   {o.kind === 'void_bill' && p.action === 'reissue' && (
                     <div className="space-y-2">
                       <div>
-                        <label htmlFor={`sc-t-${o.orderId}`} className="block text-xs text-s-muted">The right payment method</label>
-                        <select id={`sc-t-${o.orderId}`} value={p.newTender} onChange={(e) => patch(o.orderId, { newTender: e.target.value, tenderRef: '' })}
-                          className="bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text">
+                        <FieldLabel htmlFor={`sc-t-${o.orderId}`} className="block">The right payment method</FieldLabel>
+                        <Select id={`sc-t-${o.orderId}`} value={p.newTender} onChange={(e) => patch(o.orderId, { newTender: e.target.value, tenderRef: '' })}
+                          className="s-input w-auto px-3 py-2 text-sm">
                           <option value="">Choose…</option>
                           {REISSUE_TENDERS.filter((t) => !o.tenders.some((x) => x.status === 'paid' && x.method === t)).map((t) => <option key={t} value={t}>{TENDER_LABEL[t]}</option>)}
-                        </select>
+                        </Select>
                       </div>
                       {p.newTender && p.newTender !== 'cash' && (
                         <div>
-                          <label htmlFor={`sc-f-${o.orderId}`} className="block text-xs text-s-muted">{TENDER_REF_LABEL[p.newTender]}</label>
-                          <input id={`sc-f-${o.orderId}`} type="text" maxLength={120} value={p.tenderRef} onChange={(e) => patch(o.orderId, { tenderRef: e.target.value })}
-                            className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+                          <FieldLabel htmlFor={`sc-f-${o.orderId}`} className="block">{TENDER_REF_LABEL[p.newTender]}</FieldLabel>
+                          <Input id={`sc-f-${o.orderId}`} type="text" maxLength={120} value={p.tenderRef} onChange={(e) => patch(o.orderId, { tenderRef: e.target.value })}
+                            className="w-full" />
                         </div>
                       )}
-                      <p className="text-[11px] text-s-muted">The same items are billed again at this payment method, dated on the original day. The food is not wasted and no money is handed back.</p>
+                      <p className="text-xs text-s-muted">The same items are billed again at this payment method, dated on the original day. The food is not wasted and no money is handed back.</p>
                     </div>
                   )}
                 </div>
@@ -225,15 +227,15 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
       </ul>
 
       <div>
-        <label htmlFor="sc-reason" className="block text-xs text-s-muted">What happened on this shift? Reason for the whole correction (at least {MIN_REASON} characters)</label>
-        <textarea id="sc-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+        <FieldLabel htmlFor="sc-reason" className="block">What happened on this shift? Reason for the whole correction (at least {MIN_REASON} characters)</FieldLabel>
+        <Textarea id="sc-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full" />
       </div>
 
       {err && <p role="alert" className="text-sm text-s-red">{err}</p>}
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className="s-btn-primary text-sm" disabled={!ready || send.isPending} onClick={() => { setErr(null); send.mutate() }}>
+        <Button type="button"  disabled={!ready || send.isPending} onClick={() => { setErr(null); send.mutate() }}>
           {send.isPending ? 'Sending…' : `Send ${chosen.length || ''} ${chosen.length === 1 ? 'fix' : 'fixes'} to the CEO`}
-        </button>
+        </Button>
         <span className="text-xs text-s-muted">Nothing changes until the CEO approves.</span>
       </div>
     </div>

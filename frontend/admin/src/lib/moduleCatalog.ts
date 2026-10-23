@@ -325,10 +325,10 @@ export const PERSONAL_PAGES: ModulePage[] = [
  * Short and factual; omit a module rather than guess.
  */
 export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
-  pos: 'One refund engine, one comp engine and one settle path, all on the open drawer; GST is cash 15% / card 8% from one pricing function. Offline: sw.js replays queued till orders to the admin origin without a session, so they are lost. No screen to comp an order after it was rung; split bills (/orders/[id]/split) are not linked from the till.',
+  pos: 'One refund engine, one comp engine and one settle path, all on the open drawer; GST is cash 15% / card 8% from one pricing function. Offline: a new order is kept on the till (lib/offline-queue.ts) and re-sent with the cashier\'s session and the same idempotency key; a refused order stays on the till with the server\'s reason until a manager resends or discards it. Payments, Keenu, No Charge and adding items need the internet. No Charge comps an open order; Split is on the Order Summary.',
   orders: 'Every order is created by ingestOrder and completed by one completeOrder, which issues the invoice; tax filing goes only through the POS connector. Voids are per line on the order page.',
   refunds: 'The one refund engine: caps, manager PIN, cash from the open drawer, its own journal entry; a full refund restores loyalty, wallet and gift-card value.',
-  reservations: 'Table state is set by the reservation flow only — POS orders never mark a table occupied. Guest tags have endpoints but no admin screen.',
+  reservations: 'A table is occupied by the reservation flow, or by an open till bill on it (released when the bill is completed or cancelled). Guest tags have endpoints but no admin screen.',
   dashboard: 'The four workspace dashboards (Operations, Finance, Marketing, HR) are blank until the owner picks their numbers.',
   ops: 'The prep list forecasts for the first brand only; it has no brand picker.',
   inventory: 'Stock is held as FIFO lots, costed at the price paid: lib/stockLedger.ts is the only writer and every change leaves a stock movement. Sales deplete through the one recipe explosion; unfired voids and cancels go back to their lots, fired ones are booked as waste. Counts and prep batches are company-scoped. One stock pool per company: lots carry their outlet, but per-outlet pools are the next build, so a transfer moves no quantity (a short receipt is booked as transit loss). Lots have no expiry dates.',

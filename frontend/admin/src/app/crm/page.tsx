@@ -15,6 +15,8 @@ import {
 } from '../../components/finance/PaymentReceivedFields'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '@/components/ui/Modal'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -203,7 +205,7 @@ export default function CRMPage() {
                 type="submit"
                 disabled={toggleBan.isPending || banReason.trim().length < 3}
                 className={`flex-1 rounded-xl text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50 ${
-                  banModal.ban ? 'bg-primary text-primary-on' : 'bg-s-red text-[#fff]'
+                  banModal.ban ? 'bg-primary text-primary-on' : 'bg-s-red text-primary-on'
                 }`}>
                 {toggleBan.isPending ? '…' : banModal.ban ? 'Unblock' : 'Block'}
               </button>
@@ -291,7 +293,7 @@ export default function CRMPage() {
           <div className="flex-1 overflow-y-auto">
               {isLoading && <p className="px-4 py-3 text-xs text-s-muted">Loading…</p>}
               {!isLoading && customers.length === 0 && (
-                <p className="px-4 py-6 text-center text-xs text-s-muted">No customers found</p>
+                <CompactEmptyState message="No customers found" />
               )}
               {customers.map((c) => (
                 <button key={c.id} onClick={() => setSelectedId(selectedId === c.id ? null : c.id)}
@@ -301,7 +303,7 @@ export default function CRMPage() {
                   <div className={`h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-xs font-black ${
                     c.activeBan ? 'bg-s-red/20 text-s-red' : 'bg-s-border text-s-muted'
                   }`}>
-                    {c.activeBan ? '⛔' : (c.name[0]?.toUpperCase() ?? '?')}
+                    {c.activeBan ? <NavIcon name="ban" size={16} /> : (c.name[0]?.toUpperCase() ?? '?')}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 mb-0.5">
@@ -341,7 +343,7 @@ export default function CRMPage() {
                     <div className={`h-14 w-14 rounded-full flex items-center justify-center text-2xl font-black shrink-0 ${
                       customerDetail.activeBan ? 'bg-s-red/20 text-s-red' : 'bg-s-border text-s-text'
                     }`}>
-                      {customerDetail.activeBan ? '⛔' : (customerDetail.name[0]?.toUpperCase() ?? '?')}
+                      {customerDetail.activeBan ? <NavIcon name="ban" size={16} /> : (customerDetail.name[0]?.toUpperCase() ?? '?')}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -354,8 +356,8 @@ export default function CRMPage() {
                         <p className="text-xs text-s-red mt-0.5">Reason: {customerDetail.activeBan.reason}</p>
                       )}
                       <div className="flex flex-wrap gap-3 mt-1">
-                        {customerDetail.phone && <span className="text-sm text-s-muted">📞 {customerDetail.phone}</span>}
-                        {customerDetail.email && <span className="text-sm text-s-muted">✉ {customerDetail.email}</span>}
+                        {customerDetail.phone && <span className="text-sm text-s-muted"><NavIcon name="call" size={13} className="mr-1 inline" />{customerDetail.phone}</span>}
+                        {customerDetail.email && <span className="text-sm text-s-muted"><NavIcon name="mail" size={13} className="mr-1 inline" />{customerDetail.email}</span>}
                       </div>
                       <p className="text-xs text-s-muted mt-1">
                         Member since {new Date(customerDetail.createdAt).toLocaleDateString()}
@@ -451,7 +453,7 @@ export default function CRMPage() {
                     <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Order history</p>
                   </div>
                   {customerDetail.orders.length === 0 ? (
-                    <p className="px-4 py-6 text-center text-sm text-s-muted">No orders yet</p>
+                    <CompactEmptyState message="No orders yet" />
                   ) : (
                     <div className="divide-y divide-s-border">
                       {customerDetail.orders.map((order) => (
@@ -486,7 +488,7 @@ export default function CRMPage() {
           {!selected && (
             <div className="flex-1 flex items-center justify-center h-full text-s-muted">
               <div className="text-center">
-                <p className="text-5xl mb-3">👥</p>
+                <span className="mb-3 inline-block text-s-muted"><NavIcon name="users" size={32} /></span>
                 <p className="font-semibold text-s-text">Select a customer</p>
                 <p className="text-sm mt-1">Click any name in the list to view their profile</p>
               </div>

@@ -33,7 +33,7 @@ export default function StaffMealsPage() {
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🍽 Staff meals</h1>
+            <h1 className="text-2xl font-black text-white/90">Staff meals</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Free / staff-rate meals consumed by employees. A staff meal is rung up at the till and comped as a staff meal with a manager PIN — it shows here. Cumulative weekly spend over the cap per person flags for review.
             </p>

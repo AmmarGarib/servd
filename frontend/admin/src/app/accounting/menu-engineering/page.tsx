@@ -1,4 +1,5 @@
 'use client'
+import { Input } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
@@ -24,8 +25,8 @@ interface MenuEngineeringItem {
 const QUADRANT_META = {
   star:      { label: 'Stars',       color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.12)',  border: 'rgb(var(--erp-accent-rgb) / 0.45)', desc: 'High popularity · High margin — promote & protect' },
   plowHorse: { label: 'Plowhorses', color: 'var(--erp-secondary)', bg: 'rgb(var(--ink-rgb) / 0.08)', border: 'rgb(var(--ink-rgb) / 0.25)', desc: 'High popularity · Low margin — reduce cost or reprice' },
-  puzzle:    { label: 'Puzzles',    color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.25)', desc: 'Low popularity · High margin — reposition or bundle' },
-  dog:       { label: 'Dogs',       color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.08)',   border: 'rgba(255,77,79,0.25)',  desc: 'Low popularity · Low margin — consider removing' },
+  puzzle:    { label: 'Puzzles',    color: 'var(--erp-warning)', bg: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)',  border: 'color-mix(in srgb, var(--erp-warning) 25%, transparent)', desc: 'Low popularity · High margin — reposition or bundle' },
+  dog:       { label: 'Dogs',       color: 'var(--erp-danger)', bg: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)',   border: 'color-mix(in srgb, var(--erp-danger) 25%, transparent)',  desc: 'Low popularity · Low margin — consider removing' },
 }
 
 function toDateInput(d: Date) { return d.toISOString().split('T')[0]! }
@@ -81,8 +82,8 @@ export default function MenuEngineeringPage() {
           <option value="">Select concept…</option>
           {concepts?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
-        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="s-input text-sm px-3 py-2 rounded-xl" />
-        <input type="date" value={dateTo}   onChange={e => setDateTo(e.target.value)}   className="s-input text-sm px-3 py-2 rounded-xl" />
+        <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="text-sm px-3 py-2 rounded-xl" />
+        <Input type="date" value={dateTo}   onChange={e => setDateTo(e.target.value)}   className="text-sm px-3 py-2 rounded-xl" />
       </div>
 
       {!conceptId && (
@@ -114,7 +115,7 @@ export default function MenuEngineeringPage() {
                   }}>
                   <div className="text-2xl font-black" style={{ color: meta.color }}>{count}</div>
                   <div className="text-sm font-bold mt-1" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>{meta.label}</div>
-                  <div className="text-[11px] mt-1 leading-tight" style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>{meta.desc}</div>
+                  <div className="text-xs mt-1 leading-tight" style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>{meta.desc}</div>
                 </button>
               )
             })}
@@ -136,28 +137,28 @@ export default function MenuEngineeringPage() {
                   return (
                     <div key={q} className="relative rounded-xl flex flex-col p-3"
                       style={{ background: activeQ === q ? meta.bg : 'rgb(var(--fg-rgb) / 0.015)', border: `1px solid ${activeQ === q ? meta.border : 'rgb(var(--fg-rgb) / 0.04)'}` }}>
-                      <span className="text-[9px] font-black tracking-widest" style={{ color: meta.color }}>{label}</span>
+                      <span className="text-xs font-black tracking-widest" style={{ color: meta.color }}>{label}</span>
                       <div className="mt-1 space-y-1 overflow-hidden" style={{ maxHeight: '200px' }}>
                         {qItems.slice(0, 6).map(item => (
                           <div key={item.menuItemId ?? item.name} className="flex items-center gap-2">
                             <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: meta.color }} />
                             <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>{item.name}</span>
-                            <span className="text-[10px] ml-auto shrink-0" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>{item.qtySold}</span>
+                            <span className="text-xs ml-auto shrink-0" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>{item.qtySold}</span>
                           </div>
                         ))}
-                        {qItems.length > 6 && <p className="text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.25)' }}>+{qItems.length - 6} more</p>}
+                        {qItems.length > 6 && <p className="text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.25)' }}>+{qItems.length - 6} more</p>}
                       </div>
                     </div>
                   )
                 })}
               </div>
               {/* Axis labels */}
-              <div className="absolute -bottom-5 left-0 right-0 flex justify-between text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.25)' }}>
+              <div className="absolute -bottom-5 left-0 right-0 flex justify-between text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.25)' }}>
                 <span>← Low Margin</span>
                 <span>High Margin →</span>
               </div>
             </div>
-            <div className="mt-8 flex justify-between text-[10px]" style={{ color: 'rgb(var(--fg-rgb) / 0.25)' }}>
+            <div className="mt-8 flex justify-between text-xs" style={{ color: 'rgb(var(--fg-rgb) / 0.25)' }}>
               <span>↑ High Popularity</span>
               <span>Low Popularity ↓</span>
             </div>
@@ -169,11 +170,11 @@ export default function MenuEngineeringPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: 'rgb(var(--fg-rgb) / 0.03)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                  <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Item</th>
-                  <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Quadrant</th>
-                  <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Sold</th>
-                  <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Margin %</th>
-                  <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Recommendation</th>
+                  <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Item</th>
+                  <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Quadrant</th>
+                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Sold</th>
+                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Margin %</th>
+                  <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Recommendation</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,10 +189,10 @@ export default function MenuEngineeringPage() {
                       <td className="px-4 py-3 font-medium" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>
                         {item.name}
                         {/* No recipe = no food cost, so its margin reads 100% and skews the quadrant. */}
-                        {!item.hasRecipe && <span className="ml-2 text-[10px] font-normal" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>no recipe</span>}
+                        {!item.hasRecipe && <span className="ml-2 text-xs font-normal" style={{ color: 'rgb(var(--fg-rgb) / 0.4)' }}>no recipe</span>}
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full"
                           style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
                           {meta.label}
                         </span>

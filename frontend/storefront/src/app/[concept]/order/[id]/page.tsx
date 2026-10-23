@@ -221,7 +221,7 @@ export default function OrderStatusPage() {
         </p>
       </div>
       <Link href={`/${slug}`}
-        className="rounded-2xl font-black px-8 py-4 text-sm transition-transform active:scale-[0.98]"
+        className="rounded-[var(--servd-btn-radius)] font-black px-8 py-4 text-sm transition-transform active:scale-[0.98]"
         style={{ background: 'var(--servd-green)', color: 'var(--servd-on-green)', boxShadow: '0 6px 18px rgba(61,31,59,0.28)' }}>
         Back to menu
       </Link>
@@ -405,7 +405,7 @@ export default function OrderStatusPage() {
                   </p>
                 </div>
                 <a href={riderTel(order.rider.phone)}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold"
+                  className="px-3 py-1.5 rounded-[var(--servd-btn-radius)] text-xs font-bold"
                   style={{ background: 'var(--servd-ink)', color: '#fff' }}>
                   Call
                 </a>
@@ -509,7 +509,7 @@ export default function OrderStatusPage() {
         )}
 
         <Link href={`/${slug}`}
-          className="flex items-center justify-center gap-2 w-full rounded-2xl py-3.5 font-bold text-sm transition-all active:scale-[0.98]"
+          className="flex items-center justify-center gap-2 w-full rounded-[var(--servd-btn-radius)] py-3.5 font-bold text-sm transition-all active:scale-[0.98]"
           style={{ background: 'white', border: '1px solid var(--servd-line)', color: 'var(--servd-mute)' }}>
           Order something else →
         </Link>
@@ -573,7 +573,7 @@ function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArri
 
   return (
     <button onClick={tap} disabled={busy}
-      className="flex items-center justify-center gap-2 w-full rounded-2xl py-4 font-black text-sm tracking-wide transition-transform active:scale-[0.98]"
+      className="flex items-center justify-center gap-2 w-full rounded-[var(--servd-btn-radius)] py-4 font-black text-sm tracking-wide transition-transform active:scale-[0.98]"
       style={{
         background: 'var(--servd-green)', color: 'var(--servd-on-green)',
         border: '1px solid var(--servd-green-dark)',

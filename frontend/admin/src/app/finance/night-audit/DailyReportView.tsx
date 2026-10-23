@@ -37,7 +37,7 @@ function Table({ head, rows }: { head: string[]; rows: Array<Array<React.ReactNo
 function Stat({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-s-border p-2">
-      <p className="text-[11px] text-s-muted">{k}</p>
+      <p className="text-xs text-s-muted">{k}</p>
       <p className="text-sm font-semibold text-s-text tabular-nums">{v}</p>
     </div>
   )
@@ -62,7 +62,7 @@ export function DailyReportView({ report: r, preview }: { report: DailyReport; p
       <div>
         <p className="text-xs text-s-muted">{r.companyName}{preview ? ' · Preview (not saved)' : ''}</p>
         <p className="text-base font-semibold text-s-text">Daily audit report — {fmtDayLong(r.day)}</p>
-        <p className="text-[11px] text-s-muted">Generated {fmtWhen(r.generatedAt)}</p>
+        <p className="text-xs text-s-muted">Generated {fmtWhen(r.generatedAt)}</p>
       </div>
 
       <Section title="Sales">

@@ -12,7 +12,7 @@
 //   - two companies charge into their own ledgers;
 //   - the legacy 1590 reclass runs once;
 //   - the close check blocks and chargeForClose clears it;
-//   - tax depreciation (IA + WDV), the CEO's freeze, deferred tax (report only);
+//   - tax depreciation (IA + WDV), the CEO's freeze (no deferred tax, H24);
 //   - the worker: every company into its own ledger, idempotently, with
 //     FixedAssetRun rows; prepaid releases; de-duplicated flags.
 import { describe, it, expect } from 'vitest'
@@ -29,7 +29,7 @@ import {
 } from '../src/modules/fixedAssets/schedule.js'
 import { fixedAssetCloseChecks, chargeForClose } from '../src/modules/fixedAssets/closeCheck.js'
 import type { CloseCheckContext } from '../src/modules/accounting/closeCheckTypes.js'
-import { taxSchedule, freezeTaxYear, deferredTax } from '../src/modules/fixedAssets/tax.js'
+import { taxSchedule, freezeTaxYear } from '../src/modules/fixedAssets/tax.js'
 import { taxYearOf } from '../src/modules/accounting/fiscalYear.js'
 import { runDepreciationOnce, runForTenant } from '../src/workers/depreciation.js'
 
@@ -324,8 +324,8 @@ describe('the period-close check', () => {
   })
 })
 
-describe('tax depreciation (H23) and deferred tax (H24)', () => {
-  it('initial allowance then WDV; a frozen year never changes; deferred tax at 29%', async () => {
+describe('tax depreciation (H23)', () => {
+  it('initial allowance then WDV; a frozen year never changes', async () => {
     const co = await mkCo('tax')
     const other = await mkCo('tax-b')
     const oven = await mkAsset(co, { name: 'Tandoor', costCents: 1_000_000, inServiceAt: new Date('2025-08-10T12:00:00+05:00'), life: 60 })
@@ -353,16 +353,6 @@ describe('tax depreciation (H23) and deferred tax (H24)', () => {
     expect(frozen.rows[0]).toMatchObject({ depreciationCents: 112_500, closingWdvCents: 637_500, frozen: true })
     expect((await taxSchedule(co.tenantId, 2027)).rows[0]).toMatchObject({ openingWdvCents: 637_500, depreciationCents: 191_250 })
 
-    // Deferred tax at 30 June 2026: register NBV − tax WDV, at 29%.
-    const rows = await prisma.fixedAssetDepreciation.findMany({ where: { assetId: oven.id, period: { lte: '2026-06' } } })
-    const nbv = 1_000_000 - rows.reduce((t, r) => t + Number(r.amountCents), 0)
-    const d = await deferredTax(co.tenantId, 2026)
-    expect(d.rateBp).toBe(2900)
-    expect(d.byClass).toEqual([expect.objectContaining({
-      classKey: 'kitchen_equipment', nbvCents: nbv, taxWdvCents: 637_500, differenceCents: nbv - 637_500,
-      deferredTaxCents: Math.round(((nbv - 637_500) * 2900) / 10_000),
-    })])
-    expect(d.totals.deferredTaxCents).toBe(Math.round(((nbv - 637_500) * 2900) / 10_000))
   })
 })
 

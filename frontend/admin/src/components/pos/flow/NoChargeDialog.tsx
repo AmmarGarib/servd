@@ -1,4 +1,5 @@
 'use client'
+import { requireOnline } from '../../../lib/offline-queue'
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ApiError, posApi } from '../../../lib/api'
@@ -45,6 +46,7 @@ export function NoChargeDialog({ ticket, shiftId, onClose, onDone }: {
     if (!ok) return
     setBusy(true); setError(null)
     try {
+      requireOnline() // a comp is never queued offline: "No internet — not sent"
       await posApi.compOrder(ticket.id, {
         amountCents: stored.dueCents,
         reason: kind === 'staff_meal' ? 'staff_meal' : reason.trim(),

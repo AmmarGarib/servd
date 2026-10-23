@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { api } from '../../lib/api'
 import { fmtPkrShort } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
+import { NavIcon } from './NavIcon'
 
 interface FeedItem {
   kind: 'journal' | 'audit' | 'order'
@@ -25,9 +26,9 @@ function relTime(iso: string): string {
 }
 
 const ICON: Record<string, string> = {
-  journal: '📒',
-  audit:   '🔐',
-  order:   '🍽️',
+  journal: 'book',
+  audit:   'lock',
+  order:   'utensils',
 }
 
 export function ActivityFeed({ limit = 20 }: { limit?: number }) {
@@ -65,7 +66,7 @@ function FeedRow({ item }: { item: FeedItem }) {
     const o = item.payload as { id: string; status: string; totalCents: number; concept: { name: string; slug: string } }
     return (
       <Link href={`/orders/${o.id}`} className="flex items-start gap-3 px-4 py-3 hover:bg-s-bg-soft transition-colors">
-        <span className="text-lg">{ICON.order}</span>
+        <span className="text-primary-ink"><NavIcon name={ICON.order} size={18} /></span>
         <div className="flex-1 min-w-0">
           <p className="text-xs text-s-text">
             <span className="font-semibold">{o.concept.name}</span> order {o.status}
@@ -81,7 +82,7 @@ function FeedRow({ item }: { item: FeedItem }) {
     const j = item.payload as { id: string; reference: string | null; description: string; postedBy: string | null }
     return (
       <Link href={`/accounting/ledger?id=${j.id}`} className="flex items-start gap-3 px-4 py-3 hover:bg-s-bg-soft transition-colors">
-        <span className="text-lg">{ICON.journal}</span>
+        <span className="text-primary-ink"><NavIcon name={ICON.journal} size={18} /></span>
         <div className="flex-1 min-w-0">
           <p className="text-xs text-s-text truncate">{j.description}</p>
           <p className="text-[11px] text-s-dim font-mono">
@@ -96,7 +97,7 @@ function FeedRow({ item }: { item: FeedItem }) {
     const a = item.payload as { id: string; action: string; entity: string; entityId: string | null; userEmail: string | null }
     return (
       <Link href={`/accounting/audit-log?action=${encodeURIComponent(a.action)}`} className="flex items-start gap-3 px-4 py-3 hover:bg-s-bg-soft transition-colors">
-        <span className="text-lg">{ICON.audit}</span>
+        <span className="text-primary-ink"><NavIcon name={ICON.audit} size={18} /></span>
         <div className="flex-1 min-w-0">
           <p className="text-xs text-s-text">
             <span className="font-mono bg-s-bg-soft border border-s-border rounded px-1.5 py-0.5 mr-1">{a.action}</span>

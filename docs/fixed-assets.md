@@ -82,8 +82,9 @@ For a small purchase that does not need a project: **Finance → Project
 tracker → Quick buy**. It creates the standing project and line, records the
 bank payment and asks for the capitalisation in one go. It is **bank only**
 (`QUICK_BUY_BANK_ONLY`). Quick-buy items are pooled when the class is
-smallwares; a single big item booked by Quick buy is shown as shared across
-brands, because the standing project has no brand (open point, section 11).
+smallwares. Quick buy can name a **brand** (and the outlet), so a single big
+item is no longer shown as shared across brands; an item bought for no brand
+must name its outlet (`LOCATION_REQUIRED_FOR_SHARED`).
 
 ### 2.3 Equipment is refused everywhere else
 
@@ -112,15 +113,15 @@ changed by a "change of estimate" request.
 
 | Class | Cost account | Accumulated depreciation | Life | Tax rate | Initial allowance |
 |---|---|---|---|---|---|
-| Kitchen equipment | 1510 | 1591 | 5 years | 15% | 25% |
-| Furniture and fixtures | 1520 | 1592 | 7 years | 15% | - |
-| IT equipment | 1530 | 1593 | 3 years | 30% | 25% |
+| Kitchen equipment | 1510 | 1591 | 5 years | 15% | 25% (ticked by default) |
+| Furniture and fixtures | 1520 | 1592 | 7 years | 15% | untick by default |
+| IT equipment | 1530 | 1593 | 3 years | 30% | untick by default |
 | Vehicles | 1540 | 1594 | 5 years | 15% | - |
 | Leasehold improvements (fit-out) | 1550 | 1595 | 10 years, or the lease end | 10% | - |
 | Buildings | 1505 | 1596 | 20 years | 10% | - |
-| Power and generation | 1515 | 1597 | 7 years | 15% | 25% |
-| Office equipment | 1525 | 1598 | 5 years | 15% | 25% |
-| Smallwares (pooled) | 1560 | 1599 | 24 months | to confirm | - |
+| Power and generation | 1515 | 1597 | 7 years | 15% | 25% (ticked by default) |
+| Office equipment | 1525 | 1598 | 5 years | 15% | untick by default |
+| Smallwares (pooled) | 1560 | 1599 | 24 months | deducted in full in the year bought (H35) | - |
 | Land | 1500 | - | not depreciated | - | - |
 
 The old single "accumulated depreciation" account **1590** is legacy. A
@@ -259,15 +260,22 @@ exactly the rows shown):
 - The **tax schedule** (Reports, Tax; the active company only) uses the Income Tax
   Ordinance Third Schedule rates in the class table (H23), on the **written-down
   value** of each asset, per tax year (1 July to 30 June, named by the year it
-  ends in): in the year of first use a **25% initial allowance** on eligible
-  plant (kitchen, IT, power, office equipment) and then the class rate on what
-  is left; later years the rate on the opening value; in the year of disposal
+  ends in): in the year of first use a **25% initial allowance** on each asset
+  that is **ticked "Eligible for 25% initial allowance (tax)"** and then the
+  class rate on what is left. The tick is **per asset** (H42, Hasnain
+  2026-10-16): it starts ticked for kitchen equipment and power and generation,
+  and unticked for office, IT and every other class. Finance or the CEO changes
+  it on the asset page (`PUT /accounting/fixed-assets/:id/initial-allowance`,
+  audited); once a tax year from the asset's first is frozen the tick is final
+  (`TAX_YEAR_FROZEN`). Ticked means the class rate, or the statutory 25% when
+  the class carries 0. Land and smallwares never. It is a tax view only and
+  never changes the books; later years the rate on the opening value; in the year of disposal
   no depreciation, and the proceeds come off the value. Cost is net of
   claimable input tax. A partial smallwares write-off does not move the tax
-  value (Hasnain to confirm).
-- **Smallwares are not in the tax schedule.** The Third Schedule rates do not
-  cover them; they are listed as **"tax treatment to confirm"** until
-  Hasnain gives the treatment.
+  value.
+- **Smallwares are deducted in full in the year they are bought** (H35). They
+  are not depreciated in the tax schedule: the whole cost is the deduction of
+  the year of purchase.
 - The CEO can **freeze a tax year** once the return is filed
   (`POST /reports/tax/<year>/freeze`): the year's schedule stops changing even
   if a late disposal is entered. Freezing a year not yet over is refused
@@ -282,9 +290,9 @@ exactly the rows shown):
   is the default built to keep today's CEO-only control. If the CEO does not
   want to approve small smallwares purchases, that is a one-line change. A
   delayed approval pushes depreciation into later months (it catches up).
-- A single big item bought through Quick buy is shown as shared across brands
-  until a later fix lets Quick buy carry a brand.
-- Smallwares tax treatment (H23) is open with Hasnain.
+- Quick buy can name a brand, so the earlier open point about shared-only
+  Quick buy is closed.
+- Smallwares tax treatment is settled: deducted in full in the year bought (H35).
 - Year end is **30 June** for all companies (H29). The roll-forward is virtual:
   nothing is posted at year end and nothing is reversed on a reopen.
 - Closing a month with a pending capitalisation is allowed with a warning; the

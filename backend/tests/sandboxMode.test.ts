@@ -393,7 +393,7 @@ describe('email', () => {
     expect(await emailConfigured()).toBe(true)
   })
 
-  it("supplier chat's own SMTP transport is blocked too", async () => {
+  it('supplier chat goes through the one mail sender, blocked in a practice copy', async () => {
     const ctx = {
       conversation: { id: 'conv-1', subject: 'Order' },
       supplier: { id: 'sup-1', name: 'Fresh Farms', email: 'orders@freshfarms.example', whatsappPhone: null, phone: null },
@@ -404,7 +404,7 @@ describe('email', () => {
     practice(true)
     expect((await deliverToSupplier(ctx)).email).toBe('sent')
     expect(mail.transports).toBe(1)
-    expect(recentlyBlocked()[0]).toMatchObject({ kind: 'email', summary: expect.stringContaining('supplier chat') })
+    expect(recentlyBlocked()[0]).toMatchObject({ kind: 'email' })
   })
 })
 

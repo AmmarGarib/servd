@@ -12,6 +12,7 @@
 // edit, here or in the API. Pre-bills never reach the fiscal POS, the ledger
 // or any revenue / tax report.
 
+import { CheckLabel, Field, Input, SidePanel } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
@@ -19,6 +20,7 @@ import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 // A pre-bill is priced for cash or the digital rate. 'card' is the digital tax
 // group — Card – Keenu and Raast QR share it (backend lib/pricing.ts).
@@ -148,7 +150,7 @@ function FlagChip({ flag }: { flag: Flag }) {
   return (
     <span
       title={FLAG_HINT[flag]}
-      className="inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+      className="inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-wider"
       style={{ background: dangerBg, color: danger, border: `1px solid ${dangerBorder}` }}
     >
       {FLAG_LABEL[flag]}
@@ -162,7 +164,7 @@ function StatusPill({ status }: { status: Status }) {
     : status === 'cancelled'
       ? { background: dangerBg, color: danger }
       : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'var(--muted)' }
-  return <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={tone}>{STATUS_LABEL[status]}</span>
+  return <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold" style={tone}>{STATUS_LABEL[status]}</span>
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -200,7 +202,7 @@ export default function VoidedPreBillsPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="border-b px-4 py-6 sm:px-7" style={{ borderColor: 'var(--border)' }}>
-        <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
+        <Link href="/finance" className="text-xs text-s-muted hover:text-white/70">← Finance</Link>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white/90">Voided pre bills</h1>
@@ -218,10 +220,10 @@ export default function VoidedPreBillsPage() {
         {/* Filters */}
         <div className="flex flex-wrap items-end gap-3 rounded-2xl p-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
           <Filter label="From">
-            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={fieldCls} />
+            <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={fieldCls} />
           </Filter>
           <Filter label="To">
-            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={fieldCls} />
+            <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={fieldCls} />
           </Filter>
           <Filter label="Brand">
             <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
@@ -241,10 +243,10 @@ export default function VoidedPreBillsPage() {
               {(Object.keys(STATUS_LABEL) as Status[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
             </Select>
           </Filter>
-          <label className="flex cursor-pointer items-center gap-2 pb-2 text-sm text-white/70">
+          <CheckLabel className="flex cursor-pointer items-center gap-2 pb-2 text-sm text-white/70">
             <input type="checkbox" checked={flagged} onChange={(e) => setFlagged(e.target.checked)} />
             Flagged only
-          </label>
+          </CheckLabel>
         </div>
 
         {/* Summary */}
@@ -254,8 +256,8 @@ export default function VoidedPreBillsPage() {
           <Tile label="Final bill lower" value={String(data?.summary.finalLower.orders ?? 0)} sub={`${fmtPkr(data?.summary.finalLower.diffCents ?? 0)} below`} alert={(data?.summary.finalLower.orders ?? 0) > 0} hint={FLAG_HINT.FINAL_LOWER} />
           <Tile label="Lines voided after" value={String(data?.summary.lineVoidsAfter.orders ?? 0)} sub={`${fmtPkr(data?.summary.lineVoidsAfter.cents ?? 0)} · ${printsLabel(data?.summary.lineVoidsAfter.count ?? 0)}`} alert={(data?.summary.lineVoidsAfter.orders ?? 0) > 0} hint={FLAG_HINT.LINE_VOIDS_AFTER} />
         </div>
-        {data && <p className="text-xs text-white/40">Amounts count each order once — a reprinted bill is one bill, not several.</p>}
-        {flagged && data && <p className="text-xs text-white/40">Totals cover every pre-bill in the range; the table shows only the flagged ones.</p>}
+        {data && <p className="text-xs text-s-muted">Amounts count each order once — a reprinted bill is one bill, not several.</p>}
+        {flagged && data && <p className="text-xs text-s-muted">Totals cover every pre-bill in the range; the table shows only the flagged ones.</p>}
         {data?.truncated && (
           <p className="rounded-xl px-4 py-2 text-sm" style={{ color: 'var(--erp-warning)', background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)' }}>
             Showing the latest 5,000 pre-bills only — narrow the date range to see the rest.
@@ -269,15 +271,12 @@ export default function VoidedPreBillsPage() {
           ) : isLoading ? (
             <p className="p-8 text-center text-sm text-white/40">Loading…</p>
           ) : rows.length === 0 ? (
-            <div className="p-10 text-center">
-              <p className="font-bold text-white/85">{flagged ? 'Nothing flagged' : 'No pre-bills'}</p>
-              <p className="mt-1 text-sm text-white/45">{flagged ? 'Every pre-bill in this range became a full & final bill at the same or a higher total.' : 'No pre-bill was printed in this range.'}</p>
-            </div>
+            <CompactEmptyState message={flagged ? 'No flagged pre-bills in this range.' : 'No pre-bills printed in this range.'} />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <tr className="text-left text-xs uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
                     <th className="px-4 py-3 font-semibold">Pre-bill</th>
                     <th className="px-3 py-3 font-semibold">Printed (PKT)</th>
                     <th className="px-3 py-3 font-semibold">Brand</th>
@@ -307,7 +306,7 @@ export default function VoidedPreBillsPage() {
                       <td className="px-3 py-2.5 text-white/75">{r.printedBy ?? '—'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold text-white/85">
                         {fmtPkr(r.totalCents)}
-                        <span className="ml-1 text-[10px] uppercase text-white/35">{tenderText(r.tender)}</span>
+                        <span className="ml-1 text-xs uppercase text-white/35">{tenderText(r.tender)}</span>
                       </td>
                       <td className="px-3 py-2.5"><StatusPill status={r.status} /></td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right text-white/75">{r.finalTotalCents != null ? fmtPkr(r.finalTotalCents) : '—'}</td>
@@ -336,21 +335,9 @@ export default function VoidedPreBillsPage() {
 function Drawer({ row: r, onClose }: { row: Row; onClose: () => void }) {
   const otherCents = r.totalCents - (r.subtotalCents - r.discountCents + r.taxCents + r.serviceChargeCents)
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-secondary/40" onClick={onClose}>
-      <aside
-        className="h-full w-full max-w-md overflow-y-auto"
-        style={{ background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}
-        onClick={(e) => e.stopPropagation()}
-        aria-label={`Pre-bill ${r.label}`}
-      >
-        <div className="sticky top-0 flex items-center justify-between border-b px-5 py-4" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-          <div>
-            <h2 className="font-mono text-lg font-black text-white/90">{r.label}</h2>
-            <p className="text-xs text-white/45">{r.brand}{r.table ? ` · Table ${r.table}` : ''} · Order {r.orderRef}</p>
-          </div>
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/50 hover:text-white" aria-label="Close">Close</button>
-        </div>
-
+    <SidePanel flush onClose={onClose} ariaLabel={`Pre-bill ${r.label}`}
+        title={<span className="font-mono">{r.label}</span>}
+        subtitle={`${r.brand}${r.table ? ` · Table ${r.table}` : ''} · Order ${r.orderRef}`}>
         <div className="space-y-5 p-5 text-sm">
           {r.flags.length > 0 && (
             <div className="space-y-2 rounded-xl p-3" style={{ background: dangerBg, border: `1px solid ${dangerBorder}` }}>
@@ -378,7 +365,7 @@ function Drawer({ row: r, onClose }: { row: Row; onClose: () => void }) {
                     <td className="py-1 pr-2 text-white/50">{l.qty}×</td>
                     <td className="py-1 text-white/80">
                       {l.name}
-                      {l.modifiers.length > 0 && <div className="text-xs text-white/40">{l.modifiers.map((m) => `+ ${m.name}`).join(', ')}</div>}
+                      {l.modifiers.length > 0 && <div className="text-xs text-s-muted">{l.modifiers.map((m) => `+ ${m.name}`).join(', ')}</div>}
                     </td>
                     <td className="whitespace-nowrap py-1 text-right text-white/80">{fmtPkr(l.lineCents)}</td>
                   </tr>
@@ -432,7 +419,7 @@ function Drawer({ row: r, onClose }: { row: Row; onClose: () => void }) {
                       <span className="text-white/85">{v.qty}× {v.name}</span>
                       <span className="whitespace-nowrap font-semibold" style={{ color: danger }}>{fmtPkr(v.cents)}</span>
                     </div>
-                    <p className="mt-0.5 text-xs text-white/50">
+                    <p className="mt-0.5 text-xs text-s-muted">
                       {fmtPkt(v.voidedAt)} · approved by {v.approver ?? 'unknown'}{v.reason ? ` · ${v.reason}` : ''}
                     </p>
                   </div>
@@ -442,12 +429,11 @@ function Drawer({ row: r, onClose }: { row: Row; onClose: () => void }) {
             )}
           </Section>
 
-          <p className="text-xs text-white/35">
+          <p className="text-xs text-s-muted">
             A pre-bill is a permanent record. It is never filed with the POS, never posts to the ledger and is never counted as revenue.
           </p>
         </div>
-      </aside>
-    </div>
+      </SidePanel>
   )
 }
 
@@ -463,21 +449,21 @@ function Tile({ label, value, sub, alert, hint }: { label: string; value: string
       title={hint}
       style={{ background: alert ? dangerBg : 'var(--surface)', border: `1px solid ${alert ? dangerBorder : 'var(--border)'}` }}
     >
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-white/45">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wider text-white/45">{label}</p>
       <p className="mt-1 text-2xl font-black" style={{ color: alert ? danger : 'var(--text)' }}>{value}</p>
-      <p className="text-xs text-white/50">{sub}</p>
+      <p className="text-xs text-s-muted">{sub}</p>
     </div>
   )
 }
 
 function Filter({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="flex flex-col gap-1 text-xs text-white/50">{label}{children}</label>
+  return <Field label={label}>{children}</Field>
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-white/40">{title}</h3>
+      <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-white/40">{title}</h3>
       <div className="space-y-1">{children}</div>
     </section>
   )

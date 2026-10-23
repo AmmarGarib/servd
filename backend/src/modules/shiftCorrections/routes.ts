@@ -9,7 +9,8 @@
 //   GET  /:id              finance, CEO   the set with a preview of each fix
 //   POST /:id/approve      CEO            {note?} → applied | failed (the response says which)
 //   POST /:id/reject       CEO            {note ≥10} → rejected; nothing changes
-//   POST /:id/retry        CEO            a failed set → applied | failed
+//   POST /:id/retry        CEO            a failed set → applied | failed (the approve right; a set
+//                                         interrupted mid-apply is moved to failed by sweepStaleApplies)
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { UserRole } from '@prisma/client'
@@ -144,12 +145,14 @@ export async function shiftCorrectionRoutes(app: FastifyInstance): Promise<void>
 
   app.post<{ Params: { id: string } }>('/:id/retry', ceo, async (req) => {
     const id = z.string().uuid().parse(req.params.id)
-    const found = await loadCorrection(prisma, id, await scopeTenantWhere(req, 'write'))
+    // The same right as approving (APPROVAL_RIGHTS.shift_correction): a retry applies the set.
+    const { found, grant } = await decide(req, id)
     await claimRetry(found.id)
     await audit({
       category: 'accounting', action: 'shift_correction.retry', entity: 'ShiftCorrection', entityId: found.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: found.tenantId,
-      before: { status: 'failed', error: found.error }, after: { status: 'approved' }, metadata: { actorRole: req.staffUser!.role },
+      before: { status: 'failed', error: found.error }, after: { status: 'approved' },
+      metadata: { actorRole: req.staffUser!.role, via: grant.via },
     })
     await applyCorrection(found.id, actorOf(req))
     return correctionView(await loadCorrection(prisma, found.id, { tenantId: found.tenantId }), { preview: false })

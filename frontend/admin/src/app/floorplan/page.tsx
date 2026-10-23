@@ -21,6 +21,7 @@ import { LiveFloor } from './LiveFloor'
 import { LayoutsGallery } from '../../components/floorplan/LayoutsGallery'
 import { useBrandFilter } from '../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../components/ui/NavIcon'
 
 interface Concept { id: string; name: string; slug: string }
 interface BrandTable { id: string; label: string; capacity: number | null; floorId: string | null }
@@ -187,7 +188,7 @@ export default function FloorplanPage() {
               className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-s-surface border-s-border text-s-text hover:bg-s-bg-soft"
               title="Drop a pre-built table arrangement onto this floor"
             >
-              📐 Layouts
+              <NavIcon name="layout" size={14} className="mr-1 inline" />Layouts
             </button>
           )}
         </div>

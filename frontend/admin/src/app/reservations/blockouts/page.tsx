@@ -42,9 +42,9 @@ export default function BlockoutsPage() {
   })
 
   const KIND_LABEL: Record<Blockout['kind'], { label: string; tone: string }> = {
-    closure:          { label: 'Closed',          tone: 'bg-s-red text-[#fff]' },
+    closure:          { label: 'Closed',          tone: 'bg-s-red text-bone' },
     private_event:    { label: 'Private event',   tone: 'bg-secondary text-secondary-on' },
-    reduced_capacity: { label: 'Reduced',         tone: 'bg-s-amber text-[#fff]' },
+    reduced_capacity: { label: 'Reduced',         tone: 'bg-s-amber text-bone' },
     custom:           { label: 'Custom',          tone: 'bg-s-elevated text-s-text' },
   }
 
@@ -83,10 +83,10 @@ export default function BlockoutsPage() {
                     <p className="flex items-center gap-1 text-s-muted"><ArrowRight size={12} aria-hidden="true" /> {new Date(b.endTime).toLocaleString()}</p>
                   </td>
                   <td className="px-4 py-2">
-                    <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${KIND_LABEL[b.kind].tone}`}>
+                    <span className={`text-xs uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${KIND_LABEL[b.kind].tone}`}>
                       {KIND_LABEL[b.kind].label}
                     </span>
-                    {b.capacityCap && <p className="text-[11px] text-s-muted mt-1">Cap: {b.capacityCap}</p>}
+                    {b.capacityCap && <p className="text-xs text-s-muted mt-1">Cap: {b.capacityCap}</p>}
                   </td>
                   <td className="px-4 py-2 text-xs text-s-text">{b.reason ?? '—'}</td>
                   <td className="px-4 py-2 text-right">

@@ -4,14 +4,15 @@ import { useAuthStore } from '../store/auth'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { STOREFRONT_URL } from '../lib/content'
+import { NavIcon } from '../components/ui/NavIcon'
 
 const FEATURES = [
-  { icon: '🖥', title: 'Kitchen Display', desc: 'Real-time order routing to every station. No tickets, no misses.' },
-  { icon: '💳', title: 'Point of Sale', desc: 'Fast POS with split payments, modifiers, and shift management.' },
-  { icon: '📱', title: 'Online Ordering', desc: 'Branded storefronts per concept. Delivery, pickup, dine-in.' },
-  { icon: '👥', title: 'CRM & Loyalty', desc: 'Segments, wallet, campaigns, and tiered loyalty built in.' },
-  { icon: '📊', title: 'Live Analytics', desc: 'P&L, food cost, and revenue — updated in real time.' },
-  { icon: '🏭', title: 'Inventory & Recipes', desc: 'Purchase orders, recipe costing, and stock alerts.' },
+  { icon: 'monitor', title: 'Kitchen Display', desc: 'Real-time order routing to every station. No tickets, no misses.' },
+  { icon: 'card', title: 'Point of Sale', desc: 'Fast POS with split payments, modifiers, and shift management.' },
+  { icon: 'phone', title: 'Online Ordering', desc: 'Branded storefronts per concept. Delivery, pickup, dine-in.' },
+  { icon: 'users', title: 'CRM & Loyalty', desc: 'Segments, wallet, campaigns, and tiered loyalty built in.' },
+  { icon: 'chart', title: 'Live Analytics', desc: 'P&L, food cost, and revenue — updated in real time.' },
+  { icon: 'factory', title: 'Inventory & Recipes', desc: 'Purchase orders, recipe costing, and stock alerts.' },
 ]
 
 
@@ -95,7 +96,7 @@ export default function LandingPage() {
               className="s-card p-5 hover:border-s-teal/30 hover:bg-s-elevated transition-all group cursor-default"
               style={{ animationDelay: `${i * 60}ms` }}>
               <div className="h-10 w-10 rounded-xl bg-s-elevated border border-s-border flex items-center justify-center text-xl mb-4 group-hover:scale-110 transition-transform">
-                {f.icon}
+                <NavIcon name={f.icon} size={20} />
               </div>
               <h3 className="font-bold text-s-text mb-1">{f.title}</h3>
               <p className="text-sm text-s-muted leading-relaxed">{f.desc}</p>
@@ -110,7 +111,7 @@ export default function LandingPage() {
 
           {/* Staff portal */}
           <div className="rounded-2xl border border-s-teal/20 bg-s-teal-dim/20 p-6">
-            <div className="h-12 w-12 rounded-xl bg-s-teal/10 border border-s-teal/20 flex items-center justify-center text-2xl mb-4">⚙</div>
+            <div className="h-12 w-12 rounded-xl bg-s-teal/10 border border-s-teal/20 flex items-center justify-center text-2xl mb-4"><NavIcon name="cog" size={24} /></div>
             <h2 className="text-lg font-black text-s-text mb-1">Staff Portal</h2>
             <p className="text-sm text-s-muted mb-5 leading-relaxed">
               Dashboard, KDS, POS, reports, CRM, inventory — everything your team needs to run the operation.
@@ -129,7 +130,7 @@ export default function LandingPage() {
 
           {/* Customer portal */}
           <div className="rounded-2xl border border-s-indigo/20 bg-s-indigo-dim/20 p-6">
-            <div className="h-12 w-12 rounded-xl bg-s-indigo/10 border border-s-indigo/20 flex items-center justify-center text-2xl mb-4">🛍</div>
+            <div className="h-12 w-12 rounded-xl bg-s-indigo/10 border border-s-indigo/20 flex items-center justify-center text-2xl mb-4"><NavIcon name="bag" size={24} /></div>
             <h2 className="text-lg font-black text-s-text mb-1">Online Ordering</h2>
             <p className="text-sm text-s-muted mb-5 leading-relaxed">
               Browse menus, place orders, track live status, and earn loyalty points — from any device.

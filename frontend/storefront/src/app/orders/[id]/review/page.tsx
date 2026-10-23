@@ -121,7 +121,7 @@ export default function ReviewOrderPage() {
       <Centered>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>Hmm.</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>{error ?? 'We couldn\'t find this order.'}</p>
-        <MagneticLink href="/orders" className="servd-btn-primary">My orders</MagneticLink>
+        <MagneticLink href="/orders" className="servd-btn-rect servd-btn-primary">My orders</MagneticLink>
       </Centered>
     )
   }
@@ -131,7 +131,7 @@ export default function ReviewOrderPage() {
         <div style={{ marginBottom: '0.75rem', color: 'var(--servd-green-dark)' }}><BigCheckIcon /></div>
         <h1 className="font-display" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>Already reviewed.</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>Thanks for the feedback — it helps us cook better.</p>
-        <MagneticLink href={brandCanonical(order.concept.slug)} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
+        <MagneticLink href={brandCanonical(order.concept.slug)} className="servd-btn-rect servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
       </Centered>
     )
   }
@@ -159,7 +159,7 @@ export default function ReviewOrderPage() {
           </div>
         )}
         <div>
-          <MagneticLink href={brandCanonical(order.concept.slug)} className="servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
+          <MagneticLink href={brandCanonical(order.concept.slug)} className="servd-btn-rect servd-btn-primary">Back to {formatBrandName(order.concept.name)}</MagneticLink>
         </div>
       </Centered>
     )
@@ -252,7 +252,7 @@ export default function ReviewOrderPage() {
         <button
           onClick={submit}
           disabled={rating < 1 || submitting}
-          className="servd-btn-primary"
+          className="servd-btn-rect servd-btn-primary"
           style={{ width: '100%', padding: '1rem', fontSize: '1rem' }}>
           {submitting ? 'Submitting…' : rating < 1 ? 'Pick a star to submit' : 'Submit review'}
         </button>

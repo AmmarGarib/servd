@@ -6,6 +6,7 @@
 // companies in view; finance reads it with its 'accounting' module. Numbers
 // run per company, prefix, Karachi year and type, so the same number can
 // appear once in each company.
+import { Field, Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import Link from 'next/link'
@@ -70,7 +71,7 @@ export default function TaxInvoicesPage() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/accounting" className="text-xs text-s-muted hover:text-s-text">← Accounting</Link>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-success">Sales tax</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-success">Sales tax</p>
           <h1 className="text-xl font-bold text-s-text">Tax invoices</h1>
         </div>
         <ExportMenu path={`/invoices/register.csv?${qs}`} filename={`tax-invoices-${from}-${to}`} onError={(m) => setErr(m)} />
@@ -82,26 +83,22 @@ export default function TaxInvoicesPage() {
           Credit notes count against the totals. Tie these to the <Link href="/accounting/sales-tax-return" className="underline">sales tax return</Link>.
         </p>
         <div className="s-card p-3 flex flex-wrap items-end gap-3">
-          <label className="block">
-            <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">From</span>
-            <input type="date" className="s-input" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
-          </label>
-          <label className="block">
-            <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">To</span>
-            <input type="date" className="s-input" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
-          </label>
-          <label className="block">
-            <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">Type</span>
+          <Field label="From">
+            <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+          </Field>
+          <Field label="To">
+            <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+          </Field>
+          <Field label="Type">
             <Select className="s-input" value={type} onChange={(e) => setType(e.target.value as typeof type)}>
               <option value="">Invoices and credit notes</option>
               <option value="invoice">Invoices</option>
               <option value="credit_note">Credit notes</option>
             </Select>
-          </label>
-          <label className="block flex-1 min-w-[180px]">
-            <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">Number or buyer</span>
-            <input className="s-input w-full" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. STX-2026-00012" />
-          </label>
+          </Field>
+          <Field label="Number or buyer">
+            <Input className="w-full" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. STX-2026-00012" />
+          </Field>
         </div>
         {err && <p role="alert" className="text-xs text-s-red">{err}</p>}
         {isLoading && <p className="text-s-muted text-sm" role="status">Loading…</p>}
@@ -130,7 +127,7 @@ export default function TaxInvoicesPage() {
                       <td className="px-4 py-2 font-mono text-xs text-s-text whitespace-nowrap">
                         {r.invoiceNumber}
                         {r.type === 'credit_note' && (
-                          <div className="font-sans"><span className="s-badge-purple text-[10px]">Credit note</span>{r.originalInvoiceId && <span className="text-s-muted"> for {byId.get(r.originalInvoiceId) ?? 'an earlier invoice'}</span>}</div>
+                          <div className="font-sans"><span className="s-badge-purple text-xs">Credit note</span>{r.originalInvoiceId && <span className="text-s-muted"> for {byId.get(r.originalInvoiceId) ?? 'an earlier invoice'}</span>}</div>
                         )}
                       </td>
                       <td className="px-4 py-2 text-xs text-s-muted whitespace-nowrap">{pktDay(r.issuedAt)}</td>

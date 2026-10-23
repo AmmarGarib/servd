@@ -6,6 +6,7 @@
 // books goes through a request, and the CEO approves it (the approve and
 // reject buttons appear only when the API says canDecide).
 
+import { CheckLabel, Input, Textarea } from '@/components/finance/ui'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -150,7 +151,7 @@ export default function FixedAssetPage() {
           {actions.length > 0 && (
             <section className="rounded-2xl p-4" style={card}>
               <p className="text-sm font-black text-white/90">What do you need to do with it?</p>
-              <p className="text-xs text-white/45 mt-0.5">
+              <p className="text-xs text-s-muted mt-0.5">
                 {isCeo ? 'As CEO, what you send posts at once.' : 'Disposals, write-downs and voids go to the CEO to approve. A move takes effect at once.'}
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
@@ -190,7 +191,7 @@ export default function FixedAssetPage() {
                 ...(a.leaseEndsAt ? [['Lease ends', fmtDay(a.leaseEndsAt)]] : []),
                 ...(a.status === 'disposed' ? [['Disposed', `${fmtDay(a.disposedAt)}${a.disposalKind ? ` (${a.disposalKind.replace(/_/g, ' ')})` : ''}`]] : []),
               ] as Array<[string, string]>).map(([k, v]) => (
-                <div key={k}><dt className="text-[11px] font-bold uppercase tracking-wider text-white/40">{k}</dt><dd className="text-white/85 break-words">{v}</dd></div>
+                <div key={k}><dt className="text-xs font-bold uppercase tracking-wider text-white/40">{k}</dt><dd className="text-white/85 break-words">{v}</dd></div>
               ))}
             </dl>
             {a.notes && <p className="text-sm text-white/60 mt-3 break-words">Notes: {a.notes}</p>}
@@ -229,7 +230,7 @@ export default function FixedAssetPage() {
               firstYearFrozen={data.tax.initialAllowance?.frozenTaxYear != null}
               onSaved={refresh}
             />
-            {data.tax.note && !data.tax.toConfirm && <p className="text-xs text-white/50 mt-1">{data.tax.note}</p>}
+            {data.tax.note && !data.tax.toConfirm && <p className="text-xs text-s-muted mt-1">{data.tax.note}</p>}
             {data.tax.toConfirm ? (
               <p className="text-sm text-white/60 mt-2">Tax treatment to confirm. {data.tax.note}</p>
             ) : data.tax.years.length === 0 ? (
@@ -238,7 +239,7 @@ export default function FixedAssetPage() {
               <div className="overflow-x-auto mt-3">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                    <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                       {['Tax year', 'Rate', 'Opening', 'Added', 'Initial allowance', 'Depreciation', 'Sale proceeds', 'Closing'].map((h, i) => (
                         <th key={h} className={`px-3 py-2 font-bold whitespace-nowrap ${i > 0 ? 'text-right' : ''}`}>{h}</th>
                       ))}
@@ -279,7 +280,7 @@ export default function FixedAssetPage() {
                   <li key={j.id} className="py-2 flex flex-wrap gap-x-4 gap-y-0.5">
                     <span className="text-white/50 w-28 shrink-0">{fmtDay(j.entryDate)}</span>
                     <span className="text-white/80 min-w-0 break-words flex-1">{j.description || j.reference}</span>
-                    <span className="text-[11px] text-white/35 break-all">{j.reference}</span>
+                    <span className="text-xs text-s-muted break-all">{j.reference}</span>
                   </li>
                 ))}
               </ul>
@@ -313,7 +314,7 @@ function InitialAllowanceTick({ asset, canEdit, applicable, firstYearFrozen, onS
   const locked = !canEdit || firstYearFrozen || save.isPending
   return (
     <div className="mt-2">
-      <label className={`flex items-center gap-2 text-sm ${locked ? 'text-white/50' : 'text-white/80 cursor-pointer'}`}>
+      <CheckLabel className={`text-sm ${locked ? 'text-white/50' : 'text-white/80 cursor-pointer'}`}>
         <input
           type="checkbox"
           checked={save.isPending ? !!save.variables : checked}
@@ -321,8 +322,8 @@ function InitialAllowanceTick({ asset, canEdit, applicable, firstYearFrozen, onS
           onChange={(e) => save.mutate(e.target.checked)}
         />
         Eligible for 25% initial allowance (tax)
-      </label>
-      <p className="text-[11px] text-white/45 mt-0.5 ml-6">
+      </CheckLabel>
+      <p className="text-xs text-s-muted mt-0.5 ml-6">
         {firstYearFrozen
           ? 'A tax year carrying its initial allowance is frozen, so this can no longer change.'
           : 'Plant and machinery only (accountant, H42). Changes the tax view, never the books.'}
@@ -359,13 +360,13 @@ function EditDetails({ detail, lookups, onClose, onSaved }: {
   return (
     <Modal title="Edit details" onClose={onClose}>
       <form onSubmit={(e) => { e.preventDefault(); save.mutate() }} className="space-y-3">
-        <p className="text-[11px] text-white/45">
+        <p className="text-xs text-s-muted">
           Only descriptive details can be edited. Cost, life, dates, class, brand and outlet drive posted depreciation, so they change through a request.
         </p>
-        <L t="Name"><input className={inp} value={name} onChange={(e) => setName(e.target.value)} /></L>
+        <L t="Name"><Input className={inp} value={name} onChange={(e) => setName(e.target.value)} /></L>
         <div className="grid grid-cols-2 gap-3">
-          <L t="Serial number"><input className={inp} value={serial} onChange={(e) => setSerial(e.target.value)} /></L>
-          <L t="Warranty until"><input type="date" className={inp} value={warranty} onChange={(e) => setWarranty(e.target.value)} /></L>
+          <L t="Serial number"><Input className={inp} value={serial} onChange={(e) => setSerial(e.target.value)} /></L>
+          <L t="Warranty until"><Input type="date" className={inp} value={warranty} onChange={(e) => setWarranty(e.target.value)} /></L>
         </div>
         <L t="Supplier">
           <Select className={inp} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
@@ -373,7 +374,7 @@ function EditDetails({ detail, lookups, onClose, onSaved }: {
             {forCompany(lookups.suppliers, a.tenantId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>
         </L>
-        <L t="Notes"><textarea className={inp} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></L>
+        <L t="Notes"><Textarea className={inp} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></L>
         <ErrorLine error={save.error} />
         <div className="flex gap-2 pt-2">
           <button type="submit" disabled={save.isPending || !name.trim()} className={btnPrimary}>{save.isPending ? 'Saving…' : 'Save'}</button>

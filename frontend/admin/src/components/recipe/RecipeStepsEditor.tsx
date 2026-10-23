@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../ui/NavIcon'
 
 /**
  * Recipe step editor — phase tabs, station picker, dependency picker, duration.
@@ -22,10 +23,10 @@ import { Select } from '@/components/ui/Select'
  */
 
 const PHASES = [
-  { id: 'prep_mep',         label: 'Mise en place',  emoji: '🥗', desc: 'Pre-service dice/portion/sauces' },
-  { id: 'prep_mop',         label: 'Prep MOP',       emoji: '🧪', desc: 'Pre-service marinades, par-bakes, sous-vide' },
-  { id: 'service_cook',     label: 'Service cook',   emoji: '🔥', desc: 'Hot-line cook during service' },
-  { id: 'service_assemble', label: 'Plate & finish', emoji: '🍽',  desc: 'Final assembly / box / garnish' },
+  { id: 'prep_mep',         label: 'Mise en place',  icon: 'salad', desc: 'Pre-service dice/portion/sauces' },
+  { id: 'prep_mop',         label: 'Prep MOP',       icon: 'flask', desc: 'Pre-service marinades, par-bakes, sous-vide' },
+  { id: 'service_cook',     label: 'Service cook',   icon: 'flame', desc: 'Hot-line cook during service' },
+  { id: 'service_assemble', label: 'Plate & finish', icon: 'utensils',  desc: 'Final assembly / box / garnish' },
 ] as const
 
 type Phase = typeof PHASES[number]['id']
@@ -134,7 +135,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
               style={active
                 ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-primary-ink)', border: '1px solid var(--erp-accent)' }
                 : { background: 'transparent', color: 'rgb(var(--fg-rgb) / 0.5)', border: '1px solid transparent' }}>
-              <span className="mr-1">{p.emoji}</span>
+              <NavIcon name={p.icon} size={13} className="mr-1 inline" />
               {p.label}
               {count > 0 && <span className="ml-1.5 text-[10px] opacity-70">({count})</span>}
             </button>
@@ -171,7 +172,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-white/90 leading-snug">{s.instruction}</p>
                 <div className="flex items-center gap-2 mt-1 flex-wrap text-[10px]">
-                  <span style={{ color: 'var(--erp-primary-ink)' }}>📍 {station?.name ?? 'No station'}</span>
+                  <span style={{ color: 'var(--erp-primary-ink)' }}><NavIcon name="pin" size={11} className="mr-0.5 inline" />{station?.name ?? 'No station'}</span>
                   <span className="text-white/40">⏱ {s.estimatedSeconds}s</span>
                   {s.dependsOnIds.length > 0 && (
                     <span className="text-white/40">
@@ -187,7 +188,7 @@ export function RecipeStepsEditor({ recipeId }: { recipeId: string }) {
                 </button>
                 <button onClick={() => { if (confirm('Delete this step?')) remove.mutate(s.id) }}
                   className="text-[10px] px-2 py-1 rounded font-bold"
-                  style={{ background: 'rgba(255,77,79,0.08)', color: 'var(--erp-danger)' }}>
+                  style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', color: 'var(--erp-danger)' }}>
                   Delete
                 </button>
               </div>
@@ -293,7 +294,7 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
                     ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' }
                     : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.7)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}
                   title={c.instruction}>
-                  {on ? '✓ ' : '+ '}{c.instruction.slice(0, 36)}{c.instruction.length > 36 ? '…' : ''}
+                  {on ? 'Added: ' : '+ '}{c.instruction.slice(0, 36)}{c.instruction.length > 36 ? '…' : ''}
                 </button>
               )
             })}

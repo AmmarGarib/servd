@@ -11,11 +11,16 @@
 //   PUT  /pos/orders/:id/settlement-channel close in servd (§6a)
 //   POST /pos/orders/:id/keenu-push (+check) push to Keenu (§6b)
 //   GET  /pos/delivery-zones                delivery zones (§7)
+//
+// Offline (owner, 2026-10-23): only Save of a NEW ticket is kept on the device and sent later
+// (lib/offline-queue.ts). Every other write here — add items, settle / pay, Keenu push — is never
+// queued: offline it throws "No internet — not sent" (NO_INTERNET_MESSAGE), never a fake success.
 
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
 import { usePosStore, type Fulfilment, type TillDelivery, type TillGuest, type TillWaiter } from '../../../store/pos'
 import { newIdempotencyKey, tillErrorMessage, type FiscalView, type TillLine, type TillOrder, type OfflinePlaceholder, isOfflinePlaceholder, normaliseRungOrder } from '../tillApi'
+import { postOrderOrQueue, requireOnline, summariseLines } from '../../../lib/offline-queue'
 
 // ─── Table board ─────────────────────────────────────────────────────────────
 
@@ -215,11 +220,18 @@ export interface SaveBody {
   discountReason: string
   discountPin: string
   items: TillLine[]
+  /** For the offline queue's list only (brand, the server's last total). Never sent. */
+  brandName?: string | null
+  totalCents?: number | null
 }
 
 /** A TillOrder from POST /pos/orders with the new columns. */
 export type SavedOrder = TillOrder & { settlementChannel?: string | null; waiterEmployeeId?: string | null; partySize?: number | null }
 
+/**
+ * Save. Offline, a NEW ticket is kept on this device and sent later with the same idempotency key
+ * (lib/offline-queue.ts) — the answer is then a placeholder, never an order. Not one with a manager PIN.
+ */
 export function saveTicket(b: SaveBody): Promise<SavedOrder | OfflinePlaceholder> {
   const delivery = b.fulfilment === 'delivery' && b.delivery
   const body = {
@@ -248,7 +260,9 @@ export function saveTicket(b: SaveBody): Promise<SavedOrder | OfflinePlaceholder
     ...(b.discountPin && { managerOverridePin: b.discountPin }),
     items: b.items,
   }
-  return api.post<SavedOrder | OfflinePlaceholder>('/pos/orders', body).then((r) => normaliseRungOrder(r) as SavedOrder | OfflinePlaceholder)
+  const label = b.fulfilment === 'dine_in' ? 'Dine in' : b.fulfilment === 'delivery' ? `Delivery${delivery ? ` — ${delivery.name.trim()}` : ''}` : 'Takeaway'
+  const summary = summariseLines(b.items, { brandName: b.brandName ?? null, label, discountCents: b.discountCents, totalCents: b.totalCents ?? null })
+  return postOrderOrQueue<SavedOrder>(body, summary).then((r) => normaliseRungOrder(r) as SavedOrder | OfflinePlaceholder)
 }
 export { isOfflinePlaceholder, newIdempotencyKey }
 
@@ -257,6 +271,7 @@ export { isOfflinePlaceholder, newIdempotencyKey }
  * lines fire to the kitchen. 409 BILL_IN_PAYMENT once money is on the bill (ring them up on a new ticket instead).
  */
 export function addItemsToTicket(orderId: string, b: { items: TillLine[]; idempotencyKey: string; managerOverridePin?: string }): Promise<SavedOrder> {
+  requireOnline()
   return api.post<SavedOrder>(`/pos/orders/${orderId}/items`, {
     items: b.items, idempotencyKey: b.idempotencyKey, ...(b.managerOverridePin && { managerOverridePin: b.managerOverridePin }),
   }).then((r) => normaliseRungOrder(r) as SavedOrder)
@@ -265,6 +280,7 @@ export function addItemsToTicket(orderId: string, b: { items: TillLine[]; idempo
 // ─── Settle ─────────────────────────────────────────────────────────────────
 
 export function setServdChannel(orderId: string): Promise<{ orderId: string; settlementChannel: string }> {
+  requireOnline()
   return api.put<{ orderId: string; settlementChannel: string }>(`/pos/orders/${orderId}/settlement-channel`, { channel: 'servd' })
 }
 
@@ -281,6 +297,7 @@ export function payServd(body: {
   gatewayRef?: string
   manualReason?: 'terminal_offline'
 }): Promise<{ payments: Array<{ id: string; changeCents: number | null }>; orderCompleted: boolean; fiscal?: FiscalView | null }> {
+  requireOnline()
   const { orderId, shiftId, idempotencyKey, ...p } = body
   return api.post('/pos/payments', { orderId, shiftId, idempotencyKey, settlementChannel: 'servd', payments: [p] })
 }
@@ -294,6 +311,7 @@ export interface SplitTender {
   raastVerified?: true
 }
 export function paySplitServd(body: { orderId: string; shiftId: string; idempotencyKey: string; payments: SplitTender[] }): Promise<{ payments: Array<{ id: string; changeCents: number | null }>; orderCompleted: boolean; fiscal?: FiscalView | null }> {
+  requireOnline()
   return api.post('/pos/payments', { ...body, settlementChannel: 'servd' })
 }
 
@@ -334,9 +352,11 @@ export type KeenuAnswer = KeenuSettled | KeenuPending
 
 /** 201 settled, 202 pending — both come back as the parsed body. */
 export function pushToKeenu(orderId: string, body: { shiftId: string; method: 'cash' | 'card'; tipCents?: number }): Promise<KeenuAnswer> {
+  requireOnline()
   return api.post<KeenuAnswer>(`/pos/orders/${orderId}/keenu-push`, body)
 }
 export function checkKeenuPush(orderId: string): Promise<KeenuAnswer> {
+  requireOnline()
   return api.post<KeenuAnswer>(`/pos/orders/${orderId}/keenu-push/check`, {})
 }
 export function getKeenuPush(orderId: string): Promise<{ settlementChannel: string | null; push: KeenuPushView | null }> {

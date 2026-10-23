@@ -133,8 +133,11 @@ describe('R2-UI-01 — the till survives the ring-up answer', () => {
   })
 
   it('an offline placeholder passes through untouched', async () => {
+    // Today the placeholder comes from the till's own offline queue
+    // (lib/offline-queue.ts), never from the server; whatever produces it,
+    // the ring-up step must hand it back untouched.
     apiPost.mockResolvedValueOnce({ id: 'tmp-1', status: 'queued_offline' })
-    const rung = await till.ringUp({} as never)
+    const rung = await till.ringUp(ringBody('k') as never)
     expect(rung).toEqual({ id: 'tmp-1', status: 'queued_offline' })
   })
 })

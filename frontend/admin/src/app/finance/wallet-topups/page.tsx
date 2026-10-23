@@ -12,6 +12,7 @@
 // API: GET /wallet/customers?q= (customers of the active company), POST
 // /wallet/topup {kind: 'paid', tender, paymentRef, bankAccountId?}.
 
+import { Button, FieldLabel, Input } from '@/components/finance/ui'
 import { useState } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -79,7 +80,7 @@ export default function WalletTopupsPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="border-b px-4 py-6 sm:px-7" style={{ borderColor: 'var(--border)' }}>
-        <Link href="/accounting" className="text-xs text-white/40 hover:text-white/70">← Accounting</Link>
+        <Link href="/accounting" className="text-xs text-s-muted hover:text-white/70">← Accounting</Link>
         <h1 className="mt-2 text-2xl font-black text-white/90">Wallet top-ups</h1>
         <p className="mt-1 max-w-2xl text-sm text-white/45">
           A customer paid to load their wallet. Recorded and booked in {company?.name ?? 'the active company'} (Wallet Liability 2050),
@@ -98,22 +99,22 @@ export default function WalletTopupsPage() {
         )}
 
         <section className="space-y-3 rounded-2xl p-4" style={panel}>
-          <label htmlFor="wt-search" className="text-xs text-white/50 block">Customer</label>
+          <FieldLabel htmlFor="wt-search" className="block">Customer</FieldLabel>
           {picked ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-sm">
                 <p className="font-semibold text-white/90">{picked.name}</p>
                 <p className="text-white/45">{[picked.phone, picked.email].filter(Boolean).join(' · ')} · wallet {fmtPkr(picked.walletBalanceCents)}</p>
               </div>
-              <button type="button" onClick={() => setPicked(null)} className="s-btn-ghost text-xs">Change</button>
+              <Button size="sm" variant="ghost" type="button" onClick={() => setPicked(null)}>Change</Button>
             </div>
           ) : (
             <>
-              <input id="wt-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off"
+              <Input id="wt-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off"
                 placeholder="Name, phone or email (3+ characters)" className={fieldCls} />
               {findError && <p role="alert" className="text-xs text-s-red">{errText(findError)}</p>}
               {term.length >= 3 && !isFetching && (found?.customers.length ?? 0) === 0 && (
-                <p className="text-xs text-white/40">No customer of this company matches. A customer belongs to a company once they order or book at one of its brands.</p>
+                <p className="text-xs text-s-muted">No customer of this company matches. A customer belongs to a company once they order or book at one of its brands.</p>
               )}
               <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                 {found?.customers.map((c) => (
@@ -134,7 +135,7 @@ export default function WalletTopupsPage() {
           <form className="space-y-3 rounded-2xl p-4" style={panel}
             onSubmit={(e) => { e.preventDefault(); if (ready) topup.mutate() }}>
             <div>
-              <label htmlFor="wt-amount" className="text-xs text-white/50 block">Amount received (PKR)</label>
+              <FieldLabel htmlFor="wt-amount" className="block">Amount received (PKR)</FieldLabel>
               <MoneyInput id="wt-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} />
             </div>
             <PaymentReceivedFields
@@ -145,9 +146,9 @@ export default function WalletTopupsPage() {
               idPrefix="wt"
             />
             {topup.isError && <p role="alert" className="text-xs text-s-red">{errText(topup.error)}</p>}
-            <button type="submit" disabled={!ready} className="s-btn-primary text-sm">
+            <Button type="submit" disabled={!ready}>
               {topup.isPending ? 'Recording…' : 'Record paid top-up'}
-            </button>
+            </Button>
           </form>
         )}
       </div>

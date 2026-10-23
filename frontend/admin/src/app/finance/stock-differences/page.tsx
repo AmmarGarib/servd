@@ -13,6 +13,9 @@
 // Pending: grouped by outlet, then week (Monday), with totals. Select one
 // company's lines and Approve. Cleared: what was approved, when, by whom.
 
+import { FIcon } from '@/components/finance/ui/icons'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { Button, LinkButton, Textarea } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -127,10 +130,10 @@ export default function StockDifferencesPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
-        <p className="mt-2 text-[11px] font-bold uppercase tracking-wider text-success">Food cost</p>
+        <Link href="/finance" className="text-xs text-s-muted hover:text-white/70">← Finance</Link>
+        <p className="mt-2 text-xs font-bold uppercase tracking-wider text-success">Food cost</p>
         <h1 className="text-2xl font-black text-white/90">Stock differences</h1>
-        <p className="text-sm text-white/45 mt-1 max-w-3xl">
+        <p className="text-sm text-s-muted mt-1 max-w-3xl">
           Waste and stock-count differences leave the shelves at once, but their cost waits in 1290 Stock Differences Suspense, with its reason,
           until the CEO approves it into cost of sales — waste to 5040, count differences to 5050, dated the day it is approved, so a closed month is
           never changed. The month-end close warns while anything still waits.
@@ -171,30 +174,25 @@ export default function StockDifferencesPage() {
               {selectedCompanies.size > 1 && <span className="ml-2 font-semibold" style={{ color: 'var(--erp-warning)' }}>Pick one company&apos;s differences at a time.</span>}
             </div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => toggle(rows.map((r) => r.lineId), selectedRows.length < rows.length)}
-                className="s-btn-secondary px-3 py-2">
+              <Button variant="secondary" type="button" onClick={() => toggle(rows.map((r) => r.lineId), selectedRows.length < rows.length)}>
                 {selectedRows.length < rows.length ? 'Select all shown' : 'Clear selection'}
-              </button>
-              <button type="button"
+              </Button>
+              <Button type="button"
                 disabled={selectedRows.length === 0 || selectedCompanies.size > 1 || approve.isPending}
                 onClick={() => {
                   if (window.confirm(`Approve ${selectedRows.length} difference${selectedRows.length === 1 ? '' : 's'} (${fmtPkr(selectedNet)} net) into cost of sales, dated today?`)) {
                     approve.mutate(selectedRows.map((r) => r.lineId))
                   }
-                }}
-                className="s-btn-primary px-4 py-2">
+                }}>
                 {approve.isPending ? 'Approving…' : 'Approve'}
-              </button>
+              </Button>
             </div>
           </div>
         )}
 
-        {list.isLoading && <p className="text-sm text-white/45">Loading…</p>}
+        {list.isLoading && <p className="text-sm text-s-muted">Loading…</p>}
         {!list.isLoading && rows.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">{status === 'pending' ? 'Nothing is waiting' : 'Nothing approved yet'}</p>
-            <p className="text-sm text-white/45 mt-1">{status === 'pending' ? 'Every waste and count difference has reached cost of sales.' : 'Approved differences show here.'}</p>
-          </div>
+          <CompactEmptyState message={status === 'pending' ? 'Nothing is waiting. Every waste and count difference has reached cost of sales.' : 'Nothing approved yet.'} />
         )}
 
         {groups.map(([key, g]) => {
@@ -208,7 +206,7 @@ export default function StockDifferencesPage() {
               </div>
               {[...g.weeks.entries()].map(([week, wr]) => (
                 <div key={week}>
-                  <div className="flex items-center justify-between gap-3 px-4 py-2 text-xs text-white/50 border-t border-white/[0.05]">
+                  <div className="flex items-center justify-between gap-3 px-4 py-2 text-xs text-s-muted border-t border-white/[0.05]">
                     <label className="flex items-center gap-2">
                       {status === 'pending' && canApprove && (
                         <input type="checkbox" aria-label={`Select ${weekLabel(week)}`}
@@ -232,10 +230,10 @@ export default function StockDifferencesPage() {
         })}
 
         {list.hasNextPage && (
-          <button type="button" onClick={() => list.fetchNextPage()} disabled={list.isFetchingNextPage}
-            className="s-btn-secondary w-full px-4 py-2.5">
+          <Button variant="secondary" type="button" onClick={() => list.fetchNextPage()} disabled={list.isFetchingNextPage}
+            className="w-full">
             {list.isFetchingNextPage ? 'Loading…' : 'Show more'}
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -263,20 +261,20 @@ function DifferenceRow({ row: r, canApprove, checked, onCheck, onQueried }: {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-bold text-white/85">{r.itemName ?? r.reference}</span>
-            <span className="s-badge-purple text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full">{KIND_LABEL[r.kind]}</span>
-            <span className="text-xs text-white/55">{reasonText(r.reason)}</span>
+            <span className="s-badge-purple text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full">{KIND_LABEL[r.kind]}</span>
+            <span className="text-xs text-s-muted">{reasonText(r.reason)}</span>
             {r.queries.length > 0 && r.status === 'pending' && (
-              <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--erp-warning)' }}>Sent back</span>
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--erp-warning)' }}>Sent back</span>
             )}
           </div>
-          <p className="text-xs text-white/45 mt-1">
+          <p className="text-xs text-s-muted mt-1">
             {fmtDay(r.entryDate)}
             {r.conceptName ? ` · ${r.conceptName}` : ' · head office'}
             {r.companyName ? ` · ${r.companyName}` : ''}
             {r.recordedByName ? ` · by ${r.recordedByName}` : ''}
             {` · to ${r.clearingAccount} on approval`}
           </p>
-          {r.notes && <p className="text-xs text-white/55 mt-1">{r.notes}</p>}
+          {r.notes && <p className="text-xs text-s-muted mt-1">{r.notes}</p>}
           {r.queries.map((q, i) => (
             <p key={i} className="text-xs mt-1" style={{ color: 'var(--erp-warning)' }}>
               Sent back{q.byName ? ` by ${q.byName}` : ''} on {fmtDay(q.at)}: {q.note}
@@ -289,16 +287,14 @@ function DifferenceRow({ row: r, canApprove, checked, onCheck, onQueried }: {
           )}
           {asking && (
             <div className="mt-2 space-y-2">
-              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} autoFocus
-                placeholder="What should the kitchen or finance check? (3–500 characters)"
-                className="s-input" />
+              <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} autoFocus
+                placeholder="What should the kitchen or finance check? (3–500 characters)" />
               {send.error && <p className="text-xs" style={{ color: 'var(--erp-danger)' }}>{(send.error as Error).message}</p>}
               <div className="flex gap-2">
-                <button type="button" onClick={() => send.mutate()} disabled={send.isPending || note.trim().length < 3}
-                  className="s-btn-primary px-3 py-1.5 text-xs">
+                <Button size="sm" type="button" onClick={() => send.mutate()} disabled={send.isPending || note.trim().length < 3}>
                   {send.isPending ? 'Sending…' : 'Send back'}
-                </button>
-                <button type="button" onClick={() => { setAsking(false); setNote('') }} className="s-btn-secondary px-3 py-1.5 text-xs">Cancel</button>
+                </Button>
+                <Button size="sm" variant="secondary" type="button" onClick={() => { setAsking(false); setNote('') }}>Cancel</Button>
               </div>
             </div>
           )}
@@ -307,9 +303,9 @@ function DifferenceRow({ row: r, canApprove, checked, onCheck, onQueried }: {
           <div className="font-black" style={{ color: loss ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
             {loss ? '' : '+'}{fmtPkr(Math.abs(r.valueCents))}
           </div>
-          <div className="text-[10px] uppercase tracking-wider text-white/40">{loss ? 'loss' : 'gain'}</div>
+          <div className="text-xs uppercase tracking-wider text-white/40">{loss ? 'loss' : 'gain'}</div>
           {canApprove && !asking && (
-            <button type="button" onClick={() => setAsking(true)} className="mt-1 text-xs text-primary-ink hover:underline">Send back</button>
+            <LinkButton type="button" onClick={() => setAsking(true)} className="mt-1">Send back</LinkButton>
           )}
         </div>
       </div>
@@ -322,7 +318,7 @@ function DifferenceRow({ row: r, canApprove, checked, onCheck, onQueried }: {
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'danger' | 'success' }) {
   return (
     <div className="rounded-2xl p-4" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-      <div className="text-[11px] uppercase tracking-wider text-white/45">{label}</div>
+      <div className="text-xs uppercase tracking-wider text-white/45">{label}</div>
       <div className="text-lg font-black mt-1" style={{ color: tone === 'danger' ? 'var(--erp-danger)' : tone === 'success' ? 'var(--erp-success)' : undefined }}>{value}</div>
     </div>
   )
@@ -334,7 +330,7 @@ function Banner({ tone, children, onClose }: { tone: 'success' | 'danger'; child
     <div role={tone === 'danger' ? 'alert' : 'status'} className="flex items-start justify-between gap-3 rounded-xl px-4 py-3 text-sm"
       style={{ color: c, background: `color-mix(in srgb, ${c} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${c} 30%, transparent)` }}>
       <span>{children}</span>
-      {onClose && <button type="button" onClick={onClose} aria-label="Dismiss" className="opacity-70 hover:opacity-100">✕</button>}
+      {onClose && <button type="button" onClick={onClose} aria-label="Dismiss" className="opacity-70 hover:opacity-100"><FIcon name="x" size={14} /></button>}
     </div>
   )
 }

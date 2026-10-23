@@ -8,6 +8,7 @@ import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { APP_ROLES, MODULES, type AppRole, type ModuleId } from '../../../lib/appRoles'
 import { useViewAsRole } from '../../../store/viewAsRole'
 import { useWorkspaceDefs } from '../../../hooks/useWorkspaces'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 /**
  * Role presets — HR's (owner, 2026-10-16: "Give the presets thing to HR"),
@@ -87,8 +88,8 @@ export default function RoleModulesPage() {
       <div className="min-h-screen p-7" style={{ background: 'var(--bg)' }}>
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="mt-8 max-w-md mx-auto rounded-2xl p-8 text-center"
-          style={{ background: 'rgba(255,77,79,0.05)', border: '1px solid rgba(255,77,79,0.2)' }}>
-          <p className="text-3xl mb-3">🔒</p>
+          style={{ background: 'color-mix(in srgb, var(--erp-danger) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 20%, transparent)' }}>
+          <span className="mb-3 inline-block text-s-muted"><NavIcon name="lock" size={32} /></span>
           <p className="font-bold text-white/85">CEO and HR only</p>
           <p className="text-sm text-white/45 mt-1">Role presets are kept by HR, with the CEO.</p>
         </div>
@@ -136,7 +137,7 @@ export default function RoleModulesPage() {
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🗂 Role presets</h1>
+            <h1 className="text-2xl font-black text-white/90">Role presets</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               The base case for each role, kept by HR. Change one person&rsquo;s access on Workforce — only the CEO does that. The CEO always sees everything. Tap a role label to switch into View-as mode and watch the sidebar reshape in real time.
             </p>
@@ -196,13 +197,13 @@ export default function RoleModulesPage() {
               style={focusRole === r.value
                 ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' }
                 : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.45)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              {r.emoji} {r.label}
+              {r.label}
             </button>
           ))}
           {focusRole && (
             <button onClick={() => { setFocusRole(null); setViewAs(null) }}
               className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
-              style={{ background: 'rgba(255,77,79,0.08)', color: 'var(--erp-danger)', border: '1px solid rgba(255,77,79,0.18)' }}>
+              style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', color: 'var(--erp-danger)', border: '1px solid color-mix(in srgb, var(--erp-danger) 18%, transparent)' }}>
               Clear preview
             </button>
           )}
@@ -224,7 +225,7 @@ export default function RoleModulesPage() {
                       className="w-full text-center hover:opacity-100 transition-opacity"
                       style={{ opacity: focusRole === r.value ? 1 : 0.85 }}
                       title={r.description}>
-                      <p className="text-base leading-none">{r.emoji}</p>
+                      
                       <p className="text-[9px] font-black uppercase tracking-wider text-white/65 mt-1">{r.label}</p>
                       {lockedRole(r.value) && (
                         <p className="text-[8px] font-bold text-white/35 mt-0.5" title={CEO_ONLY_NOTE}>CEO only</p>
@@ -268,9 +269,9 @@ export default function RoleModulesPage() {
                               style={allOn
                                 ? { background: 'var(--erp-accent)', color: 'var(--erp-on-accent)' }
                                 : someOn
-                                  ? { background: 'rgba(245,158,11,0.7)', color: 'var(--erp-on-primary)' }
+                                  ? { background: 'var(--erp-warning)', color: 'var(--erp-on-primary)' }
                                   : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.1)' }}>
-                              {allOn ? '✓' : someOn ? '−' : ''}
+                              {allOn ? <NavIcon name="check" size={12} /> : someOn ? <NavIcon name="minus" size={12} /> : null}
                             </button>
                           </td>
                         )
@@ -298,7 +299,7 @@ export default function RoleModulesPage() {
                                   style={enabled
                                     ? { background: 'rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.7)' }
                                     : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px dashed rgb(var(--fg-rgb) / 0.15)', color: 'transparent' }}>
-                                  {enabled ? '✓' : ''}
+                                  {enabled ? <NavIcon name="check" size={12} /> : null}
                                 </span>
                               </td>
                             )
@@ -321,7 +322,7 @@ export default function RoleModulesPage() {
                                   ? (isCustom ? { background: 'var(--erp-warning)', color: 'var(--erp-on-primary)' } : { background: 'var(--erp-accent)', color: 'var(--erp-on-accent)' })
                                   : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'transparent' }}
                                 title={enabled ? 'Allowed — click to hide' : 'Hidden — click to allow'}>
-                                {enabled ? '✓' : ''}
+                                {enabled ? <NavIcon name="check" size={12} /> : null}
                               </button>
                             </td>
                           )
@@ -346,9 +347,9 @@ export default function RoleModulesPage() {
                 title={roleLocked ? CEO_ONLY_NOTE : undefined}
                 className="rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-25"
                 style={isCustom
-                  ? { background: 'rgba(245,158,11,0.1)', color: 'var(--erp-warning)', border: '1px solid rgba(245,158,11,0.25)' }
+                  ? { background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', color: 'var(--erp-warning)', border: '1px solid color-mix(in srgb, var(--erp-warning) 28%, transparent)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.35)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-                {r.emoji} {r.label}
+                {r.label}
               </button>
             )
           })}
@@ -357,16 +358,16 @@ export default function RoleModulesPage() {
         {/* Helper card */}
         <div className="rounded-xl p-4 text-xs text-white/45 leading-relaxed"
           style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.15)' }}>
-          💡 <strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. HR keeps this map with the CEO; the CEO-only roles and the governance modules stay the CEO&rsquo;s, and so does any one person&rsquo;s access (Workforce). Amber ticks indicate a role you&rsquo;ve customised; green ticks are still on defaults. Actions that need sign-off (refunds, voids, comps) ask for a manager PIN at the till; there is no separate per-action matrix.
+          <NavIcon name="bulb" size={13} className="mr-1 inline" /><strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. HR keeps this map with the CEO; the CEO-only roles and the governance modules stay the CEO&rsquo;s, and so does any one person&rsquo;s access (Workforce). Amber ticks indicate a role you&rsquo;ve customised; green ticks are still on defaults. Actions that need sign-off (refunds, voids, comps) ask for a manager PIN at the till; there is no separate per-action matrix.
         </div>
 
         {focusedRoleMeta && focusedRoleModules && (
           <div className="fixed bottom-4 right-4 rounded-2xl p-4 max-w-sm shadow-2xl"
             style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.6)' }}>
             <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: 'var(--erp-success)' }}>
-              🔭 Previewing as
+              <NavIcon name="eye" size={12} className="mr-1 inline" />Previewing as
             </p>
-            <p className="text-sm font-bold text-white/90">{focusedRoleMeta.emoji} {focusedRoleMeta.label}</p>
+            <p className="text-sm font-bold text-white/90">{focusedRoleMeta.label}</p>
             <p className="text-[11px] text-white/45 mt-0.5">{focusedRoleMeta.description}</p>
             <p className="text-[11px] text-white/55 mt-2">{focusedRoleModules.size} of {MODULES.length} modules visible</p>
           </div>

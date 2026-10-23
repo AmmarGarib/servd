@@ -21,6 +21,7 @@
 // Every save answers with the books result: green when the entry posted, red
 // when the count is saved but its ledger entry was refused.
 
+import { ArrowLeft } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -250,7 +251,7 @@ export default function PhysicalCountPage() {
     <div className="min-h-screen bg-s-bg">
       <header className="px-4 sm:px-7 py-5 border-b border-s-border">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <Link href="/inventory" className="text-xs text-s-muted hover:text-s-text">← Inventory</Link>
+          <Link href="/inventory" className="inline-flex min-h-11 items-center gap-1.5 text-xs text-s-muted hover:text-s-text"><ArrowLeft size={14} aria-hidden="true" />Inventory</Link>
           <Link href="/inventory/count/history" className="text-xs font-semibold text-primary-ink hover:underline">Count history</Link>
         </div>
         <h1 className="text-2xl font-black text-s-text mt-2">Physical count</h1>
@@ -434,7 +435,7 @@ export default function PhysicalCountPage() {
                         <input enterKeyHint="next" value={l.reason} onChange={(e) => patch(item.id, { reason: e.target.value })} maxLength={200}
                           placeholder="Why does it differ? (required, 3+ characters)" aria-label={`Reason for the difference on ${item.name}`}
                           className={fi} style={reasonShort ? { borderColor: 'var(--erp-warning)' } : undefined} />
-                        <p className="text-[11px] text-s-muted mt-1">
+                        <p className="text-xs text-s-muted mt-1">
                           {diff < 0 ? 'The missing quantity is written off at the price paid.' : 'The extra is added at the latest purchase price, and flagged if the books held none.'}
                         </p>
                       </div>
@@ -442,7 +443,7 @@ export default function PhysicalCountPage() {
                   </div>
                 )}
                 {mode === 'opening' && counted != null && (
-                  <p className="mt-1 text-[11px] text-s-muted">
+                  <p className="mt-1 text-xs text-s-muted">
                     {!(counted > 0) ? 'The quantity must be above zero.'
                       : (l.costPkr.trim() === '' && item.unitCostCents == null) ? 'This item has no cost estimate — type its unit cost.'
                       : `Booked at PKR ${l.costPkr.trim() !== '' ? Number(l.costPkr).toLocaleString('en-PK', { maximumFractionDigits: 3 }) : (item.unitCostCents! / 100).toLocaleString('en-PK', { maximumFractionDigits: 3 })} per ${item.unit}.`}

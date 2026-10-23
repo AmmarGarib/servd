@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface Taxonomy { dietaryTags: string[]; allergens: string[] }
 
@@ -24,7 +25,7 @@ export default function DietaryTagsPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
-        <h1 className="text-2xl font-black text-white/90 mt-2">🥗 Dietary tags &amp; allergens</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-2">Dietary tags &amp; allergens</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           The taxonomy your menu items pick from. Defined once here, attached on each item in the menu editor.
         </p>
@@ -82,7 +83,7 @@ function ListEditor({ title, desc, items, onChange, placeholder, accent }: {
           <span key={item} className="inline-flex items-center gap-2 rounded-full px-3 py-1.5"
             style={{ background: `color-mix(in srgb, ${accent} 8%, transparent)`, color: accent, border: `1px solid color-mix(in srgb, ${accent} 20%, transparent)` }}>
             <span className="text-xs font-bold">{item}</span>
-            <button onClick={() => remove(i)} className="text-xs hover:text-white/100">✕</button>
+            <button onClick={() => remove(i)} className="text-xs hover:text-white/100"><NavIcon name="x" size={16} /></button>
           </span>
         ))}
         {items.length === 0 && <p className="text-xs text-white/35 italic">Empty.</p>}

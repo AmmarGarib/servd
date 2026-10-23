@@ -12,6 +12,7 @@
 // 2210), the resulting 1010 balance (a warning when it would go negative),
 // and a pick for every spend with no category and every one-sided transfer or
 // return; then Post. 409 BACKFILL_RUNNING while another backfill runs.
+import { Button, Field, Input } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
@@ -176,10 +177,10 @@ function UnpostedSection({ result, run }: {
           <p className="text-xs text-s-muted">Closed drawers, sales, points, refunds, bank deposits, waste, stock counts, cancelled orders and failed card payments with no ledger entry. A shift, deposit, waste or count in a closed month posts into the current month with a note naming its date. A sale, points or refund posts on its own day only — if that day is closed it is listed for the accountant and not posted. Closed months are never reopened.</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => run.mutate(true)} disabled={run.isPending} className="s-btn-secondary text-xs">Preview</button>
-          <button onClick={() => run.mutate(false)} disabled={run.isPending || !result?.dryRun || postable === 0} className="s-btn-primary text-xs">
+          <Button size="sm" variant="secondary" type="submit" onClick={() => run.mutate(true)} disabled={run.isPending}>Preview</Button>
+          <Button size="sm" type="submit" onClick={() => run.mutate(false)} disabled={run.isPending || !result?.dryRun || postable === 0}>
             Post {postable > 0 ? postable : ''}
-          </button>
+          </Button>
         </div>
       </div>
       {run.error && <p role="alert" className="text-xs text-s-red">{backfillErrorText(run.error)}</p>}
@@ -385,16 +386,14 @@ function PettyCashHistory() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => run.mutate(true)} disabled={run.isPending} className="s-btn-secondary text-xs">
+          <Button size="sm" variant="secondary" type="submit" onClick={() => run.mutate(true)} disabled={run.isPending}>
             {result && (stale || !result.dryRun) ? 'Preview again' : 'Dry run'}
-          </button>
-          <button
+          </Button>
+          <Button size="sm" type="submit"
             onClick={() => run.mutate(false)}
-            disabled={run.isPending || !result?.dryRun || stale || postable === 0}
-            className="s-btn-primary text-xs"
-          >
+            disabled={run.isPending || !result?.dryRun || stale || postable === 0}>
             Post {postable > 0 ? postable : ''}
-          </button>
+          </Button>
         </div>
       </div>
       {run.error && <p role="alert" className="text-xs text-s-red">{backfillErrorText(run.error)}</p>}
@@ -416,8 +415,7 @@ function PettyCashHistory() {
           <div key={t} className="rounded-lg border border-s-border p-3 space-y-3">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <p className="text-sm font-semibold text-s-text">{nameOf.get(t) ?? 'Company'}</p>
-              <label className="block text-xs">
-                <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">Money already in the boxes came from</span>
+              <Field label="Money already in the boxes came from">
                 <Select
                   className="s-input"
                   value={sourceOf(t)}
@@ -425,7 +423,7 @@ function PettyCashHistory() {
                 >
                   {(Object.keys(SOURCE_LABEL) as HistSource[]).map((k) => <option key={k} value={k}>{SOURCE_LABEL[k]}</option>)}
                 </Select>
-              </label>
+              </Field>
             </div>
             {cash && (
               <p className={`text-xs rounded px-2 py-1.5 ${cash.outcome === 'warning' ? 'text-s-red' : 'text-s-muted'}`}
@@ -511,24 +509,23 @@ function NeedPick({ row, pick, categories, onChange }: { row: PettyRow; pick: Pi
             {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
           </Select>
           <span className="text-s-muted">or account</span>
-          <input
-            className="s-input w-24 font-mono"
+          <Input
+            className="w-24 font-mono"
             inputMode="numeric"
             placeholder="6xxx"
             value={p.accountCode ?? ''}
             onChange={(e) => onChange({ accountCode: e.target.value || undefined, categoryKey: undefined })}
           />
-          <span className="basis-full text-[11px] text-s-muted">A kitchen purchase from before stock lots: 5010 food, 5020 drinks, 5030 packaging.</span>
+          <span className="basis-full text-xs text-s-muted">A kitchen purchase from before stock lots: 5010 food, 5020 drinks, 5030 packaging.</span>
         </div>
       ) : (
         <div className="flex flex-wrap items-end gap-2">
-          <label className="block">
-            <span className="block text-[11px] text-s-muted mb-0.5">{inflow ? 'The cash came from' : 'The cash went to'}</span>
+          <Field label={inflow ? 'The cash came from' : 'The cash went to'}>
             <Select className="s-input" value={side ?? ''} onChange={(e) => onChange({ [sideKey]: (e.target.value || undefined) as CashSide | undefined })}>
               <option value="">Pick…</option>
               {(Object.keys(SIDE_LABEL) as CashSide[]).map((k) => <option key={k} value={k}>{SIDE_LABEL[k]}</option>)}
             </Select>
-          </label>
+          </Field>
           {side === 'bank' && (
             <div className="min-w-[12rem]">
               <BankAccountSelect tenantId={row.tenantId} value={p.bankAccountId ?? ''} onChange={(v) => onChange({ bankAccountId: v || undefined })} className="s-input" />

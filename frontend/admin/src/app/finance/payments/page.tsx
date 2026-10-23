@@ -16,6 +16,7 @@
 // (module accounting). Changing a classification — one row (the panel) or
 // many (the "Classify selected" bar) — is the CEO's or finance's with a reason.
 
+import { Button, Field, Input, SidePanel } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -29,6 +30,7 @@ import {
   type PaymentClassification, type PaymentTaxStatus,
 } from '@/components/finance/PaymentClassificationFields'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 type Filter = PaymentClassification | 'all'
 
@@ -141,10 +143,10 @@ export default function PaymentsRegisterPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="border-b px-4 py-6 sm:px-7" style={{ borderColor: 'var(--border)' }}>
-        <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
+        <Link href="/finance" className="text-xs text-s-muted hover:text-white/70">← Finance</Link>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-success">Management reporting</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-success">Management reporting</p>
             <h1 className="text-2xl font-black text-white/90">Payments register</h1>
             <p className="mt-1 max-w-2xl text-sm text-white/45">
               Every payment out of cash, petty cash and the banks, with its internal classification. The classification is a
@@ -179,8 +181,8 @@ export default function PaymentsRegisterPage() {
         </div>
 
         <div className="flex flex-wrap items-end gap-3 rounded-2xl p-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-          <Field label="From"><input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={fieldCls} /></Field>
-          <Field label="To"><input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={fieldCls} /></Field>
+          <Field label="From"><Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={fieldCls} /></Field>
+          <Field label="To"><Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={fieldCls} /></Field>
           <Field label="Category">
             <Select value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
               <option value="">All categories</option>
@@ -193,7 +195,7 @@ export default function PaymentsRegisterPage() {
               {Object.entries(data?.methods ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>
           </Field>
-          <Field label="Search"><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Payee, voucher, narration" className="s-input" /></Field>
+          <Field label="Search"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Payee, voucher, narration" /></Field>
         </div>
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -218,12 +220,12 @@ export default function PaymentsRegisterPage() {
           ) : isLoading ? (
             <p className="p-8 text-center text-sm text-white/40">Loading…</p>
           ) : rows.length === 0 ? (
-            <p className="p-10 text-center text-sm text-white/45">No payments in this range.</p>
+            <CompactEmptyState message="No payments in this range." />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <tr className="text-left text-xs uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
                     {canClassify && (
                       <th className="px-3 py-3">
                         {filter === 'unclassified' && (
@@ -255,7 +257,7 @@ export default function PaymentsRegisterPage() {
                       )}
                       <td className="px-3 py-2.5 font-mono text-xs">
                         <span className="font-semibold text-white/85">{r.voucherNo ?? '—'}</span>
-                        {r.voucherNumber && r.voucherNumber !== r.voucherNo && <span className="block text-[11px] text-white/45">{r.voucherNumber}</span>}
+                        {r.voucherNumber && r.voucherNumber !== r.voucherNo && <span className="block text-xs text-s-muted">{r.voucherNumber}</span>}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-white/60">{fmtDate(r.entryDate)}</td>
                       {data?.multiCompany && <td className="px-3 py-2.5 text-white/60">{r.companyName ?? '—'}</td>}
@@ -267,7 +269,7 @@ export default function PaymentsRegisterPage() {
                       <td className="whitespace-nowrap px-3 py-2.5 text-right text-white/60">{r.whtCents ? fmtPkr(r.whtCents) : '—'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold text-white/90">{fmtPkr(r.netCents)}</td>
                       <td className="px-3 py-2.5"><ClassificationChip value={r.classification} /></td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-xs text-white/55" title={r.nonDeductionReason ?? undefined}>{taxText(r)}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-xs text-s-muted" title={r.nonDeductionReason ?? undefined}>{taxText(r)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -275,7 +277,7 @@ export default function PaymentsRegisterPage() {
             </div>
           )}
         </div>
-        {data && <p className="text-xs text-white/40">{data.note}</p>}
+        {data && <p className="text-xs text-s-muted">{data.note}</p>}
       </div>
 
       {openId && <Panel id={openId} canClassify={canClassify} onClose={() => setOpenId(null)} onSaved={refresh} />}
@@ -285,16 +287,12 @@ export default function PaymentsRegisterPage() {
 
 // ─── Bits ────────────────────────────────────────────────────────────────────
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="flex flex-col gap-1 text-xs text-white/50">{label}{children}</label>
-}
-
 function Tile({ label, t, active }: { label: string; t?: Totals; active: boolean }) {
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--surface)', border: `1px solid ${active ? 'var(--erp-success)' : 'var(--border)'}` }}>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-white/45">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wider text-white/45">{label}</p>
       <p className="mt-1 text-2xl font-black text-white/90">{fmtPkr(t?.netCents ?? 0)}</p>
-      <p className="text-xs text-white/50">{t?.count ?? 0} payments · gross {fmtPkr(t?.grossCents ?? 0)} · WHT {fmtPkr(t?.whtCents ?? 0)}</p>
+      <p className="text-xs text-s-muted">{t?.count ?? 0} payments · gross {fmtPkr(t?.grossCents ?? 0)} · WHT {fmtPkr(t?.whtCents ?? 0)}</p>
     </div>
   )
 }
@@ -308,7 +306,7 @@ function TieOut({ t }: { t: Resp['tieOut'] }) {
           ? <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--erp-success) 12%, transparent)', color: 'var(--erp-success)' }}>Ties to ledger</span>
           : <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--erp-danger) 10%, transparent)', color: danger }}>Difference {fmtPkr(t.differenceCents)}</span>}
       </div>
-      <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-xs text-white/55 sm:grid-cols-2">
+      <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-xs text-s-muted sm:grid-cols-2">
         <span>Credits to cash, petty cash and banks: {fmtPkr(t.moneyCreditsCents)}</span>
         <span>less sales and till (out of scope): {fmtPkr(t.salesAndTillCents)}</span>
         <span>less reversed entries: {fmtPkr(t.reversedCents)}</span>
@@ -348,7 +346,7 @@ function ClassifyInputs({ classification, setClassification, taxStatus, setTaxSt
       )}
       {showTax && taxStatus === 'not_deducted' && (
         <Field label="Reason tax was not deducted">
-          <input className="s-input" value={nonDeductionReason} maxLength={500} onChange={(e) => setNonDeductionReason(e.target.value)} />
+          <Input value={nonDeductionReason} maxLength={500} onChange={(e) => setNonDeductionReason(e.target.value)} />
         </Field>
       )}
     </>
@@ -384,9 +382,9 @@ function BulkBar({ ids, onDone }: { ids: string[]; onDone: () => void }) {
           showTax
         />
         <Field label="Reason (at least 10 characters)">
-          <input className="s-input min-w-[16rem]" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
+          <Input className="min-w-[16rem]" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
         </Field>
-        <button disabled={!ready || busy} onClick={send} className="s-btn-primary">{busy ? 'Saving…' : 'Classify selected'}</button>
+        <Button type="submit" disabled={!ready || busy} onClick={send}>{busy ? 'Saving…' : 'Classify selected'}</Button>
       </div>
       {err && <p className="text-sm" style={{ color: danger }}>{err}</p>}
     </div>
@@ -426,15 +424,9 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
     } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-secondary/40" onClick={onClose}>
-      <aside className="h-full w-full max-w-md overflow-y-auto" style={{ background: 'var(--surface)', borderLeft: '1px solid var(--border)' }} onClick={(e) => e.stopPropagation()} aria-label="Payment">
-        <div className="sticky top-0 flex items-center justify-between border-b px-5 py-4" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-          <div>
-            <h2 className="font-mono text-lg font-black text-white/90">{p ? (p.voucherNo ?? p.voucherNumber) : '…'}</h2>
-            <p className="text-xs text-white/45">{p ? `${p.payee} · ${p.categoryLabel}` : ''}</p>
-          </div>
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/50 hover:text-white" aria-label="Close">Close</button>
-        </div>
+    <SidePanel flush onClose={onClose} ariaLabel="Payment"
+        title={<span className="font-mono">{p ? (p.voucherNo ?? p.voucherNumber) : '…'}</span>}
+        subtitle={p ? `${p.payee} · ${p.categoryLabel}` : ''}>
         {error ? <p className="p-5 text-sm" style={{ color: danger }}>{(error as Error).message}</p> : !p ? <p className="p-5 text-sm text-white/40">Loading…</p> : (
           <div className="space-y-5 p-5 text-sm">
             <section className="space-y-1">
@@ -451,7 +443,7 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
             </section>
 
             <section>
-              <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-white/40">Ledger entry</h3>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-white/40">Ledger entry</h3>
               {(data?.lines ?? []).map((l, i) => (
                 <div key={i} className="flex justify-between gap-2 text-xs">
                   <span className="text-white/65">{l.account.code} {l.account.name}</span>
@@ -462,7 +454,7 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
 
             {canClassify && (
               <section className="space-y-3 rounded-xl p-3" style={{ border: '1px solid var(--border)' }}>
-                <h3 className="text-[11px] font-bold uppercase tracking-wider text-white/40">{p.classified ? 'Change classification' : 'Classify'}</h3>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-white/40">{p.classified ? 'Change classification' : 'Classify'}</h3>
                 <ClassifyInputs
                   classification={classification} setClassification={setClassification}
                   taxStatus={taxStatus} setTaxStatus={setTaxStatus}
@@ -471,10 +463,10 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
                 />
                 {needsReason && (
                   <Field label="Reason for the change (at least 10 characters)">
-                    <input className="s-input" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
+                    <Input value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
                   </Field>
                 )}
-                <button disabled={!ready || busy} onClick={save} className="s-btn-primary">{busy ? 'Saving…' : 'Save'}</button>
+                <Button type="submit" disabled={!ready || busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</Button>
                 {err && <p className="text-sm" style={{ color: danger }}>{err}</p>}
               </section>
             )}
@@ -482,8 +474,8 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
             <RecordFiles ownerType="payment" ownerId={p.journalEntryId} canUpload={canClassify} tenantId={p.tenantId} title="Supporting documents (tax status)" />
 
             <section>
-              <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-white/40">History</h3>
-              {(data?.history ?? []).length === 0 ? <p className="text-xs text-white/40">Not changed since it was paid.</p> : data!.history.map((h) => (
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-white/40">History</h3>
+              {(data?.history ?? []).length === 0 ? <p className="text-xs text-s-muted">Not changed since it was paid.</p> : data!.history.map((h) => (
                 <div key={h.id} className="mb-2 text-xs text-white/60">
                   <p>
                     {new Date(h.createdAt).toLocaleString('en-PK', { timeZone: 'Asia/Karachi' })} · {h.userEmail ?? 'unknown'}{h.metadata?.bulk ? ' · bulk' : ''}
@@ -497,8 +489,7 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
             </section>
           </div>
         )}
-      </aside>
-    </div>
+      </SidePanel>
   )
 }
 
@@ -519,14 +510,14 @@ function SummaryGrid({ s, exportPath, filename, onError }: { s: Resp['summary'];
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold text-white/85">Summary — by classification and method</h2>
-          <p className="text-xs text-white/45">Net paid (after tax withheld) for the dates, category and search above.</p>
+          <p className="text-xs text-s-muted">Net paid (after tax withheld) for the dates, category and search above.</p>
         </div>
         <ExportMenu path={exportPath} filename={filename} onError={onError} />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[32rem] text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-white/40">
+            <tr className="text-left text-xs uppercase tracking-wider text-white/40">
               <th className="px-3 py-2 font-semibold">Classification</th>
               {s.methods.map((m) => <th key={m.key} className="px-3 py-2 text-right font-semibold">{m.label}</th>)}
               <th className="px-3 py-2 text-right font-semibold">Total</th>

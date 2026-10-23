@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { NavIcon } from '../ui/NavIcon'
 
 interface TableTemplate {
   label: string
@@ -22,7 +23,7 @@ interface TableTemplate {
 interface Layout {
   id: string
   name: string
-  emoji: string
+  icon: string
   description: string
   bestFor: string
   tables: TableTemplate[]
@@ -33,7 +34,7 @@ const LAYOUTS: Layout[] = [
   {
     id: 'qsr-counter',
     name: 'QSR — Counter & 8-tops',
-    emoji: '🍔',
+    icon: 'utensils',
     description: '8 four-tops in two rows + a counter strip',
     bestFor: 'Stax · Smash burger · Café',
     tables: [
@@ -56,7 +57,7 @@ const LAYOUTS: Layout[] = [
   {
     id: 'cafe-mixed',
     name: 'Café — Mixed seating',
-    emoji: '☕',
+    icon: 'coffee',
     description: '6 round 2-tops, 3 four-tops, 4 high-tops',
     bestFor: 'Coffee · Bakery · Brunch',
     tables: [
@@ -80,7 +81,7 @@ const LAYOUTS: Layout[] = [
   {
     id: 'fine-dining',
     name: 'Fine dining — 12 covers',
-    emoji: '🍽',
+    icon: 'utensils',
     description: '8 four-tops + 4 two-tops, generously spaced',
     bestFor: 'Strata · Tasting menu · Anniversary spot',
     tables: [
@@ -104,7 +105,7 @@ const LAYOUTS: Layout[] = [
   {
     id: 'cloud-kitchen',
     name: 'Cloud kitchen — Pickup only',
-    emoji: '🛵',
+    icon: 'bike',
     description: 'No seating · 4 pickup pickup-stations',
     bestFor: 'Delivery-only · Ghost kitchen · Own-fleet dispatch',
     tables: [
@@ -117,7 +118,7 @@ const LAYOUTS: Layout[] = [
   {
     id: 'food-court',
     name: 'Food court — Communal',
-    emoji: '🥡',
+    icon: 'bag',
     description: '6 communal long tables + 4 stand-up bars',
     bestFor: 'Multi-brand kitchen · Mall location',
     tables: [
@@ -138,7 +139,7 @@ const LAYOUTS: Layout[] = [
   {
     id: 'mixed-dine-takeaway',
     name: 'Mixed — Dine-in + Takeaway',
-    emoji: '🥡',
+    icon: 'bag',
     description: '6 dine-in tables + 3 takeaway pickup spots',
     bestFor: 'QSR + dining · Hybrid concept',
     tables: [
@@ -185,7 +186,7 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
             <h2 className="font-black text-white/90 text-lg">Layout templates</h2>
             <p className="text-xs text-white/45">Drop a pre-built arrangement onto this floor. You can drag-and-edit afterward.</p>
           </div>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
 
         <div className="p-5 max-h-[70vh] overflow-y-auto">
@@ -197,7 +198,7 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
                   ? { background: 'rgb(var(--erp-primary-rgb) / 0.08)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.4)' }
                   : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-3xl">{l.emoji}</span>
+                  <span className="text-primary-ink"><NavIcon name={l.icon} size={28} /></span>
                   <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
                     style={{ background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
                     {l.tables.length} tables
@@ -213,7 +214,7 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
           {selected && (
             <div className="mt-5 rounded-xl p-4"
               style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.2)' }}>
-              <p className="text-sm font-bold text-primary-ink">{selected.emoji} {selected.name}</p>
+              <p className="text-sm font-bold text-primary-ink">{selected.name}</p>
               <p className="text-xs text-white/65 mt-1">{selected.description}</p>
 
               {hasExistingTables && (
@@ -221,7 +222,7 @@ export function LayoutsGallery({ floorId, hasExistingTables, onClose, onApplied 
                   <input type="checkbox" checked={clearExisting} onChange={(e) => setClearExisting(e.target.checked)} className="accent-primary" />
                   <span className="text-xs text-white/85">
                     Clear existing tables on this floor first
-                    <span className="text-amber-700/80 ml-1">⚠ destructive</span>
+                    <span className="text-amber-700/80 ml-1"><NavIcon name="warn" size={11} className="mr-0.5 inline" />destructive</span>
                   </span>
                 </label>
               )}

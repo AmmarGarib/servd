@@ -29,6 +29,8 @@ import { useIsPracticeCopy } from '@/components/SandboxBanner'
 import { PersonModules } from '../../components/staff/PersonModules'
 import { OffboardButtons } from '../../components/hr/OffboardButtons'
 import { useAuthStore } from '../../store/auth'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -76,7 +78,7 @@ const CODE_LOGIN_CATEGORIES = new Set(['foh', 'boh'])
 interface Category {
   key: string
   label: string
-  emoji: string
+  icon: string
   blurb: string
   /** First entry is the canonical/primary role enum value for new staff. */
   roles: AppRole[]
@@ -89,63 +91,63 @@ const CATEGORIES: Category[] = [
   {
     key: 'owners',
     label: 'Owners',
-    emoji: '🔑',
+    icon: 'key',
     blurb: 'Co-owners — see what the CEO sees and approve staff work; their own submissions escalate to the CEO.',
     roles: ['owner'],
   },
   {
     key: 'management',
     label: 'Management',
-    emoji: '🧑‍💼',
+    icon: 'briefcase',
     blurb: 'GMs, FOH & BOH leads, the F&B manager — the people who run the floor day-to-day.',
     roles: ['management', 'foh_management', 'boh_management', 'fnb_manager'],
   },
   {
     key: 'foh',
     label: 'Front of House',
-    emoji: '💁',
+    icon: 'user',
     blurb: 'Servers, hosts, cashiers — anyone customer-facing.',
     roles: ['foh', 'cashier'],
   },
   {
     key: 'boh',
     label: 'Back of House',
-    emoji: '🍳',
+    icon: 'chef',
     blurb: 'Line cooks, expediters, KDS station operators.',
     roles: ['boh', 'kitchen', 'expediter'],
   },
   {
     key: 'procurement',
     label: 'Procurement',
-    emoji: '🏭',
+    icon: 'factory',
     blurb: 'Supplier chat and POs. Sees deliveries at the dock; a manager receives.',
     roles: ['procurement'],
   },
   {
     key: 'marketing',
     label: 'Marketing',
-    emoji: '🚀',
+    icon: 'rocket',
     blurb: 'Brand manager, CRM, campaigns, reviews, content calendar.',
     roles: ['marketing', 'brand_manager'],
   },
   {
     key: 'finance',
     label: 'Finance',
-    emoji: '💰',
+    icon: 'wallet',
     blurb: 'P&L, payroll, accounting, reconciliation.',
     roles: ['finance'],
   },
   {
     key: 'hr',
     label: 'HR',
-    emoji: '👥',
+    icon: 'users',
     blurb: 'Staff records, scheduling, compliance.',
     roles: ['hr'],
   },
   {
     key: 'it',
     label: 'IT / Dev',
-    emoji: '',
+    icon: 'plug',
     blurb: 'IT / developer — integrations, the user audit log, notifications, help.',
     roles: ['it'],
   },
@@ -154,7 +156,7 @@ const CATEGORIES: Category[] = [
   {
     key: 'directors',
     label: 'Directors',
-    emoji: '',
+    icon: 'eye',
     blurb: 'Brand partners — see how their brand is doing (sales, P&L, food cost, reviews), read-only. CEO only.',
     roles: ['director'],
   },
@@ -194,7 +196,7 @@ function DirectorBrandPicker({ value, onChange }: { value: string[]; onChange: (
                   ? 'bg-accent-dim text-success border border-accent'
                   : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
               }`}>
-              <span>{checked ? '✓' : '+'}</span>
+              <NavIcon name={checked ? 'check' : 'plus'} size={12} />
               <span>{b.name}</span>
             </button>
           )
@@ -206,8 +208,8 @@ function DirectorBrandPicker({ value, onChange }: { value: string[]; onChange: (
 
 const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: string; bg: string }> = {
   active:    { label: 'Active',    color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.18)' },
-  pending:   { label: 'Pending',   color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.10)' },
-  suspended: { label: 'Suspended', color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.10)' },
+  pending:   { label: 'Pending',   color: 'var(--erp-warning)', bg: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)' },
+  suspended: { label: 'Suspended', color: 'var(--erp-danger)', bg: 'color-mix(in srgb, var(--erp-danger) 10%, transparent)' },
 }
 
 // The API derives the status in one place (auth/accountStatus.ts) — including
@@ -376,7 +378,7 @@ function WorkforcePageInner() {
                 <button
                   onClick={() => { setActiveTab('people'); setActiveCategory('all'); setStatusFilter('pending'); router.replace('/workforce?status=pending') }}
                   className="rounded-lg px-3 py-2 text-xs font-bold border transition-colors"
-                  style={{ background: 'rgba(245,158,11,0.10)', borderColor: 'rgba(245,158,11,0.35)', color: 'var(--erp-warning)' }}>
+                  style={{ background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)', borderColor: 'color-mix(in srgb, var(--erp-warning) 35%, transparent)', color: 'var(--erp-warning)' }}>
                   ⏳ Review {pendingCount} pending
                 </button>
               )}
@@ -402,14 +404,14 @@ function WorkforcePageInner() {
             style={activeTab === 'people'
               ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
               : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
-            👥 People ({users.length})
+            <NavIcon name="users" size={14} className="mr-1.5 inline" />People ({users.length})
           </button>
           <button onClick={() => { setActiveTab('positions'); router.replace('/workforce?tab=positions') }}
             className="px-4 py-2.5 text-sm font-bold transition-colors"
             style={activeTab === 'positions'
               ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
               : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
-            💼 Positions (budget)
+            <NavIcon name="briefcase" size={14} className="mr-1.5 inline" />Positions (budget)
           </button>
         </div>
       </div>
@@ -424,13 +426,13 @@ function WorkforcePageInner() {
       <div className="max-w-6xl mx-auto px-6 pt-5">
         <div className="flex flex-wrap gap-2">
           <CategoryChip
-            label="All staff" emoji="∞" count={users.length}
+            label="All staff" icon="users" count={users.length}
             active={activeCategory === 'all'}
             onClick={() => { setActiveCategory('all'); router.replace('/workforce') }}
           />
           {CATEGORIES.filter((c) => (countsByCategory.get(c.key) ?? 0) > 0 || activeCategory === c.key).map((c) => (
             <CategoryChip
-              key={c.key} label={c.label} emoji={c.emoji}
+              key={c.key} label={c.label} icon={c.icon}
               count={countsByCategory.get(c.key) ?? 0}
               active={activeCategory === c.key}
               onClick={() => { setActiveCategory(c.key); router.replace(`/workforce?category=${c.key}`) }}
@@ -465,17 +467,11 @@ function WorkforcePageInner() {
         <div className="mt-4 mb-12 rounded-xl border border-s-border bg-s-surface overflow-hidden">
           {isLoading && <div className="p-8 text-center text-sm text-s-muted">Loading staff…</div>}
           {!isLoading && filtered.length === 0 && (
-            <div className="p-12 text-center">
-              <p className="text-4xl mb-2">📭</p>
-              <p className="text-sm font-semibold">No staff here yet</p>
-              <p className="text-xs text-s-muted mt-1">
-                {statusFilter === 'pending'
+            <div className="p-6"><CompactEmptyState icon={<NavIcon name="inbox" size={28} />} message="No staff here yet" detail={statusFilter === 'pending'
                   ? 'Nobody is waiting for approval.'
                   : activeCategory === 'all'
                     ? 'Tap + Add staff to create an account.'
-                    : `No ${CATEGORIES.find((c) => c.key === activeCategory)?.label} staff on file. Add one to get started.`}
-              </p>
-            </div>
+                    : `No ${CATEGORIES.find((c) => c.key === activeCategory)?.label} staff on file. Add one to get started.`} /></div>
           )}
           {filtered.map((u) => (
             <StaffRow
@@ -492,7 +488,7 @@ function WorkforcePageInner() {
               // Chip is mostly noise in single-tenant view (every row belongs
               // to the same company). Only render it when the operator is
               // looking across companies, OR when the row is orphaned —
-              // those always need a "⚠ No company" badge.
+              // those always need a "No company" badge.
               showTenantChip={viewAll}
               expanded={editingId === u.id}
               onExpand={() => setEditingId(editingId === u.id ? null : u.id)}
@@ -536,8 +532,8 @@ export default function WorkforcePage() {
 // ─── Components ──────────────────────────────────────────────────────────────
 
 function CategoryChip({
-  label, emoji, count, active, onClick,
-}: { label: string; emoji: string; count: number; active: boolean; onClick: () => void }) {
+  label, icon, count, active, onClick,
+}: { label: string; icon: string; count: number; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick}
       className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
@@ -545,7 +541,7 @@ function CategoryChip({
           ? 'bg-accent-dim border border-accent text-s-text'
           : 'bg-s-surface border border-s-border text-s-text hover:border-primary/40'
       }`}>
-      <span>{emoji}</span>
+      <NavIcon name={icon} size={14} />
       <span>{label}</span>
       <span className={`text-[10px] font-black ${active ? 'opacity-60' : 'text-s-muted'}`}>{count}</span>
     </button>
@@ -555,7 +551,7 @@ function CategoryChip({
 function CategoryBlurb({ category }: { category: Category }) {
   return (
     <div className="mt-3 flex items-center gap-3 rounded-lg border border-s-border bg-s-surface/50 px-4 py-2.5">
-      <span className="text-xl">{category.emoji}</span>
+      <span className="text-primary-ink"><NavIcon name={category.icon} size={20} /></span>
       <p className="text-xs text-s-muted flex-1">{category.blurb}</p>
       {category.specialistHref && (
         <Link href={category.specialistHref}
@@ -636,14 +632,14 @@ function StaffRow({
                 employee record. Open the row for the link to HR. */}
             {status === 'suspended' && user.payroll && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--erp-warning)' }}
+                style={{ background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', color: 'var(--erp-warning)' }}
                 title="This login is switched off, but the person is still on payroll in HR. Start a separation in HR to stop pay.">
                 Still on payroll
               </span>
             )}
             {user.usesCodeLogin && !user.phone && status !== 'suspended' && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}
+                style={{ background: 'color-mix(in srgb, var(--erp-danger) 10%, transparent)', color: 'var(--erp-danger)' }}
                 title="Signs in with a code sent to their phone — with no number on file they cannot sign in.">
                 No phone
               </span>
@@ -663,9 +659,9 @@ function StaffRow({
                 with no company is a data bug; surface it everywhere. */}
             {!user.tenantId && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-                style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}
+                style={{ background: 'color-mix(in srgb, var(--erp-danger) 10%, transparent)', color: 'var(--erp-danger)' }}
                 title="This staff row has no company assigned. Tap to fix.">
-                ⚠ No company
+                No company
               </span>
             )}
           </div>
@@ -686,7 +682,7 @@ function StaffRow({
         </div>
         <div className="shrink-0 text-right">
           <p className="text-[11px] font-bold text-s-text">
-            {cat?.emoji ?? '·'} {cat?.label ?? roleLabel(user.role)}
+            {cat?.label ?? roleLabel(user.role)}
           </p>
           <p className="text-[10px] text-s-muted mt-0.5">
             {user.jobTitle ? roleLabel(user.role) : 'No role title set'}
@@ -964,7 +960,7 @@ function InlineEditor({
                 opening the row never changes it. */}
             {!categoryOf(user.role) && <option value="">{roleLabel(user.role)} (unchanged)</option>}
             {assignableCategories(assignable).map((c) => (
-              <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
+              <option key={c.key} value={c.key}>{c.label}</option>
             ))}
           </Select>
         </Field>
@@ -1006,7 +1002,7 @@ function InlineEditor({
                         ? 'bg-accent-dim text-success border border-accent'
                         : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
                     }`}>
-                    <span>{checked ? '✓' : '+'}</span>
+                    <NavIcon name={checked ? 'check' : 'plus'} size={12} />
                     <span>{t.name}</span>
                     {isPrimary && <span className="text-[9px] uppercase tracking-wider opacity-70">primary</span>}
                   </button>
@@ -1071,7 +1067,7 @@ function InlineEditor({
                             ? 'bg-accent-dim text-success border border-accent'
                             : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
                         }`}>
-                        <span>{checked ? '✓' : '+'}</span>
+                        <NavIcon name={checked ? 'check' : 'plus'} size={12} />
                         <span>{s.name}</span>
                       </button>
                     )
@@ -1143,7 +1139,7 @@ function InlineEditor({
               })) remove.mutate()
             }} disabled={remove.isPending}
             className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-red-700 hover:border-red-400/40">
-            🗑 Delete
+            <NavIcon name="trash" size={13} className="mr-1 inline" />Delete
           </button>
         </div>
 
@@ -1421,7 +1417,7 @@ function AddStaffModal({
                           ? 'bg-accent-dim text-success border border-accent'
                           : 'bg-s-surface text-s-muted border border-s-border hover:border-accent/40'
                       }`}>
-                      <span>{checked ? '✓' : '+'}</span>
+                      <NavIcon name={checked ? 'check' : 'plus'} size={12} />
                       <span>{t.name}</span>
                       {isPrimary && <span className="text-[9px] uppercase tracking-wider opacity-70">primary</span>}
                     </button>
@@ -1433,7 +1429,7 @@ function AddStaffModal({
           <Field label={practice ? 'Role' : 'Category'}>
             <Select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
               {assignableCategories(assignable).filter((c) => !asHr || (c.key !== 'owners' && c.key !== 'directors')).map((c) => (
-                <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
+                <option key={c.key} value={c.key}>{c.label}</option>
               ))}
             </Select>
           </Field>

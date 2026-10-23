@@ -153,6 +153,18 @@ describe('cash / bank prefill finance\'s pay', () => {
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json().voucher).toMatchObject({ paySource: 'bank', payAccountCode: '1021', payBankAccountId: bank['A'] })
     expect(await entryLines(`cashvoucher.pay:${v.id}`)).toEqual([['1021', 'credit', 30_000], ['6140', 'debit', 30_000]])
+    expect(r.json().voucher).toMatchObject({ paidFrom: expect.stringContaining('HBL Ops'), payFromBankName: 'HBL Ops' })
+    // F11: the bank deleted later — the voucher still names the bank that paid it, marked "(removed)".
+    await prisma.bankAccount.update({ where: { id: bank['A']! }, data: { deletedAt: new Date() } })
+    try {
+      const after = (await call('finA', 'GET', `${V}/${v.id}`)).json()
+      const view = after.voucher ?? after
+      expect(view.payFromBankName).toBe('HBL Ops (removed)')
+      expect(view.paidFrom).toContain('HBL Ops (removed)')
+      expect((await call('finB', 'GET', `${V}/${v.id}`)).statusCode).toBe(404)
+    } finally {
+      await prisma.bankAccount.update({ where: { id: bank['A']! }, data: { deletedAt: null } })
+    }
   })
   it('cash: cash on hand by default — finance may still pick another source at pay', async () => {
     const v = await raise({ payFrom: 'cash' })

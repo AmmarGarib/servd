@@ -9,6 +9,7 @@
 // each ingredient's own stock unit, so a 200 g draw from a kg item deducts
 // 0.2 kg — not 200 kg.
 
+import { ArrowLeft, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -179,7 +180,7 @@ export default function PrepBatchPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex gap-4 text-xs">
-          {canOpen('/inventory') && <Link href="/inventory" className="text-white/40 hover:text-white/70">← Inventory</Link>}
+          {canOpen('/inventory') && <Link href="/inventory" className="inline-flex min-h-11 items-center gap-1.5 text-white/40 hover:text-white/70"><ArrowLeft size={14} aria-hidden="true" />Inventory</Link>}
           {canOpen('/par-sheet') && <Link href="/par-sheet" className="text-white/40 hover:text-white/70">Par sheet</Link>}
         </div>
         <h1 className="text-2xl font-black text-white/90 mt-2">Prep batch log</h1>
@@ -293,7 +294,7 @@ export default function PrepBatchPage() {
                 aria-label={`Ingredient ${i + 1} quantity`} placeholder="Qty" className={fieldCls} />
               {/* The draw is taken off stock as-is, so it is always in the item's own stock unit. */}
               <span className="text-xs text-white/55">{itemById.get(inp.inventoryItemId)?.unit ?? inp.unit}</span>
-              <button type="button" onClick={() => rmInput(i)} aria-label={`Remove ingredient ${i + 1}`} className="text-white/30 hover:text-s-red px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">✕</button>
+              <button type="button" onClick={() => rmInput(i)} aria-label={`Remove ingredient ${i + 1}`} className="text-white/30 hover:text-s-red px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"><X size={16} aria-hidden="true" /></button>
             </div>
           ))}
           <button type="button" onClick={addInput} className="text-xs text-primary-ink hover:underline mt-3">+ Add ingredient</button>
@@ -310,7 +311,7 @@ export default function PrepBatchPage() {
           {tried && problem && <p role="alert" className="mr-4 self-center text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>{problem}</p>}
           <button type="submit" disabled={submit.isPending}
             className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
-            {submit.isPending ? 'Saving…' : 'Log batch →'}
+            {submit.isPending ? 'Saving…' : 'Log batch'}
           </button>
         </div>
 

@@ -12,12 +12,14 @@
 //         and Return. What each button may do is decided by the server; this
 //         file keeps no role list beyond the `canDecide` the page passes down.
 
+import { Button, Field, Input, LinkButton } from '@/components/finance/ui'
 import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 export type JournalRequestStatus = 'draft' | 'submitted' | 'returned' | 'posted' | 'withdrawn'
 
@@ -106,12 +108,11 @@ export function JournalRequests({ mode, accounts, canDecide, onEdit, refreshKey 
   return (
     <section className="space-y-3" aria-label={mode === 'mine' ? 'My requests' : 'Requests'}>
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <label className="block">
-          <span className="block text-xs text-s-muted mb-1">Show</span>
+        <Field label="Show">
           <Select value={status} onChange={(e) => setStatus(e.target.value as '' | JournalRequestStatus)} className="s-select py-1.5">
             {FILTERS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
           </Select>
-        </label>
+        </Field>
         <p className="max-w-xl text-xs text-s-muted">
           {mode === 'mine'
             ? 'A request is only a proposal: nothing reaches the books until the CEO approves it. A returned request can be edited and sent again.'
@@ -122,14 +123,14 @@ export function JournalRequests({ mode, accounts, canDecide, onEdit, refreshKey 
       {msg && (
         <div role={msg.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${msg.ok ? 'text-success' : 'text-s-red'}`}>
           {msg.text}
-          <button type="button" className="ml-3 text-xs text-s-muted hover:text-s-text" onClick={() => setMsg(null)}>Close</button>
+          <LinkButton tone="muted" type="button" className="ml-3" onClick={() => setMsg(null)}>Close</LinkButton>
         </div>
       )}
 
       {list.isLoading && <p className="s-card p-6 text-center text-sm text-s-muted">Loading…</p>}
       {list.isError && <p role="alert" className="s-card p-6 text-center text-sm text-s-red">{errText(list.error)}</p>}
       {!list.isLoading && !list.isError && requests.length === 0 && (
-        <p className="s-card p-6 text-center text-sm text-s-muted">{mode === 'mine' ? 'You have no requests' : 'No requests'}{status ? ' with this status.' : ' yet.'}</p>
+        <CompactEmptyState message={`${mode === 'mine' ? 'You have no requests' : 'No requests'}${status ? ' with this status.' : ' yet.'}`} />
       )}
       <ul className="space-y-2">
         {requests.map((r) => (
@@ -201,9 +202,9 @@ function RequestCard({ r, mine, canDecide, accountOf, onEdit, onDone, onError }:
 
       {lines.length > 0 && (
         <div>
-          <button type="button" className="text-xs text-s-muted underline" onClick={() => setOpen((o) => !o)}>
+          <LinkButton tone="muted" type="button"  onClick={() => setOpen((o) => !o)}>
             {open ? 'Hide lines' : `Show ${lines.length} lines`}
-          </button>
+          </LinkButton>
           {open && (
             <table className="mt-2 w-full text-xs">
               <tbody>
@@ -229,41 +230,40 @@ function RequestCard({ r, mine, canDecide, accountOf, onEdit, onDone, onError }:
           {!returning && (
             <Fragment>
               {preparerOpen && r.kind === 'post' && (
-                <button type="button" className="s-btn-secondary text-sm" onClick={() => onEdit(r)}>Edit</button>
+                <Button variant="secondary" type="button"  onClick={() => onEdit(r)}>Edit</Button>
               )}
               {preparerOpen && (
-                <button type="button" className="s-btn-primary text-sm" disabled={act.isPending} onClick={() => act.mutate({ path: 'submit' })}>
+                <Button type="button"  disabled={act.isPending} onClick={() => act.mutate({ path: 'submit' })}>
                   {r.status === 'returned' ? 'Send again' : 'Send for approval'}
-                </button>
+                </Button>
               )}
               {canWithdraw && (
-                <button type="button" className="s-btn-ghost text-sm" disabled={act.isPending}
+                <Button variant="ghost" type="button"  disabled={act.isPending}
                   onClick={() => { if (window.confirm('Withdraw this request?')) act.mutate({ path: 'withdraw' }) }}>
                   Withdraw
-                </button>
+                </Button>
               )}
               {canDecideNow && (
                 <>
-                  <button type="button" className="s-btn-primary text-sm" disabled={act.isPending}
+                  <Button type="button"  disabled={act.isPending}
                     onClick={() => { if (window.confirm('Approve and post this entry to the books?')) act.mutate({ path: 'approve' }) }}>
                     {act.isPending ? 'Working…' : 'Approve and post'}
-                  </button>
-                  <button type="button" className="s-btn-secondary text-sm" onClick={() => setReturning(true)}>Return</button>
+                  </Button>
+                  <Button variant="secondary" type="button"  onClick={() => setReturning(true)}>Return</Button>
                 </>
               )}
             </Fragment>
           )}
           {returning && (
             <>
-              <label className="block min-w-[14rem] flex-1">
-                <span className="block text-xs text-s-muted mb-1">Why is it returned? (at least 3 characters)</span>
-                <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} className="s-input py-1.5" />
-              </label>
-              <button type="button" className="s-btn-secondary text-sm" disabled={act.isPending || note.trim().length < 3}
+              <Field label="Why is it returned? (at least 3 characters)">
+                <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} className="py-1.5" />
+              </Field>
+              <Button variant="secondary" type="button"  disabled={act.isPending || note.trim().length < 3}
                 onClick={() => act.mutate({ path: 'reject', body: { note: note.trim() } })}>
                 Return to preparer
-              </button>
-              <button type="button" className="s-btn-ghost text-sm" onClick={() => { setReturning(false); setNote('') }}>Cancel</button>
+              </Button>
+              <Button variant="ghost" type="button"  onClick={() => { setReturning(false); setNote('') }}>Cancel</Button>
             </>
           )}
         </div>

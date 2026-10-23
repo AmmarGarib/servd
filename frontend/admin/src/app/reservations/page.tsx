@@ -75,13 +75,13 @@ interface Reservation {
 
 interface Floor { id: string; name: string; tables: Array<{ id: string; label: string; capacity: number }> }
 
-const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  booked:    { bg: 'rgba(59,130,246,0.12)',  text: '#1d4ed8', label: 'Booked' },
-  confirmed: { bg: 'rgba(34,197,94,0.14)',   text: '#15803d', label: 'Confirmed' },
-  seated:    { bg: 'rgb(var(--ink-rgb) / 0.18)',  text: '#4338ca', label: 'Seated' },
-  completed: { bg: 'rgba(0,0,0,0.06)',       text: 'rgba(0,0,0,0.5)', label: 'Done' },
-  no_show:   { bg: 'rgba(239,68,68,0.12)',   text: '#b91c1c', label: 'No show' },
-  cancelled: { bg: 'rgba(239,68,68,0.12)',   text: '#b91c1c', label: 'Cancelled' },
+const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
+  booked:    { cls: 'bg-s-blue-dim text-s-blue',       label: 'Booked' },
+  confirmed: { cls: 'bg-s-green-dim text-s-green',     label: 'Confirmed' },
+  seated:    { cls: 'bg-primary/10 text-primary-ink',  label: 'Seated' },
+  completed: { cls: 'bg-s-elevated text-s-muted',      label: 'Done' },
+  no_show:   { cls: 'bg-s-red-dim text-s-red',         label: 'No show' },
+  cancelled: { cls: 'bg-s-red-dim text-s-red',         label: 'Cancelled' },
 }
 
 export default function ReservationsPage() {
@@ -235,13 +235,13 @@ export default function ReservationsPage() {
                 <div key={w.id} className="rounded-lg border border-s-border p-3">
                   <div className="flex items-baseline justify-between mb-1">
                     <p className="text-sm font-semibold">{w.isVip && <VipMark />}{w.guestName}</p>
-                    <span className="text-[11px] text-s-muted">{w.partySize}p</span>
+                    <span className="text-xs text-s-muted">{w.partySize}p</span>
                   </div>
-                  <p className="text-[11px] text-s-muted">
+                  <p className="text-xs text-s-muted">
                     {new Date(w.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}
                     {w.guestPhone && <> · {w.guestPhone}</>}
                   </p>
-                  {w.notes && <p className="text-[11px] text-s-muted mt-1 italic">{w.notes}</p>}
+                  {w.notes && <p className="text-xs text-s-muted mt-1 italic">{w.notes}</p>}
                   <SeatButton id={w.id} tables={allTables}
                     onSeat={(tableId) => transition.mutate({ id: w.id, action: 'seat', body: { tableId } })} />
                 </div>
@@ -321,10 +321,10 @@ function ReservationRow({
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-sm font-semibold">{r.isVip && <VipMark />}{r.guestName}</span>
           <span className="text-xs text-s-muted">{r.partySize} ppl</span>
-          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: badge.bg, color: badge.text }}>{badge.label}</span>
-          {r.table && <span className="text-[11px] text-s-muted font-mono">@ {r.table.label}</span>}
+          <span className={`text-xs uppercase tracking-wider px-1.5 py-0.5 rounded ${badge.cls}`}>{badge.label}</span>
+          {r.table && <span className="text-xs text-s-muted font-mono">@ {r.table.label}</span>}
         </div>
-        <p className="text-[11px] text-s-muted mt-0.5">
+        <p className="text-xs text-s-muted mt-0.5">
           {r.guestPhone && <span><Ico d={ICON_PHONE} className="mr-1" />{r.guestPhone}</span>}
           {r.guestEmail && <span> · <Ico d={ICON_MAIL} className="mr-1" />{r.guestEmail}</span>}
           {r.notes && <span className="italic"> · {r.notes}</span>}
@@ -334,19 +334,19 @@ function ReservationRow({
       <div className="flex gap-1.5 flex-wrap justify-end">
         {r.customer && (
           <button onClick={() => onViewCustomer(r.customer!.id)}
-            className="min-h-11 text-[11px] font-bold px-3 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+            className="min-h-11 text-xs font-bold px-3 rounded bg-primary/10 text-primary-ink border border-primary/30">
             <Ico d={ICON_USER} className="mr-1" />Profile
           </button>
         )}
         {r.status === 'booked' && (
-          <button onClick={() => onTransition('confirm')} className="min-h-11 text-[11px] font-bold px-3 rounded bg-primary text-primary-on">Confirm</button>
+          <button onClick={() => onTransition('confirm')} className="min-h-11 text-xs font-bold px-3 rounded bg-primary text-primary-on">Confirm</button>
         )}
         {(r.status === 'booked' || r.status === 'confirmed') && (
           <SeatButton id={r.id} tables={tables} preselect={r.table?.id}
             onSeat={(tableId) => onTransition('seat', { tableId })} />
         )}
         {r.status === 'seated' && (
-          <button onClick={() => onTransition('complete')} className="min-h-11 text-[11px] font-bold px-3 rounded bg-secondary text-secondary-on">Complete</button>
+          <button onClick={() => onTransition('complete')} className="min-h-11 text-xs font-bold px-3 rounded bg-secondary text-secondary-on">Complete</button>
         )}
         {(r.status === 'booked' || r.status === 'confirmed') && (
           <button onClick={async () => {
@@ -356,7 +356,7 @@ function ReservationRow({
               reason: { label: 'Reason for cancelling', minLength: 3 },
             })
             if (res && res.reason) onTransition('cancel', { reason: res.reason })
-          }} className="min-h-11 text-[11px] text-s-red px-3">Cancel</button>
+          }} className="min-h-11 text-xs text-s-red px-3">Cancel</button>
         )}
         {(r.status === 'booked' || r.status === 'confirmed') && new Date(r.endTime).getTime() < Date.now() && (
           <button onClick={async () => {
@@ -365,7 +365,7 @@ function ReservationRow({
               confirmLabel: 'Mark no-show', danger: true,
             })
             if (res) onTransition('no-show')
-          }} className="min-h-11 text-[11px] text-s-red px-3">No-show</button>
+          }} className="min-h-11 text-xs text-s-red px-3">No-show</button>
         )}
       </div>
     </div>
@@ -385,7 +385,7 @@ function SeatButton({
   const [open, setOpen] = useState(false)
   return (
     <span className="relative">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-11 text-[11px] font-bold px-3 rounded bg-secondary text-secondary-on">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-11 text-xs font-bold px-3 rounded bg-secondary text-secondary-on">
         Seat <ArrowRight size={12} aria-hidden="true" className="inline-block align-[-2px]" />
       </button>
       {open && (
@@ -593,7 +593,7 @@ function NewReservationModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[11px] text-s-muted mb-1">{label}</span>
+      <span className="block text-xs text-s-muted mb-1">{label}</span>
       {children}
     </label>
   )

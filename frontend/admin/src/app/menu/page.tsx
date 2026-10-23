@@ -1,4 +1,5 @@
 'use client'
+import { Trash2, Pencil, X, Camera, Play } from 'lucide-react'
 import { useId, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { menuApi, api, deleteWithUndo, type Category, type MenuItem } from '../../lib/api'
@@ -271,7 +272,7 @@ export default function MenuPage() {
                     }}
                     disabled={removeCategory.isPending}
                     className="rounded-lg border border-s-red/40 text-s-red px-3 py-1.5 text-xs hover:bg-s-red/10 ml-auto [@media(pointer:coarse)]:min-h-11">
-                    🗑 Delete category
+                    <span className="inline-flex items-center gap-1.5"><Trash2 size={14} aria-hidden="true" />Delete category</span>
                   </button>
                   {catError && <p role="alert" className="basis-full text-xs text-s-red font-semibold">{catError}</p>}
                 </form>
@@ -285,7 +286,7 @@ export default function MenuPage() {
                       {cat.parentId && <span className="text-s-muted font-semibold">{nameOf.get(cat.parentId) ?? ''} › </span>}{cat.name}
                     </h2>
                     <span className="text-xs text-s-muted opacity-0 group-hover:opacity-100 transition-opacity">
-                      ✎ Edit
+                      <span className="inline-flex items-center gap-1"><Pencil size={12} aria-hidden="true" />Edit</span>
                     </span>
                   </button>
                   {/* Items are now created via the Recipe form so the menu
@@ -341,7 +342,7 @@ export default function MenuPage() {
                       aria-label={`Edit ${item.name}`}
                       className="[@media(pointer:coarse)]:min-h-11 rounded-lg border border-primary/50 px-4 py-2 text-xs font-bold text-primary-ink hover:bg-primary/10"
                     >
-                      ✎ Edit
+                      <span className="inline-flex items-center gap-1.5"><Pencil size={14} aria-hidden="true" />Edit</span>
                     </button>
                     <button
                       type="button"
@@ -357,7 +358,7 @@ export default function MenuPage() {
                       }}
                       className="[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 rounded-lg border border-s-border px-2 py-2 text-xs text-s-red hover:border-s-red"
                     >
-                      ✕
+                      <X size={16} aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -752,7 +753,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
             <div className="mt-1 flex items-center gap-3">
               {imageUrl
                 ? <img src={imageUrl} alt="preview" className="h-16 w-16 rounded-lg object-cover border border-s-border" />
-                : <div className="h-16 w-16 rounded-lg border border-dashed border-s-border bg-s-bg flex items-center justify-center text-2xl">📷</div>
+                : <div className="h-16 w-16 rounded-lg border border-dashed border-s-border bg-s-bg flex items-center justify-center text-s-muted"><Camera size={24} aria-hidden="true" /></div>
               }
               <label className={`cursor-pointer rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text transition-colors ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
                 {uploading ? 'Uploading…' : 'Upload Image'}
@@ -772,7 +773,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
             <div className="mt-1 flex items-center gap-3">
               {videoUrl
                 ? <video src={videoUrl} muted playsInline loop autoPlay className="h-16 w-16 rounded-lg object-cover border border-s-border" />
-                : <div className="h-16 w-16 rounded-lg border border-dashed border-s-border bg-s-bg flex items-center justify-center text-2xl">▶</div>
+                : <div className="h-16 w-16 rounded-lg border border-dashed border-s-border bg-s-bg flex items-center justify-center text-s-muted"><Play size={24} aria-hidden="true" /></div>
               }
               <label className={`cursor-pointer rounded-lg border border-s-border px-3 py-2 text-xs text-s-muted hover:text-s-text transition-colors ${videoUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                 {videoUploading ? 'Uploading…' : 'Upload Video'}
@@ -782,7 +783,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
                 <button type="button" onClick={() => setVideoUrl('')} className="text-xs text-s-red hover:underline">Remove</button>
               )}
             </div>
-            <p className="text-[10px] text-s-muted mt-1">
+            <p className="text-xs text-s-muted mt-1">
               MP4 or WebM, up to 25 MB. Loops silently on the storefront menu.
             </p>
             {videoUploadError && <p className="text-xs text-s-red mt-1">{videoUploadError}</p>}

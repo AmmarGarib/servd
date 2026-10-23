@@ -9,6 +9,7 @@ import { BottomCTA } from '../../components/brand/parts/BottomCTA'
 import type { SectionProps } from '../types'
 import { color, link, list, safeSrc, str } from '../safe'
 import { brandHref, brandNameOf, fill, orLive } from './util'
+import { StarRating } from '../../components/ui/Icons'
 
 const eyebrowStyle = (accent: string, center = false): React.CSSProperties => ({
   color: accent, fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.28em', textTransform: 'uppercase',
@@ -125,7 +126,7 @@ export function Reviews({ fields, ctx }: SectionProps) {
             const who = t(r.name)
             return (
               <div key={i} className="servd-card" style={{ padding: '1.75rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div style={{ color: stars, letterSpacing: '0.1em', fontSize: '0.95rem' }} aria-label="5 out of 5 stars">★★★★★</div>
+                <div style={{ color: stars }}><StarRating value={5} size={16} color="currentColor" /></div>
                 <p style={{ fontSize: '0.97rem', lineHeight: 1.55 }}>{t(r.text)}</p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.5rem' }}>
                   <div style={{ width: '2.2rem', height: '2.2rem', borderRadius: '50%', background: tintColor(accent, '22'), color: accent, fontWeight: 800, display: 'grid', placeItems: 'center', fontSize: '0.85rem' }}>

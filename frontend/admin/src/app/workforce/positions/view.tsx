@@ -31,6 +31,7 @@ import { Select } from '@/components/ui/Select'
 import { Modal } from '@/components/ui/Modal'
 import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 // Who may change what on this page — the same rules the API enforces
 // (backend/src/modules/positions/routes.ts + contributions.ts), so no one is
@@ -130,7 +131,7 @@ interface Summary {
 }
 
 const STATUS_META: Record<Position['status'], { label: string; color: string; bg: string }> = {
-  open:     { label: 'Open',     color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.10)' },
+  open:     { label: 'Open',     color: 'var(--erp-warning)', bg: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)' },
   filled:   { label: 'Filled',   color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.18)' },
   frozen:   { label: 'Frozen',   color: 'var(--muted)', bg: 'rgb(var(--fg-rgb) / 0.06)' },
   archived: { label: 'Archived', color: 'var(--muted)', bg: 'rgb(var(--fg-rgb) / 0.04)' },
@@ -510,7 +511,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
 
         {!isLoading && positions.length === 0 && (
           <div className="rounded-xl border border-s-border bg-s-surface p-12 text-center">
-            <p className="text-4xl mb-2">💼</p>
+            <span className="mb-2 inline-block text-s-muted"><NavIcon name="briefcase" size={32} /></span>
             <p className="text-sm font-semibold">No budgeted positions yet</p>
             {canEditSeats ? (
               <>
@@ -817,7 +818,7 @@ function PositionEditor({
       <div className="flex items-center justify-between gap-2 pt-2">
         <button onClick={() => archive.mutate()} disabled={archive.isPending}
           className="rounded-lg px-3 py-2 text-xs font-bold text-red-700 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
-          🗑 Archive
+          <NavIcon name="archive" size={13} className="mr-1 inline" />Archive
         </button>
         <div className="flex gap-2">
           <button onClick={onClose}

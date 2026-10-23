@@ -40,6 +40,7 @@ const EMPTY_ADDR: AddressForm = { label: '', address: '', isDefault: false, pin:
 import { BlockedNotice } from '../../components/account/BlockedNotice'
 import { statusFor } from '../../lib/orderStatus'
 import { formatBrandName } from '../../lib/concept'
+import { CheckIcon as TickIcon, StarIcon, StarRating, TicketIcon } from '../../components/ui/Icons'
 const TIER_COLOR: Record<string, string> = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#ffd700' }
 
 // Where the customer stands, from GET /loyalty/status: the balance and what it
@@ -815,7 +816,7 @@ function ReferralSection({
         <button onClick={() => copy(referralCode)}
           className="rounded-xl px-3 py-3 text-xs font-bold whitespace-nowrap"
           style={{ background: '#7c2d12', color: '#0a0a0a' }}>
-          {copied ? '✓ Copied' : 'Copy'}
+          {copied ? <><TickIcon size={12} /> Copied</> : 'Copy'}
         </button>
       </div>
 
@@ -1023,7 +1024,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-black text-sm">{formatBrandName(r.concept.name)}</span>
-                    {r.isVip && <span className="text-[10px] font-bold text-amber-600">★ VIP</span>}
+                    {r.isVip && <span className="text-[10px] font-bold text-amber-600"><StarIcon size={10} /> VIP</span>}
                     <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 rounded-full"
                       style={{
                         background: isCancelled
@@ -1122,7 +1123,7 @@ function MyReviewsSection({ token }: { token: string | null }) {
           <div key={r.id} className="rounded-xl p-3" style={{ background: 'rgba(0,0,0,0.025)' }}>
             <div className="flex items-center justify-between gap-2">
               <span className="font-bold text-sm">{formatBrandName(r.concept.name)}</span>
-              <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+              <span className="text-amber-500"><StarRating value={r.rating} size={14} /></span>
             </div>
             {r.comment && (
               <p className="text-xs mt-1.5" style={{ color: 'var(--servd-ink)' }}>{r.comment}</p>
@@ -1263,7 +1264,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
         >
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>🎫 Raise an issue</p>
+              <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}><TicketIcon size={15} /> Raise an issue</p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--servd-mute)' }}>
                 Wrong item, late delivery, quality concern — we&apos;ll fix it.
               </p>

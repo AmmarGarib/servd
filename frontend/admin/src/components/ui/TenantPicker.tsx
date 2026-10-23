@@ -115,12 +115,12 @@ export function TenantField({
 
 /**
  * Indigo brand chip — drop on a list row in portfolio view so the operator
- * sees which company each item belongs to. Falls back to an orange "⚠ No
+ * sees which company each item belongs to. Falls back to an orange "No
  * company" badge for orphan rows (tenantId null). Stays hidden in single-
  * tenant view because every row would carry the same name.
  */
 export function TenantChip({
-  tenant, tenantId, tenants, fallback = '⚠ No company', alwaysShow,
+  tenant, tenantId, tenants, fallback = 'No company', alwaysShow,
 }: {
   /** Hydrated relation (when the API returned `tenant: {...}` inline). */
   tenant?: { id: string; name: string } | null
@@ -147,7 +147,7 @@ export function TenantChip({
   if (!resolved && !tenantId) {
     return (
       <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-        style={{ background: 'rgba(255,77,79,0.10)', color: '#b42318' }}
+        style={{ background: 'color-mix(in srgb, var(--erp-danger) 10%, transparent)', color: 'var(--erp-danger)' }}
         title="No company assigned — edit to fix.">
         {fallback}
       </span>

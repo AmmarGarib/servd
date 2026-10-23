@@ -29,7 +29,7 @@ export default function LoginPage() {
           <p className="text-center text-sm mt-6 mb-3 text-[color:var(--servd-mute)]">Don&apos;t have an account?</p>
           <Link href={signupHref}
             className="flex items-center justify-center w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-colors"
-            style={{ background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', textDecoration: 'none' }}>
+            style={{ background: 'var(--servd-green-soft)', color: 'var(--servd-purple)', border: '1.5px solid var(--servd-purple)', textDecoration: 'none' }}>
             Create an account
           </Link>
         </div>

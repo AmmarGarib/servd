@@ -165,6 +165,46 @@ async function companyCustomerStats(conceptIds: string[], customerIds?: string[]
   return rows.map((r) => ({ id: r.id, n: Number(r.n), spent: Number(r.spent), firstAt: r.first_at, lastAt: r.last_at }))
 }
 
+/**
+ * No-show, complaint, review and last-seated figures of one customer at the
+ * brands in view (`t` = scopeTenantWhere). The Customer columns of the same
+ * name are servd-wide rollups (lib/customerRollups.ts) — the same definitions,
+ * narrowed to this company's brands.
+ */
+async function companyActivityFigures(customerId: string, t: Prisma.ConceptWhereInput) {
+  const inCo = { concept: t }
+  const [noShows, complaints, reviews, lastSeated] = await Promise.all([
+    prisma.reservation.aggregate({
+      where: { customerId, status: 'no_show', ...inCo },
+      _count: { _all: true }, _max: { updatedAt: true },
+    }),
+    prisma.orderComplaint.aggregate({
+      where: { customerId, kind: 'complaint', ...inCo },
+      _count: { _all: true }, _max: { createdAt: true },
+    }),
+    prisma.orderReview.aggregate({
+      where: { customerId, ...inCo },
+      _count: { _all: true }, _max: { createdAt: true }, _avg: { rating: true },
+    }),
+    prisma.reservation.findFirst({
+      where: { customerId, seatedAt: { not: null }, ...inCo },
+      select: { seatedAt: true }, orderBy: { seatedAt: 'desc' },
+    }),
+  ])
+  return {
+    lastSeatedAt: lastSeated?.seatedAt ?? null,
+    figures: {
+      noShowCount: noShows._count._all,
+      lastNoShowAt: noShows._max.updatedAt ?? null,
+      complaintCount: complaints._count._all,
+      lastComplaintAt: complaints._max.createdAt ?? null,
+      reviewCount: reviews._count._all,
+      lastReviewedAt: reviews._max.createdAt ?? null,
+      avgReviewRating: reviews._avg.rating ?? null,
+    },
+  }
+}
+
 /** Every live brand of one company. */
 async function companyConceptIds(tenantId: string | null): Promise<string[]> {
   if (!tenantId) return []
@@ -431,7 +471,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const t = await scopeTenantWhere(req, 'read')
-      const customer = await prisma.customer.findFirst({
+      const found = await prisma.customer.findFirst({
         where: {
           id: req.params.id,
           deletedAt: null,
@@ -441,22 +481,32 @@ export async function crmRoutes(fastify: FastifyInstance) {
           // ANY customer's PII + order history by UUID.
           ...customerOfCompanies(t),
         },
+        // The Customer rollup columns (totalSpentCents, first/last order,
+        // lastVisitAt, no-show / complaint / review counts) are GLOBAL across
+        // companies, so they are never selected here: the figures below are
+        // recomputed for the companies in view only (F2 — the guest card
+        // leaked another company's totals).
         select: {
           id: true, name: true, email: true, phone: true, birthdayMmDd: true,
-          firstOrderAt: true, lastOrderAt: true, lastVisitAt: true,
-          totalSpentCents: true, staffNotes: true,
-          // Rollup fields — denormalized so this endpoint is fast.
-          noShowCount: true, complaintCount: true, reviewCount: true,
-          avgReviewRating: true, lastNoShowAt: true, lastComplaintAt: true,
-          lastReviewedAt: true,
+          staffNotes: true, preferredConceptId: true,
           // Naughty list — surfaced front-and-center so a host opening a
           // reservation immediately sees risk + recent strike history.
+          // Strikes are servd-wide account standing (owner, 2026-10-15).
           strikeCount: true,
           loyaltyAccounts: { where: t, select: { tenantId: true, tier: true, pointsBalance: true, lifetimePoints: true } },
-          preferredConcept: { select: { name: true, slug: true } },
+          preferredConcept: { select: { name: true, slug: true, tenantId: true } },
         },
       })
-      if (!customer) throw new NotFoundError('Customer', req.params.id)
+      if (!found) throw new NotFoundError('Customer', req.params.id)
+      const scope = tenantIdsOf(t)
+      // Spend, order count, first / last order and the preferred brand at the
+      // companies in view — the same figures as the list and GET /customers/:id.
+      const { walletBalance: _w, ...customer } = (await scopedCustomerFigures(req, scope, [found]))[0]!
+      const activity = await companyActivityFigures(customer.id, t)
+      const lastVisitAt =
+        customer.lastOrderAt && activity.lastSeatedAt
+          ? (customer.lastOrderAt > activity.lastSeatedAt ? customer.lastOrderAt : activity.lastSeatedAt)
+          : (customer.lastOrderAt ?? activity.lastSeatedAt ?? null)
 
       // Pull recent activity in parallel for snappy response. Every list is
       // this company's own activity: the customer is global, but what they
@@ -516,7 +566,6 @@ export async function crmRoutes(fastify: FastifyInstance) {
       ])
       // Strikes and bans are servd-wide (owner, 2026-10-15): every strike on
       // the account, another company's anonymised ("Another servd kitchen").
-      const scope = tenantIdsOf(t)
       const recentStrikes = (await strikesForView(strikeRows.slice(0, 5), scope))
         .map(({ customerId: _c, ...rest }) => rest)
 
@@ -525,6 +574,8 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const ours = (slug: string) => scope.some((tid) => slug.endsWith(`.${tid}`))
       return {
         ...customer,
+        ...activity.figures,
+        lastVisitAt,
         // The wallet at the companies in view only (ONL-R2-01).
         walletBalance: balanceInView((await walletBalancesOf([customer.id], scope)).get(customer.id), scope),
         loyaltyAccount: loyaltyAccountInView(customer.loyaltyAccounts, req.staffUser!.tenantId),

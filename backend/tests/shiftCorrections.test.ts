@@ -779,3 +779,88 @@ describe('Raast QR bills (correctable like cash and card)', () => {
     expect(tb.debits).toBe(tb.credits)
   })
 })
+
+// ─── F3: separation of duties, retry rights, interrupted applies ───────────────
+describe('shift corrections — own drawer, retry right, interrupted apply', () => {
+  let financeRan: Who, financeClosed: Who
+
+  beforeAll(async () => {
+    financeRan = await mkUser('scor-fin-ran', 'finance', A.tenantId)
+    financeClosed = await mkUser('scor-fin-closed', 'finance', A.tenantId)
+  })
+
+  async function closedDrawerWithBill() {
+    const drawer = await openDrawer(A, cashierA)
+    const bill = await paidBill(A, cashierA, drawer)
+    // Closed through the till's own route: the closer is recorded.
+    const c = await call()(cashierA, 'POST', `/pos/shifts/${drawer}/close`, { closingFloatCents: bill.totalCents, confirmOpenTickets: true })
+    expect(c.statusCode, c.body).toBe(200)
+    await postShiftClose(drawer)
+    return { drawer, bill }
+  }
+
+  const body = (drawer: string, orderId: string) => ({ shiftId: drawer, reason: REASON, items: [{ orderId, kind: 'void_bill', reason: 'Duplicate bill of table 9' }] })
+
+  it('the till close records who closed the drawer', async () => {
+    const { drawer } = await closedDrawerWithBill()
+    const row = await prisma.auditLog.findFirst({ where: { action: 'pos.shift.close', entity: 'Shift', entityId: drawer } })
+    expect(row).toMatchObject({ userId: cashierA.id, tenantId: A.tenantId })
+  })
+
+  it('finance never raises a correction on a drawer it ran or closed (403 SELF_CORRECTION_BLOCKED); the CEO is exempt', async () => {
+    const { drawer, bill } = await closedDrawerWithBill()
+    await prisma.shift.update({ where: { id: drawer }, data: { userId: financeRan.id } })
+    const ran = await call()(financeRan, 'POST', '/pos/shift-corrections', body(drawer, bill.id))
+    expect(ran.statusCode, ran.body).toBe(403)
+    expect(ran.json().error.code).toBe('SELF_CORRECTION_BLOCKED')
+
+    const d2 = await closedDrawerWithBill()
+    await prisma.auditLog.create({ data: { category: 'accounting', action: 'pos.shift.close', entity: 'Shift', entityId: d2.drawer, userId: financeClosed.id, tenantId: A.tenantId } })
+    const closed = await call()(financeClosed, 'POST', '/pos/shift-corrections', body(d2.drawer, d2.bill.id))
+    expect(closed.statusCode, closed.body).toBe(403)
+    expect(closed.json().error.code).toBe('SELF_CORRECTION_BLOCKED')
+    // Another finance login may raise it.
+    const other = await call()(financeA, 'POST', '/pos/shift-corrections', body(d2.drawer, d2.bill.id))
+    expect(other.statusCode, other.body).toBe(201)
+    await call()(ceoA, 'POST', `/pos/shift-corrections/${other.json().id}/reject`, { note: 'Not needed after all, tested only' })
+
+    // The CEO is exempt: a drawer the CEO ran.
+    const d3 = await closedDrawerWithBill()
+    await prisma.shift.update({ where: { id: d3.drawer }, data: { userId: ceoA.id } })
+    const ceo = await call()(ceoA, 'POST', '/pos/shift-corrections', body(d3.drawer, d3.bill.id))
+    expect(ceo.statusCode, ceo.body).toBe(201)
+    await call()(ceoA, 'POST', `/pos/shift-corrections/${ceo.json().id}/reject`, { note: 'Not needed after all, tested only' })
+  })
+
+  it('an apply left "approved" is swept to failed after 5 minutes idle; Retry needs the approve right and finishes it', async () => {
+    const { sweepStaleApplies } = await import('../src/modules/shiftCorrections/service.js')
+    const { drawer, bill } = await closedDrawerWithBill()
+    const r = await call()(financeA, 'POST', '/pos/shift-corrections', body(drawer, bill.id))
+    expect(r.statusCode, r.body).toBe(201)
+    const id = r.json().id as string
+    // The process died after the CEO's claim, before the apply ran.
+    await prisma.shiftCorrection.update({ where: { id }, data: { status: 'approved', decidedById: ceoA.id, decidedAt: new Date() } })
+
+    // Fresh: not touched.
+    expect(await sweepStaleApplies()).not.toContain(id)
+    expect((await prisma.shiftCorrection.findUniqueOrThrow({ where: { id } })).status).toBe('approved')
+    // Retry refuses a set that is not failed.
+    expect((await call()(ceoA, 'POST', `/pos/shift-corrections/${id}/retry`, {})).json().error.code).toBe('NOT_FAILED')
+
+    // Ten minutes idle → failed, with the reason; the sweep is idempotent.
+    expect(await sweepStaleApplies(new Date(Date.now() + 10 * 60_000))).toContain(id)
+    const failed = await prisma.shiftCorrection.findUniqueOrThrow({ where: { id } })
+    expect(failed.status).toBe('failed')
+    expect(failed.error).toMatch(/^APPLY_INTERRUPTED/)
+    expect(await sweepStaleApplies(new Date(Date.now() + 10 * 60_000))).not.toContain(id)
+    await flushNotifications()
+
+    // Retry: another company's CEO 404, finance 403, the set's own CEO applies it.
+    expect((await call()(ceoB, 'POST', `/pos/shift-corrections/${id}/retry`, {})).statusCode).toBe(404)
+    expect((await call()(financeA, 'POST', `/pos/shift-corrections/${id}/retry`, {})).statusCode).toBe(403)
+    const ok = await call()(ceoA, 'POST', `/pos/shift-corrections/${id}/retry`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().status, ok.body).toBe('applied')
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: bill.id } })).status).toBe('cancelled')
+  })
+})

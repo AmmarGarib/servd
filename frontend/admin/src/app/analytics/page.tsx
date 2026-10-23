@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { todayPktIso } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 interface FunnelStep {
   event: string
@@ -148,14 +150,14 @@ export default function AnalyticsPage() {
       {overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: 'Sessions', value: overview.totalSessions.toLocaleString(), icon: '👤' },
-            { label: 'Checkout started', value: overview.checkoutStarted.toLocaleString(), icon: '🛒' },
-            { label: 'Orders placed', value: overview.ordersPlaced.toLocaleString(), icon: '✅' },
-            { label: 'Checkout conversion', value: `${overview.checkoutConversion}%`, icon: '📈' },
+            { label: 'Sessions', value: overview.totalSessions.toLocaleString(), icon: 'user' },
+            { label: 'Checkout started', value: overview.checkoutStarted.toLocaleString(), icon: 'cart' },
+            { label: 'Orders placed', value: overview.ordersPlaced.toLocaleString(), icon: 'done' },
+            { label: 'Checkout conversion', value: `${overview.checkoutConversion}%`, icon: 'trend' },
           ].map((kpi) => (
             <div key={kpi.label} className="bg-s-surface rounded-xl border border-s-border p-4">
               <div className="flex items-center gap-2 text-s-muted text-sm mb-1">
-                <span>{kpi.icon}</span>
+                <NavIcon name={kpi.icon} size={14} />
                 <span>{kpi.label}</span>
               </div>
               <div className="text-2xl font-bold text-s-text">{kpi.value}</div>
@@ -253,7 +255,7 @@ export default function AnalyticsPage() {
             </table>
             </div>
           ) : (
-            <p className="text-sm text-s-muted text-center py-8">No item view data yet</p>
+            <CompactEmptyState message="No item view data yet" />
           )}
         </div>
 
@@ -284,7 +286,7 @@ export default function AnalyticsPage() {
             </table>
             </div>
           ) : (
-            <p className="text-sm text-s-muted text-center py-8">No search data yet</p>
+            <CompactEmptyState message="No search data yet" />
           )}
         </div>
       </div>

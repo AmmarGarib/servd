@@ -10,6 +10,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { NavIcon } from '../ui/NavIcon'
 
 const inp = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none'
 
@@ -64,8 +65,8 @@ export function ReachOutModal({
   })
 
   const reaches = [
-    context.customer.email && `📧 ${context.customer.email}`,
-    context.customer.phone && `💬 ${context.customer.phone}`,
+    context.customer.email && `Email ${context.customer.email}`,
+    context.customer.phone && `WhatsApp ${context.customer.phone}`,
   ].filter(Boolean) as string[]
 
   return (
@@ -80,14 +81,14 @@ export function ReachOutModal({
               {context.contextSubtitle && <span className="ml-1 text-s-muted/70">· {context.contextSubtitle}</span>}
             </p>
           </div>
-          <button onClick={onClose} className="text-2xl leading-none text-s-muted hover:text-s-text">✕</button>
+          <button onClick={onClose} className="text-2xl leading-none text-s-muted hover:text-s-text"><NavIcon name="x" size={16} /></button>
         </div>
 
         <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
           <div className="rounded-xl border border-s-border bg-s-bg/40 p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-2">Will reach via</p>
             <div className="flex flex-wrap gap-1.5">
-              <span className="rounded-full bg-primary/10 border border-primary/30 px-2 py-0.5 text-[10px] text-primary-ink">🌐 In-app thread</span>
+              <span className="rounded-full bg-primary/10 border border-primary/30 px-2 py-0.5 text-[10px] text-primary-ink"><NavIcon name="globe" size={11} className="mr-1 inline" />In-app thread</span>
               {reaches.map((r) => (
                 <span key={r} className="rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-[10px] text-blue-700">
                   {r}

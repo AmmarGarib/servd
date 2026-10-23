@@ -31,8 +31,8 @@ interface TestAttempt {
 
 const OUTCOME_META: Record<Outcome, { label: string; color: string; bg: string }> = {
   promising:  { label: 'Promising',  color: 'var(--erp-success)', bg: 'rgb(var(--erp-accent-rgb) / 0.15)' },
-  needs_work: { label: 'Needs work', color: 'var(--erp-warning)', bg: 'rgba(245,158,11,0.12)' },
-  rejected:   { label: 'Rejected',   color: 'var(--erp-danger)', bg: 'rgba(255,77,79,0.12)' },
+  needs_work: { label: 'Needs work', color: 'var(--erp-warning)', bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)' },
+  rejected:   { label: 'Rejected',   color: 'var(--erp-danger)', bg: 'color-mix(in srgb, var(--erp-danger) 12%, transparent)' },
 }
 
 export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
@@ -99,7 +99,7 @@ export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
           </Select>
           <Select value={rating} onChange={(e) => setRating(e.target.value ? Number(e.target.value) : '')} className="s-select text-xs">
             <option value="">Rating…</option>
-            {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{'★'.repeat(n)} ({n})</option>)}
+            {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} of 5</option>)}
           </Select>
           <button type="button" onClick={submit} disabled={add.isPending}
             className="ml-auto rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
@@ -125,7 +125,7 @@ export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
                       {OUTCOME_META[d.outcome].label}
                     </span>
                   )}
-                  {d.rating !== '' && <span style={{ color: 'var(--erp-warning)' }}>{'★'.repeat(Number(d.rating))}</span>}
+                  {d.rating !== '' && <span style={{ color: 'var(--erp-warning)' }}>{d.rating}/5</span>}
                   <span className="text-s-dim ml-auto">saves with recipe</span>
                   <button type="button" title="Remove"
                     onClick={() => onDraftsChange?.((drafts ?? []).filter((_, j) => j !== i))}
@@ -150,7 +150,7 @@ export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
                     {OUTCOME_META[a.outcome].label}
                   </span>
                 )}
-                {a.rating != null && <span style={{ color: 'var(--erp-warning)' }}>{'★'.repeat(a.rating)}</span>}
+                {a.rating != null && <span style={{ color: 'var(--erp-warning)' }}>{a.rating}/5</span>}
                 <span className="text-s-dim ml-auto">
                   {a.testedByName ?? 'Unknown'} · {new Date(a.createdAt).toLocaleDateString()}
                 </span>

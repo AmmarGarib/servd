@@ -228,8 +228,8 @@ export function SignupForm({
     e.currentTarget.style.boxShadow   = 'none'
   }
   const primaryBtnStyle = (busy: boolean): React.CSSProperties => ({
-    background: busy ? 'var(--servd-surface)' : 'var(--servd-green)',
-    color: busy ? 'var(--servd-mute)' : 'var(--servd-on-green)',
+    background: busy ? 'var(--servd-surface)' : 'var(--servd-purple)',
+    color: busy ? 'var(--servd-mute)' : 'var(--servd-on-purple)',
     boxShadow: busy ? 'none' : '0 4px 14px rgba(106,13,173,0.18)',
   })
 
@@ -390,7 +390,7 @@ export function SignupForm({
           <p className="text-center text-sm mt-5 mb-3 text-[color:var(--servd-mute)]">Already have an account?</p>
           <Link href={loginHref}
             className="flex items-center justify-center w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-colors"
-            style={{ background: 'var(--servd-purple)', color: 'var(--servd-on-purple)', textDecoration: 'none' }}>
+            style={{ background: 'var(--servd-green-soft)', color: 'var(--servd-purple)', border: '1.5px solid var(--servd-purple)', textDecoration: 'none' }}>
             Sign in
           </Link>
         </>

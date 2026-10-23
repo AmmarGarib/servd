@@ -29,7 +29,7 @@ export function PaymentsByClassificationCard() {
   ]
   return (
     <Link href="/finance/payments" className="block rounded-2xl p-5 hover:opacity-95" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-      <p className="text-[11px] font-bold uppercase tracking-wider text-success">This month</p>
+      <p className="text-xs font-bold uppercase tracking-wider text-success">This month</p>
       <h2 className="text-lg font-black text-white/90">Payments by classification</h2>
       <p className="mt-1 text-2xl font-black text-white/90">{fmtPkr(all)}</p>
       <div className="mt-3 space-y-2">
@@ -49,7 +49,7 @@ export function PaymentsByClassificationCard() {
         })}
       </div>
       {data && (
-        <p className="mt-3 text-[11px]" style={{ color: data.tieOut.ties ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
+        <p className="mt-3 text-xs" style={{ color: data.tieOut.ties ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
           {data.tieOut.ties ? 'Ties to the ledger' : `Differs from the ledger by ${fmtPkr(data.tieOut.differenceCents)}`}
         </p>
       )}

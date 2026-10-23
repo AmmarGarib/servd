@@ -1,4 +1,5 @@
 'use client'
+import { Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
@@ -40,9 +41,9 @@ export default function CashFlowPage() {
           <h1 className="text-xl font-bold text-s-text">Cash Flow</h1>
         </div>
         <div className="flex items-center gap-3">
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+          <Input className="w-auto px-2 py-1 text-sm" type="date" value={from} onChange={(e) => setFrom(e.target.value)}  />
           <span className="text-s-muted text-xs">→</span>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+          <Input className="w-auto px-2 py-1 text-sm" type="date" value={to} onChange={(e) => setTo(e.target.value)}  />
           <ExportMenu path={`/accounting/cash-flow?dateFrom=${from}&dateTo=${to}`} filename={`cash-flow-${from}-${to}`} />
         </div>
       </header>
@@ -69,7 +70,7 @@ export default function CashFlowPage() {
                     <tr key={`${r.tenantId ?? ''}:${r.code}`} className="border-t border-s-border">
                       <td className="px-4 py-2 text-s-text">
                         <span className="font-mono text-xs text-s-muted mr-2">{r.code}</span>{r.name}
-                        {multi && r.companyName && <span className="block text-[11px] text-s-muted">{r.companyName}</span>}
+                        {multi && r.companyName && <span className="block text-xs text-s-muted">{r.companyName}</span>}
                       </td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-success">{fmtPkr(r.inflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkr(r.outflowCents)}</td>

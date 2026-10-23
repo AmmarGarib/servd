@@ -14,6 +14,8 @@ import { MoneyInput } from '../../components/ui/MoneyInput'
 import { usePermissions } from '../../hooks/useCan'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 type StepKey = 'company' | 'brand' | 'location' | 'hours' | 'menu' | 'done'
 
@@ -84,7 +86,7 @@ export default function OnboardingWizardPage() {
       {/* Browser <option> dropdowns ignore the page's dark theme by default and
           render white-on-white. Force dark styling globally for this page. */}
       <style>{`
-        select option { background-color: var(--surface); color: #f5f5f5; }
+        select option { background-color: var(--surface); color: var(--text); }
         select option:hover, select option:checked { background-color: var(--elevated); }
       `}</style>
       <header className="px-7 py-6 border-b border-white/[0.05]">
@@ -234,7 +236,7 @@ function CompanyStep({ tenants, onDone }: { tenants: Tenant[]; onDone: () => voi
               background: t.isActive ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.025)',
               border: `1px solid ${t.isActive ? 'rgb(var(--erp-primary-rgb) / 0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
             }}>
-            <span className="text-2xl shrink-0" aria-hidden="true">🏢</span>
+            <span className="shrink-0 text-primary-ink" aria-hidden="true"><NavIcon name="building" size={24} /></span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="font-bold text-white/90 text-sm truncate">{t.name}</p>
@@ -463,8 +465,8 @@ function MergeCompaniesForm({ tenants, onDone }: { tenants: Tenant[]; onDone: ()
       hint="Move every brand, location, staff member, and historical record from one company into another. The source company is then closed. This cannot be undone.">
 
       <div className="rounded-xl px-4 py-3 mb-1"
-        style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)' }}>
-        <p className="text-sm font-bold text-red-700/90 mb-1">⚠ Destructive operation</p>
+        style={{ background: 'color-mix(in srgb, var(--erp-danger) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 25%, transparent)' }}>
+        <p className="text-sm font-bold text-red-700/90 mb-1"><NavIcon name="warn" size={14} className="mr-1 inline" />Destructive operation</p>
         <p className="text-xs text-white/65 leading-relaxed">
           Everything under the <span className="font-bold">source</span> company — brands, kitchens, orders, staff,
           ledger — gets reassigned to the <span className="font-bold">target</span>. The source company is then
@@ -514,7 +516,7 @@ function MergeCompaniesForm({ tenants, onDone }: { tenants: Tenant[]; onDone: ()
 
       <Footer>
         <button onClick={() => merge.mutate()} disabled={!canMerge || merge.isPending}
-          className="rounded-xl bg-s-red text-[#fff] font-bold px-5 py-2.5 text-sm hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+          className="rounded-xl bg-s-red text-primary-on font-bold px-5 py-2.5 text-sm hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
           {merge.isPending ? 'Combining…' : 'Combine companies →'}
         </button>
         <button type="button" onClick={onDone}
@@ -578,7 +580,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
           {existingBrands.map((b) => (
             <div key={b.id} className="flex items-center gap-3 rounded-lg p-3"
               style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
-              <span className="text-primary-ink text-lg shrink-0" aria-hidden="true">✓</span>
+              <span className="text-primary-ink shrink-0" aria-hidden="true"><NavIcon name="check" size={18} /></span>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-white/90 text-sm">{b.name}</p>
                 <p className="text-xs text-white/45 font-mono truncate">{b.conceptStatement ?? `/${b.slug}`}</p>
@@ -635,7 +637,7 @@ function MultiBrandStep({ onDone }: { onDone: () => void }) {
 
 // Pick a default colour from a small palette so each new brand looks distinct.
 function pickColor(n: number): string {
-  const palette = ['#D4581A', '#5a2156', '#3f7d20', '#a15c00', '#6b2f68', '#be185d', '#1d4ed8', '#84CC16']
+  const palette = ['#D4581A', '#5a2156', 'var(--erp-success)', 'var(--erp-warning)', '#6b2f68', '#be185d', '#1d4ed8', '#84CC16']
   return palette[(n - 1) % palette.length]!
 }
 
@@ -738,7 +740,10 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
   const [heroTagline, setHeroTagline] = useState(existingBrand?.heroTagline ?? '')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [slug, setSlug] = useState(existingBrand?.slug ?? '')
-  const [type, setType] = useState<'restaurant' | 'cafe' | 'cloud_kitchen' | 'food_truck'>((existingBrand?.type as 'restaurant' | 'cafe' | 'cloud_kitchen' | 'food_truck') ?? 'restaurant')
+  // The API accepts only restaurant / digital / cart. Older saved brands may
+  // still carry a retired value (cafe, cloud_kitchen, food_truck): map them.
+  const [type, setType] = useState<'restaurant' | 'digital' | 'cart'>(
+    ({ cafe: 'restaurant', cloud_kitchen: 'digital', food_truck: 'cart', restaurant: 'restaurant', digital: 'digital', cart: 'cart' } as Record<string, 'restaurant' | 'digital' | 'cart'>)[existingBrand?.type ?? 'restaurant'] ?? 'restaurant')
 
   // Auto-derive slug from name (skip if editing — slug is immutable post-create
   // because storefront URLs already point at it).
@@ -924,9 +929,9 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
           <div className="flex flex-wrap gap-1.5 mb-2">
             {competitors.map((c) => (
               <span key={c} className="inline-flex items-center gap-2 rounded-full px-3 py-1.5"
-                style={{ background: 'rgba(245,158,11,0.12)', color: '#a15c00', border: '1px solid rgba(245,158,11,0.3)' }}>
+                style={{ background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', color: 'var(--erp-warning)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
                 <span className="text-xs font-bold">{c}</span>
-                <button onClick={() => setCompetitors(competitors.filter((x) => x !== c))} className="text-xs">✕</button>
+                <button onClick={() => setCompetitors(competitors.filter((x) => x !== c))} className="text-xs"><NavIcon name="x" size={16} /></button>
               </span>
             ))}
             {competitors.length === 0 && <p className="text-xs text-white/35 italic">None added yet.</p>}
@@ -982,10 +987,9 @@ function BrandBriefForm({ title, hint, onCreated, onCancel, inline, defaultColor
           </Field>
           <Field label="Venue type">
             <Select value={type} onChange={(e) => setType(e.target.value as typeof type)} className={selectCls}>
-              <option value="restaurant">Dine-in restaurant</option>
-              <option value="cafe">Café</option>
-              <option value="cloud_kitchen">Cloud kitchen (delivery only)</option>
-              <option value="food_truck">Food truck</option>
+              <option value="restaurant">Restaurant or café (dine-in, takeaway, delivery)</option>
+              <option value="digital">Delivery-only kitchen (no dining room)</option>
+              <option value="cart">Cart or food truck (mobile or counter only)</option>
             </Select>
           </Field>
         </div>
@@ -1403,9 +1407,7 @@ function MenuStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => voi
           Your menu sections {categories.length > 0 && <span className="text-white/65">· {categories.length}</span>}
         </p>
         {categories.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/[0.08] px-4 py-8 text-center">
-            <p className="text-xs text-white/45">No categories yet — add at least one to continue.</p>
-          </div>
+          <CompactEmptyState message="No categories yet — add at least one to continue." />
         ) : (
           <div className="space-y-1.5">
             {categories.map((cat, i) => (
@@ -1497,7 +1499,7 @@ function ErrorBanner({ error }: { error: unknown }) {
       : 'Something went wrong'
   return (
     <div className="rounded-xl px-4 py-3 mt-4 text-sm"
-      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#b42318' }}>
+      style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)', color: 'var(--erp-danger)' }}>
       <strong className="font-bold">Save failed:</strong> {msg}
     </div>
   )

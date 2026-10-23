@@ -15,6 +15,7 @@ import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { OvertimePicker, otAvailableOf, otSummary } from '../../../../components/hr/OvertimePicker'
+import { NavIcon } from '../../../../components/ui/NavIcon'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
 /** How the salary was worked out (backend hr/logic.ts PayBasis, owner HR-1):
@@ -129,7 +130,7 @@ export default function PayrollRunPage() {
           </div>
           {warnings.length > 0 && (
             <div className="rounded-xl p-3 text-sm" style={{ background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
-              {warnings.map((w) => <p key={w} className="text-s-amber">⚠ {w}</p>)}
+              {warnings.map((w) => <p key={w} className="text-s-amber"><NavIcon name="warn" size={13} className="mr-1 inline" />{w}</p>)}
             </div>
           )}
           <div className="flex flex-wrap gap-2">
@@ -182,7 +183,7 @@ export default function PayrollRunPage() {
                       <td className="px-4 py-3 text-white/70">{rs(s.earningsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
-                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-s-amber" title={w.join('\n')}>⚠</span>}</td>
+                      <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-s-amber" title={w.join('\n')}><NavIcon name="warn" size={13} className="inline" /></span>}</td>
                       <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditingId(s.id)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
                     </tr>
                   )

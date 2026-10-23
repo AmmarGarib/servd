@@ -1,4 +1,5 @@
 'use client'
+import { Button, FieldLabel, Input, LinkButton, SidePanel, Textarea } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -8,6 +9,8 @@ import { fmtPkrWhole } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { useManagerRoles } from '../../../lib/roles'
 import { Select } from '@/components/ui/Select'
+import { FIcon } from '../../../components/finance/ui/icons'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 // Who may read the staff directory (GET /auth/users: management + HR). Any
 // other holder of the procurement module (the buyer) gets the staff already
@@ -50,7 +53,7 @@ const STATUS_COLORS: Record<string, string> = {
   draft:            'text-s-muted border-s-border',
   pending_approval: 'text-s-amber border-s-amber',
   approved:         'text-success border-accent',
-  sent:             'text-blue-700 border-blue-400',
+  sent:             'text-s-blue border-s-blue',
   received:         'text-success border-accent bg-accent-dim',
   partial:          'text-s-amber border-s-amber',
   cancelled:        'text-s-red border-s-red',
@@ -58,10 +61,10 @@ const STATUS_COLORS: Record<string, string> = {
 
 const CATEGORY_COLORS: Record<string, string> = {
   meat:       'bg-s-red/20 text-s-red',
-  fish:       'bg-blue-500/20 text-blue-700',
+  fish:       'bg-s-blue/20 text-s-blue',
   farm:       'bg-accent-dim text-success',
-  dairy:      'bg-yellow-500/20 text-yellow-700',
-  'dry-goods':'bg-orange-500/20 text-orange-700',
+  dairy:      'bg-s-amber/20 text-s-amber',
+  'dry-goods':'bg-s-amber/20 text-s-amber',
 }
 
 function daysAgo(date: string) {
@@ -163,7 +166,7 @@ export default function ProcurementMonitorPage() {
           <p className="text-sm text-s-muted mt-0.5">Track all procurement staff, suppliers, and orders</p>
         </div>
         <a href="/procurement/chat" className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-primary-on hover:opacity-90">
-          💬 Supplier Chat
+          <FIcon name="chat" size={14} /> Supplier Chat
         </a>
       </div>
 
@@ -229,7 +232,7 @@ export default function ProcurementMonitorPage() {
                         {/* Indigo brand chip — shown only in portfolio view,
                             mirrors the workforce hub. */}
                         {viewAll && tenant && (
-                          <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                          <span className="shrink-0 text-xs uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
                             style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                             {tenant.name}
                           </span>
@@ -237,15 +240,15 @@ export default function ProcurementMonitorPage() {
                         {/* Orphan warning always shows — broken row needing
                             a company assignment via the edit drawer. */}
                         {!s.tenantId && (
-                          <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-                            style={{ background: 'rgba(255,77,79,0.10)', color: 'var(--erp-danger)' }}
+                          <span className="shrink-0 text-xs uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                            style={{ background: 'color-mix(in srgb, var(--erp-danger) 10%, transparent)', color: 'var(--erp-danger)' }}
                             title="No company assigned — click Edit to fix.">
-                            ⚠ No company
+                            <FIcon name="warn" size={12} /> No company
                           </span>
                         )}
                       </div>
-                      <button onClick={() => setEditSupplier(s)}
-                        className="shrink-0 text-xs text-s-muted hover:text-s-text">Edit</button>
+                      <LinkButton tone="muted" type="button" onClick={() => setEditSupplier(s)}
+                        className="shrink-0">Edit</LinkButton>
                     </div>
                   )
                 })}
@@ -254,7 +257,7 @@ export default function ProcurementMonitorPage() {
           )
         })}
         {byStaff.size === 0 && (
-          <p className="col-span-full text-center text-s-muted py-8">No suppliers found. Add suppliers in Procurement.</p>
+          <div className="col-span-full"><CompactEmptyState message="No suppliers found. Add suppliers in Procurement." /></div>
         )}
       </div>
 
@@ -350,21 +353,17 @@ function SupplierEditDrawer({
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-secondary/50" onClick={onClose}>
-      <div className="w-full max-w-md rounded-t-2xl bg-s-surface p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold text-s-text">{supplier.name}</h2>
-          <button onClick={onClose} className="text-s-muted text-2xl leading-none">✕</button>
-        </div>
+    <SidePanel side="bottom" title={supplier.name} onClose={onClose}>
+      <div className="space-y-4">
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-s-muted">Category</label>
-            <input value={category} onChange={(e) => setCategory(e.target.value)}
+            <FieldLabel>Category</FieldLabel>
+            <Input value={category} onChange={(e) => setCategory(e.target.value)}
               placeholder="meat, fish, farm, dairy, dry-goods…"
-              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm" />
+              className="w-full mt-1" />
           </div>
           <div>
-            <label className="text-xs text-s-muted">Assigned Procurement Staff</label>
+            <FieldLabel>Assigned Procurement Staff</FieldLabel>
             <Select value={assignedStaffId} onChange={(e) => setAssignedStaff(e.target.value)}
               className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
               <option value="">— Unassigned —</option>
@@ -373,9 +372,9 @@ function SupplierEditDrawer({
           </div>
           {tenants.length > 0 && (
             <div>
-              <label className="text-xs text-s-muted">
+              <FieldLabel>
                 Company {!supplier.tenantId && <span className="text-s-red">— orphan, pick one</span>}
-              </label>
+              </FieldLabel>
               <Select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
                 className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                 {!supplier.tenantId && <option value="">— pick a company —</option>}
@@ -384,20 +383,20 @@ function SupplierEditDrawer({
             </div>
           )}
           <div>
-            <label className="text-xs text-s-muted">Notes</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-              className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm resize-none" />
+            <FieldLabel>Notes</FieldLabel>
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
+              className="w-full mt-1" />
           </div>
         </div>
         {save.isError && <p className="text-sm text-s-red">Save failed</p>}
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-s-border py-3 text-s-muted hover:text-s-text text-sm">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending}
-            className="flex-1 rounded-xl bg-primary py-3 font-bold text-primary-on disabled:opacity-50 hover:opacity-90 text-sm">
+          <Button variant="secondary" type="submit" onClick={onClose} className="flex-1">Cancel</Button>
+          <Button type="submit" onClick={() => save.mutate()} disabled={save.isPending}
+            className="flex-1">
             {save.isPending ? 'Saving…' : 'Save'}
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </SidePanel>
   )
 }

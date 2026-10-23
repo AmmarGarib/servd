@@ -18,6 +18,7 @@ import { card, inp, btnGhost, human, type PunchRow } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
 import { BulkAttendanceButtons } from '../../../components/hr/BulkAttendance'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 const STATUS_TONE: Record<string, string> = {
   present: 'var(--erp-success)', late: 'var(--erp-warning)', missing_punch: 'var(--erp-danger)', absent: 'var(--erp-danger)', half_day: 'var(--erp-warning)',
@@ -80,7 +81,7 @@ function DayTab() {
       {error && <p className="text-sm text-s-red mb-3">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
-        {!isLoading && rows.length === 0 && <p className="p-6 text-sm text-white/40 text-center">No punches or attendance on this day.</p>}
+        {!isLoading && rows.length === 0 && <CompactEmptyState message="No punches or attendance on this day." />}
         {rows.map((r) => (
           <div key={r.key} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 grid md:grid-cols-[220px_1fr_220px] gap-3 items-start text-sm">
             <div>
@@ -193,7 +194,7 @@ function TodayTab() {
       {error && <p className="text-sm text-s-red mb-3">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
-        {!isLoading && rows.length === 0 && <p className="p-6 text-sm text-white/40 text-center">Nobody matches.</p>}
+        {!isLoading && rows.length === 0 && <CompactEmptyState message="Nobody matches." />}
         {rows.map((r) => (
           <div key={r.employeeId} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 grid md:grid-cols-[220px_1fr_150px] gap-3 items-start text-sm">
             <div>
@@ -258,7 +259,7 @@ function PunchLogTab() {
       {error && <p className="text-sm text-s-red mb-3">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       <div className="rounded-2xl overflow-x-auto" style={card}>
-        {!isLoading && (data?.rows.length ?? 0) === 0 ? <p className="p-6 text-sm text-white/40 text-center">No punches in this range.</p> : (
+        {!isLoading && (data?.rows.length ?? 0) === 0 ? <CompactEmptyState message="No punches in this range." /> : (
           <table className="w-full text-xs">
             <thead><tr>{['Date', 'Time', 'Employee', 'In / out', 'Source', 'Location', 'Distance', ''].map((h) => <th key={h} className="px-3 py-2 text-left font-bold text-white/45 whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>

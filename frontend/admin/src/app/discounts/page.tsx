@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../lib/api'
 import Link from 'next/link'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 // Date inputs hold the Karachi day (UTC+5) of the stored instant, whatever the browser's zone.
 function isoToPktDay(iso: string): string {
@@ -228,11 +230,7 @@ export default function DiscountsPage() {
         {isLoading ? (
           <p className="text-s-muted text-sm">Loading…</p>
         ) : discounts.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-4xl mb-3">🏷</p>
-            <p className="font-semibold text-s-text">No section discounts yet</p>
-            <p className="text-sm text-s-muted mt-1">Create time-based discounts on menu categories</p>
-          </div>
+          <CompactEmptyState message="No section discounts yet" detail="Create time-based discounts on menu categories" />
         ) : (
           <div className="rounded-xl border border-s-border overflow-hidden">
             <div className="overflow-x-auto">

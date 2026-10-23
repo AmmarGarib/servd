@@ -6,6 +6,7 @@ import { ActivityFeed } from '../../components/ui/ActivityFeed'
 import { fmtPkrShort, startOfMonthPktIso, todayPktIso } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
+import { FIcon, type FIconName } from '../../components/finance/ui/icons'
 
 // The books' own audit trail answers only these roles (backend
 // lib/moduleAccess.ts ACCOUNTING_AUDIT_ROLES) — the module alone is not enough.
@@ -52,18 +53,18 @@ interface Vendor {
 // Gift cards need 'gift_cards', Tip pools 'payroll', Payroll 'staff_hr' or
 // 'payroll' (the one register), the audit log ACCOUNTING_AUDIT_ROLES too.
 const OPERATIONS_LINKS: Array<{ href: string; label: string }> = [
-  { href: '/orders',           label: '⚡ Live orders' },
-  { href: '/floorplan',        label: '🪑 Floor plan' },
-  { href: '/reservations',     label: '📅 Reservations' },
-  { href: '/gift-cards',       label: '🎁 Gift cards' },
-  { href: '/dispatch',         label: '🛵 Dispatch' },
-  { href: '/tip-pools',        label: '💰 Tip pools' },
+  { href: '/orders',           label: 'Live orders' },
+  { href: '/floorplan',        label: 'Floor plan' },
+  { href: '/reservations',     label: 'Reservations' },
+  { href: '/gift-cards',       label: 'Gift cards' },
+  { href: '/dispatch',         label: 'Dispatch' },
+  { href: '/tip-pools',        label: 'Tip pools' },
   { href: '/storefront',       label: 'Storefront content' },
-  { href: '/analytics',        label: '📊 Sales analytics' },
-  { href: '/crm',              label: '👥 Customers' },
-  { href: '/refunds',          label: '↩️ Refunds' },
-  { href: '/inventory/alerts', label: '📦 Stock alerts' },
-  { href: '/reviews',          label: '⭐ Reviews' },
+  { href: '/analytics',        label: 'Sales analytics' },
+  { href: '/crm',              label: 'Customers' },
+  { href: '/refunds',          label: 'Refunds' },
+  { href: '/inventory/alerts', label: 'Stock alerts' },
+  { href: '/reviews',          label: 'Reviews' },
 ]
 
 const LEDGER_LINKS: Array<{ href: string; label: string }> = [
@@ -236,7 +237,7 @@ export default function AccountingHubPage() {
               className="metric-card s-card-hover group">
               <p className="metric-label">{kpi.label}</p>
               <p className={`metric-value ${kpi.color}`}>{kpi.value}</p>
-              {kpi.sub && <p className="text-[11px] text-s-dim mt-1">{kpi.sub}</p>}
+              {kpi.sub && <p className="text-xs text-s-muted mt-1">{kpi.sub}</p>}
             </Link>
           ))}
         </div>
@@ -270,7 +271,7 @@ export default function AccountingHubPage() {
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div>
                 <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Food cost — month to date</p>
-                <p className="text-xs text-s-dim mt-0.5">
+                <p className="text-xs text-s-muted mt-0.5">
                   Actual cost of sales against the recipes at the price paid{fc.targetPct != null && !fc.revenueHidden ? ` · target ${fc.targetPct}%` : ''}
                 </p>
               </div>
@@ -308,7 +309,7 @@ export default function AccountingHubPage() {
               ].map((s) => (
                 <div key={s.label} className="text-center rounded-lg bg-s-elevated border border-s-border p-3">
                   <p className={`text-base font-bold ${s.color}`}>{s.value}</p>
-                  <p className="text-[10px] text-s-dim mt-0.5">{s.label}</p>
+                  <p className="text-xs text-s-muted mt-0.5">{s.label}</p>
                 </div>
               ))}
             </div>
@@ -332,12 +333,12 @@ export default function AccountingHubPage() {
                   <div key={item.menuItemId} className="flex items-center justify-between py-1">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-s-text truncate">{item.name}</p>
-                      <p className="text-[11px] text-s-dim">{item.qtySold} sold{item.revenueCents != null ? ` · ${fmtPkrShort(item.revenueCents)} sales` : ''}</p>
+                      <p className="text-xs text-s-muted">{item.qtySold} sold{item.revenueCents != null ? ` · ${fmtPkrShort(item.revenueCents)} sales` : ''}</p>
                     </div>
                     <div className="ml-3 text-right shrink-0">
                       <p className="text-sm font-bold text-s-text">{fmtPkrShort(item.costCents)}</p>
                       {item.costPct != null && (
-                        <p className="text-[11px] font-semibold" style={{ color: item.targetPct != null && item.costPct > item.targetPct ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
+                        <p className="text-xs font-semibold" style={{ color: item.targetPct != null && item.costPct > item.targetPct ? 'var(--erp-danger)' : 'var(--erp-success)' }}>
                           {item.costPct}% of sales
                         </p>
                       )}
@@ -362,13 +363,13 @@ export default function AccountingHubPage() {
                   <div key={po.id} className="flex items-center justify-between py-1.5 border-b border-s-border/50 last:border-0">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-s-text truncate">{po.supplier.name}</p>
-                      <p className="text-[11px] text-s-dim font-mono">
+                      <p className="text-xs text-s-muted font-mono">
                         {po.reference ?? po.id.slice(-8).toUpperCase()} · {po.lines.length} lines
                       </p>
                     </div>
                     <div className="ml-3 flex items-center gap-2 shrink-0">
                       <span className="text-sm font-semibold text-s-text">{fmtPkrShort(po.totalCents)}</span>
-                      <span className={`s-badge text-[10px] ${poStatusColor[po.status] ?? 's-badge-muted'}`}>
+                      <span className={`s-badge text-xs ${poStatusColor[po.status] ?? 's-badge-muted'}`}>
                         {po.status}
                       </span>
                     </div>
@@ -384,18 +385,18 @@ export default function AccountingHubPage() {
           <p className="text-xs font-semibold text-s-muted uppercase tracking-wider mb-3">Finance Modules</p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[
-              { href: '/reports/food-cost',    icon: '🍽', label: 'Food cost variance', desc: 'Actual vs recipe' },
-              { href: '/accounting/recipes',   icon: '📐', label: 'Recipes',   desc: 'Ingredient costing' },
-              { href: '/procurement',   icon: '🏭', label: 'Vendors',   desc: 'Suppliers & POs' },
-              { href: '/accounting/pl-ledger', icon: '💰', label: 'P&L',       desc: 'Profit & Loss (ledger)' },
-              { href: '/reports',              icon: '📈', label: 'Reports',   desc: 'Sales & analytics' },
-              { href: '/inventory',            icon: '📦', label: 'Inventory', desc: 'Stock & par levels' },
+              { href: '/reports/food-cost',    icon: 'plate' as FIconName, label: 'Food cost variance', desc: 'Actual vs recipe' },
+              { href: '/accounting/recipes',   icon: 'ruler' as FIconName, label: 'Recipes',   desc: 'Ingredient costing' },
+              { href: '/procurement',   icon: 'factory' as FIconName, label: 'Vendors',   desc: 'Suppliers & POs' },
+              { href: '/accounting/pl-ledger', icon: 'cash' as FIconName, label: 'P&L',       desc: 'Profit & Loss (ledger)' },
+              { href: '/reports',              icon: 'trend' as FIconName, label: 'Reports',   desc: 'Sales & analytics' },
+              { href: '/inventory',            icon: 'box' as FIconName, label: 'Inventory', desc: 'Stock & par levels' },
             ].filter((item) => can(item.href)).map((item) => (
               <Link key={item.href} href={item.href}
                 className="s-card p-4 hover:border-s-teal/40 hover:bg-s-elevated transition-all group">
-                <span className="text-2xl group-hover:scale-110 transition-transform block mb-2">{item.icon}</span>
+                <span className="text-2xl group-hover:scale-110 transition-transform block mb-2 text-s-muted"><FIcon name={item.icon} size={24} /></span>
                 <p className="text-sm font-semibold text-s-text">{item.label}</p>
-                <p className="text-[11px] text-s-dim mt-0.5">{item.desc}</p>
+                <p className="text-xs text-s-muted mt-0.5">{item.desc}</p>
               </Link>
             ))}
           </div>
@@ -414,7 +415,7 @@ export default function AccountingHubPage() {
                   {noRecipeNames.slice(0, 8).map((name) => (
                     <span key={name} className="s-badge-amber">{name}</span>
                   ))}
-                  {noRecipeCount > 8 && <span className="text-[11px] opacity-80">+{noRecipeCount - 8} more</span>}
+                  {noRecipeCount > 8 && <span className="text-xs opacity-80">+{noRecipeCount - 8} more</span>}
                 </div>
               </div>
               {can('/accounting/recipes') && <Link href="/accounting/recipes" className="s-btn text-xs shrink-0">Add recipes →</Link>}

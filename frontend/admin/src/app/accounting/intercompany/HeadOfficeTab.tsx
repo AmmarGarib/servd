@@ -20,6 +20,7 @@
 // offices — it stays OFF until the CEO turns it on, so this tab is read-only
 // until then.
 
+import { Button, Field, Input } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
@@ -31,10 +32,11 @@ import {
   RUN_BADGE, RechargeRunDetail, RunBody, runMonthLabel, type RechargeRun,
 } from './RechargeRunDetail'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 type Msg = { ok: boolean; text: string } | null
 
-const labelCls = 'block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1'
+const labelCls = 'block mb-1'
 const danger = 'var(--erp-danger)'
 
 const errText = (err: unknown) => (err instanceof ApiError ? err.message : (err as Error)?.message ?? 'Something went wrong')
@@ -129,7 +131,7 @@ export function HeadOfficeTab({ headOffices, activeCompany, canPrepare, canDecid
 
       {!runs.isLoading && headOffices.length === 0 && charges.length === 0 && (
         <>
-          <p className="s-card p-6 text-center text-sm text-white/45">No head office has charged your companies yet.</p>
+          <CompactEmptyState message="No head office has charged your companies yet." />
           {/* A served company's first month: show why its close is held up. */}
           {activeCompany && <CompanyCloseStatus companies={[activeCompany]} />}
         </>
@@ -214,7 +216,7 @@ function HeadOfficeSection({ ho, canPrepare, canDecide, canReverse, setMsg }: {
       {s && s.companies.length > 0 && (
         <div className="s-card overflow-x-auto">
           <table className="w-full min-w-[34rem] text-sm">
-            <thead className="text-xs text-white/45">
+            <thead className="text-xs text-s-muted">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Company</th>
                 <th className="px-3 py-2 text-right font-medium">Share</th>
@@ -242,16 +244,15 @@ function HeadOfficeSection({ ho, canPrepare, canDecide, canReverse, setMsg }: {
       {canPrepare && (
         <div className="s-card space-y-3 p-4">
           <div className="flex flex-wrap items-end gap-3">
-            <label className="block">
-              <span className={labelCls}>Month</span>
+            <Field label="Month">
               <Select value={period} onChange={(e) => { setPeriod(e.target.value); setShowPreview(false) }} className="s-select">
                 {months.map((m) => <option key={m} value={m}>{runMonthLabel(m)}</option>)}
               </Select>
-            </label>
-            <button type="button" className="s-btn-secondary text-sm" onClick={() => setShowPreview(true)} disabled={preview.isFetching}>Preview</button>
-            <button type="button" className="s-btn-primary text-sm" onClick={() => prepare.mutate()} disabled={prepare.isPending}>
+            </Field>
+            <Button variant="secondary" type="button"  onClick={() => setShowPreview(true)} disabled={preview.isFetching}>Preview</Button>
+            <Button type="button"  onClick={() => prepare.mutate()} disabled={prepare.isPending}>
               {prepare.isPending ? 'Preparing…' : 'Prepare run'}
-            </button>
+            </Button>
           </div>
           {showPreview && preview.isError && <p className="text-sm" style={{ color: danger }}>{errText(preview.error)}</p>}
           {showPreview && preview.data && (
@@ -441,21 +442,18 @@ function StatementCard({ headOfficeId, companies }: { headOfficeId: string; comp
     <div className="s-card space-y-3 p-4">
       <p className={labelCls}>Statement</p>
       <div className="flex flex-wrap items-end gap-3">
-        <label className="block">
-          <span className={labelCls}>Company</span>
+        <Field label="Company">
           <Select value={companyId} onChange={(e) => setCompanyId(e.target.value)} className="s-select">
             {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>From</span>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="s-input" />
-        </label>
-        <label className="block">
-          <span className={labelCls}>To</span>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="s-input" />
-        </label>
-        <button type="button" className="s-btn-secondary text-sm" disabled={!from || !to || from > to} onClick={() => setAsked((n) => n + 1)}>Show statement</button>
+        </Field>
+        <Field label="From">
+          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </Field>
+        <Field label="To">
+          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </Field>
+        <Button variant="secondary" type="button"  disabled={!from || !to || from > to} onClick={() => setAsked((n) => n + 1)}>Show statement</Button>
         <ExportMenu disabled={!from || !to || from > to}
           path={`/accounting/intercompany/recharge-runs/statement?headOfficeId=${encodeURIComponent(headOfficeId)}&companyId=${encodeURIComponent(companyId)}&from=${from}&to=${to}`}
           filename={`head-office-statement-${from}-${to}`} />

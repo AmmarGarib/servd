@@ -4,6 +4,7 @@
 // reject sends it back to iteration with an optional note. The API also gates
 // these actions to the admin/CEO role, so this page degrades gracefully if a
 // non-CEO somehow lands here.
+import { Button } from '@/components/finance/ui'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../../lib/api'
@@ -70,7 +71,7 @@ export default function RecipeApprovalsPage() {
           <p className="text-sm text-s-muted">Couldn't load pending recipes.</p>
         ) : pending.length === 0 ? (
           <div className="rounded-xl border border-s-border bg-s-surface p-6 text-sm text-s-muted">
-            Nothing waiting for approval. 🎉
+            Nothing waiting for approval.
           </div>
         ) : (
           <div className="space-y-2">
@@ -78,7 +79,7 @@ export default function RecipeApprovalsPage() {
               <div key={r.id} className="rounded-xl border border-s-border bg-s-surface p-4 flex items-center justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                    <span className="text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                       style={{ background: 'rgb(var(--ink-rgb) / 0.15)', color: 'var(--erp-primary-ink)' }}>
                       {r.kind === 'component' ? 'Sub recipe' : 'Plate'}
                     </span>
@@ -86,7 +87,7 @@ export default function RecipeApprovalsPage() {
                       {r.name}
                     </Link>
                   </div>
-                  <p className="text-[11px] text-s-dim mt-0.5">
+                  <p className="text-xs text-s-muted mt-0.5">
                     {r.brand ?? 'Cross-brand'}
                     {r.submittedAt && ` · submitted ${new Date(r.submittedAt).toLocaleDateString()}`}
                   </p>
@@ -100,11 +101,10 @@ export default function RecipeApprovalsPage() {
                     className="rounded-lg border border-s-border px-3 py-1.5 text-xs font-bold hover:bg-s-bg disabled:opacity-50">
                     Reject
                   </button>
-                  <button type="button" disabled={busy}
-                    onClick={() => approve.mutate(r.id)}
-                    className="rounded-lg bg-primary text-primary-on px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
+                  <Button size="sm" type="button" disabled={busy}
+                    onClick={() => approve.mutate(r.id)}>
                     Approve → Production
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}

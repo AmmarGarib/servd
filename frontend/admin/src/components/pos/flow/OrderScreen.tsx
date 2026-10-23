@@ -170,11 +170,12 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
         conceptId, idempotencyKey: st.ensureCheckoutKey(), shiftId: st.shiftId, tableId: st.tableId, fulfilment: st.fulfilment,
         waiter: st.waiter, partySize: st.partySize, guest: st.guest, customerId: st.guest?.customerId ?? st.customerId, delivery: st.delivery,
         discountCents: st.discountCents, discountReason: st.discountReason, discountPin: st.discountPin, items: st.lines(),
+        brandName: brand?.name ?? null, totalCents: cashTotal,
       })
       // Lines go; the table, waiter and pax stay for the next round (added to this ticket while it is unpaid).
       usePosStore.getState().clearLines()
       void qc.invalidateQueries({ queryKey: ['pos'] })
-      if (isOfflinePlaceholder(r)) { setNote('No connection. The order is queued and will reach the kitchen when the till is back online.'); return null }
+      if (isOfflinePlaceholder(r)) { setNote('No internet. The order is kept on this till and goes to the kitchen when the connection is back. It is NOT in the kitchen yet — see "waiting to sync" at the top.'); return null }
       setSentIds((ids) => [...ids, r.id])
       return r
     } catch (e) {

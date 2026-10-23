@@ -153,8 +153,8 @@ function resultHtml(r: RunResult, currency: boolean): string {
     </tbody></table>`).join('')
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(r.title)}</title><style>
     body{font-family:sans-serif;font-size:12px;padding:16px} h1{font-size:18px;margin:0} h3{margin:16px 0 4px}
-    p{margin:2px 0;color:#444} table{border-collapse:collapse;width:100%} th,td{border-bottom:1px solid #ccc;padding:4px 6px;text-align:left}
-    .n{text-align:right} .t td{font-weight:bold;border-top:2px solid #000}</style></head><body>
+    p{margin:2px 0;color:dimgray} table{border-collapse:collapse;width:100%} th,td{border-bottom:1px solid silver;padding:4px 6px;text-align:left}
+    .n{text-align:right} .t td{font-weight:bold;border-top:2px solid black}</style></head><body>
     <h1>${esc(r.title)}</h1>${r.printedBy ? `<p>Printed By : ${esc(r.printedBy)} at ${esc(r.printedAt ?? '')}</p>` : ''}<p>Date: ${esc(r.period.replace(' to ', ' To '))}; Outlet: ${esc(r.outlets.join(', '))}</p>${body}<p style="text-align:center">---- End ----</p>
     ${r.notes.map((n) => `<p>${esc(n)}</p>`).join('')}</body></html>`
 }

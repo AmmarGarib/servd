@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Report {
   id: string
@@ -49,7 +51,7 @@ export default function ScheduledReportsPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">📊 Scheduled reports</h1>
+            <h1 className="text-2xl font-black text-white/90">Scheduled reports</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Daily/weekly digests delivered to your inbox automatically. No more "can you pull last week's numbers."
             </p>
@@ -60,10 +62,7 @@ export default function ScheduledReportsPage() {
 
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         {data.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">No scheduled reports</p>
-            <p className="text-sm text-white/45 mt-1">Set up the daily P&amp;L digest as a starting point.</p>
-          </div>
+          <CompactEmptyState message="No scheduled reports" detail="Set up the daily P&amp;L digest as a starting point." />
         )}
         {data.map((r) => {
           const concept = concepts.find((c) => c.id === r.conceptId)
@@ -80,9 +79,9 @@ export default function ScheduledReportsPage() {
                     {concept && <span className="text-[10px] text-white/55">{concept.name}</span>}
                   </div>
                   <p className="text-xs text-white/55 mt-1">
-                    📅 <code className="font-mono text-white/65">{r.cron}</code>
+                    <NavIcon name="calendar" size={12} className="mr-1 inline" /><code className="font-mono text-white/65">{r.cron}</code>
                     {' · '}
-                    📧 {r.recipients.length === 1 ? r.recipients[0] : `${r.recipients.length} recipients`}
+                    <NavIcon name="mail" size={12} className="mr-1 inline" />{r.recipients.length === 1 ? r.recipients[0] : `${r.recipients.length} recipients`}
                   </p>
                   {r.lastRunAt && <p className="text-[10px] text-white/30 mt-1">Last sent {new Date(r.lastRunAt).toLocaleString()} · {r.lastStatus}</p>}
                 </div>
@@ -128,7 +127,7 @@ function Modal({ report, concepts, onClose, onSaved }: { report: Report | null; 
       <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{report ? 'Edit schedule' : 'New scheduled report'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
           <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Daily P&L" className={fieldCls} autoFocus /></Field>

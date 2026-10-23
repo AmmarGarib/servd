@@ -7,12 +7,12 @@ const nextConfig = {
   ...(process.env.BUILD_STANDALONE === 'true' && { output: 'standalone' }),
   eslint: { ignoreDuringBuilds: true },
   poweredByHeader: false,
-  images: {
-    remotePatterns: [
-      { protocol: 'https', hostname: '*.r2.cloudflarestorage.com' },
-      { protocol: 'https', hostname: 'media.servd.pk' },
-    ],
-  },
+  // The image optimizer (/_next/image) is OFF: nothing uses next/image, and
+  // Next 14 has unauthenticated RCE / DoS advisories in that endpoint (fixed
+  // only in 15.5.28+). The old remotePatterns allowed ANY R2 bucket
+  // (*.r2.cloudflarestorage.com), i.e. attacker-hosted files. Re-enable only
+  // after the Next 15 upgrade, and only for our own media host.
+  images: { unoptimized: true },
   // Baseline security headers. The operator console must never be frameable
   // (clickjacking on refund/void/payroll buttons is a real attack here).
   // X-Robots-Tag keeps every response (pages, JSON, files) out of search

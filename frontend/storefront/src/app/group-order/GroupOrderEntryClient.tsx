@@ -236,7 +236,7 @@ export function GroupOrderEntryClient({ brands }: Props) {
               name="name" autoComplete="given-name" maxLength={120} enterKeyHint="go" />
           </label>
           {err && <p role="alert" className="text-sm" style={{ color: 'var(--servd-danger)' }}>{err}</p>}
-          <button type="submit" disabled={busy || !conceptSlug || !name.trim()} className="servd-btn-primary w-full mt-2">
+          <button type="submit" disabled={busy || !conceptSlug || !name.trim()} className="servd-btn-rect servd-btn-primary w-full mt-2">
             {busy ? 'Creating…' : conceptSlug ? `Start group at ${brands.find((b) => b.slug === conceptSlug)?.name ?? conceptSlug}` : 'Pick a kitchen first'}
           </button>
         </form>
@@ -260,7 +260,7 @@ export function GroupOrderEntryClient({ brands }: Props) {
               name="name" autoComplete="given-name" maxLength={120} enterKeyHint="go" />
           </label>
           {joinErr && <p id="group-code-err" role="alert" className="text-sm" style={{ color: 'var(--servd-danger)' }}>{joinErr}</p>}
-          <button type="submit" disabled={joinBusy || !code || !joinName.trim()} className="servd-btn-primary w-full mt-2">
+          <button type="submit" disabled={joinBusy || !code || !joinName.trim()} className="servd-btn-rect servd-btn-primary w-full mt-2">
             {joinBusy ? 'Checking…' : 'Join group'}
           </button>
         </form>

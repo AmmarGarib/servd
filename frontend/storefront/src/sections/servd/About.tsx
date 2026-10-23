@@ -27,11 +27,14 @@ const td: CSSProperties = { padding: '0.85rem 1rem', fontSize: '0.95rem', vertic
 // names come from data-label, so the editable headings still apply.
 const ABOUT_TABLE_CSS = `
 @media (max-width: 640px) {
-  .sv-about-table, .sv-about-table tbody, .sv-about-table tr, .sv-about-table th, .sv-about-table td { display: block; width: 100%; }
+  .sv-about-wrap:hover { box-shadow: none !important; translate: none !important; }
+  .sv-about-wrap { overflow: visible !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }
+  .sv-about-table, .sv-about-table tbody, .sv-about-table tr, .sv-about-table th, .sv-about-table td { display: block; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
   .sv-about-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-  .sv-about-table tr { padding: 0.5rem 0; border-bottom: 1px solid var(--servd-line, rgba(38,16,56,0.12)); }
-  .sv-about-table tr:last-child { border-bottom: 0; }
-  .sv-about-table th, .sv-about-table td { border-bottom: 0 !important; padding: 0.3rem 1rem !important; }
+  .sv-about-table tbody { display: grid; gap: 1.1rem; }
+  .sv-about-table tr { padding: 0.6rem 0; margin-right: 8px; background: var(--servd-bg); border: var(--servd-hard-border); box-shadow: var(--servd-hard-card); border-radius: 1rem; }
+  .sv-about-table th, .sv-about-table td { border-bottom: 0 !important; padding: 0.3rem 1rem !important; white-space: normal !important; }
+  .sv-about-table th[scope="row"] { font-size: 1.05rem; }
   .sv-about-table td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; font-weight: 700; color: var(--servd-mute); }
 }`
 
@@ -71,7 +74,7 @@ export function AboutIntro({ fields, ctx }: SectionProps) {
         {showTable && (
           <div>
             {str(fields.tableHeading) && <h2 className="display" style={{ fontSize: 'clamp(1.5rem, 3vw, 2rem)', margin: '0 0 1rem' }}>{str(fields.tableHeading)}</h2>}
-            <div className="servd-card sv-hard-card" style={{ padding: 0, overflowX: 'auto' }}>
+            <div className="servd-card sv-hard-card sv-about-wrap" style={{ padding: 0, overflowX: 'auto' }}>
               <style>{ABOUT_TABLE_CSS}</style>
               <table className="sv-about-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>

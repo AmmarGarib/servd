@@ -10,6 +10,7 @@ import { card, btn, btnGhost, rs, day, human, STATUS_BADGE, type HrField } from 
 import { HrShell, Modal, useHrForm, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface Row {
   id: string; employeeCode: string; fullName: string; phone: string | null; status: string; employmentType: string
@@ -76,7 +77,7 @@ function Employees() {
             className="rounded-lg px-3 py-2 pr-10 text-sm bg-white/[0.04] border border-white/10 text-white/90 w-full [&::-webkit-search-cancel-button]:appearance-none" aria-label="Search employees" />
           {q && (
             <button type="button" aria-label="Clear search" onClick={() => { setQ(''); writeUrl({ q: '' }) }}
-              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center text-white/45 hover:text-white/80">✕</button>
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center text-white/45 hover:text-white/80"><NavIcon name="x" size={16} /></button>
           )}
         </div>
         {STATUS_CHIPS.map(([k, l]) => (

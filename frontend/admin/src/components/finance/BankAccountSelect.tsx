@@ -8,6 +8,7 @@
 // more (BANK_ACCOUNT_REQUIRED). This picker shows only that company's banks
 // and marks the choice required when it has more than one.
 
+import { FieldLabel } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
@@ -65,9 +66,9 @@ export function BankAccountSelect({
 
   return (
     <div>
-      <label htmlFor={id} className={labelClassName}>
+      <FieldLabel htmlFor={id} className={labelClassName}>
         {label}{required ? ' *' : ''}
-      </label>
+      </FieldLabel>
       <Select
         id={id}
         value={value}

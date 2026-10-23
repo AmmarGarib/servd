@@ -110,7 +110,7 @@ export function LoginForm({
         </div>
 
         <MagneticButton type="submit" disabled={loading}
-          className="group w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-[var(--servd-green)] text-[color:var(--servd-on-green)] hover:bg-[var(--servd-green-hover)]"
+          className="group w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-[var(--servd-purple)] text-[color:var(--servd-on-purple)] hover:bg-[var(--servd-black)]"
           style={{ boxShadow: '0 4px 14px rgba(106,13,173,0.18)' }}>
           {loading ? 'Signing in…' : 'Sign in'}
           {!loading && <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />}

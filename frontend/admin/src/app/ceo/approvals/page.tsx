@@ -32,6 +32,7 @@ import {
 } from '../approvalsData'
 import { useAuthStore } from '../../../store/auth'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Item {
   type: string
@@ -276,15 +277,10 @@ function ApprovalsInbox() {
         {isLoading && <p className="text-sm text-white/40">Loading…</p>}
         {error && <p className="text-sm" style={{ color: 'var(--erp-danger)' }}>Could not load approvals: {(error as Error).message}</p>}
         {!isLoading && !error && (data?.types.length ?? 0) === 0 && (
-          <div className="rounded-2xl p-8 text-center" style={card}>
-            <p className="text-sm font-bold text-white/70">Nothing for you to approve.</p>
-            <p className="text-xs text-white/40 mt-1">Your role signs off none of the approval types, and no request is waiting on you as a manager.</p>
-          </div>
+          <CompactEmptyState message="Nothing for you to approve." detail="Your role signs off none of the approval types, and no request is waiting on you as a manager." />
         )}
         {!isLoading && !error && (data?.types.length ?? 0) > 0 && items.length === 0 && (
-          <div className="rounded-2xl p-8 text-center" style={card}>
-            <p className="text-sm font-bold text-success">Nothing is waiting on you.</p>
-          </div>
+          <CompactEmptyState message="Nothing is waiting on you." />
         )}
         {(data?.types ?? []).filter((t) => t.error && (filter === 'all' || filter === t.type)).map((t) => (
           <p key={t.type} className="text-xs" style={{ color: 'var(--erp-warning)' }}>

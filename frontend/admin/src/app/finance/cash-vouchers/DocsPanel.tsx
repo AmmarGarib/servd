@@ -21,7 +21,7 @@ import { api } from '../../../lib/api'
 import { formatPkr } from './amountInWords'
 import { CV_BASE, CV_ROOT, errorWords, fmtDateTime, useCategories, type CashVoucher, type SupportingDoc } from './data'
 import { attachmentPath, kb, preparePhoto } from './photo'
-import { ErrorBanner, fieldCls, primaryBtn, secondaryBtn } from './ui'
+import { Button, CheckLabel, ErrorBanner, fieldCls, FieldLabel, Input, LinkButton, primaryBtn, secondaryBtn, Textarea } from './ui'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { Modal } from '../../../components/ui/Modal'
@@ -146,15 +146,15 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
             {v.sentBack && v.sentBackNote ? `Finance: “${v.sentBackNote}”. ` : ''}
             Attach the bills, receipts or invoices for this cash. Once they are attached the voucher is closed for you — finance checks them afterwards{v.bookedAtPay ? '' : ' and books the expense'}.
           </p>
-          <button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={primaryBtn}>
+          <Button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS}>
             {busy ? 'Uploading…' : docs.length ? '+ Attach more documents' : '+ Attach documents'}
-          </button>
+          </Button>
         </div>
       )}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <p className="text-sm font-black text-white/90">Supporting documents</p>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-s-muted">
             Bills, receipts, invoices — PDF, photos, Excel, Word and similar. Attached documents close the voucher;
             {v.bookedAtPay ? ' the expense was booked when finance paid it, so they are kept under the voucher and book nothing.' : ' finance books the expense once it has checked them.'}
             {v.dueBy && v.status === 'disbursed' ? ` Due by ${fmtDateTime(v.dueBy).split(',')[0]}.` : ''}
@@ -164,9 +164,9 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
           <>
             <input ref={input} type="file" multiple accept={DOC_ACCEPT} className="hidden" onChange={(e) => void add(e.target.files)} />
             {!needsDocs && (
-              <button type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS} className={secondaryBtn}>
+              <Button variant="secondary" type="button" onClick={() => input.current?.click()} disabled={busy || docs.length >= MAX_DOCS}>
                 {busy ? 'Uploading…' : '+ Add documents'}
-              </button>
+              </Button>
             )}
           </>
         )}
@@ -188,15 +188,14 @@ export function DocumentsPanel({ v, isKeeper }: { v: CashVoucher; isKeeper: bool
               </span>
               <span className="flex items-center gap-3 shrink-0">
                 {viewable(d) && (
-                  <button type="button" onClick={() => void view(d)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>View</button>
+                  <LinkButton size="md" type="button" onClick={() => void view(d)}  style={{ color: 'var(--erp-primary)' }}>View</LinkButton>
                 )}
-                <button type="button" onClick={() => void download(d)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>Download</button>
+                <LinkButton size="md" type="button" onClick={() => void download(d)}  style={{ color: 'var(--erp-primary)' }}>Download</LinkButton>
                 {!locked && (v.canUpload || isKeeper) && (
-                  <button type="button" onClick={async () => {
+                  <LinkButton tone="danger" size="md" type="button" onClick={async () => {
                     const name = d.fileName || `Document ${d.id.slice(0, 6)}`
                     if (await confirm({ title: `Remove ${name}?`, body: `It is taken off ${v.number}. Finance will not see it when verifying.`, confirmLabel: 'Remove', danger: true })) del.mutate(d.id)
-                  }} disabled={del.isPending}
-                    className="font-bold text-s-red">Remove</button>
+                  }} disabled={del.isPending}>Remove</LinkButton>
                 )}
               </span>
             </li>
@@ -239,7 +238,7 @@ function CheckDocsPanel({ v }: { v: CashVoucher }) {
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Check the documents</p>
-      <p className="text-xs text-white/55">
+      <p className="text-xs text-s-muted">
         PKR {formatPkr(v.amountCents)} was booked as expense in one entry when it was paid{v.paidFrom ? ` from ${v.paidFrom}` : ''}.
         Check the documents above against it and mark them checked — this books nothing.
         If less or more was spent, correct it with a manual journal on{' '}
@@ -247,12 +246,12 @@ function CheckDocsPanel({ v }: { v: CashVoucher }) {
       </p>
       {noDocs && <p className="text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>Upload at least one supporting document first.</p>}
       {check.error && <ErrorBanner message={errorWords(check.error)} />}
-      <button disabled={noDocs || check.isPending} className={primaryBtn}
+      <Button type="submit" disabled={noDocs || check.isPending} 
         onClick={async () => {
           if (await confirm({ title: `Mark the documents of ${v.number} checked?`, body: 'The expense is already booked; this posts nothing.', confirmLabel: 'Mark documents checked' })) { check.reset(); check.mutate() }
         }}>
         {check.isPending ? 'Saving…' : 'Mark documents checked'}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -294,13 +293,13 @@ function HoldVerifyPanel({ v }: { v: CashVoucher }) {
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Check the documents &amp; book the expense</p>
-      <p className="text-xs text-white/55">
+      <p className="text-xs text-s-muted">
         This voucher was paid before the one-entry rule and its expense is not booked yet. Checking the documents books
         PKR {formatPkr(v.amountCents)} as expense in ONE entry, in its category. If less or more was spent, correct it with a
         manual journal on <Link href="/accounting/journal" className="underline font-bold">Finance → Journal</Link>.
       </p>
       <div>
-        <label htmlFor="hv-category" className="text-xs text-white/55">Expense account</label>
+        <FieldLabel htmlFor="hv-category">Expense account</FieldLabel>
         <div className="mt-1">
           <Select id="hv-category" value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
             {!categories.some((c) => c.key === category) && category && <option value={category}>{category}</option>}
@@ -311,12 +310,12 @@ function HoldVerifyPanel({ v }: { v: CashVoucher }) {
       </div>
       {noDocs && <p className="text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>Upload at least one supporting document first.</p>}
       {verify.error && <ErrorBanner message={errorWords(verify.error)} />}
-      <button disabled={noDocs || !category || verify.isPending} className={primaryBtn}
+      <Button type="submit" disabled={noDocs || !category || verify.isPending} 
         onClick={async () => {
           if (await confirm({ title: `Check the documents of ${v.number}?`, body: `This books PKR ${formatPkr(v.amountCents)} as expense in one entry. It cannot be undone from here.`, confirmLabel: 'Check and book' })) { verify.reset(); verify.mutate() }
         }}>
         {verify.isPending ? 'Booking…' : 'Check documents & book'}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -355,7 +354,7 @@ export function ResolveByJournalPanel({ v }: { v: CashVoucher }) {
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid color-mix(in srgb, var(--erp-warning) 45%, transparent)' }}>
       <p className="text-sm font-black text-white/90">Still held on 1357 — resolve by journal entry</p>
-      <p className="text-xs text-white/55">
+      <p className="text-xs text-s-muted">
         This voucher was paid under the old hold flow and its expense is not booked. If it cannot be booked by checking
         its documents (equipment, stock, a different amount), post a manual journal on{' '}
         <Link href="/accounting/journal" className="underline font-bold">Finance → Journal</Link> — debit the right account,
@@ -363,17 +362,17 @@ export function ResolveByJournalPanel({ v }: { v: CashVoucher }) {
         This posts nothing. The month cannot be closed while a voucher is still held.
       </p>
       {!open ? (
-        <button className={secondaryBtn} onClick={() => setOpen(true)}>Resolved by journal entry…</button>
+        <Button variant="secondary" type="submit"  onClick={() => setOpen(true)}>Resolved by journal entry…</Button>
       ) : (
         <div className="space-y-3">
           {cands.error && <ErrorBanner message={errorWords(cands.error)} />}
-          {cands.isLoading && <p className="text-xs text-white/50">Loading manual entries…</p>}
+          {cands.isLoading && <p className="text-xs text-s-muted">Loading manual entries…</p>}
           {cands.data && (items.length === 0 ? (
-            <p className="text-xs text-white/55">No unused manual entry crediting 1357 since this voucher was paid. Post it on Finance → Journal first, or paste its id below.</p>
+            <p className="text-xs text-s-muted">No unused manual entry crediting 1357 since this voucher was paid. Post it on Finance → Journal first, or paste its id below.</p>
           ) : (
             <div className="space-y-1.5" role="radiogroup" aria-label="Manual journal entries that credit 1357">
               {items.map((e) => (
-                <label key={e.id} className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs cursor-pointer"
+                <CheckLabel key={e.id} className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs cursor-pointer"
                   style={{ border: `1px solid ${entryId === e.id ? 'var(--erp-primary)' : 'var(--border)'}` }}>
                   <input type="radio" name={`resolve-${v.id}`} checked={entryId === e.id} onChange={() => setEntryId(e.id)} className="mt-0.5" />
                   <span className="flex-1 min-w-0">
@@ -383,21 +382,21 @@ export function ResolveByJournalPanel({ v }: { v: CashVoucher }) {
                   {e.matches
                     ? <span className="text-success font-bold">Clears it</span>
                     : <span className="font-bold" style={{ color: 'var(--erp-warning)' }}>Different amount / brand</span>}
-                </label>
+                </CheckLabel>
               ))}
             </div>
           ))}
           <div>
-            <label htmlFor={`resolve-entry-${v.id}`} className="text-xs text-white/55">Journal entry id</label>
-            <input id={`resolve-entry-${v.id}`} value={entryId} onChange={(e) => setEntryId(e.target.value)} className={`${fieldCls} mt-1 font-mono`} placeholder="Pick above or paste the entry id" />
+            <FieldLabel htmlFor={`resolve-entry-${v.id}`}>Journal entry id</FieldLabel>
+            <Input id={`resolve-entry-${v.id}`} value={entryId} onChange={(e) => setEntryId(e.target.value)} className={`${`${fieldCls} mt-1 font-mono`} w-auto font-mono`} placeholder="Pick above or paste the entry id" />
           </div>
           <div>
-            <label htmlFor={`resolve-note-${v.id}`} className="text-xs text-white/55">Note (what the entry corrected, at least 10 characters)</label>
-            <textarea id={`resolve-note-${v.id}`} value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} className={`${fieldCls} mt-1`} />
+            <FieldLabel htmlFor={`resolve-note-${v.id}`}>Note (what the entry corrected, at least 10 characters)</FieldLabel>
+            <Textarea id={`resolve-note-${v.id}`} value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} className={`${`${fieldCls} mt-1`} w-auto`} />
           </div>
           {resolve.error && <ErrorBanner message={errorWords(resolve.error)} />}
           <div className="flex flex-wrap gap-2">
-            <button disabled={!ready || resolve.isPending} className={primaryBtn}
+            <Button type="submit" disabled={!ready || resolve.isPending} 
               onClick={async () => {
                 if (await confirm({
                   title: `Mark ${v.number} resolved by this journal entry?`,
@@ -406,8 +405,8 @@ export function ResolveByJournalPanel({ v }: { v: CashVoucher }) {
                 })) { resolve.reset(); resolve.mutate() }
               }}>
               {resolve.isPending ? 'Saving…' : 'Mark resolved'}
-            </button>
-            <button className={secondaryBtn} onClick={() => { setOpen(false); setEntryId(''); setNote('') }}>Cancel</button>
+            </Button>
+            <Button variant="secondary" type="submit"  onClick={() => { setOpen(false); setEntryId(''); setNote('') }}>Cancel</Button>
           </div>
         </div>
       )}

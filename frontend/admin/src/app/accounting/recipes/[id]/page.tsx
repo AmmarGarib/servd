@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useParams, useRouter } from 'next/navigation'
 import { api } from '../../../../lib/api'
@@ -78,8 +79,8 @@ export default function EditRecipePage() {
     return (
       <div className="p-12 text-center">
         <p className="text-sm text-s-muted">Couldn't load that recipe.</p>
-        <button onClick={() => router.push('/accounting/recipes')}
-          className="mt-3 rounded-lg bg-primary text-primary-on px-4 py-2 text-xs font-black">Back to list</button>
+        <Button size="sm" type="submit" onClick={() => router.push('/accounting/recipes')}
+          className="mt-3">Back to list</Button>
       </div>
     )
   }
@@ -122,7 +123,7 @@ export default function EditRecipePage() {
             <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-success">As saved</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-success">As saved</p>
                   <h2 className="text-base font-black">What every sale is costed with today</h2>
                 </div>
                 <p className="text-xs text-s-muted">

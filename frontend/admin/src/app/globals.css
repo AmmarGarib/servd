@@ -531,7 +531,7 @@
    Page content only (#main): 10-11px helper text becomes 12px, and the faint
    ink tints (text-white/25..45 = ink at 25-45%) become the standard muted
    colour. Not applied inside kitchen / sidebar dark areas. */
-#main :is(.text-\[10px\], .text-\[11px\]):not(:where(.erp-kitchen-dark, .erp-on-secondary) *) { font-size: 12px; line-height: 1.35; }
+#main :is(.text-\[9px\], .text-\[10px\], .text-\[11px\]):not(:where(.erp-kitchen-dark, .erp-on-secondary) *) { font-size: 12px; line-height: 1.35; }
 #main :is(.text-white\/20, .text-white\/25, .text-white\/30, .text-white\/35, .text-white\/40, .text-white\/45, .text-s-dim):not(:where(.erp-kitchen-dark, .erp-on-secondary) *) { color: var(--muted); }
 
 /* Banners above the page (test company, lens, view-as, portfolio): their text

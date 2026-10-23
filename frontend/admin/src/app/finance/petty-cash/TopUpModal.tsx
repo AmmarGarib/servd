@@ -11,7 +11,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
-import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, firstMissing, focusField, pinRefusal, pkr, primaryBtn, useSubmitOnce, type Box } from './ui'
+import { Button, Choice, ErrorBanner, Field, fieldCls, firstMissing, focusField, Footer, Input, Modal, pinRefusal, pkr, primaryBtn, type Box, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
 
 export type TopupSource = 'garibsons' | 'safe' | 'bank' | 'till'
@@ -55,7 +55,7 @@ export function SourcePicker({ value, onChange, tenantId, boxId, allowTill }: {
       { value: 'bank', label: 'Bank account' },
       { value: 'till', label: 'Till drawer', disabled: !allowTill || !boxId },
     ]} />
-    {value.source === 'garibsons' && <p className="text-[10px] text-white/35">Owed back to Garibsons (2210 Due to Garibsons).</p>}
+    {value.source === 'garibsons' && <p className="text-xs text-s-muted">Owed back to Garibsons (2210 Due to Garibsons).</p>}
     {value.source === 'bank' && (
       <BankAccountSelect tenantId={tenantId} value={value.bankAccountId} onChange={(bankAccountId) => onChange({ ...value, bankAccountId })} className={fieldCls} />
     )}
@@ -67,7 +67,7 @@ export function SourcePicker({ value, onChange, tenantId, boxId, allowTill }: {
             <option key={d.id} value={d.id}>{d.cashierName}{d.locationName ? ` · ${d.locationName}` : ''} · opened {new Date(d.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</option>
           ))}
         </Select>
-        <p className="text-[10px] text-white/35 mt-1">Shown on the drawer as a pay-out; its count expects less cash. Nothing goes to the bank deposit.</p>
+        <p className="text-xs text-s-muted mt-1">Shown on the drawer as a pay-out; its count expects less cash. Nothing goes to the bank deposit.</p>
       </Field>
     )}
   </div>
@@ -108,21 +108,21 @@ export function TopUpModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
     </Field>
     <Field label="Amount (PKR) *" error={shown('tu-amount')}>
       <MoneyInput id="tu-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
-      <p className="text-[10px] text-white/30 mt-1">In the box now: {pkr(box.floatCents)} · limit without a PIN {pkr(box.topUpLimitCents)}</p>
+      <p className="text-xs text-s-muted mt-1">In the box now: {pkr(box.floatCents)} · limit without a PIN {pkr(box.topUpLimitCents)}</p>
     </Field>
     <Field label="Reason *" error={shown('tu-reason')}>
-      <input id="tu-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} placeholder="Weekly float from Jamil sb" className={fieldCls} />
+      <Input id="tu-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} placeholder="Weekly float from Jamil sb" className={fieldCls} />
     </Field>
     {overLimit && (
       <Field label="Manager PIN *" error={shown('tu-pin')}>
-        <input id="tu-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Above the box's top-up limit" className={fieldCls} />
+        <Input id="tu-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Above the box's top-up limit" className={fieldCls} />
       </Field>
     )}
     {save.error && <ErrorBanner error={pinRefusal(save.error) ?? save.error} />}
     <Footer onCancel={onClose} primary={
-      <button type="submit" disabled={save.isPending} className={primaryBtn}>
+      <Button type="submit" disabled={save.isPending}>
         {save.isPending ? 'Saving…' : 'Top up'}
-      </button>
+      </Button>
     } />
     </form>
   </Modal>

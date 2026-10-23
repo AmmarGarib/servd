@@ -21,6 +21,7 @@ import { ErrorNote } from './components/ui'
 import type { SummaryResponse } from './components/types'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 type Tab = 'summary' | 'ingredients' | 'valuation' | 'flags'
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -134,7 +135,7 @@ export default function FoodCostReportPage() {
       <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6">
         <ErrorNote error={error} />
         {isLoading && <p className="py-10 text-center text-sm text-s-dim">Loading…</p>}
-        {!isLoading && !error && companies.length === 0 && <p className="py-10 text-center text-sm text-s-dim">No company in view.</p>}
+        {!isLoading && !error && companies.length === 0 && <CompactEmptyState message="No company in view." />}
 
         {tab === 'summary' && companies.map((c) => (
           <CompanySummary key={c.tenantId} c={c} reasons={data!.wasteReasons} />

@@ -1,13 +1,15 @@
 'use client'
 import Link from 'next/link'
 import { useState } from 'react'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 const SUPPORT_WHATSAPP = '923000000000'   // placeholder — set to your real support number
 
 const FAQ: Array<{ q: string; a: string }> = [
   {
     q: 'How do I bump an item on the KDS without touching the screen?',
-    a: 'Open the KDS → tap the 🎙 icon in the top-right to enable voice control. Then say "bump 47" (where 47 is the last 2 digits of the order ID). You can also say "hold 23", "fire 12", "recall 8".',
+    a: 'Open the KDS → tap the microphone icon in the top-right to enable voice control. Then say "bump 47" (where 47 is the last 2 digits of the order ID). You can also say "hold 23", "fire 12", "recall 8".',
   },
   {
     q: 'A customer\'s receipt didn\'t print. What now?',
@@ -78,12 +80,12 @@ export default function HelpPage() {
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-2xl p-4 transition-all hover:-translate-y-0.5"
-            style={{ background: 'linear-gradient(135deg, rgba(37,211,102,0.12), rgba(37,211,102,0.04))', border: '1px solid rgba(37,211,102,0.3)' }}
+            style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--erp-accent) 18%, transparent), color-mix(in srgb, var(--erp-accent) 6%, transparent))', border: '1px solid color-mix(in srgb, var(--erp-accent) 40%, transparent)' }}
           >
-            <p className="text-2xl mb-2">📱</p>
+            <span className="mb-2 inline-block text-s-muted"><NavIcon name="phone" size={32} /></span>
             <p className="font-bold text-sm text-white/85">WhatsApp support</p>
             <p className="text-xs text-white/45 mt-0.5">Fastest path — chat with our team</p>
-            <p className="text-[11px] text-[#25D366] font-bold mt-2">Open chat →</p>
+            <p className="text-[11px] text-success font-bold mt-2">Open chat →</p>
           </a>
 
           <a
@@ -91,7 +93,7 @@ export default function HelpPage() {
             className="rounded-2xl p-4 transition-all hover:-translate-y-0.5"
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
           >
-            <p className="text-2xl mb-2">✉</p>
+            <span className="mb-2 inline-block text-primary-ink"><NavIcon name="mail" size={28} /></span>
             <p className="font-bold text-sm text-white/85">Email us</p>
             <p className="text-xs text-white/45 mt-0.5">servd@gsfoods.pk</p>
             <p className="text-[11px] text-white/45 font-bold mt-2">Reply within 24h →</p>
@@ -102,7 +104,7 @@ export default function HelpPage() {
             className="rounded-2xl p-4 transition-all hover:-translate-y-0.5"
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}
           >
-            <p className="text-2xl mb-2">🎛</p>
+            <span className="mb-2 inline-block text-primary-ink"><NavIcon name="sliders" size={28} /></span>
             <p className="font-bold text-sm text-white/85">Configuration Hub</p>
             <p className="text-xs text-white/45 mt-0.5">Find every settings tab in one place</p>
             <p className="text-[11px] text-white/45 font-bold mt-2">Open hub →</p>
@@ -127,9 +129,7 @@ export default function HelpPage() {
         {/* FAQ list */}
         <div className="space-y-2">
           {filtered.length === 0 && (
-            <div className="rounded-xl p-6 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-              <p className="text-sm text-white/45">No matching FAQ. Try WhatsApp — we&apos;ll add it to the list once we answer.</p>
-            </div>
+            <CompactEmptyState message="No matching FAQ. Try WhatsApp — we&apos;ll add it to the list once we answer." />
           )}
           {filtered.map((f, i) => (
             <details

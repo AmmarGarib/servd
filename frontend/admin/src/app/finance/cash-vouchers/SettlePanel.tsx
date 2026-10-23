@@ -24,7 +24,7 @@ import {
   type CashVoucher, type ReceiptMeta, type Settlement,
 } from './data'
 import { attachmentPath, fetchAttachmentUrl, kb } from './photo'
-import { ErrorBanner, fieldCls, primaryBtn, secondaryBtn } from './ui'
+import { Button, ErrorBanner, fieldCls, Input, LinkButton, primaryBtn, secondaryBtn } from './ui'
 import { Select } from '@/components/ui/Select'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
@@ -71,7 +71,7 @@ export function SettlePanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <p className="text-sm font-black text-white/90">Receipts</p>
-            <p className="text-xs text-white/50">
+            <p className="text-xs text-s-muted">
               Paid {fmtDateTime(v.disbursedAt)}{(v.paidFrom ?? v.boxName) ? ` from ${v.paidFrom ?? v.boxName}` : ''}{v.paidAccountCode ? ` — booked to ${v.paidAccountCode}` : ''}.
               {v.dueBy && v.status === 'disbursed' ? ` Receipts due by ${fmtDate(v.dueBy)}.` : ''}
             </p>
@@ -81,7 +81,7 @@ export function SettlePanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
             <p className={`text-sm font-black ${open === 0 ? 'text-success' : 'text-white/85'}`}>
               PKR {formatPkr(covered)} of {formatPkr(v.amountCents)}
             </p>
-            {open > 0 && <p className="text-[11px]" style={{ color: v.overdue ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.5)' }}>PKR {formatPkr(open)} still open{v.overdue ? ' — overdue' : ''}</p>}
+            {open > 0 && <p className="text-xs" style={{ color: v.overdue ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.5)' }}>PKR {formatPkr(open)} still open{v.overdue ? ' — overdue' : ''}</p>}
           </div>
         </div>
         {v.canUploadReceipts ? (
@@ -103,18 +103,18 @@ export function SettlePanel({ v, isKeeper }: { v: CashVoucher; isKeeper: boolean
       {v.canSettle && (
         <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
           <p className="text-sm font-black text-white/90">Submit receipts</p>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-s-muted">
             Say what the receipts above were for. A line in the request&rsquo;s own category books nothing new; another category, stock
             or equipment moves the money there. Up to PKR {formatPkr(open)}.
           </p>
           <SpendLinesEditor lines={lines} onChange={setLines} totalCents={open} canPickAccount={isKeeper}
             tenantId={v.tenantId} fieldClassName={fieldCls} mode="atMost" />
-          <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Note (optional)" className={fieldCls} />
+          <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Note (optional)" className={fieldCls} />
           {receipts.length === 0 && <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>Add the receipts first — every submission needs at least one.</p>}
           {settle.error && <ErrorBanner message={errorWords(settle.error)} />}
-          <button onClick={() => { settle.reset(); settle.mutate() }} disabled={!ready || settle.isPending} className={primaryBtn}>
+          <Button type="submit" onClick={() => { settle.reset(); settle.mutate() }} disabled={!ready || settle.isPending}>
             {settle.isPending ? 'Submitting…' : `Submit ${receipts.length} receipt${receipts.length === 1 ? '' : 's'}`}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -147,7 +147,7 @@ function SettlementCard({ v, s, onChanged }: { v: CashVoucher; s: Settlement; on
         <span className="font-black text-white/80">#{s.seq} · {fmtDateTime(s.createdAt)}{s.submittedByName ? ` · ${s.submittedByName}` : ''}</span>
         <span className="font-black text-white/85">PKR {formatPkr(s.totalCents)}</span>
       </div>
-      {s.note && <p className="text-xs text-white/55">{s.note}</p>}
+      {s.note && <p className="text-xs text-s-muted">{s.note}</p>}
       <ul className="space-y-1">
         {s.lines.map((l) => (
           <li key={l.id} className="text-xs flex items-center justify-between gap-2 flex-wrap">
@@ -160,18 +160,17 @@ function SettlementCard({ v, s, onChanged }: { v: CashVoucher; s: Settlement; on
             <span className="flex items-center gap-2">
               <span className="font-bold text-white/80 tabular-nums">{formatPkr(l.amountCents)}</span>
               {v.canReclass && l.kind === 'expense' && editing !== l.id && (
-                <button onClick={() => { reclass.reset(); setEditing(l.id); setPick(l.categoryKey ?? '') }} className="text-[11px] font-bold" style={{ color: 'var(--erp-primary)' }}>Move</button>
+                <LinkButton type="button" onClick={() => { reclass.reset(); setEditing(l.id); setPick(l.categoryKey ?? '') }}  style={{ color: 'var(--erp-primary)' }}>Move</LinkButton>
               )}
             </span>
             {editing === l.id && (
               <span className="w-full flex items-center gap-2">
-                <Select value={pick} onChange={(e) => setPick(e.target.value)} className={`${fieldCls} !py-1`}>
+                <Select value={pick} onChange={(e) => setPick(e.target.value)} className={`${`${fieldCls} !py-1`} w-auto`}>
                   <option value="">— another category —</option>
                   {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
                 </Select>
-                <button disabled={!pick || reclass.isPending} onClick={() => reclass.mutate({ lineId: l.id, categoryKey: pick })}
-                  className="s-btn-primary px-3 py-1.5 text-xs">Move</button>
-                <button onClick={() => setEditing(null)} className="text-xs text-white/50 px-1">Keep</button>
+                <Button size="sm" type="submit" disabled={!pick || reclass.isPending} onClick={() => reclass.mutate({ lineId: l.id, categoryKey: pick })}>Move</Button>
+                <button onClick={() => setEditing(null)} className="text-xs text-s-muted px-1">Keep</button>
               </span>
             )}
           </li>
@@ -198,7 +197,7 @@ function ChangePanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolea
   return (
     <div className="rounded-2xl p-5 space-y-3" style={card}>
       <p className="text-sm font-black text-white/90">Change returned</p>
-      <p className="text-xs text-white/50">Cash the holder hands back. Up to PKR {formatPkr(v.remainingCents)}.</p>
+      <p className="text-xs text-s-muted">Cash the holder hands back. Up to PKR {formatPkr(v.remainingCents)}.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <MoneyInput value={amountCents} onChange={setAmountCents} className={fieldCls} ariaLabel="Change in rupees" />
         {boxes.length > 0 && (
@@ -209,10 +208,9 @@ function ChangePanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolea
         )}
       </div>
       {back.error && <ErrorBanner message={errorWords(back.error)} />}
-      <button onClick={() => { back.reset(); back.mutate() }} disabled={back.isPending || amountCents <= 0 || amountCents > v.remainingCents || !boxId}
-        className={secondaryBtn}>
+      <Button variant="secondary" type="submit" onClick={() => { back.reset(); back.mutate() }} disabled={back.isPending || amountCents <= 0 || amountCents > v.remainingCents || !boxId}>
         {back.isPending ? 'Saving…' : 'Change is back in the box'}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -249,7 +247,7 @@ function Thumb({ requestId, file }: { requestId: string; file: ReceiptMeta }) {
       {url
         // eslint-disable-next-line @next/next/no-img-element
         ? <img src={url} alt="Receipt" className="w-full h-full object-cover" />
-        : <span className="text-[10px] font-bold text-white/55 px-1 text-center">{err ? 'Not loaded' : file.mime === 'application/pdf' ? 'PDF' : 'Photo'}<br />{kb(file.sizeBytes)}</span>}
+        : <span className="text-xs font-bold text-white/55 px-1 text-center">{err ? 'Not loaded' : file.mime === 'application/pdf' ? 'PDF' : 'Photo'}<br />{kb(file.sizeBytes)}</span>}
     </button>
   )
 }

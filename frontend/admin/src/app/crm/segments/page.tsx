@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { fmtPkrWhole } from '../../../lib/money'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface Segment {
   id: string
@@ -135,7 +136,7 @@ export default function SegmentsPage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-2">
-                      <span className="text-lg">{seg.emoji}</span>
+                      
                       <span className="font-medium text-sm text-s-text">{seg.name}</span>
                     </span>
                     <span
@@ -156,7 +157,7 @@ export default function SegmentsPage() {
         <div className="flex-1 overflow-y-auto">
           {!selected ? (
             <div className="flex flex-col items-center justify-center h-full text-s-muted gap-3">
-              <span className="text-5xl">👈</span>
+              <NavIcon name="users" size={40} />
               <p className="text-sm">Select a segment to see its members</p>
             </div>
           ) : (
@@ -174,7 +175,7 @@ export default function SegmentsPage() {
                   href={`/crm/campaigns?segment=${selected.slug}`}
                   className="px-3 py-1.5 rounded-lg border border-s-border text-sm text-s-text hover:bg-s-elevated"
                 >
-                  📣 Campaign
+                  <NavIcon name="megaphone" size={14} className="mr-1 inline" />Campaign
                 </a>
               </div>
 
@@ -187,7 +188,7 @@ export default function SegmentsPage() {
                 </div>
               ) : members.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-64 text-s-muted gap-2">
-                  <span className="text-3xl">🌵</span>
+                  <NavIcon name="ghost" size={28} />
                   <p className="text-sm">No members yet — run a recompute</p>
                 </div>
               ) : (

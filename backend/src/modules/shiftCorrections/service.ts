@@ -316,6 +316,27 @@ function assertItemsShape(items: ItemInput[], reason: string): void {
 
 // ─── Create ──────────────────────────────────────────────────────────────────
 
+/**
+ * Separation of duties: finance never raises a correction on a drawer it ran
+ * (Shift.userId) or closed (the close route's 'pos.shift.close' audit row) —
+ * 403 SELF_CORRECTION_BLOCKED. The CEO is exempt (the CEO approves every set).
+ */
+async function assertNotOwnDrawer(shift: ShiftRow, actor: Actor): Promise<void> {
+  if (actor.role === 'admin') return
+  const ran = shift.userId === actor.id
+  const closed = ran ? null : await prisma.auditLog.findFirst({
+    where: { action: 'pos.shift.close', entity: 'Shift', entityId: shift.id, userId: actor.id },
+    select: { id: true },
+  })
+  if (ran || closed) {
+    throw new AppError(
+      'SELF_CORRECTION_BLOCKED',
+      `You ${ran ? 'ran' : 'closed'} this drawer — another finance login or the CEO raises its correction`,
+      403,
+    )
+  }
+}
+
 export async function createCorrection(input: {
   shift: ShiftRow
   reason: string
@@ -325,6 +346,7 @@ export async function createCorrection(input: {
   const { shift, actor } = input
   if (shift.status !== 'closed') throw new AppError('SHIFT_NOT_CLOSED', 'Only a closed drawer is corrected — close it on the till first', 409)
   const { tenantId, businessDay, businessDate } = shiftFacts(shift)
+  await assertNotOwnDrawer(shift, actor)
   const reason = input.reason.trim()
   assertItemsShape(input.items, reason)
   await assertBooksOpen(prisma, tenantId, shift.id, businessDate)
@@ -596,6 +618,61 @@ export async function claimRetry(id: string): Promise<void> {
   if (claimed.count === 0) throw new AppError('NOT_FAILED', 'Only a correction that failed to apply is retried — reload it', 409)
 }
 
+// ─── Interrupted applies ─────────────────────────────────────────────────────
+
+/** A set left 'approved' with no progress for this long is taken as interrupted. */
+export const STALE_APPLY_MS = 5 * 60_000
+
+/**
+ * Recovery for a set stuck in 'approved': the process died (deploy, crash)
+ * between the CEO's claim and the end of applyCorrection. Every apply step is
+ * idempotent and applyCorrection bumps updatedAt after each step and each fix,
+ * so a set with no progress for STALE_APPLY_MS is moved to 'failed' — with an
+ * error saying so — and the CEO's existing Retry finishes it. Conditional on
+ * (status 'approved', updatedAt unchanged), so a set that moved on is never
+ * touched. A close the dead apply reversed but did not re-post is flagged
+ * posting_failed exactly as a refused step would be. Run at boot and by the
+ * shiftCorrectionSweep worker. Returns the ids moved.
+ */
+export async function sweepStaleApplies(now = new Date(), staleMs = STALE_APPLY_MS): Promise<string[]> {
+  const cutoff = new Date(now.getTime() - staleMs)
+  const stale = await prisma.shiftCorrection.findMany({
+    where: { status: 'approved', updatedAt: { lt: cutoff } },
+    select: { id: true, tenantId: true, shiftId: true, businessDay: true, updatedAt: true, result: true, decidedById: true },
+    take: 200,
+  })
+  const moved: string[] = []
+  for (const c of stale) {
+    const message = 'APPLY_INTERRUPTED: the apply stopped before it finished (the server restarted or the request died) — retry the correction to finish it'
+    const claimed = await prisma.shiftCorrection.updateMany({
+      where: { id: c.id, status: 'approved', updatedAt: c.updatedAt },
+      data: { status: 'failed', error: message },
+    })
+    if (claimed.count === 0) continue
+    moved.push(c.id)
+    const progress = asProgress(c.result)
+    const ref = c.id.slice(-8).toUpperCase()
+    if (progress.reversed && !progress.reposted) {
+      await flagPostingFailed({
+        tenantId: c.tenantId, sourceType: 'shift.close', sourceId: c.shiftId, entityType: 'Shift', entityId: c.shiftId,
+        reason: `Shift correction ${ref} reversed this drawer's close and stopped before re-posting it: ${message}`.slice(0, 900),
+        title: 'Corrected drawer close not re-posted — retry the shift correction',
+        actorId: c.decidedById ?? undefined,
+        metadata: { correctionId: c.id, documentDate: shiftBusinessDateIso(c.businessDay) },
+      })
+    }
+    await audit({
+      category: 'accounting', action: 'shift_correction.failed', entity: 'ShiftCorrection', entityId: c.id,
+      userId: null, tenantId: c.tenantId,
+      before: { status: 'approved' }, after: { status: 'failed' },
+      metadata: { actorRole: 'system', error: message, interrupted: true, lastProgressAt: c.updatedAt.toISOString(), ...progress },
+    })
+    const failed = await prisma.shiftCorrection.findUnique({ where: { id: c.id } })
+    if (failed) notifyOutcome(failed, null, 'failed')
+  }
+  return moved
+}
+
 // ─── Apply ───────────────────────────────────────────────────────────────────
 
 interface ApplyProgress {
@@ -681,6 +758,9 @@ export async function applyCorrection(id: string, ceo: Actor): Promise<ShiftCorr
     const { cancelOrder } = await import('../orders/service.js')
     const { enqueueFiscalRefundTx, kickFiscal } = await import('../../connectors/fiscal/outbox.js')
     for (const item of pending) {
+      // Heartbeat: a set still working bumps updatedAt per fix, so the stale-
+      // apply sweep (sweepStaleApplies) never takes a live apply for a dead one.
+      await save()
       const o = orders.get(item.orderId)!
       const finalBill = item.kind !== 'cancel_kot'
       const reissue = item.kind === 'void_reissue'
@@ -962,9 +1042,11 @@ async function voidRaastReceipts(c: ShiftCorrection, item: ShiftCorrectionItem, 
 const shiftBusinessDateIso = (day: string) => `${day}T23:59:59.999+05:00`
 
 /** Finance (with accounting) of the shift's company + the requester: applied / failed. Queued, never throws. */
-function notifyOutcome(c: ShiftCorrection, actorId: string, outcome: 'applied' | 'failed'): void {
+function notifyOutcome(c: ShiftCorrection, actorId: string | null, outcome: 'applied' | 'failed'): void {
   queueStaffNotify(async () => {
-    const ids = [...new Set([...(await financeOf(c.tenantId)), c.requestedById])].filter((u) => u && u !== actorId)
+    // No actor (the stale-apply sweep): the CEO who approved is told too — they retry it.
+    const extra = actorId == null && c.decidedById ? [c.decidedById] : []
+    const ids = [...new Set([...(await financeOf(c.tenantId)), c.requestedById, ...extra])].filter((u) => u && u !== actorId)
     if (ids.length === 0) return
     const ref = c.id.slice(-8).toUpperCase()
     await notifyStaffMany(ids.map((userId) => ({

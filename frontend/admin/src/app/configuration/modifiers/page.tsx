@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface Option {
   id?: string
@@ -82,7 +83,7 @@ export default function ModifiersPage() {
                           ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)', border: '1px solid var(--erp-accent)' }
                           : { background: 'rgb(var(--erp-primary-rgb) / 0.08)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.15)' }}>
                         {o.name}{o.priceDeltaCents > 0 ? ` +${(o.priceDeltaCents / 100).toFixed(0)}` : o.priceDeltaCents < 0 ? ` ${(o.priceDeltaCents / 100).toFixed(0)}` : ''}
-                        {o.isDefault ? ' ★' : ''}
+                        {o.isDefault ? <NavIcon name="star" size={11} className="ml-1 inline fill-current" /> : null}
                       </span>
                     ))}
                   </div>
@@ -249,7 +250,7 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{template ? 'Edit template' : 'New modifier template'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
           <Field label="Name *">
@@ -282,7 +283,7 @@ function Modal({ template, onClose, onSaved }: { template: Template | null; onCl
                     <input type="checkbox" checked={o.isDefault} onChange={(e) => update(idx, { isDefault: e.target.checked })} className="accent-accent" />
                     Default
                   </label>
-                  <button onClick={() => rm(idx)} className="text-white/30 hover:text-red-700 px-2">✕</button>
+                  <button onClick={() => rm(idx)} className="text-white/30 hover:text-red-700 px-2"><NavIcon name="x" size={16} /></button>
                 </div>
               ))}
             </div>

@@ -1,5 +1,6 @@
-// servd Service Worker — offline POS queue + KDS caching
-const CACHE = 'servd-v2'
+// servd Service Worker — page caching for the till and KDS (the offline order
+// queue lives in the page: src/lib/offline-queue.ts)
+const CACHE = 'servd-v3'
 const POS_CACHE = 'servd-pos-v1'
 
 const PRECACHE = ['/', '/kds', '/kds/all', '/kds/cart', '/pos', '/favicon.ico']
@@ -23,26 +24,17 @@ self.addEventListener('activate', (e) => {
 })
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
+// The till's writes are NOT intercepted here (owner, 2026-10-23: offline orders
+// must never vanish). The page keeps an order it could not send in IndexedDB
+// (src/lib/offline-queue.ts) and replays it itself with the cashier's session;
+// money writes fail loudly offline. This worker never answers a write with a
+// made-up success and never deletes a queued order.
 self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET') return
   const url = new URL(e.request.url)
+  if (url.origin !== self.location.origin) return
 
-  // Intercept POS order POST — queue offline, return synthetic success
-  if (e.request.method === 'POST' && url.pathname.endsWith('/pos/orders')) {
-    e.respondWith(
-      fetch(e.request.clone()).catch(async () => {
-        // Network failed — queue in IndexedDB and respond with a pending placeholder
-        const body = await e.request.clone().json().catch(() => null)
-        if (body) await queueOfflineOrder(body)
-        return new Response(
-          JSON.stringify({ id: `offline_${Date.now()}`, status: 'queued_offline' }),
-          { status: 202, headers: { 'Content-Type': 'application/json', 'X-Offline': '1' } }
-        )
-      })
-    )
-    return
-  }
-
-  // Cache-first for navigation + static assets
+  // Network first, cache as fallback, for navigation + static assets
   if (e.request.mode === 'navigate' || url.pathname.startsWith('/_next/static')) {
     e.respondWith(
       fetch(e.request)
@@ -56,88 +48,19 @@ self.addEventListener('fetch', (e) => {
   }
 })
 
-// ── Background Sync ───────────────────────────────────────────────────────────
+// ── Background Sync: wake the open tills so THEY replay (with their session) ──
 self.addEventListener('sync', (e) => {
   if (e.tag === 'pos-order-sync') {
-    e.waitUntil(flushOfflineQueue())
+    e.waitUntil(askPagesToReplay())
   }
 })
 
-// ── Message from page ─────────────────────────────────────────────────────────
+// Old pages may still post FLUSH_OFFLINE_QUEUE: the page replays now, so just nudge.
 self.addEventListener('message', (e) => {
-  if (e.data?.type === 'FLUSH_OFFLINE_QUEUE') {
-    flushOfflineQueue().then((flushed) => {
-      e.source?.postMessage({ type: 'FLUSH_COMPLETE', flushed })
-    })
-  }
+  if (e.data?.type === 'FLUSH_OFFLINE_QUEUE') askPagesToReplay()
 })
 
-// ── IndexedDB helpers ─────────────────────────────────────────────────────────
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('servd-offline', 1)
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore('pos_queue', { keyPath: 'localId' })
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function queueOfflineOrder(body) {
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('pos_queue', 'readwrite')
-    const store = tx.objectStore('pos_queue')
-    const entry = { localId: `offline_${Date.now()}`, body, queuedAt: Date.now() }
-    const req = store.put(entry)
-    req.onsuccess = () => resolve(entry)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function getAllQueued() {
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('pos_queue', 'readonly')
-    const req = tx.objectStore('pos_queue').getAll()
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function deleteQueued(localId) {
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('pos_queue', 'readwrite')
-    const req = tx.objectStore('pos_queue').delete(localId)
-    req.onsuccess = () => resolve()
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function flushOfflineQueue() {
-  const entries = await getAllQueued()
-  let flushed = 0
-  for (const entry of entries) {
-    try {
-      const res = await fetch('/api/v1/pos/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(entry.body),
-      })
-      if (res.ok || res.status < 500) {
-        await deleteQueued(entry.localId)
-        flushed++
-      }
-    } catch {
-      // Still offline — leave in queue
-    }
-  }
-  if (flushed > 0) {
-    self.clients.matchAll().then((clients) => {
-      clients.forEach((c) => c.postMessage({ type: 'ORDERS_SYNCED', count: flushed }))
-    })
-  }
-  return flushed
+async function askPagesToReplay() {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  clients.forEach((c) => c.postMessage({ type: 'REPLAY_OFFLINE_QUEUE' }))
 }

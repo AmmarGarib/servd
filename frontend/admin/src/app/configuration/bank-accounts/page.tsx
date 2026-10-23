@@ -16,6 +16,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Bank {
   id: string
@@ -118,10 +120,7 @@ export default function BankAccountsPage() {
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         <ErrorBox error={setDefault.error} />
         {data.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">No bank accounts yet</p>
-            <p className="text-sm text-white/45 mt-1">Add your operating accounts to enable reconciliation reports.</p>
-          </div>
+          <CompactEmptyState message="No bank accounts yet" detail="Add your operating accounts to enable reconciliation reports." />
         )}
         {data.map((b) => (
           <div key={b.id} className="rounded-2xl p-5"
@@ -230,7 +229,7 @@ function Modal({ account, onClose, onSaved }: { account: Bank | null; onClose: (
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{account ? 'Edit account' : 'Add bank account'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
           <Field label="Display name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="HBL Operations" className={fieldCls} autoFocus /></Field>

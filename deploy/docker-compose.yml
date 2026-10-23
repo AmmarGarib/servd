@@ -102,7 +102,9 @@ services:
 
   # ─────────── Cloudflare Tunnel ────────────────────────────────────────────
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pinned (owner open item F10): 'latest' let any compose pull swap the tunnel
+    # under live. Bump deliberately after checking the release notes.
+    image: cloudflare/cloudflared:2026.10.1
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}"
     depends_on:

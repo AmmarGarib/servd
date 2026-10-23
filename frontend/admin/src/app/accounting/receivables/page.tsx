@@ -45,6 +45,7 @@
 // referenceUsedBefore and the payment is saved), never a block. Refund is
 // money OUT and keeps its own methods.
 
+import { Button, Field, Input, LinkButton } from '@/components/finance/ui'
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { toast } from 'sonner'
@@ -69,6 +70,8 @@ import {
 import { Select } from '@/components/ui/Select'
 import { Modal as SharedModal } from '../../../components/ui/Modal'
 import { dateBounds } from '../../finance/cash-vouchers/ui'
+import { FIcon } from '../../../components/finance/ui/icons'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 type PaymentKind = 'payment' | 'withholding' | 'refund'
 interface Payment {
@@ -108,7 +111,7 @@ const clientName = (c: ClientOption) => c.tradeName || c.legalName || c.number |
 interface TaxPreview { brandName: string | null; rates: { cashPct: number; cardPct: number } | null; accountCode: string; accountName: string }
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
-const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
+const inp = 's-input w-full'
 const today = () => todayPktIso()
 const plusDays = (d: string, n: number) => new Date(new Date(d).getTime() + n * 86_400_000).toISOString().slice(0, 10)
 /** Rupees typed → paisa. */
@@ -156,7 +159,7 @@ const creditLeft = (i: Invoice) => {
 }
 
 function L({ t, children }: { t: string; children: React.ReactNode }) {
-  return <label className="block"><span className="text-[11px] font-bold text-white/50">{t}</span>{children}</label>
+  return <Field label={t}>{children}</Field>
 }
 const bounds = dateBounds()
 /** Thin wrapper over the shared Modal (Escape, focus trap, scroll lock, "Discard changes?" when `dirty`). */
@@ -173,7 +176,7 @@ function Buttons({ busy, label, busyLabel, onClose, danger }: {
         className={danger ? 's-btn-danger px-4 py-2' : 's-btn-primary px-4 py-2'}>
         {busy ? busyLabel : label}
       </button>
-      <button type="button" onClick={onClose} className="s-btn-secondary px-4 py-2">Cancel</button>
+      <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
     </div>
   )
 }
@@ -288,13 +291,13 @@ function Receivables() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 md:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/modules/tax" className="text-xs text-white/40 hover:text-white/70">← Tax, invoices & filing</Link>
+        <Link href="/modules/tax" className="text-xs text-s-muted hover:text-white/70">← Tax, invoices & filing</Link>
         <div className="flex flex-wrap items-start justify-between gap-4 mt-2">
           <div>
             <h1 className="text-2xl font-black text-white/90">Receivables</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">Invoices for customers who pay later. Till sales settle on the spot and never appear here.</p>
           </div>
-          <button onClick={() => setRaising(true)} className="s-btn-primary px-4 py-2.5">+ New invoice</button>
+          <Button type="submit" onClick={() => setRaising(true)}>+ New invoice</Button>
         </div>
       </header>
 
@@ -303,7 +306,7 @@ function Receivables() {
           <div role="status" className="flex items-start justify-between gap-3 rounded-2xl p-4 text-sm"
             style={{ background: 'color-mix(in srgb, var(--erp-success) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-success) 35%, transparent)' }}>
             <span className="text-white/85">{notice}</span>
-            <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 text-white/50 hover:text-white">×</button>
+            <LinkButton tone="muted" size="md" type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0"><FIcon name="x" size={14} /></LinkButton>
           </div>
         )}
         {data && (
@@ -311,7 +314,7 @@ function Receivables() {
             {[['Outstanding', data.outstandingCents], ['Not yet due', data.aging['current'] ?? 0], ['1–30 days', data.aging['1-30'] ?? 0],
               ['31–60', data.aging['31-60'] ?? 0], ['61–90', data.aging['61-90'] ?? 0], ['90+', data.aging['90+'] ?? 0]].map(([l, v], i) => (
               <div key={l as string} className="rounded-2xl p-4" style={card}>
-                <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{l}</p>
+                <p className="text-xs uppercase tracking-wider text-white/40 font-bold">{l}</p>
                 <p className="text-lg font-black mt-1" style={{ color: i >= 4 && (v as number) > 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{fmtPkrWhole(v as number)}</p>
               </div>
             ))}
@@ -331,21 +334,18 @@ function Receivables() {
           ))}
         </div>
         {filter === 'written_off' && (
-          <p className="text-xs text-white/45">Invoices the CEO wrote off as bad debts. They are out of the aging figures above; money that arrives later is recorded as a recovery.</p>
+          <p className="text-xs text-s-muted">Invoices the CEO wrote off as bad debts. They are out of the aging figures above; money that arrives later is recorded as a recovery.</p>
         )}
 
         {data && data.invoices.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={card}>
-            <p className="font-bold text-white/85">Nothing here</p>
-            <p className="text-sm text-white/45 mt-1">Raise an invoice when a customer is paying on account.</p>
-          </div>
+          <CompactEmptyState message="No invoices here. Raise one when a customer pays on account." />
         )}
 
         {data && data.invoices.length > 0 && (
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm min-w-[760px]">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                   {['Document', 'Customer', 'Due', 'Total', 'Received', 'Balance', 'Status', ''].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
                 </tr>
               </thead>
@@ -421,26 +421,26 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
         <td className="px-4 py-3">
           <p className="font-bold text-white/90">
             {i.number}
-            {i.kind === 'statement' && <span className="ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold s-badge-purple">Statement</span>}
+            {i.kind === 'statement' && <span className="ml-2 rounded-full px-2 py-0.5 text-xs font-bold s-badge-purple">Statement</span>}
           </p>
           {i.kind === 'statement' && (
-            <p className="text-[11px] text-white/50">
+            <p className="text-xs text-s-muted">
               {i.statementPeriod ? `${i.statementPeriod.from} to ${i.statementPeriod.to}` : 'Statement'}
               {i.customerAccountId && <> · <Link href={`/accounting/receivables/clients/${i.customerAccountId}`} className="text-primary-ink font-bold">Client</Link></>}
             </p>
           )}
-          <p className="text-[11px] text-white/40 truncate max-w-[200px]">{isNote ? `Credit note on ${i.originalNumber ?? 'an invoice'} — ${i.description}` : i.description}</p>
+          <p className="text-xs text-s-muted truncate max-w-[200px]">{isNote ? `Credit note on ${i.originalNumber ?? 'an invoice'} — ${i.description}` : i.description}</p>
         </td>
         <td className="px-4 py-3 text-white/70">{i.customerName}</td>
         <td className="px-4 py-3 text-white/60 whitespace-nowrap">
           {new Date(isNote ? i.issueDate : i.dueDate).toLocaleDateString()}
-          {i.bucket && i.bucket !== 'current' && <span className="ml-1 text-[10px] text-s-red">{i.bucket}d</span>}
+          {i.bucket && i.bucket !== 'current' && <span className="ml-1 text-xs text-s-red">{i.bucket}d</span>}
         </td>
         <td className="px-4 py-3 text-white/80 whitespace-nowrap">{fmtPkrWhole(isNote ? -i.totalCents : i.totalCents)}</td>
         <td className="px-4 py-3 text-white/60 whitespace-nowrap">
           {isNote ? '—' : fmtPkrWhole(i.paidCents)}
           {!isNote && (i.creditedCents > 0 || i.whtCents > 0 || i.writtenOffCents > 0) && (
-            <p className="text-[10px] text-white/40">
+            <p className="text-xs text-s-muted">
               {[
                 i.creditedCents > 0 && `Credited ${fmtPkrWhole(i.creditedCents)}`,
                 i.whtCents > 0 && `Tax withheld ${fmtPkrWhole(i.whtCents)}`,
@@ -455,7 +455,7 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
         <td className="px-4 py-3">
           <span className="text-xs font-bold" style={{ color: STATUS[i.status]?.color }}>{STATUS[i.status]?.label ?? i.status}</span>
           {waiting && (
-            <p className="mt-1 text-[10px] font-bold" style={{ color: 'var(--erp-warning)' }}>
+            <p className="mt-1 text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>
               Write-off of {fmtPkrWhole(waiting.amountCents)} waiting for the CEO
             </p>
           )}
@@ -465,7 +465,7 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
             {isLive(i) && i.balanceCents > 0 && act('Record payment', { kind: 'pay', inv: i })}
             {isLive(i) && i.balanceCents > 0 && act('Tax withheld', { kind: 'wht', inv: i })}
             {isLive(i) && i.kind === 'invoice' && left && (left.amount > 0 || left.tax > 0) && act('Credit note', { kind: 'credit', inv: i })}
-            {i.kind === 'statement' && isLive(i) && <span className="text-[10px] text-white/40">No credit note: refund the bill at the till</span>}
+            {i.kind === 'statement' && isLive(i) && <span className="text-xs text-s-muted">No credit note: refund the bill at the till</span>}
             {isLive(i) && i.balanceCents < 0 && i.paidCents > 0 && act('Refund', { kind: 'refund', inv: i })}
             {isLive(i) && i.canRequestWriteOff && act('Write off', { kind: 'writeoff', inv: i }, true)}
             {waitingFull?.canApprove && act('Approve write-off', { kind: 'decide', mode: 'approve', writeOff: waitingFull })}
@@ -476,7 +476,7 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
             ))}
             {isLive(i) && i.status === 'open' && nothingAgainst && act('Void', { kind: 'void', inv: i }, true)}
             {isNote && i.status === 'issued' && act('Void', { kind: 'void', inv: i }, true)}
-            {hasDetail && <button onClick={onToggle} className="text-xs font-bold text-white/50 hover:text-white">{expanded ? 'Hide' : 'Details'}</button>}
+            {hasDetail && <LinkButton tone="muted" type="button" onClick={onToggle}>{expanded ? 'Hide' : 'Details'}</LinkButton>}
           </div>
         </td>
       </tr>
@@ -496,7 +496,7 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
                   <span className={`font-bold ${p.reversedAt ? 'line-through text-white/40' : 'text-white/85'}`}>{fmtPkrWhole(Math.abs(p.amountCents))}</span>
                   {p.reversedAt
                     ? <span className="text-s-red">Reversed {new Date(p.reversedAt).toLocaleDateString()}{p.reversedReason ? ` — ${p.reversedReason}` : ''}</span>
-                    : <button onClick={() => onAction({ kind: 'reverse', inv: i, payment: p })} className="font-bold text-white/40 hover:text-white">Reverse</button>}
+                    : <LinkButton tone="muted" size="md" type="button" onClick={() => onAction({ kind: 'reverse', inv: i, payment: p })}>Reverse</LinkButton>}
                 </div>
               ))}
               {i.creditNotes.map((c) => (
@@ -528,8 +528,8 @@ function Row({ i, wos, highlight, expanded, onToggle, onAction }: {
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-white/60">“{w.reason}”</p>
-                    {f?.decisionNote && <p className="text-[11px] text-white/45">Note: {f.decisionNote}</p>}
+                    <p className="text-xs text-white/60">“{w.reason}”</p>
+                    {f?.decisionNote && <p className="text-xs text-s-muted">Note: {f.decisionNote}</p>}
                     {f && <EvidenceFiles writeOff={f} />}
                     {f && (f.canApprove || f.canReject || f.canCancel || f.canRecover) && (
                       <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1">
@@ -605,30 +605,28 @@ function Raise({ concepts, onClose, prefill }: { concepts: Concept[]; onClose: (
       <Form busy={save.isPending} onSubmit={() => save.mutate()}
         missing={!(f.customerName.trim() || f.customerAccountId) ? 'Enter the customer, or pick an on-account client.' : !f.amount ? 'Enter the amount before tax.' : !f.description.trim() ? 'Say what the invoice is for.' : null}>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="sm:col-span-2"><L t="Customer"><input className={inp} value={f.customerName} onChange={set('customerName')} placeholder="Company or person" /></L></div>
-        <L t="Email"><input className={inp} value={f.customerEmail} onChange={set('customerEmail')} /></L>
-        <L t="Phone"><input className={inp} value={f.customerPhone} onChange={set('customerPhone')} /></L>
-        <L t="NTN"><input className={inp} value={f.customerNtn} onChange={set('customerNtn')} /></L>
+        <div className="sm:col-span-2"><L t="Customer"><Input className={inp} value={f.customerName} onChange={set('customerName')} placeholder="Company or person" /></L></div>
+        <L t="Email"><Input className={inp} value={f.customerEmail} onChange={set('customerEmail')} /></L>
+        <L t="Phone"><Input className={inp} value={f.customerPhone} onChange={set('customerPhone')} /></L>
+        <L t="NTN"><Input className={inp} value={f.customerNtn} onChange={set('customerNtn')} /></L>
         {clients.length > 0 && (
           <div className="sm:col-span-2"><L t="On-account client (optional)"><Select className={inp} value={f.customerAccountId} onChange={pickClient}>
             <option value="">None</option>{clients.map((c) => <option key={c.id} value={c.id}>{clientName(c)}</option>)}</Select></L></div>
         )}
         <L t="Brand"><Select className={inp} value={f.conceptId} onChange={set('conceptId')}>
           <option value="">—</option>{concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></L>
-        <L t="Issued"><input type="date" min={bounds.min} max={bounds.max} className={inp} value={f.issueDate} onChange={set('issueDate')} /></L>
-        <L t="Due"><input type="date" min={bounds.min} max={bounds.max} className={inp} value={f.dueDate} onChange={set('dueDate')} /></L>
-        <div className="sm:col-span-2"><L t="What for"><input className={inp} value={f.description} onChange={set('description')} placeholder="Office lunch, 40 covers, 12 Sep" /></L></div>
+        <L t="Issued"><Input type="date" min={bounds.min} max={bounds.max} className={inp} value={f.issueDate} onChange={set('issueDate')} /></L>
+        <L t="Due"><Input type="date" min={bounds.min} max={bounds.max} className={inp} value={f.dueDate} onChange={set('dueDate')} /></L>
+        <div className="sm:col-span-2"><L t="What for"><Input className={inp} value={f.description} onChange={set('description')} placeholder="Office lunch, 40 covers, 12 Sep" /></L></div>
         <L t="Amount before tax (PKR)"><RupeeField label="Amount before tax (PKR)" value={f.amount} onChange={(v) => setF((p) => ({ ...p, amount: v }))} /></L>
         <L t="Sales tax (PKR)"><RupeeField label="Sales tax (PKR)" value={f.tax} onChange={(v) => setF((p) => ({ ...p, tax: v }))} /></L>
       </div>
-      <div className="mt-2 text-[11px] text-white/50 space-y-1">
+      <div className="mt-2 text-xs text-s-muted space-y-1">
         {preview?.rates ? (
           <div className="flex flex-wrap items-center gap-1.5">
             <span>{preview.brandName}&apos;s rates:</span>
-            <button type="button" onClick={() => applyRate(preview.rates!.cashPct)}
-              className="s-btn-secondary px-2 py-0.5">Cash {preview.rates.cashPct}%</button>
-            <button type="button" onClick={() => applyRate(preview.rates!.cardPct)}
-              className="s-btn-secondary px-2 py-0.5">Card / digital {preview.rates.cardPct}%</button>
+            <Button variant="secondary" type="button" onClick={() => applyRate(preview.rates!.cashPct)}>Cash {preview.rates.cashPct}%</Button>
+            <Button variant="secondary" type="button" onClick={() => applyRate(preview.rates!.cardPct)}>Card / digital {preview.rates.cardPct}%</Button>
           </div>
         ) : (
           <p>Pick a brand to use its sales-tax rates.</p>
@@ -672,7 +670,7 @@ function Pay({ inv, onClose, prefill }: { inv: Invoice; onClose: () => void; pre
       <Modal title="Payment recorded" onClose={done}>
         <p className="text-sm text-white/70 mb-3">{fmtPkrWhole(toPaisa(amount))} received on {inv.number} ({receiptMethodLabel(method).toLowerCase()}, ref {reference.trim()}).</p>
         <ReferenceUsedBeforeNotice uses={usedBefore} />
-        <button type="button" onClick={done} className="s-btn-primary mt-5 px-4 py-2">Done</button>
+        <Button type="button" onClick={done} className="mt-5">Done</Button>
       </Modal>
     )
   }
@@ -683,7 +681,7 @@ function Pay({ inv, onClose, prefill }: { inv: Invoice; onClose: () => void; pre
       <p className="text-sm text-white/60">Balance owed: <strong className="text-white/90">{fmtPkrWhole(inv.balanceCents)}</strong></p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <L t="Amount received (PKR)"><RupeeField label="Amount received (PKR)" value={amount} onChange={setAmount} invalid={!Number(amount)} /></L>
-        <L t="Received"><input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
+        <L t="Received"><Input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
         <div className="sm:col-span-2">
           <PaymentReceivedFields
             tenantId={inv.tenantId}
@@ -692,11 +690,11 @@ function Pay({ inv, onClose, prefill }: { inv: Invoice; onClose: () => void; pre
             bankAccountId={bankAccountId} onBank={setBankAccountId}
             idPrefix="ar-pay"
             selectClassName={inp} inputClassName={inp}
-            labelClassName="block text-[11px] font-bold text-white/50"
+            labelClassName="block text-xs font-bold text-white/50"
           />
         </div>
       </div>
-      <p className="text-[11px] text-white/45 mt-3">If the client kept back income tax, record the cash here and the tax with &ldquo;Tax withheld&rdquo; when their certificate arrives.</p>
+      <p className="text-xs text-s-muted mt-3">If the client kept back income tax, record the cash here and the tax with &ldquo;Tax withheld&rdquo; when their certificate arrives.</p>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <Buttons busy={go.isPending} label="Record payment" busyLabel="Saving…" onClose={onClose} />
       </Form>
@@ -741,7 +739,7 @@ function Withhold({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
           {fmtPkrWhole(saved.amountCents)} of sales tax {inv.customerName} withheld is booked to 1335 (Sales Tax Withheld by Customers).
           It is netted in the {saved.authority ? <strong className="text-white/90">{saved.authority}</strong> : 'matching authority’s'} sales-tax return — the authority this invoice’s own tax was charged to.
         </p>
-        <button type="button" onClick={done} className="s-btn-primary mt-5 px-4 py-2">Done</button>
+        <Button type="button" onClick={done} className="mt-5">Done</Button>
       </Modal>
     )
   }
@@ -750,7 +748,7 @@ function Withhold({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
     <button type="button" onClick={() => pick(k)} disabled={disabled} aria-pressed={kind === k}
       className={`text-left rounded-xl p-3 border disabled:opacity-40 ${kind === k ? 'bg-accent-dim border-accent' : 'border-white/10'}`}>
       <span className="block text-sm font-bold text-white/90">{title}</span>
-      <span className="block text-[11px] text-white/50 mt-0.5">{sub}</span>
+      <span className="block text-xs text-s-muted mt-0.5">{sub}</span>
     </button>
   )
   return (
@@ -767,17 +765,17 @@ function Withhold({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
             : 'This invoice charged no sales tax, so the client cannot have withheld any.', !canSalesTax)}
       </div>
       {salesTax && (
-        <p className="text-[11px] text-white/50 mt-3">
+        <p className="text-xs text-s-muted mt-3">
           Sales tax on this invoice: {fmtPkrWhole(inv.taxCents)}. Up to <strong className="text-white/80">{fmtPkrWhole(taxLeft)}</strong> can still be withheld
           (tax taken back by credit notes and sales tax already withheld are not available again).
         </p>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <L t={salesTax ? 'Sales tax withheld (PKR)' : 'Income tax withheld (PKR)'}><RupeeField label={salesTax ? 'Sales tax withheld (PKR)' : 'Income tax withheld (PKR)'} value={amount} onChange={setAmount} invalid={!Number(amount) || tooMuch} /></L>
-        <L t="Date"><input type="date" min={bounds.min} className={inp} value={date} max={today()} onChange={(e) => setDate(e.target.value)} /></L>
-        <div className="sm:col-span-2"><L t="Certificate no."><input className={inp} value={certificateNo} onChange={(e) => setCertificateNo(e.target.value)} placeholder="From the client's withholding certificate" /></L></div>
+        <L t="Date"><Input type="date" min={bounds.min} className={inp} value={date} max={today()} onChange={(e) => setDate(e.target.value)} /></L>
+        <div className="sm:col-span-2"><L t="Certificate no."><Input className={inp} value={certificateNo} onChange={(e) => setCertificateNo(e.target.value)} placeholder="From the client's withholding certificate" /></L></div>
       </div>
-      {tooMuch && <p className="text-[11px] mt-2" style={{ color: 'var(--erp-warning)' }}>That is more than the sales tax that can still be withheld ({fmtPkrWhole(taxLeft)}).</p>}
+      {tooMuch && <p className="text-xs mt-2" style={{ color: 'var(--erp-warning)' }}>That is more than the sales tax that can still be withheld ({fmtPkrWhole(taxLeft)}).</p>}
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <Buttons busy={go.isPending} label={salesTax ? 'Record sales tax withheld' : 'Record income tax withheld'} busyLabel="Saving…" onClose={onClose} />
       </Form>
@@ -811,7 +809,7 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
     return (
       <Modal title="Credit note issued" onClose={onClose}>
         <p className="text-sm" style={{ color: 'var(--erp-warning)' }}>{warning}</p>
-        <button type="button" onClick={onClose} className="s-btn-primary mt-5 px-4 py-2">Done</button>
+        <Button type="button" onClick={onClose} className="mt-5">Done</Button>
       </Modal>
     )
   }
@@ -825,7 +823,7 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
         {inv.paidCents > 0 && ' If it is more than is still owed, the customer is left in credit and you can refund them.'}
       </p>
       {inv.writtenOffCents > 0 && (
-        <p className="text-[11px] mt-2" style={{ color: 'var(--erp-warning)' }}>
+        <p className="text-xs mt-2" style={{ color: 'var(--erp-warning)' }}>
           {fmtPkrWhole(inv.writtenOffCents)} of this invoice was written off as a bad debt. A credit note can only credit what was not written off.
         </p>
       )}
@@ -835,12 +833,12 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
           <div className="flex gap-1">
             <div className="flex-1 min-w-0"><RupeeField label="Tax credited (PKR)" value={tax} onChange={setTax} /></div>
             {inv.taxCents > 0 && (
-              <button type="button" onClick={taxShare} className="s-btn-secondary px-2 text-[11px] whitespace-nowrap">Invoice&apos;s rate</button>
+              <Button size="sm" variant="secondary" type="button" onClick={taxShare} className="whitespace-nowrap">Invoice&apos;s rate</Button>
             )}
           </div>
         </L>
-        <L t="Date"><input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
-        <L t="Reason"><input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Short delivery, price agreed lower…" /></L>
+        <L t="Date"><Input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
+        <L t="Reason"><Input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Short delivery, price agreed lower…" /></L>
       </div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <Buttons busy={go.isPending} label="Issue credit note" busyLabel="Saving…" onClose={onClose} />
@@ -879,10 +877,10 @@ function Refund({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
       <p className="text-sm text-white/60">They are in credit by <strong className="text-white/90">{fmtPkrWhole(-inv.balanceCents)}</strong> on {inv.number}. You can refund up to {fmtPkrWhole(max)}.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <L t="Refund (PKR)"><RupeeField label="Refund (PKR)" value={amount} onChange={setAmount} invalid={!Number(amount)} /></L>
-        <L t="Paid on"><input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
+        <L t="Paid on"><Input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
         <L t="Method"><Select className={inp} value={method} onChange={(e) => setMethod(e.target.value)}>
           {REFUND_METHODS.map((m) => <option key={m} value={m}>{receiptMethodLabel(m)}</option>)}</Select></L>
-        <L t="Reference"><input className={inp} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Cheque / txn no." /></L>
+        <L t="Reference"><Input className={inp} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Cheque / txn no." /></L>
         {usesBank && (
           <div className="sm:col-span-2">
             <BankAccountSelect tenantId={inv.tenantId} value={bankAccountId} onChange={setBankAccountId} id="ar-refund-bank" label="Paid from" className={inp} />
@@ -925,8 +923,8 @@ function Reverse({ inv, payment, onClose }: { inv: Invoice; payment: Payment; on
         {payment.bankName ? ` · ${payment.bankName}` : ''}{payment.reference ? ` · ${payment.reference}` : ''}. {what} It stays on record as reversed.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-        <L t="Reason"><input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Cheque bounced" /></L>
-        <L t="Date"><input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
+        <L t="Reason"><Input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Cheque bounced" /></L>
+        <L t="Date"><Input type="date" min={bounds.min} max={bounds.max} className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>
       </div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <Buttons busy={go.isPending} label="Reverse" busyLabel="Reversing…" onClose={onClose} danger />
@@ -955,7 +953,7 @@ function Void({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
           ? `This withdraws the credit note: ${inv.originalNumber ?? 'the invoice'} owes ${fmtPkrWhole(inv.totalCents)} again, and the ledger entry is reversed.`
           : 'This reverses the invoice in the ledger. It stays on record as void.'}
       </p>
-      <div className="mt-4"><L t="Reason"><input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Raised in error" /></L></div>
+      <div className="mt-4"><L t="Reason"><Input className={inp} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Raised in error" /></L></div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <Buttons busy={go.isPending} label={isNote ? 'Void credit note' : inv.kind === 'statement' ? 'Void statement' : 'Void invoice'} busyLabel="Voiding…" onClose={onClose} danger />
       </Form>

@@ -12,6 +12,7 @@
 // is shown as the API wrote it. A company-only viewer sees only its own lines
 // and the warnings that name no other company (the server trims the rest).
 
+import { Button, CheckLabel, Field, Input, LinkButton } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
@@ -82,7 +83,7 @@ export function runMonthLabel(m: string): string {
   return new Date(Date.UTC(y, mo - 1, 1)).toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
 
-const labelCls = 'block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1'
+const labelCls = 'block mb-1'
 const danger = 'var(--erp-danger)'
 
 function errText(err: unknown): string {
@@ -133,7 +134,7 @@ export function RunBody({ run }: { run: Pick<RechargeRun, 'basis' | 'lines' | 'p
       <div className="overflow-x-auto">
         <p className={labelCls}>Lines — one per company</p>
         <table className="w-full min-w-[30rem] text-sm">
-          <thead className="text-xs text-white/45">
+          <thead className="text-xs text-s-muted">
             <tr>
               <th className="py-1 pr-2 text-left font-medium">Company</th>
               <th className="py-1 pr-2 text-right font-medium">Share</th>
@@ -147,7 +148,7 @@ export function RunBody({ run }: { run: Pick<RechargeRun, 'basis' | 'lines' | 'p
                 <td className="py-1.5 pr-2 text-white/85">{l.companyName ?? 'Company'}</td>
                 <td className="py-1.5 pr-2 text-right tabular-nums">{(l.shareBps / 100).toFixed(2)}%</td>
                 <td className="py-1.5 pr-2 text-right tabular-nums" style={l.amountCents < 0 ? { color: danger } : undefined}>{fmtPkr(l.amountCents)}</td>
-                <td className="py-1.5 pl-3 text-xs text-white/50">
+                <td className="py-1.5 pl-3 text-xs text-s-muted">
                   {l.transferId ? <>{dateLabel(l.entryDate)}{l.postedLate && <span className="s-badge-amber ml-2">Posted late</span>}</> : '—'}
                   {l.memoNote && <span className="block text-white/40">{l.memoNote}</span>}
                 </td>
@@ -210,16 +211,16 @@ export function RechargeRunDetail({ runId, canPrepare, canDecide, canReverse, on
           <span className={badge.cls}>{badge.label}</span>
           <span className="s-badge-purple">{run.kind === 'true_up' ? 'True-up' : 'Monthly'}</span>
           {run.stale && <span className="s-badge-amber">Out of date — refresh</span>}
-          <span className="text-xs text-white/45">
+          <span className="text-xs text-s-muted">
             Prepared {dateLabel(run.preparedAt)}{run.submittedAt && <> · submitted {dateLabel(run.submittedAt)}</>}
             {run.postedAt && <> · posted {dateLabel(run.postedAt)}</>}
             {run.decisionNote && <> · “{run.decisionNote}”</>}
           </span>
         </div>
-        <button type="button" className="text-xs text-white/40 hover:text-white/70" onClick={onClose}>Close</button>
+        <LinkButton tone="muted" type="button"  onClick={onClose}>Close</LinkButton>
       </div>
 
-      {run.reversedAt && <p className="text-xs text-white/55">Reversed {dateLabel(run.reversedAt)}: {run.reversalReason}</p>}
+      {run.reversedAt && <p className="text-xs text-s-muted">Reversed {dateLabel(run.reversedAt)}: {run.reversalReason}</p>}
       {run.driftAtApprovalCents !== null && run.driftAtApprovalCents !== 0 && (
         <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>
           The month&apos;s cost moved by {fmtPkr(run.driftAtApprovalCents)} after this run was prepared; a true-up covers it.
@@ -243,23 +244,23 @@ export function RechargeRunDetail({ runId, canPrepare, canDecide, canReverse, on
         {mode === '' && (
           <>
             {canPrepare && open && (
-              <button type="button" className="s-btn-secondary text-sm" disabled={act.isPending} onClick={() => act.mutate({ path: 'refresh' })}>Refresh</button>
+              <Button variant="secondary" type="button"  disabled={act.isPending} onClick={() => act.mutate({ path: 'refresh' })}>Refresh</Button>
             )}
             {canPrepare && run.status === 'draft' && (
-              <button type="button" className="s-btn-primary text-sm" disabled={act.isPending || run.stale} onClick={() => act.mutate({ path: 'submit' })}>Submit for approval</button>
+              <Button type="button"  disabled={act.isPending || run.stale} onClick={() => act.mutate({ path: 'submit' })}>Submit for approval</Button>
             )}
             {canPrepare && open && (
-              <button type="button" className="s-btn-ghost text-sm" disabled={act.isPending}
-                onClick={() => { if (window.confirm('Withdraw this run?')) act.mutate({ path: 'withdraw' }) }}>Withdraw</button>
+              <Button variant="ghost" type="button"  disabled={act.isPending}
+                onClick={() => { if (window.confirm('Withdraw this run?')) act.mutate({ path: 'withdraw' }) }}>Withdraw</Button>
             )}
             {canDecide && run.status === 'submitted' && (
               <>
-                <button type="button" className="s-btn-primary text-sm" onClick={() => setMode('approve')}>Approve</button>
-                <button type="button" className="s-btn-secondary text-sm" onClick={() => setMode('reject')}>Reject</button>
+                <Button type="button"  onClick={() => setMode('approve')}>Approve</Button>
+                <Button variant="secondary" type="button"  onClick={() => setMode('reject')}>Reject</Button>
               </>
             )}
             {canReverse && run.status === 'posted' && (
-              <button type="button" className="s-btn-danger text-sm" onClick={() => setMode('reverse')}>Reverse</button>
+              <Button variant="danger" type="button"  onClick={() => setMode('reverse')}>Reverse</Button>
             )}
           </>
         )}
@@ -267,36 +268,35 @@ export function RechargeRunDetail({ runId, canPrepare, canDecide, canReverse, on
           <div className="w-full space-y-2">
             <p className="text-sm text-white/70">Posting charges every company and credits the head office, in both books at once.</p>
             {needsAck && (
-              <label className="flex items-start gap-2 text-sm text-white/70">
+              <CheckLabel className="flex items-start gap-2 text-sm text-white/70">
                 <input type="checkbox" className="mt-1" style={{ accentColor: 'var(--erp-accent)' }} checked={ack} onChange={(e) => setAck(e.target.checked)} />
                 <span>I have read the warnings above</span>
-              </label>
+              </CheckLabel>
             )}
-            <label className="flex items-start gap-2 text-sm text-white/70">
+            <CheckLabel className="flex items-start gap-2 text-sm text-white/70">
               <input type="checkbox" className="mt-1" style={{ accentColor: 'var(--erp-accent)' }} checked={late} onChange={(e) => setLate(e.target.checked)} />
               <span>If a book is already closed for the month, post in the open period instead (marked as posted late)</span>
-            </label>
+            </CheckLabel>
             <div className="flex gap-2">
-              <button type="button" className="s-btn-primary text-sm" disabled={act.isPending || (needsAck && !ack)}
+              <Button type="button"  disabled={act.isPending || (needsAck && !ack)}
                 onClick={() => act.mutate({ path: 'approve', body: { ...(needsAck && { acknowledgeWarnings: true }), ...(late && { postInOpenPeriod: true }) } })}>
                 {act.isPending ? 'Posting…' : 'Approve and post'}
-              </button>
-              <button type="button" className="s-btn-ghost text-sm" onClick={() => setMode('')}>Cancel</button>
+              </Button>
+              <Button variant="ghost" type="button"  onClick={() => setMode('')}>Cancel</Button>
             </div>
           </div>
         )}
         {(mode === 'reject' || mode === 'reverse') && (
           <>
-            <label className="block min-w-[14rem] flex-1">
-              <span className={labelCls}>{mode === 'reject' ? 'Why is it rejected? (at least 3 characters)' : 'Why is it reversed? (at least 10 characters)'}</span>
-              <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} className="s-input" />
-            </label>
+            <div className="min-w-[14rem] flex-1"><Field label={mode === 'reject' ? 'Why is it rejected? (at least 3 characters)' : 'Why is it reversed? (at least 10 characters)'}>
+              <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
+            </Field></div>
             <button type="button" className={mode === 'reject' ? 's-btn-secondary text-sm' : 's-btn-danger text-sm'}
               disabled={act.isPending || note.trim().length < (mode === 'reject' ? 3 : 10)}
               onClick={() => act.mutate(mode === 'reject' ? { path: 'reject', body: { note: note.trim() } } : { path: 'reverse', body: { reason: note.trim() } })}>
               {mode === 'reject' ? 'Reject run' : 'Reverse in every book'}
             </button>
-            <button type="button" className="s-btn-ghost text-sm" onClick={() => { setMode(''); setNote('') }}>Cancel</button>
+            <Button variant="ghost" type="button"  onClick={() => { setMode(''); setNote('') }}>Cancel</Button>
           </>
         )}
       </div>

@@ -159,13 +159,13 @@ export default function OrdersPage() {
           ) : error ? (
             <div role="alert" className="servd-card" style={{ padding: '2rem', textAlign: 'center' }}>
               <p style={{ color: 'var(--servd-danger)', fontWeight: 600 }}>{error}</p>
-              <button onClick={() => window.location.reload()} className="servd-btn-secondary" style={{ marginTop: '1rem' }}>Try again</button>
+              <button onClick={() => window.location.reload()} className="servd-btn-rect servd-btn-secondary" style={{ marginTop: '1rem' }}>Try again</button>
             </div>
           ) : !profile?.orders.length ? (
             <div className="servd-card" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
               <h2 style={{ fontSize: '1.4rem', marginBottom: '0.75rem' }}>No orders yet</h2>
               <p style={{ color: 'var(--servd-mute)', marginBottom: '2rem' }}>Once you order, it&rsquo;ll show up here for re-ordering with one tap.</p>
-              <MagneticLink href="/#kitchens" className="servd-btn-primary">See the kitchens</MagneticLink>
+              <MagneticLink href="/#kitchens" className="servd-btn-rect servd-btn-primary">See the kitchens</MagneticLink>
             </div>
           ) : (
             <div style={{ display: 'grid', gap: '0.85rem', maxWidth: '820px', margin: '0 auto' }}>

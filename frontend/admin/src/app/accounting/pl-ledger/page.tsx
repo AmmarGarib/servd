@@ -7,6 +7,7 @@
 //               (GET /accounting/pl-ledger/brands)
 // The old /finance "P&L" summed the sales register (GST-inclusive, discount
 // taken off twice, no costs); /finance now redirects here.
+import { Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
@@ -256,11 +257,11 @@ export default function PLLedgerPage() {
                 {p.label}
               </button>
             ))}
-            <input type="date" value={from} onChange={(e) => { setPreset(null); setFrom(e.target.value) }}
-              className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+            <Input className="w-auto px-2 py-1 text-sm" type="date" value={from} onChange={(e) => { setPreset(null); setFrom(e.target.value) }}
+               />
             <span className="text-s-muted text-xs">→</span>
-            <input type="date" value={to} onChange={(e) => { setPreset(null); setTo(e.target.value) }}
-              className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+            <Input className="w-auto px-2 py-1 text-sm" type="date" value={to} onChange={(e) => { setPreset(null); setTo(e.target.value) }}
+               />
             <ExportMenu path={exportPath} filename={exportName} onError={(m) => setCsvError(m)} />
           </div>
         </div>

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../lib/api'
 import Link from 'next/link'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -165,9 +166,8 @@ function StationsTab() {
           Loading stations…
         </p>
       ) : groupedStations.length === 0 ? (
-        <p className="rounded-xl border border-kds-border bg-kds-card px-4 py-10 text-center text-sm text-kds-subtext">
-          No concepts yet — create one in <Link href="/settings" className="underline text-kds-green">Brands &amp; Stations</Link>.
-        </p>
+        <CompactEmptyState tone="dark" message="No brands yet"
+          detail={<>Create one in <Link href="/settings" className="underline text-kds-green">Brands &amp; Stations</Link>.</>} />
       ) : (
         <div className="space-y-3">
           {groupedStations.map((group) => {
@@ -213,7 +213,7 @@ function StationsTab() {
                                 className="min-h-11 rounded-lg border border-kds-green bg-kds-bg px-3 text-sm text-kds-text focus:outline-none w-44"
                                 autoFocus
                               />
-                              <label className="text-[11px] text-kds-subtext flex items-center gap-1.5">
+                              <label className="text-xs text-kds-subtext flex items-center gap-1.5">
                                 Order
                                 <input
                                   type="number"
@@ -240,8 +240,8 @@ function StationsTab() {
                             /* Read mode — compact row */
                             <div className="flex items-center gap-3 flex-wrap">
                               <span className="font-medium text-kds-text">{s.name}</span>
-                              <span className="text-[11px] text-kds-subtext">order {s.displayOrder}</span>
-                              <span className={`inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-[10px] font-bold px-1.5 ${
+                              <span className="text-xs text-kds-subtext">order {s.displayOrder}</span>
+                              <span className={`inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-xs font-bold px-1.5 ${
                                 s.liveLoad > 0 ? 'bg-kds-amber/20 text-kds-amber' : 'bg-kds-bg text-kds-subtext'
                               }`}>
                                 load {s.liveLoad}

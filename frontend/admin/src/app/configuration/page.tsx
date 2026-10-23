@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
+import { NavIcon } from '../../components/ui/NavIcon'
 
 // ─── Configuration Hub ────────────────────────────────────────────────────────
 //
@@ -30,7 +31,7 @@ interface Tile {
 
 const STATUS_PILL: Record<Status, { label: string; bg: string; fg: string }> = {
   ready:      { label: 'Ready',         bg: 'rgb(var(--erp-accent-rgb) / 0.2)',  fg: 'var(--erp-success)' },
-  incomplete: { label: 'Needs setup',   bg: 'rgba(245,158,11,0.12)', fg: 'var(--erp-warning)' },
+  incomplete: { label: 'Needs setup',   bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', fg: 'var(--erp-warning)' },
   optional:   { label: 'Optional',      bg: 'rgb(var(--fg-rgb) / 0.06)', fg: 'rgb(var(--fg-rgb) / 0.55)' },
   unknown:    { label: '—',             bg: 'rgb(var(--fg-rgb) / 0.04)', fg: 'rgb(var(--fg-rgb) / 0.35)' },
 }
@@ -68,165 +69,165 @@ export default function ConfigurationHubPage() {
 
   const tiles: Tile[] = [
     // ── Core ──────────────────────────────────────────────────────────────
-    { href: '/ceo/brands',  icon: '🏷', title: 'Brands',
+    { href: '/ceo/brands',  icon: 'tag', title: 'Brands',
       desc: 'The one brand editor — identity, contact, brief, storefront copy, cash / card GST, tax registration.',
       category: 'core', status: conceptsReady ? 'ready' : 'incomplete',
       hint: conceptsReady ? `${concepts.length} concepts configured` : 'Add at least one concept' },
 
-    { href: '/kds/config',  icon: '🍳', title: 'Kitchen Stations',
+    { href: '/kds/config',  icon: 'chef', title: 'Kitchen Stations',
       desc: 'Stations that show up on KDS — grill, fryer, expediter.',
       category: 'core', status: stationsReady ? 'ready' : 'incomplete',
       hint: stationsReady ? `${stations.length} stations` : 'Define your kitchen layout' },
 
-    { href: '/workforce',  icon: '👥', title: 'Staff & Roles',
+    { href: '/workforce',  icon: 'users', title: 'Staff & Roles',
       desc: 'Accounts, companies, override PINs, pending signups.',
       category: 'core', status: staffReady ? 'ready' : 'incomplete',
       hint: staffReady ? `${users.length} users` : 'Add team members' },
 
-    { href: '/configuration/locations',  icon: '📍', title: 'Locations',
+    { href: '/configuration/locations',  icon: 'pin', title: 'Locations',
       desc: 'Physical kitchens: the address and map pin customers see, the delivery origin and the clock-in anchor. One kitchen can run many brands.',
       category: 'core', status: 'incomplete', hint: 'Set up locations to filter accounting per branch' },
 
-    { href: '/configuration/domains',  icon: '🌐', title: 'Custom Domains',
+    { href: '/configuration/domains',  icon: 'globe', title: 'Custom Domains',
       desc: 'Point your own URLs (e.g. order.yourbrand.pk) to brand storefronts.',
       category: 'channels', status: 'optional', hint: 'DNS-verified, SSL automatic' },
 
-    { href: '/configuration/role-modules',  icon: '🔒', title: 'Module Access',
+    { href: '/configuration/role-modules',  icon: 'lock', title: 'Module Access',
       desc: 'Which areas each role can open — enforced by the API.',
       category: 'core', status: 'ready', hint: 'Per-role defaults, CEO-editable' },
 
-    { href: '/configuration/operations',  icon: '📍', title: 'Clock-in geofence',
+    { href: '/configuration/operations',  icon: 'pin', title: 'Clock-in geofence',
       desc: 'Force on-site clock-in for floor staff (anchored on each location\'s map pin).',
       category: 'core', status: 'optional', hint: 'Optional but recommended' },
 
-    { href: '/menu',  icon: '📝', title: 'Menu & Pricing',
+    { href: '/menu',  icon: 'edit', title: 'Menu & Pricing',
       desc: 'Items, modifiers, allergens, photos, instructions.',
       category: 'core', status: 'unknown' },
 
-    { href: '/scheduling',  icon: '📅', title: 'Shift Schedule',
+    { href: '/scheduling',  icon: 'calendar', title: 'Shift Schedule',
       desc: 'Weekly roster — who works which shift.',
       category: 'core', status: 'unknown' },
 
     // ── Channels ──────────────────────────────────────────────────────────
-    { href: '/storefront',  icon: '🛍', title: 'Online Storefront',
+    { href: '/storefront',  icon: 'bag', title: 'Online Storefront',
       desc: 'Library, pages (landing hero, brand pages, brand footers and social links), pop-ups and approvals.',
       category: 'channels', status: 'unknown' },
 
     // One tile for Dev → API: the WhatsApp gateway and the POS connector
     // (fiscal POS for FBR / SRB + the card machine). Replaces the separate
     // "WhatsApp" and "Tax Rates & FBR" tiles.
-    { href: '/connectors',  icon: '⇄', title: 'API connectors',
+    { href: '/connectors',  icon: 'plug', title: 'API connectors',
       desc: 'The WhatsApp gateway (codes, resets, customer messages) and the POS connector — the fiscal POS that files FBR / SRB, and the card machine.',
       category: 'platform', status: 'unknown' },
 
-    { href: '/qrcodes',  icon: '📱', title: 'QR Codes / Table Ordering',
+    { href: '/qrcodes',  icon: 'phone', title: 'QR Codes / Table Ordering',
       desc: 'Per-table scan-to-order links.',
       category: 'channels', status: 'optional' },
 
     // ── Finance ───────────────────────────────────────────────────────────
-    { href: '/configuration/payment-methods',  icon: '💳', title: 'Payment Methods',
+    { href: '/configuration/payment-methods',  icon: 'card', title: 'Payment Methods',
       desc: 'Cash, Keenu, JazzCash, EasyPaisa toggles + processing fees.',
       category: 'finance', status: 'incomplete' },
 
-    { href: '/procurement',  icon: '🏭', title: 'Suppliers & Vendors',
+    { href: '/procurement',  icon: 'factory', title: 'Suppliers & Vendors',
       desc: 'Vendor list, payment terms, lead times, opening balances.',
       category: 'finance', status: suppliersReady ? 'ready' : 'incomplete',
       hint: suppliersReady ? `${suppliers.length} suppliers` : 'Add your first supplier' },
 
-    { href: '/configuration/loyalty',  icon: '⭐', title: 'Loyalty Program',
+    { href: '/configuration/loyalty',  icon: 'star', title: 'Loyalty Program',
       desc: 'Earn rate, redemption rate, expiry, tiers.',
       category: 'finance', status: 'incomplete' },
 
     // ── Operations ────────────────────────────────────────────────────────
-    { href: '/configuration/hours',  icon: '🕒', title: 'Hours of Operation',
+    { href: '/configuration/hours',  icon: 'clock', title: 'Hours of Operation',
       desc: 'Per-brand open / close windows (split service supported). Closures live in Reservations → Closures.',
       category: 'operations', status: 'incomplete' },
 
-    { href: '/inventory',  icon: '📦', title: 'Inventory & Reorder',
+    { href: '/inventory',  icon: 'box', title: 'Inventory & Reorder',
       desc: 'Par levels, reorder points, suppliers per item.',
       category: 'operations', status: 'unknown' },
 
-    { href: '/configuration/email',  icon: '✉️', title: 'Email',
+    { href: '/configuration/email',  icon: 'mail', title: 'Email',
       desc: 'SMTP for every email servd sends — the backup channel for codes and password resets when WhatsApp is down.',
       category: 'channels', status: 'unknown' },
 
     // ── Platform ──────────────────────────────────────────────────────────
-    { href: '/settings/integrations',  icon: '🔌', title: 'Integrations',
+    { href: '/settings/integrations',  icon: 'plug', title: 'Integrations',
       desc: 'Meta (Facebook + Instagram), email, webhooks, the supplier portal. WhatsApp and the POS connector are in API connectors.',
       category: 'platform', status: 'incomplete', hint: 'Most are optional' },
 
     // B07: API tokens tile removed — no third-party integrations need them in v1.
 
-    { href: '/help',  icon: '❓', title: 'Help & Support',
+    { href: '/help',  icon: 'help', title: 'Help & Support',
       desc: 'FAQ, WhatsApp support, email, docs.',
       category: 'platform', status: 'ready', hint: 'WhatsApp reply within 1h business hours' },
 
-    { href: '/configuration/language',  icon: '🌐', title: 'Language & Localisation',
+    { href: '/configuration/language',  icon: 'globe', title: 'Language & Localisation',
       desc: 'English / اردو for this browser.',
       category: 'platform', status: 'ready', hint: 'Bilingual KDS active' },
 
-    { href: '/configuration/audit-log',  icon: '📜', title: 'Audit Log',
+    { href: '/configuration/audit-log',  icon: 'scroll', title: 'Audit Log',
       desc: 'Who did what, when — compliance + investigations.',
       category: 'platform', status: 'optional' },
 
     // ── Newly shipped (18 setup gaps) ─────────────────────────────────────
-    { href: '/configuration/modifiers', icon: '🍔', title: 'Modifier templates',
+    { href: '/configuration/modifiers', icon: 'utensils', title: 'Modifier templates',
       desc: 'Reusable option groups (sauces, sizes, spice level) attached to menu items.',
       category: 'core', status: 'incomplete', hint: 'Define once, attach in menu editor' },
 
-    { href: '/configuration/refund-policy', icon: '⚖️', title: 'Refund / void / comp policy',
+    { href: '/configuration/refund-policy', icon: 'scale', title: 'Refund / void / comp policy',
       desc: 'Per-role caps. Manager override above threshold.',
       category: 'finance', status: 'ready', hint: 'Defaults active — review limits' },
 
-    { href: '/configuration/operations', icon: '⚙️', title: 'Service charge & tip pool',
+    { href: '/configuration/operations', icon: 'cog', title: 'Service charge & tip pool',
       desc: 'Service fee %, tip pool distribution, invoice numbering, withholding tax.',
       category: 'finance', status: 'incomplete', hint: 'Configure platform-wide ops rules' },
 
-    { href: '/configuration/delivery-zones', icon: '🛵', title: 'Delivery zones',
+    { href: '/configuration/delivery-zones', icon: 'bike', title: 'Delivery zones',
       desc: 'Radius bands with per-zone fees, minimum order, free-above thresholds. Beyond the last zone, delivery is refused.',
       category: 'channels', status: 'incomplete' },
 
-    { href: '/configuration/receipts', icon: '🧾', title: 'Receipt + cash drawer',
+    { href: '/configuration/receipts', icon: 'receipt', title: 'Receipt + cash drawer',
       desc: 'Header/footer, paper width, ESC/POS printer IP, drawer kick, variance limit.',
       category: 'operations', status: 'incomplete', hint: 'Replaces the basic Printer config' },
 
-    { href: '/configuration/kds-devices', icon: '📺', title: 'KDS device registry',
+    { href: '/configuration/kds-devices', icon: 'tv', title: 'KDS device registry',
       desc: 'Register each kitchen tablet/TV — bind to station + concept, monitor connectivity.',
       category: 'operations', status: 'incomplete' },
 
-    { href: '/configuration/templates', icon: '✉️', title: 'Email / SMS / WhatsApp templates',
+    { href: '/configuration/templates', icon: 'mail', title: 'Email / SMS / WhatsApp templates',
       desc: 'Edit the actual text customers receive. Per-concept + per-language overrides.',
       category: 'operations', status: 'incomplete' },
 
-    { href: '/configuration/bank-accounts', icon: '🏦', title: 'Bank accounts',
+    { href: '/configuration/bank-accounts', icon: 'bank', title: 'Bank accounts',
       desc: 'Operating accounts for reconciliation against card payouts and rider COD handoffs.',
       category: 'finance', status: 'incomplete' },
 
-    { href: '/configuration/reservation-policy', icon: '📅', title: 'Reservation policy',
+    { href: '/configuration/reservation-policy', icon: 'calendar', title: 'Reservation policy',
       desc: 'Deposits, no-show buffer, advance windows, party caps, walk-in handling.',
       category: 'operations', status: 'ready', hint: 'Defaults active' },
 
-    { href: '/configuration/chart-of-accounts', icon: '📒', title: 'Chart of accounts',
+    { href: '/configuration/chart-of-accounts', icon: 'book', title: 'Chart of accounts',
       desc: 'Add/edit ledger codes to mirror your accountant\'s tree.',
       category: 'finance', status: 'ready' },
 
-    { href: '/configuration/webhooks', icon: '🪝', title: 'Outbound webhooks',
+    { href: '/configuration/webhooks', icon: 'webhook', title: 'Outbound webhooks',
       desc: 'Push order events to your accountant\'s software, BI tool, or Slack bot. HMAC-signed, with a test ping and delivery log.',
       category: 'platform', status: 'optional' },
 
-    { href: '/configuration/custom-fields', icon: '🧩', title: 'Custom fields',
+    { href: '/configuration/custom-fields', icon: 'puzzle', title: 'Custom fields',
       desc: 'Add fields to customers, orders, items, suppliers — without touching code.',
       category: 'platform', status: 'optional' },
 
-    { href: '/configuration/scheduled-reports', icon: '📊', title: 'Scheduled reports',
+    { href: '/configuration/scheduled-reports', icon: 'chart', title: 'Scheduled reports',
       desc: 'Daily/weekly digests delivered to your inbox. P&L, low stock, AP aging.',
       category: 'platform', status: 'optional' },
 
-    { href: '/configuration/dietary-tags', icon: '🥗', title: 'Dietary tags & allergens',
+    { href: '/configuration/dietary-tags', icon: 'salad', title: 'Dietary tags & allergens',
       desc: 'Taxonomy your menu items pick from — Vegan, Halal, Gluten-free, etc.',
       category: 'core', status: 'incomplete', hint: 'Defaults included; edit to match your menu' },
 
-    { href: '/reservations/blockouts', icon: '📅', title: 'Holidays & closures',
+    { href: '/reservations/blockouts', icon: 'calendar', title: 'Holidays & closures',
       desc: 'Block out dates the brand is closed or running reduced capacity.',
       category: 'operations', status: 'optional' },
   ]
@@ -318,7 +319,7 @@ function ConfigTile({ tile }: { tile: Tile }) {
       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgb(var(--fg-rgb) / 0.06)'; e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.02)' }}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
-        <span className="text-2xl shrink-0">{tile.icon}</span>
+        <span className="text-2xl shrink-0 text-primary-ink"><NavIcon name={tile.icon} size={24} /></span>
         <span
           className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider"
           style={{ background: pill.bg, color: pill.fg }}

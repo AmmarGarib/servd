@@ -8,6 +8,7 @@
 // approve; moving units between outlets takes effect at once. The buttons come
 // from the API's capability flags.
 
+import { Field } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
@@ -16,6 +17,7 @@ import {
 } from '../../../../components/fixedAssets/shared'
 import { PoolRequestModal, type PoolRequestKind, type PoolRow } from '../../../../components/fixedAssets/RequestForms'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 interface Layer {
   id: string; assetTag: string | null; name: string; quantity: number; originalQuantity: number
@@ -102,24 +104,21 @@ export default function PoolsPage() {
       </div>
 
       <div className="rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3" style={card}>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Outlet</span>
+        <Field label="Outlet">
           <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">All outlets</option>{outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Brand</span>
+            <option value="">All outlets</option>{outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
+        <Field label="Brand">
           <Select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
-            <option value="">All brands</option>{brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Type</span>
+            <option value="">All brands</option>{brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
+        <Field label="Type">
           <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
-            <option value="">All types</option>{(lookups?.smallwareTypes ?? []).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</Select></label>
+            <option value="">All types</option>{(lookups?.smallwareTypes ?? []).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</Select></Field>
       </div>
 
       {error && <Notice tone="bad">{errorWords(error)}</Notice>}
       {isLoading && <p className="text-sm text-white/40">Loading pools…</p>}
       {data && pools.length === 0 && (
-        <div className="rounded-2xl p-10 text-center" style={card}>
-          <p className="font-bold text-white/85">No smallwares pools yet</p>
-          <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">A pool is created when smallwares are bought through CapEx (Buy equipment, choosing a smallwares type and an outlet).</p>
-        </div>
+        <CompactEmptyState message="No smallwares pools yet." />
       )}
 
       <div className="space-y-3">
@@ -131,7 +130,7 @@ export default function PoolsPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-black text-white/90 break-words">{p.label}</p>
-                  <p className="text-xs text-white/45 mt-0.5">
+                  <p className="text-xs text-s-muted mt-0.5">
                     {[p.typeLabel, p.locationName, p.conceptName ?? 'Shared across brands', multi ? p.companyName : null].filter(Boolean).join(' · ')}
                   </p>
                 </div>
@@ -139,10 +138,10 @@ export default function PoolsPage() {
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
-                <div><p className="text-[11px] text-white/40">Units on hand</p><p className="font-black text-white/90">{p.unitsOnHand}</p></div>
-                <div><p className="text-[11px] text-white/40">Cost</p><p className="font-mono text-white/80">{money(p.costCents)}</p></div>
-                <div><p className="text-[11px] text-white/40">Depreciated</p><p className="font-mono text-white/60">{money(p.accumulatedCents)}</p></div>
-                <div><p className="text-[11px] text-white/40">Book value</p><p className="font-mono font-bold text-white/90">{money(p.nbvCents)}</p></div>
+                <div><p className="text-xs text-s-muted">Units on hand</p><p className="font-black text-white/90">{p.unitsOnHand}</p></div>
+                <div><p className="text-xs text-s-muted">Cost</p><p className="font-mono text-white/80">{money(p.costCents)}</p></div>
+                <div><p className="text-xs text-s-muted">Depreciated</p><p className="font-mono text-white/60">{money(p.accumulatedCents)}</p></div>
+                <div><p className="text-xs text-s-muted">Book value</p><p className="font-mono font-bold text-white/90">{money(p.nbvCents)}</p></div>
               </div>
 
               <p className="text-xs mt-3" style={{ color: p.lastCount ? (short > 0 ? 'var(--erp-danger)' : 'var(--erp-success)') : 'rgb(var(--fg-rgb) / 0.45)' }}>
@@ -168,7 +167,7 @@ export default function PoolsPage() {
                 <div className="mt-3 overflow-x-auto rounded-xl" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                      <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                         {['Purchase', 'In service', 'Units', 'Life', 'Cost', 'Depreciated', 'Book value'].map((h, i) => <th key={h} className={`px-3 py-2 font-bold whitespace-nowrap ${i > 3 ? 'text-right' : ''}`}>{h}</th>)}
                       </tr>
                     </thead>

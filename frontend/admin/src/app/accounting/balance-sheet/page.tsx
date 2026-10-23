@@ -5,6 +5,7 @@
 // to date'. In "All companies" view every company keeps its own rows: the
 // inter-company Due from / Due to balances are shown GROSS, never netted — this
 // is not a consolidation.
+import { Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
@@ -106,8 +107,8 @@ export default function BalanceSheetPage() {
           <h1 className="text-xl font-bold text-s-text">Balance Sheet</h1>
         </div>
         <div className="flex items-center gap-3">
-          <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
-            className="bg-s-card border border-s-border rounded px-3 py-1.5 text-sm text-s-text" />
+          <Input className="w-auto px-3 py-1.5 text-sm" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
+             />
           <ExportMenu path={`/accounting/balance-sheet?asOf=${asOf}`} filename={`balance-sheet-${asOf}`} />
         </div>
       </header>

@@ -1,8 +1,10 @@
 'use client'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { Smartphone, Utensils, Leaf, Gift, Camera, PartyPopper, Bell, SquareCheck, ChevronLeft, ChevronRight, User, X, TriangleAlert, Check, type LucideIcon } from 'lucide-react'
 import { isoToPktLocal, pktLocalToIso, localYmd } from '@/lib/money'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,15 +37,16 @@ interface CalEvent {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const TYPE_CONFIG: Record<EventType, { label: string; color: string; bg: string; emoji: string }> = {
-  social_post:         { label: 'Social Post',  color: '#3b82f6', bg: 'bg-blue-500',   emoji: '📱' },
-  menu_change:         { label: 'Menu Change',  color: '#f97316', bg: 'bg-orange-500', emoji: '🍽' },
-  seasonal_ingredient: { label: 'Seasonal',     color: '#3f7d20', bg: 'bg-green-500',  emoji: '🌿' },
-  deal:                { label: 'Deal',          color: 'var(--erp-primary-ink)', bg: 'bg-purple-500', emoji: '🎁' },
-  shoot:               { label: 'Shoot',         color: '#be185d', bg: 'bg-pink-500',   emoji: '📸' },
-  event_promo:         { label: 'Event/Promo',   color: '#b42318', bg: 'bg-red-500',    emoji: '🎉' },
-  reminder:            { label: 'Reminder',      color: '#eab308', bg: 'bg-yellow-500', emoji: '🔔' },
-  task:                { label: 'Task',           color: '#64748b', bg: 'bg-slate-500',  emoji: '✅' },
+// Colours are admin tokens (s-*), icons are lucide line icons (ERP-7/12).
+const TYPE_CONFIG: Record<EventType, { label: string; bg: string; dot: string; Icon: LucideIcon }> = {
+  social_post:         { label: 'Social Post',  bg: 'bg-s-blue',   dot: 'bg-s-blue',   Icon: Smartphone },
+  menu_change:         { label: 'Menu Change',  bg: 'bg-s-amber',  dot: 'bg-s-amber',  Icon: Utensils },
+  seasonal_ingredient: { label: 'Seasonal',     bg: 'bg-s-green',  dot: 'bg-s-green',  Icon: Leaf },
+  deal:                { label: 'Deal',         bg: 'bg-s-purple', dot: 'bg-s-purple', Icon: Gift },
+  shoot:               { label: 'Shoot',        bg: 'bg-s-pink',   dot: 'bg-s-pink',   Icon: Camera },
+  event_promo:         { label: 'Event/Promo',  bg: 'bg-s-red',    dot: 'bg-s-red',    Icon: PartyPopper },
+  reminder:            { label: 'Reminder',     bg: 'bg-s-amber',  dot: 'bg-s-amber',  Icon: Bell },
+  task:                { label: 'Task',         bg: 'bg-s-muted',  dot: 'bg-s-muted',  Icon: SquareCheck },
 }
 
 const DEPT_OPTIONS = ['', 'marketing', 'procurement', 'kitchen', 'ops', 'management']
@@ -119,9 +122,9 @@ export default function CalendarPage() {
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-black">Content Calendar</h1>
           <div className="flex items-center gap-1">
-            <button onClick={prevMonth} className="rounded p-1 hover:bg-s-elevated text-lg">‹</button>
+            <button onClick={prevMonth} aria-label="Previous month" className="flex h-11 w-11 items-center justify-center rounded hover:bg-s-elevated"><ChevronLeft size={20} aria-hidden="true" /></button>
             <span className="min-w-36 text-center font-semibold">{monthLabel}</span>
-            <button onClick={nextMonth} className="rounded p-1 hover:bg-s-elevated text-lg">›</button>
+            <button onClick={nextMonth} aria-label="Next month" className="flex h-11 w-11 items-center justify-center rounded hover:bg-s-elevated"><ChevronRight size={20} aria-hidden="true" /></button>
           </div>
           <button
             onClick={() => setViewMonth({ year: today.getFullYear(), month: today.getMonth() })}
@@ -143,7 +146,7 @@ export default function CalendarPage() {
             className="rounded-lg border border-s-border bg-s-bg px-2 py-1 text-xs text-s-text">
             <option value="">All Types</option>
             {Object.entries(TYPE_CONFIG).map(([k, v]) => (
-              <option key={k} value={k}>{v.emoji} {v.label}</option>
+              <option key={k} value={k}>{v.label}</option>
             ))}
           </Select>
           <button
@@ -198,10 +201,10 @@ export default function CalendarPage() {
                           <div
                             key={e.id}
                             onClick={(ev) => { ev.stopPropagation(); setEditEvent(e) }}
-                            className="truncate rounded px-1 py-0.5 text-xs font-medium text-white cursor-pointer hover:opacity-80"
-                            style={{ backgroundColor: e.color ?? cfg.color }}
+                            className={`flex items-center gap-1 truncate rounded px-1 py-0.5 text-xs font-medium text-white cursor-pointer hover:opacity-80 ${e.color ? '' : cfg.bg}`}
+                            style={e.color ? { backgroundColor: e.color } : undefined}
                           >
-                            {cfg.emoji} {e.title}
+                            <cfg.Icon size={12} aria-hidden="true" className="shrink-0" /><span className="truncate">{e.title}</span>
                           </div>
                         )
                       })}
@@ -229,7 +232,7 @@ export default function CalendarPage() {
               </button>
             </div>
             {dayEvents.length === 0 && (
-              <p className="text-sm text-s-muted">Nothing planned. Click + Add to schedule something.</p>
+              <CompactEmptyState message="Nothing planned for this day." />
             )}
             {dayEvents.map((e) => {
               const cfg = TYPE_CONFIG[e.type]
@@ -239,13 +242,12 @@ export default function CalendarPage() {
                   className="mb-3 cursor-pointer rounded-xl border border-s-border p-3 hover:border-primary/50 transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-base">{cfg.emoji}</span>
+                    <cfg.Icon size={18} aria-hidden="true" className="shrink-0 text-s-muted" />
                     <span className="font-semibold text-sm">{e.title}</span>
-                    <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-bold text-white`}
-                      style={{ backgroundColor: cfg.color }}>{cfg.label}</span>
+                    <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-bold text-white ${cfg.bg}`}>{cfg.label}</span>
                   </div>
                   {e.description && <p className="text-xs text-s-muted line-clamp-2">{e.description}</p>}
-                  {e.assignee && <p className="text-xs text-s-muted mt-1">👤 {e.assignee.name}</p>}
+                  {e.assignee && <p className="text-xs text-s-muted mt-1 flex items-center gap-1"><User size={12} aria-hidden="true" />{e.assignee.name}</p>}
                   {e.socialPost && (
                     <div className="mt-1 text-xs">
                       <span className={`font-bold ${e.socialPost.status === 'published' ? 'text-primary-ink' : e.socialPost.status === 'failed' ? 'text-s-red' : 'text-s-amber'}`}>
@@ -277,8 +279,8 @@ export default function CalendarPage() {
             onClick={() => setFilterType(filterType === k ? '' : k as EventType)}
             className={`flex items-center gap-1 text-xs whitespace-nowrap transition-opacity ${filterType && filterType !== k ? 'opacity-40' : ''}`}
           >
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: v.color }} />
-            {v.emoji} {v.label}
+            <span className={`h-2.5 w-2.5 rounded-full ${v.dot}`} />
+            <v.Icon size={12} aria-hidden="true" />{v.label}
           </button>
         ))}
       </div>
@@ -385,7 +387,7 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
                 Delete
               </button>
             )}
-            <button onClick={onClose} className="text-s-muted text-2xl leading-none">✕</button>
+            <button onClick={onClose} aria-label="Close" className="flex h-11 w-11 items-center justify-center text-s-muted hover:text-s-text"><X size={20} aria-hidden="true" /></button>
           </div>
         </div>
 
@@ -393,7 +395,7 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
         {type === 'social_post' && (
           <div className="mb-4 flex gap-1 rounded-lg border border-s-border p-1 text-xs font-bold">
             <button onClick={() => setTab('details')} className={`flex-1 rounded-md py-1.5 transition-colors ${tab === 'details' ? 'bg-primary text-primary-on' : 'text-s-muted'}`}>Details</button>
-            <button onClick={() => setTab('social')} className={`flex-1 rounded-md py-1.5 transition-colors ${tab === 'social' ? 'bg-primary text-primary-on' : 'text-s-muted'}`}>📱 Social Post</button>
+            <button onClick={() => setTab('social')} className={`flex-1 rounded-md py-1.5 transition-colors ${tab === 'social' ? 'bg-primary text-primary-on' : 'text-s-muted'}`}>Social Post</button>
           </div>
         )}
 
@@ -410,7 +412,7 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
                 <Select value={type} onChange={(e) => setType(e.target.value as EventType)}
                   className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
                   {Object.entries(TYPE_CONFIG).map(([k, v]) => (
-                    <option key={k} value={k}>{v.emoji} {v.label}</option>
+                    <option key={k} value={k}>{v.label}</option>
                   ))}
                 </Select>
               </div>
@@ -454,9 +456,9 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
                 <label className="text-xs text-s-muted">Platform</label>
                 <Select value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}
                   className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
-                  <option value="instagram">📸 Instagram</option>
-                  <option value="facebook">🤝 Facebook</option>
-                  <option value="tiktok">🎵 TikTok</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="facebook">Facebook</option>
+                  <option value="tiktok">TikTok</option>
                 </Select>
               </div>
               <div>
@@ -483,13 +485,13 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
               <p className="mt-1 text-right text-xs text-s-muted">{caption.length}/2200</p>
             </div>
             {event?.socialPost?.status === 'failed' && (
-              <div className="rounded-lg bg-s-red/10 border border-s-red p-3 text-xs text-s-red">
-                ⚠ Last publish failed: {event.socialPost.error}
+              <div className="rounded-lg bg-s-red/10 border border-s-red p-3 text-xs text-s-red flex items-center gap-1.5">
+                <TriangleAlert size={14} aria-hidden="true" className="shrink-0" />Last publish failed: {event.socialPost.error}
               </div>
             )}
             {event?.socialPost?.status === 'published' && (
-              <div className="rounded-lg bg-primary/10 border border-primary p-3 text-xs text-primary-ink">
-                ✓ Published {event.socialPost.publishedAt ? new Date(event.socialPost.publishedAt).toLocaleString('en-PK') : ''}
+              <div className="rounded-lg bg-primary/10 border border-primary p-3 text-xs text-primary-ink flex items-center gap-1.5">
+                <Check size={14} aria-hidden="true" className="shrink-0" />Published {event.socialPost.publishedAt ? new Date(event.socialPost.publishedAt).toLocaleString('en-PK') : ''}
               </div>
             )}
           </div>

@@ -13,6 +13,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { formatBrandName } from '../../../../lib/concept'
 import { brandCanonical } from '../../../../lib/brandDomains'
+import { CheckIcon } from '../../../../components/ui/Icons'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -91,7 +92,7 @@ export default function ClaimOfferPage() {
   if (claimed) {
     return (
       <Centered>
-        <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>✓</div>
+        <div style={{ marginBottom: '0.5rem', color: 'var(--servd-success, #4f7a1c)' }}><CheckIcon size={48} strokeWidth={2.5} /></div>
         <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>
           Confirmed.
         </h1>

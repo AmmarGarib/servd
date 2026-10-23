@@ -1,0 +1,40 @@
+# Test files NOT run under TEST_RLS=1 (scripts/test-rls.sh runs every other
+# test file). Each line: path, then why. Remove a line once the file passes
+# with the lock on:  npm run test:rls -- tests/<file>.test.ts
+#
+# Test RLS themselves (create roles, replace the helper functions, SET ROLE):
+tests/fixedAssetsRls.test.ts
+tests/headOfficeRlsContext.test.ts
+tests/moneyBigintRls.test.ts
+#
+# Fixture: the test runs DDL (CREATE INDEX / TRIGGER / FUNCTION, ALTER TABLE,
+# or replays a migration with psql) — needs the table owner, not the app role:
+tests/tipPoolCompany.test.ts
+tests/hoLoginsTipStorefront.test.ts
+tests/ordersReconcile.test.ts
+tests/auditOnlineCheckout.test.ts
+tests/fiscalTill.test.ts
+tests/resimWallet.test.ts
+#
+# Fixture: a synthetic RLS context with no company writes company audit rows:
+tests/resimTill.test.ts
+#
+# Order-dependent (an earlier file leaves SMTP_* / WHATSAPP_* in process.env);
+# passes on its own under the lock:
+tests/passwordReset.test.ts
+#
+# PRODUCT behaviour under the lock (reported, F9) — re-add once fixed:
+#   group_orders <-> group_order_members policies recurse (42P17)
+tests/groupOrderSubmit.test.ts
+#   POST /tenants: tenants_rls WITH CHECK refuses the new company; /tenants/mine hides member companies
+tests/headOfficeTenantGuards.test.ts
+#   flagException (lib/exceptions.ts) writes into a company outside the request scope -> flag dropped
+tests/hoProcurementRecipes.test.ts
+#   labour-budget.ts include of the counterparty tenant -> hidden row -> 500
+tests/headOfficeSetup.test.ts
+tests/labourBudgetHeadOffice.test.ts
+#
+# Fail WITHOUT the lock too (2026-10-23, under other agents' edits) — the
+# normal suite reports them:
+tests/auditPeopleHr.test.ts
+tests/resimUi.test.ts

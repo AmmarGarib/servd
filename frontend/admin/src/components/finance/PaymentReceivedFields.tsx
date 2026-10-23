@@ -14,6 +14,7 @@
 // never a block: show `referenceUsedBefore` from the API response with
 // <ReferenceUsedBeforeNotice>. The till keeps its own tenders.
 
+import { FieldLabel, Input } from '@/components/finance/ui'
 import { useRef, useState } from 'react'
 import { BankAccountSelect, FIELD_LABEL_CLASS } from './BankAccountSelect'
 import { MoneyInput } from '../ui/MoneyInput'
@@ -114,7 +115,7 @@ export function PaymentReceivedFields({
   return (
     <div className="space-y-2">
       <div>
-        <label htmlFor={`${idPrefix}-method`} className={labelClassName}>{methodLabel}</label>
+        <FieldLabel htmlFor={`${idPrefix}-method`} className={labelClassName}>{methodLabel}</FieldLabel>
         <Select
           id={`${idPrefix}-method`}
           value={method}
@@ -132,8 +133,8 @@ export function PaymentReceivedFields({
       </div>
       {hint}
       <div>
-        <label htmlFor={`${idPrefix}-ref`} className={labelClassName}>Cheque / bank reference #{required ? ' *' : ''}</label>
-        <input
+        <FieldLabel htmlFor={`${idPrefix}-ref`} className={labelClassName}>Cheque / bank reference #{required ? ' *' : ''}</FieldLabel>
+        <Input
           id={`${idPrefix}-ref`}
           value={reference}
           onChange={(e) => onReference(e.target.value)}
@@ -186,7 +187,7 @@ export function RupeeField({ id, value, onChange, label, invalid, className = 's
     <>
       <MoneyInput id={id} ariaLabel={label} value={cents} allowNegative={allowNegative} onChange={(c) => onChange(c === 0 ? '' : paisaToRupees(c))}
         className={className} aria-invalid={invalid ? true : undefined} />
-      {Math.abs(cents) >= 10_000_000 && <span className="block text-[11px] text-s-muted mt-1" aria-live="polite">{fmtPkrWhole(cents)}</span>}
+      {Math.abs(cents) >= 10_000_000 && <span className="block text-xs text-s-muted mt-1" aria-live="polite">{fmtPkrWhole(cents)}</span>}
     </>
   )
 }

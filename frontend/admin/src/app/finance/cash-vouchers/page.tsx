@@ -23,7 +23,8 @@ import { CV_ROOT, errorWords, fmtDate, stageOf, useDashboard, useVouchers, type 
 import { VoucherForm } from './VoucherForm'
 import { useTrashPrefill } from '../../../lib/trash'
 import { unwrapPrefill, pStr } from '../../../lib/trashPrefill'
-import { ErrorBanner, StatusBadge } from './ui'
+import { Button, ErrorBanner, StatusBadge } from './ui'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 export default function CashVouchersPage() {
   return (
@@ -81,10 +82,10 @@ function CashVouchers() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
-        {keeper && <Link href="/finance/petty-cash" className="text-xs text-white/40 hover:text-white/70">← Petty cash</Link>}
+        {keeper && <Link href="/finance/petty-cash" className="text-xs text-s-muted hover:text-white/70">← Petty cash</Link>}
         <div className="flex items-start justify-between gap-4 mt-2 flex-wrap">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-success">Finance</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-success">Finance</p>
             <h1 className="text-2xl font-black text-white/90">Cash vouchers</h1>
             <p className="text-sm text-white/45 mt-1 max-w-2xl">
               Request cash here — a voucher is created and goes to finance at once, then to the CEO. After approval the cashier pays you;
@@ -92,14 +93,13 @@ function CashVouchers() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setMode('request')} className="s-btn-primary px-4 py-2.5">
+            <Button type="submit" onClick={() => setMode('request')}>
               + Request cash
-            </button>
+            </Button>
             {data?.financeApprover && (
-              <button onClick={() => setMode('expense')}
-                className="s-btn-secondary px-4 py-2.5">
+              <Button variant="secondary" type="submit" onClick={() => setMode('expense')}>
                 + New payee voucher
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -117,12 +117,12 @@ function CashVouchers() {
                 style={on
                   ? { background: 'var(--erp-accent-dim)', border: '1px solid var(--erp-accent)' }
                   : { background: 'var(--surface)', border: '1px solid var(--border)' }}>
-                <p className="text-[11px] font-bold text-white/55 leading-tight">{t.label}</p>
+                <p className="text-xs font-bold text-white/55 leading-tight">{t.label}</p>
                 <p className="mt-1 text-2xl font-black tabular-nums"
                   style={{ color: hot && t.bad ? 'var(--erp-danger)' : hot && t.good ? 'var(--erp-success)' : 'var(--text)' }}>
                   {d ? d.count : '—'}
                 </p>
-                <p className="text-[11px] text-white/45 tabular-nums">{d ? `PKR ${formatPkr(d.cents)}` : ' '}</p>
+                <p className="text-xs text-s-muted tabular-nums">{d ? `PKR ${formatPkr(d.cents)}` : ' '}</p>
               </button>
             )
           })}
@@ -139,19 +139,16 @@ function CashVouchers() {
               {e.count && (dash.data?.[e.count]?.count ?? 0) > 0 ? ` (${dash.data?.[e.count]?.count})` : ''}
             </button>
           ))}
-          <span className="text-xs text-white/40">Showing: <b className="text-white/70">{label}</b></span>
+          <span className="text-xs text-s-muted">Showing: <b className="text-white/70">{label}</b></span>
         </div>
 
-        {data?.truncated && <p className="mt-2 text-xs text-white/45">Showing the newest {rows.length} vouchers.</p>}
+        {data?.truncated && <p className="mt-2 text-xs text-s-muted">Showing the newest {rows.length} vouchers.</p>}
 
         <div className="mt-5">
           {isLoading && <p className="text-sm text-white/40">Loading…</p>}
           {error && <ErrorBanner message={`Could not load cash vouchers: ${errorWords(error)}`} />}
           {!isLoading && !error && rows.length === 0 && (
-            <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-              <p className="font-bold text-white/85">Nothing in &ldquo;{label}&rdquo;</p>
-              {(view === 'mine' || view === 'open') && <p className="text-sm text-white/45 mt-1">Need cash for work? Request it — it goes to finance first.</p>}
-            </div>
+            <CompactEmptyState message={`Nothing in "${label}".`} />
           )}
 
           {rows.length > 0 && (
@@ -170,8 +167,8 @@ function CashVouchers() {
                       <span className="font-bold text-white/85 truncate">{v.holderName ?? v.payeeName}</span>
                       <span className="font-black text-white/90 shrink-0">PKR {formatPkr(v.amountCents)}</span>
                     </div>
-                    <p className="text-xs text-white/50 truncate">{v.purpose}</p>
-                    <p className="text-[11px] text-white/35 mt-0.5">{fmtDate(v.voucherDate)}{v.kind === 'expense' ? ' · payee voucher' : ''}</p>
+                    <p className="text-xs text-s-muted truncate">{v.purpose}</p>
+                    <p className="text-xs text-s-muted mt-0.5">{fmtDate(v.voucherDate)}{v.kind === 'expense' ? ' · payee voucher' : ''}</p>
                   </Link>
                 ))}
               </div>

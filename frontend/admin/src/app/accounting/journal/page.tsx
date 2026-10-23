@@ -17,6 +17,7 @@
 //     Requests tab to approve or return.
 //   • A wrong entry is undone by a reversing entry (every line flipped), never
 //     deleted. Each manual entry can be reversed once.
+import { Button, Field, Input, LinkButton } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -356,54 +357,49 @@ export default function JournalEntryPage() {
                 <p className="text-xs text-s-muted">
                   Editing the entry of {pktDate(amending.entryDate)} ({amending.description}). Saving reverses the old entry and posts this one in its place — both stay in the ledger.
                 </p>
-                <label className="block">
-                  <span className="block text-xs text-s-muted mb-1">Why are you editing it? (required)</span>
-                  <input type="text" value={amendReason} onChange={(x) => setAmendReason(x.target.value)} maxLength={500}
+                <Field label="Why are you editing it? (required)">
+                  <Input type="text" value={amendReason} onChange={(x) => setAmendReason(x.target.value)} maxLength={500}
                     placeholder="e.g. Wrong account on the second line" className={inputCls} />
-                </label>
+                </Field>
               </div>
             )}
             {editing && (
               <p className="text-xs text-s-muted">
                 Editing your {editing.status === 'returned' ? 'returned ' : ''}request for {companyName(editing.tenantId)}.
                 {editing.decisionNote && editing.status === 'returned' && <> The CEO said: “{editing.decisionNote}”.</>}
-                {' '}<button type="button" className="underline" onClick={resetForm}>Start a new entry instead</button>
+                {' '}<LinkButton size="md" type="button"  onClick={resetForm}>Start a new entry instead</LinkButton>
               </p>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               {companyIds.length > 1 && (
-                <label className="block sm:col-span-4">
-                  <span className="block text-xs text-s-muted mb-1">Company (whose books)</span>
+                <Field label="Company (whose books)">
                   <Select value={pickedCompany} disabled={!!editing || !!amending} onChange={(e) => { setPickedCompany(e.target.value); setLines([blankLine(), blankLine()]) }} className="s-select py-1.5">
                     <option value="">— pick a company —</option>
                     {companyIds.map((id) => <option key={id} value={id}>{companyName(id)}</option>)}
                   </Select>
-                </label>
+                </Field>
               )}
-              <label className="block">
-                <span className="block text-xs text-s-muted mb-1">Date</span>
-                <input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(e) => setDate(e.target.value)} className={inputCls}
+              <Field label="Date">
+                <Input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(e) => setDate(e.target.value)} className={inputCls}
                   aria-invalid={dateLocked || !date || date < dateBounds().min || date > dateBounds().max ? true : undefined}
                   aria-describedby={dateLocked ? 'journal-date-note' : undefined} />
-                {dateLocked && <span id="journal-date-note" role="alert" className="block text-[11px] text-s-red mt-1">Books are closed through {lockedThrough} — pick a later date.</span>}
-                {dateReopened && <span role={isAdmin ? 'status' : 'alert'} className={`block text-[11px] mt-1 ${isAdmin ? 'text-s-muted' : 'text-s-red'}`}>
+                {dateLocked && <span id="journal-date-note" role="alert" className="block text-xs text-s-red mt-1">Books are closed through {lockedThrough} — pick a later date.</span>}
+                {dateReopened && <span role={isAdmin ? 'status' : 'alert'} className={`block text-xs mt-1 ${isAdmin ? 'text-s-muted' : 'text-s-red'}`}>
                   {isAdmin ? `This month is reopened (through ${reopenedThrough}) — only you can post into it.` : `The CEO reopened the books through ${reopenedThrough} — only the CEO can post there. Pick a later date.`}
                 </span>}
                 {!dateLocked && !dateReopened && reopenedThrough && companyIds.length === 1 && (
-                  <span className="block text-[11px] text-s-muted mt-1">Reopened by the CEO through {reopenedThrough} (CEO only).</span>
+                  <span className="block text-xs text-s-muted mt-1">Reopened by the CEO through {reopenedThrough} (CEO only).</span>
                 )}
-                {!dateLocked && date && (date < dateBounds().min || date > dateBounds().max) && <span role="alert" className="block text-[11px] text-s-red mt-1">Pick a date between {dateBounds().min} and {dateBounds().max}.</span>}
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="block text-xs text-s-muted mb-1">Description</span>
-                <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300}
+                {!dateLocked && date && (date < dateBounds().min || date > dateBounds().max) && <span role="alert" className="block text-xs text-s-red mt-1">Pick a date between {dateBounds().min} and {dateBounds().max}.</span>}
+              </Field>
+              <Field label="Description">
+                <Input type="text" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300}
                   placeholder="e.g. Opening balance — HBL operating account" className={inputCls} />
-              </label>
-              <label className="block">
-                <span className="block text-xs text-s-muted mb-1">Cheque / bank reference (optional)</span>
-                <input type="text" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={60}
+              </Field>
+              <Field label="Cheque / bank reference (optional)">
+                <Input type="text" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={60}
                   placeholder="e.g. cheque 004512" className={inputCls} />
-              </label>
+              </Field>
             </div>
             {lockedThrough && companyIds.length === 1 && (
               <p className={`text-xs ${dateLocked ? 'text-s-red' : 'text-s-muted'}`}>
@@ -433,7 +429,7 @@ export default function JournalEntryPage() {
                           <option value="">— account —</option>
                           {companyAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
                         </Select>
-                        {error && <p className="text-[11px] text-s-red mt-1">{error}</p>}
+                        {error && <p className="text-xs text-s-red mt-1">{error}</p>}
                       </td>
                       <td className="py-1.5 pr-2">
                         <Select aria-label={`Line ${i + 1} brand`} value={line.conceptId}
@@ -443,23 +439,22 @@ export default function JournalEntryPage() {
                         </Select>
                       </td>
                       <td className="py-1.5 pr-2">
-                        <input aria-label={`Line ${i + 1} memo`} type="text" value={line.memo} maxLength={200}
+                        <Input aria-label={`Line ${i + 1} memo`} type="text" value={line.memo} maxLength={200}
                           onChange={(e) => patchLine(line.key, { memo: e.target.value })} className={inputCls} />
                       </td>
                       <td className="py-1.5 pr-2">
-                        <input aria-label={`Line ${i + 1} debit`} inputMode="decimal" value={line.debit} placeholder="0.00"
+                        <Input aria-label={`Line ${i + 1} debit`} inputMode="decimal" value={line.debit} placeholder="0.00"
                           onChange={(e) => patchLine(line.key, { debit: e.target.value, ...(e.target.value && { credit: '' }) })}
                           className={`${inputCls} text-right font-mono`} />
                       </td>
                       <td className="py-1.5 pr-2">
-                        <input aria-label={`Line ${i + 1} credit`} inputMode="decimal" value={line.credit} placeholder="0.00"
+                        <Input aria-label={`Line ${i + 1} credit`} inputMode="decimal" value={line.credit} placeholder="0.00"
                           onChange={(e) => patchLine(line.key, { credit: e.target.value, ...(e.target.value && { debit: '' }) })}
                           className={`${inputCls} text-right font-mono`} />
                       </td>
                       <td className="py-1.5">
-                        <button type="button" onClick={() => setLines((ls) => ls.filter((l) => l.key !== line.key))}
-                          disabled={lines.length <= 2} aria-label={`Remove line ${i + 1}`}
-                          className="s-btn-ghost px-2 py-1 text-xs">Remove</button>
+                        <Button size="sm" variant="ghost" type="button" onClick={() => setLines((ls) => ls.filter((l) => l.key !== line.key))}
+                          disabled={lines.length <= 2} aria-label={`Remove line ${i + 1}`}>Remove</Button>
                       </td>
                     </tr>
                   ))}
@@ -467,7 +462,7 @@ export default function JournalEntryPage() {
                 <tfoot className="border-t border-s-border font-semibold">
                   <tr>
                     <td colSpan={3} className="py-2 pr-2">
-                      <button type="button" onClick={() => setLines((ls) => [...ls, blankLine()])} className="s-btn-secondary text-xs">Add line</button>
+                      <Button size="sm" variant="secondary" type="button" onClick={() => setLines((ls) => [...ls, blankLine()])}>Add line</Button>
                     </td>
                     <td className="py-2 pr-2 text-right font-mono text-s-text">{fmtPkr(debitTotal)}</td>
                     <td className="py-2 pr-2 text-right font-mono text-s-text">{fmtPkr(creditTotal)}</td>
@@ -519,20 +514,19 @@ export default function JournalEntryPage() {
               </ul>
               <div className="flex flex-wrap gap-2">
                 {amending && (
-                  <button type="button" onClick={() => { setAmending(null); setAmendReason(''); setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setFiles([]) }}
-                    className="s-btn-ghost text-sm">Stop editing</button>
+                  <Button variant="ghost" type="button" onClick={() => { setAmending(null); setAmendReason(''); setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setFiles([]) }}>Stop editing</Button>
                 )}
                 {canPost && !editing && (
-                  <button type="button" onClick={() => { setResult(null); post.mutate() }}
-                    disabled={blockers.length > 0 || post.isPending || saveRequest.isPending} className="s-btn-primary text-sm">
+                  <Button type="button" onClick={() => { setResult(null); post.mutate() }}
+                    disabled={blockers.length > 0 || post.isPending || saveRequest.isPending}>
                     {post.isPending ? 'Posting…' : amending ? 'Save changes' : 'Post entry'}
-                  </button>
+                  </Button>
                 )}
                 {!amending && !canPost && (<>
-                <button type="button" onClick={() => { setResult(null); saveRequest.mutate(false) }}
-                  disabled={blockers.length > 0 || saveRequest.isPending || post.isPending} className="s-btn-secondary text-sm">
+                <Button variant="secondary" type="button" onClick={() => { setResult(null); saveRequest.mutate(false) }}
+                  disabled={blockers.length > 0 || saveRequest.isPending || post.isPending}>
                   Save as draft
-                </button>
+                </Button>
                 <button type="button" onClick={() => { setResult(null); saveRequest.mutate(true) }}
                   disabled={blockers.length > 0 || saveRequest.isPending || post.isPending}
                   className={isAdmin && !editing ? 's-btn-secondary text-sm' : 's-btn-primary text-sm'}>
@@ -626,7 +620,7 @@ function ManualEntryRow({ e, isAdmin, canAttach, canRequest, company, onEdit, ce
         <span className="font-mono text-xs text-s-muted w-24 shrink-0">{pktDate(e.entryDate)}</span>
         <span className="flex-1 min-w-0">
           <Link href={`/accounting/ledger?id=${e.id}`} className="block text-sm text-s-text truncate hover:underline">{e.description}</Link>
-          <span className="block text-[11px] text-s-dim truncate">
+          <span className="block text-xs text-s-muted truncate">
             {company && <>{company} · </>}
             {e.lines.map((l) => `${l.account.code} ${l.type === 'debit' ? 'Dr' : 'Cr'}`).join(' · ')}
           </span>
@@ -639,10 +633,10 @@ function ManualEntryRow({ e, isAdmin, canAttach, canRequest, company, onEdit, ce
           <span className="s-badge-muted shrink-0" title="Dated in closed books — only the CEO can edit or cancel it; you can ask for the reversal">Closed books — CEO only</span>
         )}
         {(isAdmin || canRequest) && !isReversal && !e.reversedBy && !open && !asked && (
-          <button type="button" onClick={() => setOpen(true)} className="s-btn-secondary text-xs px-3 py-1 shrink-0">{isAdmin ? 'Cancel (reverse)' : 'Request reversal'}</button>
+          <Button size="sm" variant="secondary" type="button" onClick={() => setOpen(true)} className="shrink-0">{isAdmin ? 'Cancel (reverse)' : 'Request reversal'}</Button>
         )}
         {onEdit && !isReversal && !e.reversedBy && !open && (
-          <button type="button" onClick={() => onEdit(e)} className="s-btn-secondary text-xs px-3 py-1 shrink-0">Edit</button>
+          <Button size="sm" variant="secondary" type="button" onClick={() => onEdit(e)} className="shrink-0">Edit</Button>
         )}
       </div>
       {!isReversal && (
@@ -652,25 +646,23 @@ function ManualEntryRow({ e, isAdmin, canAttach, canRequest, company, onEdit, ce
       )}
       {open && (
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 items-end">
-          <label className="block">
-            <span className="block text-xs text-s-muted mb-1">Reason (required)</span>
-            <input type="text" value={reason} onChange={(x) => setReason(x.target.value)} maxLength={500}
+          <Field label="Reason (required)">
+            <Input type="text" value={reason} onChange={(x) => setReason(x.target.value)} maxLength={500}
               placeholder="e.g. Posted to the wrong bank account" className={inputCls} />
-          </label>
-          <label className="block">
-            <span className="block text-xs text-s-muted mb-1">Reversal date</span>
-            <input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(x) => setDate(x.target.value)} className={inputCls} />
-          </label>
+          </Field>
+          <Field label="Reversal date">
+            <Input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(x) => setDate(x.target.value)} className={inputCls} />
+          </Field>
           {isAdmin ? (
-            <button type="button" onClick={() => reverse.mutate()} disabled={reason.trim().length < 5 || reverse.isPending} className="s-btn-danger text-sm">
+            <Button variant="danger" type="button" onClick={() => reverse.mutate()} disabled={reason.trim().length < 5 || reverse.isPending}>
               {reverse.isPending ? 'Reversing…' : 'Post reversal'}
-            </button>
+            </Button>
           ) : (
-            <button type="button" onClick={() => requestReversal.mutate()} disabled={reason.trim().length < 5 || requestReversal.isPending} className="s-btn-primary text-sm">
+            <Button type="button" onClick={() => requestReversal.mutate()} disabled={reason.trim().length < 5 || requestReversal.isPending}>
               {requestReversal.isPending ? 'Sending…' : 'Send for approval'}
-            </button>
+            </Button>
           )}
-          <button type="button" onClick={() => { setOpen(false); setErr(null) }} className="s-btn-ghost text-sm">Cancel</button>
+          <Button variant="ghost" type="button" onClick={() => { setOpen(false); setErr(null) }}>Cancel</Button>
           {err && <p role="alert" className="sm:col-span-4 text-xs text-s-red">{err}</p>}
         </div>
       )}

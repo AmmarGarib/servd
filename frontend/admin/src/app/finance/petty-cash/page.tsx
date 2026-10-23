@@ -24,12 +24,9 @@ import { TopUpModal, SourcePicker, DEFAULT_SOURCE, sourceBody, sourceReady, type
 import { SpendModal } from './SpendModal'
 import { ReturnModal } from './ReturnModal'
 import { TieOutBanner } from './TieOutBanner'
-import {
-  ErrorBanner, Field, Footer, Modal, fieldCls, pinRefusal, pkr, primaryBtn, sourceLabel, TYPE_LABEL,
-  type Box, type Movement,
-  firstMissing, focusField, useSubmitOnce,
-} from './ui'
+import { Button, ErrorBanner, Field, fieldCls, firstMissing, focusField, Footer, Input, LinkButton, Modal, pinRefusal, pkr, primaryBtn, sourceLabel, Textarea, type Box, type Movement, TYPE_LABEL, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 interface User { id: string; name: string }
 
@@ -80,16 +77,16 @@ export default function PettyCashPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
+        <Link href="/finance" className="text-xs text-s-muted hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-2 flex-wrap">
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-success">Cash</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-success">Cash</p>
             <h1 className="text-2xl font-black text-white/90">Petty cash</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Cash boxes for small spend, on the books as 1011 Petty cash. Say where every top-up came from and what every spend was for — each one is booked as it is saved. Count the boxes monthly; a difference is booked and flagged.
             </p>
           </div>
-          {isKeeper && <button onClick={() => setCreating(true)} className="s-btn-primary px-4 py-2.5">+ New box</button>}
+          {isKeeper && <Button type="submit" onClick={() => setCreating(true)}>+ New box</Button>}
         </div>
       </header>
 
@@ -98,16 +95,13 @@ export default function PettyCashPage() {
         <Link href="/finance/cash-vouchers" className="s-card-hover flex items-center justify-between gap-3 px-5 py-4">
           <div className="min-w-0">
             <p className="font-black text-white/90">Cash requests</p>
-            <p className="text-xs text-white/45 mt-0.5">Cash handed to someone against a signed, approved request is paid from a box here and booked as an advance until the receipts come in.</p>
+            <p className="text-xs text-s-muted mt-0.5">Cash handed to someone against a signed, approved request is paid from a box here and booked as an advance until the receipts come in.</p>
           </div>
           <span className="text-sm font-bold text-primary-ink shrink-0">Open →</span>
         </Link>
         {keeperList.error && !notKeeper && <ErrorBanner error={keeperList.error} />}
         {boxes.length === 0 && !keeperList.isLoading && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">{isKeeper ? 'No petty cash boxes' : 'You hold no petty cash box'}</p>
-            <p className="text-sm text-white/45 mt-1">{isKeeper ? 'Add a box to start tracking small spend with a paper trail.' : 'A manager or finance assigns a box to its custodian.'}</p>
-          </div>
+          <CompactEmptyState message={isKeeper ? 'No petty cash boxes yet.' : 'You hold no petty cash box.'} action={isKeeper ? { label: '+ New box', onClick: () => setCreating(true) } : undefined} />
         )}
         {boxes.map((b) => {
           const siblings = boxes.filter((o) => o.id !== b.id && o.tenantId === b.tenantId)
@@ -122,30 +116,29 @@ export default function PettyCashPage() {
                     <h3 className="text-lg font-black text-white/90 break-words">{b.name}</h3>
                     <span className="s-badge-purple">{pkr(b.floatCents)}</span>
                   </div>
-                  <p className="text-xs text-white/45 mt-1">
+                  <p className="text-xs text-s-muted mt-1">
                     Custodian: {b.custodianName ?? users.find((u) => u.id === b.custodianId)?.name ?? (b.custodianId === me?.id ? 'you' : '—')} · Top-up limit {pkr(b.topUpLimitCents)}
                   </p>
                   {shown.length > 0 && (
                     <div className="mt-3 space-y-2">
                       {shown.map((m) => <MovementRow key={m.id} m={m} />)}
                       {b.movements.length > 4 && (
-                        <button onClick={() => setOpenBox(expanded ? null : b.id)} className="text-[11px] font-bold" style={{ color: 'var(--erp-primary)' }}>
+                        <LinkButton type="button" onClick={() => setOpenBox(expanded ? null : b.id)}  style={{ color: 'var(--erp-primary)' }}>
                           {expanded ? 'Show fewer' : `Show the last ${b.movements.length}`}
-                        </button>
+                        </LinkButton>
                       )}
                     </div>
                   )}
                 </div>
                 <div className="flex flex-wrap sm:flex-col gap-1.5 shrink-0">
-                  <button onClick={() => setSpendFor(b)} className="s-btn-primary px-3 py-1.5 text-xs">Spend</button>
-                  <button onClick={() => setTopUpFor(b)} className="s-btn-secondary px-3 py-1.5 text-xs">Top up</button>
+                  <Button size="sm" type="submit" onClick={() => setSpendFor(b)}>Spend</Button>
+                  <Button size="sm" variant="secondary" type="submit" onClick={() => setTopUpFor(b)}>Top up</Button>
                   {isKeeper && <>
-                    <button onClick={() => setReturnFor(b)} disabled={b.floatCents <= 0} className="s-btn-secondary px-3 py-1.5 text-xs">Return cash</button>
-                    <button onClick={() => setTransferFrom(b)} disabled={siblings.length === 0}
-                      title={siblings.length === 0 ? 'No other box of this company to move cash to' : undefined}
-                      className="s-btn-secondary px-3 py-1.5 text-xs">Transfer</button>
-                    <button onClick={() => setReconcileFor(b)} className="s-btn-secondary px-3 py-1.5 text-xs">Count</button>
-                    <button onClick={() => setEditing(b)} className="s-btn-secondary px-3 py-1.5 text-xs">Edit</button>
+                    <Button size="sm" variant="secondary" type="submit" onClick={() => setReturnFor(b)} disabled={b.floatCents <= 0}>Return cash</Button>
+                    <Button size="sm" variant="secondary" type="submit" onClick={() => setTransferFrom(b)} disabled={siblings.length === 0}
+                      title={siblings.length === 0 ? 'No other box of this company to move cash to' : undefined}>Transfer</Button>
+                    <Button size="sm" variant="secondary" type="submit" onClick={() => setReconcileFor(b)}>Count</Button>
+                    <Button size="sm" variant="secondary" type="submit" onClick={() => setEditing(b)}>Edit</Button>
                   </>}
                 </div>
               </div>
@@ -221,7 +214,7 @@ function CreateBoxModal({ users, onClose, onSaved }: { users: User[]; onClose: (
   })
   return <Modal title="New petty cash box" onClose={onClose} dirty={!save.isPending && (!!name.trim() || !!custodianId)}>
     <form onSubmit={submit} className="space-y-3" noValidate>
-    <Field label="Name *" error={shown('pb-name')}><input id="pb-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Head office — Jamil sb" className={fieldCls} autoFocus /></Field>
+    <Field label="Name *" error={shown('pb-name')}><Input id="pb-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Head office — Jamil sb" className={fieldCls} autoFocus /></Field>
     <Field label="Custodian *" error={shown('pb-custodian')}>
       <Select id="pb-custodian" value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
         <option value="">— pick a user —</option>
@@ -244,12 +237,12 @@ function CreateBoxModal({ users, onClose, onSaved }: { users: User[]; onClose: (
     )}
     {overLimit && (
       <Field label="Manager PIN *" error={shown('pb-pin')}>
-        <input id="pb-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Opening float above the limit" className={fieldCls} />
+        <Input id="pb-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Opening float above the limit" className={fieldCls} />
       </Field>
     )}
-    <p className="text-[10px] text-white/30">The opening float is the box&apos;s first top-up and is booked from the source you pick. To fill a new box from a till drawer, create it empty and top it up.</p>
+    <p className="text-xs text-s-muted">The opening float is the box&apos;s first top-up and is booked from the source you pick. To fill a new box from a till drawer, create it empty and top it up.</p>
     {save.error && <ErrorBanner error={pinRefusal(save.error) ?? save.error} />}
-    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Create box'}</button>} />
+    <Footer onCancel={onClose} primary={<Button type="submit" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Create box'}</Button>} />
     </form>
   </Modal>
 }
@@ -290,7 +283,7 @@ function EditBoxModal({ box, users, onClose, onSaved }: { box: Box; users: User[
   })
   return <Modal title={`Edit ${box.name}`} onClose={onClose} dirty={!save.isPending && !unchanged}>
     <form onSubmit={submit} className="space-y-3" noValidate>
-    <Field label="Name *" error={shown('eb-name')}><input id="eb-name" value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
+    <Field label="Name *" error={shown('eb-name')}><Input id="eb-name" value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
     <Field label="Custodian *">
       <Select id="eb-custodian" value={custodianId} onChange={(e) => setCustodianId(e.target.value)} className={fieldCls}>
         {options.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -298,15 +291,15 @@ function EditBoxModal({ box, users, onClose, onSaved }: { box: Box; users: User[
     </Field>
     <Field label="Top-up limit (PKR)">
       <MoneyInput value={topUpLimitCents} onChange={setTopUpLimitCents} className={fieldCls} ariaLabel="Top-up limit in rupees" />
-      <p className="text-[10px] text-white/30 mt-1">Now {pkr(box.topUpLimitCents)}. A top-up above the limit needs a manager PIN.</p>
+      <p className="text-xs text-s-muted mt-1">Now {pkr(box.topUpLimitCents)}. A top-up above the limit needs a manager PIN.</p>
     </Field>
     {raising && (
       <Field label="Manager PIN *" error={shown('eb-pin')}>
-        <input id="eb-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Raising the limit needs a manager" className={fieldCls} />
+        <Input id="eb-pin" type="password" inputMode="numeric" value={managerOverridePin} onChange={(e) => setManagerOverridePin(e.target.value)} placeholder="Raising the limit needs a manager" className={fieldCls} />
       </Field>
     )}
     {save.error && <ErrorBanner error={pinRefusal(save.error) ?? save.error} />}
-    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Save'}</button>} />
+    <Footer onCancel={onClose} primary={<Button type="submit" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</Button>} />
     </form>
   </Modal>
 }
@@ -345,15 +338,15 @@ function TransferModal({ from, boxes, onClose, onSaved }: { from: Box; boxes: Bo
     </Field>
     <Field label="Amount (PKR) *" error={shown('tr-amount')}>
       <MoneyInput id="tr-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
-      <p className="text-[10px] mt-1" style={{ color: over ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
+      <p className="text-xs mt-1" style={{ color: over ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
         {over ? `More than the ${pkr(from.floatCents)} in ${from.name}` : `In ${from.name} now: ${pkr(from.floatCents)}`}
       </p>
     </Field>
     <Field label="Reason *" error={shown('tr-reason')}>
-      <input id="tr-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={160} placeholder="Weekend float for the kitchen box" className={fieldCls} />
+      <Input id="tr-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={160} placeholder="Weekend float for the kitchen box" className={fieldCls} />
     </Field>
     {save.error && <ErrorBanner error={save.error} />}
-    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Moving…' : 'Move cash'}</button>} />
+    <Footer onCancel={onClose} primary={<Button type="submit" disabled={save.isPending}>{save.isPending ? 'Moving…' : 'Move cash'}</Button>} />
     </form>
   </Modal>
 }
@@ -372,7 +365,7 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
   return <Modal title={`Reconcile ${box.name}`} onClose={onClose} dirty={!save.isPending && (counted !== box.floatCents || !!notes.trim())}>
     <form onSubmit={submit} className="space-y-3">
     <div className="rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-      <p className="text-xs text-white/55">System float</p>
+      <p className="text-xs text-s-muted">System float</p>
       <p className="text-2xl font-black text-white/90">{pkr(box.floatCents)}</p>
     </div>
     <Field label="Physical count (PKR) *">
@@ -384,9 +377,9 @@ function ReconcileModal({ box, onClose, onSaved }: { box: Box; onClose: () => vo
         {Math.abs(variance) >= 20000 && ' — will flag'}
       </div>
     )}
-    <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Anything noteworthy" className={fieldCls} /></Field>
+    <Field label="Notes"><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Anything noteworthy" className={fieldCls} /></Field>
     {save.error && <ErrorBanner error={save.error} />}
-    <Footer onCancel={onClose} primary={<button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Save count'}</button>} />
+    <Footer onCancel={onClose} primary={<Button type="submit" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save count'}</Button>} />
     </form>
   </Modal>
 }

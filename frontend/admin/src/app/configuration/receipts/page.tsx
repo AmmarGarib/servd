@@ -40,7 +40,7 @@ export default function ReceiptsPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
-        <h1 className="text-2xl font-black text-white/90 mt-2">🧾 Receipts &amp; cash drawer</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-2">Receipts &amp; cash drawer</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Receipt customisation, network printer config, drawer kick rules, and cash reconciliation tolerances.
         </p>

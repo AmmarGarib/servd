@@ -1,4 +1,5 @@
 'use client'
+import { ArrowLeft } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
@@ -51,7 +52,7 @@ export default function ComponentMatrixPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-6 py-4 border-b" style={{ borderColor: 'rgb(var(--fg-rgb) / 0.05)' }}>
-        <Link href="/par-sheet" className="text-xs text-white/40 hover:text-white/70">← Par sheet</Link>
+        <Link href="/par-sheet" className="inline-flex min-h-11 items-center gap-1.5 text-xs text-white/40 hover:text-white/70"><ArrowLeft size={14} aria-hidden="true" />Par sheet</Link>
         <h1 className="text-2xl font-black text-white/95 mt-1">Component matrix</h1>
         <p className="text-xs text-white/45 mt-0.5 max-w-2xl">
           Read-only planning reference: what each base ingredient can become (hero, supporting, trim and waste uses),
@@ -77,7 +78,7 @@ export default function ComponentMatrixPage() {
               <tbody>
                 {comps.map((c) => (
                   <tr key={c.id} style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.03)' }}>
-                    <td className="px-4 py-2 w-28 text-[10px] font-bold uppercase tracking-wider text-white/50">{TYPE_LABEL[c.type]}</td>
+                    <td className="px-4 py-2 w-28 text-xs font-bold uppercase tracking-wider text-white/50">{TYPE_LABEL[c.type]}</td>
                     <td className="px-3 py-2">
                       <p className="font-semibold text-white/90">{c.name}</p>
                       {c.description && <p className="text-xs text-white/45">{c.description}</p>}

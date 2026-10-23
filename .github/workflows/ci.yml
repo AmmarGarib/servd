@@ -1,22 +1,38 @@
 name: CI
 
-# Quality gate on every PR (and pushes to feature branches) — before anything
-# reaches main + the build-and-push deploy. Backend: typecheck + unit tests.
-# Frontends: next build IS the typecheck. Docker builds are intentionally NOT
-# run here (they happen on merge in build-and-push.yml) to keep PR feedback fast.
+# Quality gate on every push — main included (main is the branch that
+# deploys; the owner works straight on it) — and on every PR. Backend:
+# typecheck + the vitest suite against real Postgres + Redis, plus the suite's
+# company-lock run (TEST_RLS=1, row-level security on, plain DB role).
+# Frontends: next build IS the typecheck. Docker builds are NOT run here: they
+# happen in build-and-push.yml, a separate workflow that this one never
+# blocks or waits for (a red CI on main is the signal to roll back / fix).
 
 on:
   pull_request:
   push:
-    branches-ignore: [main]
+    branches: ['**']
+  workflow_dispatch:
 
-# Cancel superseded runs on the same ref to save minutes.
+# Cancel superseded runs on feature refs to save minutes; on main every
+# commit keeps its own result (it may already be deploying).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# The backend jobs' shared test environment. DATABASE_URL must contain "test"
+# (tests/setup.ts refuses anything else); each file rebuilds the schema.
+env:
+  NODE_ENV: test
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/servd_test
+  REDIS_URL: redis://localhost:6379/0
+  JWT_SECRET: ci-only-jwt-secret-not-used-anywhere-real-0123456789
+  JWT_REFRESH_SECRET: ci-only-refresh-secret-not-used-anywhere-real-0123456789
+  # base64 of 32 bytes, CI only (lib/secretBox.ts tests need a key).
+  SERVD_SECRET_KEY: Y2ktb25seS1zZWNyZXQta2V5LTMyLWJ5dGVzLWxvbmc=
 
 jobs:
-  backend:
+  backend-typecheck:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,10 +47,89 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npx tsc -p tsconfig.json --noEmit
-      - run: npx vitest run
+
+  backend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:16
         env:
-          # Tests should use their own test DB/mocks; surface missing config loudly.
-          NODE_ENV: test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: servd_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      # Serial inside a shard (vitest.config.ts: one fork, files share the DB);
+      # the four shards each have their own Postgres + Redis.
+      - run: npx vitest run --shard=${{ matrix.shard }}/4
+
+  # The company lock ON: the migrations' row-level security replayed onto the
+  # test DB, the app connected as a plain role with RLS_ENFORCE=1
+  # (tests/rls/rlsMode.ts). Runs every test file except those listed, with
+  # the reason, in tests/rls/exclude.txt; tests/rls/rlsMode.test.ts fails the
+  # job if the lock is not really on.
+  backend-rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: servd_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run test:rls -- --shard=${{ matrix.shard }}/4
 
   storefront:
     runs-on: ubuntu-latest

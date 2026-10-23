@@ -22,7 +22,7 @@ import { PrintPortal, VoucherSheet } from './VoucherPrint'
 import { VoucherForm } from './VoucherForm'
 import { SettlePanel, Thumbs } from './SettlePanel'
 import { DocumentsPanel, ResolveByJournalPanel, VerifyPanel } from './DocsPanel'
-import { ErrorBanner, StatusBadge, dangerOutlineBtn, fieldCls, primaryBtn, secondaryBtn } from './ui'
+import { Button, CheckLabel, dangerOutlineBtn, ErrorBanner, fieldCls, FieldLabel, primaryBtn, secondaryBtn, StatusBadge, Textarea } from './ui'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
@@ -107,10 +107,10 @@ export function VoucherDetail({ id }: { id: string }) {
       <PrintPortal v={v} companyName={companyName} categoryLabel={categoryLabel} />
 
       <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/finance/cash-vouchers" className="text-xs text-white/40 hover:text-white/70">← Cash vouchers</Link>
+        <Link href="/finance/cash-vouchers" className="text-xs text-s-muted hover:text-white/70">← Cash vouchers</Link>
         <div className="flex items-start justify-between gap-4 mt-2 flex-wrap">
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-success">{expense ? 'Payee voucher' : 'Cash request'}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-success">{expense ? 'Payee voucher' : 'Cash request'}</p>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-black text-white/90 mono">{v.number}</h1>
               <StatusBadge stage={stage} />
@@ -137,7 +137,7 @@ export function VoucherDetail({ id }: { id: string }) {
               {(v.returnCount ?? 0) > 1 ? ` (${v.returnCount} times)` : ''}
             </p>
             {v.returnNote && <p className="text-sm text-white/80 mt-1 whitespace-pre-wrap">{v.returnNote}</p>}
-            <p className="text-xs text-white/55 mt-1">Edit the voucher to fix it, then resubmit.</p>
+            <p className="text-xs text-s-muted mt-1">Edit the voucher to fix it, then resubmit.</p>
           </div>
         )}
 
@@ -147,7 +147,7 @@ export function VoucherDetail({ id }: { id: string }) {
               Finance sent it back{v.returnedByName ? ` (${v.returnedByName})` : ''}{v.returnedAt ? ` · ${fmtDateTime(v.returnedAt)}` : ''}
             </p>
             {v.sentBackNote && <p className="text-sm text-white/80 mt-1 whitespace-pre-wrap">{v.sentBackNote}</p>}
-            <p className="text-xs text-white/55 mt-1">Attach the missing or corrected documents below — the voucher closes again once they are in.</p>
+            <p className="text-xs text-s-muted mt-1">Attach the missing or corrected documents below — the voucher closes again once they are in.</p>
           </div>
         )}
         {v.closed && (
@@ -172,59 +172,58 @@ export function VoucherDetail({ id }: { id: string }) {
           <div className="flex flex-wrap items-center gap-2">
             {v.canFinanceApprove && <span className="text-xs font-bold text-white/60">Finance approval is below.</span>}
             {v.canApprove && (
-              <button disabled={act.isPending} className={primaryBtn}
+              <Button type="submit" disabled={act.isPending} 
                 onClick={async () => { if (await confirm({ title: `Approve ${v.number}?`, body: `PKR ${formatPkr(v.amountCents)} for ${holder}. The cashier may then pay it.`, confirmLabel: 'Approve' })) run('approve', { amountCents: v.amountCents }) }}>
                 Approve (CEO)
-              </button>
+              </Button>
             )}
             {v.status === 'returned' && (v.canResubmit ?? v.canEdit) && (
-              <button disabled={act.isPending} className={primaryBtn} onClick={() => run('resubmit')}>Resubmit</button>
+              <Button type="submit" disabled={act.isPending}  onClick={() => run('resubmit')}>Resubmit</Button>
             )}
             {v.canSendBack && (
-              <button onClick={() => { act.reset(); setNoteFor(noteFor === 'send-back' ? null : 'send-back') }} disabled={act.isPending} className={secondaryBtn}>
+              <Button variant="secondary" type="submit" onClick={() => { act.reset(); setNoteFor(noteFor === 'send-back' ? null : 'send-back') }} disabled={act.isPending}>
                 Send back for documents
-              </button>
+              </Button>
             )}
             {v.canReturn && (
-              <button onClick={() => { act.reset(); setNoteFor(noteFor === 'return' ? null : 'return') }} disabled={act.isPending} className={secondaryBtn}>Return for correction</button>
+              <Button variant="secondary" type="submit" onClick={() => { act.reset(); setNoteFor(noteFor === 'return' ? null : 'return') }} disabled={act.isPending}>Return for correction</Button>
             )}
             {v.canReject && (
-              <button onClick={() => { act.reset(); setNoteFor(noteFor === 'reject' ? null : 'reject') }} disabled={act.isPending} className={dangerOutlineBtn}>Reject</button>
+              <Button variant="danger" type="submit" onClick={() => { act.reset(); setNoteFor(noteFor === 'reject' ? null : 'reject') }} disabled={act.isPending}>Reject</Button>
             )}
             {(v.canEdit || v.canEditCategory) && (
-              <button onClick={() => setEditing(true)} className={secondaryBtn}>{v.canEdit ? 'Edit' : 'Change category'}</button>
+              <Button variant="secondary" type="submit" onClick={() => setEditing(true)}>{v.canEdit ? 'Edit' : 'Change category'}</Button>
             )}
             {(v.canExport ?? true) && (
               <>
-                <button onClick={() => window.print()} className={secondaryBtn}>Print</button>
-                <button onClick={() => void exportAs('pdf')} className={secondaryBtn}>Download PDF</button>
-                <button onClick={() => void exportAs('xlsx')} className={secondaryBtn}>Download Excel</button>
+                <Button variant="secondary" type="submit" onClick={() => window.print()}>Print</Button>
+                <Button variant="secondary" type="submit" onClick={() => void exportAs('pdf')}>Download PDF</Button>
+                <Button variant="secondary" type="submit" onClick={() => void exportAs('xlsx')}>Download Excel</Button>
               </>
             )}
             {v.canCancel && (
-              <button onClick={() => { act.reset(); setNoteFor(noteFor === 'cancel' ? null : 'cancel') }} disabled={act.isPending}
-                className={`${dangerOutlineBtn} sm:ml-auto`}>
+              <Button variant="danger" type="submit" onClick={() => { act.reset(); setNoteFor(noteFor === 'cancel' ? null : 'cancel') }} disabled={act.isPending}
+                className="sm:ml-auto">
                 Cancel voucher
-              </button>
+              </Button>
             )}
           </div>
 
-          {waitingFinance && !v.canFinanceApprove && <p className="text-xs text-white/50">Waiting for finance to approve it.</p>}
-          {waitingCeo && !v.canApprove && <p className="text-xs text-white/50">Approved by finance{v.financeApprovedByName ? ` (${v.financeApprovedByName})` : ''} — waiting for the CEO. Do not pay until it is approved.</p>}
-          {v.status === 'approved' && !v.canPay && <p className="text-xs text-white/50">Approved — the cashier who holds the cash box pays it.</p>}
-          {!approved && <p className="text-xs text-white/40">Printed or downloaded before the CEO approves, the voucher is stamped NOT APPROVED — for reference only.</p>}
+          {waitingFinance && !v.canFinanceApprove && <p className="text-xs text-s-muted">Waiting for finance to approve it.</p>}
+          {waitingCeo && !v.canApprove && <p className="text-xs text-s-muted">Approved by finance{v.financeApprovedByName ? ` (${v.financeApprovedByName})` : ''} — waiting for the CEO. Do not pay until it is approved.</p>}
+          {v.status === 'approved' && !v.canPay && <p className="text-xs text-s-muted">Approved — the cashier who holds the cash box pays it.</p>}
+          {!approved && <p className="text-xs text-s-muted">Printed or downloaded before the CEO approves, the voucher is stamped NOT APPROVED — for reference only.</p>}
 
           {noteFor && (
             <div className="rounded-xl p-3" style={{ background: 'var(--elevated)' }}>
-              <label className="text-[11px] font-bold text-white/60">{NOTE_ACTS[noteFor]}</label>
+              <FieldLabel>{NOTE_ACTS[noteFor]}</FieldLabel>
               <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} autoFocus
                 className="mt-1 w-full rounded-lg px-2 py-1.5 text-sm"
                 style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }} />
               <div className="mt-2 flex gap-2">
-                <button disabled={act.isPending || note.trim().length < 3} onClick={() => run(noteFor, { note: note.trim() })}
-                  className="rounded-lg px-3 py-1.5 text-xs font-black disabled:opacity-50 bg-s-red text-bone">
+                <Button variant="danger" size="sm" type="submit" disabled={act.isPending || note.trim().length < 3} onClick={() => run(noteFor, { note: note.trim() })}>
                   {act.isPending ? 'Saving…' : NOTE_BTN[noteFor]}
-                </button>
+                </Button>
                 <button onClick={() => { setNoteFor(null); setNote('') }} className="text-xs font-bold text-white/50 px-2">Keep it</button>
               </div>
             </div>
@@ -238,11 +237,11 @@ export function VoucherDetail({ id }: { id: string }) {
         {v.canConfirmReceived && (
           <div className="rounded-2xl p-5 space-y-2" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
             <p className="text-sm font-black text-white/90">Did you receive the cash?</p>
-            <p className="text-xs text-white/55">Confirming puts your name in the Received by box. Finance can verify the documents after that.</p>
-            <button disabled={act.isPending} className={primaryBtn}
+            <p className="text-xs text-s-muted">Confirming puts your name in the Received by box. Finance can verify the documents after that.</p>
+            <Button type="submit" disabled={act.isPending} 
               onClick={async () => { if (await confirm({ title: `Cash received for ${v.number}?`, body: `Confirm you received PKR ${formatPkr(v.amountCents)} in cash.`, confirmLabel: 'Cash received' })) run('confirm-received') }}>
               {act.isPending ? 'Saving…' : 'Cash received'}
-            </button>
+            </Button>
           </div>
         )}
         {v.status === 'disbursed' && newFlow && v.kind !== 'expense' && !v.cashReceivedAt && !v.canConfirmReceived && (
@@ -253,17 +252,17 @@ export function VoucherDetail({ id }: { id: string }) {
         {v.canConfirmReceivedOnBehalf && (
           <div className="rounded-2xl p-5 space-y-2" style={card}>
             <p className="text-sm font-black text-white/90">Record cash received for {v.receiverName ?? holder}</p>
-            <p className="text-xs text-white/55">Use this only when the holder cannot confirm (for example they have left). Your name goes in the Received by box and the reason is kept in the history.</p>
-            <textarea value={onBehalfReason} onChange={(e) => setOnBehalfReason(e.target.value)} rows={2} maxLength={500}
+            <p className="text-xs text-s-muted">Use this only when the holder cannot confirm (for example they have left). Your name goes in the Received by box and the reason is kept in the history.</p>
+            <Textarea value={onBehalfReason} onChange={(e) => setOnBehalfReason(e.target.value)} rows={2} maxLength={500}
               placeholder="Why the holder cannot confirm (at least 10 characters)" className={fieldCls} />
-            <button disabled={act.isPending || onBehalfReason.trim().length < 10} className={secondaryBtn}
+            <Button variant="secondary" type="submit" disabled={act.isPending || onBehalfReason.trim().length < 10} 
               onClick={async () => {
                 if (await confirm({ title: `Record cash received for ${v.number}?`, body: `This records that PKR ${formatPkr(v.amountCents)} reached the holder, on their behalf.`, confirmLabel: 'Record it' })) {
                   run('confirm-received-on-behalf', { reason: onBehalfReason.trim() })
                 }
               }}>
               {act.isPending ? 'Saving…' : 'Record cash received on their behalf'}
-            </button>
+            </Button>
           </div>
         )}
         {v.canNameHolder && <NameHolder v={v} onDone={refresh} />}
@@ -350,7 +349,7 @@ export function VoucherDetail({ id }: { id: string }) {
         <div className="rounded-2xl p-4" style={card}>
           <div className="flex items-center justify-between gap-3 mb-3">
             <p className="text-sm font-black text-white/80">The voucher as it prints</p>
-            <p className="text-[11px] text-white/40">A4</p>
+            <p className="text-xs text-s-muted">A4</p>
           </div>
           <div className="overflow-x-auto pb-1">
             <VoucherSheet v={v} companyName={companyName} categoryLabel={categoryLabel} />
@@ -371,7 +370,7 @@ export function VoucherDetail({ id }: { id: string }) {
 function Fact({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
   return (
     <div className={wide ? 'sm:col-span-2' : undefined}>
-      <dt className="text-[11px] uppercase tracking-wider text-white/40">{label}</dt>
+      <dt className="text-xs uppercase tracking-wider text-white/40">{label}</dt>
       <dd className="text-white/85 font-semibold break-words">{value}</dd>
     </div>
   )
@@ -416,8 +415,8 @@ function Steps({ v }: { v: CashVoucher }) {
             <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${s.state === 'done' ? 'bg-accent' : s.state === 'bad' ? 'bg-s-red' : 'border border-white/25'}`} />
             <span className={`text-xs font-black ${s.state === 'done' ? 'text-success' : s.state === 'bad' ? 'text-s-red' : 'text-white/45'}`}>{s.title}</span>
           </div>
-          <p className="text-[11px] text-white/60 mt-1 truncate">{s.state === 'todo' ? 'Waiting' : (s.who ?? '—')}</p>
-          {s.state !== 'todo' && s.when && <p className="text-[10px] text-white/40">{fmtDateTime(s.when)}</p>}
+          <p className="text-xs text-white/60 mt-1 truncate">{s.state === 'todo' ? 'Waiting' : (s.who ?? '—')}</p>
+          {s.state !== 'todo' && s.when && <p className="text-xs text-s-muted">{fmtDateTime(s.when)}</p>}
         </li>
       ))}
     </ol>
@@ -446,10 +445,10 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Finance approval</p>
-      <p className="text-xs text-white/55">Check the expense account and set a discount if there is one, then send it to the CEO.</p>
+      <p className="text-xs text-s-muted">Check the expense account and set a discount if there is one, then send it to the CEO.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label htmlFor="fa-category" className="text-xs text-white/55">{asset ? 'Booked to' : 'Expense account'}</label>
+          <FieldLabel htmlFor="fa-category">{asset ? 'Booked to' : 'Expense account'}</FieldLabel>
           <div className="mt-1">
             {asset ? (
               <p id="fa-category" className="text-sm text-white/80">{accountWords(v, categories)} — change it with Edit.</p>
@@ -461,16 +460,16 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
           </div>
         </div>
         <div>
-          <label htmlFor="fa-discount" className="text-xs text-white/55">Discount (PKR)</label>
+          <FieldLabel htmlFor="fa-discount">Discount (PKR)</FieldLabel>
           <div className="mt-1"><MoneyInput id="fa-discount" value={discountCents} onChange={setDiscountCents} className={fieldCls} ariaLabel="Discount in rupees" /></div>
-          <p className="text-[11px] text-white/45 mt-1">Total to pay PKR {formatPkr(Math.max(0, gross - discountCents))}</p>
+          <p className="text-xs text-s-muted mt-1">Total to pay PKR {formatPkr(Math.max(0, gross - discountCents))}</p>
         </div>
       </div>
       {approve.error && <ErrorBanner message={errorWords(approve.error)} />}
-      <button disabled={!ok || approve.isPending} className={primaryBtn}
+      <Button type="submit" disabled={!ok || approve.isPending} 
         onClick={() => { approve.reset(); approve.mutate() }}>
         {approve.isPending ? 'Approving…' : changed ? 'Save changes & approve' : 'Approve and send to the CEO'}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -497,8 +496,8 @@ function History({ id }: { id: string }) {
   return (
     <div className="rounded-2xl p-5" style={card}>
       <p className="text-sm font-black text-white/80 mb-2">History</p>
-      {isLoading && <p className="text-xs text-white/40">Loading…</p>}
-      {!isLoading && rows.length === 0 && <p className="text-xs text-white/40">Nothing recorded yet.</p>}
+      {isLoading && <p className="text-xs text-s-muted">Loading…</p>}
+      {!isLoading && rows.length === 0 && <p className="text-xs text-s-muted">Nothing recorded yet.</p>}
       <ol className="space-y-1.5">
         {rows.map((r, i) => (
           <li key={r.id ?? i} className="text-xs flex flex-wrap gap-x-3">
@@ -572,7 +571,7 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   return (
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Pay {holder}</p>
-      <p className="text-xs text-white/55">
+      <p className="text-xs text-s-muted">
         Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. {v.assetClassId
           ? <>Paying books it to CapEx advances (1340) now, in one entry against where the money comes from (a cash box,
             the cash on hand or a bank), and asks the CEO to approve the equipment onto the fixed-asset register.</>
@@ -622,18 +621,18 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
             Equipment goes on the register through CapEx (Finance → Project tracker → Quick buy), not a cash voucher. If this
             is not equipment, say why — it is booked to the voucher&rsquo;s expense account and flagged for the CEO.
           </p>
-          <label className="flex items-center gap-2 text-xs font-bold text-white/80">
+          <CheckLabel className="flex items-center gap-2 text-xs font-bold text-white/80">
             <input type="checkbox" checked={notEquipment} onChange={(e) => setNotEquipment(e.target.checked)} />
             This is not equipment
-          </label>
+          </CheckLabel>
           {notEquipment && (
-            <textarea value={notEquipmentReason} onChange={(e) => setNotEquipmentReason(e.target.value)} rows={2} maxLength={500}
+            <Textarea value={notEquipmentReason} onChange={(e) => setNotEquipmentReason(e.target.value)} rows={2} maxLength={500}
               className={fieldCls} placeholder="Why this is not equipment (at least 10 characters)" aria-label="Why this is not equipment" />
           )}
         </div>
       )}
       {!credit && <PaymentClassificationFields value={cls} onChange={setCls} compact />}
-      <button disabled={pay.isPending || !chosen || overrideIncomplete || !!clsError} title={clsError ?? undefined} className={primaryBtn}
+      <Button type="submit" disabled={pay.isPending || !chosen || overrideIncomplete || !!clsError} title={clsError ?? undefined} 
         onClick={async () => {
           const what = v.assetClassId ? 'booked to CapEx advances (the CEO then approves the capitalisation)' : 'booked as expense now'
           const ok = await confirm(credit
@@ -642,7 +641,7 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
           if (ok) { pay.reset(); pay.mutate() }
         }}>
         {pay.isPending ? 'Paying…' : credit ? 'Book on credit' : `Cash handed to ${holder}`}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -665,7 +664,7 @@ function NameHolder({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
         {staff.filter((u) => !u.tenantId || u.tenantId === v.tenantId).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
       </Select>
       {save.error && <ErrorBanner message={errorWords(save.error)} />}
-      <button disabled={!who || save.isPending} onClick={() => save.mutate()} className={primaryBtn}>Name the holder</button>
+      <Button type="submit" disabled={!who || save.isPending} onClick={() => save.mutate()}>Name the holder</Button>
     </div>
   )
 }

@@ -31,7 +31,7 @@ import { amountInWords, formatPkr } from './amountInWords'
 import {
   CV_BASE, CV_ROOT, dateInput, errorWords, todayKarachi, useCategories, usePettyBoxes, useRaiseOptions, type CashVoucher,
 } from './data'
-import { ErrorBanner, Field, Footer, Modal, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce } from './ui'
+import { Button, dateBounds, ErrorBanner, Field, fieldCls, firstMissing, focusField, Footer, Input, Modal, primaryBtn, Textarea, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
 import {
   EMPTY_PAYMENT_CLASSIFICATION, PaymentClassificationFields, paymentClassificationBody, paymentClassificationError,
@@ -161,7 +161,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
   return (
     <Modal title={title} onClose={onClose} wide dirty={!save.isPending && (purpose !== (voucher?.purpose ?? '') || grossCents !== startGross || (expense && payeeName !== (voucher?.payeeName ?? '')))}>
       <form onSubmit={submit} className="space-y-3" noValidate>
-      <p className="text-xs text-white/50">
+      <p className="text-xs text-s-muted">
         {expense
           ? (sendTo === 'ceo' || editing
             ? 'Finance prepares it, so it goes straight to the CEO for approval. After approval the cashier pays the payee.'
@@ -173,7 +173,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
 
       {expense && (
         <Field label="Payee *" hint="The vendor or person being paid." error={shown('cv-payee')}>
-          <input id="cv-payee" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} maxLength={120} className={fieldCls} autoFocus />
+          <Input id="cv-payee" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} maxLength={120} className={fieldCls} autoFocus />
         </Field>
       )}
 
@@ -182,7 +182,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
           <MoneyInput id="cv-amount" value={grossCents} onChange={setGrossCents} className={fieldCls} autoFocus={!expense} ariaLabel="Amount in rupees" />
         </Field>
         <Field label={expense ? 'Date *' : 'Needed on *'} error={shown('cv-date')}>
-          <input id="cv-date" type="date" min={!expense && !editing ? todayKarachi() : bounds.min} max={bounds.max} value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className={fieldCls} />
+          <Input id="cv-date" type="date" min={!expense && !editing ? todayKarachi() : bounds.min} max={bounds.max} value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className={fieldCls} />
         </Field>
       </div>
 
@@ -197,11 +197,11 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
         </div>
       )}
       {totalCents > 0 && (
-        <p className="-mt-1 text-[11px] text-white/55">PKR {formatPkr(totalCents)} — {amountInWords(totalCents)}</p>
+        <p className="-mt-1 text-xs text-s-muted">PKR {formatPkr(totalCents)} — {amountInWords(totalCents)}</p>
       )}
 
       <Field label={expense ? 'Particulars *' : 'What is it for? *'} error={shown('cv-purpose')}>
-        <textarea id="cv-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} maxLength={500}
+        <Textarea id="cv-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} maxLength={500}
           placeholder={expense ? 'e.g. Generator repair — invoice 1042' : 'e.g. Cleaning supplies for the outlet'} className={fieldCls} />
       </Field>
 
@@ -228,7 +228,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
         </Select>
       </Field>
       {assetClassId && (
-        <p className="-mt-1 text-[11px] text-white/55">
+        <p className="-mt-1 text-xs text-s-muted">
           {assetClass?.label ?? 'Equipment'}: booked to CapEx advances at payment; the CEO approves the capitalisation, then it depreciates monthly.
         </p>
       )}
@@ -266,12 +266,12 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
             {(opts?.suppliers ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </Select>
           <div className="mt-2 flex gap-2">
-            <input value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} maxLength={120} placeholder="New supplier name"
+            <Input value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} maxLength={120} placeholder="New supplier name"
               aria-label="New supplier name" className={fieldCls} />
-            <button type="button" disabled={!newSupplier.trim() || addSupplier.isPending} className={primaryBtn}
+            <Button type="button" disabled={!newSupplier.trim() || addSupplier.isPending} 
               onClick={() => { addSupplier.reset(); addSupplier.mutate() }}>
               {addSupplier.isPending ? 'Adding…' : 'Add supplier'}
-            </button>
+            </Button>
           </div>
           {addSupplier.error && <ErrorBanner message={errorWords(addSupplier.error)} />}
         </Field>
@@ -296,12 +296,12 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
 
       {save.error && <ErrorBanner message={errorWords(save.error)} />}
       <Footer onCancel={onClose} primary={
-        <button type="submit" disabled={save.isPending} className={primaryBtn}>
+        <Button type="submit" disabled={save.isPending}>
           {save.isPending ? 'Saving…'
             : editing ? 'Save'
               : expense ? (sendTo === 'ceo' ? 'Send to the CEO' : 'Send to finance')
                 : 'Send to finance'}
-        </button>
+        </Button>
       } />
       </form>
     </Modal>

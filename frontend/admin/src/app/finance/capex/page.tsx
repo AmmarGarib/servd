@@ -31,28 +31,31 @@ import { PendingFilesPicker } from '../../../components/files/PendingFilesPicker
 import { uploadRecordFiles, type PickedFile } from '../../../components/files/recordFiles'
 import { NumberField } from '../../../components/ui/NumberField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
-import {
-  Dialog, ErrorBanner as SharedErrorBanner, Field, Hint, SectionCard, StickyActionBar, StickySummary,
-  dangerBtn, dateBounds, fieldCls, firstMissing, focusField, primaryBtn, useSubmitOnce,
-} from '../../../components/finance/ui'
+import { Button, CheckLabel, dangerBtn, dateBounds, Dialog, ErrorBanner as SharedErrorBanner, Field, fieldCls, FieldLabel, firstMissing, focusField, Hint, Input, LinkButton, primaryBtn, SectionCard, StickyActionBar, StickySummary, Textarea, useSubmitOnce } from '../../../components/finance/ui'
+import { FIcon, categoryIcon, type FIconName } from '../../../components/finance/ui/icons'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 // The shapes of GET /finance/capex live in components/fixedAssets/capexTypes.ts.
 
 // Scope catalog — keeps the UI legible. Operator can add lines under any
-// scope; this just orders + emojis them so the page reads naturally.
+// scope; this just orders + icons them so the page reads naturally.
+const SCOPE_ICON: Record<string, FIconName> = {
+  BOH: 'chef', FOH: 'seat', AG: 'sparkles', Equipment: 'tools', MEP: 'bolt', Civil: 'civil', Tech: 'laptop',
+  Branding: 'palette', Permits: 'doc', SoftCosts: 'ruler', Other: 'box', __orphan__: 'box',
+}
 const SCOPES = [
-  { key: 'BOH',        emoji: '🍳', label: 'Back of House',  hint: 'Kitchen equipment, cooking line, walk-in, exhaust' },
-  { key: 'FOH',        emoji: '🪑', label: 'Front of House', hint: 'Dining furniture, bar, host stand, seating' },
-  { key: 'AG',         emoji: '✨', label: 'AG / Finishing', hint: 'Flooring, paint, lighting, decor, ceiling' },
-  { key: 'Equipment',  emoji: '🛠', label: 'Small wares',     hint: 'Smallwares, utensils, plate-up, bar tools' },
-  { key: 'MEP',        emoji: '⚡', label: 'MEP',             hint: 'Mechanical · Electrical · Plumbing · HVAC' },
-  { key: 'Civil',      emoji: '🏗', label: 'Civil',           hint: 'Demo, framing, drywall, masonry, glazing' },
-  { key: 'Tech',       emoji: '💻', label: 'Tech',            hint: 'POS terminals, KDS screens, Wi-Fi, cameras' },
-  { key: 'Branding',   emoji: '🎨', label: 'Branding',        hint: 'Signage, exterior, install of brand assets' },
-  { key: 'Permits',    emoji: '📑', label: 'Permits & Legal', hint: 'FBR, FCO, building permits, professional fees' },
-  { key: 'SoftCosts',  emoji: '📐', label: 'Soft Costs',      hint: 'Architect, consultant, project management' },
-  { key: 'Other',      emoji: '📦', label: 'Other',           hint: 'Anything that doesn’t fit above' },
+  { key: 'BOH',         label: 'Back of House',  hint: 'Kitchen equipment, cooking line, walk-in, exhaust' },
+  { key: 'FOH',        label: 'Front of House', hint: 'Dining furniture, bar, host stand, seating' },
+  { key: 'AG',         label: 'AG / Finishing', hint: 'Flooring, paint, lighting, decor, ceiling' },
+  { key: 'Equipment',  label: 'Small wares',     hint: 'Smallwares, utensils, plate-up, bar tools' },
+  { key: 'MEP',        label: 'MEP',             hint: 'Mechanical · Electrical · Plumbing · HVAC' },
+  { key: 'Civil',      label: 'Civil',           hint: 'Demo, framing, drywall, masonry, glazing' },
+  { key: 'Tech',       label: 'Tech',            hint: 'POS terminals, KDS screens, Wi-Fi, cameras' },
+  { key: 'Branding',   label: 'Branding',        hint: 'Signage, exterior, install of brand assets' },
+  { key: 'Permits',    label: 'Permits & Legal', hint: 'FBR, FCO, building permits, professional fees' },
+  { key: 'SoftCosts',  label: 'Soft Costs',      hint: 'Architect, consultant, project management' },
+  { key: 'Other',      label: 'Other',           hint: 'Anything that doesn’t fit above' },
 ] as const
 
 const PHASE_META: Record<Phase, { label: string; bg: string; fg: string }> = {
@@ -132,10 +135,10 @@ function CapexTracker() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-5 border-b border-white/[0.05]">
-        <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
+        <Link href="/finance" className="text-xs text-s-muted hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-1">
           <div>
-            <h1 className="text-2xl font-black text-white/90 flex items-center gap-2">🏗 Capex</h1>
+            <h1 className="text-2xl font-black text-white/90 flex items-center gap-2"><FIcon name="civil" size={22} /> Capex</h1>
             <p className="text-sm text-white/40 mt-1 max-w-3xl">
               One-time build cost per project (kitchen builds, refurbs, equipment). Recurring run-rate lives
               in <Link href="/finance/opex" className="text-primary-ink font-bold hover:opacity-80">OpEx →</Link>;
@@ -150,9 +153,9 @@ function CapexTracker() {
               </Link>
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2 sm:flex-nowrap">
             <button onClick={() => { setNotice(null); setQuickBuy(true) }} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-black text-white/80 hover:text-white">Buy equipment</button>
-            <button onClick={() => setCreating(true)} className="s-btn-primary px-4 py-2.5">+ New project</button>
+            <Button type="submit" onClick={() => setCreating(true)}>+ New project</Button>
           </div>
         </div>
       </header>
@@ -169,25 +172,25 @@ function CapexTracker() {
               ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', border: '1px solid var(--erp-accent)' }
               : { background: 'rgb(var(--erp-primary-rgb) / 0.04)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.20)' }}>
             <div className="flex items-start justify-between gap-2">
-              <p className="font-bold text-sm" style={{ color: 'var(--erp-primary-ink)' }}>💼 Workforce</p>
-              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
+              <p className="font-bold text-sm" style={{ color: 'var(--erp-primary-ink)' }}><FIcon name="briefcase" size={14} /> Workforce</p>
+              <span className="text-xs font-black uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
                 style={{ background: 'rgb(var(--erp-primary-rgb) / 0.20)', color: 'var(--erp-primary-ink)' }}>
                 Standing
               </span>
             </div>
-            <p className="text-[11px] text-white/45 mt-1">
+            <p className="text-xs text-s-muted mt-1">
               Positions + JV contributions feed
             </p>
           </button>
 
-          <div className="text-[10px] uppercase tracking-wider text-white/40 font-bold pt-2 pb-1 px-1">
+          <div className="text-xs uppercase tracking-wider text-white/40 font-bold pt-2 pb-1 px-1">
             Projects
           </div>
 
           {projects.length === 0 && (
             <div className="rounded-xl p-4 text-center"
               style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              <p className="text-xs text-white/45">No projects yet — start one to plan your build.</p>
+              <p className="text-xs text-s-muted">No projects yet — start one to plan your build.</p>
             </div>
           )}
           {projects.map((p) => {
@@ -200,12 +203,12 @@ function CapexTracker() {
                   : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-bold text-sm text-white/90 truncate">{p.name}</p>
-                  <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
+                  <span className="text-xs font-black uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
                     style={{ background: PHASE_META[p.phase].bg, color: PHASE_META[p.phase].fg }}>
                     {PHASE_META[p.phase].label}
                   </span>
                 </div>
-                <p className="text-[11px] text-white/45 mt-1">
+                <p className="text-xs text-s-muted mt-1">
                   {p.lines.length} lines · {PKR(p.rollups.committedCents)}
                 </p>
                 {p.budgetEnvelopeCents > 0 && (
@@ -217,7 +220,7 @@ function CapexTracker() {
                           background: overBudget ? 'var(--erp-danger)' : 'var(--erp-accent)',
                         }} />
                     </div>
-                    <p className="text-[10px] mt-1" style={{ color: overBudget ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.4)' }}>
+                    <p className="text-xs mt-1" style={{ color: overBudget ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.4)' }}>
                       {overBudget
                         ? `${PKR(p.rollups.varianceVsEnvelopeCents)} over envelope`
                         : `${PKR(p.rollups.remainingCents)} of ${PKR(p.budgetEnvelopeCents)} remaining`}
@@ -248,11 +251,7 @@ function CapexTracker() {
           ) : project ? (
             <ProjectDetail project={project} qc={qc} instalmentFill={instalmentFill} onInstalmentFillUsed={() => setInstalmentFill(null)} />
           ) : (
-            <div className="rounded-2xl p-10 text-center"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              <p className="font-bold text-white/85">No project selected</p>
-              <p className="text-sm text-white/45 mt-1">Pick a project from the sidebar or create a new one.</p>
-            </div>
+            <CompactEmptyState message="No project selected. Pick one from the sidebar or create a new one." action={{ label: '+ New project', onClick: () => setCreating(true) }} />
           )}
         </main>
       </div>
@@ -297,7 +296,7 @@ function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { 
   // away) bucket into a "Misc" catch-all so they don't disappear.
   const activeScopes: ScopeDef[] = project.scopeConfig && project.scopeConfig.length > 0
     ? project.scopeConfig
-    : SCOPES.map((s) => ({ key: s.key, label: s.label, emoji: s.emoji, hint: s.hint }))
+    : SCOPES.map((s) => ({ key: s.key, label: s.label, hint: s.hint }))
 
   const knownKeys = new Set(activeScopes.map((s) => s.key))
   const orphanLines = project.lines.filter((l) => !knownKeys.has(l.scope))
@@ -307,7 +306,7 @@ function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { 
     lines: project.lines.filter((l) => l.scope === s.key),
   }))
   if (orphanLines.length > 0) {
-    linesByScope.push({ key: '__orphan__', label: 'Unsorted', emoji: '📦', hint: 'Lines whose section was renamed or removed', lines: orphanLines })
+    linesByScope.push({ key: '__orphan__', label: 'Unsorted', hint: 'Lines whose section was renamed or removed', lines: orphanLines })
   }
 
   return (
@@ -319,18 +318,18 @@ function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { 
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-2xl font-black text-white/90">{project.name}</h2>
-              <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
+              <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded"
                 style={{ background: PHASE_META[project.phase].bg, color: PHASE_META[project.phase].fg }}>
                 {PHASE_META[project.phase].label}
               </span>
               {project.isJointVenture && (
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
+                <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded"
                   style={{ background: 'rgb(var(--erp-primary-rgb) / 0.20)', color: 'var(--erp-primary-ink)' }}>
                   Joint venture
                 </span>
               )}
             </div>
-            <p className="text-xs text-white/45 mt-1.5">
+            <p className="text-xs text-s-muted mt-1.5">
               {project.projectType.replace(/_/g, ' ')}
               {project.address ? ` · ${project.address}` : ''}
               {project.floorAreaSqft ? ` · ${project.floorAreaSqft.toLocaleString()} sqft` : ''}
@@ -338,9 +337,9 @@ function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { 
             </p>
             {project.isJointVenture && project.jvPartners && project.jvPartners.length > 0 && (
               <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10px] uppercase tracking-wider text-white/45">Partner split:</span>
+                <span className="text-xs uppercase tracking-wider text-white/45">Partner split:</span>
                 {project.jvPartners.map((p, i) => (
-                  <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
+                  <span key={i} className="text-xs font-bold rounded px-2 py-0.5"
                     style={{ background: 'rgb(var(--erp-primary-rgb) / 0.10)', color: 'var(--erp-primary-ink)' }}>
                     {p.label} {p.pct}% · {PKR(Math.round(project.rollups.totalAskCents * p.pct / 100))}
                   </span>
@@ -348,9 +347,9 @@ function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { 
               </div>
             )}
           </div>
-          <button onClick={() => setEditingProject(true)} className="s-btn-secondary px-3 py-1.5 text-xs">
+          <Button size="sm" variant="secondary" type="submit" onClick={() => setEditingProject(true)}>
             Edit project
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -361,14 +360,14 @@ function ProjectDetail({ project, qc, instalmentFill, onInstalmentFillUsed }: { 
           style={tab === 'capex'
             ? { color: 'var(--erp-primary-ink)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
             : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
-          🏗 CapEx · build
+          <FIcon name="civil" size={16} /> CapEx · build
         </button>
         <button onClick={() => setTab('opex')}
           className="px-4 py-2.5 text-sm font-bold transition-colors"
           style={tab === 'opex'
             ? { color: 'var(--erp-warning)', borderBottom: '2px solid var(--erp-accent)', marginBottom: '-1px' }
             : { color: 'rgb(var(--fg-rgb) / 0.5)' }}>
-          💸 OpEx · run-rate
+          <FIcon name="coins" size={16} /> OpEx · run-rate
         </button>
       </div>
 
@@ -448,10 +447,10 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
 
       {/* Customize sections */}
       <div className="flex justify-end">
-        <button onClick={onCustomizeScopes}
-          className="s-btn-secondary text-xs inline-flex items-center gap-1.5 px-3 py-1.5">
-          🛠 Customize sections
-        </button>
+        <Button size="sm" variant="secondary" type="submit" onClick={onCustomizeScopes}
+          className="inline-flex items-center gap-1.5">
+          <FIcon name="tools" size={14} /> Customize sections
+        </Button>
       </div>
 
       {/* Scope sections */}
@@ -464,23 +463,22 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
               <header className="px-5 py-3 flex items-center justify-between gap-3"
                 style={{ background: 'rgb(var(--fg-rgb) / 0.02)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.04)' }}>
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl">{s.emoji}</span>
+                  <span className="text-s-muted"><FIcon name={SCOPE_ICON[s.key] ?? 'tag'} size={24} /></span>
                   <div>
                     <p className="font-black text-white/90 text-sm">{s.label}</p>
-                    <p className="text-[10px] text-white/40">{s.hint}</p>
+                    <p className="text-xs text-s-muted">{s.hint}</p>
                   </div>
-                  <span className="ml-2 text-xs text-white/45">({s.lines.length})</span>
+                  <span className="ml-2 text-xs text-s-muted">({s.lines.length})</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-black text-white/85">{PKR(scopeTotal)}</span>
-                  <button onClick={() => onAddLineScope(s.key)}
-                    className="s-btn-primary px-3 py-1.5 text-xs">
+                  <Button size="sm" type="submit" onClick={() => onAddLineScope(s.key)}>
                     + Line
-                  </button>
+                  </Button>
                 </div>
               </header>
               {s.lines.length === 0 ? (
-                <p className="px-5 py-6 text-xs text-white/30 italic">No items in this scope.</p>
+                <p className="px-5 py-6 text-xs text-s-muted italic">No items in this scope.</p>
               ) : (
                 <div className="divide-y divide-white/[0.04]">
                   {s.lines.map((l) => <LineRow key={l.id} line={l} flags={flags.get(l.id) ?? []} onEdit={() => onEditLine(l)} />)}
@@ -524,17 +522,7 @@ function OpexTab({ projectId, qc }: { projectId: string; qc: ReturnType<typeof u
 
       {/* Empty state */}
       {categories.length === 0 && (
-        <div className="rounded-2xl p-8 text-center"
-          style={{ background: 'color-mix(in srgb, var(--erp-warning) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 20%, transparent)' }}>
-          <p className="text-3xl mb-2">💸</p>
-          <p className="font-bold text-white/85">No recurring costs tied to this project</p>
-          <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
-            Rent, payroll, utilities, software — anything that pays out monthly tied to this build. Add lines to see total cost of ownership beyond the one-time CapEx.
-          </p>
-          <button onClick={() => setAdding(true)} className="s-btn-primary mt-4 px-4 py-2">
-            + Add OpEx line
-          </button>
-        </div>
+        <CompactEmptyState message="No recurring costs tied to this project." icon={<FIcon name="coins" size={28} />} action={{ label: '+ Add OpEx line', onClick: () => setAdding(true) }} />
       )}
 
       {categories.length > 0 && (
@@ -550,7 +538,7 @@ function OpexTab({ projectId, qc }: { projectId: string; qc: ReturnType<typeof u
       )}
 
       {/* Cross-link to company-wide OpEx */}
-      <div className="rounded-xl p-3 text-xs text-white/55"
+      <div className="rounded-xl p-3 text-xs text-s-muted"
         style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         Cross-project / company-wide expenses (software you use everywhere, etc.) live in
         {' '}<Link href="/finance/opex" className="text-primary-ink hover:underline">/finance/opex</Link>.
@@ -588,10 +576,10 @@ function ProjectOpexCategory({ category, onEditLine }: { category: OpexCategory;
       <header className="px-5 py-3 flex items-center justify-between gap-3"
         style={{ background: 'rgb(var(--fg-rgb) / 0.02)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.04)' }}>
         <div className="flex items-center gap-2">
-          {category.emoji && <span className="text-2xl">{category.emoji}</span>}
+          <span className="text-s-muted"><FIcon name={categoryIcon(category.name)} size={24} /></span>
           <div>
             <p className="font-black text-white/90 text-sm">{category.name}</p>
-            <p className="text-[10px] text-white/40">{category.lineCount} line{category.lineCount === 1 ? '' : 's'}</p>
+            <p className="text-xs text-s-muted">{category.lineCount} line{category.lineCount === 1 ? '' : 's'}</p>
           </div>
         </div>
         <span className="text-sm font-black text-white/85">{PKR(category.monthlyExpectedCents)}/mo</span>
@@ -602,14 +590,14 @@ function ProjectOpexCategory({ category, onEditLine }: { category: OpexCategory;
             className="w-full text-left px-5 py-3 flex items-center justify-between gap-3 hover:bg-white/[0.015] transition-colors">
             <div>
               <p className="text-sm font-bold text-white/85">{l.name}</p>
-              <p className="text-[11px] text-white/45">
+              <p className="text-xs text-s-muted">
                 {l.vendor ?? <em>no vendor</em>}
                 {l.nextDueDate && ` · due ${new Date(l.nextDueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`}
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-mono text-white/85">{PKR(l.amountCents)}<span className="text-[10px] text-white/45">/{l.cadence === 'monthly' ? 'mo' : l.cadence === 'quarterly' ? 'qtr' : l.cadence === 'annual' ? 'yr' : 'use'}</span></span>
-              <span className="text-white/30 text-xs">›</span>
+              <span className="text-sm font-mono text-white/85">{PKR(l.amountCents)}<span className="text-xs text-s-muted">/{l.cadence === 'monthly' ? 'mo' : l.cadence === 'quarterly' ? 'qtr' : l.cadence === 'annual' ? 'yr' : 'use'}</span></span>
+              <span className="text-s-muted text-xs">›</span>
             </div>
           </button>
         ))}
@@ -630,16 +618,14 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
   const [nextDueDate, setNextDueDate] = useState(line?.nextDueDate?.slice(0, 10) ?? '')
   const [creatingCategory, setCreatingCategory] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
-  const [newCategoryEmoji, setNewCategoryEmoji] = useState('')
 
   const createCat = useMutation({
-    mutationFn: () => api.post<{ id: string }>('/opex/categories', { name: newCategoryName.trim(), emoji: newCategoryEmoji.trim() || null }),
+    mutationFn: () => api.post<{ id: string }>('/opex/categories', { name: newCategoryName.trim(), emoji: null }),
     onSuccess: async (created) => {
       await qc.invalidateQueries({ queryKey: ['opex-categories'] })
       setCategoryId(created.id)
       setCreatingCategory(false)
       setNewCategoryName('')
-      setNewCategoryEmoji('')
     },
   })
 
@@ -682,21 +668,19 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
     <ModalShell title={isEdit ? 'Edit OpEx line' : 'Add OpEx line'} onClose={onClose} dirty={dirty}>
       <form id="ol-form" onSubmit={submit} className="space-y-3" noValidate>
           <div>
-          <label htmlFor="ol-category" className="text-xs text-white/55">Category *</label>
+          <FieldLabel htmlFor="ol-category">Category *</FieldLabel>
           <div className="flex gap-2 mt-1">
             <Select id="ol-category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={fieldCls + ' flex-1'}>
               <option value="">— pick —</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
-            <button type="button" onClick={() => setCreatingCategory(!creatingCategory)}
-              className="s-btn-secondary px-3 text-xs">+ New</button>
+            <Button size="sm" variant="secondary" type="button" onClick={() => setCreatingCategory(!creatingCategory)}>+ New</Button>
           </div>
-          {tried && errs['ol-category'] && <p role="alert" className="text-[11px] mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-category']}</p>}
+          {tried && errs['ol-category'] && <p role="alert" className="text-xs mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-category']}</p>}
           {creatingCategory && (
             <div className="rounded-lg p-3 mt-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              <div className="grid grid-cols-[60px_1fr] gap-2">
-                <input value={newCategoryEmoji} onChange={(e) => setNewCategoryEmoji(e.target.value)} placeholder="🏢" aria-label="Emoji" className={fieldCls + ' text-center text-xl'} />
-                <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)}
+              <div className="grid grid-cols-1 gap-2">
+                <Input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (newCategoryName.trim()) createCat.mutate() } }}
                   aria-label="New category name" placeholder="Category name (e.g. Rent, Utilities)" className={fieldCls} autoFocus />
               </div>
@@ -704,33 +688,31 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
                 <p className="text-xs text-s-red mt-2">Could not create: {(createCat.error as Error).message}</p>
               )}
               <div className="flex justify-between gap-2 mt-2">
-                <button type="button" onClick={() => { setCreatingCategory(false); setNewCategoryName(''); setNewCategoryEmoji('') }}
-                  className="text-xs text-white/55 hover:text-white">Cancel</button>
-                <button type="button" onClick={() => createCat.mutate()} disabled={!newCategoryName.trim() || createCat.isPending}
-                  className="s-btn-primary px-3 py-1.5 text-xs">
+                <LinkButton tone="muted" type="button" onClick={() => { setCreatingCategory(false); setNewCategoryName('') }}>Cancel</LinkButton>
+                <Button size="sm" type="button" onClick={() => createCat.mutate()} disabled={!newCategoryName.trim() || createCat.isPending}>
                   {createCat.isPending ? 'Creating…' : '+ Create category'}
-                </button>
+                </Button>
               </div>
             </div>
           )}
         </div>
         <div>
-          <label htmlFor="ol-name" className="text-xs text-white/55">Line name *</label>
-          <input id="ol-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="42C kitchen rent — Phase 1" className={fieldCls + ' mt-1'} />
-          {tried && errs['ol-name'] && <p role="alert" className="text-[11px] mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-name']}</p>}
+          <FieldLabel htmlFor="ol-name">Line name *</FieldLabel>
+          <Input id="ol-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="42C kitchen rent — Phase 1" className={fieldCls + ' mt-1'} />
+          {tried && errs['ol-name'] && <p role="alert" className="text-xs mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-name']}</p>}
         </div>
         <div>
-          <label htmlFor="ol-vendor" className="text-xs text-white/55">Vendor</label>
-          <input id="ol-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Landlord" className={fieldCls + ' mt-1'} />
+          <FieldLabel htmlFor="ol-vendor">Vendor</FieldLabel>
+          <Input id="ol-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Landlord" className={fieldCls + ' mt-1'} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label htmlFor="ol-amount" className="text-xs text-white/55">Amount (PKR) *</label>
+            <FieldLabel htmlFor="ol-amount">Amount (PKR) *</FieldLabel>
             <MoneyInput id="ol-amount" value={amountCents} onChange={setAmount} className={fieldCls + ' mt-1'} />
-            {tried && errs['ol-amount'] && <p role="alert" className="text-[11px] mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-amount']}</p>}
+            {tried && errs['ol-amount'] && <p role="alert" className="text-xs mt-1 font-bold" style={{ color: 'var(--erp-danger)' }}>{errs['ol-amount']}</p>}
           </div>
           <div>
-            <label htmlFor="ol-cadence" className="text-xs text-white/55">Cadence</label>
+            <FieldLabel htmlFor="ol-cadence">Cadence</FieldLabel>
             <Select id="ol-cadence" value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)} className={fieldCls + ' mt-1'}>
               <option value="monthly">Monthly</option>
               <option value="quarterly">Quarterly</option>
@@ -740,24 +722,23 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
           </div>
         </div>
         <div>
-          <label htmlFor="ol-due" className="text-xs text-white/55">Next due</label>
-          <input id="ol-due" type="date" min={bounds.min} max={bounds.max} value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls + ' mt-1'} />
+          <FieldLabel htmlFor="ol-due">Next due</FieldLabel>
+          <Input id="ol-due" type="date" min={bounds.min} max={bounds.max} value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} className={fieldCls + ' mt-1'} />
         </div>
       </form>
       {save.error && <ErrorBanner error={save.error} />}
       {del.error && <ErrorBanner error={del.error} />}
       <ModalFooter onCancel={onClose}>
         {isEdit && (
-          <button type="button" onClick={async () => { if (await confirm({ title: `Delete ${name || 'this line'}?`, body: 'The OpEx line is removed from this project.', confirmLabel: 'Delete', danger: true })) del.mutate() }}
+          <Button variant="danger" size="sm" type="button" onClick={async () => { if (await confirm({ title: `Delete ${name || 'this line'}?`, body: 'The OpEx line is removed from this project.', confirmLabel: 'Delete', danger: true })) del.mutate() }}
             disabled={del.isPending}
-            className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto disabled:opacity-50">
+            className="mr-auto">
             {del.isPending ? 'Deleting…' : 'Delete'}
-          </button>
+          </Button>
         )}
-        <button type="submit" form="ol-form" disabled={save.isPending}
-          className="s-btn-primary px-5 py-2.5">
+        <Button type="submit" form="ol-form" disabled={save.isPending}>
           {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Add line'}
-        </button>
+        </Button>
       </ModalFooter>
     </ModalShell>
   )
@@ -784,7 +765,7 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
         .map((s) => ({
           key:   (s.key || s.label).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'scope',
           label: s.label.trim(),
-          emoji: s.emoji?.trim() || null,
+          emoji: null,
           hint:  s.hint?.trim() || null,
         }))
       // De-dupe keys (suffix on collision)
@@ -822,29 +803,27 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
     })
   }
   function addBlank() {
-    setScopes((prev) => [...prev, { key: '', label: '', emoji: '📦' }])
+    setScopes((prev) => [...prev, { key: '', label: '' }])
   }
   function reset() {
-    setScopes(SCOPES.map((s) => ({ key: s.key, label: s.label, emoji: s.emoji, hint: s.hint })))
+    setScopes(SCOPES.map((s) => ({ key: s.key, label: s.label, hint: s.hint })))
   }
 
   const submit = useSubmitOnce(save.isPending)(() => { save.mutate(); return true })
   const dirty = !save.isPending && JSON.stringify(scopes) !== JSON.stringify(currentScopes.map((x) => ({ ...x })))
   return (
     <ModalShell title="Customize sections" onClose={onClose} wide dirty={dirty}>
-      <p className="text-xs text-white/45 -mt-1">Rename, reorder, or define your own. Lines under a removed section move to &ldquo;Unsorted&rdquo;.</p>
+      <p className="text-xs text-s-muted -mt-1">Rename, reorder, or define your own. Lines under a removed section move to &ldquo;Unsorted&rdquo;.</p>
       <form id="scopes-form" onSubmit={submit} className="space-y-2">
           {scopes.map((s, i) => {
           const used = usedKeys.has(s.key)
           return (
-            <div key={i} className="rounded-lg p-3 grid grid-cols-[24px_60px_1fr_2fr_auto_auto] gap-2 items-center"
+            <div key={i} className="rounded-lg p-3 grid grid-cols-[24px_1fr_2fr_auto_auto] gap-2 items-center"
               style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              <span className="text-xs font-mono text-white/35">{i + 1}</span>
-              <input value={s.emoji ?? ''} onChange={(e) => patch(i, { emoji: e.target.value })}
-                placeholder="📦" aria-label={`Section ${i + 1} emoji`} className={fieldCls + ' text-center text-lg'} />
-              <input value={s.label} onChange={(e) => patch(i, { label: e.target.value })}
+              <span className="text-xs font-mono text-s-muted">{i + 1}</span>
+              <Input value={s.label} onChange={(e) => patch(i, { label: e.target.value })}
                 aria-label={`Section ${i + 1} label`} placeholder="Label (e.g. Back of House)" className={fieldCls + ' font-bold'} />
-              <input value={s.hint ?? ''} onChange={(e) => patch(i, { hint: e.target.value })}
+              <Input value={s.hint ?? ''} onChange={(e) => patch(i, { hint: e.target.value })}
                 aria-label={`Section ${i + 1} hint`} placeholder="Hint (e.g. Kitchen equipment, walk-in, exhaust)" className={fieldCls + ' text-xs'} />
               <div className="flex items-center">
                 <button type="button" aria-label="Move up" onClick={() => move(i, -1)} disabled={i === 0} className="text-white/30 hover:text-white px-1 disabled:opacity-20">↑</button>
@@ -852,29 +831,27 @@ function ScopesEditorModal({ project, currentScopes, onClose, onSaved }: {
               </div>
               <button type="button" aria-label={`Remove section ${i + 1}`} onClick={() => void remove(i)} className="text-white/30 hover:text-s-red px-1"
                 title={used ? 'In use — confirm to remove' : 'Remove section'}>
-                {used ? '⚠' : '✕'}
+                {used ? <FIcon name="warn" size={16} /> : <FIcon name="x" size={16} />}
               </button>
             </div>
           )
         })}
 
         <div className="flex items-center gap-2 pt-2">
-          <button type="button" onClick={addBlank}
-            className="s-btn-primary text-xs px-3 py-1.5">
+          <Button size="sm" type="button" onClick={addBlank}>
             + Add section
-          </button>
-          <button type="button" onClick={reset}
-            className="text-xs text-white/55 hover:text-white">
+          </Button>
+          <LinkButton tone="muted" type="button" onClick={reset}>
             Reset to default
-          </button>
+          </LinkButton>
         </div>
 
       </form>
       {save.error && <ErrorBanner error={save.error} />}
       <ModalFooter onCancel={onClose}>
-        <button type="submit" form="scopes-form" disabled={save.isPending || scopes.length === 0} className={primaryBtn}>
+        <Button type="submit" form="scopes-form" disabled={save.isPending || scopes.length === 0}>
           {save.isPending ? 'Saving…' : 'Save sections'}
-        </button>
+        </Button>
       </ModalFooter>
     </ModalShell>
   )
@@ -884,7 +861,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
   return (
     <div className="rounded-xl p-3"
       style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/35">{label}</p>
+      <p className="text-xs font-black uppercase tracking-[0.18em] text-white/35">{label}</p>
       <p className="text-sm font-black mt-1" style={{ color: accent }}>{value}</p>
     </div>
   )
@@ -906,13 +883,13 @@ function LineRow({ line, flags, onEdit }: { line: Line; flags: string[]; onEdit:
             <div className="flex items-center gap-2 flex-wrap">
               <p className="text-sm font-bold text-white/90 break-words">{line.item}</p>
               {line.priority === 'must_have' ? null : (
-                <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">{line.priority.replace('_', ' ')}</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-white/40">{line.priority.replace('_', ' ')}</span>
               )}
               {line.quotes.length > 0 && (
-                <span className="text-[10px] text-white/40">{line.quotes.length} quote{line.quotes.length === 1 ? '' : 's'}</span>
+                <span className="text-xs text-s-muted">{line.quotes.length} quote{line.quotes.length === 1 ? '' : 's'}</span>
               )}
             </div>
-            <p className="text-[11px] text-white/45 mt-0.5">
+            <p className="text-xs text-s-muted mt-0.5">
               {line.vendor ?? <em>no vendor</em>}
               {line.leadTimeDays ? ` · ${line.leadTimeDays}d lead` : ''}
               {line.expectedDeliveryDate ? ` · ETA ${new Date(line.expectedDeliveryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}
@@ -920,7 +897,7 @@ function LineRow({ line, flags, onEdit }: { line: Line; flags: string[]; onEdit:
           </div>
 
           <div className="text-right whitespace-nowrap">
-            <p className="text-xs text-white/45">qty {line.quantity}</p>
+            <p className="text-xs text-s-muted">qty {line.quantity}</p>
             <p className="text-sm font-mono text-white/85">{PKR(totalDue)}</p>
           </div>
 
@@ -928,15 +905,15 @@ function LineRow({ line, flags, onEdit }: { line: Line; flags: string[]; onEdit:
             <div className="h-1 rounded-full bg-white/5 overflow-hidden">
               <div className="h-full bg-accent" style={{ width: `${paidPct}%` }} />
             </div>
-            <p className="text-[10px] text-white/40 mt-0.5">{Math.round(paidPct)}% paid</p>
+            <p className="text-xs text-s-muted mt-0.5">{Math.round(paidPct)}% paid</p>
           </div>
 
-          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full justify-self-start sm:justify-self-auto"
+          <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full justify-self-start sm:justify-self-auto"
             style={{ color: status.fg, background: `color-mix(in srgb, ${status.fg} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${status.fg} 25%, transparent)` }}>
             {status.label}
           </span>
 
-          <span className="text-white/30 text-xs hidden sm:inline">›</span>
+          <span className="text-s-muted text-xs hidden sm:inline">›</span>
         </div>
       </button>
 
@@ -1007,7 +984,7 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
   return <ModalShell title="New CapEx project" onClose={onClose} dirty={!save.isPending && (!!name.trim() || !!address.trim() || budgetEnvelopeCents > 0)}>
     <form id="np-form" onSubmit={submit} className="space-y-4" noValidate>
     <Field label="Project name *" error={shown('np-name')}>
-      <input id="np-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="42C Kitchen — Phase 1 build" className={fieldCls} autoFocus />
+      <Input id="np-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="42C Kitchen — Phase 1 build" className={fieldCls} autoFocus />
     </Field>
     <Field label="Project type">
       <Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} className={fieldCls}>
@@ -1019,14 +996,14 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
       </Select>
     </Field>
     <Field label="Address (optional)">
-      <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="MM Alam Road, Lahore" className={fieldCls} />
+      <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="MM Alam Road, Lahore" className={fieldCls} />
     </Field>
     <div className="grid grid-cols-2 gap-3">
       <Field label="Floor area (sqft)">
         <NumberField decimals={2} min={0} value={floorAreaSqft === '' ? null : floorAreaSqft} onValueChange={(n) => setFloorAreaSqft(n == null ? '' : n)} className={fieldCls} />
       </Field>
       <Field label="Target opening" error={shown('np-open')}>
-        <input id="np-open" type="date" min={bounds.min} max={bounds.max} value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
+        <Input id="np-open" type="date" min={bounds.min} max={bounds.max} value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
       </Field>
     </div>
     <Field label="Budget envelope (PKR) *">
@@ -1039,27 +1016,26 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
         on this project automatically — set once here, see chips everywhere. */}
     <div className="rounded-xl p-3"
       style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.20)' }}>
-      <label className="flex items-center gap-2 cursor-pointer">
+      <CheckLabel className="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" checked={isJointVenture}
           onChange={(e) => setIsJointVenture(e.target.checked)} />
         <span className="text-sm font-bold text-white/85">Joint venture</span>
-        <span className="text-[11px] text-white/40">Flip on if a partner co-funds this build.</span>
-      </label>
+        <span className="text-xs text-s-muted">Flip on if a partner co-funds this build.</span>
+      </CheckLabel>
       {isJointVenture && (
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-wider text-white/55 font-bold">
+            <span className="text-xs uppercase tracking-wider text-white/55 font-bold">
               Partner shares
             </span>
-            <button type="button"
-              onClick={() => setJvPartners([...jvPartners, { label: '', pct: 0 }])}
-              className="text-[10px] font-bold text-primary-ink hover:underline">
+            <LinkButton type="button"
+              onClick={() => setJvPartners([...jvPartners, { label: '', pct: 0 }])}>
               + Add partner
-            </button>
+            </LinkButton>
           </div>
           {jvPartners.map((p, i) => (
             <div key={i} className="flex gap-2">
-              <input value={p.label}
+              <Input value={p.label}
                 onChange={(e) => {
                   const next = [...jvPartners]
                   next[i] = { ...next[i]!, label: e.target.value }
@@ -1075,16 +1051,16 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
                     setJvPartners(next)
                   }}
                   className={fieldCls + ' pr-7'} />
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-white/40">%</span>
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-s-muted">%</span>
               </div>
               {jvPartners.length > 2 && (
                 <button type="button"
                   onClick={() => setJvPartners(jvPartners.filter((_, j) => j !== i))}
-                  className="text-s-red hover:bg-red-400/10 rounded-md px-2 text-sm">×</button>
+                  className="text-s-red hover:bg-s-red/10 rounded-md px-2 text-sm"><FIcon name="x" size={14} /></button>
               )}
             </div>
           ))}
-          <p className={`text-[11px] font-mono ${splitOff ? 'text-s-amber' : 'text-white/40'}`}>
+          <p className={`text-xs font-mono ${splitOff ? 'text-s-amber' : 'text-s-muted'}`}>
             Total: {splitSum}% {splitOff && '(should be 100)'}
           </p>
         </div>
@@ -1094,9 +1070,9 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
     </form>
     {save.error && <ErrorBanner error={save.error} />}
     <ModalFooter onCancel={onClose}>
-      <button type="submit" form="np-form" disabled={save.isPending} className={primaryBtn}>
+      <Button type="submit" form="np-form" disabled={save.isPending}>
         {save.isPending ? 'Creating…' : 'Create project →'}
-      </button>
+      </Button>
     </ModalFooter>
   </ModalShell>
 }
@@ -1148,7 +1124,7 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   return <ModalShell title="Edit project" onClose={onClose} wide dirty={dirty}>
     <form id="ep-form" onSubmit={submit} className="space-y-4" noValidate>
     <div className="grid grid-cols-2 gap-3">
-      <Field label="Name *" error={shown('ep-name')}><input id="ep-name" value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
+      <Field label="Name *" error={shown('ep-name')}><Input id="ep-name" value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
       <Field label="Phase">
         <Select value={phase} onChange={(e) => setPhase(e.target.value as Phase)} className={fieldCls}>
           {Object.entries(PHASE_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
@@ -1175,31 +1151,31 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
         <MoneyInput value={taxCents} onChange={setTaxCents} className={fieldCls} />
       </Field>
     </div>
-    <Field label="Address"><input value={address} onChange={(e) => setAddress(e.target.value)} className={fieldCls} /></Field>
+    <Field label="Address"><Input value={address} onChange={(e) => setAddress(e.target.value)} className={fieldCls} /></Field>
     <div className="grid grid-cols-2 gap-3">
       <Field label="Floor area (sqft)">
         <NumberField decimals={2} min={0} value={floorAreaSqft === '' ? null : floorAreaSqft} onValueChange={(n) => setFloorAreaSqft(n == null ? '' : n)} className={fieldCls} />
       </Field>
       <Field label="Target opening" error={shown('ep-open')}>
-        <input id="ep-open" type="date" min={bounds.min} max={bounds.max} value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
+        <Input id="ep-open" type="date" min={bounds.min} max={bounds.max} value={targetOpeningDate} onChange={(e) => setTargetOpeningDate(e.target.value)} className={fieldCls} />
       </Field>
     </div>
     <Field label="Notes">
-      <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={fieldCls} />
+      <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={fieldCls} />
     </Field>
     </form>
     {save.error && <ErrorBanner error={save.error} />}
     {del.error && <ErrorBanner error={del.error} />}
     <ModalFooter onCancel={onClose}>
-      <button type="button"
+      <Button variant="danger" size="sm" type="button"
         onClick={async () => { if (await confirm({ title: `Delete project "${project.name}"?`, body: 'Its lines, quotes and payments go with it.', confirmLabel: 'Delete project', danger: true })) del.mutate() }}
         disabled={del.isPending}
-        className="rounded-xl border border-red-500/20 text-s-red/70 px-4 py-2.5 text-xs hover:text-s-red mr-auto disabled:opacity-50">
+        className="mr-auto">
         {del.isPending ? 'Deleting…' : 'Delete project'}
-      </button>
-      <button type="submit" form="ep-form" disabled={save.isPending} className={primaryBtn}>
+      </Button>
+      <Button type="submit" form="ep-form" disabled={save.isPending}>
         {save.isPending ? 'Saving…' : 'Save changes'}
-      </button>
+      </Button>
     </ModalFooter>
   </ModalShell>
 }
@@ -1313,13 +1289,13 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
       </div>
     )}
     <Field label="Item *" error={shown('cl-item')}>
-      <input id="cl-item" value={item} onChange={(e) => setItem(e.target.value)} disabled={onRegister}
+      <Input id="cl-item" value={item} onChange={(e) => setItem(e.target.value)} disabled={onRegister}
         placeholder="Rational SCC 6-2/1 combi oven · 5-tier walk-in shelving · Emergency lighting set" className={fieldCls + ' disabled:opacity-60'} autoFocus />
     </Field>
 
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       <Field label="Category">
-        <input value={category} onChange={(e) => setCategory(e.target.value)} disabled={onRegister} placeholder="Cooking · Refrigeration" className={fieldCls + ' disabled:opacity-60'} />
+        <Input value={category} onChange={(e) => setCategory(e.target.value)} disabled={onRegister} placeholder="Cooking · Refrigeration" className={fieldCls + ' disabled:opacity-60'} />
       </Field>
       <Field label="Quantity" error={shown('cl-qty')}>
         <NumberField id="cl-qty" min={1} value={quantity} onValueChange={setQuantity} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
@@ -1363,8 +1339,8 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
           </Select>
           <Hint>Pick a supplier so income tax can be withheld at the rate for their filer status (the non-filer rate until it is confirmed).</Hint>
         </Field>
-        <Field label="Vendor name"><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
-        <Field label="Contact (name · phone)"><input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="Bilal · +92 300 1234567" className={fieldCls} /></Field>
+        <Field label="Vendor name"><Input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>
+        <Field label="Contact (name · phone)"><Input value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} placeholder="Bilal · +92 300 1234567" className={fieldCls} /></Field>
       </div>
     </Section>
 
@@ -1407,20 +1383,20 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
           <NumberField min={0} value={leadTimeDays === '' ? null : leadTimeDays} onValueChange={(n) => setLeadTimeDays(n == null ? '' : n)} className={fieldCls} />
         </Field>
         <Field label="Expected delivery" error={shown('cl-exp')}>
-          <input id="cl-exp" type="date" min={bounds.min} max={bounds.max} value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className={fieldCls} />
+          <Input id="cl-exp" type="date" min={bounds.min} max={bounds.max} value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} className={fieldCls} />
         </Field>
         <Field label="Delivered on" error={shown('cl-del')}>
-          <input id="cl-del" type="date" min={bounds.min} max={bounds.max} value={actualDeliveryDate} onChange={(e) => setActualDeliveryDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+          <Input id="cl-del" type="date" min={bounds.min} max={bounds.max} value={actualDeliveryDate} onChange={(e) => setActualDeliveryDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
         </Field>
         <Field label="Installed on" error={shown('cl-inst')}>
-          <input id="cl-inst" type="date" min={bounds.min} max={bounds.max} value={installedDate} onChange={(e) => setInstalledDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
+          <Input id="cl-inst" type="date" min={bounds.min} max={bounds.max} value={installedDate} onChange={(e) => setInstalledDate(e.target.value)} disabled={onRegister} className={fieldCls + ' disabled:opacity-60'} />
           <Hint>Depreciation starts from the install date, else the delivery date.</Hint>
         </Field>
       </div>
     </Section>
 
     <Field label="Notes">
-      <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+      <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
         placeholder="3-year warranty, gas connection required, lead time confirmed by Bilal on call." className={fieldCls} />
     </Field>
 
@@ -1437,14 +1413,14 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
 
     <ModalFooter onCancel={onClose}>
       {line && (
-        <button type="button" onClick={async () => { if (await confirm({ title: `Delete ${item.trim() || 'this line'}?`, body: 'Its quotes and instalments are removed with it.', confirmLabel: 'Delete line', danger: true })) del.mutate() }}
-          className={dangerBtn + ' mr-auto text-xs'}>
+        <Button variant="danger" type="button" onClick={async () => { if (await confirm({ title: `Delete ${item.trim() || 'this line'}?`, body: 'Its quotes and instalments are removed with it.', confirmLabel: 'Delete line', danger: true })) del.mutate() }}
+          className="mr-auto">
           Delete line
-        </button>
+        </Button>
       )}
-      <button type="submit" form="cl-form" disabled={save.isPending} className={primaryBtn}>
+      <Button type="submit" form="cl-form" disabled={save.isPending}>
         {save.isPending ? 'Saving…' : line ? 'Save changes' : 'Add line'}
-      </button>
+      </Button>
     </ModalFooter>
   </ModalShell>
 }
@@ -1501,17 +1477,17 @@ function QuotePanel({ line, tenantId, onChange }: { line: Line; tenantId: string
             : { background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <div>
             <p className="text-sm font-bold text-white/85">{q.vendor}</p>
-            {q.contactName && <p className="text-[11px] text-white/45">{q.contactName}</p>}
-            {q.fileUrl && <a href={q.fileUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] underline" style={{ color: 'var(--erp-primary)' }}>Old quote link</a>}
+            {q.contactName && <p className="text-xs text-s-muted">{q.contactName}</p>}
+            {q.fileUrl && <a href={q.fileUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline" style={{ color: 'var(--erp-primary)' }}>Old quote link</a>}
           </div>
           <span className="text-sm font-mono text-white/85">{PKR(q.totalCents)}</span>
-          <span className="text-xs text-white/45">{q.leadTimeDays ? `${q.leadTimeDays}d` : '—'}</span>
+          <span className="text-xs text-s-muted">{q.leadTimeDays ? `${q.leadTimeDays}d` : '—'}</span>
           {q.isWinner ? (
-            <span className="text-[10px] font-black uppercase tracking-wider text-success">★ Winner</span>
+            <span className="text-xs font-black uppercase tracking-wider text-success"><FIcon name="star" size={12} /> Winner</span>
           ) : (
-            <button onClick={() => setWinner.mutate(q.id)} className="text-[11px] text-white/55 hover:text-white">Pick</button>
+            <LinkButton tone="muted" type="button" onClick={() => setWinner.mutate(q.id)}>Pick</LinkButton>
           )}
-          <button onClick={() => removeQuote.mutate(q.id)} className="text-white/30 hover:text-s-red">✕</button>
+          <LinkButton tone="muted" size="md" type="button" onClick={() => removeQuote.mutate(q.id)}  aria-label="Remove quote"><FIcon name="x" size={14} /></LinkButton>
           <div className="col-span-full">
             <RecordFiles ownerType="capex_quote" ownerId={q.id} tenantId={tenantId ?? undefined} canUpload title="Quote files" compact lazy />
           </div>
@@ -1519,34 +1495,33 @@ function QuotePanel({ line, tenantId, onChange }: { line: Line; tenantId: string
       ))}
     </div>
 
-    {uploadProblem && <p role="alert" className="text-[11px] font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{uploadProblem}</p>}
+    {uploadProblem && <p role="alert" className="text-xs font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{uploadProblem}</p>}
     {adding ? (
       <form onSubmit={submitQuote} noValidate className="rounded-xl p-3 mt-2"
         style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
         <div className="grid grid-cols-2 gap-2">
-          <input id="q-vendor" aria-label="Vendor name" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor name" className={fieldCls} autoFocus />
+          <Input id="q-vendor" aria-label="Vendor name" value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor name" className={fieldCls} autoFocus />
           <MoneyInput id="q-total" ariaLabel="Quote total (PKR)" value={totalCents} onChange={setTotalCents} placeholder="Total (PKR)" className={fieldCls} />
         </div>
         <div className="grid grid-cols-2 gap-2 mt-2">
-          <input aria-label="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" className={fieldCls} />
+          <Input aria-label="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name" className={fieldCls} />
           <NumberField aria-label="Lead days" min={0} value={leadTimeDays === '' ? null : leadTimeDays} onValueChange={(n) => setLeadTimeDays(n == null ? '' : n)} placeholder="Lead days" className={fieldCls} />
         </div>
         <div className="mt-2">
           <PendingFilesPicker ownerType="capex_quote" label="Quote files (optional)" value={files} onChange={setFiles} />
         </div>
-        {quoteProblem && <p role="alert" className="text-[11px] font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{quoteProblem}</p>}
+        {quoteProblem && <p role="alert" className="text-xs font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{quoteProblem}</p>}
         {add.error && <ErrorBanner error={add.error} />}
         <div className="flex gap-2 mt-2 justify-end">
-          <button type="button" onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
-          <button type="submit" disabled={add.isPending}
-            className="s-btn-primary px-3 py-1.5 text-xs">{add.isPending ? 'Saving…' : '+ Save quote'}</button>
+          <LinkButton tone="muted" type="button" onClick={() => setAdding(false)}>Cancel</LinkButton>
+          <Button size="sm" type="submit" disabled={add.isPending}>{add.isPending ? 'Saving…' : '+ Save quote'}</Button>
         </div>
       </form>
     ) : (
-      <button onClick={() => setAdding(true)}
-        className="w-full rounded-lg border-2 border-dashed border-white/10 px-3 py-2 text-xs text-white/55 hover:text-white hover:border-white/30 mt-2">
+      <Button variant="secondary" size="sm" type="submit" onClick={() => setAdding(true)}
+        className="w-full mt-2">
         + Add quote (compare vendors)
-      </button>
+      </Button>
     )}
   </Section>
 }
@@ -1607,7 +1582,7 @@ function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Pr
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <span className="text-xs font-bold uppercase tracking-wider text-white/65 w-20">{p.label}</span>
               <span className="text-sm font-mono text-white/85">{PKR(p.amountCents)}</span>
-              <span className="text-xs text-white/45 min-w-0 flex-1 basis-40">
+              <span className="text-xs text-s-muted min-w-0 flex-1 basis-40">
                 {p.dueDate ? `due ${new Date(p.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'no due date'}
                 {p.paidAt && <span className="text-success ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
                 {bankName(p.bankAccountId) && <span className="ml-2">· {p.paidAt ? 'from' : 'to pay from'} {bankName(p.bankAccountId)}</span>}
@@ -1616,17 +1591,16 @@ function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Pr
                 p.source === 'cash'
                   ? <span className="s-badge-purple" title="Paid from petty cash or a cash request. Correct it there.">Paid in cash</span>
                   : posted?.status === 'posted'
-                    ? <span className="text-[10px] font-black text-success" title={`Booked to ${posted.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
-                    : <span className="text-[10px] font-black text-s-amber" title="Paid before capex posted to the books. An admin can post it.">PAID · NOT POSTED</span>
+                    ? <span className="text-xs font-black text-success" title={`Booked to ${posted.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
+                    : <span className="text-xs font-black text-s-amber" title="Paid before capex posted to the books. An admin can post it.">PAID · NOT POSTED</span>
               ) : (
-                <button onClick={() => setPaying(paying?.id === p.id ? null : p)}
-                  className="s-btn-primary px-2.5 py-1 text-[10px]">Mark paid</button>
+                <Button size="sm" type="submit" onClick={() => setPaying(paying?.id === p.id ? null : p)}>Mark paid</Button>
               )}
-              <button onClick={() => remove.mutate(p.id)} aria-label="Delete instalment" className="text-white/30 hover:text-s-red">&times;</button>
+              <LinkButton tone="muted" size="md" type="button" onClick={() => remove.mutate(p.id)} aria-label="Delete instalment">&times;</LinkButton>
             </div>
 
             {p.paidAt && (p.whtCents > 0 || p.coversMonths || isDeposit || p.whtOverrideReason) && (
-              <div className="mt-2 text-[11px] text-white/55 space-y-0.5">
+              <div className="mt-2 text-xs text-s-muted space-y-0.5">
                 {p.whtCents > 0 && <p>Income tax withheld {PKR(p.whtCents)} · net to the bank {PKR(gross - p.whtCents)}{p.whtOverrideReason ? ` · your own figure: ${p.whtOverrideReason}` : ''}</p>}
                 {p.coversMonths && p.coversFrom && <p>Covers {p.coversMonths} month{p.coversMonths === 1 ? '' : 's'} from {p.coversFrom} · {PKR(p.releasedCents)} released to rent so far</p>}
                 {isDeposit && (
@@ -1642,8 +1616,8 @@ function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Pr
             )}
             {(isDeposit || (isLegacyPrepaid && caps.canApprove)) && (
               <div className="mt-2 flex flex-wrap gap-3">
-                {isDeposit && <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setReturning(p)}>Deposit back…</button>}
-                {isLegacyPrepaid && caps.canApprove && <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setReclassing(p)}>This is a security deposit, not rent…</button>}
+                {isDeposit && <LinkButton type="button"  onClick={() => setReturning(p)}>Deposit back…</LinkButton>}
+                {isLegacyPrepaid && caps.canApprove && <LinkButton type="button"  onClick={() => setReclassing(p)}>This is a security deposit, not rent…</LinkButton>}
               </div>
             )}
 
@@ -1669,25 +1643,24 @@ function PaymentPanel({ project, line, tenantId, onChange, fill }: { project: Pr
             <option value="extra">Extra</option>
           </Select>
           <MoneyInput id="sch-amount" ariaLabel="Instalment amount (PKR)" value={amountCents} onChange={setAmountCents} placeholder="Amount (PKR)" className={fieldCls} />
-          <input id="sch-due" type="date" min={bounds.min} max={bounds.max} value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} aria-label="Due date" />
+          <Input id="sch-due" type="date" min={bounds.min} max={bounds.max} value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldCls} aria-label="Due date" />
         </div>
         <div className="mt-2">
           <BankAccountSelect tenantId={tenantId} value={bankAccountId} onChange={setBankAccountId}
             id={`capex-sched-bank-${line.id}`} label="To be paid from" className={fieldCls} />
         </div>
-        {schedProblem && <p role="alert" className="text-[11px] font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{schedProblem}</p>}
+        {schedProblem && <p role="alert" className="text-xs font-bold mt-2" style={{ color: 'var(--erp-danger)' }}>{schedProblem}</p>}
         {add.error && <ErrorBanner error={add.error} />}
         <div className="flex gap-2 mt-2 justify-end">
-          <button type="button" onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
-          <button type="submit" disabled={add.isPending}
-            className="s-btn-primary px-3 py-1.5 text-xs">{add.isPending ? 'Saving…' : '+ Schedule'}</button>
+          <LinkButton tone="muted" type="button" onClick={() => setAdding(false)}>Cancel</LinkButton>
+          <Button size="sm" type="submit" disabled={add.isPending}>{add.isPending ? 'Saving…' : '+ Schedule'}</Button>
         </div>
       </form>
     ) : (
-      <button onClick={() => setAdding(true)}
-        className="w-full rounded-lg border-2 border-dashed border-white/10 px-3 py-2 text-xs text-white/55 hover:text-white hover:border-white/30 mt-2">
+      <Button variant="secondary" size="sm" type="submit" onClick={() => setAdding(true)}
+        className="w-full mt-2">
         + Schedule payment
-      </button>
+      </Button>
     )}
 
     {returning && <DepositReturnModal payment={returning} line={line} project={project} onClose={() => setReturning(null)} onDone={() => { setReturning(null); onChange() }} />}
@@ -1757,13 +1730,13 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
         <div className="sm:col-span-1">
           <BankAccountSelect tenantId={tenantId} value={bankId} onChange={setBankId} id={`capex-pay-bank-${payment.id}`} label="Paid from" className={fieldCls} />
         </div>
-        <Field label="Paid on"><input id="mp-paid" type="date" min="2000-01-01" value={paidOn} max={new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} /></Field>
+        <Field label="Paid on"><Input id="mp-paid" type="date" min="2000-01-01" value={paidOn} max={new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)} onChange={(e) => setPaidOn(e.target.value)} className={fieldCls} /></Field>
         <Field label="Amount (PKR)"><MoneyInput id="mp-amount" value={amount} onChange={setAmount} className={fieldCls} /></Field>
       </div>
 
       {(termExpected || needsTerm) && (
         <div className="grid grid-cols-2 gap-3">
-          <Field label={`Covers from${termRequired ? ' *' : ''}`}><input type="month" value={coversFrom} onChange={(e) => setCoversFrom(e.target.value)} className={fieldCls} /></Field>
+          <Field label={`Covers from${termRequired ? ' *' : ''}`}><Input type="month" value={coversFrom} onChange={(e) => setCoversFrom(e.target.value)} className={fieldCls} /></Field>
           <Field label={`Covers how many months${termRequired ? ' *' : ''}`}><NumberField id="mp-months" min={1} max={240} value={coversMonths === '' ? null : Number(coversMonths)} onValueChange={(n) => setCoversMonths(n == null ? '' : String(n))} className={fieldCls} /></Field>
           <div className="col-span-2"><Hint>A rent advance is spread over the months it covers, one month at a time.</Hint></div>
         </div>
@@ -1771,26 +1744,25 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
 
       <ExemptionLine supplier={supplier} />
       <WhtPreview result={wht} grossCents={amount} override={override ? overrideCents : null} />
-      <label className="flex items-center gap-2 text-xs text-white/65">
+      <CheckLabel className="flex items-center gap-2 text-xs text-white/65">
         <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
         Use my own withholding figure (for example, the supplier&rsquo;s certificate is not on file yet)
-      </label>
+      </CheckLabel>
       {override && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Income tax withheld (PKR)"><MoneyInput value={overrideCents} onChange={setOverrideCents} className={fieldCls} /></Field>
-          <Field label="Why (at least 5 characters)"><input id="mp-why" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} className={fieldCls} /></Field>
+          <Field label="Why (at least 5 characters)"><Input id="mp-why" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} className={fieldCls} /></Field>
         </div>
       )}
 
       <div id="mp-cls"><PaymentClassificationFields value={cls} onChange={setCls} compact /></div>
-      {problem && <p role="alert" className="text-[11px] font-bold" style={{ color: 'var(--erp-danger)' }}>{problem}</p>}
+      {problem && <p role="alert" className="text-xs font-bold" style={{ color: 'var(--erp-danger)' }}>{problem}</p>}
       {pay.error && <ErrorBanner error={pay.error} />}
       <div className="flex gap-2 justify-end">
-        <button type="button" onClick={onClose} className="text-xs text-white/55 hover:text-white">Cancel</button>
-        <button type="submit" disabled={pay.isPending}
-          className="s-btn-primary px-3 py-1.5 text-xs">
+        <LinkButton tone="muted" type="button" onClick={onClose}>Cancel</LinkButton>
+        <Button size="sm" type="submit" disabled={pay.isPending}>
           {pay.isPending ? 'Saving…' : `Paid ${PKR(amount)}`}
-        </button>
+        </Button>
       </div>
     </form>
   )

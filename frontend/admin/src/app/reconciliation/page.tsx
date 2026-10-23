@@ -1,4 +1,5 @@
 'use client'
+import { Button, CheckLabel, FieldLabel, Input, LinkButton, Textarea } from '@/components/finance/ui'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { api, posApi, ApiError, type ZReport } from '../../lib/api'
@@ -173,7 +174,7 @@ function ShiftDetailPanel({
   })
   const closeError = complete.isError && !isOpenTicketsError(complete.error) ? (complete.error as Error).message : null
 
-  const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text focus:border-s-teal focus:outline-none w-full'
+  const inp = 's-input w-full'
 
   return (
     <Modal title="Shift Reconciliation" onClose={onClose} wide dirty={closingFloat !== null && !complete.isSuccess && !complete.isPending}>
@@ -232,7 +233,7 @@ function ShiftDetailPanel({
                       <tr>
                         <td className="px-4 py-2.5 text-s-text font-semibold">
                           Variance
-                          <span className="block text-[10px] font-normal text-s-muted">tolerance ±{fmtPkr(data.varianceLimitCents)}</span>
+                          <span className="block text-xs font-normal text-s-muted">tolerance ±{fmtPkr(data.varianceLimitCents)}</span>
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <VariancePill cents={data.varianceCents} balanced={data.isBalanced} />
@@ -294,7 +295,7 @@ function ShiftDetailPanel({
                 </p>
                 <DialogForm busy={complete.isPending} onSubmit={() => complete.mutate(false)} missing={closingFloat == null ? 'Enter the cash counted in the drawer (0 if it is empty).' : null}>
                 <div>
-                  <label htmlFor="sh-closing" className="text-xs text-s-muted block mb-1">Closing float (PKR)</label>
+                  <FieldLabel htmlFor="sh-closing" className="block mb-1">Closing float (PKR)</FieldLabel>
                   <NumberField
                     id="sh-closing"
                     decimals={2}
@@ -304,28 +305,28 @@ function ShiftDetailPanel({
                     placeholder="e.g. 5000"
                     className={inp}
                   />
-                  {closingFloat != null && closingFloat >= 100000 && <p className="text-[11px] text-s-muted mt-1" aria-live="polite">{fmtPkr(Math.round(closingFloat * 100))}</p>}
+                  {closingFloat != null && closingFloat >= 100000 && <p className="text-xs text-s-muted mt-1" aria-live="polite">{fmtPkr(Math.round(closingFloat * 100))}</p>}
                 </div>
                 <div className="mt-3">
-                  <label htmlFor="sh-notes" className="text-xs text-s-muted block mb-1">Notes (optional)</label>
-                  <input
+                  <FieldLabel htmlFor="sh-notes" className="block mb-1">Notes (optional)</FieldLabel>
+                  <Input
                     id="sh-notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Any discrepancy explanations…"
-                    className={inp}
+                    className={`${inp} w-auto px-1.5 py-0.5`}
                   />
                 </div>
                 {!openTicketsBlock && closeError && (
                   <p role="alert" className="text-sm text-s-red mt-3">{closeError}</p>
                 )}
                 {!openTicketsBlock && (
-                  <button
+                  <Button
                     type="submit"
                     disabled={complete.isPending}
-                    className="w-full mt-3 rounded-xl bg-primary text-primary-on font-bold py-2.5 text-sm hover:opacity-90 disabled:opacity-40">
+                    className="w-full mt-3">
                     {complete.isPending ? 'Closing…' : 'Close shift'}
-                  </button>
+                  </Button>
                 )}
                 </DialogForm>
                 {openTicketsBlock && (
@@ -397,8 +398,8 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
   const hasHeader = csvLines.length > 0 && /date/i.test(csvLines[0]!) && /amount/i.test(csvLines[0]!)
   const parsedRows = Math.max(0, csvLines.length - (hasHeader ? 1 : 0))
   const bounds = dateBounds()
-  const fieldCls = 'w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text'
-  const labelCls = 'block text-[11px] font-bold text-s-muted mb-0.5'
+  const fieldCls = 's-input w-full'
+  const labelCls = 'block mb-1'
   const missing = !picked ? 'Pick the bank account the statement is for.'
     : !statementDate || statementDate < bounds.min || statementDate > bounds.max ? `Pick a statement date between ${bounds.min} and ${bounds.max}.`
     : parsedRows === 0 ? 'Paste the statement CSV (date, description, amount, reference).'
@@ -409,39 +410,39 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
       <DialogForm busy={submit.isPending} onSubmit={() => { setErr(null); submit.mutate() }} missing={missing}>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div>
-          <label htmlFor="bi-bank" className={labelCls}>Statement is for</label>
+          <FieldLabel htmlFor="bi-bank" className={labelCls}>Statement is for</FieldLabel>
           <Select id="bi-bank" value={picked} onChange={(e) => setTarget(e.target.value)} className={fieldCls}>
             {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
             <option value={GATEWAY}>Card / gateway settlement (1030)</option>
           </Select>
         </div>
         <div>
-          <label htmlFor="bi-date" className={labelCls}>Statement date</label>
-          <input id="bi-date" type="date" min={bounds.min} max={bounds.max} value={statementDate} onChange={(e) => setStatementDate(e.target.value)} className={fieldCls}
+          <FieldLabel htmlFor="bi-date" className={labelCls}>Statement date</FieldLabel>
+          <Input id="bi-date" type="date" min={bounds.min} max={bounds.max} value={statementDate} onChange={(e) => setStatementDate(e.target.value)} className={fieldCls}
             aria-invalid={!statementDate || statementDate < bounds.min || statementDate > bounds.max ? true : undefined} />
         </div>
         <div>
-          <label htmlFor="bi-opening" className={labelCls}>Opening balance (PKR)</label>
+          <FieldLabel htmlFor="bi-opening" className={labelCls}>Opening balance (PKR)</FieldLabel>
           <MoneyInput id="bi-opening" allowNegative value={opening} onChange={setOpening} placeholder="0 — a minus sign is fine for an overdrawn account" className={fieldCls} />
         </div>
         <div>
-          <label htmlFor="bi-closing" className={labelCls}>Closing balance (PKR)</label>
+          <FieldLabel htmlFor="bi-closing" className={labelCls}>Closing balance (PKR)</FieldLabel>
           <MoneyInput id="bi-closing" allowNegative value={closing} onChange={setClosing} placeholder="0" className={fieldCls} />
         </div>
       </div>
       {banks.length === 0 && <p className="text-xs text-s-muted mt-2">No bank accounts yet — add one in Configuration → Bank accounts.</p>}
       <div className="mt-2">
-        <label htmlFor="bi-csv" className={labelCls}>Statement CSV</label>
-        <textarea id="bi-csv" value={csv} onChange={(e) => setCsv(e.target.value)} rows={6} placeholder="Paste CSV (date,description,amount,reference)"
-          className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text font-mono text-xs" />
-        <p className="text-[11px] text-s-muted mt-1" aria-live="polite">
+        <FieldLabel htmlFor="bi-csv" className={labelCls}>Statement CSV</FieldLabel>
+        <Textarea id="bi-csv" value={csv} onChange={(e) => setCsv(e.target.value)} rows={6} placeholder="Paste CSV (date,description,amount,reference)"
+          className="w-full font-mono" />
+        <p className="text-xs text-s-muted mt-1" aria-live="polite">
           {parsedRows === 0 ? 'No rows yet.' : `${parsedRows} row${parsedRows === 1 ? '' : 's'} parsed${hasHeader ? ' (header line skipped)' : ''}.`}
         </p>
       </div>
       {err && <p role="alert" className="text-s-red text-xs mt-2">{err}</p>}
-      <button type="submit" disabled={submit.isPending} className="s-btn-primary text-xs mt-2">
+      <Button size="sm" type="submit" disabled={submit.isPending} className="mt-2">
         {submit.isPending ? 'Importing…' : 'Import'}
-      </button>
+      </Button>
       </DialogForm>
     </div>
   )
@@ -484,7 +485,7 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
     onSuccess: onDone,
   })
   const setRow = (i: number, patch: Partial<SplitRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)))
-  const inp = 'bg-s-card border border-s-border rounded px-1.5 py-0.5 text-s-text'
+  const inp = 's-input'
 
   return (
     <DialogForm busy={adjust.isPending} onSubmit={() => adjust.mutate()}
@@ -497,12 +498,12 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
         </p>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        <label className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={!split} onChange={() => setSplit(false)} /> One account</label>
-        <label className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={split} onChange={() => setSplit(true)} /> Split (e.g. card settlement less fee)</label>
+        <CheckLabel className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={!split} onChange={() => setSplit(false)} /> One account</CheckLabel>
+        <CheckLabel className="inline-flex items-center gap-1"><input type="radio" name={`adjust-mode-${line.id}`} checked={split} onChange={() => setSplit(true)} /> Split (e.g. card settlement less fee)</CheckLabel>
       </div>
       {!split ? (
         <div className="flex flex-wrap gap-2">
-          <input value={contra} onChange={(e) => setContra(e.target.value)} aria-label="Account code" placeholder="account code (6080)" className={`${inp} w-36`} />
+          <Input value={contra} onChange={(e) => setContra(e.target.value)} aria-label="Account code" placeholder="account code (6080)" className={`${inp} w-36`} />
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -511,17 +512,17 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
           </p>
           {rows.map((r, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2">
-              <input value={r.code} onChange={(e) => setRow(i, { code: e.target.value })} aria-label={`Line ${i + 1} account code`} placeholder="code" className={`${inp} w-20 font-mono`} />
-              <Select value={r.type} onChange={(e) => setRow(i, { type: e.target.value as 'debit' | 'credit' })} className={inp}>
+              <Input value={r.code} onChange={(e) => setRow(i, { code: e.target.value })} aria-label={`Line ${i + 1} account code`} placeholder="code" className={`${inp} w-20 font-mono`} />
+              <Select value={r.type} onChange={(e) => setRow(i, { type: e.target.value as 'debit' | 'credit' })} className={`${inp} w-auto px-1.5 py-0.5`}>
                 <option value="debit">Dr</option>
                 <option value="credit">Cr</option>
               </Select>
               <span className="w-28"><RupeeField label={`Line ${i + 1} amount (PKR)`} value={r.amount} onChange={(v) => setRow(i, { amount: v })} className={`${inp} w-full text-right`} /></span>
-              {rows.length > 1 && <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-s-muted hover:text-s-text">Remove</button>}
+              {rows.length > 1 && <LinkButton tone="muted" size="md" type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>Remove</LinkButton>}
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" onClick={() => setRows((rs) => [...rs, { code: '', type: otherSide, amount: '' }])} className="text-primary-ink">+ Add line</button>
+            <LinkButton size="md" type="button" onClick={() => setRows((rs) => [...rs, { code: '', type: otherSide, amount: '' }])}>+ Add line</LinkButton>
             <span className={off === 0 ? 'text-success' : 'text-s-red'}>
               {off === 0 ? 'Balanced' : `Off by ${fmtPkr(Math.abs(off))} (${off > 0 ? 'more debits' : 'more credits'})`}
             </span>
@@ -529,14 +530,13 @@ function AdjustForm({ line, raastAccount, onDone, onCancel }: { line: StatementL
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <input value={memo} onChange={(e) => setMemo(e.target.value)} aria-label="Memo" placeholder="memo (what this is)" className={`${inp} flex-1 min-w-[10rem]`} />
-        <button
+        <Input value={memo} onChange={(e) => setMemo(e.target.value)} aria-label="Memo" placeholder="memo (what this is)" className={`${inp} flex-1 min-w-[10rem]`} />
+        <LinkButton size="md"
           type="submit"
-          disabled={adjust.isPending}
-          className="text-primary-ink font-semibold disabled:opacity-40">
+          disabled={adjust.isPending}>
           {adjust.isPending ? 'Booking…' : 'Book'}
-        </button>
-        <button type="button" onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
       {adjust.error && (
         <p role="alert" className="text-s-red">
@@ -556,10 +556,10 @@ function IgnoreForm({ busy, onCancel, onSubmit }: { busy: boolean; onCancel: () 
   const ok = reason.trim().length >= 10
   return (
     <div className="px-4 py-3 flex flex-wrap items-center gap-2 text-xs">
-      <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} aria-label="Why ignore this line"
-        placeholder="Why is this line ignored? (at least 10 characters)" className="bg-s-card border border-s-border rounded px-1.5 py-0.5 text-s-text flex-1 min-w-[14rem]" />
-      <button disabled={!ok || busy} onClick={() => onSubmit(reason.trim())} className="text-primary-ink font-semibold disabled:opacity-40">{busy ? 'Saving…' : 'Ignore line'}</button>
-      <button onClick={onCancel} className="text-s-muted">Cancel</button>
+      <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} aria-label="Why ignore this line"
+        placeholder="Why is this line ignored? (at least 10 characters)" className="flex-1 min-w-[14rem]" />
+      <LinkButton size="md" type="button" disabled={!ok || busy} onClick={() => onSubmit(reason.trim())}>{busy ? 'Saving…' : 'Ignore line'}</LinkButton>
+      <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
     </div>
   )
 }
@@ -589,7 +589,7 @@ function ManualMatch({ line, onCancel, onDone }: { line: StatementLine; onCancel
         <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))} className="bg-s-card border border-s-border rounded px-1.5 py-0.5 text-s-text">
           {[15, 45, 90, 180, 400].map((d) => <option key={d} value={d}>{d} days</option>)}
         </Select>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
       {isLoading && <p className="text-s-muted">Looking…</p>}
       {error && <p role="alert" className="text-s-red">{(error as Error).message}</p>}
@@ -603,7 +603,7 @@ function ManualMatch({ line, onCancel, onDone }: { line: StatementLine; onCancel
               <span className="text-s-muted whitespace-nowrap">{c.entryDate.slice(0, 10)}</span>
               <span className="text-s-text flex-1 min-w-[12rem]">{c.description}{c.reference && <span className="text-s-muted"> · {c.reference}</span>}</span>
               <span className="font-mono">{fmtPkr(c.amountCents)}</span>
-              <button disabled={match.isPending} onClick={() => match.mutate(c.journalLineId)} className="text-primary-ink font-semibold disabled:opacity-40">Match</button>
+              <LinkButton size="md" type="button" disabled={match.isPending} onClick={() => match.mutate(c.journalLineId)}>Match</LinkButton>
             </li>
           ))}
         </ul>
@@ -669,7 +669,7 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
                   {l.description}{l.reference && <span className="text-s-muted"> · {l.reference}</span>}
                   {l.raastReceipt && (
                     <button onClick={onOpenRaast} title={`Raast payment${l.raastReceipt.bankRef ? ` ${l.raastReceipt.bankRef}` : ''} on bill #${orderRef(l.raastReceipt.orderId)}`}
-                      className="ml-2 s-badge-green text-[10px] font-semibold">
+                      className="ml-2 s-badge-green text-xs font-semibold">
                       Raast #{orderRef(l.raastReceipt.orderId)}
                     </button>
                   )}
@@ -678,17 +678,17 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
                 <td className={`px-4 py-2 text-right font-mono ${l.amountCents < 0 ? 'text-s-red' : 'text-s-text'}`}>{fmtPkr(l.amountCents)}</td>
                 <td className="px-4 py-2 text-right whitespace-nowrap">
                   {l.matchStatus === 'matched' && l.cardSettlement ? (
-                    <button onClick={onOpenCards} className="text-s-muted underline hover:text-s-text">card payout — undo on Card payouts</button>
+                    <LinkButton tone="muted" size="md" type="button" onClick={onOpenCards}>card payout — undo on Card payouts</LinkButton>
                   ) : l.matchStatus === 'matched' && !l.raastReceipt && canUnmatch ? (
                     <span className="inline-flex gap-3">
                       <span className="text-s-muted">matched</span>
-                      <button onClick={async () => { if (await confirm({ title: `Undo the match on ${fmtPkr(l.amountCents)}?`, body: `${l.description || 'This statement line'} goes back to unmatched and its journal line is free again.`, confirmLabel: 'Undo match', danger: true })) unmatch.mutate(l.id) }}
-                        disabled={unmatch.isPending} className="text-s-muted underline hover:text-s-text">Unmatch</button>
+                      <LinkButton tone="muted" size="md" type="button" onClick={async () => { if (await confirm({ title: `Undo the match on ${fmtPkr(l.amountCents)}?`, body: `${l.description || 'This statement line'} goes back to unmatched and its journal line is free again.`, confirmLabel: 'Undo match', danger: true })) unmatch.mutate(l.id) }}
+                        disabled={unmatch.isPending}>Unmatch</LinkButton>
                     </span>
                   ) : l.matchStatus === 'ignored' ? (
                     <span className="inline-flex gap-3">
                       <span className="text-s-muted" title={l.notes ?? undefined}>ignored</span>
-                      <button onClick={() => unignore.mutate(l.id)} disabled={unignore.isPending} className="text-s-muted underline hover:text-s-text">Bring back</button>
+                      <LinkButton tone="muted" size="md" type="button" onClick={() => unignore.mutate(l.id)} disabled={unignore.isPending}>Bring back</LinkButton>
                     </span>
                   ) : l.matchStatus !== 'unmatched' ? (
                     <span className="text-s-muted">{l.matchStatus}</span>
@@ -703,11 +703,11 @@ function StatementLines({ importId, raastAccount, payoutBank, onOpenRaast, onOpe
                   ) : (
                     <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
                       {payoutBank && l.amountCents > 0 && (
-                        <button onClick={() => { setAdjusting(null); setCardLine(l.id) }} className="text-primary-ink font-semibold">Card payout?</button>
+                        <LinkButton size="md" type="button" onClick={() => { setAdjusting(null); setCardLine(l.id) }}>Card payout?</LinkButton>
                       )}
-                      {canBook && <button onClick={() => { setCardLine(null); setAdjusting(null); setIgnoring(null); setMatching(l.id) }} className="text-primary-ink font-semibold">Match by hand</button>}
-                      {canBook && <button onClick={() => { setCardLine(null); setMatching(null); setIgnoring(null); setAdjusting(l.id) }} className="text-primary-ink">Book adjustment</button>}
-                      <button onClick={() => { setCardLine(null); setMatching(null); setAdjusting(null); setIgnoring(l.id) }} className="text-s-muted hover:text-s-text">Ignore</button>
+                      {canBook && <LinkButton size="md" type="button" onClick={() => { setCardLine(null); setAdjusting(null); setIgnoring(null); setMatching(l.id) }}>Match by hand</LinkButton>}
+                      {canBook && <LinkButton size="md" type="button" onClick={() => { setCardLine(null); setMatching(null); setIgnoring(null); setAdjusting(l.id) }}>Book adjustment</LinkButton>}
+                      <LinkButton tone="muted" size="md" type="button" onClick={() => { setCardLine(null); setMatching(null); setAdjusting(null); setIgnoring(l.id) }}>Ignore</LinkButton>
                     </span>
                   )}
                 </td>
@@ -911,11 +911,10 @@ export default function ReconciliationPage() {
                         <VariancePill cents={s.varianceCents} balanced={s.isBalanced} />
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setSelectedShift(s.shiftId) }}
-                          className="text-xs text-s-muted hover:text-primary-ink transition-colors">
+                        <LinkButton tone="muted" type="button"
+                          onClick={(e) => { e.stopPropagation(); setSelectedShift(s.shiftId) }}>
                           {s.status === 'open' ? 'Close →' : 'View →'}
-                        </button>
+                        </LinkButton>
                       </td>
                     </tr>
                   ))}
@@ -945,9 +944,9 @@ export default function ReconciliationPage() {
           <div className="s-card overflow-hidden">
             <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border flex items-center justify-between">
               <div className="text-xs font-semibold text-s-text">Bank Statement Imports</div>
-              <button onClick={() => setShowImport(!showImport)} className="s-btn-secondary text-xs">
+              <Button size="sm" variant="secondary" type="submit" onClick={() => setShowImport(!showImport)}>
                 {showImport ? 'Cancel' : 'Import CSV'}
-              </button>
+              </Button>
             </div>
             {showImport && (
               <BankImportForm

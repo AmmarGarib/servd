@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { ErrorNote, Section, pkr } from './ui'
 import type { FlagRow } from './types'
+import { CompactEmptyState } from '../../../../components/ui/CompactEmptyState'
 
 const KIND_LABEL: Record<string, string> = {
   shrinkage: 'Count shrinkage', shrinkage_trend: 'Shrinkage trend', yield_low: 'Low prep yield', stock_shortfall: 'Sold beyond stock',
@@ -22,7 +23,7 @@ export function FlagsTab({ tenantId }: { tenantId: string }) {
     <Section title="Stock flags" hint="Open flags on stock and refused stock postings. Acknowledge or resolve them in Exceptions." right={<Link href="/exceptions" className="text-xs text-primary-ink hover:underline">Exceptions</Link>}>
       <ErrorNote error={error} />
       {isLoading ? <p className="py-6 text-center text-sm text-s-dim">Loading…</p> : (data?.flags ?? []).length === 0 ? (
-        <p className="py-6 text-center text-sm text-s-dim">No open stock flags</p>
+        <CompactEmptyState message="No open stock flags" />
       ) : (
         <div className="overflow-x-auto">
           <table className="s-table">

@@ -1,5 +1,6 @@
 'use client'
 // One set of fixes: what it asks for, what approving will do, and the CEO's buttons.
+import { Button } from '@/components/finance/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
@@ -62,7 +63,7 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
 
   return (
     <div className="space-y-4">
-      <button type="button" className="s-btn-secondary text-sm" onClick={onBack}>Back to the list</button>
+      <Button variant="secondary" type="button"  onClick={onBack}>Back to the list</Button>
       {msg && <div role={msg.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm ${msg.ok ? 'text-success' : 'text-s-red'}`}>{msg.text}</div>}
 
       <div className="s-card p-4 space-y-2">
@@ -95,7 +96,7 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
               <div key={k}><p className="text-s-muted">{k}</p><p className="text-sm font-semibold tabular-nums text-s-text">{v}</p></div>
             ))}
           </div>
-          {c.status !== 'applied' && <p className="text-[11px] text-s-muted mt-2">The expected cash changes after approval: it drops by any cash bill that is voided and not handed back.</p>}
+          {c.status !== 'applied' && <p className="text-xs text-s-muted mt-2">The expected cash changes after approval: it drops by any cash bill that is voided and not handed back.</p>}
         </div>
       )}
 
@@ -132,12 +133,12 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
 
       {isCeo && c.status === 'submitted' && (
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="s-btn-primary text-sm" disabled={decide.isPending} onClick={approve}>{decide.isPending ? 'Working…' : 'Approve and apply'}</button>
-          <button type="button" className="s-btn-secondary text-sm" disabled={decide.isPending} onClick={reject}>Reject</button>
+          <Button type="button"  disabled={decide.isPending} onClick={approve}>{decide.isPending ? 'Working…' : 'Approve and apply'}</Button>
+          <Button variant="secondary" type="button"  disabled={decide.isPending} onClick={reject}>Reject</Button>
         </div>
       )}
       {isCeo && c.status === 'failed' && (
-        <button type="button" className="s-btn-primary text-sm" disabled={decide.isPending} onClick={retry}>{decide.isPending ? 'Working…' : 'Retry'}</button>
+        <Button type="button"  disabled={decide.isPending} onClick={retry}>{decide.isPending ? 'Working…' : 'Retry'}</Button>
       )}
       {!isCeo && c.status === 'submitted' && <p className="text-xs text-s-muted">Only the CEO can approve or reject this.</p>}
     </div>

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 type Scope = 'customer' | 'order' | 'menu_item' | 'supplier'
 type FieldType = 'text' | 'number' | 'date' | 'select' | 'boolean'
@@ -41,7 +42,7 @@ export default function CustomFieldsPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🧩 Custom fields</h1>
+            <h1 className="text-2xl font-black text-white/90">Custom fields</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Add fields to customers, orders, menu items, or suppliers — without changing code. They'll appear in the matching record's edit form.
             </p>
@@ -121,7 +122,7 @@ function Modal({ field, onClose, onSaved }: { field: Def | null; onClose: () => 
       <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{field ? 'Edit field' : 'New custom field'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
           {!field && (

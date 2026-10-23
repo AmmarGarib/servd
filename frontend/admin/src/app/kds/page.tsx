@@ -8,6 +8,7 @@ import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../lib/api'
 import { useLineActions, LineStateBadge, HoldButton, RecallStrip } from '../../components/kds/LineActions'
 import { orderRef } from '../../lib/orderRef'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 /**
  * Kitchen dashboard — the line cook's home page.
@@ -121,14 +122,8 @@ export default function KdsKitchenDashboard() {
               </p>
             </div>
           ) : (
-            <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-12 text-center">
-              <ChefHat size={32} aria-hidden="true" className="mx-auto mb-2 text-kds-subtext" />
-              <p className="text-base font-bold text-kds-text">No active stations yet</p>
-              <p className="text-sm text-kds-subtext mt-1">
-                Open <Link href="/kds/config" className="text-kds-green underline">KDS Config</Link> to add stations,
-                then assign cooks in <Link href="/workforce" className="text-kds-green underline">Workforce</Link>.
-              </p>
-            </div>
+            <CompactEmptyState tone="dark" icon={<ChefHat size={28} aria-hidden="true" />} message="No active stations yet"
+              detail={<>Open <Link href="/kds/config" className="text-kds-green underline">KDS Config</Link> to add stations, then assign cooks in <Link href="/workforce" className="text-kds-green underline">Workforce</Link>.</>} />
           )
         ) : (
           <div className="space-y-3">
@@ -149,7 +144,7 @@ export default function KdsKitchenDashboard() {
                       {group.stations.length} station{group.stations.length === 1 ? '' : 's'}
                     </span>
                     {totalLoad > 0 && (
-                      <span className="ml-auto inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-[10px] font-bold px-1.5 bg-kds-amber/20 text-kds-amber">
+                      <span className="ml-auto inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-xs font-bold px-1.5 bg-kds-amber/20 text-kds-amber">
                         {totalLoad}
                       </span>
                     )}
@@ -171,7 +166,7 @@ export default function KdsKitchenDashboard() {
                                   <ChevronDown size={16} aria-hidden="true" />
                                 </span>
                                 <span className="font-medium text-kds-text">{s.name}</span>
-                                <span className={`inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-[10px] font-bold px-1.5 ${
+                                <span className={`inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-xs font-bold px-1.5 ${
                                   s.liveLoad > 0 ? 'bg-kds-amber/20 text-kds-amber' : 'bg-kds-bg text-kds-subtext'
                                 }`}>
                                   {s.liveLoad} ticket{s.liveLoad === 1 ? '' : 's'}
@@ -219,11 +214,12 @@ export default function KdsKitchenDashboard() {
 // fighting the outer scroll container. The bumping logic is small enough
 // that a focused, embed-friendly version is the cleaner answer.
 
-interface FulfilmentMeta { short: string; accent: string; bg: string }
+interface FulfilmentMeta { short: string; text: string; badge: string; card: string }
+// kds-* tokens only (green / amber / violet), never hex.
 const FULFILMENT_META: Record<string, FulfilmentMeta> = {
-  dine_in:  { short: 'PLATE',    accent: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
-  takeout:  { short: 'PACK',     accent: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-  delivery: { short: 'PACK+LBL', accent: '#ec4899', bg: 'rgba(236,72,153,0.12)' },
+  dine_in:  { short: 'PLATE',    text: 'text-kds-green',     badge: 'bg-kds-green/10 border-kds-green/30',         card: 'border-kds-green/35' },
+  takeout:  { short: 'PACK',     text: 'text-kds-amber',     badge: 'bg-kds-amber/10 border-kds-amber/30',         card: 'border-kds-amber/35' },
+  delivery: { short: 'PACK+LBL', text: 'text-source-manual', badge: 'bg-source-manual/10 border-source-manual/30', card: 'border-source-manual/35' },
 }
 // Strict fallback so TS doesn't widen the lookup to `FulfilmentMeta | undefined`
 // — every fulfilment value we get from the API maps to one of the three above,
@@ -308,7 +304,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
         <div>
           <Check size={28} aria-hidden="true" className="mx-auto mb-1 text-kds-green" />
           <p className="text-sm font-bold text-kds-text">All clear</p>
-          <p className="text-[11px] text-kds-subtext mt-0.5">New tickets appear here when expo fires them.</p>
+          <p className="text-xs text-kds-subtext mt-0.5">New tickets appear here when expo fires them.</p>
         </div>
         <div className="text-left"><RecallStrip stationId={stationId} actions={lineActions} /></div>
       </div>
@@ -338,15 +334,13 @@ function StationLivePanel({ stationId }: { stationId: string }) {
             const fm: FulfilmentMeta = FULFILMENT_META[t.order.fulfilmentType] ?? FALLBACK_META
             const instruction = !isLegacy ? (t as StepTicket).instruction : null
             return (
-              <div key={id} className="rounded-xl relative overflow-hidden"
-                style={{ background: '#1f2230', border: `2px solid ${fm.accent}55` }}>
+              <div key={id} className={`rounded-xl relative overflow-hidden border-2 bg-kds-card ${fm.card}`}>
                 <div className="p-3">
-                  <div className="absolute -top-2 left-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider"
-                    style={{ background: fm.bg, color: fm.accent, border: `1px solid ${fm.accent}50` }}>
+                  <div className={`absolute -top-2 left-2 px-1.5 py-0.5 rounded text-xs font-black uppercase tracking-wider border bg-kds-card ${fm.badge} ${fm.text}`}>
                     <FulfilmentIcon type={t.order.fulfilmentType} size={11} /> {fm.short}
                     {t.order.tableLabel && <span className="ml-1 opacity-80">· {t.order.tableLabel}</span>}
                   </div>
-                  <div className="flex items-center justify-between mt-1 mb-1.5 text-[9px] uppercase tracking-wider font-bold">
+                  <div className="flex items-center justify-between mt-1 mb-1.5 text-xs uppercase tracking-wider font-bold">
                     <span className="text-kds-subtext">{t.order.concept.name}</span>
                     <span className="text-kds-amber">{elapsed}</span>
                   </div>
@@ -356,16 +350,16 @@ function StationLivePanel({ stationId }: { stationId: string }) {
                     {t.itemName}
                   </p>
                   {instruction && (
-                    <p className="text-[12px] font-semibold mt-1 leading-snug" style={{ color: '#86EFAC' }}>
+                    <p className="text-xs font-semibold mt-1 leading-snug text-kds-green">
                       <ArrowRight size={12} aria-hidden="true" className="inline-block align-[-1px] mr-0.5" />{instruction}
                     </p>
                   )}
                   {t.itemNotes && (
-                    <p className="text-[11px] italic mt-1" style={{ color: '#FCD34D' }}>
+                    <p className="text-xs italic mt-1 text-kds-amber">
                       <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{t.itemNotes}
                     </p>
                   )}
-                  <p className="text-[10px] text-kds-subtext mt-1">
+                  <p className="text-xs text-kds-subtext mt-1">
                     {t.order.customerName ?? 'Walk-in'} · #{orderRef(t.order.id)}
                   </p>
                   {!isHeld && (
@@ -395,18 +389,18 @@ function StationLivePanel({ stationId }: { stationId: string }) {
 
       {waiting.length > 0 && (
         <div>
-          <p className="text-[9px] uppercase tracking-[0.2em] font-black text-kds-subtext mb-1.5">
+          <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-1.5">
             On deck ({waiting.length})
           </p>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
             {waiting.map((t) => (
               <div key={t.stepId} className="rounded-lg px-2.5 py-1.5 opacity-60"
                 style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
-                <p className="text-[11px] font-bold text-kds-text/70 leading-tight">
+                <p className="text-xs font-bold text-kds-text/70 leading-tight">
                   {t.qty > 1 && <span className="text-kds-subtext mr-1">{t.qty}×</span>}
                   {t.itemName}
                 </p>
-                <p className="text-[9px] text-kds-subtext italic mt-0.5">{t.instruction}</p>
+                <p className="text-xs text-kds-subtext italic mt-0.5">{t.instruction}</p>
               </div>
             ))}
           </div>
@@ -471,10 +465,10 @@ function UnroutedPanel() {
                 {it.qty > 1 && <span className="text-kds-amber mr-1">{it.qty}×</span>}
                 {it.itemName}
               </p>
-              <p className="text-[11px] text-kds-subtext truncate">
+              <p className="text-xs text-kds-subtext truncate">
                 {it.order.concept.name} · {it.order.tableLabel ?? it.order.customerName ?? 'Walk-in'} · #{orderRef(it.order.id)}
               </p>
-              <p className="text-[10px] text-kds-subtext/80">
+              <p className="text-xs text-kds-subtext/80">
                 {it.retiredStation ? `Routed to retired station "${it.retiredStation}"` : 'No station set'}
               </p>
             </div>
@@ -531,7 +525,7 @@ function BackInStockPanel() {
           <div key={it.menuItemId} className="flex items-center gap-3 rounded-lg border border-kds-border bg-kds-card px-3 py-2">
             <div className="min-w-0">
               <p className="text-sm font-bold text-kds-text">{it.name}</p>
-              <p className="text-[11px] text-kds-subtext">
+              <p className="text-xs text-kds-subtext">
                 {it.conceptName} · off since {formatDistanceToNowStrict(new Date(it.eightySixedAt))} ago
               </p>
             </div>

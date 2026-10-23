@@ -13,7 +13,7 @@ import { api, ApiError } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { SpendLinesEditor, emptyLine, lineBody, linesReady, type SpendLine } from '../../../components/finance/SpendLinesEditor'
 import { ReceiptUploader, type UploadedReceipt } from '../../../components/finance/ReceiptUploader'
-import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, firstMissing, focusField, pkr, primaryBtn, useSubmitOnce, type Box } from './ui'
+import { Button, Choice, ErrorBanner, Field, fieldCls, firstMissing, focusField, Footer, Input, Modal, pkr, primaryBtn, type Box, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
 
 interface OpenBill { id: string; billNumber: string; status: string; totalCents: number; whtCents: number; paidCents: number; creditedCents?: number; supplier: { name: string } }
@@ -93,20 +93,20 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
     )}
     <Field label="Amount (PKR) *" error={shown('sp-amount')}>
       <MoneyInput id="sp-amount" value={amountCents} onChange={setAmount} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
-      <p className="text-[10px] mt-1" style={{ color: amountCents > box.floatCents ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
+      <p className="text-xs mt-1" style={{ color: amountCents > box.floatCents ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
         {amountCents > box.floatCents ? `More than the ${pkr(box.floatCents)} in the box` : `In the box now: ${pkr(box.floatCents)}`}
       </p>
     </Field>
     <Field label="What for *" error={shown('sp-reason')}>
-      <input id="sp-reason" value={reason} onChange={(e) => setWhat(e.target.value)} maxLength={200} placeholder="Printer paper and pens" className={fieldCls} />
+      <Input id="sp-reason" value={reason} onChange={(e) => setWhat(e.target.value)} maxLength={200} placeholder="Printer paper and pens" className={fieldCls} />
     </Field>
     <Field label="Vendor">
-      <input value={vendorName} onChange={(e) => setVendorName(e.target.value)} maxLength={120} placeholder="Optional" className={fieldCls} />
+      <Input value={vendorName} onChange={(e) => setVendorName(e.target.value)} maxLength={120} placeholder="Optional" className={fieldCls} />
     </Field>
     {mode === 'expense' ? (
       <Field label="Booked to *" error={shown('sp-lines')}>
         <SpendLinesEditor lines={lines} onChange={setLines} totalCents={amountCents} canPickAccount={isKeeper} tenantId={box.tenantId} fieldClassName={fieldCls} />
-        <p className="text-[10px] text-white/35 mt-1">Kitchen food, drinks and packaging are stock — book them through a supplier receipt, not here.</p>
+        <p className="text-xs text-s-muted mt-1">Kitchen food, drinks and packaging are stock — book them through a supplier receipt, not here.</p>
       </Field>
     ) : (
       <Field label="Supplier bill *" error={shown('sp-bill')}>
@@ -116,7 +116,7 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
             <option key={b.id} value={b.id}>{b.supplier.name} · {b.billNumber} · {pkr(b.totalCents - (b.whtCents ?? 0) - b.paidCents - (b.creditedCents ?? 0))} due</option>
           ))}
         </Select>
-        <p className="text-[10px] text-white/35 mt-1">Recorded as a cash payment against the bill, so it is not expensed twice.</p>
+        <p className="text-xs text-s-muted mt-1">Recorded as a cash payment against the bill, so it is not expensed twice.</p>
       </Field>
     )}
     <ReceiptUploader
@@ -127,14 +127,14 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
       onChange={setReceipts}
       max={5}
     />
-    <p className="text-[10px] text-white/35">A receipt photo is required above your company&apos;s photo threshold (PKR 500 unless changed).</p>
+    <p className="text-xs text-s-muted">A receipt photo is required above your company&apos;s photo threshold (PKR 500 unless changed).</p>
     <div id="sp-cls">
       <PaymentClassificationFields value={cls} onChange={setCls} compact />
-      {shown('sp-cls') && <p className="text-[11px] mt-1" style={{ color: 'var(--erp-danger)' }}>{shown('sp-cls')}</p>}
+      {shown('sp-cls') && <p className="text-xs mt-1" style={{ color: 'var(--erp-danger)' }}>{shown('sp-cls')}</p>}
     </div>
     {save.error && <ErrorBanner error={save.error} />}
     <Footer onCancel={onClose} primary={
-      <button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Record spend'}</button>
+      <Button type="submit" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Record spend'}</Button>
     } />
     </form>
   </Modal>

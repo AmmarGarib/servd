@@ -22,7 +22,6 @@ type Mode = 'me' | 'kiosk'
 type Stage = 'idle' | 'working' | 'success' | 'error'
 
 interface PresignedUpload { uploadUrl: string; publicUrl: string }
-interface PresignedUpload { uploadUrl: string; publicUrl: string }
 /** Live clock for the top of the screen: Karachi time, ticking each second. */
 function useNow() {
   const [now, setNow] = useState<Date | null>(null)
@@ -225,7 +224,7 @@ export default function TimeClockPage() {
             <p className="text-2xl font-black tabular-nums leading-none text-white">
               {now ? now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: TZ }) : '--:--:--'}
             </p>
-            <p className="mt-1 text-[11px] text-white/55">
+            <p className="mt-1 text-xs text-white/55">
               {now ? now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: TZ }) : ''}
             </p>
           </div>
@@ -254,7 +253,7 @@ export default function TimeClockPage() {
               <canvas ref={canvasRef} className="hidden" />
               {!asked && <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-white/50">The camera and your location are asked for when you clock in.</p>}
               {asked && (
-                <div className="absolute top-3 right-3 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full"
+                <div className="absolute top-3 right-3 text-xs font-bold uppercase tracking-widest px-2 py-1 rounded-full"
                   style={{ background: coords ? 'rgb(var(--erp-accent-rgb) / 0.22)' : 'color-mix(in srgb, var(--erp-danger) 18%, transparent)', color: coords ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
                   <MapPin size={10} aria-hidden="true" className="mr-1 inline-block align-[-1px]" />{coords ? 'located' : mediaNote ? 'no location' : 'locating…'}
                 </div>

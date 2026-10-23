@@ -4,12 +4,14 @@
 // the CEO approves or rejects (the buttons show only when the API says the
 // caller may decide). The same queue feeds the CEO's approvals inbox.
 
+import { Field } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { FA_BASE, FaFrame, Notice, card, inp, errorWords, useFaLookups, type FaRequest } from '../../../../components/fixedAssets/shared'
 import { RequestCard } from '../../../../components/fixedAssets/RequestCard'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 const FILTERS: Array<{ key: string; label: string; status: string }> = [
   { key: 'pending', label: 'Waiting', status: 'pending' },
@@ -74,7 +76,7 @@ export default function RequestsPage() {
             )
           })}
         </div>
-        <label className="block ml-auto min-w-[200px]"><span className="text-[11px] font-bold text-white/50">Kind</span>
+        <Field label="Kind">
           <Select className={inp} value={kind} onChange={(e) => setKind(e.target.value)}>
             <option value="">All kinds</option>
             <option value="capitalise">Capitalise from CapEx</option>
@@ -83,16 +85,13 @@ export default function RequestsPage() {
             <option value="pool_write_off">Write off smallwares units</option>
             <option value="pool_transfer">Move smallwares units</option>
             <option value="count">Smallwares count</option>
-          </Select></label>
+          </Select></Field>
       </div>
 
       {error && <Notice tone="bad">{errorWords(error)}</Notice>}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       {data && list.length === 0 && (
-        <div className="rounded-2xl p-10 text-center" style={card}>
-          <p className="font-bold text-white/85">{filter === 'pending' ? 'Nothing is waiting' : 'No requests here'}</p>
-          <p className="text-sm text-white/45 mt-1">Requests appear when finance disposes of an asset, writes one down, writes off smallwares, or prepares a CapEx item for the register.</p>
-        </div>
+        <CompactEmptyState message={filter === 'pending' ? 'Nothing is waiting.' : 'No requests here.'} />
       )}
 
       <div className="space-y-3">

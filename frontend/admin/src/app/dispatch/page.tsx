@@ -20,6 +20,7 @@
 // "Delivered" is a manager's override, not a routine button: the rider closes
 // a rider-app job with the customer's code at the door (deliverGate below).
 
+import { X, ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -170,7 +171,7 @@ function EnterCode({ orderId, onDone }: { orderId: string; onDone: () => void })
           className="s-btn-primary min-h-11 px-4 text-xs disabled:opacity-50">{verify.isPending ? 'Checking…' : 'Check'}</button>
         <button type="button" onClick={() => { setOpen(false); setMsg(null) }} className="s-btn-secondary min-h-11 px-4 text-xs">Cancel</button>
       </div>
-      {msg && <p role="alert" className={`text-[11px] ${msg.tone === 'bad' ? 'text-s-red' : 'text-s-muted'}`}>{msg.text}</p>}
+      {msg && <p role="alert" className={`text-xs ${msg.tone === 'bad' ? 'text-s-red' : 'text-s-muted'}`}>{msg.text}</p>}
     </form>
   )
 }
@@ -298,7 +299,7 @@ export default function DispatchPage() {
         {boardError && (
           <div role="alert" className="flex items-start justify-between gap-3 rounded-lg border border-s-red/40 bg-s-red/10 px-3 py-2 text-sm text-s-red">
             <span>{boardError}</span>
-            <button onClick={() => setBoardError(null)} aria-label="Dismiss" className="shrink-0 px-1">✕</button>
+            <button onClick={() => setBoardError(null)} aria-label="Dismiss" className="flex h-11 w-11 shrink-0 items-center justify-center"><X size={16} aria-hidden="true" /></button>
           </div>
         )}
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
@@ -317,25 +318,25 @@ export default function DispatchPage() {
                   <p className="text-sm font-bold flex items-center gap-2">
                     {r.name}
                     {r.fleetPartner && (
-                      <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-s-purple-dim text-s-purple">
+                      <span className="text-xs font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-s-purple-dim text-s-purple">
                         Partner fleet
                       </span>
                     )}
                   </p>
-                  <p className="text-[11px] text-s-muted">{fmtPhone(r.phone)} · {r.vehicleType}</p>
+                  <p className="text-xs text-s-muted">{fmtPhone(r.phone)} · {r.vehicleType}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className={`text-[11px] ${r.stale ? 'text-s-red' : 'text-s-muted'}`}>
+                <span className={`text-xs ${r.stale ? 'text-s-red' : 'text-s-muted'}`}>
                   fix: {fmtAge(r.lastFixAgeMs)}{r.stale && r.lastFixAgeMs != null ? ' (stale)' : ''}
                 </span>
                 {r.lastLat != null && r.lastLng != null && (
                   <a target="_blank" rel="noopener noreferrer"
                     href={`https://www.google.com/maps?q=${r.lastLat},${r.lastLng}`}
-                    className="text-[11px] text-primary-ink hover:underline">map ↗</a>
+                    className="text-xs text-primary-ink hover:underline">map<ExternalLink size={12} aria-hidden="true" className="ml-1 inline-block" /></a>
                 )}
                 {r.fleetPartner ? (
-                  <span className="text-[11px] text-s-muted capitalize">{r.status}</span>
+                  <span className="text-xs text-s-muted capitalize">{r.status}</span>
                 ) : (
                   <Select
                     value={r.status}
@@ -363,37 +364,37 @@ export default function DispatchPage() {
                       <div key={o.id} className={`rounded-lg border p-2 bg-s-bg-soft ${isDelivery(o) ? 'border-s-border' : 'border-s-red/40'}`}>
                         <div className="flex justify-between items-baseline mb-1">
                           <span className="text-xs font-mono text-s-muted">#{orderRef(o.id)}</span>
-                          <span className="text-[10px] uppercase tracking-wider font-bold text-s-muted">
+                          <span className="text-xs uppercase tracking-wider font-bold text-s-muted">
                             {o.status === 'completed' ? 'completed · not delivered' : o.status}
                           </span>
                         </div>
                         <p className="text-sm font-semibold">{formatBrandName(o.concept.name)}</p>
-                        <p className="text-[11px] text-s-muted">{o.customerName ?? 'Guest'} · {fmtPkrWhole(o.totalCents)}</p>
-                        {o.deliveryNotes && <p className="text-[11px] italic text-s-muted mt-1">{o.deliveryNotes}</p>}
+                        <p className="text-xs text-s-muted">{o.customerName ?? 'Guest'} · {fmtPkrWhole(o.totalCents)}</p>
+                        {o.deliveryNotes && <p className="text-xs italic text-s-muted mt-1">{o.deliveryNotes}</p>}
                         {meta && stage && (
-                          <span className={`mt-1.5 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium ${meta.chip}`}>
+                          <span className={`mt-1.5 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${meta.chip}`}>
                             {meta.label}
                             {stage.at && <span className="opacity-70">· {fmtTime(stage.at)}</span>}
                           </span>
                         )}
                         {!isDelivery(o) && (
-                          <p className="text-[11px] text-s-red mt-1">
+                          <p className="text-xs text-s-red mt-1">
                             Not a delivery ({FULFILMENT_LABEL[o.fulfilmentType ?? ''] ?? o.fulfilmentType}) — unassign the rider.
                           </p>
                         )}
                         {gate?.note && (
-                          <p className={`text-[11px] mt-1 ${gate.locked ? 'text-s-red' : 'text-s-muted'}`}>{gate.note}</p>
+                          <p className={`text-xs mt-1 ${gate.locked ? 'text-s-red' : 'text-s-muted'}`}>{gate.note}</p>
                         )}
                         {deliverError[o.id] && (
-                          <p role="alert" className="text-[11px] mt-1 text-s-red">{deliverError[o.id]}</p>
+                          <p role="alert" className="text-xs mt-1 text-s-red">{deliverError[o.id]}</p>
                         )}
                         {o.handoverReroutedAt && (
-                          <p className="text-[11px] mt-1 text-success">
+                          <p className="text-xs mt-1 text-success">
                             Code sent to the rider{o.handoverRerouteByName ? ` by ${o.handoverRerouteByName}` : ' by a manager'} · {fmtTime(o.handoverReroutedAt)}
                           </p>
                         )}
                         {gate && canOverrides && o.codeOnly && (gate.locked || o.doorProblem) && (
-                          <Link href="/emergency-overrides" className="text-[11px] text-primary-ink hover:underline mt-1 inline-block">
+                          <Link href="/emergency-overrides" className="text-xs text-primary-ink hover:underline mt-1 inline-block">
                             Open Emergency overrides
                           </Link>
                         )}

@@ -473,7 +473,16 @@ export async function posRoutes(fastify: FastifyInstance) {
       // §7.10: a drawer with a card-machine charge (or card refund) still in
       // flight cannot close — 409 SHIFT_HAS_ACTIVE_CHARGE {charges}.
       await assertShiftHasNoActiveCharges(shift.id)
-      return closeShift(req.params.id, closingFloatCents, notes, { confirmOpenTickets })
+      const closed = await closeShift(req.params.id, closingFloatCents, notes, { confirmOpenTickets })
+      // Who closed the drawer (the Shift row keeps only who ran it). Read by
+      // shift corrections: finance never corrects a drawer it ran or closed
+      // (shiftCorrections/service.ts assertNotOwnDrawer).
+      await audit({
+        category: 'accounting', action: 'pos.shift.close', entity: 'Shift', entityId: shift.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: shift.tenantId ?? null,
+        after: { status: 'closed', closingFloatCents }, metadata: { actorRole: req.staffUser!.role, shiftUserId: shift.userId },
+      })
+      return closed
     },
   )
 

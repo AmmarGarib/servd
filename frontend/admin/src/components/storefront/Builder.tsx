@@ -41,6 +41,7 @@ import type { MotionPreviewControl } from './MotionPicker'
 import { PageSettingsPanel, PopupRulesPanel, StatusBadge } from './panels'
 import { VersionsDrawer } from './VersionsDrawer'
 import { blockIds, findBlock, forEachBlock, insertAt, locate, updateBlock, type Slot } from './tree'
+import { CompactEmptyState } from '../ui/CompactEmptyState'
 
 interface Doc { title: string; blocks: Block[]; settings: PageSettings }
 type RightTab = 'element' | 'page' | 'rules'
@@ -655,7 +656,7 @@ export function Builder({ slug }: { slug: string }) {
               ))}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto">
-              {!doc && <p className="p-6 text-center text-sm text-s-muted">Nothing to edit yet.</p>}
+              {!doc && <CompactEmptyState message="Nothing to edit yet." />}
               {doc && tab === 'element' && (selected
                 ? <BlockInspector key={selected.id} block={selected} fonts={fonts} noStyle={kind === 'widget'}
                     kind={kind} slug={slug} motionPreview={motionPreview}

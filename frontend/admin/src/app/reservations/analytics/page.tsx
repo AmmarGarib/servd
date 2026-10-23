@@ -97,7 +97,7 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
     <div className="s-card p-4">
       <p className="text-xs text-s-muted">{label}</p>
       <p className={`text-2xl font-bold ${tone === 'red' ? 'text-s-red' : tone === 'ok' ? 'text-primary-ink' : 'text-s-text'}`}>{value}</p>
-      {sub && <p className="text-[11px] text-s-dim mt-0.5">{sub}</p>}
+      {sub && <p className="text-xs text-s-dim mt-0.5">{sub}</p>}
     </div>
   )
 }

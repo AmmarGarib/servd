@@ -6,6 +6,7 @@ import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import { roleLabel } from '../../../lib/appRoles'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 // User audit log — the Dev workspace's IDENTITY trail (decision 47): who signed
 // in (and who failed to), who exists, what access they hold, and what they did
@@ -274,7 +275,7 @@ function Row({ row, signins, open, onToggle, onUser }: {
         <td className="px-4 py-2 text-xs">
           <span className="font-mono rounded px-1.5 py-0.5"
             style={loud
-              ? { background: 'rgba(245,158,11,0.12)', color: 'var(--erp-warning)' }
+              ? { background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', color: 'var(--erp-warning)' }
               : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
             {signins ? (SIGNIN_LABEL[row.action] ?? row.action) : row.action}
           </span>
@@ -348,7 +349,7 @@ function UserDrawer({ userId, onClose, onFilter }: { userId: string; onClose: ()
             <p className="text-lg font-black text-white/90 truncate">{s?.user.name ?? 'User'}</p>
             {s && <p className="text-xs text-white/45 truncate">{s.user.email ?? '—'} · {roleLabel(s.user.role)}</p>}
           </div>
-          <button onClick={onClose} className="text-white/40 hover:text-white" aria-label="Close">✕</button>
+          <button onClick={onClose} className="text-white/40 hover:text-white" aria-label="Close"><NavIcon name="x" size={16} /></button>
         </div>
 
         {summary.isLoading && <p className="text-sm text-white/40 mt-4">Loading…</p>}

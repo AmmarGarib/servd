@@ -17,6 +17,7 @@ import { OvertimePicker, otAvailableOf } from '../../../../components/hr/Overtim
 import { AttendanceRegister } from '../../../../components/hr/AttendanceRegister'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '../../../../components/ui/CompactEmptyState'
 
 export default function HrSectionPage() {
   const { section } = useParams<{ section: string }>()
@@ -109,10 +110,7 @@ export default function HrSectionPage() {
 
       {!isRegister && isLoading && <p className="text-sm text-white/40 py-6 text-center" role="status">Loading…</p>}
       {!isRegister && data && data.records.length === 0 && (
-        <div className="rounded-2xl p-10 text-center" style={card}>
-          <p className="font-bold text-white/85">Nothing here yet</p>
-          <p className="text-sm text-white/45 mt-1">{moved ? `Nothing was recorded here before. Use ${moved.label}.` : 'Add the first one with “+ New”.'}</p>
-        </div>
+        <CompactEmptyState message="Nothing here yet" detail={moved ? `Nothing was recorded here before. Use ${moved.label}.` : 'Add the first one with “+ New”.'} />
       )}
       {!isRegister && data && data.records.length > 0 && (
         <div className="rounded-2xl overflow-x-auto" style={card}>

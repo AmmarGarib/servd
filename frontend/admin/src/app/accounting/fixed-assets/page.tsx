@@ -11,6 +11,7 @@
 // the Requests tab). Every class, life and permission comes from GET
 // /accounting/fixed-assets/lookups.
 
+import { CheckLabel, Field, Input } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -24,6 +25,7 @@ import {
 import { AddExistingAssetForm } from '../../../components/fixedAssets/AddExistingAssetForm'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 interface CompanyTotals { tenantId: string; companyName: string; assets: number; costCents: number; accumulatedCents: number; nbvCents: number; monthlyCents: number }
 interface LastRun {
@@ -173,7 +175,7 @@ export default function FixedAssetsPage() {
         <div className="rounded-2xl overflow-x-auto" style={card}>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+              <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                 {['Company', 'Items', 'Cost', 'Depreciated', 'Book value', 'Per month'].map((h, i) => <th key={h} className={`px-4 py-3 font-bold ${i > 0 ? 'text-right' : ''}`}>{h}</th>)}
               </tr>
             </thead>
@@ -198,7 +200,7 @@ export default function FixedAssetsPage() {
         <section className="rounded-2xl p-4 space-y-3" style={card} aria-label="Depreciation runs">
           <div>
             <p className="text-sm font-black text-white/90">Depreciation is charged automatically</p>
-            <p className="text-xs text-white/45 mt-0.5">
+            <p className="text-xs text-s-muted mt-0.5">
               Every night, for each month that has ended. There is no switch. The last completed month is {fmtMonth(data.lastCompletedPeriod)}.
             </p>
           </div>
@@ -245,44 +247,38 @@ export default function FixedAssetsPage() {
 
       {/* Filters */}
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-6 gap-3 items-end" style={card}>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Show</span>
+        <Field label="Show">
           <Select className={inp} value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUS_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </Select></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Class</span>
+          </Select></Field>
+        <Field label="Class">
           <Select className={inp} value={classKey} onChange={(e) => setClassKey(e.target.value)}>
             <option value="">All classes</option>
             {classOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </Select></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Brand</span>
+          </Select></Field>
+        <Field label="Brand">
           <Select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
             <option value="">All brands</option>
             {brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </Select></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Outlet</span>
+          </Select></Field>
+        <Field label="Outlet">
           <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
             <option value="">All outlets</option>
             {outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </Select></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Values as of</span>
-          <input type="date" className={inp} value={asOf} onChange={(e) => setAsOf(e.target.value)} /></label>
-        <label className="flex items-center gap-2 text-sm text-white/70 pb-2">
+          </Select></Field>
+        <Field label="Values as of">
+          <Input type="date" className={inp} value={asOf} onChange={(e) => setAsOf(e.target.value)} /></Field>
+        <CheckLabel className="flex items-center gap-2 text-sm text-white/70 pb-2">
           <input type="checkbox" checked={owedOnly} onChange={(e) => setOwedOnly(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
           Months still to charge
-        </label>
+        </CheckLabel>
       </div>
 
       {error && <Notice tone="bad">{errorWords(error)}</Notice>}
       {isLoading && <p className="text-sm text-white/40">Loading the register…</p>}
 
       {data && data.assets.length === 0 && !isLoading && (
-        <div className="rounded-2xl p-10 text-center" style={card}>
-          <p className="font-bold text-white/85">Nothing on the register{status !== 'all' ? ' with these filters' : ''}</p>
-          <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
-            Equipment is added through CapEx: prepare a delivered item in the Project tracker, or use Buy equipment for a purchase made today.
-            Equipment you already had (bought before servd, or from a related party) goes on with Add existing asset.
-          </p>
-        </div>
+        <CompactEmptyState message={`Nothing on the register${status !== 'all' ? ' with these filters' : ''}.`} />
       )}
 
       {data && data.assets.length > 0 && (
@@ -294,7 +290,7 @@ export default function FixedAssetsPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="font-bold text-white/90 break-words">{a.name}</p>
-                    <p className="text-[11px] text-white/45">{[a.assetTag, a.classLabel, multi ? a.companyName : null].filter(Boolean).join(' · ')}</p>
+                    <p className="text-xs text-s-muted">{[a.assetTag, a.classLabel, multi ? a.companyName : null].filter(Boolean).join(' · ')}</p>
                   </div>
                   <AssetStatusBadge status={a.status} />
                 </div>
@@ -303,7 +299,7 @@ export default function FixedAssetsPage() {
                   <div><p className="text-white/40">Depreciated</p><p className="font-mono text-white/65">{money(a.accumulatedCents)}</p></div>
                   <div><p className="text-white/40">Book value</p><p className="font-mono font-bold text-white/90">{money(a.nbvCents)}</p></div>
                 </div>
-                <p className="text-[11px] text-white/45 mt-2">
+                <p className="text-xs text-s-muted mt-2">
                   {a.conceptName ?? 'Shared'} · {a.locationName
                     ? <>at {a.locationName}</>
                     : <span style={{ color: a.conceptId ? undefined : 'var(--erp-warning)' }}>{a.conceptId ? 'no outlet' : 'location not set'}</span>}
@@ -318,7 +314,7 @@ export default function FixedAssetsPage() {
           <div className="hidden md:block rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                   {[
                     { h: 'Asset' }, ...(multi ? [{ h: 'Company' }] : []), { h: 'Class' }, { h: 'Brand' }, { h: 'Location' }, { h: 'In service' },
                     { h: 'Cost', r: true }, { h: 'Depreciated', r: true }, { h: 'Book value', r: true }, { h: 'Per month', r: true },
@@ -333,7 +329,7 @@ export default function FixedAssetsPage() {
                   <tr key={a.id} className="border-t border-white/[0.05]" style={{ opacity: a.status === 'active' ? 1 : 0.6 }}>
                     <td className="px-4 py-3">
                       <Link href={`${FA_BASE}/${a.id}`} className="font-bold text-primary-ink hover:underline">{a.name}</Link>
-                      <p className="text-[11px] text-white/40">{[a.assetTag, a.kind === 'pool_layer' ? `${a.quantity} units, smallwares` : null].filter(Boolean).join(' · ') || '—'}</p>
+                      <p className="text-xs text-s-muted">{[a.assetTag, a.kind === 'pool_layer' ? `${a.quantity} units, smallwares` : null].filter(Boolean).join(' · ') || '—'}</p>
                     </td>
                     {multi && <td className="px-4 py-3 text-white/60">{a.companyName}</td>}
                     <td className="px-4 py-3 text-white/60">{a.classLabel}</td>
@@ -348,7 +344,7 @@ export default function FixedAssetsPage() {
                     <td className="px-4 py-3 text-right text-white/60 whitespace-nowrap">{a.status === 'active' ? money(a.nextChargeCents) : '—'}</td>
                     <td className="px-4 py-3 text-white/60 whitespace-nowrap">
                       {a.lastChargedPeriod ? fmtMonth(a.lastChargedPeriod) : 'not yet'}
-                      {a.unchargedMonths > 0 && <span className="text-s-amber text-[11px]"> · {a.unchargedMonths} owed</span>}
+                      {a.unchargedMonths > 0 && <span className="text-s-amber text-xs"> · {a.unchargedMonths} owed</span>}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <AssetStatusBadge status={a.status} />

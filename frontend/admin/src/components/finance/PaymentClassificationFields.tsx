@@ -7,6 +7,7 @@
 // (backend accounting/paymentsRegister.ts). Sent with the pay request as
 // `classification`, `taxStatus`, `nonDeductionReason`.
 
+import { Field, Input } from '@/components/finance/ui'
 import { Select } from '@/components/ui/Select'
 
 export type PaymentClassification = 'official' | 'unofficial' | 'unclassified'
@@ -52,7 +53,7 @@ export function ClassificationChip({ value }: { value: PaymentClassification | n
     : value === 'unofficial'
       ? { background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary)' }
       : { background: 'rgb(var(--fg-rgb) / 0.05)', color: 'var(--muted)' }
-  return <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={tone}>{CLASSIFICATION_LABEL[value]}</span>
+  return <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold" style={tone}>{CLASSIFICATION_LABEL[value]}</span>
 }
 
 export function PaymentClassificationFields({ value, onChange, compact = false }: {
@@ -64,8 +65,7 @@ export function PaymentClassificationFields({ value, onChange, compact = false }
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-xs text-white/50">
-          <span>Classification <span style={{ color: 'var(--erp-danger)' }}>*</span></span>
+        <Field label=""><span>Classification <span style={{ color: 'var(--erp-danger)' }}>*</span></span>
           <Select
             required
             value={value.classification}
@@ -78,9 +78,8 @@ export function PaymentClassificationFields({ value, onChange, compact = false }
             <option value="unofficial">Unofficial</option>
             <option value="unclassified">Unclassified</option>
           </Select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-white/50">
-          <span>Tax deduction</span>
+        </Field>
+        <Field label=""><span>Tax deduction</span>
           <Select
             value={value.taxStatus}
             onChange={(e) => set({ taxStatus: e.target.value as PaymentTaxStatus | '' })}
@@ -92,22 +91,20 @@ export function PaymentClassificationFields({ value, onChange, compact = false }
             <option value="not_deducted">Not deducted</option>
             <option value="not_applicable">Not applicable</option>
           </Select>
-        </label>
+        </Field>
       </div>
       {value.taxStatus === 'not_deducted' && (
-        <label className="flex flex-col gap-1 text-xs text-white/50">
-          <span>Reason tax was not deducted <span style={{ color: 'var(--erp-danger)' }}>*</span></span>
-          <input
-            className="s-input"
+        <Field label=""><span>Reason tax was not deducted <span style={{ color: 'var(--erp-danger)' }}>*</span></span>
+          <Input
             value={value.nonDeductionReason}
             maxLength={500}
             placeholder="e.g. below the withholding threshold; exemption certificate on file"
             onChange={(e) => set({ nonDeductionReason: e.target.value })}
           />
-        </label>
+        </Field>
       )}
       {!compact && (
-        <p className="text-[11px] text-white/40">
+        <p className="text-xs text-s-muted">
           Internal reporting label only — it changes no entry, account, tax return or statutory report.
         </p>
       )}

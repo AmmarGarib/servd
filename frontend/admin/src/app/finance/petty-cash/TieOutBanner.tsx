@@ -52,7 +52,7 @@ export function TieOutBanner() {
         )
       })}
       {!allOk && (
-        <p className="text-xs text-white/55">
+        <p className="text-xs text-s-muted">
           History from before petty cash was booked is put on the books by the CEO in{' '}
           <Link href="/reconciliation" className="font-bold underline" style={{ color: 'var(--erp-primary)' }}>Reconciliation → Backfill</Link>
           {' '}(dry run first). A difference that remains after that is a float changed outside servd — count the box.

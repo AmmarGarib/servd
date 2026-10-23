@@ -11,6 +11,7 @@ import { FloorCanvas } from '../../components/floorplan/FloorCanvas'
 import type { FloorTable } from '../../components/floorplan/FloorCanvas'
 import { fmtPkr } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
+import { NavIcon } from '../../components/ui/NavIcon'
 
 interface LiveTable extends FloorTable {
   status: string
@@ -26,14 +27,14 @@ interface Floor {
 }
 
 const STATUS_COLORS: Record<string, { fill: string; stroke: string; text: string; label: string }> = {
-  available:      { fill: 'rgba(34,197,94,0.16)',   stroke: 'rgba(22,163,74,0.55)',  text: 'var(--text)', label: 'Available' },
-  reserved:       { fill: 'rgba(59,130,246,0.16)',  stroke: 'rgba(59,130,246,0.55)', text: 'var(--text)', label: 'Reserved'  },
+  available:      { fill: 'color-mix(in srgb, var(--erp-success) 16%, transparent)',   stroke: 'color-mix(in srgb, var(--erp-success) 55%, transparent)',  text: 'var(--text)', label: 'Available' },
+  reserved:       { fill: 'color-mix(in srgb, var(--erp-primary) 16%, transparent)',  stroke: 'color-mix(in srgb, var(--erp-primary) 55%, transparent)', text: 'var(--text)', label: 'Reserved'  },
   seated:         { fill: 'rgb(var(--ink-rgb) / 0.18)',  stroke: 'rgb(var(--ink-rgb) / 0.6)',  text: 'var(--text)', label: 'Seated'    },
-  ordered:        { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: 'var(--text)', label: 'Ordered'   },
-  eating:         { fill: 'rgba(245,158,11,0.18)',  stroke: 'rgba(245,158,11,0.7)',  text: 'var(--text)', label: 'Eating'    },
-  check:          { fill: 'rgba(217,119,6,0.22)',   stroke: 'rgba(217,119,6,0.8)',   text: 'var(--text)', label: 'Check'     },
-  cleaning:       { fill: 'rgba(168,85,247,0.16)',  stroke: 'rgba(168,85,247,0.6)',  text: 'var(--text)', label: 'Cleaning'  },
-  out_of_service: { fill: 'rgba(0,0,0,0.08)',       stroke: 'rgba(0,0,0,0.3)',       text: 'var(--text)', label: 'OOS'       },
+  ordered:        { fill: 'color-mix(in srgb, var(--erp-warning) 18%, transparent)',  stroke: 'color-mix(in srgb, var(--erp-warning) 70%, transparent)',  text: 'var(--text)', label: 'Ordered'   },
+  eating:         { fill: 'color-mix(in srgb, var(--erp-warning) 18%, transparent)',  stroke: 'color-mix(in srgb, var(--erp-warning) 70%, transparent)',  text: 'var(--text)', label: 'Eating'    },
+  check:          { fill: 'color-mix(in srgb, var(--erp-warning) 24%, transparent)',   stroke: 'color-mix(in srgb, var(--erp-warning) 80%, transparent)',   text: 'var(--text)', label: 'Check'     },
+  cleaning:       { fill: 'color-mix(in srgb, var(--erp-secondary) 16%, transparent)',  stroke: 'color-mix(in srgb, var(--erp-secondary) 60%, transparent)',  text: 'var(--text)', label: 'Cleaning'  },
+  out_of_service: { fill: 'rgb(var(--ink-rgb) / 0.08)',       stroke: 'rgb(var(--ink-rgb) / 0.3)',       text: 'var(--text)', label: 'OOS'       },
 }
 
 function statusOf(t: LiveTable): string {
@@ -143,7 +144,7 @@ function TableDetailPanel({ table, onChanged }: { table: LiveTable; onChanged: (
             {table.reservations.map((r) => (
               <div key={r.id} className="flex justify-between text-xs py-1">
                 <span>
-                  {r.isVip && <span className="mr-1">⭐</span>}
+                  {r.isVip && <NavIcon name="star" size={12} className="mr-1 inline fill-current" />}
                   <span>{r.guestName}</span>
                   <span className="text-s-muted"> · {r.partySize}p</span>
                 </span>

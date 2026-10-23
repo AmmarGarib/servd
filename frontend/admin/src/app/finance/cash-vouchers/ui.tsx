@@ -9,7 +9,7 @@ import { Dialog, DialogFooter, ErrorBanner as SharedErrorBanner } from '../../..
 // The shared finance parts (components/finance/ui) — re-exported under the
 // names these screens already use.
 export {
-  Field, fieldCls, primaryBtn, secondaryBtn, dangerOutlineBtn, focusField, useSubmitOnce, firstMissing, dateBounds,
+  LinkButton, Field, FieldLabel, CheckLabel, Input, Textarea, Button, fieldCls, primaryBtn, secondaryBtn, dangerOutlineBtn, focusField, useSubmitOnce, firstMissing, dateBounds,
 } from '../../../components/finance/ui'
 
 /** Thin wrapper over the shared Dialog (Escape, focus trap, dirty-close ask). */
@@ -40,7 +40,7 @@ export function Chip({ on, onClick, label, count }: { on: boolean; onClick: () =
         ? { background: 'var(--erp-accent-dim)', border: '1px solid var(--erp-accent)', color: 'var(--text)' }
         : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'rgb(var(--fg-rgb) / 0.75)' }}>
       {label}
-      <span className="rounded-full px-1.5 text-[10px] font-black"
+      <span className="rounded-full px-1.5 text-xs font-black"
         style={count > 0
           ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
           : { background: 'rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>

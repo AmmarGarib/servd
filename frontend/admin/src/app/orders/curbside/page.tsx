@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { getSocket } from '../../../lib/socket'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface CurbsideOrder {
   id: string; status: string; totalCents: number; placedAt: string
@@ -59,7 +60,7 @@ export default function CurbsidePage() {
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-bold tracking-wide">CURBSIDE / CAR-HOPPING</h1>
           <span className="text-xs text-s-muted">
-            🚗 {data?.arrived.length ?? 0} here · {data?.enRoute.length ?? 0} en route
+            <NavIcon name="car" size={14} className="mr-1 inline" />{data?.arrived.length ?? 0} here · {data?.enRoute.length ?? 0} en route
           </span>
         </div>
       </div>
@@ -71,7 +72,7 @@ export default function CurbsidePage() {
       {data && (
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 p-4 overflow-y-auto">
           {/* ── ARRIVED — needs runner ─────────────────────────────────── */}
-          <Column title="🚨 Cars here" subtitle="Run the food out NOW" accent="amber">
+          <Column title="Cars here" subtitle="Run the food out NOW" accent="amber">
             {data.arrived.length === 0 && (
               <Empty msg="No cars waiting. Quiet so far." />
             )}

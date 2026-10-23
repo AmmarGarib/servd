@@ -16,6 +16,7 @@ import { useCanPrintBill } from '../../components/pos/useCanPrintBill'
 import { orderRef } from '../../lib/orderRef'
 import { Select } from '@/components/ui/Select'
 import { useConfirm, type ConfirmResult } from '@/components/ui/ConfirmDialog'
+import { NavIcon } from '../../components/ui/NavIcon'
 
 // The full & final bill exists only once an order reached it (spec §17.1):
 // completed, or since refunded / cancelled / rejected (bannered so), or paid
@@ -364,7 +365,7 @@ function OrdersBoard() {
             {actionError && (
               <div role="alert" className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-s-red/40 bg-s-red/10 px-3 py-2 text-sm text-s-red">
                 <span>{actionError}</span>
-                <button onClick={() => setActionError(null)} aria-label="Dismiss" className="shrink-0 px-1">✕</button>
+                <button onClick={() => setActionError(null)} aria-label="Dismiss" className="shrink-0 px-1"><NavIcon name="x" size={16} /></button>
               </div>
             )}
 

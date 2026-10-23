@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface EnvVarStatus { name: string; set: boolean }
 
@@ -45,7 +46,7 @@ export default function PaymentMethodsPage() {
           <Link href="/configuration" className="hover:text-white/70">← Configuration Hub</Link>
         </div>
         <div>
-          <h1 className="text-2xl font-black text-white/90">💳 Payment Methods</h1>
+          <h1 className="text-2xl font-black text-white/90">Payment Methods</h1>
           <p className="text-sm text-white/40 mt-1 max-w-2xl">
             Connect each gateway you've signed up with. Secrets (API keys, hash keys) live in <code className="font-mono text-xs px-1 py-0.5 rounded bg-white/5">.env</code> — never paste them into a UI form.
           </p>
@@ -127,7 +128,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
       {/* Card header */}
       <div className="px-5 py-4 flex items-start justify-between gap-3 border-b border-white/[0.04]">
         <div className="flex items-start gap-3 min-w-0">
-          <span className="text-3xl shrink-0">{gw.emoji}</span>
+          <span className="shrink-0 text-primary-ink"><NavIcon name="card" size={28} /></span>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="font-black text-white/90">{gw.label}</h3>
@@ -162,11 +163,11 @@ function GatewayCard({ gw }: { gw: Gateway }) {
               <div className="space-y-1.5">
                 {gw.envStatus.map((e) => (
                   <div key={e.name} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
-                    style={{ background: e.set ? 'var(--erp-accent-dim)' : 'rgba(245,158,11,0.05)', border: `1px solid ${e.set ? 'rgb(var(--erp-accent-rgb) / 0.45)' : 'rgba(245,158,11,0.25)'}` }}>
+                    style={{ background: e.set ? 'var(--erp-accent-dim)' : 'color-mix(in srgb, var(--erp-warning) 5%, transparent)', border: `1px solid ${e.set ? 'rgb(var(--erp-accent-rgb) / 0.45)' : 'color-mix(in srgb, var(--erp-warning) 25%, transparent)'}` }}>
                     <code className="text-xs font-mono text-white/85">{e.name}</code>
                     <span className="text-[10px] font-black"
                       style={{ color: e.set ? 'var(--erp-success)' : 'var(--erp-warning)' }}>
-                      {e.set ? '✓ SET' : '⚠ NOT SET'}
+                      {e.set ? 'SET' : 'NOT SET'}
                     </span>
                   </div>
                 ))}
@@ -251,7 +252,7 @@ function GatewayCard({ gw }: { gw: Gateway }) {
 
           <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
             <p className={`text-[10px] ${savedAt && Date.now() - savedAt < 4000 ? 'font-bold text-success' : 'text-white/35'}`}>
-              {savedAt && Date.now() - savedAt < 4000 ? '✓ Saved' : gw.config?.updatedAt ? `Last saved ${new Date(gw.config.updatedAt).toLocaleString('en-PK')}` : 'Not saved yet'}
+              {savedAt && Date.now() - savedAt < 4000 ? 'Saved' : gw.config?.updatedAt ? `Last saved ${new Date(gw.config.updatedAt).toLocaleString('en-PK')}` : 'Not saved yet'}
             </p>
             <button
               onClick={() => save.mutate()}

@@ -6,6 +6,7 @@ import { api, deleteWithUndo } from '../../../lib/api'
 import { Modal } from '../../../components/ui/Modal'
 import { FormField } from '../../../components/ui/FormField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 // Outbound webhooks — the ONE editor, over /webhooks/endpoints (company-
 // scoped; https-only with a private-address block on create, edit and test).
@@ -65,11 +66,11 @@ export default function WebhooksPage() {
     onSuccess: (r, id) => {
       setPingResult((p) => ({
         ...p,
-        [id]: r.success ? `✓ ${r.statusCode} in ${r.responseMs} ms` : `✗ ${r.statusCode ?? r.error ?? 'failed'} (${r.responseMs} ms)`,
+        [id]: r.success ? `OK ${r.statusCode} in ${r.responseMs} ms` : `Failed ${r.statusCode ?? r.error ?? 'failed'} (${r.responseMs} ms)`,
       }))
       void qc.invalidateQueries({ queryKey: ['webhook-deliveries'] })
     },
-    onError: (err, id) => setPingResult((p) => ({ ...p, [id]: `✗ ${(err as Error).message}` })),
+    onError: (err, id) => setPingResult((p) => ({ ...p, [id]: `Failed: ${(err as Error).message}` })),
   })
 
   return (
@@ -78,7 +79,7 @@ export default function WebhooksPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">🪝 Outbound webhooks</h1>
+            <h1 className="text-2xl font-black text-white/90">Outbound webhooks</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Push order events to your accountant's software, BI tool, or in-house Slack bot. Every payload is signed with
               HMAC-SHA256 (<code className="text-white/60">X-Servd-Signature</code>). Endpoints belong to the active company.
@@ -90,10 +91,7 @@ export default function WebhooksPage() {
 
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         {data.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">No webhooks configured</p>
-            <p className="text-sm text-white/45 mt-1">Subscribe an external system to order events.</p>
-          </div>
+          <CompactEmptyState message="No webhooks configured" detail="Subscribe an external system to order events." />
         )}
         {data.map((h) => (
           <div key={h.id} className="rounded-2xl p-5"
@@ -106,7 +104,7 @@ export default function WebhooksPage() {
                     <span key={e} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={FIRING.has(e)
                         ? { background: 'var(--erp-accent-dim)', color: 'var(--erp-success)' }
-                        : { background: 'rgba(245,158,11,0.08)', color: 'var(--erp-warning)' }}
+                        : { background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)', color: 'var(--erp-warning)' }}
                       title={FIRING.has(e) ? undefined : 'servd does not send this event yet'}>
                       {e}{FIRING.has(e) ? '' : ' · not sent yet'}
                     </span>
@@ -117,7 +115,7 @@ export default function WebhooksPage() {
                   {h.lastSentAt ? <span>Last sent {new Date(h.lastSentAt).toLocaleString()} ({h.lastStatus})</span> : <span>Never sent</span>}
                   {h.failureCount > 0 && <span className="text-red-700"> · {h.failureCount} failures</span>}
                 </p>
-                {pingResult[h.id] && <p className={`text-xs font-mono mt-1 ${pingResult[h.id]!.startsWith('✓') ? 'text-success' : 'text-white/60'}`}>Test ping: {pingResult[h.id]}</p>}
+                {pingResult[h.id] && <p className={`text-xs font-mono mt-1 ${pingResult[h.id]!.startsWith('OK') ? 'text-success' : 'text-white/60'}`}>Test ping: {pingResult[h.id]}</p>}
               </div>
               <div className="flex flex-col gap-2 shrink-0">
                 <button type="button" onClick={() => ping.mutate(h.id)} disabled={ping.isPending}

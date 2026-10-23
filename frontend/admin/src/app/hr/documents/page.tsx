@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../lib/api'
-import { card, inp, btn, btnGhost, day, human } from '../../../lib/hr'
+import { card, inp, btn, btnGhost, day, human, btnDanger } from '../../../lib/hr'
 import { HrShell, Modal, useHrLookups } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
@@ -95,7 +95,7 @@ export default function HrDocumentsPage() {
                     <td className="px-4 py-2 text-white/60">{day(d.issueDate)}</td>
                     <td className="px-4 py-2" style={{ color: tone }}>{day(d.expiryDate)}</td>
                     <td className="px-4 py-2 text-white/60">{d.verifiedAt ? day(d.verifiedAt) : <button className="text-xs font-bold text-primary-ink px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Verify</button>}</td>
-                    <td className="px-4 py-2 text-right"><button className="text-xs text-white/50 hover:text-s-red px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
+                    <td className="px-4 py-2 text-right"><button className={`${btnDanger} !text-xs !px-2 !py-1.5 [@media(pointer:coarse)]:min-h-[44px]`} onClick={async () => {
                       const ok = await confirm({ title: 'Delete this document?', body: `${d.title || human(d.docType)} for ${d.employee.fullName} will be removed.`, confirmLabel: 'Delete', danger: true })
                       if (ok) del.mutate(d.id)
                     }}>Delete</button></td>

@@ -245,7 +245,7 @@ export async function postPayrollPayment(runId: string, paidBy: string, from: Pa
  * has several and none was named).
  *
  * A staff advance moved from an unsettled cash request (paidFrom
- * 'cash_request', written only by advanceLoan.ts createLoanFromCashAdvanceTx —
+ * 'cash_request', legacy rows only — see advanceLoan.ts;
  * the loan form's choices are bank | cash) paid nothing out today: the money
  * left the petty-cash box when the request was paid, and has waited on 1355
  * Cash advances since. The loan takes it over: Cr 1355.

@@ -12,6 +12,7 @@ import { BankAccountSelect } from '../finance/BankAccountSelect'
 import { Select } from '@/components/ui/Select'
 import { NumberField } from '@/components/ui/NumberField'
 import { MoneyInput } from '@/components/ui/MoneyInput'
+import { NavIcon } from '../ui/NavIcon'
 
 type Values = Record<string, unknown>
 
@@ -303,7 +304,7 @@ function TableInput({ f, rows, onSet, ctx }: { f: HrField; rows: Values[]; onSet
                     <FieldInput f={c} v={r[c.key]} onSet={(v) => update(i, c.key, v)} ctx={ctx} />
                   </td>
                 ))}
-                <td className="px-2"><button type="button" onClick={() => onSet(rows.filter((_, j) => j !== i))} className="text-white/35 hover:text-s-red" aria-label="Remove row">✕</button></td>
+                <td className="px-2"><button type="button" onClick={() => onSet(rows.filter((_, j) => j !== i))} className="text-white/35 hover:text-s-red" aria-label="Remove row"><NavIcon name="x" size={16} /></button></td>
               </tr>
             ))}
           </tbody>

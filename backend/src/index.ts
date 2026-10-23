@@ -87,6 +87,7 @@ import { tillClearingRoutes } from './modules/accounting/tillClearingRoutes.js'
 import { startHeadOfficeRechargeWorker } from './workers/headOfficeRecharge.js'
 import { startCodCustodyWorker } from './workers/codCustody.js'
 import { startNightAuditSettleWorker } from './workers/nightAuditSettle.js'
+import { startShiftCorrectionSweepWorker, runShiftCorrectionSweepOnce } from './workers/shiftCorrectionSweep.js'
 import { startTillClearingSweepWorker } from './workers/tillClearingSweep.js'
 import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
 import { startStaffNotificationsWorker } from './workers/staffNotifications.js'
@@ -1250,7 +1251,16 @@ async function build() {
     fastify.log.warn(`[cashVoucher] hold conversion skipped: ${(err as Error).message}`)
   }
 
+  // Shift corrections whose apply died mid-way (left 'approved' with no
+  // progress for 5 minutes) → 'failed', so the CEO's Retry finishes them.
+  try {
+    await runShiftCorrectionSweepOnce()
+  } catch (err) {
+    fastify.log.warn(`[shiftCorrection] stale-apply sweep skipped: ${(err as Error).message}`)
+  }
+
   if (workersEnabled) {
+    startShiftCorrectionSweepWorker()
     startCartReleaseWorker()
     startLoyaltyTriggerWorker()
     startLoyaltyExpirationWorker()

@@ -15,6 +15,7 @@ import { HrShell, Modal, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { NavIcon } from '../../../../components/ui/NavIcon'
 
 interface FormInfo {
   section: { key: string; title: string; requires: string[]; effect: string | null }
@@ -191,7 +192,7 @@ export default function FormatEditorPage() {
                       </td>
                       <td className="px-1 py-1.5 min-w-[110px]"><input className={inp} value={f.group ?? ''} onChange={(e) => upd(i, { group: e.target.value || undefined })} aria-label="Group" /></td>
                       <td className="px-1 py-1.5">
-                        <button type="button" disabled={!!locked} onClick={() => void removeField(i)} className="text-white/45 hover:text-s-red disabled:opacity-20 px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Remove field" title={locked ? 'Needed by calculations — relabel instead' : 'Remove'}>✕</button>
+                        <button type="button" disabled={!!locked} onClick={() => void removeField(i)} className="text-white/45 hover:text-s-red disabled:opacity-20 px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Remove field" title={locked ? 'Needed by calculations — relabel instead' : 'Remove'}><NavIcon name="x" size={16} /></button>
                       </td>
                     </tr>
                   )
@@ -221,7 +222,7 @@ export default function FormatEditorPage() {
                   <Select className={inp} value={w.role} onChange={(e) => { setWorkflow(workflow.map((x, j) => (j === i ? { ...x, role: e.target.value as WorkflowStep['role'] } : x))); setDirty(true) }} aria-label="Who approves">
                     {Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </Select>
-                  <button type="button" onClick={() => void removeStep(i)} className="text-white/45 hover:text-s-red px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Remove step">✕</button>
+                  <button type="button" onClick={() => void removeStep(i)} className="text-white/45 hover:text-s-red px-1 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]" aria-label="Remove step"><NavIcon name="x" size={16} /></button>
                 </div>
               ))}
               {workflow.length < 6 && <button className="text-xs font-bold text-white/50 hover:text-white" onClick={() => { setWorkflow([...workflow, { key: nextStepKey(workflow), label: 'HR approval', role: 'hr' }]); setDirty(true) }}>+ Add step</button>}

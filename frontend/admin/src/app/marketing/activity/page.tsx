@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface MarketingUser {
   id: string
@@ -28,20 +30,20 @@ interface ActivityRow {
   createdAt: string
 }
 
-const ACTION_META: Record<string, { emoji: string; label: string; color: string }> = {
-  'campaign.create':         { emoji: '✉️', label: 'Drafted campaign',       color: 'var(--erp-primary-ink)' },
-  'campaign.send':           { emoji: '📨', label: 'Sent campaign',          color: '#3f7d20' },
-  'campaign.update':         { emoji: '✏️', label: 'Edited campaign',        color: 'var(--muted)' },
-  'promo.create':            { emoji: '🎟', label: 'Created promo',          color: 'var(--erp-secondary)' },
-  'promo.update':            { emoji: '✏️', label: 'Updated promo',          color: 'var(--muted)' },
-  'promo.deactivate':        { emoji: '🛑', label: 'Deactivated promo',      color: '#b42318' },
-  'discount.create':         { emoji: '🏷', label: 'Added discount',         color: '#a15c00' },
-  'discount.update':         { emoji: '✏️', label: 'Updated discount',       color: 'var(--muted)' },
-  'concept.update':          { emoji: '🏢', label: 'Edited brand',           color: '#1d4ed8' },
-  'storefront.layout.update': { emoji: '🎨', label: 'Updated storefront',    color: '#be185d' },
-  'media.upload':            { emoji: '🖼', label: 'Uploaded media',         color: 'var(--erp-primary-ink)' },
-  'content_event.create':    { emoji: '📅', label: 'Scheduled post',         color: '#F472B6' },
-  'content_event.publish':   { emoji: '🚀', label: 'Published post',         color: '#3f7d20' },
+const ACTION_META: Record<string, { icon: string; label: string; color: string }> = {
+  'campaign.create':         { icon: 'mail', label: 'Drafted campaign',       color: 'var(--erp-primary-ink)' },
+  'campaign.send':           { icon: 'send', label: 'Sent campaign',          color: 'var(--erp-success)' },
+  'campaign.update':         { icon: 'edit', label: 'Edited campaign',        color: 'var(--muted)' },
+  'promo.create':            { icon: 'ticket', label: 'Created promo',          color: 'var(--erp-secondary)' },
+  'promo.update':            { icon: 'edit', label: 'Updated promo',          color: 'var(--muted)' },
+  'promo.deactivate':        { icon: 'ban', label: 'Deactivated promo',      color: 'var(--erp-danger)' },
+  'discount.create':         { icon: 'tag', label: 'Added discount',         color: 'var(--erp-warning)' },
+  'discount.update':         { icon: 'edit', label: 'Updated discount',       color: 'var(--muted)' },
+  'concept.update':          { icon: 'building', label: 'Edited brand',           color: 'var(--erp-primary-ink)' },
+  'storefront.layout.update': { icon: 'palette', label: 'Updated storefront',    color: 'var(--erp-secondary)' },
+  'media.upload':            { icon: 'image', label: 'Uploaded media',         color: 'var(--erp-primary-ink)' },
+  'content_event.create':    { icon: 'calendar', label: 'Scheduled post',         color: 'var(--erp-secondary)' },
+  'content_event.publish':   { icon: 'rocket', label: 'Published post',         color: 'var(--erp-success)' },
 }
 
 export default function MarketingActivityPage() {
@@ -69,7 +71,7 @@ export default function MarketingActivityPage() {
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-black text-white/90">📋 Marketing Activity Log</h1>
+            <h1 className="text-2xl font-black text-white/90">Marketing Activity Log</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Every campaign, promo, brand edit, and creative upload — with the user, timestamp, and before/after diff. Use this to audit what your agency is producing.
             </p>
@@ -142,22 +144,18 @@ export default function MarketingActivityPage() {
           {isLoading && <p className="text-sm text-white/40">Loading…</p>}
 
           {!isLoading && activity.length === 0 && (
-            <div className="rounded-2xl p-8 text-center"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              <p className="text-3xl mb-2">📭</p>
-              <p className="text-sm text-white/65">No activity in the selected window.</p>
-            </div>
+            <CompactEmptyState message="No activity in the selected window." />
           )}
 
           <div className="rounded-2xl overflow-hidden"
             style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
             <div className="divide-y divide-white/[0.04]">
               {activity.map((row) => {
-                const meta = ACTION_META[row.action] ?? { emoji: '•', label: row.action, color: 'var(--muted)' }
+                const meta = ACTION_META[row.action] ?? { icon: '', label: row.action, color: 'var(--muted)' }
                 return (
                   <details key={row.id} className="group">
                     <summary className="cursor-pointer list-none px-4 py-3 flex items-center gap-3 hover:bg-white/[0.015]">
-                      <span className="text-xl shrink-0">{meta.emoji}</span>
+                      <span className="shrink-0" style={{ color: meta.color }}><NavIcon name={meta.icon} size={20} /></span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-bold" style={{ color: meta.color }}>{meta.label}</span>
@@ -183,7 +181,7 @@ export default function MarketingActivityPage() {
                           <div>
                             <p className="text-[10px] font-bold text-white/30 uppercase mb-1">Before</p>
                             <pre className="rounded-lg p-2 text-[10px] overflow-x-auto"
-                              style={{ background: 'rgba(255,77,79,0.05)', color: 'rgb(var(--fg-rgb) / 0.6)', border: '1px solid rgba(255,77,79,0.15)' }}>
+                              style={{ background: 'color-mix(in srgb, var(--erp-danger) 6%, transparent)', color: 'rgb(var(--fg-rgb) / 0.6)', border: '1px solid color-mix(in srgb, var(--erp-danger) 18%, transparent)' }}>
                               {row.before ? JSON.stringify(row.before, null, 2) : '—'}
                             </pre>
                           </div>

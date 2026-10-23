@@ -7,6 +7,7 @@ import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { BrandKitCard } from '../../../components/storefront/BrandKitCard'
 import { Select } from '@/components/ui/Select'
 import { useAuthStore } from '../../../store/auth'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface Concept {
   id: string
@@ -372,13 +373,13 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
     },
   })
 
-  const TABS: Array<{ key: TabKey; label: string; emoji: string }> = [
-    { key: 'identity',   label: 'Identity',   emoji: '🏷' },
-    { key: 'contact',    label: 'Contact',    emoji: '📞' },
-    { key: 'brief',      label: 'Brief',      emoji: '🧭' },
-    { key: 'storefront', label: 'Storefront', emoji: '🛍' },
-    { key: 'delivery',   label: 'Kitchen & delivery', emoji: '📍' },
-    { key: 'tax',        label: 'Tax registration', emoji: '🧾' },
+  const TABS: Array<{ key: TabKey; label: string; icon: string }> = [
+    { key: 'identity',   label: 'Identity',   icon: 'tag' },
+    { key: 'contact',    label: 'Contact',    icon: 'call' },
+    { key: 'brief',      label: 'Brief',      icon: 'compass' },
+    { key: 'storefront', label: 'Storefront', icon: 'bag' },
+    { key: 'delivery',   label: 'Kitchen & delivery', icon: 'pin' },
+    { key: 'tax',        label: 'Tax registration', icon: 'receipt' },
   ]
 
   return (
@@ -407,7 +408,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
         </div>
       </div>
       {savedAt && Date.now() - savedAt < 4000 && (
-        <p className="text-xs text-primary-ink">✓ Saved</p>
+        <p className="text-xs text-primary-ink"><NavIcon name="check" size={12} className="mr-1 inline" />Saved</p>
       )}
       {saveError && <p className="text-xs text-s-red">{saveError}</p>}
       {/* Tabs */}
@@ -419,7 +420,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             className="px-4 py-2.5 text-xs font-bold transition-all relative shrink-0"
             style={{ color: tab === t.key ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.45)' }}
           >
-            {t.emoji} {t.label}
+            <NavIcon name={t.icon} size={13} className="mr-1.5 inline" />{t.label}
             {tab === t.key && (
               <span className="absolute bottom-[-1px] left-0 right-0 h-0.5" style={{ background: 'var(--erp-primary)' }} />
             )}
@@ -482,7 +483,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 <button onClick={() => setConfirmDelete(false)}
                   className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55">Cancel</button>
                 <button onClick={() => del.mutate()} disabled={del.isPending}
-                  className="rounded-lg bg-s-red px-3 py-1.5 text-xs font-bold text-[#fff] disabled:opacity-50">
+                  className="rounded-lg bg-s-red px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">
                   {del.isPending ? 'Deleting…' : 'Yes, delete'}
                 </button>
                 {del.isError && <span className="text-xs text-s-red">{(del.error as Error).message}</span>}

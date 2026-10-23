@@ -446,7 +446,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
               ? <>Please try again. If it still won&rsquo;t load, flag down your server &mdash; they&rsquo;ll take your order from the printed menu.</>
               : 'Please try again.'}
           </p>
-          <MagneticButton type="button" onClick={retry} className="servd-btn-primary" style={{ minHeight: '2.75rem' }}>
+          <MagneticButton type="button" onClick={retry} className="servd-btn-rect servd-btn-primary" style={{ minHeight: '2.75rem' }}>
             Retry
           </MagneticButton>
         </div>
@@ -618,7 +618,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
                 </div>
                 <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
                   {takesBookings && (
-                    <MagneticLink href={reserveHref} className="servd-btn-primary" style={{ minHeight: '2.75rem' }}>
+                    <MagneticLink href={reserveHref} className="servd-btn-rect servd-btn-primary" style={{ minHeight: '2.75rem' }}>
                       Book a table
                     </MagneticLink>
                   )}
@@ -743,7 +743,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
               <button type="button" data-autofocus onClick={dismissPendingAdd} style={OUTLINE_BTN}>
                 Keep
               </button>
-              <MagneticButton type="button" className="servd-btn-primary" style={{ flex: 1, minHeight: '2.75rem' }}
+              <MagneticButton type="button" className="servd-btn-rect servd-btn-primary" style={{ flex: 1, minHeight: '2.75rem' }}
                 onClick={() => addToBasket(pendingAdd.request, { seated: true, fresh: true })}>
                 Start new
               </MagneticButton>
@@ -761,7 +761,7 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
               {takesBookings && (
                 <a href={reserveHref} style={OUTLINE_BTN}>Book a table</a>
               )}
-              <MagneticButton type="button" data-autofocus className="servd-btn-primary" style={{ flex: 1, minHeight: '2.75rem' }}
+              <MagneticButton type="button" data-autofocus className="servd-btn-rect servd-btn-primary" style={{ flex: 1, minHeight: '2.75rem' }}
                 onClick={() => { markAtTable(); addToBasket(pendingAdd.request, { seated: true }) }}>
                 I&rsquo;m at a table
               </MagneticButton>
@@ -1323,7 +1323,7 @@ function ItemDetailModal({
           <button
             type="button"
             onClick={onAddTap}
-            className="servd-btn-primary"
+            className="servd-btn-rect servd-btn-primary"
             style={{ flex: 1, padding: '0.85rem 1rem', minHeight: '2.75rem' }}
           >
             {canAdd
@@ -1513,7 +1513,7 @@ function CartDrawer({
               </div>
             </div>
             {/* servd-btn-primary: green fill, var(--servd-on-green) ink. */}
-            <MagneticButton type="button" onClick={onCheckout} className="servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
+            <MagneticButton type="button" onClick={onCheckout} className="servd-btn-rect servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
               Checkout · {fmt(subtotal)} + tax
             </MagneticButton>
           </footer>

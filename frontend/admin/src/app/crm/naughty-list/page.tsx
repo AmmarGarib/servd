@@ -15,6 +15,7 @@ import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import { useManagerRoles } from '../../../lib/roles'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 // The API's MANAGERS (served by GET /permissions/role-modules; lib/roles.ts). Forgiving a strike
 // and lifting a ban stay with managers; the marketing roles (who hold the crm
@@ -69,12 +70,12 @@ interface Ban {
 }
 
 const KIND_OPTIONS = [
-  { value: '',                     label: 'All offenses', emoji: '⚠️' },
-  { value: 'reservation_no_show',  label: 'Reservation no-shows', emoji: '📅' },
-  { value: 'cod_unpaid',           label: 'Cash on delivery — unpaid', emoji: '💸' },
-  { value: 'cod_refused',          label: 'Refused at door', emoji: '🚫' },
+  { value: '',                     label: 'All offenses', icon: 'warn' },
+  { value: 'reservation_no_show',  label: 'Reservation no-shows', icon: 'calendar' },
+  { value: 'cod_unpaid',           label: 'Cash on delivery — unpaid', icon: 'cash' },
+  { value: 'cod_refused',          label: 'Refused at door', icon: 'ban' },
   { value: 'chargeback',           label: 'Chargebacks', emoji: '↩️' },
-  { value: 'other',                label: 'Other (manual)', emoji: '✏️' },
+  { value: 'other',                label: 'Other (manual)', icon: 'edit' },
 ] as const
 
 function fmtKind(k: string): string {
@@ -116,7 +117,7 @@ export default function NaughtyListPage() {
               </label>
               <Select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
                 className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-1.5 text-xs text-white/85">
-                {KIND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.emoji} {o.label}</option>)}
+                {KIND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </Select>
             </div>
             <OffendersList bannedOnly={bannedOnly} kindFilter={kindFilter} />
@@ -134,7 +135,7 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
     <button onClick={onClick}
       className="rounded-lg px-3 py-1.5 text-xs font-bold transition-all"
       style={active
-        ? { background: 'rgba(244,63,94,0.15)', color: '#b42318', border: '1px solid rgba(244,63,94,0.4)' }
+        ? { background: 'color-mix(in srgb, var(--erp-danger) 15%, transparent)', color: 'var(--erp-danger)', border: '1px solid color-mix(in srgb, var(--erp-danger) 40%, transparent)' }
         : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
       {children}
     </button>
@@ -156,7 +157,7 @@ function OffendersList({ bannedOnly, kindFilter }: { bannedOnly: boolean; kindFi
   })
 
   if (isLoading) return <p className="text-sm text-white/40">Loading…</p>
-  if (!data || data.length === 0) return <Empty msg="🌟 No offenders. Everyone's behaving today." />
+  if (!data || data.length === 0) return <Empty msg="No offenders. Everyone's behaving today." />
 
   return (
     <div className="space-y-2">
@@ -173,14 +174,14 @@ function OffenderRow({ row }: { row: Row }) {
 
   return (
     <div className={`rounded-xl border ${banned ? 'border-rose-500/40' : activeStrikes >= 2 ? 'border-amber-500/40' : 'border-white/[0.08]'}`}
-      style={{ background: banned ? 'rgba(244,63,94,0.06)' : 'rgb(var(--fg-rgb) / 0.02)' }}>
+      style={{ background: banned ? 'color-mix(in srgb, var(--erp-danger) 6%, transparent)' : 'rgb(var(--fg-rgb) / 0.02)' }}>
       <button onClick={() => setExpanded(!expanded)}
         className="w-full text-left px-4 py-3 flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-bold text-white/90">{customer.name}</span>
-            {banned && <Badge color="rose" label="🚫 BANNED" />}
-            {!banned && activeStrikes >= 2 && <Badge color="amber" label="⚠ 1 strike from ban" />}
+            {banned && <Badge color="rose" label="BANNED" />}
+            {!banned && activeStrikes >= 2 && <Badge color="amber" label="1 strike from ban" />}
             <span className="text-[11px] font-mono text-white/35">
               {customer.phone ?? customer.email ?? '—'}
             </span>
@@ -219,7 +220,7 @@ function StrikeMeter({ active }: { active: number }) {
     <div className="flex gap-1">
       {[1,2,3].map((n) => (
         <div key={n} className="w-2.5 h-2.5 rounded-full"
-          style={{ background: n <= active ? '#f43f5e' : 'rgb(var(--fg-rgb) / 0.12)' }} />
+          style={{ background: n <= active ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.12)' }} />
       ))}
     </div>
   )
@@ -246,7 +247,7 @@ function StrikeLine({ strike }: { strike: Strike }) {
           {strike.otherKitchen && <span className="ml-2 text-[10px] text-white/45">· another servd kitchen</span>}
           {strike.severity > 1 && (
             <span className="ml-1.5 text-[9px] font-bold px-1.5 rounded text-rose-700"
-              style={{ background: 'rgba(244,63,94,0.15)' }}>×{strike.severity}</span>
+              style={{ background: 'color-mix(in srgb, var(--erp-danger) 15%, transparent)' }}>×{strike.severity}</span>
           )}
           <span className="text-white/40 ml-2">{new Date(strike.recordedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
           {isReversed && <span className="ml-2 text-[10px] text-primary-ink">↺ reversed</span>}
@@ -333,7 +334,7 @@ function BansList() {
   })
 
   if (isLoading) return <p className="text-sm text-white/40">Loading…</p>
-  if (!data || data.length === 0) return <Empty msg="🌟 No bans. Operating clean." />
+  if (!data || data.length === 0) return <Empty msg="No bans. Operating clean." />
 
   const active = data.filter((b) => !b.liftedAt && (!b.expiresAt || new Date(b.expiresAt) > new Date()))
   const lifted = data.filter((b) => b.liftedAt || (b.expiresAt && new Date(b.expiresAt) <= new Date()))
@@ -361,8 +362,8 @@ function BanRow({ ban }: { ban: Ban }) {
   return (
     <div className="rounded-xl px-4 py-3 border"
       style={{
-        background: isLifted ? 'rgb(var(--fg-rgb) / 0.02)' : 'rgba(244,63,94,0.06)',
-        borderColor: isLifted ? 'rgb(var(--fg-rgb) / 0.08)' : 'rgba(244,63,94,0.3)',
+        background: isLifted ? 'rgb(var(--fg-rgb) / 0.02)' : 'color-mix(in srgb, var(--erp-danger) 6%, transparent)',
+        borderColor: isLifted ? 'rgb(var(--fg-rgb) / 0.08)' : 'color-mix(in srgb, var(--erp-danger) 30%, transparent)',
         opacity: isLifted ? 0.7 : 1,
       }}>
       <div className="flex items-center justify-between gap-3">
@@ -394,8 +395,8 @@ function BanRow({ ban }: { ban: Ban }) {
 
 function Badge({ color, label }: { color: 'rose' | 'amber'; label: string }) {
   const styles = color === 'rose'
-    ? { bg: 'rgba(244,63,94,0.15)', text: '#b42318' }
-    : { bg: 'rgba(245,158,11,0.15)', text: '#a15c00' }
+    ? { bg: 'color-mix(in srgb, var(--erp-danger) 15%, transparent)', text: 'var(--erp-danger)' }
+    : { bg: 'color-mix(in srgb, var(--erp-warning) 15%, transparent)', text: 'var(--erp-warning)' }
   return (
     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"
       style={{ background: styles.bg, color: styles.text }}>{label}</span>
@@ -404,8 +405,6 @@ function Badge({ color, label }: { color: 'rose' | 'amber'; label: string }) {
 
 function Empty({ msg }: { msg: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-white/10 p-12 text-center text-sm text-white/40">
-      {msg}
-    </div>
+    <CompactEmptyState message={msg} />
   )
 }

@@ -33,6 +33,7 @@
 // canRejectVoidRequest) and the buttons follow them — no role list here.
 // Admin colour tokens only; text labels, no emoji.
 
+import { Button, CheckLabel, Field, FieldLabel, Input, LinkButton } from '@/components/finance/ui'
 import { Fragment, useMemo, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
@@ -216,7 +217,7 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : 'Something went wrong'
 }
 
-const inputCls = 'bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text'
+const inputCls = 's-input'
 
 // ─── Tab ─────────────────────────────────────────────────────────────────────
 
@@ -297,7 +298,7 @@ export function RaastTab() {
       {notice && (
         <div role={notice.ok ? 'status' : 'alert'} className={`s-card p-3 text-sm flex items-start gap-3 ${notice.ok ? 'border-l-4 border-s-teal' : 'border-l-4 border-s-red'}`}>
           <span className={notice.ok ? 'text-success' : 'text-s-red'}>{notice.text}</span>
-          <button onClick={() => setNotice(null)} className="ml-auto text-xs text-s-muted underline">Dismiss</button>
+          <LinkButton tone="muted" type="button" onClick={() => setNotice(null)} className="ml-auto">Dismiss</LinkButton>
         </div>
       )}
 
@@ -318,7 +319,7 @@ export function RaastTab() {
           <span className="text-s-text">
             {voidAsks} Raast payment{voidAsks === 1 ? '' : 's'} ({fmtPkr(k?.voidRequested?.cents ?? 0)}) waiting for the CEO to void — never booked.
           </span>
-          <button onClick={() => setStatus('void_requested')} className="ml-auto text-primary-ink font-semibold">Show them</button>
+          <LinkButton size="md" type="button" onClick={() => setStatus('void_requested')} className="ml-auto">Show them</LinkButton>
         </div>
       )}
 
@@ -335,35 +336,32 @@ export function RaastTab() {
         <>
           {/* Filters */}
           <div className="flex flex-wrap items-end gap-2">
-            <label className="text-xs text-s-muted">
-              <span className="block mb-0.5">Status</span>
-              <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className={inputCls}>
+            <Field label="Status">
+              <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className={`${inputCls} w-auto px-2 py-1 text-sm`}>
                 {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </Select>
-            </label>
-            <label className="text-xs text-s-muted">
-              <span className="block mb-0.5">Receiving account</span>
-              <Select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={inputCls}>
+            </Field>
+            <Field label="Receiving account">
+              <Select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={`${inputCls} w-auto px-2 py-1 text-sm`}>
                 <option value="">All accounts</option>
                 {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.raastDefault ? ' (default Raast)' : ''}</option>)}
               </Select>
-            </label>
-            <label className="text-xs text-s-muted">
-              <span className="block mb-0.5">From</span>
-              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} />
-            </label>
-            <label className="text-xs text-s-muted">
-              <span className="block mb-0.5">To</span>
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={inputCls} />
-            </label>
-            <label className="text-xs text-s-muted flex-1 min-w-[10rem]">
-              <span className="block mb-0.5">Bank reference or order #</span>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. 4F3A9C1B" className={`${inputCls} w-full font-mono`} />
-            </label>
-            <button onClick={() => rematch.mutate()} disabled={rematch.isPending}
-              className="s-btn-secondary text-xs" title="Look for each provisional payment's reference in the active company's unmatched statement lines of the last 60 days">
+            </Field>
+            <Field label="From">
+              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={`${inputCls} w-auto px-2 py-1 text-sm`} />
+            </Field>
+            <Field label="To">
+              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={`${inputCls} w-auto px-2 py-1 text-sm`} />
+            </Field>
+            <div className="flex-1 min-w-[10rem]">
+              <Field label="Bank reference or order #">
+                <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. 4F3A9C1B" className={`${inputCls} w-full font-mono`} />
+              </Field>
+            </div>
+            <Button size="sm" variant="secondary" type="submit" onClick={() => rematch.mutate()} disabled={rematch.isPending}
+               title="Look for each provisional payment's reference in the active company's unmatched statement lines of the last 60 days">
               {rematch.isPending ? 'Matching…' : 'Re-run matching'}
-            </button>
+            </Button>
           </div>
 
           {/* Receipts */}
@@ -399,63 +397,63 @@ export function RaastTab() {
                           </td>
                           <td className="px-3 py-2">
                             <Link href={`/orders/${r.orderId}`} className="font-mono text-xs text-primary-ink hover:underline">#{r.orderRef}</Link>
-                            <span className="block text-[11px] text-s-muted">{r.brand}</span>
+                            <span className="block text-xs text-s-muted">{r.brand}</span>
                           </td>
                           <td className="px-3 py-2 font-mono text-xs text-s-text">
                             {r.bankRef ?? <span className="text-s-dim">—</span>}
-                            <span className="block font-sans text-[10px] text-s-dim">
+                            <span className="block font-sans text-xs text-s-muted">
                               {r.confirmedVia === 'sms' ? 'from the bank SMS' : r.confirmedVia === 'bank_api' ? 'from the bank' : r.confirmedVia === 'cashier' ? 'typed by the cashier' : ''}
                               {r.smsConfirmed && r.confirmedVia !== 'sms' ? ' · bank SMS seen' : ''}
                             </span>
                           </td>
                           <td className="px-3 py-2 text-right font-mono text-xs text-s-text">
                             {fmtPkr(r.amountCents)}
-                            {r.tipCents > 0 && <span className="block text-[10px] text-s-dim">incl. tip {fmtPkr(r.tipCents)}</span>}
+                            {r.tipCents > 0 && <span className="block text-xs text-s-muted">incl. tip {fmtPkr(r.tipCents)}</span>}
                           </td>
                           <td className="px-3 py-2 text-xs text-s-muted">
                             {r.bankAccount.name}{r.bankAccount.last4 ? ` ••${r.bankAccount.last4}` : ''}
-                            <span className="block font-mono text-[10px] text-s-dim">{r.ledgerCode}</span>
+                            <span className="block font-mono text-xs text-s-muted">{r.ledgerCode}</span>
                           </td>
                           <td className="px-3 py-2 text-xs">
-                            <span title={statusLabel(r.status)} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${CHIP[r.status]}`}>{statusShort(r.status)}</span>
+                            <span title={statusLabel(r.status)} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${CHIP[r.status]}`}>{statusShort(r.status)}</span>
                             {pendingAsk && (
                               <span className="block mt-1">
-                                <span className="s-badge-amber text-[10px]">Void asked for</span>
-                                <span className="block text-[10px] text-s-muted">
+                                <span className="s-badge-amber text-xs">Void asked for</span>
+                                <span className="block text-xs text-s-muted">
                                   {pendingAsk.by?.name ?? 'Finance'}, {fmtWhen(pendingAsk.at)}{pendingAsk.reason ? `: ${pendingAsk.reason}` : ''}
                                 </span>
                               </span>
                             )}
                             {r.status === 'voided' && r.voided && (
-                              <span className="block mt-1 text-[10px] text-s-muted">
+                              <span className="block mt-1 text-xs text-s-muted">
                                 Voided by {r.voided.by?.name ?? 'the CEO'}, {fmtWhen(r.voided.at)}{r.voided.reason ? `: ${r.voided.reason}` : ''}. No ledger entry; the reference stays used.
                               </span>
                             )}
                             {r.status === 'provisional' && r.voidBlockedReason && (r.orderStatus === 'cancelled' || r.orderStatus === 'rejected' || pendingAsk) && (
-                              <span className="block mt-1 text-[10px] text-s-dim" title="Why this payment cannot be voided as never booked">Not voidable: {r.voidBlockedReason}</span>
+                              <span className="block mt-1 text-xs text-s-muted" title="Why this payment cannot be voided as never booked">Not voidable: {r.voidBlockedReason}</span>
                             )}
                             {r.status === 'matched' && r.statementLine && (
-                              <span className="block mt-1 text-[10px] text-s-muted">
+                              <span className="block mt-1 text-xs text-s-muted">
                                 {r.statementLine.postedDate.slice(0, 10)} · {r.matchedAutomatically ? 'by the import' : 'by finance'}
                               </span>
                             )}
                             {r.status === 'needs_attention' && r.attentionReason && (
-                              <span className="block mt-1 text-[10px] text-s-red">{r.attentionReason.replace(/_/g, ' ').toLowerCase()}</span>
+                              <span className="block mt-1 text-xs text-s-red">{r.attentionReason.replace(/_/g, ' ').toLowerCase()}</span>
                             )}
                             {r.status === 'needs_attention' && (
-                              <span className="block text-[10px] text-s-muted">A customer transfer the till could not book — attach it at the till&rsquo;s bank alerts while the bill is open; once the bill is closed, refund the customer and resolve it here.</span>
+                              <span className="block text-xs text-s-muted">A customer transfer the till could not book — attach it at the till&rsquo;s bank alerts while the bill is open; once the bill is closed, refund the customer and resolve it here.</span>
                             )}
                           </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap text-xs">
                             <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
-                              {r.canMatch && <button onClick={() => toggle(r.id, 'match')} className="text-primary-ink font-semibold">Match</button>}
-                              {r.canFixReference && !r.smsConfirmed && <button onClick={() => toggle(r.id, 'reference')} className="text-s-muted hover:text-s-text">Fix reference</button>}
-                              {r.canWriteOff && <button onClick={() => toggle(r.id, 'unreceived')} className="text-s-red">Not received</button>}
-                              {r.canUnmatch && <button onClick={() => toggle(r.id, 'unmatch')} className="text-s-muted hover:text-s-text">Unmatch</button>}
-                              {r.canResolve && <button onClick={() => toggle(r.id, 'resolve')} className="text-primary-ink font-semibold">Resolve</button>}
-                              {r.canRequestVoid && <button onClick={() => toggle(r.id, 'void_request')} className="text-primary-ink font-semibold">Ask the CEO to void</button>}
-                              {r.canVoid && <button onClick={() => toggle(r.id, 'void')} className="text-s-red font-semibold">Void — never booked</button>}
-                              {r.canRejectVoidRequest && <button onClick={() => toggle(r.id, 'void_reject')} className="text-s-muted hover:text-s-text">Turn down the ask</button>}
+                              {r.canMatch && <LinkButton size="md" type="button" onClick={() => toggle(r.id, 'match')}>Match</LinkButton>}
+                              {r.canFixReference && !r.smsConfirmed && <LinkButton tone="muted" size="md" type="button" onClick={() => toggle(r.id, 'reference')}>Fix reference</LinkButton>}
+                              {r.canWriteOff && <LinkButton tone="danger" size="md" type="button" onClick={() => toggle(r.id, 'unreceived')}>Not received</LinkButton>}
+                              {r.canUnmatch && <LinkButton tone="muted" size="md" type="button" onClick={() => toggle(r.id, 'unmatch')}>Unmatch</LinkButton>}
+                              {r.canResolve && <LinkButton size="md" type="button" onClick={() => toggle(r.id, 'resolve')}>Resolve</LinkButton>}
+                              {r.canRequestVoid && <LinkButton size="md" type="button" onClick={() => toggle(r.id, 'void_request')}>Ask the CEO to void</LinkButton>}
+                              {r.canVoid && <LinkButton tone="danger" size="md" type="button" onClick={() => toggle(r.id, 'void')}>Void — never booked</LinkButton>}
+                              {r.canRejectVoidRequest && <LinkButton tone="muted" size="md" type="button" onClick={() => toggle(r.id, 'void_reject')}>Turn down the ask</LinkButton>}
                             </span>
                           </td>
                         </tr>
@@ -481,13 +479,13 @@ export function RaastTab() {
             </div>
             {receipts.hasNextPage && (
               <div className="border-t border-s-border px-4 py-2 text-center">
-                <button onClick={() => void receipts.fetchNextPage()} disabled={receipts.isFetchingNextPage} className="text-xs text-primary-ink">
+                <LinkButton type="button" onClick={() => void receipts.fetchNextPage()} disabled={receipts.isFetchingNextPage}>
                   {receipts.isFetchingNextPage ? 'Loading…' : 'Load more'}
-                </button>
+                </LinkButton>
               </div>
             )}
           </div>
-          <p className="text-[11px] text-s-dim">
+          <p className="text-xs text-s-muted">
             Fixing a reference, unmatching, writing off a payment as not received and resolving a payment that needs attention are for the CEO or a
             co-owner. Voiding a payment that was never booked is the CEO&rsquo;s alone — finance asks for it. You see the buttons your role may use.
           </p>
@@ -503,7 +501,7 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub: s
     <div className="s-card p-3">
       <p className="text-xs text-s-muted">{label}</p>
       <p className={`text-xl font-bold mt-0.5 ${color}`}>{value}</p>
-      <p className="text-[11px] text-s-dim mt-0.5">{sub}</p>
+      <p className="text-xs text-s-muted mt-0.5">{sub}</p>
     </div>
   )
 }
@@ -549,10 +547,10 @@ function MatchPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; o
                   <td className="px-2 py-1.5 text-s-text">{c.description}{c.reference && <span className="text-s-muted"> · {c.reference}</span>}</td>
                   <td className="px-2 py-1.5 text-right font-mono text-s-text">{fmtPkr(c.amountCents)}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                    {c.refHit && <span className="s-badge-green text-[10px]">Names the reference</span>}
-                    {c.suggested && <span className="s-badge-purple text-[10px]" title="No line names the reference, but this is the only line of this amount on the payment's day and the only payment of this amount that day. Check it before confirming.">Suggested — check it</span>}
-                    {c.beforeBill && <span className="text-[10px] text-s-red" title="This credit is dated before the bill existed — it cannot be this bill's payment by its reference.">before the bill</span>}
-                    {!c.refHit && !c.suggested && !c.beforeBill && c.sameDay && <span className="text-[10px] text-s-dim">same day</span>}
+                    {c.refHit && <span className="s-badge-green text-xs">Names the reference</span>}
+                    {c.suggested && <span className="s-badge-purple text-xs" title="No line names the reference, but this is the only line of this amount on the payment's day and the only payment of this amount that day. Check it before confirming.">Suggested — check it</span>}
+                    {c.beforeBill && <span className="text-xs text-s-red" title="This credit is dated before the bill existed — it cannot be this bill's payment by its reference.">before the bill</span>}
+                    {!c.refHit && !c.suggested && !c.beforeBill && c.sameDay && <span className="text-xs text-s-muted">same day</span>}
                   </td>
                 </tr>
               ))}
@@ -568,10 +566,10 @@ function MatchPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; o
       )}
       {match.error && <p className="text-s-red">{errorText(match.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => chosen && match.mutate(chosen)} disabled={!chosen || match.isPending} className="text-primary-ink font-semibold disabled:opacity-40">
+        <LinkButton size="md" type="button" onClick={() => chosen && match.mutate(chosen)} disabled={!chosen || match.isPending}>
           {match.isPending ? 'Matching…' : 'Confirm match'}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -595,16 +593,16 @@ function ReferencePanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRo
         Before and after are recorded.
       </p>
       <div className="flex flex-wrap gap-2">
-        <input value={bankRef} onChange={(e) => setBankRef(e.target.value)} placeholder={receipt.bankRef ? `now ${receipt.bankRef}` : 'bank reference'} autoComplete="off" spellCheck={false}
+        <Input value={bankRef} onChange={(e) => setBankRef(e.target.value)} placeholder={receipt.bankRef ? `now ${receipt.bankRef}` : 'bank reference'} autoComplete="off" spellCheck={false}
           className={`${inputCls} w-56 font-mono uppercase`} />
-        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why (e.g. cashier typed 0 for O)" className={`${inputCls} flex-1 min-w-[12rem]`} />
+        <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why (e.g. cashier typed 0 for O)" className={`${inputCls} flex-1 min-w-[12rem]`} />
       </div>
       {fix.error && <p className="text-s-red">{errorText(fix.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => fix.mutate()} disabled={fix.isPending || !bankRef.trim() || reason.trim().length < 3} className="text-primary-ink font-semibold disabled:opacity-40">
+        <LinkButton size="md" type="button" onClick={() => fix.mutate()} disabled={fix.isPending || !bankRef.trim() || reason.trim().length < 3}>
           {fix.isPending ? 'Saving…' : 'Change reference'}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -630,13 +628,13 @@ function UnreceivedPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptR
       <Select value={contra} onChange={(e) => setContra(e.target.value as Contra)} className={`${inputCls} w-full`}>
         {(Object.keys(CONTRA_LABEL) as Array<keyof typeof CONTRA_LABEL>).map((c) => <option key={c} value={c}>{CONTRA_LABEL[c]}</option>)}
       </Select>
-      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="what happened (required)" className={`${inputCls} w-full`} />
+      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="what happened (required)" className={`${inputCls} w-full`} />
       {writeOff.error && <p className="text-s-red">{errorText(writeOff.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => writeOff.mutate()} disabled={writeOff.isPending || reason.trim().length < 3} className="text-s-red font-semibold disabled:opacity-40">
+        <LinkButton tone="danger" size="md" type="button" onClick={() => writeOff.mutate()} disabled={writeOff.isPending || reason.trim().length < 3}>
           {writeOff.isPending ? 'Booking…' : `Write off ${fmtPkr(receipt.amountCents)}`}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -658,13 +656,13 @@ function UnmatchPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow;
           ({fmtPkr(receipt.statementLine.amountCents)}). Unmatching puts the payment back to provisional.
         </p>
       )}
-      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why (optional, recorded)" className={`${inputCls} w-full`} />
+      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why (optional, recorded)" className={`${inputCls} w-full`} />
       {unmatch.error && <p className="text-s-red">{errorText(unmatch.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => unmatch.mutate()} disabled={unmatch.isPending || (reason.trim().length > 0 && reason.trim().length < 3)} className="text-primary-ink font-semibold disabled:opacity-40">
+        <LinkButton size="md" type="button" onClick={() => unmatch.mutate()} disabled={unmatch.isPending || (reason.trim().length > 0 && reason.trim().length < 3)}>
           {unmatch.isPending ? 'Unmatching…' : 'Unmatch'}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -699,16 +697,16 @@ function ResolvePanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow;
         {(Object.keys(RESOLVE_LABEL) as ResolveOutcome[]).map((o) => <option key={o} value={o}>{RESOLVE_LABEL[o]}</option>)}
       </Select>
       {outcome === 'refunded_to_customer' && (
-        <input value={refundRef} onChange={(e) => setRefundRef(e.target.value)} placeholder="reference of the transfer sent back (optional)" autoComplete="off" spellCheck={false}
+        <Input value={refundRef} onChange={(e) => setRefundRef(e.target.value)} placeholder="reference of the transfer sent back (optional)" autoComplete="off" spellCheck={false}
           className={`${inputCls} w-full font-mono uppercase`} />
       )}
-      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="what happened (required)" className={`${inputCls} w-full`} />
+      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="what happened (required)" className={`${inputCls} w-full`} />
       {resolve.error && <p className="text-s-red">{errorText(resolve.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => resolve.mutate()} disabled={resolve.isPending || reason.trim().length < 3} className="text-primary-ink font-semibold disabled:opacity-40">
+        <LinkButton size="md" type="button" onClick={() => resolve.mutate()} disabled={resolve.isPending || reason.trim().length < 3}>
           {resolve.isPending ? 'Saving…' : 'Resolve'}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -729,13 +727,13 @@ function VoidRequestPanel({ receipt, onDone, onCancel }: { receipt: RaastReceipt
   return (
     <div className="space-y-2 text-xs max-w-xl">
       <p className="text-s-muted">{VOID_EXPLAINER}</p>
-      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it was never booked (required, a sentence)" className={`${inputCls} w-full`} />
+      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it was never booked (required, a sentence)" className={`${inputCls} w-full`} />
       {ask.error && <p className="text-s-red">{errorText(ask.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => ask.mutate()} disabled={ask.isPending || reason.trim().length < 10} className="text-primary-ink font-semibold disabled:opacity-40">
+        <LinkButton size="md" type="button" onClick={() => ask.mutate()} disabled={ask.isPending || reason.trim().length < 10}>
           {ask.isPending ? 'Sending…' : 'Ask the CEO to void'}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -757,17 +755,17 @@ function VoidPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptRow; on
           Asked for by {ask.by?.name ?? 'finance'} on {fmtWhen(ask.at)}{ask.reason ? `: “${ask.reason}”` : ''}.
         </p>
       )}
-      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it was never booked (required, a sentence)" className={`${inputCls} w-full`} />
-      <label className="flex items-start gap-2 text-s-text">
+      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it was never booked (required, a sentence)" className={`${inputCls} w-full`} />
+      <CheckLabel className="flex items-start gap-2 text-s-text">
         <input type="checkbox" className="mt-0.5 accent-primary" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
         <span>No ledger entry is made. The statement credit, if the money arrived, is booked with the bank-line adjustment.</span>
-      </label>
+      </CheckLabel>
       {voidIt.error && <p className="text-s-red">{errorText(voidIt.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => voidIt.mutate()} disabled={voidIt.isPending || !understood || reason.trim().length < 10} className="text-s-red font-semibold disabled:opacity-40">
+        <LinkButton tone="danger" size="md" type="button" onClick={() => voidIt.mutate()} disabled={voidIt.isPending || !understood || reason.trim().length < 10}>
           {voidIt.isPending ? 'Voiding…' : `Void ${fmtPkr(receipt.amountCents)} — never booked`}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -782,13 +780,13 @@ function VoidRejectPanel({ receipt, onDone, onCancel }: { receipt: RaastReceiptR
   return (
     <div className="space-y-2 text-xs max-w-xl">
       <p className="text-s-muted">The payment stays provisional — finance matches it, or a CEO / co-owner marks it not received once its sale is booked.</p>
-      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="a note for finance (required)" className={`${inputCls} w-full`} />
+      <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="a note for finance (required)" className={`${inputCls} w-full`} />
       {reject.error && <p className="text-s-red">{errorText(reject.error)}</p>}
       <div className="flex gap-3">
-        <button onClick={() => reject.mutate()} disabled={reject.isPending || note.trim().length < 3} className="text-primary-ink font-semibold disabled:opacity-40">
+        <LinkButton size="md" type="button" onClick={() => reject.mutate()} disabled={reject.isPending || note.trim().length < 3}>
           {reject.isPending ? 'Saving…' : 'Turn down the ask'}
-        </button>
-        <button onClick={onCancel} className="text-s-muted">Cancel</button>
+        </LinkButton>
+        <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Cancel</LinkButton>
       </div>
     </div>
   )
@@ -810,14 +808,13 @@ function SmsLog() {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-s-muted">
-          <span className="block mb-0.5">Status</span>
-          <Select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls}>
+        <Field label="Status">
+          <Select value={status} onChange={(e) => setStatus(e.target.value)} className={`${inputCls} w-auto px-2 py-1 text-sm`}>
             <option value="">Every bank SMS</option>
             {Object.entries(ALERT_STATUS_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </Select>
-        </label>
-        <p className="text-[11px] text-s-dim pb-1">
+        </Field>
+        <p className="text-xs text-s-muted pb-1">
           Read only. A bank SMS with no bill is attached at the till (Bank alerts); a manager marks one that is not a sale. Only SMS from the
           bank senders IT listed are kept — OTPs and other messages never are.
         </p>
@@ -845,7 +842,7 @@ function SmsLog() {
                     <td className="px-3 py-2 text-xs text-s-muted whitespace-nowrap">{fmtWhen(a.occurredAt ?? a.receivedAt)}</td>
                     <td className="px-3 py-2 text-xs text-s-text">
                       <span className="font-mono">{a.sender}</span>
-                      {a.payer && <span className="block text-[11px] text-s-muted">{a.payer}</span>}
+                      {a.payer && <span className="block text-xs text-s-muted">{a.payer}</span>}
                     </td>
                     <td className={`px-3 py-2 text-right font-mono text-xs ${a.kind === 'debit' ? 'text-s-red' : 'text-s-text'}`}>
                       {a.amountCents != null ? `${a.kind === 'debit' ? '-' : ''}${fmtPkr(a.amountCents)}` : '—'}
@@ -854,12 +851,12 @@ function SmsLog() {
                     <td className="px-3 py-2 text-xs text-s-muted">{a.bankAccount ? `${a.bankAccount.name}${a.bankAccount.last4 ? ` ••${a.bankAccount.last4}` : ''}` : (a.accountLast4 ? `••${a.accountLast4}` : '—')}</td>
                     <td className="px-3 py-2 text-xs">
                       <span className="text-s-text">{ALERT_STATUS_LABEL[a.status] ?? a.status}</span>
-                      {a.receipt && <Link href={`/orders/${a.receipt.orderId}`} className="block font-mono text-[11px] text-primary-ink hover:underline">#{a.receipt.orderRef}</Link>}
-                      {a.resolution && <span className="block text-[11px] text-s-muted">{a.resolution}</span>}
+                      {a.receipt && <Link href={`/orders/${a.receipt.orderId}`} className="block font-mono text-xs text-primary-ink hover:underline">#{a.receipt.orderRef}</Link>}
+                      {a.resolution && <span className="block text-xs text-s-muted">{a.resolution}</span>}
                       {a.body && (
-                        <button onClick={() => setShown(shown === a.id ? null : a.id)} className="block text-[11px] text-s-muted underline">
+                        <LinkButton tone="muted" type="button" onClick={() => setShown(shown === a.id ? null : a.id)}>
                           {shown === a.id ? 'Hide the message' : 'Show the message'}
-                        </button>
+                        </LinkButton>
                       )}
                     </td>
                   </tr>
@@ -875,9 +872,9 @@ function SmsLog() {
         </div>
         {alerts.hasNextPage && (
           <div className="border-t border-s-border px-4 py-2 text-center">
-            <button onClick={() => void alerts.fetchNextPage()} disabled={alerts.isFetchingNextPage} className="text-xs text-primary-ink">
+            <LinkButton type="button" onClick={() => void alerts.fetchNextPage()} disabled={alerts.isFetchingNextPage}>
               {alerts.isFetchingNextPage ? 'Loading…' : 'Load more'}
-            </button>
+            </LinkButton>
           </div>
         )}
       </div>

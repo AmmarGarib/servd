@@ -2,6 +2,7 @@
 // Shift corrections — fix a mistake on a closed shift (void a bill, cancel an open ticket).
 // Finance lists the fixes and sends ONE set to the CEO; nothing changes until the CEO approves.
 // Contract: CLAUDE.md "Shift corrections", backend/src/modules/shiftCorrections/.
+import { Button } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { Suspense, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -9,6 +10,7 @@ import { api } from '../../../lib/api'
 import { CorrectionDetail } from '../../../components/finance/shiftCorrections/CorrectionDetail'
 import { NewCorrection } from '../../../components/finance/shiftCorrections/NewCorrection'
 import { type CorrectionSet, type SetStatus, STATUS_BADGE, STATUS_LABEL, fmtDateTime, fmtDay } from '../../../components/finance/shiftCorrections/types'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 const FILTERS: Array<{ key: SetStatus | 'all'; label: string }> = [
   { key: 'all', label: 'All' },
@@ -66,12 +68,12 @@ function ShiftCorrections() {
                   </button>
                 ))}
               </div>
-              <button type="button" className="s-btn-primary text-sm" onClick={() => setCreating(true)}>New correction</button>
+              <Button type="button"  onClick={() => setCreating(true)}>New correction</Button>
             </div>
 
             {list.isLoading && <p className="text-xs text-s-muted">Loading…</p>}
             {list.error && <p role="alert" className="text-xs text-s-red">{(list.error as Error).message}</p>}
-            {list.data && list.data.items.length === 0 && <div className="s-card p-6 text-sm text-s-muted text-center">No corrections{status === 'all' ? ' yet' : ' with this status'}.</div>}
+            {list.data && list.data.items.length === 0 && <CompactEmptyState message={`No corrections${status === 'all' ? ' yet' : ' with this status'}.`} />}
             <ul className="space-y-2">
               {(list.data?.items ?? []).map((c) => (
                 <li key={c.id}>

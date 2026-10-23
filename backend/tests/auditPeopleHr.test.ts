@@ -238,7 +238,15 @@ describe('PPL-12 the rota refuses a shift on approved leave', () => {
 // ─── PPL-13 ──────────────────────────────────────────────────────────────────
 
 describe('PPL-13 staff ask for a swap of their own shift; the manager approves', () => {
-  const future = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10)
+  // Ten days out, stepping past 2–15 Nov 2026, the weeks PPL-12 fills (leave, copied rota)
+  // — a swap there is refused or shows as leave / off.
+  const future = (() => {
+    const t = Date.now() + 10 * 86_400_000
+    for (let i = 0; ; i++) {
+      const d = new Date(t + i * 86_400_000).toISOString().slice(0, 10)
+      if (d < '2026-11-02' || d > '2026-11-15') return d
+    }
+  })()
   let swapId: string
 
   it('offers it in self-service and files it for the requester only', async () => {
@@ -250,7 +258,7 @@ describe('PPL-13 staff ask for a swap of their own shift; the manager approves',
 
     // Naming someone else as "employee" is ignored: a swap is of your own shift.
     const r = await call('ali', 'POST', '/hr/me/records/shift_swap', { data: { employee: emps['Bilal Ahmed'], swapWith: emps['Bilal Ahmed'], date: future, toShift: morning, reason: 'Exam' } })
-    expect(r.statusCode).toBe(201)
+    expect(r.statusCode, r.body).toBe(201)
     expect(r.json()).toMatchObject({ employeeId: emps['Ali Raza'], status: 'submitted', section: 'shift_swap' })
     swapId = r.json().id
   })

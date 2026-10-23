@@ -12,6 +12,7 @@
 // trial balance can never be closed over. A close across the company's fiscal
 // year end is a year-end close (nothing is posted — the roll-forward is
 // virtual). The CEO sets the company's fiscal year end month here too.
+import { Button, CheckLabel, FieldLabel, Input, Textarea } from '@/components/finance/ui'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { api, ApiError } from '../../../lib/api'
@@ -96,7 +97,7 @@ interface FiscalYearCompany { tenantId: string; name: string; endMonth: number; 
 
 function Chip({ kind, children }: { kind: 'block' | 'warn' | 'clear' | 'fixed'; children: React.ReactNode }) {
   const cls = kind === 'block' ? 's-badge-red' : kind === 'warn' ? 's-badge-amber' : kind === 'clear' ? 's-badge-green' : 's-badge-muted'
-  return <span className={`${cls} text-[11px] whitespace-nowrap`}>{children}</span>
+  return <span className={`${cls} text-xs whitespace-nowrap`}>{children}</span>
 }
 
 export default function PeriodClosePage() {
@@ -257,7 +258,7 @@ export default function PeriodClosePage() {
             {isAdmin && state.tenantId && (
               <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
                 <div className="flex-1">
-                  <label htmlFor="fy-month" className="block text-xs text-s-muted">Year-end month</label>
+                  <FieldLabel htmlFor="fy-month" className="block">Year-end month</FieldLabel>
                   <Select id="fy-month" value={fyMonth ?? state.fiscalYear.endMonth} onChange={(e) => setFyMonth(Number(e.target.value))}
                     className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text">
                     {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
@@ -265,18 +266,16 @@ export default function PeriodClosePage() {
                 </div>
                 {fyNeedsReason && (
                   <div className="flex-[2]">
-                    <label htmlFor="fy-reason" className="block text-xs text-s-muted">Reason (books are already closed across a year end)</label>
-                    <input id="fy-reason" type="text" value={fyReason} onChange={(e) => setFyReason(e.target.value)} placeholder="e.g. auditors moved us to a calendar year"
-                      className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+                    <FieldLabel htmlFor="fy-reason" className="block">Reason (books are already closed across a year end)</FieldLabel>
+                    <Input id="fy-reason" type="text" value={fyReason} onChange={(e) => setFyReason(e.target.value)} placeholder="e.g. auditors moved us to a calendar year"
+                      className="w-full" />
                   </div>
                 )}
-                <button
+                <Button variant="secondary" type="submit"
                   onClick={() => saveFy.mutate()}
-                  disabled={saveFy.isPending || fyMonth === null || fyMonth === state.fiscalYear.endMonth || (fyNeedsReason && fyReason.trim().length < 10)}
-                  className="s-btn-secondary text-sm"
-                >
+                  disabled={saveFy.isPending || fyMonth === null || fyMonth === state.fiscalYear.endMonth || (fyNeedsReason && fyReason.trim().length < 10)}>
                   {saveFy.isPending ? 'Saving…' : 'Save year end'}
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -289,14 +288,14 @@ export default function PeriodClosePage() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label htmlFor="lock-through" className="block text-xs text-s-muted">Lock through (inclusive)</label>
-              <input id="lock-through" type="date" value={lockedThrough} max={maxLock} onChange={(e) => setLockedThrough(e.target.value)}
-                className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+              <FieldLabel htmlFor="lock-through" className="block">Lock through (inclusive)</FieldLabel>
+              <Input id="lock-through" type="date" value={lockedThrough} max={maxLock} onChange={(e) => setLockedThrough(e.target.value)}
+                className="w-full" />
             </div>
             <div>
-              <label htmlFor="lock-note" className="block text-xs text-s-muted">Note (optional)</label>
-              <input id="lock-note" type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. August month-end signed off"
-                className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+              <FieldLabel htmlFor="lock-note" className="block">Note (optional)</FieldLabel>
+              <Input id="lock-note" type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. August month-end signed off"
+                className="w-full" />
             </div>
           </div>
 
@@ -314,7 +313,7 @@ export default function PeriodClosePage() {
               <p className="text-xs font-semibold text-s-text">
                 Checklist{state?.months?.length ? ` (${state.months[0]}${state.months.length > 1 ? ` to ${state.months[state.months.length - 1]}` : ''})` : ''}
               </p>
-              {checking && <span className="text-[11px] text-s-muted">Checking…</span>}
+              {checking && <span className="text-xs text-s-muted">Checking…</span>}
             </div>
             {state && blocks.length === 0 && (
               <div className="flex items-center gap-2 text-xs">
@@ -339,18 +338,18 @@ export default function PeriodClosePage() {
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <Link href={p.link} className="text-primary-ink underline">Open</Link>
                     {p.fix && myRole && fixRolesOf(p.fix.path).includes(myRole) && (
-                      <button onClick={() => fix.mutate(p)} disabled={fix.isPending} className="s-btn-secondary text-xs">
+                      <Button size="sm" variant="secondary" type="submit" onClick={() => fix.mutate(p)} disabled={fix.isPending}>
                         {fix.isPending && fix.variables?.key === p.key ? 'Working…' : p.fix.label}
-                      </button>
+                      </Button>
                     )}
                     {p.severity === 'block' && !p.overridable && (
                       <span className="text-s-red">Must be fixed — this cannot be closed over.</span>
                     )}
                     {p.severity === 'block' && p.overridable && isAdmin && (
-                      <label className="flex items-center gap-1.5 text-s-text">
+                      <CheckLabel className="flex items-center gap-1.5 text-s-text">
                         <input type="checkbox" className="accent-primary" checked={tick} onChange={() => toggle(p.key)} />
                         Close over this (CEO, with a reason)
-                      </label>
+                      </CheckLabel>
                     )}
                   </div>
                 </div>
@@ -360,21 +359,21 @@ export default function PeriodClosePage() {
 
           {isAdmin && needsReason && (
             <div>
-              <label htmlFor="override-reason" className="block text-xs text-s-muted">Why close over {ticked.size === 1 ? 'this check' : 'these checks'}? (at least 10 characters — kept on the close, the audit trail and the Exceptions inbox)</label>
-              <textarea id="override-reason" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows={2}
-                className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
+              <FieldLabel htmlFor="override-reason" className="block">Why close over {ticked.size === 1 ? 'this check' : 'these checks'}? (at least 10 characters — kept on the close, the audit trail and the Exceptions inbox)</FieldLabel>
+              <Textarea id="override-reason" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows={2}
+                className="w-full" />
             </div>
           )}
 
           {isAdmin ? (
-            <button onClick={() => close.mutate()} disabled={close.isPending || !canClose} className="s-btn-primary text-sm w-full">
+            <Button type="submit" onClick={() => close.mutate()} disabled={close.isPending || !canClose} className="w-full">
               {close.isPending ? 'Closing…' : state?.isYearEnd ? 'Close period (year end)' : 'Close period'}
-            </button>
+            </Button>
           ) : (
             <p className="text-xs text-s-muted">Only the CEO closes the books.</p>
           )}
           {isAdmin && state && !canClose && !close.isPending && (
-            <p className="text-[11px] text-s-muted">
+            <p className="text-xs text-s-muted">
               {fixedOnly.length > 0
                 ? 'Fix the checks marked "must be fixed" first.'
                 : untickedBlocks.length > 0
@@ -390,17 +389,16 @@ export default function PeriodClosePage() {
             <p className="text-xs text-s-muted">
               Removes only the most recent close. The reopening is written to the accounting audit trail and raised in the Exceptions inbox. Say why.
             </p>
-            <label htmlFor="reopen-reason" className="block text-xs text-s-muted">Reason (required)</label>
-            <input id="reopen-reason" type="text" value={reopenReason} onChange={(e) => setReopenReason(e.target.value)}
+            <FieldLabel htmlFor="reopen-reason" className="block">Reason (required)</FieldLabel>
+            <Input id="reopen-reason" type="text" value={reopenReason} onChange={(e) => setReopenReason(e.target.value)}
               placeholder="e.g. supplier bill for August arrived late"
-              className="w-full bg-s-card border border-s-border rounded px-3 py-2 text-sm text-s-text" />
-            <button
+              className="w-full" />
+            <Button variant="danger" type="submit"
               onClick={() => reopen.mutate(reopenReason.trim())}
               disabled={reopen.isPending || reopenReason.trim().length < 5}
-              className="s-btn-danger text-sm w-full"
-            >
+              className="w-full">
               {reopen.isPending ? 'Reopening…' : 'Reopen'}
-            </button>
+            </Button>
           </div>
         )}
 

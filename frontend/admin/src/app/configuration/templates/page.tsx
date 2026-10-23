@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Template {
   id: string
@@ -38,7 +40,7 @@ export default function TemplatesPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">✉️ Email / SMS / WhatsApp templates</h1>
+            <h1 className="text-2xl font-black text-white/90">Email / SMS / WhatsApp templates</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Edit the actual text customers receive. Use <code className="bg-white/5 rounded px-1 text-primary-ink">{'{{var}}'}</code> placeholders. Override per concept + language.
             </p>
@@ -49,10 +51,7 @@ export default function TemplatesPage() {
 
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         {templates.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">No custom templates</p>
-            <p className="text-sm text-white/45 mt-1">System defaults are in use. Add one to override.</p>
-          </div>
+          <CompactEmptyState message="No custom templates" detail="System defaults are in use. Add one to override." />
         )}
         {templates.map((t) => {
           const concept = concepts.find((c) => c.id === t.conceptId)
@@ -115,7 +114,7 @@ function Modal({ template, concepts, onClose, onSaved }: { template: Template | 
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{template ? 'Edit template' : 'New template'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
           {!template && (

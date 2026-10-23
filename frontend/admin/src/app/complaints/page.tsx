@@ -10,6 +10,8 @@ import { usePermissions } from '../../hooks/useCan'
 import { orderRef } from '../../lib/orderRef'
 import { Select } from '@/components/ui/Select'
 import { useManagerRoles } from '../../lib/roles'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 interface Complaint {
   id: string
@@ -89,13 +91,13 @@ function AgeBadge({ createdAt, now }: { createdAt: string; now: number }) {
   if (diffHours < 24) {
     return (
       <span className="text-xs font-semibold text-s-amber whitespace-nowrap">
-        ⚠ {Math.floor(diffHours)}h
+        <NavIcon name="warn" size={12} className="mr-1 inline" />{Math.floor(diffHours)}h
       </span>
     )
   }
   return (
     <span className="text-xs font-bold text-s-red whitespace-nowrap">
-      🔥 {diffDays}d — overdue
+      <NavIcon name="flame" size={12} className="mr-1 inline" />{diffDays}d — overdue
     </span>
   )
 }
@@ -452,7 +454,7 @@ export default function ComplaintsPage() {
       <div className="rounded-xl border border-s-border overflow-hidden">
         {isLoading && <p className="px-4 py-6 text-center text-s-muted">Loading…</p>}
         {!isLoading && complaints.length === 0 && (
-          <p className="px-4 py-10 text-center text-s-muted">No complaints — nice!</p>
+          <CompactEmptyState message="No complaints — nice!" />
         )}
         {complaints.map((c) => c.kind === 'ban_appeal' ? (
           <AppealCard key={c.id} c={c} canDecide={canDecideAppeals} now={now} />
@@ -520,7 +522,7 @@ export default function ComplaintsPage() {
                 {c.order?.customer && (c.order.customer.email || c.order.customer.phone) && (
                   <button onClick={() => setReachingOut(c)}
                     className="rounded-lg border border-blue-400 text-blue-700 px-3 py-1 text-xs hover:bg-blue-400/10 transition-colors">
-                    💬 Reach out
+                    <NavIcon name="chat" size={14} className="mr-1 inline" />Reach out
                   </button>
                 )}
                 {c.status !== 'resolved' && c.status !== 'closed' && (

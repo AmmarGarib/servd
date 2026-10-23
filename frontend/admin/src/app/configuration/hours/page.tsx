@@ -137,7 +137,7 @@ export default function HoursPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
-        <h1 className="text-2xl font-black text-white/90 mt-2">🕒 Hours of operation</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-2">Hours of operation</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Per-brand open/close windows — add a second window for split lunch / dinner service. Storefront refuses orders outside these hours; reservations only land in windows marked reservable.
         </p>
@@ -146,7 +146,7 @@ export default function HoursPage() {
       <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         {concepts.length === 0 ? (
           <div className="rounded-2xl p-10 text-center"
-            style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            style={{ background: 'color-mix(in srgb, var(--erp-warning) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 20%, transparent)' }}>
             <p className="font-bold text-amber-700">Add a brand first</p>
             <p className="text-sm text-white/45 mt-1">
               Hours attach to a brand. <Link href="/onboarding" className="text-amber-700 hover:underline">Run setup wizard</Link>.

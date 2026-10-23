@@ -8,6 +8,7 @@ import { api } from '../../lib/api'
 import { card } from '../../lib/hr'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '../ui/CompactEmptyState'
 
 interface RegisterRow { id: string; manual: boolean; values: string[]; checkIn?: { lat: number; lng: number } | null }
 interface Register { columns: string[]; rows: RegisterRow[] }
@@ -68,10 +69,7 @@ export function AttendanceRegister({ onOpen, onExportError }: { onOpen: (id: str
       {error && <p className="text-sm text-s-red mb-4" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
       {isLoading && <p className="text-sm text-white/40 py-6 text-center" role="status">Loading…</p>}
       {data && rows.length === 0 && (
-        <div className="rounded-2xl p-10 text-center" style={card}>
-          <p className="font-bold text-white/85">No attendance in this period</p>
-          <p className="text-sm text-white/45 mt-1">Change the dates or filters, or add a day with “+ New”.</p>
-        </div>
+        <CompactEmptyState message="No attendance in this period" detail="Change the dates or filters, or add a day with “+ New”." />
       )}
       {data && rows.length > 0 && (
         <div className="rounded-2xl overflow-x-auto" style={card}>

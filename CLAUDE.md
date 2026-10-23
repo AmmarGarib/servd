@@ -553,7 +553,12 @@ the media (owner, 2026-10-12) — `showTitle` off keeps the title only as an
   first order must be at least PKR 500, and a referrer is capped at 10 payouts
   per 30 days. Held-back referrals stay unstamped so they can pay later.
 
-- **Zero known dependency vulnerabilities.** The API is on Fastify 5. Don't
+- **Dependencies (2026-10-23):** both Next.js apps are on 14.2.35, which still
+  carries advisories fixed only in Next 15.5.28+ (image optimizer RCE / DoS,
+  server-action DoS, rewrite SSRF). Mitigation until the Next 15 upgrade: the
+  image optimizer is OFF in both apps (`images: { unoptimized: true }`, nothing
+  uses `next/image`; `/_next/image` answers 404) — never re-add a wildcard
+  `remotePatterns` such as `*.r2.cloudflarestorage.com`. The API is on Fastify 5. Don't
   re-add `@fastify/jwt` (auth uses `jsonwebtoken`), `@fastify/multipart`
   (uploads go via the S3 presigner) or `@fastify/websocket` (realtime is
   socket.io) — they were removed as unused, and `@fastify/jwt` was the source
@@ -2306,6 +2311,43 @@ change a route only together with that file). Binding rules:
   falls into its brand's active session by its `placedAt` Karachi time (`tillReports.ts sessionResolver`) — nothing
   is stored on the order. Reports read them as in `reports/TILL_REPORTS.md`. Tests:
   `tests/menuSubcategoriesSessions.test.ts`.
+
+### Open-items sweep (2026-10-23)
+
+- **Offline till orders** (`frontend/admin/src/lib/offline-queue.ts`, the ONE
+  queue; `public/sw.js` only caches GETs and never intercepts a write): a new
+  ring-up that fails on the network is kept on the device with its
+  idempotencyKey and re-sent by the PAGE through the normal api client (the
+  cashier's session); it leaves the queue only on success or a manager's
+  Discard; a server refusal stays with its reason (`OfflineQueue.tsx`). Money
+  writes (payments, Keenu, No Charge, add items) are never queued offline —
+  they fail with "No internet — not sent". Never fake a success.
+- **Shift corrections:** finance cannot raise one on a drawer it ran or
+  closed (403 `SELF_CORRECTION_BLOCKED`; the CEO is exempt; the closer is the
+  `pos.shift.close` audit row); `/:id/retry` runs the approve right check; a
+  set left `approved` with no progress for 5 minutes is moved to `failed` by
+  `sweepStaleApplies` (boot + worker `shiftCorrectionSweep`).
+- **Guest card** `GET /crm/customers/:id/context` returns only the companies
+  in view (`scopedCustomerFigures` + `companyActivityFigures`); strike count
+  stays servd-wide.
+- **Supplier emails** go through `lib/mailer.ts sendEmail` (admin mail
+  settings first), never their own transport.
+- **CI runs on every push to main** (`.github/workflows/ci.yml`: tsc, 4 test
+  shards with Postgres + Redis services, 4 RLS shards). `TEST_RLS=1` /
+  `npm run test:rls` runs the suite as a non-owner role with the live RLS
+  policies (`backend/tests/rls/`, exclusions in `exclude.txt`). Finding to
+  act on: live connects as the table owner, so RLS is very likely NOT enforced
+  on live; 34 tables (HR back office, fiscal documents, receivables, wallets…)
+  have no policy; `group_orders` / `group_order_members` policies recurse
+  (42P17). Fix those before ever switching live to a non-owner role.
+- **Look-and-feel (16 Oct answers):** finance pages use the shared parts in
+  `components/finance/ui` (`Field`, `Input`, `Select`, `Button`, `Dialog`,
+  `SidePanel`, `LinkButton`); `.s-input` is full width, so a toolbar / table
+  control passes `w-auto` + compact sizing. Icons are line icons
+  (`components/ui/NavIcon.tsx`, `components/finance/ui/icons.tsx`), never
+  emoji; empty states are `CompactEmptyState` (`tone="dark"` on kitchen
+  screens). Storefront buttons in ordering / checkout use
+  `--servd-btn-radius` (0.5rem) or `.servd-btn-rect`, never pills.
 
 ### Shift corrections (owner, 2026-10-21)
 

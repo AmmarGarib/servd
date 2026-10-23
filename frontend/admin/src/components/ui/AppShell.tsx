@@ -528,7 +528,7 @@ function NavLinkRow({
         )}
         {!collapsed && item.badge && (
           <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full"
-            style={{ background: 'rgba(255,77,79,0.18)', color: '#b42318' }}>
+            style={{ background: 'color-mix(in srgb, var(--erp-danger) 18%, transparent)', color: 'var(--erp-danger)' }}>
             {item.badge}
           </span>
         )}
@@ -540,7 +540,7 @@ function NavLinkRow({
           <button onClick={(e) => { e.stopPropagation(); onTogglePin() }}
             className="p-1 rounded hover:bg-white/10 transition-colors"
             title={pinned ? 'Unpin' : 'Pin to top'}
-            style={{ color: pinned ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.15)', opacity: pinned ? 1 : 0 }}
+            style={{ color: pinned ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.15)', opacity: pinned ? 1 : 0 }}
             onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
             onMouseLeave={(e) => { if (!pinned) e.currentTarget.style.opacity = '0' }}
           >
@@ -754,7 +754,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             className="w-full flex justify-center py-1.5 rounded-lg transition-colors"
             style={{ color: 'rgb(var(--fg-rgb) / 0.2)' }}
             title="Clock out"
-            onMouseEnter={(e) => (e.currentTarget.style.color = '#b42318')}
+            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--erp-danger)')}
             onMouseLeave={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.2)')}>
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
               <path d="M10 5L13 7.5m0 0L10 10M13 7.5H6M6 3H4a1.5 1.5 0 00-1.5 1.5v6A1.5 1.5 0 004 12H6"
@@ -822,8 +822,8 @@ function Shell({ children }: { children: React.ReactNode }) {
             <p className="text-xs font-semibold truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.75)' }}>
               {user?.name ?? 'Staff'}
             </p>
-            <p className="text-[10px]" style={{ color: isSuper ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.25)' }}>
-              {isSuper ? '👑 CEO' : roleLabel(user?.role)}
+            <p className="text-[10px]" style={{ color: isSuper ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.25)' }}>
+              {isSuper ? 'CEO' : roleLabel(user?.role)}
             </p>
           </div>
         </div>
@@ -831,7 +831,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         {hasQueue && (
           <Link href="/ceo/approvals"
             className="mt-1.5 pt-1.5 border-t border-white/[0.05] flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors"
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'color-mix(in srgb, var(--erp-warning) 6%, transparent)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
             <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--erp-warning)' }} />
             <span className="text-[10px] font-bold flex-1" style={{ color: 'var(--erp-warning)' }}>
@@ -1085,7 +1085,7 @@ function ImpersonationBanner() {
         borderBottom: '1px solid rgb(var(--ink-rgb) / 0.3)',
         color: 'var(--erp-primary-ink)',
       }}>
-      <span className="font-black">{opt?.emoji ?? '🔭'}</span>
+      <NavIcon name="eye" size={14} />
       <span className="font-bold">Viewing as {opt?.label ?? viewAs}</span>
       <span className="text-white/55">— sidebar & action buttons reflect what this role sees. Writes still run as you.</span>
       <button onClick={() => clear()}

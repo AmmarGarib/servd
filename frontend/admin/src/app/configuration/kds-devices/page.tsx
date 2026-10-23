@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Device { id: string; name: string; stationId: string | null; conceptId: string | null; deviceFingerprint: string | null; lastSeenAt: string | null; isActive: boolean; notes: string | null }
 interface Station { id: string; name: string }
@@ -24,7 +26,7 @@ export default function KdsDevicesPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <div>
-            <h1 className="text-2xl font-black text-white/90">📺 KDS devices</h1>
+            <h1 className="text-2xl font-black text-white/90">KDS devices</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Physical screens registered to display kitchen tickets. Bind a device to a station + concept so it only shows tickets it should.
             </p>
@@ -35,10 +37,7 @@ export default function KdsDevicesPage() {
 
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         {devices.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">No KDS devices registered</p>
-            <p className="text-sm text-white/45 mt-1">Register each kitchen tablet/TV so you can monitor connectivity.</p>
-          </div>
+          <CompactEmptyState message="No KDS devices registered" detail="Register each kitchen tablet/TV so you can monitor connectivity." />
         )}
         {devices.map((d) => {
           const station = stations.find((s) => s.id === d.stationId)
@@ -98,7 +97,7 @@ function Modal({ device, stations, concepts, onClose, onSaved }: { device: Devic
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
           <h2 className="font-black text-white/90">{device ? 'Edit device' : 'Register device'}</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
+          <button onClick={onClose} className="text-white/40 text-xl"><NavIcon name="x" size={16} /></button>
         </div>
         <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
           <Field label="Device name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Grill Tablet" className={fieldCls} autoFocus /></Field>

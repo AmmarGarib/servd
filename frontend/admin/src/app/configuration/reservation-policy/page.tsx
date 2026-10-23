@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface Daypart {
   label: string
@@ -50,7 +51,7 @@ export default function ReservationPolicyPage() {
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
-        <h1 className="text-2xl font-black text-white/90 mt-2">📅 Reservation policy</h1>
+        <h1 className="text-2xl font-black text-white/90 mt-2">Reservation policy</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Deposits, no-show buffer, advance booking windows, party size caps, walk-in handling.
         </p>
@@ -251,7 +252,7 @@ function DaypartsEditor({ value, onChange }: { value: Daypart[]; onChange: (d: D
       {issues.length > 0 && (
         <ul className="mt-3 space-y-0.5">
           {issues.map((m, i) => (
-            <li key={i} className="text-[11px] text-rose-700">⚠ {m}</li>
+            <li key={i} className="text-[11px] text-rose-700"><NavIcon name="warn" size={11} className="mr-1 inline" />{m}</li>
           ))}
         </ul>
       )}

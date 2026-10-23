@@ -8,6 +8,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
+import { ArrowLeft } from 'lucide-react'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
 import { useManagerRoles } from '../../lib/roles'
@@ -57,7 +59,7 @@ export default function FoodSafetyPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/modules/haccp" className="text-xs text-white/40 hover:text-white/70">← Food safety</Link>
+        <Link href="/modules/haccp" className="inline-flex min-h-11 items-center gap-1.5 text-xs text-white/40 hover:text-white/70"><ArrowLeft size={14} aria-hidden="true" />Food safety</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">Food safety logs</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">Check every unit each day. A reading outside its limit needs a note on what you did.</p>
       </header>
@@ -76,20 +78,16 @@ export default function FoodSafetyPage() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-black text-white/85">Temperatures</h2>
             {canSetUp && (
-              <button onClick={() => presetUnits.mutate()} disabled={presetUnits.isPending} className="text-xs font-bold text-white/50 hover:text-white">
+              <button onClick={() => presetUnits.mutate()} disabled={presetUnits.isPending} className="min-h-11 px-2 text-xs font-bold text-white/50 hover:text-white">
                 + Add standard units
               </button>
             )}
           </div>
           {data && data.units.length === 0 && (
-            <div className="rounded-2xl p-8 text-center" style={card}>
-              <p className="font-bold text-white/85">No units set up</p>
-              <p className="text-sm text-white/45 mt-1">
-                {canSetUp
-                  ? 'Add the standard set (chillers, freezer, hot hold, cooking core, deliveries) and adjust the limits to your plan.'
-                  : 'Ask a manager to set up the units to check.'}
-              </p>
-            </div>
+            <CompactEmptyState
+              message={canSetUp ? 'No units set up yet.' : 'No units set up. Ask a manager to add the units to check.'}
+              action={canSetUp ? { label: 'Add standard units', onClick: () => presetUnits.mutate() } : undefined}
+            />
           )}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {data?.units.map((u) => {
@@ -98,11 +96,11 @@ export default function FoodSafetyPage() {
                 <button key={u.id} onClick={() => setLogging(u)} className="text-left rounded-2xl p-4 transition-all hover:bg-white/[0.05]"
                   style={{ ...card, borderColor: bad ? 'rgba(248,113,113,0.5)' : !u.checkedToday ? 'rgba(245,158,11,0.4)' : card.border }}>
                   <p className="font-bold text-white/90">{u.name}</p>
-                  <p className="text-[11px] text-white/40">{limits(u)}</p>
-                  <p className="text-2xl font-black mt-2" style={{ color: bad ? '#b42318' : 'rgb(var(--fg-rgb) / 0.9)' }}>
+                  <p className="text-xs text-white/40">{limits(u)}</p>
+                  <p className="text-2xl font-black mt-2" style={{ color: bad ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>
                     {u.lastReading ? `${u.lastReading.readingC}°C` : '—'}
                   </p>
-                  <p className="text-[11px] mt-1" style={{ color: u.checkedToday ? 'rgb(var(--fg-rgb) / 0.4)' : '#a15c00' }}>
+                  <p className="text-xs mt-1" style={{ color: u.checkedToday ? 'rgb(var(--fg-rgb) / 0.4)' : 'var(--erp-warning)' }}>
                     {u.lastReading ? ago(u.lastReading.takenAt) : 'never checked'}{!u.checkedToday && ' · check due'}
                   </p>
                 </button>
@@ -115,7 +113,7 @@ export default function FoodSafetyPage() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-black text-white/85">Cleaning</h2>
             {canSetUp && (
-              <button onClick={() => presetTasks.mutate()} disabled={presetTasks.isPending} className="text-xs font-bold text-white/50 hover:text-white">
+              <button onClick={() => presetTasks.mutate()} disabled={presetTasks.isPending} className="min-h-11 px-2 text-xs font-bold text-white/50 hover:text-white">
                 + Add standard schedule
               </button>
             )}
@@ -125,10 +123,10 @@ export default function FoodSafetyPage() {
               <div key={t.id} className="rounded-2xl p-4 flex items-center justify-between gap-3" style={{ ...card, borderColor: t.due ? 'rgba(245,158,11,0.4)' : card.border }}>
                 <div className="min-w-0">
                   <p className="font-bold text-white/90">{t.name}</p>
-                  <p className="text-[11px] text-white/40">{[t.area, t.frequency].filter(Boolean).join(' · ')} · {t.lastDoneAt ? `done ${ago(t.lastDoneAt)}` : 'never done'}</p>
+                  <p className="text-xs text-white/40">{[t.area, t.frequency].filter(Boolean).join(' · ')} · {t.lastDoneAt ? `done ${ago(t.lastDoneAt)}` : 'never done'}</p>
                 </div>
                 <button onClick={() => done.mutate(t.id)} disabled={done.isPending}
-                  className="rounded-xl px-4 py-3 text-sm font-black shrink-0"
+                  className="min-h-11 rounded-xl px-4 py-3 text-sm font-black shrink-0"
                   style={t.due ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' } : { border: '1px solid rgb(var(--fg-rgb) / 0.1)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>
                   {t.due ? 'Mark done' : 'Done again'}
                 </button>
@@ -145,8 +143,8 @@ export default function FoodSafetyPage() {
                 <div key={r.id} className="px-4 py-2.5 border-t border-white/[0.05] first:border-t-0 text-sm flex gap-3">
                   <span className="w-20 text-white/40 shrink-0">{new Date(r.takenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   <span className="flex-1 text-white/75">{r.unit?.name}</span>
-                  <span className="font-bold" style={{ color: r.withinRange ? 'rgb(var(--fg-rgb) / 0.85)' : '#b42318' }}>{r.readingC}°C</span>
-                  {r.correctiveAction && <span className="text-[11px] text-white/45 truncate max-w-[40%]">{r.correctiveAction}</span>}
+                  <span className="font-bold" style={{ color: r.withinRange ? 'rgb(var(--fg-rgb) / 0.85)' : 'var(--erp-danger)' }}>{r.readingC}°C</span>
+                  {r.correctiveAction && <span className="text-xs text-white/45 truncate max-w-[40%]">{r.correctiveAction}</span>}
                 </div>
               ))}
             </div>
@@ -162,8 +160,8 @@ export default function FoodSafetyPage() {
 function Stat({ label, value, warn }: { label: string; value: string; warn: boolean }) {
   return (
     <div className="rounded-2xl p-4" style={card}>
-      <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{label}</p>
-      <p className="text-2xl font-black mt-1" style={{ color: warn ? '#a15c00' : 'rgb(var(--fg-rgb) / 0.9)' }}>{value}</p>
+      <p className="text-xs uppercase tracking-wider text-white/40 font-bold">{label}</p>
+      <p className="text-2xl font-black mt-1" style={{ color: warn ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{value}</p>
     </div>
   )
 }
@@ -186,12 +184,12 @@ function LogReading({ unit, onClose, onSaved }: { unit: Unit; onClose: () => voi
         <p className="text-lg font-black text-white/90">{unit.name}</p>
         <p className="text-sm text-white/45">Limit: {limits(unit)}</p>
         <label className="block mt-4">
-          <span className="text-[11px] font-bold text-white/50">Reading (°C)</span>
+          <span className="text-xs font-bold text-white/50">Reading (°C)</span>
           <input autoFocus type="number" inputMode="decimal" step="0.1" className={inp} value={value} onChange={(e) => setValue(e.target.value)} />
         </label>
         {bad && (
           <label className="block mt-3">
-            <span className="text-[11px] font-bold" style={{ color: '#b42318' }}>Out of range — what did you do about it?</span>
+            <span className="text-xs font-bold" style={{ color: 'var(--erp-danger)' }}>Out of range — what did you do about it?</span>
             <textarea rows={3} className={inp} value={action} onChange={(e) => setAction(e.target.value)}
               placeholder="Moved stock to the walk-in, told the manager, called the engineer" />
           </label>
@@ -200,7 +198,7 @@ function LogReading({ unit, onClose, onSaved }: { unit: Unit; onClose: () => voi
         <div className="flex gap-2 mt-5">
           <button onClick={() => save.mutate()} disabled={save.isPending || !has || (bad && action.trim().length < 3)}
             className="flex-1 rounded-xl bg-primary py-3 text-base font-black text-primary-on disabled:opacity-50">{save.isPending ? 'Saving…' : 'Save reading'}</button>
-          <button onClick={onClose} className="rounded-xl px-4 py-3 text-sm text-white/60 border border-white/10">Cancel</button>
+          <button onClick={onClose} className="min-h-11 rounded-xl px-4 py-3 text-sm text-white/60 border border-white/10">Cancel</button>
         </div>
       </div>
     </div>

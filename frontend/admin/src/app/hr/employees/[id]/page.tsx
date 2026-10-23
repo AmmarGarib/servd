@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, isReportingLineField, REPORTS_TO_CEO, type HrRecord, type HrLogin, recordStatusText, isManualEntry } from '../../../../lib/hr'
+import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, isReportingLineField, REPORTS_TO_CEO, type HrRecord, type HrLogin, recordStatusText, isManualEntry, btnDanger } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
@@ -21,6 +21,7 @@ import { RecordFiles } from '@/components/files/RecordFiles'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '../../../../components/ui/CompactEmptyState'
 
 interface Profile {
   employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
@@ -237,7 +238,7 @@ function DocumentsTab({ p }: { p: Profile }) {
       </form>
       {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
-        {p.documents.length === 0 && <p className="p-6 text-sm text-white/40 text-center">No documents yet.</p>}
+        {p.documents.length === 0 && <CompactEmptyState message="No documents yet." />}
         {p.documents.map((d) => (
           <div key={d.id} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <span className="font-bold text-white/85 sm:w-48 shrink-0">{d.title || human(d.docType)}</span>
@@ -246,7 +247,7 @@ function DocumentsTab({ p }: { p: Profile }) {
             <span className="text-xs" style={{ color: soon(d.expiryDate) ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.45)' }}>{d.expiryDate ? `Expires ${day(d.expiryDate)}` : ''}</span>
             <span className="ml-auto flex gap-1">
               {d.verifiedAt ? <span className="text-xs text-primary-ink">Verified</span> : <button type="button" className="text-xs text-white/50 hover:text-white px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={verify.isPending} onClick={() => verify.mutate(d.id)}>Mark verified</button>}
-              <button type="button" className="text-xs text-white/50 hover:text-s-red px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={async () => {
+              <button type="button" className={`${btnDanger} !text-xs !px-2 !py-1.5 [@media(pointer:coarse)]:min-h-[44px]`} onClick={async () => {
                 const ok = await confirm({ title: 'Delete this document?', body: `${d.title || human(d.docType)} will be removed from ${p.employee.fullName}'s file.`, confirmLabel: 'Delete', danger: true })
                 if (ok) del.mutate(d.id)
               }}>Delete</button>

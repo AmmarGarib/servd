@@ -19,6 +19,7 @@
 //   Issue <Month> statements   bulk, for the last day of the previous
 //                  Karachi month; shows what was created and skipped.
 
+import { Button, CheckLabel, Field, Input, LinkButton, Textarea } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -29,6 +30,7 @@ import { Select } from '@/components/ui/Select'
 import { Modal as SharedModal } from '../../../../components/ui/Modal'
 import { NumberField } from '../../../../components/ui/NumberField'
 import { DialogForm, RupeeField } from '../../../../components/finance/PaymentReceivedFields'
+import { FIcon } from '../../../../components/finance/ui/icons'
 
 type ClientStatus = 'pending' | 'active' | 'suspended' | 'closed'
 interface Overdue { invoiceId: string; number: string; dueDate: string; balanceCents: number }
@@ -57,7 +59,7 @@ interface BulkResult {
 }
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
-const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-primary'
+const inp = 's-input w-full'
 /** Rupees typed → paisa. */
 const toPaisa = (rupees: string) => Math.round((Number(rupees) || 0) * 100)
 const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong — try again')
@@ -80,7 +82,7 @@ function previousMonthEnd(): { periodTo: string; month: string } {
 }
 
 function L({ t, children }: { t: string; children: React.ReactNode }) {
-  return <label className="block"><span className="text-[11px] font-bold text-white/50">{t}</span>{children}</label>
+  return <Field label={t}>{children}</Field>
 }
 /** Thin wrapper over the shared Modal (Escape, focus trap, scroll lock, "Discard changes?" when `dirty`). */
 function Modal({ title, children, onClose, dirty }: { title: string; children: React.ReactNode; onClose: () => void; dirty?: boolean }) {
@@ -111,7 +113,7 @@ function CutoverPanel({ status, onDone }: { status: TillStatus; onDone: () => vo
   ]
   return (
     <section className="rounded-2xl p-5" style={{ ...card, borderColor: 'color-mix(in srgb, var(--erp-warning) 40%, transparent)' }}>
-      <p className="text-[10px] uppercase tracking-wider font-bold text-success">Step 1</p>
+      <p className="text-xs uppercase tracking-wider font-bold text-success">Step 1</p>
       <h2 className="text-lg font-black text-white/90 mt-1">Split till clearing before approving clients</h2>
       <p className="text-sm text-white/60 mt-1 max-w-2xl">
         Before clients can be approved, till clearing moves off 1110 onto 1115. Confirm with your CA.
@@ -128,12 +130,12 @@ function CutoverPanel({ status, onDone }: { status: TillStatus; onDone: () => vo
           <span>Tie-out difference</span><span>{fmtPkrWhole(t.differenceCents)}</span>
         </div>
         {t.unexplainedCount > 0 && (
-          <p className="sm:col-span-2 text-xs text-white/50">{t.unexplainedCount} other line(s) on 1110 (manual journals, openings) are never moved.</p>
+          <p className="sm:col-span-2 text-xs text-s-muted">{t.unexplainedCount} other line(s) on 1110 (manual journals, openings) are never moved.</p>
         )}
       </div>
       <div className="mt-4">
         {status.canCutover
-          ? <button onClick={() => { setErr(null); setAsking(true) }} className="s-btn-primary px-4 py-2">Split till clearing</button>
+          ? <Button type="submit" onClick={() => { setErr(null); setAsking(true) }}>Split till clearing</Button>
           : <p className="text-sm font-bold text-white/60">Waiting for the CEO</p>}
       </div>
       {asking && (
@@ -143,15 +145,14 @@ function CutoverPanel({ status, onDone }: { status: TillStatus; onDone: () => vo
             Moves {fmtPkrWhole(status.previewCents)} of till clearing from 1110 to 1115 in the active company, once. It is audited.
           </p>
           <L t="Why (at least 10 characters)">
-            <textarea className={inp} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 10 ? true : undefined} placeholder="CA confirmed on …" />
+            <Textarea className={inp} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 10 ? true : undefined} placeholder="CA confirmed on …" />
           </L>
           <Err msg={err} />
           <div className="flex gap-2 mt-5">
-            <button type="submit" disabled={split.isPending}
-              className="s-btn-primary px-4 py-2">
+            <Button type="submit" disabled={split.isPending}>
               {split.isPending ? 'Splitting…' : 'Split till clearing'}
-            </button>
-            <button type="button" onClick={() => setAsking(false)} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
+            </Button>
+            <Button variant="ghost" type="button" onClick={() => setAsking(false)}>Cancel</Button>
           </div>
           </DialogForm>
         </Modal>
@@ -201,17 +202,17 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
     <Modal title="New client" onClose={onClose} dirty={!create.isPending && (!!f.legalName.trim() || !!f.tradeName.trim() || !!f.limit || !!f.notes.trim())}>
       <DialogForm busy={create.isPending} onSubmit={() => { setErr(null); create.mutate() }} missing={missing}>
       <div className="space-y-3">
-        <L t="Legal name"><input className={inp} aria-invalid={f.legalName.trim().length < 2 ? true : undefined} value={f.legalName} onChange={(e) => set('legalName', e.target.value)} /></L>
-        <L t="Trade name"><input className={inp} value={f.tradeName} onChange={(e) => set('tradeName', e.target.value)} /></L>
+        <L t="Legal name"><Input className={inp} aria-invalid={f.legalName.trim().length < 2 ? true : undefined} value={f.legalName} onChange={(e) => set('legalName', e.target.value)} /></L>
+        <L t="Trade name"><Input className={inp} value={f.tradeName} onChange={(e) => set('tradeName', e.target.value)} /></L>
         <div className="grid grid-cols-2 gap-3">
-          <L t="NTN"><input className={inp} value={f.ntn} onChange={(e) => set('ntn', e.target.value)} /></L>
-          <L t="STRN"><input className={inp} value={f.strn} onChange={(e) => set('strn', e.target.value)} /></L>
+          <L t="NTN"><Input className={inp} value={f.ntn} onChange={(e) => set('ntn', e.target.value)} /></L>
+          <L t="STRN"><Input className={inp} value={f.strn} onChange={(e) => set('strn', e.target.value)} /></L>
         </div>
-        <L t="Address"><input className={inp} value={f.address} onChange={(e) => set('address', e.target.value)} /></L>
+        <L t="Address"><Input className={inp} value={f.address} onChange={(e) => set('address', e.target.value)} /></L>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <L t="Contact name"><input className={inp} value={f.contactName} onChange={(e) => set('contactName', e.target.value)} /></L>
-          <L t="Contact phone"><input className={inp} value={f.contactPhone} onChange={(e) => set('contactPhone', e.target.value)} /></L>
-          <L t="Contact email (statements go here)"><input type="email" className={inp} value={f.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} /></L>
+          <L t="Contact name"><Input className={inp} value={f.contactName} onChange={(e) => set('contactName', e.target.value)} /></L>
+          <L t="Contact phone"><Input className={inp} value={f.contactPhone} onChange={(e) => set('contactPhone', e.target.value)} /></L>
+          <L t="Contact email (statements go here)"><Input type="email" className={inp} value={f.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} /></L>
         </div>
         <div className="grid grid-cols-3 gap-3">
           <L t="Credit limit (PKR)"><RupeeField className={inp} label="Credit limit (PKR)" value={f.limit} onChange={(v) => set('limit', v)} invalid={toPaisa(f.limit) <= 0 && f.legalName.trim().length >= 2} /></L>
@@ -230,27 +231,26 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
               <button key={id} type="button" onClick={() => setBrandIds(brandIds.filter((x) => x !== id))}
                 className="rounded-full px-3 py-1 text-xs font-bold text-white/80"
                 style={{ background: 'color-mix(in srgb, var(--erp-success) 14%, transparent)' }}>
-                {brands.find((b) => b.id === id)?.name ?? id} ×
+                {brands.find((b) => b.id === id)?.name ?? id} <FIcon name="x" size={12} />
               </button>
             ))}
           </div>
         )}
-        <label className="flex items-center gap-2 text-sm text-white/80">
+        <CheckLabel className="flex items-center gap-2 text-sm text-white/80">
           <input type="checkbox" checked={f.requiresReference} onChange={(e) => set('requiresReference', e.target.checked)} />
           Every bill needs a reference (PO number or who signed)
-        </label>
-        <L t="Notes"><textarea className={inp} rows={2} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></L>
-        <p className="text-xs text-white/50">
+        </CheckLabel>
+        <L t="Notes"><Textarea className={inp} rows={2} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></L>
+        <p className="text-xs text-s-muted">
           The CEO approves every new client, unless the CEO is the one creating it. A client cannot be billed until it is approved.
         </p>
       </div>
       <Err msg={err} />
       <div className="flex gap-2 mt-5">
-        <button type="submit" disabled={create.isPending}
-          className="s-btn-primary px-4 py-2">
+        <Button type="submit" disabled={create.isPending}>
           {create.isPending ? 'Saving…' : 'Create client'}
-        </button>
-        <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
+        </Button>
+        <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
       </div>
       </DialogForm>
     </Modal>
@@ -277,11 +277,10 @@ function BulkDialog({ periodTo, month, onClose, onDone }: { periodTo: string; mo
           </p>
           <Err msg={err} />
           <div className="flex gap-2 mt-5">
-            <button type="submit" disabled={issue.isPending}
-              className="s-btn-primary px-4 py-2">
+            <Button type="submit" disabled={issue.isPending}>
               {issue.isPending ? 'Issuing…' : `Issue ${month} statements`}
-            </button>
-            <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Cancel</button>
+            </Button>
+            <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
           </div>
         </DialogForm>
       ) : (
@@ -302,7 +301,7 @@ function BulkDialog({ periodTo, month, onClose, onDone }: { periodTo: string; mo
               {result.skipped.map((s) => <li key={s.accountId}>{s.accountNumber}: {s.message}</li>)}
             </ul>
           )}
-          <button type="button" onClick={onClose} className="s-btn-primary mt-5 px-4 py-2">Done</button>
+          <Button type="button" onClick={onClose} className="mt-5">Done</Button>
         </>
       )}
     </Modal>
@@ -343,16 +342,16 @@ export default function OnAccountClientsPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 md:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/accounting/receivables" className="text-xs text-white/40 hover:text-white/70">← Receivables</Link>
+        <Link href="/accounting/receivables" className="text-xs text-s-muted hover:text-white/70">← Receivables</Link>
         <div className="flex flex-wrap items-start justify-between gap-4 mt-2">
           <div>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-success">Receivables</p>
+            <p className="text-xs uppercase tracking-wider font-bold text-success">Receivables</p>
             <h1 className="text-2xl font-black text-white/90">On-account clients</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">Corporate clients billed monthly on a statement. Their QR cards are taken at the till.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setBulk(true)} className="rounded-xl px-4 py-2.5 text-sm font-black text-white/90 border border-white/15 hover:bg-white/5">Issue {month} statements</button>
-            <button onClick={() => setCreating(true)} className="s-btn-primary px-4 py-2.5">+ New client</button>
+            <Button type="submit" onClick={() => setCreating(true)}>+ New client</Button>
           </div>
         </div>
       </header>
@@ -362,13 +361,13 @@ export default function OnAccountClientsPage() {
           <div role="status" className="flex items-start justify-between gap-3 rounded-2xl p-4 text-sm"
             style={{ background: 'color-mix(in srgb, var(--erp-success) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-success) 35%, transparent)' }}>
             <span className="text-white/85">{notice}</span>
-            <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 text-white/50 hover:text-white">×</button>
+            <LinkButton tone="muted" size="md" type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0"><FIcon name="x" size={14} /></LinkButton>
           </div>
         )}
         {needsCutover && status && <CutoverPanel status={status} onDone={refresh} />}
 
         <div className="flex flex-wrap items-center gap-2">
-          <input className={`${inp} max-w-xs`} placeholder="Search name, OA number or NTN" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Input className={`${inp} max-w-xs`} placeholder="Search name, OA number or NTN" value={q} onChange={(e) => setQ(e.target.value)} />
           {([['Pending', pendingOnly, setPendingOnly], ['Overdue', overdueOnly, setOverdueOnly]] as const).map(([label, on, setOn]) => (
             <button key={label} onClick={() => setOn(!on)} aria-pressed={on}
               className="rounded-full px-3 py-1.5 text-xs font-bold"
@@ -395,39 +394,39 @@ export default function OnAccountClientsPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold text-white/50">{r.number}</span>
                   <span className="text-base font-black text-white/90">{r.legalName}</span>
-                  <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+                  <span className="rounded-full px-2 py-0.5 text-xs font-black uppercase"
                     style={{ background: `color-mix(in srgb, ${s.color} 16%, transparent)`, color: s.color }}>{s.label}</span>
                   {r.pending === 'limit_increase' && (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+                    <span className="rounded-full px-2 py-0.5 text-xs font-black uppercase"
                       style={{ background: 'color-mix(in srgb, var(--erp-warning) 16%, transparent)', color: 'var(--erp-warning)' }}>
                       Limit increase waiting
                     </span>
                   )}
                   {r.overdue && (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+                    <span className="rounded-full px-2 py-0.5 text-xs font-black uppercase"
                       style={{ background: 'color-mix(in srgb, var(--erp-danger) 16%, transparent)', color: 'var(--erp-danger)' }}>
                       Overdue · {r.overdue.number}
                     </span>
                   )}
                   {(r.creditCents ?? 0) > 0 && (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+                    <span className="rounded-full px-2 py-0.5 text-xs font-black uppercase"
                       style={{ background: 'color-mix(in srgb, var(--erp-warning) 16%, transparent)', color: 'var(--erp-warning)' }}>
                       In credit · {fmtPkrWhole(r.creditCents ?? 0)}
                     </span>
                   )}
-                  {r.companyName && <span className="ml-auto text-xs text-white/40">{r.companyName}</span>}
+                  {r.companyName && <span className="ml-auto text-xs text-s-muted">{r.companyName}</span>}
                 </div>
                 <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div><p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Limit</p><p className="font-black text-white/90">{fmtPkrWhole(r.creditLimitCents)}</p></div>
+                  <div><p className="text-xs uppercase tracking-wider text-white/40 font-bold">Limit</p><p className="font-black text-white/90">{fmtPkrWhole(r.creditLimitCents)}</p></div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Exposure</p>
+                    <p className="text-xs uppercase tracking-wider text-white/40 font-bold">Exposure</p>
                     <p className="font-black text-white/90">{fmtPkrWhole(r.exposureCents)}</p>
                     <div className="mt-1 h-1.5 rounded-full" style={{ background: 'rgb(var(--fg-rgb) / 0.08)' }}>
                       <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: pct >= 90 ? 'var(--erp-danger)' : 'var(--erp-success)' }} />
                     </div>
                   </div>
-                  <div><p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Available</p><p className="font-black text-white/90">{fmtPkrWhole(r.availableCents)}</p></div>
-                  <div><p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">Unbilled</p><p className="font-black text-white/90">{fmtPkrWhole(r.unbilledCents)}</p></div>
+                  <div><p className="text-xs uppercase tracking-wider text-white/40 font-bold">Available</p><p className="font-black text-white/90">{fmtPkrWhole(r.availableCents)}</p></div>
+                  <div><p className="text-xs uppercase tracking-wider text-white/40 font-bold">Unbilled</p><p className="font-black text-white/90">{fmtPkrWhole(r.unbilledCents)}</p></div>
                 </div>
               </Link>
             )

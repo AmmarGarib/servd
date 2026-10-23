@@ -1,4 +1,5 @@
 'use client'
+import { Button, CheckLabel, Dialog, FieldLabel, Input, LinkButton, Textarea, Field } from '@/components/finance/ui'
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -16,6 +17,8 @@ import { KitchenMethod, KitchenSections, KitchenServiceSteps, KIND_META, measure
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { toast } from 'sonner'
+import { FIcon } from '../../../components/finance/ui/icons'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 const Q_FACTOR = 0.05
 
@@ -404,22 +407,22 @@ export default function RecipesPage() {
 
         {/* Search + season filter strip */}
         <div className="mt-3 flex items-center gap-2 flex-wrap">
-          <input
+          <Input
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
             placeholder="Search recipes by name or notes…"
-            className="flex-1 min-w-[220px] s-input text-sm px-3 py-1.5 rounded-lg"
+            className="flex-1 min-w-[220px] text-sm px-3 py-1.5 rounded-lg"
           />
           <div className="flex rounded-lg overflow-hidden text-xs font-bold border border-s-border">
             {[
               { key: '',          label: 'All' },
-              { key: 'current',   label: '★ Current season' },
-              { key: 'spring',    label: '🌱 Spring' },
-              { key: 'summer',    label: '☀️ Summer' },
-              { key: 'monsoon',   label: '🌧 Monsoon' },
-              { key: 'autumn',    label: '🍂 Autumn' },
-              { key: 'winter',    label: '❄️ Winter' },
-              { key: 'ramadan',   label: '🌙 Ramadan' },
+              { key: 'current',   label: 'Current season' },
+              { key: 'spring',    label: 'Spring' },
+              { key: 'summer',    label: 'Summer' },
+              { key: 'monsoon',   label: 'Monsoon' },
+              { key: 'autumn',    label: 'Autumn' },
+              { key: 'winter',    label: 'Winter' },
+              { key: 'ramadan',   label: 'Ramadan' },
               { key: 'year-round', label: 'Year-round' },
             ].map((s) => (
               <button
@@ -433,10 +436,10 @@ export default function RecipesPage() {
               </button>
             ))}
           </div>
-          <label className="flex items-center gap-1.5 text-xs text-s-muted cursor-pointer px-2 py-1.5 rounded-lg border border-s-border">
+          <CheckLabel>
             <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="accent-accent" />
             Active only
-          </label>
+          </CheckLabel>
         </div>
       </header>
 
@@ -453,7 +456,7 @@ export default function RecipesPage() {
               ...(kitchenView ? [] : [{ label: 'Q Factor Rate', value: 'per recipe', color: 'text-s-muted' }]),
             ].map(({ label, value, color }) => (
               <div key={label} className="s-card px-4 py-3">
-                <p className="text-[10px] text-s-muted uppercase tracking-wider">{label}</p>
+                <p className="text-xs text-s-muted uppercase tracking-wider">{label}</p>
                 <p className={`text-xl font-black mt-0.5 ${color}`}>{value}</p>
               </div>
             ))}
@@ -462,9 +465,9 @@ export default function RecipesPage() {
 
         {/* Filters */}
         <div className="flex flex-wrap gap-3 items-center">
-          <input type="text" placeholder="Search recipes…"
+          <Input type="text" placeholder="Search recipes…"
             value={search} onChange={(e) => setSearch(e.target.value)}
-            className="s-input text-sm h-9 w-56" />
+            className="text-sm h-9 w-56" />
           <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)}
             className="s-select text-sm h-9 w-44">
             <option value="">All Concepts</option>
@@ -488,11 +491,11 @@ export default function RecipesPage() {
             ))}
           </div>
           {anyPackagingBrand && (
-            <label className="flex items-center gap-1.5 text-xs text-s-muted cursor-pointer px-2 py-1.5 rounded-lg border border-s-border"
+            <CheckLabel
               title="Dishes of a brand that serves in packaging, with no Packaging line">
               <input type="checkbox" checked={noPackagingOnly} onChange={(e) => setNoPackagingOnly(e.target.checked)} className="accent-accent" />
               No packaging{noPackagingCount > 0 ? ` (${noPackagingCount})` : ''}
-            </label>
+            </CheckLabel>
           )}
           <span className="ml-auto text-xs text-s-muted">
             {filtered.length} recipe{filtered.length !== 1 ? 's' : ''}
@@ -507,15 +510,7 @@ export default function RecipesPage() {
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="s-card text-center py-16">
-            <p className="text-s-dim text-sm">
-              {(recipes?.length ?? 0) === 0
-                ? (kitchenView
-                    ? 'No recipes yet.'
-                    : 'No recipes yet — click "+ New Recipe" to start building your costing sheet')
-                : 'No recipes match your filter'}
-            </p>
-          </div>
+          <CompactEmptyState message={(recipes?.length ?? 0) === 0 ? 'No recipes yet.' : 'No recipes match your filter.'} />
         ) : (
           <div className="space-y-2">
             {filtered.map((r) => {
@@ -533,35 +528,35 @@ export default function RecipesPage() {
                     onMouseLeave={(e) => (e.currentTarget.style.background = '')}
                     style={{ transition: 'background 0.12s' }}
                   >
-                    <span className="text-[10px] text-s-dim shrink-0"
+                    <span className="text-xs text-s-muted shrink-0"
                       style={{ display: 'inline-block', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>
-                      ▶
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M2 1l6 4-6 4z" /></svg>
                     </span>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Kind badge — quick visual differentiation between
                             plate vs component recipes in the mixed list. */}
-                        <span className={`text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${KIND_META[r.kind].cls}`}>
+                        <span className={`text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${KIND_META[r.kind].cls}`}>
                           {KIND_META[r.kind].label}
                         </span>
                         {/* Warnings, never a block: a packaging brand's dish with
                             no Packaging line (amber); stock of another company,
                             or a live dish costed from an unapproved recipe (red). */}
                         {r.warnings?.noPackaging && (
-                          <span className="s-badge-amber text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                          <span className="s-badge-amber text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                             title="This brand serves in packaging — add the vessel to the dish's Packaging section">
                             No packaging
                           </span>
                         )}
                         {!!r.warnings?.outsideCompany.length && (
-                          <span className="s-badge-red text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                          <span className="s-badge-red text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                             title={r.warnings.outsideCompany.map((o) => o.itemName).join(', ')}>
                             Other company&apos;s stock
                           </span>
                         )}
                         {r.warnings?.costedWhileUnapproved && (
-                          <span className="s-badge-red text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                          <span className="s-badge-red text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                             title="This dish is on sale and its cost comes from a recipe that is not approved yet">
                             On sale, not approved
                           </span>
@@ -569,7 +564,7 @@ export default function RecipesPage() {
                         {/* Lifecycle status — only call out non-live recipes so
                             the list isn't littered with "Live" on everything. */}
                         {r.status !== 'production' && (
-                          <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                          <span className="text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                             style={{ background: recipeStatusMeta[r.status].bg, color: recipeStatusMeta[r.status].color }}>
                             {recipeStatusMeta[r.status].label}
                           </span>
@@ -581,7 +576,7 @@ export default function RecipesPage() {
                           <TenantChip tenant={r.menuItem.concept.tenant} tenantId={r.menuItem.concept.tenantId} tenants={tenants} />
                         )}
                       </div>
-                      <p className="text-[10px] text-s-dim">
+                      <p className="text-xs text-s-muted">
                         {r.kind === 'plate' ? (
                           <>
                             {r.menuItem?.concept.name}
@@ -630,25 +625,23 @@ export default function RecipesPage() {
                           {/* Testing recipes can be pushed straight to the CEO's
                               approval inbox from here — no need to open the editor. */}
                           {r.status === 'iteration' && (
-                            <button onClick={() => submitMut.mutate(r.id)} disabled={submitMut.isPending}
-                              className="text-xs px-2 py-1 rounded font-bold text-primary-on bg-primary hover:opacity-90 disabled:opacity-50 transition-opacity"
+                            <Button size="sm" type="submit" onClick={() => submitMut.mutate(r.id)} disabled={submitMut.isPending}
+                              
                               title="Submit this testing recipe for CEO approval">
                               Submit
-                            </button>
+                            </Button>
                           )}
-                          {sentNotice === r.id && <span className="text-[11px] font-bold text-success self-center">Sent for approval</span>}
-                          <button onClick={() => openEdit(r)}
-                            className="text-xs px-2 py-1 rounded text-s-muted hover:text-primary-ink hover:bg-primary/10 transition-colors">
+                          {sentNotice === r.id && <span className="text-xs font-bold text-success self-center">Sent for approval</span>}
+                          <Button variant="ghost" size="sm" type="submit" onClick={() => openEdit(r)}>
                             Edit
-                          </button>
-                          <button
+                          </Button>
+                          <Button variant="ghost" size="sm" type="submit"
                             onClick={async () => {
                               const label = r.menuItem?.name ?? r.name ?? 'this recipe'
                               if (await confirm({ title: `Delete the recipe for "${label}"?`, body: 'The recipe and its costing are removed.', confirmLabel: 'Delete recipe', danger: true })) deleteMut.mutate(r.id)
-                            }}
-                            className="text-xs px-2 py-1 rounded text-s-dim hover:text-s-red hover:bg-s-red-dim transition-colors">
+                            }}>
                             Del
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     )}
@@ -689,7 +682,7 @@ export default function RecipesPage() {
                             : [{ label: 'COST / GRAM',    value: r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—' }]),
                         ].map(({ label, value }) => (
                           <div key={label}>
-                            <p style={{ fontSize: '8px', letterSpacing: '0.18em' }}
+                            <p style={{ fontSize: '12px', letterSpacing: '0.18em' }}
                               className="font-black text-s-muted uppercase">{label}</p>
                             <p className="text-sm font-bold text-s-text mt-0.5">{value}</p>
                           </div>
@@ -698,14 +691,14 @@ export default function RecipesPage() {
 
                       {/* Ingredient breakdown table */}
                       <div className="overflow-x-auto">
-                        <table className="w-full" style={{ fontSize: '11px' }}>
+                        <table className="w-full" style={{ fontSize: '12px' }}>
                           <thead>
                             <tr style={{ background: 'rgb(var(--fg-rgb) / 0.02)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                               {[
                                 'INGREDIENT', 'PURCHASE QTY', 'PURCHASE COST',
                                 'YIELD %', 'USABLE QTY', 'COST / UNIT', 'RECIPE QTY', 'RECIPE COST',
                               ].map((h) => (
-                                <th key={h} style={{ fontSize: '8px', letterSpacing: '0.15em', color: 'rgb(var(--fg-rgb) / 0.28)' }}
+                                <th key={h} style={{ fontSize: '12px', letterSpacing: '0.15em', color: 'rgb(var(--fg-rgb) / 0.28)' }}
                                   className="px-4 py-2 text-left font-black uppercase">{h}</th>
                               ))}
                             </tr>
@@ -728,14 +721,14 @@ export default function RecipesPage() {
                                 <tr key={ing.id}
                                   style={{ borderTop: idx > 0 ? '1px solid rgb(var(--fg-rgb) / 0.04)' : undefined }}>
                                   <td className="px-4 py-2.5 font-semibold" style={{ color: 'rgb(var(--fg-rgb) / 0.8)' }}>
-                                    {isPrep && <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-primary-ink">Sub</span>}
+                                    {isPrep && <span className="mr-1 text-xs font-black uppercase tracking-wider text-primary-ink">Sub</span>}
                                     {ing.section === 'packaging' && (
-                                      <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-success"
+                                      <span className="mr-1 text-xs font-black uppercase tracking-wider text-success"
                                         title="Packaging: used on takeaway and delivery, on every order at a brand that serves in packaging, and on dine-in when staff tap Box given">
                                         Pack in
                                       </span>
                                     )}
-                                    {ing.quantity < 0 && <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-s-red">Removes</span>}
+                                    {ing.quantity < 0 && <span className="mr-1 text-xs font-black uppercase tracking-wider text-s-red">Removes</span>}
                                     {sourceName}
                                   </td>
                                   <td className="px-4 py-2.5 text-s-muted">
@@ -746,7 +739,7 @@ export default function RecipesPage() {
                                   </td>
                                   <td className="px-4 py-2.5">
                                     {isPrep ? (
-                                      <span className="text-s-dim italic text-[10px]">n/a</span>
+                                      <span className="text-s-muted italic text-xs">n/a</span>
                                     ) : (
                                       <span className={yieldWarn ? 'text-s-amber font-semibold' : 'text-s-muted'}>
                                         {(ing.yieldPct * 100).toFixed(0)}%
@@ -772,7 +765,7 @@ export default function RecipesPage() {
                           <tfoot>
                             <tr style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.08)', background: 'rgb(var(--fg-rgb) / 0.015)' }}>
                               <td colSpan={7} className="px-4 py-2 text-right font-black uppercase"
-                                style={{ fontSize: '8px', letterSpacing: '0.15em', color: 'rgb(var(--fg-rgb) / 0.28)' }}>
+                                style={{ fontSize: '12px', letterSpacing: '0.15em', color: 'rgb(var(--fg-rgb) / 0.28)' }}>
                                 Ingredient Subtotal
                               </td>
                               <td className="px-4 py-2 font-black" style={{ color: 'rgb(var(--fg-rgb) / 0.65)' }}>
@@ -780,14 +773,14 @@ export default function RecipesPage() {
                               </td>
                             </tr>
                             <tr style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.04)', background: 'rgb(var(--fg-rgb) / 0.01)' }}>
-                              <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
+                              <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '12px' }}>
                                 Q factor — {r.qFactorPct ?? 10}% pricing allowance (plate wear, garnish, oil); not stock
                               </td>
                               <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.qFactorCents)}</td>
                             </tr>
                             {r.laborCostCents > 0 && (
                               <tr style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.04)', background: 'rgb(var(--fg-rgb) / 0.01)' }}>
-                                <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
+                                <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '12px' }}>
                                   Labor — {r.laborMinutes} min @ PKR 50/hr
                                 </td>
                                 <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.laborCostCents)}</td>
@@ -795,7 +788,7 @@ export default function RecipesPage() {
                             )}
                             <tr style={{ borderTop: '2px solid rgb(var(--erp-primary-rgb) / 0.2)', background: 'rgb(var(--erp-primary-rgb) / 0.04)' }}>
                               <td colSpan={7} className="px-4 py-3 text-right font-black uppercase text-primary-ink"
-                                style={{ fontSize: '8.5px', letterSpacing: '0.15em' }}>
+                                style={{ fontSize: '12px', letterSpacing: '0.15em' }}>
                                 Total Recipe Cost
                               </td>
                               <td className="px-4 py-3 font-black text-primary-ink">{fmtPkr(r.totalCostCents)}</td>
@@ -820,7 +813,7 @@ export default function RecipesPage() {
                               <span className="text-s-muted">Plate cost: </span>
                               <span className="font-bold text-s-text">{fmtPkr(r.costPerPortionCents ?? 0)}</span>
                             </span>
-                            <span className="text-xs ml-auto text-s-dim italic">
+                            <span className="text-xs ml-auto text-s-muted italic">
                               Selling price &amp; margins live in{' '}
                               <Link href="/menu-engineering" className="text-primary-ink hover:underline not-italic" onClick={(e) => e.stopPropagation()}>
                                 Menu Engineering
@@ -843,13 +836,13 @@ export default function RecipesPage() {
                                 {r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—'}
                               </span>
                             </span>
-                            <span className="text-xs ml-auto text-s-dim italic">
+                            <span className="text-xs ml-auto text-s-muted italic">
                               Use this prep as an ingredient in plate recipes — cost-per-gram flows into plate cost automatically.
                             </span>
                           </>
                         )}
                         {r.notes && (
-                          <p className="w-full text-[10px] text-s-dim italic mt-1">{r.notes}</p>
+                          <p className="w-full text-xs text-s-muted italic mt-1">{r.notes}</p>
                         )}
                       </div>
 
@@ -866,18 +859,9 @@ export default function RecipesPage() {
       {/* Managers only — never mounted for the kitchen floor (its saves and the
           RecipeStepsEditor are refused to them). */}
       {modal !== null && !kitchenView && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 bg-secondary/40 backdrop-blur-sm"
-          onClick={(e) => { if (e.target === e.currentTarget) closeModal() }}
-        >
-          <div className="bg-s-surface border border-s-border rounded-2xl shadow-modal w-full max-w-2xl max-h-[calc(100vh-5rem)] overflow-y-auto animate-scale-in">
+        <Dialog title={isEditing ? 'Edit Recipe' : 'New Recipe'} onClose={closeModal} wide>
 
-            <div className="px-6 py-4 border-b border-s-border flex items-center justify-between">
-              <h2 className="font-bold text-s-text">{isEditing ? 'Edit Recipe' : 'New Recipe'}</h2>
-              <button onClick={closeModal} className="text-s-dim hover:text-s-text transition-colors text-lg leading-none">✕</button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="p-6 space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-5">
 
               {/* Recipe kind toggle — drives every conditional below. Plate
                   recipes get a menu-item picker + portion math; prep recipes
@@ -886,36 +870,36 @@ export default function RecipesPage() {
                   menu-item link or break downstream consumers). */}
               {!isEditing ? (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black text-s-muted uppercase tracking-wider">Recipe type</label>
+                  <FieldLabel>Recipe type</FieldLabel>
                   <div className="grid grid-cols-2 gap-2">
                     <button type="button" onClick={() => setKind('plate')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'plate'
                         ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', border: '1px solid var(--erp-accent)' }
                         : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-                      <p className="text-sm font-bold text-s-text">🍽 Finished plate</p>
-                      <p className="text-[10px] text-s-dim mt-0.5">A menu item — costed as plate cost (margin vs. menu price).</p>
+                      <p className="text-sm font-bold text-s-text"><FIcon name="plate" size={14} /> Finished plate</p>
+                      <p className="text-xs text-s-muted mt-0.5">A menu item — costed as plate cost (margin vs. menu price).</p>
                     </button>
                     <button type="button" onClick={() => setKind('component')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
                       style={kind === 'component'
                         ? { background: 'rgb(var(--erp-accent-rgb) / 0.14)', border: '1px solid var(--erp-accent)' }
                         : { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-                      <p className="text-sm font-bold text-s-text">🧩 Component</p>
-                      <p className="text-[10px] text-s-dim mt-0.5">A batch sub-recipe (sauce, marinade, dough) used inside plates — costed per gram.</p>
+                      <p className="text-sm font-bold text-s-text"><FIcon name="puzzle" size={14} /> Component</p>
+                      <p className="text-xs text-s-muted mt-0.5">A batch sub-recipe (sauce, marinade, dough) used inside plates — costed per gram.</p>
                     </button>
                   </div>
                 </div>
               ) : (
-                <p className="text-[11px] text-s-dim">
-                  {kind === 'plate' ? '🍽 Plate recipe (linked to a menu item)' : '🧩 Component (cost-per-gram sub-recipe)'}
+                <p className="text-xs text-s-muted">
+                  {kind === 'plate' ? 'Plate recipe (linked to a menu item)' : 'Component (cost-per-gram sub-recipe)'}
                 </p>
               )}
 
               {kind === 'plate' ? (
                 /* Plate: menu-item picker */
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black text-s-muted uppercase tracking-wider">Menu Item</label>
+                  <FieldLabel>Menu Item</FieldLabel>
                   {isEditing ? (
                     <p className="text-sm font-semibold text-s-text">{(modal as Recipe).menuItem?.name ?? '—'}</p>
                   ) : (
@@ -932,18 +916,18 @@ export default function RecipesPage() {
                 /* Component: name + yield in grams */
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-black text-s-muted uppercase tracking-wider">Component name</label>
-                    <input value={prepName} onChange={(e) => setPrepName(e.target.value)}
+                    <FieldLabel>Component name</FieldLabel>
+                    <Input value={prepName} onChange={(e) => setPrepName(e.target.value)}
                       required placeholder="e.g. Garlic mayo, Tandoori marinade"
-                      className="s-input w-full" />
+                      className="w-full" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-black text-s-muted uppercase tracking-wider">Batch yield (grams)</label>
-                    <input type="number" min={0.001} step="any" value={yieldGramsStr}
+                    <FieldLabel>Batch yield (grams)</FieldLabel>
+                    <Input type="number" min={0.001} step="any" value={yieldGramsStr}
                       onChange={(e) => setYieldGramsStr(e.target.value)}
                       required placeholder="e.g. 2000"
-                      className="s-input w-full" />
-                    <p className="text-[10px] text-s-dim">Total grams produced by one batch — divides batch cost into cost-per-gram.</p>
+                      className="w-full" />
+                    <p className="text-xs text-s-muted">Total grams produced by one batch — divides batch cost into cost-per-gram.</p>
                   </div>
                 </div>
               )}
@@ -953,39 +937,39 @@ export default function RecipesPage() {
               {kind === 'plate' && (
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-black text-s-muted uppercase tracking-wider">Portions / Batch</label>
-                    <input type="number" min={1} value={servings}
+                    <FieldLabel>Portions / Batch</FieldLabel>
+                    <Input type="number" min={1} value={servings}
                       onChange={(e) => setServings(e.target.value)}
-                      className="s-input w-full" required />
+                      className="w-full" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-black text-s-muted uppercase tracking-wider">Portion Size (g)</label>
-                    <input type="number" min={0} step="any" value={portionSizeG}
+                    <FieldLabel>Portion Size (g)</FieldLabel>
+                    <Input type="number" min={0} step="any" value={portionSizeG}
                       onChange={(e) => setPortionSizeG(e.target.value)}
-                      placeholder="Optional" className="s-input w-full" />
+                      placeholder="Optional" className="w-full" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-black text-s-muted uppercase tracking-wider">Labor (min)</label>
-                    <input type="number" min={0} value={laborMins}
+                    <FieldLabel>Labor (min)</FieldLabel>
+                    <Input type="number" min={0} value={laborMins}
                       onChange={(e) => setLaborMins(e.target.value)}
-                      className="s-input w-full" />
+                      className="w-full" />
                   </div>
                 </div>
               )}
               {kind === 'component' && (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black text-s-muted uppercase tracking-wider">Labor (min per batch)</label>
-                  <input type="number" min={0} value={laborMins}
+                  <FieldLabel>Labor (min per batch)</FieldLabel>
+                  <Input type="number" min={0} value={laborMins}
                     onChange={(e) => setLaborMins(e.target.value)}
-                    className="s-input w-full max-w-[8rem]" />
+                    className="w-full max-w-[8rem]" />
                 </div>
               )}
 
               {/* Notes */}
               <div className="space-y-1.5">
-                <label className="text-xs font-black text-s-muted uppercase tracking-wider">Notes (internal)</label>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
-                  placeholder="Preparation notes for managers…" className="s-input w-full resize-none" />
+                <FieldLabel>Notes (internal)</FieldLabel>
+                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+                  placeholder="Preparation notes for managers…" className="w-full resize-none" />
               </div>
 
               {/* Cook's-notes free-text — fallback method shown on the
@@ -998,44 +982,44 @@ export default function RecipesPage() {
                   <p className="text-xs font-black text-primary-ink uppercase tracking-wider mb-0.5">
                     Cook's notes (method)
                   </p>
-                  <p className="text-[10px] text-s-dim">
+                  <p className="text-xs text-s-muted">
                     Free-text recipe shown on the KDS card when a cook taps for instructions.
                     Used as a fallback when no structured bump-steps are configured below.
                     <span className="text-s-dim/70"> Not bump-able — for the cascade routing, use the section at the bottom.</span>
                   </p>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black text-s-muted uppercase tracking-wider">Steps (English)</label>
-                  <textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={4}
+                  <FieldLabel>Steps (English)</FieldLabel>
+                  <Textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={4}
                     placeholder={`e.g.\n1. Grill chicken breast 6 min each side\n2. Toast bun 2 min\n3. Add sauces, lettuce, tomato\n4. Plate immediately`}
-                    className="s-input w-full resize-none text-sm" />
+                    className="w-full resize-none text-sm" />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black text-s-muted uppercase tracking-wider">طریقہ کار — Steps (اردو)</label>
-                  <textarea value={stepsUrdu} onChange={(e) => setStepsUrdu(e.target.value)} rows={4}
+                  <FieldLabel>طریقہ کار — Steps (اردو)</FieldLabel>
+                  <Textarea value={stepsUrdu} onChange={(e) => setStepsUrdu(e.target.value)} rows={4}
                     dir="rtl"
                     placeholder="مثلاً: ۱. چکن گرل کریں ۶ منٹ..."
-                    className="s-input w-full resize-none text-sm"
+                    className="w-full resize-none text-sm"
                     style={{ fontFamily: 'sans-serif' }} />
                 </div>
               </div>
 
               {/* Seasonality */}
-              <div className="rounded-xl p-4" style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.18)' }}>
+              <div className="rounded-xl p-4" style={{ background: 'color-mix(in srgb, var(--erp-warning) 4%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 18%, transparent)' }}>
                 <div className="flex items-baseline justify-between mb-3">
                   <p className="text-xs font-black text-s-amber uppercase tracking-wider">Seasonality</p>
-                  <p className="text-[10px] text-s-muted">Tag the seasons this dish belongs to. Year-round = always available.</p>
+                  <p className="text-xs text-s-muted">Tag the seasons this dish belongs to. Year-round = always available.</p>
                 </div>
 
                 <div className="flex flex-wrap gap-1.5 mb-4">
                   {[
-                    { key: 'spring',    label: '🌱 Spring' },
-                    { key: 'summer',    label: '☀️ Summer' },
-                    { key: 'monsoon',   label: '🌧 Monsoon' },
-                    { key: 'autumn',    label: '🍂 Autumn' },
-                    { key: 'winter',    label: '❄️ Winter' },
-                    { key: 'ramadan',   label: '🌙 Ramadan' },
-                    { key: 'year-round', label: '⏳ Year-round' },
+                    { key: 'spring',    label: 'Spring' },
+                    { key: 'summer',    label: 'Summer' },
+                    { key: 'monsoon',   label: 'Monsoon' },
+                    { key: 'autumn',    label: 'Autumn' },
+                    { key: 'winter',    label: 'Winter' },
+                    { key: 'ramadan',   label: 'Ramadan' },
+                    { key: 'year-round', label: 'Year-round' },
                   ].map((s) => {
                     const active = seasons.includes(s.key)
                     return (
@@ -1052,29 +1036,29 @@ export default function RecipesPage() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
                   <div>
-                    <label className="text-[10px] text-s-muted">Available from (MM-DD)</label>
-                    <input value={seasonStart} onChange={(e) => setSeasonStart(e.target.value)}
+                    <FieldLabel>Available from (MM-DD)</FieldLabel>
+                    <Input value={seasonStart} onChange={(e) => setSeasonStart(e.target.value)}
                       placeholder="04-01" maxLength={5}
-                      className="s-input w-full text-sm" />
+                      className="w-full text-sm" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-s-muted">Available to (MM-DD)</label>
-                    <input value={seasonEnd} onChange={(e) => setSeasonEnd(e.target.value)}
+                    <FieldLabel>Available to (MM-DD)</FieldLabel>
+                    <Input value={seasonEnd} onChange={(e) => setSeasonEnd(e.target.value)}
                       placeholder="09-30" maxLength={5}
-                      className="s-input w-full text-sm" />
+                      className="w-full text-sm" />
                   </div>
-                  <label className="flex items-center gap-2 text-xs text-s-muted cursor-pointer pb-2">
+                  <CheckLabel className="flex items-center gap-2 text-xs text-s-muted cursor-pointer pb-2">
                     <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />
-                    <span>Active <span className="text-[10px]">(uncheck to hide off-season)</span></span>
-                  </label>
+                    <span>Active <span className="text-xs">(uncheck to hide off-season)</span></span>
+                  </CheckLabel>
                 </div>
               </div>
 
               {/* Ingredients */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-black text-s-muted uppercase tracking-wider">Ingredients</label>
-                  <button type="button" onClick={addIng} className="text-xs text-primary-ink hover:underline">+ Add Row</button>
+                  <FieldLabel>Ingredients</FieldLabel>
+                  <LinkButton type="button" onClick={addIng}>+ Add Row</LinkButton>
                 </div>
 
                 {/* Each row now has a Raw/Component source toggle on the left.
@@ -1083,7 +1067,7 @@ export default function RecipesPage() {
                     recipes — we hide the toggle for component-on-component nesting. */}
                 <div className="grid gap-2 px-0.5" style={{ gridTemplateColumns: '60px 1fr 72px 60px 52px 20px' }}>
                   {['Source', 'Ingredient', 'Recipe Qty', 'Yield %', 'Unit', ''].map((h) => (
-                    <p key={h} style={{ fontSize: '8.5px', letterSpacing: '0.12em' }}
+                    <p key={h} style={{ fontSize: '12px', letterSpacing: '0.12em' }}
                       className="font-black text-s-muted uppercase">{h}</p>
                   ))}
                 </div>
@@ -1098,13 +1082,13 @@ export default function RecipesPage() {
                       {kind === 'plate' ? (
                         <Select value={ing.source}
                           onChange={(e) => toggleIngSource(idx, e.target.value as 'raw' | 'prep')}
-                          className="s-select text-[10px]"
+                          className="s-select text-xs"
                           title="Raw inventory item, or a component recipe used as a sub-ingredient">
                           <option value="raw">Raw</option>
                           <option value="prep">Component</option>
                         </Select>
                       ) : (
-                        <span className="text-[10px] text-s-dim font-semibold px-2 py-1.5">Raw</span>
+                        <span className="text-xs text-s-dim font-semibold px-2 py-1.5">Raw</span>
                       )}
 
                       {ing.source === 'prep' ? (
@@ -1128,31 +1112,30 @@ export default function RecipesPage() {
                           ))}
                         </Select>
                       )}
-                      <input type="number" min={0.001} step="any"
+                      <Input type="number" min={0.001} step="any"
                         placeholder={ing.source === 'prep' ? 'g' : 'Qty'} value={ing.quantity}
                         onChange={(e) => updateIng(idx, 'quantity', e.target.value)}
-                        className="s-input text-xs" required={idx === 0} />
+                        className="text-xs" required={idx === 0} />
                       <div className="relative">
-                        <input type="number" min={1} max={100} step={1}
+                        <Input type="number" min={1} max={100} step={1}
                           value={ing.yieldPct}
                           onChange={(e) => updateIng(idx, 'yieldPct', e.target.value)}
                           disabled={ing.source === 'prep'}
                           title={ing.source === 'prep' ? 'N/A — component yield already baked into cost-per-gram' : ''}
-                          className="s-input text-xs w-full pr-5 disabled:opacity-40" />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-s-dim pointer-events-none">
+                          className="text-xs w-full pr-5 disabled:opacity-40" />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-s-muted pointer-events-none">
                           %
                         </span>
                       </div>
-                      <input type="text" placeholder={ing.source === 'prep' ? 'g' : 'g'}
+                      <Input type="text" placeholder={ing.source === 'prep' ? 'g' : 'g'}
                         value={ing.unit}
                         onChange={(e) => updateIng(idx, 'unit', e.target.value)}
                         disabled={ing.source === 'prep'}
-                        className="s-input text-xs disabled:opacity-40" required={idx === 0} />
-                      <button type="button" onClick={() => removeIng(idx)}
-                        disabled={ings.length === 1}
-                        className="text-s-dim hover:text-s-red transition-colors disabled:opacity-20 text-center text-xs">
-                        ✕
-                      </button>
+                        className="text-xs disabled:opacity-40" required={idx === 0} />
+                      <LinkButton tone="muted" type="button" onClick={() => removeIng(idx)}
+                        disabled={ings.length === 1}>
+                        <FIcon name="x" size={14} />
+                      </LinkButton>
                     </div>
                   ))}
                 </div>
@@ -1160,7 +1143,7 @@ export default function RecipesPage() {
                 {/* Live cost preview */}
                 {invItems && ings.some((i) => ((i.inventoryItemId || i.prepRecipeId) && i.quantity)) && (
                   <div className="rounded-xl bg-s-elevated border border-s-border p-4 mt-1">
-                    <p style={{ fontSize: '8.5px', letterSpacing: '0.15em' }}
+                    <p style={{ fontSize: '12px', letterSpacing: '0.15em' }}
                       className="font-black text-s-muted uppercase mb-3">
                       Cost Preview (with Q Factor)
                     </p>
@@ -1231,9 +1214,9 @@ export default function RecipesPage() {
               <div className="space-y-2 pt-2 border-t border-s-border">
                 <div>
                   <p className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--erp-primary-ink)' }}>
-                    🍳 Bump-able steps (during service)
+                    <FIcon name="chef" size={14} /> Bump-able steps (during service)
                   </p>
-                  <p className="text-[11px] text-s-dim mt-0.5">
+                  <p className="text-xs text-s-muted mt-0.5">
                     Break the cook + assembly into ordered steps. Each step picks a station and may depend on earlier steps.
                     Expo confirms an order → first-ready steps fire to their stations →
                     each cook bumps when done → downstream steps cascade. This is what powers the per-station KDS bump flow.
@@ -1247,7 +1230,7 @@ export default function RecipesPage() {
                     <p className="text-xs font-bold text-white/70">
                       Save the recipe first to add bump-able steps
                     </p>
-                    <p className="text-[10px] text-s-dim mt-1">
+                    <p className="text-xs text-s-muted mt-1">
                       The step graph attaches to a saved recipe. Click <strong>Create Recipe</strong> below — the modal will
                       re-open in edit mode and this section will become an editor where you add per-station bump-steps.
                     </p>
@@ -1256,17 +1239,15 @@ export default function RecipesPage() {
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={closeModal} className="s-btn-ghost text-sm">Cancel</button>
-                <button type="submit"
-                  disabled={createMut.isPending || updateMut.isPending}
-                  className="s-btn-primary text-sm">
+                <Button variant="ghost" type="button" onClick={closeModal}>Cancel</Button>
+                <Button type="submit"
+                  disabled={createMut.isPending || updateMut.isPending}>
                   {createMut.isPending || updateMut.isPending ? 'Saving…'
                     : isEditing ? 'Save Changes' : 'Create Recipe'}
-                </button>
+                </Button>
               </div>
             </form>
-          </div>
-        </div>
+        </Dialog>
       )}
     </div>
   )
@@ -1278,7 +1259,7 @@ function Metric({ label, value, bold, teal, dim, className }: {
 }) {
   return (
     <div className="text-right">
-      <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">{label}</p>
+      <p style={{ fontSize: '12px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">{label}</p>
       <p className={`text-xs ${bold ? 'font-bold' : 'font-semibold'} ${teal ? 'text-primary-ink' : dim ? 'text-s-dim' : className ?? 'text-s-text'}`}>
         {value}
       </p>
@@ -1321,7 +1302,7 @@ function KitchenSheet({ r }: { r: Recipe }) {
       <div className="flex flex-wrap gap-8 px-6 py-3 border-b border-s-border/40 bg-s-bg-soft">
         {facts.map(({ label, value }) => (
           <div key={label}>
-            <p style={{ fontSize: '8px', letterSpacing: '0.18em' }} className="font-black text-s-muted uppercase">{label}</p>
+            <p style={{ fontSize: '12px', letterSpacing: '0.18em' }} className="font-black text-s-muted uppercase">{label}</p>
             <p className="text-sm font-bold text-s-text mt-0.5">{value}</p>
           </div>
         ))}
@@ -1335,7 +1316,7 @@ function KitchenSheet({ r }: { r: Recipe }) {
           <KitchenMethod methodSteps={r.methodSteps} steps={r.steps} stepsUrdu={r.stepsUrdu} />
         </div>
         <KitchenServiceSteps recipeId={r.id} />
-        {r.notes && <p className="text-[11px] text-s-dim italic">{r.notes}</p>}
+        {r.notes && <p className="text-xs text-s-muted italic">{r.notes}</p>}
       </div>
     </div>
   )
@@ -1346,7 +1327,7 @@ function SheetBlock({ title, subtitle, children }: { title: string; subtitle?: s
   return (
     <div>
       <p className="text-xs font-black uppercase tracking-wider text-s-muted px-3">{title}</p>
-      {subtitle && <p className="text-[10px] text-s-dim px-3 mb-1">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-s-muted px-3 mb-1">{subtitle}</p>}
       {children}
     </div>
   )

@@ -8,6 +8,7 @@
 //   PUT /accounting/withholding/enabled { enabled, reason ≥10 } — the on/off
 // switch for the ACTIVE company (owner, 2026-10-16: finance switches it on),
 // audited; the CEO keeps the same switch on Configuration → Operations.
+import { Button, Field, Input } from '@/components/finance/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -106,8 +107,8 @@ export default function WithholdingRates() {
     <div className="space-y-4">
       <div className="s-card p-4 space-y-2 text-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={d.enabled ? 's-badge-green text-[10px]' : 's-badge-muted text-[10px]'}>{d.enabled ? 'Withholding is on' : 'Withholding is off'}</span>
-          {d.defaultsUsed && <span className="s-badge-amber text-[10px]">Placeholder rates — not saved for this company yet</span>}
+          <span className={d.enabled ? 's-badge-green text-xs' : 's-badge-muted text-xs'}>{d.enabled ? 'Withholding is on' : 'Withholding is off'}</span>
+          {d.defaultsUsed && <span className="s-badge-amber text-xs">Placeholder rates — not saved for this company yet</span>}
         </div>
         <p className="text-xs text-s-muted">
           Income tax withheld from vendors when a supplier bill is recorded, or when an OpEx or CapEx payment is made (s.153 / s.155).
@@ -121,20 +122,20 @@ export default function WithholdingRates() {
             <p className="text-xs font-semibold text-s-text">
               {d.enabled ? 'Switch withholding off for this company' : 'Switch withholding on for this company'}
             </p>
-            <p className="text-[11px] text-s-muted">
+            <p className="text-xs text-s-muted">
               Applies to bills recorded and OpEx / CapEx payments made from now on; nothing already booked changes. Your reason is kept in the audit log.
             </p>
             <div className="flex flex-wrap items-start gap-2">
               <div className="flex-1 min-w-[16rem]">
-                <input
+                <Input
                   value={switchReason}
                   onChange={(e) => setSwitchReason(e.target.value)}
                   placeholder="Reason (at least 10 characters), e.g. CA confirmed the rates"
                   aria-label="Reason for switching withholding"
-                  className="w-full rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm text-s-text"
+                  className="w-full"
                 />
                 {switchTried && switchReason.trim().length < 10 && (
-                  <p role="alert" className="text-[11px] text-s-red mt-1">Give a reason of at least 10 characters.</p>
+                  <p role="alert" className="text-xs text-s-red mt-1">Give a reason of at least 10 characters.</p>
                 )}
               </div>
               <button
@@ -150,7 +151,7 @@ export default function WithholdingRates() {
                 {toggle.isPending ? 'Saving…' : d.enabled ? 'Switch off' : 'Switch on'}
               </button>
             </div>
-            {toggle.isError && <p role="alert" className="text-[11px] text-s-red">{errText(toggle.error)}</p>}
+            {toggle.isError && <p role="alert" className="text-xs text-s-red">{errText(toggle.error)}</p>}
           </div>
         )}
         <p className="text-xs text-s-muted">
@@ -161,7 +162,7 @@ export default function WithholdingRates() {
       <div className="s-card overflow-hidden">
         <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs font-semibold text-s-text">Rates by section</span>
-          {!d.canEdit && <span className="text-[11px] text-s-muted">Read only — the CEO and finance change these.</span>}
+          {!d.canEdit && <span className="text-xs text-s-muted">Read only — the CEO and finance change these.</span>}
         </div>
         <div className="divide-y divide-s-border">
           {d.sections.map((s) => {
@@ -191,14 +192,13 @@ export default function WithholdingRates() {
         </div>
         {d.canEdit && (
           <div className="px-4 py-3 border-t border-s-border flex flex-wrap items-center gap-3">
-            <button
+            <Button
               type="button"
-              className="s-btn-primary text-sm"
+              
               disabled={!dirty || invalid || save.isPending}
-              onClick={() => save.mutate(changed)}
-            >
+              onClick={() => save.mutate(changed)}>
               {save.isPending ? 'Saving…' : 'Save rates'}
-            </button>
+            </Button>
             {invalid && <span className="text-xs text-s-red">Each rate must be a number from 0 to {max / 100}%.</span>}
             {save.isError && <span className="text-xs text-s-red">{errText(save.error)}</span>}
             {saved && !dirty && !save.isError && <span className="text-xs text-success">Saved.</span>}
@@ -211,8 +211,7 @@ export default function WithholdingRates() {
 
 function RateInput({ label, value, readOnly, max, onChange }: { label: string; value: string; readOnly: boolean; max: number; onChange: (v: string) => void }) {
   return (
-    <label className="block sm:w-32">
-      <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">{label}</span>
+    <Field label={label}>
       {readOnly
         ? <span className="block font-mono text-sm text-s-text py-1.5">{value === '' ? '—' : `${value}%`}</span>
         : (
@@ -225,6 +224,6 @@ function RateInput({ label, value, readOnly, max, onChange }: { label: string; v
             onValueChange={(n) => onChange(n == null ? '' : String(n))}
           />
         )}
-    </label>
+    </Field>
   )
 }

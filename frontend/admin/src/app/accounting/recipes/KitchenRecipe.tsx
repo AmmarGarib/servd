@@ -72,14 +72,14 @@ export function splitBySection<T extends { section?: string | null }>(rows: T[])
 
 export function KitchenIngredients({ rows, empty = 'No ingredients on this recipe yet.' }: { rows: KitchenIngredient[]; empty?: string }) {
   if (rows.length === 0) {
-    return <p className="text-xs text-s-dim">{empty}</p>
+    return <p className="text-xs text-s-muted">{empty}</p>
   }
   const anyNotes = rows.some((r) => r.notes)
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-s-border text-[10px] uppercase tracking-wider text-s-muted">
+          <tr className="border-b border-s-border text-xs uppercase tracking-wider text-s-muted">
             <th className="text-left px-3 py-2 font-bold">Ingredient</th>
             <th className="text-right px-3 py-2 font-bold">Quantity</th>
             <th className="text-right px-3 py-2 font-bold">Yield</th>
@@ -96,7 +96,7 @@ export function KitchenIngredients({ rows, empty = 'No ingredients on this recip
                   {r.subRecipeId ? (
                     <span className="inline-flex items-center gap-2 flex-wrap">
                       <Link href={`/accounting/recipes/${r.subRecipeId}`} className="hover:underline">{r.name}</Link>
-                      <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 bg-primary/10 text-primary-ink">
+                      <span className="text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5 bg-primary/10 text-primary-ink">
                         Sub-recipe
                       </span>
                     </span>
@@ -104,7 +104,7 @@ export function KitchenIngredients({ rows, empty = 'No ingredients on this recip
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-s-text whitespace-nowrap">
                   {r.quantity < 0 && (
-                    <span className="mr-1 text-[9px] font-black uppercase tracking-wider text-s-red">Removes</span>
+                    <span className="mr-1 text-xs font-black uppercase tracking-wider text-s-red">Removes</span>
                   )}
                   {qty(Math.abs(r.quantity))}{r.unit ? ` ${r.unit}` : ''}
                 </td>
@@ -143,7 +143,7 @@ export function KitchenMethod({ methodSteps, steps, stepsUrdu }: {
   const hasText = !!steps?.trim()
   const hasUrdu = !!stepsUrdu?.trim()
   if (ordered.length === 0 && !hasText && !hasUrdu) {
-    return <p className="text-xs text-s-dim">No method written for this recipe yet.</p>
+    return <p className="text-xs text-s-muted">No method written for this recipe yet.</p>
   }
   return (
     <div className="space-y-3">
@@ -151,10 +151,10 @@ export function KitchenMethod({ methodSteps, steps, stepsUrdu }: {
         <ol className="space-y-2">
           {ordered.map((s, i) => (
             <li key={i} className="flex items-start gap-3 text-sm">
-              <span className="font-mono text-xs text-s-dim w-5 text-right shrink-0 mt-0.5">{i + 1}.</span>
+              <span className="font-mono text-xs text-s-muted w-5 text-right shrink-0 mt-0.5">{i + 1}.</span>
               <div className="min-w-0">
                 {s.station?.trim() && (
-                  <span className="text-[10px] font-black uppercase tracking-wider text-primary-ink mr-2">{s.station.trim()}</span>
+                  <span className="text-xs font-black uppercase tracking-wider text-primary-ink mr-2">{s.station.trim()}</span>
                 )}
                 <span className="text-s-text whitespace-pre-wrap">{s.instruction.trim()}</span>
               </div>
@@ -210,20 +210,20 @@ export function KitchenServiceSteps({ recipeId, variant = 'inline' }: { recipeId
         if (inPhase.length === 0) return null
         return (
           <div key={p.id}>
-            <p className="text-[10px] font-black uppercase tracking-wider text-s-muted mb-1">{p.label}</p>
+            <p className="text-xs font-black uppercase tracking-wider text-s-muted mb-1">{p.label}</p>
             <ol className="space-y-1.5">
               {inPhase.map((s, i) => (
                 <li key={s.id} className="flex items-start gap-3 text-sm">
-                  <span className="font-mono text-xs text-s-dim w-5 text-right shrink-0 mt-0.5">{i + 1}.</span>
+                  <span className="font-mono text-xs text-s-muted w-5 text-right shrink-0 mt-0.5">{i + 1}.</span>
                   <div className="min-w-0 flex-1">
                     {s.station?.name && (
-                      <span className="text-[10px] font-black uppercase tracking-wider text-primary-ink mr-2">{s.station.name}</span>
+                      <span className="text-xs font-black uppercase tracking-wider text-primary-ink mr-2">{s.station.name}</span>
                     )}
                     <span className="text-s-text">{s.instruction}</span>
                     {s.instructionUrdu && <p dir="rtl" className="text-xs text-s-muted mt-0.5">{s.instructionUrdu}</p>}
                   </div>
                   {s.estimatedSeconds > 0 && (
-                    <span className="text-[11px] text-s-dim font-mono shrink-0 mt-0.5">{duration(s.estimatedSeconds)}</span>
+                    <span className="text-xs text-s-muted font-mono shrink-0 mt-0.5">{duration(s.estimatedSeconds)}</span>
                   )}
                 </li>
               ))}
@@ -364,11 +364,11 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-black">{title}</h1>
-            <span className={`text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${KIND_META[recipe.kind].cls}`}>
+            <span className={`text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${KIND_META[recipe.kind].cls}`}>
               {KIND_META[recipe.kind].label}
             </span>
             {recipe.status !== 'production' && (
-              <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+              <span className="text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                 style={{ background: recipeStatusMeta[recipe.status].bg, color: recipeStatusMeta[recipe.status].color }}>
                 {recipeStatusMeta[recipe.status].label}
               </span>
@@ -382,7 +382,7 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
         <section className={`grid gap-3 ${facts.length === 3 ? 'grid-cols-3' : 'grid-cols-1 sm:grid-cols-3'}`}>
           {facts.map((f) => (
             <div key={f.label} className="rounded-xl border border-s-border bg-s-surface px-4 py-3">
-              <p className="text-[10px] uppercase tracking-wider text-s-muted">{f.label}</p>
+              <p className="text-xs uppercase tracking-wider text-s-muted">{f.label}</p>
               <p className="text-lg font-black mt-0.5">{f.value}</p>
             </div>
           ))}
@@ -410,7 +410,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
   return (
     <section className="rounded-xl border border-s-border bg-s-surface p-5">
       <h2 className={`text-base font-black ${subtitle ? '' : 'mb-3'}`}>{title}</h2>
-      {subtitle && <p className="text-[11px] text-s-muted mt-0.5 mb-3">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-s-muted mt-0.5 mb-3">{subtitle}</p>}
       {children}
     </section>
   )

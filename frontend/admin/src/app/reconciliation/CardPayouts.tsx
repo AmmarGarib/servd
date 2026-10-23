@@ -9,6 +9,7 @@
 //   GET  /lines/:id/suggestions → POST /lines/:id/confirm { days, unit }
 //   POST /:id/undo { reason } (approvers) · POST /rematch (admin, finance)
 // Every figure is the server's; the page never works a fee out.
+import { Button, CheckLabel, Field, Input, LinkButton } from '@/components/finance/ui'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
@@ -170,7 +171,7 @@ export function CardPayoutChip({ chip, onOpen }: { chip: CardSettlementChip; onO
       type="button"
       onClick={onOpen}
       title={`${STATUS_LABEL[chip.status] ?? chip.status}: card sales ${fmtPkr(chip.grossCents)}, fee ${fmtPkr(chip.feeCents)}`}
-      className="ml-2 s-badge-green text-[10px] font-semibold"
+      className="ml-2 s-badge-green text-xs font-semibold"
     >
       Card payout {dayRange(chip.dayFrom, chip.dayTo)}
     </button>
@@ -204,9 +205,9 @@ export function CardPayouts() {
             <span className="block font-normal text-s-muted">The fee (and the tax on it) is a cost on 6080, booked when Keenu pays.</span>
           </span>
           {d?.canRematch && (
-            <button type="button" onClick={() => rematch.mutate()} disabled={rematch.isPending} className="s-btn-secondary text-xs">
+            <Button size="sm" variant="secondary" type="button" onClick={() => rematch.mutate()} disabled={rematch.isPending}>
               {rematch.isPending ? 'Matching…' : 'Re-run matching'}
-            </button>
+            </Button>
           )}
         </div>
         {rematch.data && (
@@ -261,7 +262,7 @@ export function CardPayouts() {
                     {d.canUndo && (
                       <td className="px-4 py-2 text-right">
                         {s.status !== 'manual_adjust' && (
-                          <button type="button" onClick={() => setUndoing(s)} className="text-xs text-s-muted hover:text-s-text underline">Undo</button>
+                          <LinkButton tone="muted" type="button" onClick={() => setUndoing(s)}>Undo</LinkButton>
                         )}
                       </td>
                     )}
@@ -400,19 +401,19 @@ function SettingsCard() {
             How Keenu pays this company&apos;s card sales. With matching on, a credit on the payout bank is matched to the card days it pays and booked with its fee.
           </p>
         </div>
-        <span className={s.enabled ? 's-badge-green text-[10px]' : 's-badge-muted text-[10px]'}>{s.enabled ? 'Matching is on' : 'Matching is off'}</span>
+        <span className={s.enabled ? 's-badge-green text-xs' : 's-badge-muted text-xs'}>{s.enabled ? 'Matching is on' : 'Matching is off'}</span>
       </div>
-      {!edit && <p className="text-[11px] text-s-muted">Read only — the CEO and finance change these.</p>}
+      {!edit && <p className="text-xs text-s-muted">Read only — the CEO and finance change these.</p>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label className="flex items-center gap-2 sm:col-span-2">
+        <CheckLabel className="flex items-center gap-2 sm:col-span-2">
           <input type="checkbox" className="accent-accent" checked={f.enabled} disabled={!edit} onChange={(e) => { setSaved(false); setF((p) => (p ? { ...p, enabled: e.target.checked } : p)) }} />
           <span className="text-sm text-s-text">Match card payouts automatically</span>
-        </label>
+        </CheckLabel>
         <div className="sm:col-span-2">
           {edit
             ? <BankAccountSelect tenantId={q.data.tenantId} value={f.payoutBankAccountId} onChange={(v) => { setSaved(false); setF((p) => (p ? { ...p, payoutBankAccountId: v } : p)) }} className="s-input" label="Payout bank (Keenu pays into)" />
             : <Field label="Payout bank"><span className="block py-1.5 text-s-text">{q.data.payoutBank ? q.data.payoutBank.name : 'Not set'}</span></Field>}
-          {q.data.payoutBank && !q.data.payoutBank.live && <p className="text-[11px] text-s-red mt-1">That bank account is no longer active — pick another.</p>}
+          {q.data.payoutBank && !q.data.payoutBank.live && <p className="text-xs text-s-red mt-1">That bank account is no longer active — pick another.</p>}
         </div>
         <Field label="How Keenu pays">
           <Select className="s-input" value={f.unitMode} disabled={!edit} onChange={set('unitMode')}>
@@ -420,7 +421,7 @@ function SettingsCard() {
           </Select>
         </Field>
         <Field label="Matching starts on" hint="Card days before it were cleared by hand. Set automatically the first time matching is switched on.">
-          <input type="date" className="s-input" min="2000-01-01" value={f.startDay} disabled={!edit} onChange={set('startDay')} />
+          <Input type="date" min="2000-01-01" value={f.startDay} disabled={!edit} onChange={set('startDay')} />
         </Field>
         <Field label="MDR (Keenu's fee), %" hint="Of the card sales, e.g. 2.5">
           <NumberField decimals={2} min={0} max={10} className="s-input" value={asNum(f.mdr)} disabled={!edit} onValueChange={(n) => { setSaved(false); setF((p) => (p ? { ...p, mdr: fromNum(n) } : p)) }} />
@@ -443,9 +444,9 @@ function SettingsCard() {
       </div>
       {edit && (
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" className="s-btn-primary text-sm" disabled={!dirty || bad || save.isPending} onClick={() => save.mutate(patch)}>
+          <Button type="button"  disabled={!dirty || bad || save.isPending} onClick={() => save.mutate(patch)}>
             {save.isPending ? 'Saving…' : 'Save settings'}
-          </button>
+          </Button>
           {bad && <span className="text-xs text-s-red">A number is out of range — see the hints.</span>}
           {save.error && <span className="text-xs text-s-red">{cardPayoutErrorText(save.error)}</span>}
           {saved && !dirty && !save.error && <span className="text-xs text-success">Saved.</span>}
@@ -476,13 +477,13 @@ function UndoModal({ settlement, onClose }: { settlement: Settlement; onClose: (
           The payout&apos;s entry ({fmtPkr(settlement.netCents)} received, fee {fmtPkr(settlement.feeCents)}) is reversed, the card days {dayRange(settlement.dayFrom, settlement.dayTo)} are
           free again and the bank line goes back to unmatched.
         </p>
-        <div className="mt-3"><Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Matched to the wrong days" /></Field></div>
+        <div className="mt-3"><Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 3 ? true : undefined} placeholder="Matched to the wrong days" /></Field></div>
         {go.error && <p role="alert" className="text-xs text-s-red mt-3">{cardPayoutErrorText(go.error)}</p>}
         <div className="flex flex-wrap gap-2 mt-4">
-          <button type="submit" className="s-btn-danger text-sm" disabled={go.isPending}>
+          <Button variant="danger" type="submit"  disabled={go.isPending}>
             {go.isPending ? 'Undoing…' : 'Undo payout'}
-          </button>
-          <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
+          </Button>
+          <Button variant="secondary" type="button"  onClick={onClose}>Cancel</Button>
         </div>
       </DialogForm>
     </Modal>
@@ -530,18 +531,18 @@ export function CardPayoutSuggest({ lineId, onDone, onCancel }: { lineId: string
           {d.suggestions.length > 0 && (
             <div className="space-y-1">
               {d.suggestions.map((s, i) => (
-                <label key={`${s.unit}-${s.dayFrom}-${s.dayTo}`} className="flex items-start gap-2 rounded border border-s-border px-2 py-1.5 cursor-pointer">
+                <CheckLabel key={`${s.unit}-${s.dayFrom}-${s.dayTo}`} className="flex items-start gap-2 rounded border border-s-border px-2 py-1.5 cursor-pointer">
                   <input type="radio" name={`card-payout-${lineId}`} className="mt-0.5" checked={picked === i} onChange={() => setPicked(i)} />
                   <span className="flex-1 min-w-0">
                     <span className="block text-s-text font-semibold">
                       {dayRange(s.dayFrom, s.dayTo)} · {s.unitLabel}
-                      {s.fits && <span className="ml-2 s-badge-green text-[10px]">Fits the settings</span>}
+                      {s.fits && <span className="ml-2 s-badge-green text-xs">Fits the settings</span>}
                     </span>
                     <span className="block text-s-muted">
                       Card sales {fmtPkr(s.grossCents)} · fee {fmtPkr(s.impliedFeeCents)} ({pct(s.impliedFeeBps)}) · expected {fmtPkr(s.expectedNetCents)}
                     </span>
                   </span>
-                </label>
+                </CheckLabel>
               ))}
             </div>
           )}
@@ -549,25 +550,16 @@ export function CardPayoutSuggest({ lineId, onDone, onCancel }: { lineId: string
           <div className="flex flex-wrap items-center gap-3">
             {d.canConfirm
               ? (
-                <button type="button" className="text-primary-ink font-semibold disabled:opacity-40" disabled={!chosen || confirm.isPending} onClick={() => chosen && confirm.mutate(chosen)}>
+                <LinkButton size="md" type="button"  disabled={!chosen || confirm.isPending} onClick={() => chosen && confirm.mutate(chosen)}>
                   {confirm.isPending ? 'Booking…' : 'Confirm card payout'}
-                </button>
+                </LinkButton>
               )
               : <span className="text-s-muted">Finance or the CEO confirms card payouts.</span>}
           </div>
         </>
       )}
-      <button type="button" onClick={onCancel} className="text-s-muted">Close</button>
+      <LinkButton tone="muted" size="md" type="button" onClick={onCancel}>Close</LinkButton>
     </div>
   )
 }
 
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">{label}</span>
-      {children}
-      {hint && <span className="block text-[11px] text-s-muted mt-1">{hint}</span>}
-    </label>
-  )
-}

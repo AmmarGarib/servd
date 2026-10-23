@@ -8,6 +8,7 @@
 // says COD custody is on (GET /reconciliation/cod/enabled).
 // Admin colour tokens only; text labels, no emoji.
 
+import { Button, CheckLabel, Input } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
@@ -130,19 +131,18 @@ export function CodTab() {
             {open === r.paymentId && (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2 items-start">
-                  <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why (at least 5 characters)"
-                    className="flex-1 min-w-[200px] rounded-lg bg-s-bg border border-s-border px-3 py-2 text-sm text-s-text focus:border-primary focus:outline-none" />
-                  <button onClick={() => book.mutate(r.paymentId)} disabled={reason.trim().length < 5 || book.isPending}
-                    className="rounded-lg bg-primary text-primary-on font-bold px-3 py-2 text-xs disabled:opacity-50">
+                  <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why (at least 5 characters)"
+                    className="flex-1 min-w-[200px]" />
+                  <Button size="sm" type="submit" onClick={() => book.mutate(r.paymentId)} disabled={reason.trim().length < 5 || book.isPending}>
                     {book.isPending ? 'Booking…' : 'Book it'}
-                  </button>
-                  <button onClick={() => setOpen(null)} className="rounded-lg border border-s-border text-s-muted px-3 py-2 text-xs">Cancel</button>
+                  </Button>
+                  <Button variant="secondary" size="sm" type="submit" onClick={() => setOpen(null)}>Cancel</Button>
                 </div>
                 {needsLegacy && (
-                  <label className="flex items-start gap-2 text-xs text-s-text">
+                  <CheckLabel className="flex items-start gap-2 text-xs text-s-text">
                     <input type="checkbox" checked={legacy} onChange={(e) => setLegacy(e.target.checked)} className="mt-0.5 accent-primary" />
                     <span>This order was not delivered with the customer&apos;s code. Tick to book it as an older delivery anyway.</span>
-                  </label>
+                  </CheckLabel>
                 )}
                 {book.error && <p role="alert" className="text-xs text-s-red">{errorText(book.error)}</p>}
               </div>

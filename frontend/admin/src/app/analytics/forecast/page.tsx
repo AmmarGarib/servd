@@ -10,7 +10,7 @@ interface ForecastPoint { date: string; predictedQty: number }
 interface ForecastItem { menuItemId: string | null; name: string; confidence: 'high' | 'medium' | 'low'; forecasts: ForecastPoint[] }
 interface ForecastData { conceptId: string; generatedAt: string; items: ForecastItem[] }
 
-const CONF_COLOR = { high: 'var(--erp-primary)', medium: '#a15c00', low: '#b42318' }
+const CONF_COLOR = { high: 'var(--erp-primary)', medium: 'var(--erp-warning)', low: 'var(--erp-danger)' }
 
 function fmtDate(iso: string) {
   const d = new Date(iso)
@@ -111,7 +111,7 @@ export default function ForecastPage() {
               <thead>
                 <tr style={{ background: 'rgb(var(--fg-rgb) / 0.03)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                   <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider sticky left-0"
-                    style={{ color: 'rgb(var(--fg-rgb) / 0.3)', background: 'rgba(13,15,21,0.95)' }}>Item</th>
+                    style={{ color: 'rgb(var(--fg-rgb) / 0.3)', background: 'var(--surface)' }}>Item</th>
                   {dates.map(d => (
                     <th key={d} className="text-center px-3 py-3 text-[11px] font-bold" style={{ color: 'rgb(var(--fg-rgb) / 0.3)', minWidth: '80px' }}>
                       {fmtDate(d)}
@@ -138,9 +138,9 @@ export default function ForecastPage() {
                             <div className="inline-flex flex-col items-center gap-0.5">
                               <div className="h-8 w-12 rounded-lg flex items-center justify-center text-xs font-bold"
                                 style={{
-                                  background: `rgba(0,212,177,${0.05 + intensity * 0.35})`,
+                                  background: `rgb(var(--erp-accent-rgb) / ${0.05 + intensity * 0.35})`,
                                   color: intensity > 0.3 ? 'var(--erp-primary-ink)' : 'rgb(var(--fg-rgb) / 0.4)',
-                                  border: `1px solid rgba(0,212,177,${intensity * 0.2})`,
+                                  border: `1px solid rgb(var(--erp-accent-rgb) / ${intensity * 0.2})`,
                                 }}>
                                 {f.predictedQty}
                               </div>

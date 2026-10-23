@@ -37,7 +37,7 @@ interface LaborCost { totalCents: number; totalHours: number; basis: string; byE
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const SOURCE_LABEL: Record<Cell['source'], string> = { roster: 'roster', swap: 'swap', exception: 'changed', leave: 'approved', default: 'company default', none: '' }
 const SOURCE_TONE: Record<Cell['source'], string> = {
-  roster: 'rgb(var(--erp-primary-rgb) / 0.12)', swap: 'rgb(var(--ink-rgb) / 0.18)', exception: 'rgba(245,158,11,0.16)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', default: 'rgb(var(--erp-primary-rgb) / 0.06)', none: 'transparent',
+  roster: 'rgb(var(--erp-primary-rgb) / 0.12)', swap: 'rgb(var(--ink-rgb) / 0.18)', exception: 'color-mix(in srgb, var(--erp-warning) 16%, transparent)', leave: 'color-mix(in srgb, var(--erp-secondary) 10%, transparent)', default: 'rgb(var(--erp-primary-rgb) / 0.06)', none: 'transparent',
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
@@ -271,7 +271,7 @@ function ExceptionModal({ conceptId, member, cell, shifts, onClose, onSaved }: {
           )}
           {exceptionIds.length > 0 && (
             <button disabled={backToRoster.isPending} onClick={() => backToRoster.mutate()}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: 'var(--erp-warning)' }}>Back to roster</button>
+              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)', color: 'var(--erp-warning)' }}>Back to roster</button>
           )}
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>Close</button>
         </div>

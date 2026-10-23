@@ -19,6 +19,7 @@
 // till's share; the shares make up the amount. Each bag is compared with what
 // is still to bank from its tills, and the night audit compares amounts.
 
+import { Button, CheckLabel, Input, LinkButton, Textarea } from '@/components/finance/ui'
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -31,6 +32,7 @@ import { Select } from '@/components/ui/Select'
 import { Modal } from '../../../components/ui/Modal'
 import { Field, focusField, useSubmitOnce } from '../cash-vouchers/ui'
 import { prepareReceiptFile, kb } from '../../../lib/photoPrep'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 /** One deposit slip as stored (metadata only — the bytes are fetched on View / Download). */
 interface SlipFile { id: string; fileName: string | null; mime: string; sizeBytes: number; createdAt: string }
@@ -83,7 +85,7 @@ export default function DepositDropsPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
+        <Link href="/finance" className="text-xs text-s-muted hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-2 flex-wrap">
           <div className="min-w-0">
             <h1 className="text-2xl font-black text-white/90">Bank deposit drops</h1>
@@ -91,16 +93,13 @@ export default function DepositDropsPage() {
               Record every cash drop to the bank. It posts to the bank's ledger account, and a variance against the shift (drops + counted close − float kept) auto-flags. Attach the stamped deposit slip (photo or PDF) to make the drop reconcilable on the bank statement.
             </p>
           </div>
-          <button onClick={() => setAdding(true)} className="s-btn-primary px-4 py-2.5">+ Record drop</button>
+          <Button type="submit" onClick={() => setAdding(true)}>+ Record drop</Button>
         </div>
       </header>
 
       <div className="px-4 sm:px-7 py-6 max-w-5xl mx-auto space-y-2">
         {drops.length === 0 && (
-          <div className="rounded-2xl p-10 text-center" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="font-bold text-white/85">No drops recorded</p>
-            <p className="text-sm text-white/45 mt-1">Drop cash at the bank? Record it here so we can reconcile.</p>
-          </div>
+          <CompactEmptyState message="No drops recorded. Record a bank drop so it can be reconciled." action={{ label: '+ Record drop', onClick: () => setAdding(true) }} />
         )}
         {drops.map((d) => (
           <div key={d.id} className="rounded-2xl p-5"
@@ -113,7 +112,7 @@ export default function DepositDropsPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-lg font-black text-white/90">{pkr(d.amountCents)}</span>
                   {d.expectedCents > 0 && (
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                    <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
                       style={d.withinTolerance
                         ? { background: 'rgb(var(--erp-accent-rgb) / 0.15)', color: 'var(--erp-success)' }
                         : { background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', color: 'var(--erp-warning)' }}>
@@ -121,14 +120,14 @@ export default function DepositDropsPage() {
                     </span>
                   )}
                   {!d.receiptUrl && !(d.files?.length) && d.amountCents >= 100000 && (
-                    <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--erp-warning)' }}>No deposit slip</span>
+                    <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--erp-warning)' }}>No deposit slip</span>
                   )}
                 </div>
-                <p className="text-xs text-white/45 mt-1">
+                <p className="text-xs text-s-muted mt-1">
                   Still to bank from {(d.allocations?.length ?? 0) > 1 ? `${d.allocations!.length} tills` : 'the shift'} (drops + count − float, less earlier deposits): {pkr(d.expectedCents)} · {new Date(d.droppedAt).toLocaleString()}
                 </p>
                 {(d.allocations?.length ?? 0) > 1 && (
-                  <p className="text-xs text-white/55 mt-1">
+                  <p className="text-xs text-s-muted mt-1">
                     Split: {d.allocations!.map((a) => `${a.shiftId.slice(-8).toUpperCase()} ${pkr(a.amountCents)}`).join(' · ')}
                   </p>
                 )}
@@ -141,7 +140,7 @@ export default function DepositDropsPage() {
                   </span>
                   {d.bagSerial && <span><span className="text-white/45">Bag: </span><span className="font-mono text-white/70">{d.bagSerial}</span></span>}
                 </p>
-                {d.notes && <p className="text-xs text-white/55 mt-1">{d.notes}</p>}
+                {d.notes && <p className="text-xs text-s-muted mt-1">{d.notes}</p>}
               </div>
               {d.receiptUrl && <a href={d.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-ink hover:underline">View receipt link ↗</a>}
             </div>
@@ -225,20 +224,20 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
     footer={
       <div className="flex justify-between gap-3">
         {done ? (
-          <button type="button" onClick={onSaved} className="s-btn-primary ml-auto px-5 py-2.5">Done</button>
+          <Button type="button" onClick={onSaved} className="ml-auto">Done</Button>
         ) : (
           <>
-            <button type="button" onClick={onClose} className="s-btn-secondary px-4 py-2.5">Cancel</button>
-            <button type="submit" form="dd-form" disabled={save.isPending || preparing} className="s-btn-primary px-5 py-2.5">{save.isPending ? 'Saving…' : 'Record drop'}</button>
+            <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="submit" form="dd-form" disabled={save.isPending || preparing}>{save.isPending ? 'Saving…' : 'Record drop'}</Button>
           </>
         )}
       </div>
     }>
     <form id="dd-form" onSubmit={submit} className="space-y-3" noValidate>
-      <label className="flex items-center gap-2 text-sm text-white/70">
+      <CheckLabel className="flex items-center gap-2 text-sm text-white/70">
         <input type="checkbox" checked={splitMode} onChange={(e) => setSplitMode(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
         One bag for several tills — split it across them
-      </label>
+      </CheckLabel>
       {!splitMode ? (
         <>
           <Field label="Shift (optional — for the variance check)">
@@ -252,7 +251,7 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
                 ))}
               </Select>
             ) : (
-              <input id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
+              <Input id="dd-shift" value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
             )}
           </Field>
           <Field label="Amount counted at drop (PKR) *" error={tried && amountCents <= 0 ? 'Enter the amount counted.' : ''}>
@@ -275,22 +274,20 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
                     ))}
                   </Select>
                 ) : (
-                  <input id={`dd-share-${i}`} value={x.shiftId} onChange={(e) => setShares((all) => all.map((y, j) => (j === i ? { ...y, shiftId: e.target.value } : y)))} placeholder="Shift UUID" className={fieldCls} aria-label={`Till ${i + 1}`} />
+                  <Input id={`dd-share-${i}`} value={x.shiftId} onChange={(e) => setShares((all) => all.map((y, j) => (j === i ? { ...y, shiftId: e.target.value } : y)))} placeholder="Shift UUID" className={fieldCls} aria-label={`Till ${i + 1}`} />
                 )}
                 <MoneyInput value={x.amountCents} onChange={(v) => setShares((all) => all.map((y, j) => (j === i ? { ...y, amountCents: v } : y)))} className={fieldCls} ariaLabel={`Till ${i + 1} share in rupees`} />
-                <button type="button" disabled={shares.length <= 1} onClick={() => setShares((all) => all.filter((_, j) => j !== i))}
-                  className="text-xs font-bold text-s-red disabled:opacity-40">Remove</button>
+                <LinkButton tone="danger" type="button" disabled={shares.length <= 1} onClick={() => setShares((all) => all.filter((_, j) => j !== i))}>Remove</LinkButton>
               </div>
             ))}
-            <button type="button" disabled={shares.length >= 20} onClick={() => setShares((all) => [...all, { shiftId: '', amountCents: 0 }])}
-              className="s-btn-secondary px-4 py-2">+ Add a till</button>
+            <Button variant="secondary" type="button" disabled={shares.length >= 20} onClick={() => setShares((all) => [...all, { shiftId: '', amountCents: 0 }])}>+ Add a till</Button>
           </div>
         </Field>
       )}
       <BankAccountSelect tenantId={company?.id} value={bankAccountId} onChange={setBankAccountId} id="deposit-bank" label="Bank account" className={fieldCls} />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Deposit slip #"><input value={slipNumber} onChange={(e) => setSlipNumber(e.target.value)} maxLength={100} placeholder="From the bank's stamped slip" autoComplete="off" className={fieldCls + ' font-mono'} /></Field>
-        <Field label="Tamper-bag serial"><input value={bagSerial} onChange={(e) => setBagSerial(e.target.value)} className={fieldCls + ' font-mono'} /></Field>
+        <Field label="Deposit slip #"><Input value={slipNumber} onChange={(e) => setSlipNumber(e.target.value)} maxLength={100} placeholder="From the bank's stamped slip" autoComplete="off" className={fieldCls + ' font-mono'} /></Field>
+        <Field label="Tamper-bag serial"><Input value={bagSerial} onChange={(e) => setBagSerial(e.target.value)} className={fieldCls + ' font-mono'} /></Field>
       </div>
       <Field label="Deposit slip / receipt" hint={`Photo or PDF of the bank's stamped slip — up to ${MAX_SLIPS} files.`} error={slipError ?? undefined}>
         <input ref={slipInput} id="dd-slips" type="file" multiple accept={SLIP_ACCEPT} className="hidden" onChange={(e) => void addSlips(e.target.files)} />
@@ -300,18 +297,17 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
               {slips.map((f, i) => (
                 <li key={`${f.fileName}-${i}`} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
                   <span className="min-w-0 break-all"><span className="font-bold text-white/85">{f.fileName}</span><span className="text-white/45"> · {kb(f.bytes)}</span></span>
-                  <button type="button" onClick={() => setSlips((s) => s.filter((_, j) => j !== i))} className="shrink-0 font-bold text-s-red">Remove</button>
+                  <LinkButton tone="danger" size="md" type="button" onClick={() => setSlips((s) => s.filter((_, j) => j !== i))} className="shrink-0">Remove</LinkButton>
                 </li>
               ))}
             </ul>
           )}
-          <button type="button" onClick={() => slipInput.current?.click()} disabled={preparing || slips.length >= MAX_SLIPS}
-            className="s-btn-secondary px-4 py-2">
+          <Button variant="secondary" type="button" onClick={() => slipInput.current?.click()} disabled={preparing || slips.length >= MAX_SLIPS}>
             {preparing ? 'Preparing…' : slips.length ? '+ Attach another file' : '+ Attach slip'}
-          </button>
+          </Button>
         </div>
       </Field>
-      <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
+      <Field label="Notes"><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
     </form>
       {save.error && <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ color: 'var(--erp-danger)', background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)' }}>{(save.error as Error).message}</div>}
       {notBooked && (
@@ -370,8 +366,8 @@ function DropSlips({ drop }: { drop: Drop }) {
             <li key={f.id} className="flex items-center justify-between gap-3 flex-wrap text-xs">
               <span className="min-w-0 break-all"><span className="font-bold text-white/85">{nameOf(f)}</span><span className="text-white/45"> · {kb(f.sizeBytes)}</span></span>
               <span className="flex items-center gap-3 shrink-0">
-                <button type="button" onClick={() => void view(f)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>View</button>
-                <button type="button" onClick={() => void download(f)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>Download</button>
+                <LinkButton size="md" type="button" onClick={() => void view(f)}  style={{ color: 'var(--erp-primary)' }}>View</LinkButton>
+                <LinkButton size="md" type="button" onClick={() => void download(f)}  style={{ color: 'var(--erp-primary)' }}>Download</LinkButton>
               </span>
             </li>
           ))}
@@ -380,9 +376,9 @@ function DropSlips({ drop }: { drop: Drop }) {
       {files.length < MAX_SLIPS && (
         <>
           <input ref={input} type="file" multiple accept={SLIP_ACCEPT} className="hidden" onChange={(e) => void attach(e.target.files)} />
-          <button type="button" onClick={() => input.current?.click()} disabled={busy} className="text-xs font-bold disabled:opacity-50" style={{ color: 'var(--erp-primary)' }}>
+          <LinkButton type="button" onClick={() => input.current?.click()} disabled={busy}  style={{ color: 'var(--erp-primary)' }}>
             {busy ? 'Uploading…' : files.length ? '+ Attach another file' : '+ Attach slip'}
-          </button>
+          </LinkButton>
         </>
       )}
       {error && <p role="alert" className="text-xs" style={{ color: 'var(--erp-danger)' }}>{error}</p>}

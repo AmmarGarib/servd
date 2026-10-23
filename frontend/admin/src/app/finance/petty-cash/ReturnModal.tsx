@@ -8,7 +8,7 @@ import { useMutation } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
-import { Choice, ErrorBanner, Field, Footer, Modal, fieldCls, firstMissing, focusField, pkr, primaryBtn, useSubmitOnce, type Box } from './ui'
+import { Button, Choice, ErrorBanner, Field, fieldCls, firstMissing, focusField, Footer, Input, Modal, pkr, primaryBtn, type Box, useSubmitOnce } from './ui'
 
 type Destination = 'garibsons' | 'safe' | 'bank'
 
@@ -52,16 +52,16 @@ export function ReturnModal({ box, onClose, onSaved }: { box: Box; onClose: () =
     )}
     <Field label="Amount (PKR) *" error={shown('rt-amount')}>
       <MoneyInput id="rt-amount" value={amountCents} onChange={setAmountCents} className={fieldCls} autoFocus ariaLabel="Amount in rupees" />
-      <p className="text-[10px] mt-1" style={{ color: over ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
+      <p className="text-xs mt-1" style={{ color: over ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.3)' }}>
         {over ? `More than the ${pkr(box.floatCents)} in the box` : `In the box now: ${pkr(box.floatCents)}`}
       </p>
     </Field>
     <Field label="Reason *" error={shown('rt-reason')}>
-      <input id="rt-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} placeholder="Month-end float back to Jamil sb" className={fieldCls} />
+      <Input id="rt-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} placeholder="Month-end float back to Jamil sb" className={fieldCls} />
     </Field>
     {save.error && <ErrorBanner error={save.error} />}
     <Footer onCancel={onClose} primary={
-      <button type="submit" disabled={save.isPending} className={primaryBtn}>{save.isPending ? 'Saving…' : 'Return cash'}</button>
+      <Button type="submit" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Return cash'}</Button>
     } />
     </form>
   </Modal>

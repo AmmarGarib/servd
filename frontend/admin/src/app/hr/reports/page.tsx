@@ -12,6 +12,7 @@ import { card, inp, btn, btnGhost, localDate } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 type Param = 'month' | 'status' | 'department' | 'location'
 interface ReportDef { key: string; title: string; description: string; params: Param[]; columns?: string[] }
@@ -113,7 +114,7 @@ function ReportView({ t }: { t: ReportTable }) {
       </div>
       {t.note && <p className="px-4 py-2 text-xs text-s-amber border-b border-white/[0.06]">{t.note}</p>}
       {t.rows.length === 0
-        ? <p className="p-8 text-center text-sm text-white/40">Nothing to show.</p>
+        ? <CompactEmptyState message="Nothing to show." />
         : (
           <div className="overflow-x-auto max-h-[65vh]">
             <table className="w-full text-xs">

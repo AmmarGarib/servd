@@ -1,4 +1,5 @@
 import type { ReviewsBlock } from '../../lib/blocks'
+import { StarRating } from '../ui/Icons'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -33,9 +34,7 @@ export async function Reviews({ block, fallbackSlug }: { block: ReviewsBlock; fa
             <span style={{ fontSize: '2.25rem', fontWeight: 900, letterSpacing: '-0.02em' }}>
               {data.average.toFixed(1)}
             </span>
-            <span aria-hidden="true" style={{ fontSize: '1.25rem', color: 'var(--servd-green-dark)' }}>
-              {'★'.repeat(Math.round(data.average))}{'☆'.repeat(5 - Math.round(data.average))}
-            </span>
+            <StarRating value={data.average} size={22} color="var(--servd-green-dark)" />
           </div>
         )}
         <p style={{ color: 'var(--servd-mute)' }}>Based on {data.total} verified order{data.total === 1 ? '' : 's'}</p>
@@ -44,8 +43,8 @@ export async function Reviews({ block, fallbackSlug }: { block: ReviewsBlock; fa
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
         {visible.map((r) => (
           <article key={r.id} className="servd-card" style={{ padding: '1.4rem' }}>
-            <div aria-label={`${r.rating} out of 5`} style={{ color: 'var(--servd-green-dark)', fontSize: '1rem', marginBottom: '0.75rem' }}>
-              {'★'.repeat(r.rating)}<span style={{ color: 'rgba(0,0,0,0.15)' }}>{'★'.repeat(5 - r.rating)}</span>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <StarRating value={r.rating} size={16} color="var(--servd-green-dark)" />
             </div>
             {r.comment && (
               <p style={{ color: 'var(--servd-ink)', fontSize: '0.95rem', lineHeight: 1.5, marginBottom: '1rem' }}>

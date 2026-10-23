@@ -14,6 +14,7 @@
 // is MANAGERS only. Non-managers see it read-only: what is due at the dock and
 // what has come in, with the note "A manager takes the delivery in".
 
+import { Button, FieldLabel, Input, LinkButton, Textarea } from '@/components/finance/ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -27,6 +28,7 @@ import { NumberField } from '../../../components/ui/NumberField'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { asUploadBody, type PickedFile } from '@/components/files/recordFiles'
+import { FIcon } from '../../../components/finance/ui/icons'
 
 // The API's MANAGERS take a delivery in (owner decision 27) — the list comes
 // from the server (lib/roles.ts useManagerRoles).
@@ -231,13 +233,13 @@ export default function ReceivingPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/procurement" className="text-xs text-white/40 hover:text-white/70">← Procurement</Link>
+        <Link href="/procurement" className="text-xs text-s-muted hover:text-white/70">← Procurement</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">Receiving (dock door)</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Mark what physically arrived. Stock, the PO and the ingredient cost update together; short shipments and
           variances over 5% go to the Exceptions inbox. Whoever raised a PO can&apos;t receive it.
         </p>
-        <p className="text-xs text-white/55 mt-2 max-w-2xl">
+        <p className="text-xs text-s-muted mt-2 max-w-2xl">
           Goods are booked to <span className="font-semibold">Goods received not invoiced</span> until the bill arrives, then the bill clears
           them. Track what is still unbilled on{' '}
           <Link href="/procurement/grni" className="text-primary-ink hover:underline">Received, not billed</Link>.
@@ -248,9 +250,9 @@ export default function ReceivingPage() {
         {feedback && (
           <div role="status" className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{
-              background: feedback.tone === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgb(var(--erp-accent-rgb) / 0.14)',
+              background: feedback.tone === 'warn' ? 'color-mix(in srgb, var(--erp-warning) 10%, transparent)' : 'rgb(var(--erp-accent-rgb) / 0.14)',
               color: feedback.tone === 'warn' ? 'var(--erp-warning)' : 'var(--erp-success)',
-              border: `1px solid ${feedback.tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'rgb(var(--erp-accent-rgb) / 0.45)'}`,
+              border: `1px solid ${feedback.tone === 'warn' ? 'color-mix(in srgb, var(--erp-warning) 30%, transparent)' : 'rgb(var(--erp-accent-rgb) / 0.45)'}`,
             }}>
             {feedback.text}
           </div>
@@ -264,12 +266,12 @@ export default function ReceivingPage() {
             <div role="status" className="rounded-xl px-4 py-3 text-sm font-bold"
               style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
               A manager takes the delivery in.
-              <span className="block text-xs font-normal text-white/55 mt-1">
+              <span className="block text-xs font-normal text-s-muted mt-1">
                 You can see what is due at the dock and what has arrived. Whoever orders the goods does not also sign for them.
               </span>
             </div>
             <Section title="Due at the dock">
-              {pos.length === 0 && !posError && <p className="text-xs text-white/35 italic">No purchase orders waiting to be received.</p>}
+              {pos.length === 0 && !posError && <p className="text-xs text-s-muted italic">No purchase orders waiting to be received.</p>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {pos.map((po) => {
                   const outstanding = po.lines.filter((l) => l.quantityOrdered - l.quantityReceived > 0)
@@ -280,7 +282,7 @@ export default function ReceivingPage() {
                         border: `1px solid ${po.id === wantedPo ? 'var(--erp-accent)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
                       }}>
                       <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
-                      <p className="text-xs text-white/45">{po.supplier.name}{po.status === 'partial' ? ' · part-received' : ''}</p>
+                      <p className="text-xs text-s-muted">{po.supplier.name}{po.status === 'partial' ? ' · part-received' : ''}</p>
                       <ul className="mt-2 space-y-0.5">
                         {outstanding.map((l) => (
                           <li key={l.id} className="text-xs text-white/65 flex justify-between gap-2">
@@ -308,9 +310,9 @@ export default function ReceivingPage() {
             <div className="flex items-center justify-between rounded-lg p-3" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.12)', border: '1px solid var(--erp-accent)' }}>
               <div>
                 <p className="text-sm font-bold text-white/90">{poLabel(selectedPo)} · {selectedPo.supplier.name}</p>
-                <p className="text-xs text-white/45">{selectedPo.status === 'partial' ? 'Part-received — showing what is still outstanding' : 'Sent'}</p>
+                <p className="text-xs text-s-muted">{selectedPo.status === 'partial' ? 'Part-received — showing what is still outstanding' : 'Sent'}</p>
               </div>
-              <button type="button" onClick={clearPo} className="text-xs text-white/50 hover:text-white/80">Change</button>
+              <LinkButton tone="muted" type="button" onClick={clearPo}>Change</LinkButton>
             </div>
           ) : (
             <>
@@ -321,7 +323,7 @@ export default function ReceivingPage() {
                 </div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {pos.length === 0 && !posError && <p className="text-xs text-white/35 italic">No purchase orders waiting to be received.</p>}
+                {pos.length === 0 && !posError && <p className="text-xs text-s-muted italic">No purchase orders waiting to be received.</p>}
                 {pos.map((po) => {
                   const own = raisedByMe(po, me)
                   return (
@@ -330,8 +332,8 @@ export default function ReceivingPage() {
                       className="rounded-lg p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                       style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                       <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
-                      <p className="text-xs text-white/45">{po.supplier.name} · {po.lines.length} lines{po.status === 'partial' ? ' · part-received' : ''}</p>
-                      {own && <p className="text-[11px] text-white/55 mt-1">You raised this, a colleague receives it</p>}
+                      <p className="text-xs text-s-muted">{po.supplier.name} · {po.lines.length} lines{po.status === 'partial' ? ' · part-received' : ''}</p>
+                      {own && <p className="text-xs text-s-muted mt-1">You raised this, a colleague receives it</p>}
                     </button>
                   )
                 })}
@@ -348,7 +350,7 @@ export default function ReceivingPage() {
         </Section>
 
         <Section title="Step 2 — Mark received quantities">
-          {lines.length === 0 && <p className="text-xs text-white/35 italic">{poId ? 'Nothing outstanding on this PO.' : 'Pick a PO above or add lines.'}</p>}
+          {lines.length === 0 && <p className="text-xs text-s-muted italic">{poId ? 'Nothing outstanding on this PO.' : 'Pick a PO above or add lines.'}</p>}
           {poId && lines.length > 0 && (
             <button type="button" onClick={fillAllAsOrdered}
               className="rounded-lg border border-white/[0.12] px-3 py-2 text-xs font-bold text-white/80 hover:border-primary hover:text-primary-ink [@media(pointer:coarse)]:min-h-11">
@@ -363,8 +365,8 @@ export default function ReceivingPage() {
             return (
               <div key={l.key} className="rounded-lg p-3 space-y-2 mt-2"
                 style={{
-                  background: flag ? 'rgba(245,158,11,0.05)' : 'rgb(var(--fg-rgb) / 0.025)',
-                  border: `1px solid ${flag ? 'rgba(245,158,11,0.3)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
+                  background: flag ? 'color-mix(in srgb, var(--erp-warning) 5%, transparent)' : 'rgb(var(--fg-rgb) / 0.025)',
+                  border: `1px solid ${flag ? 'color-mix(in srgb, var(--erp-warning) 30%, transparent)' : 'rgb(var(--fg-rgb) / 0.06)'}`,
                 }}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-2 items-center">
                   {l.poLineId ? (
@@ -375,28 +377,28 @@ export default function ReceivingPage() {
                       {items.map((i) => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
                     </Select>
                   )}
-                  {l.outstanding != null && <span className="text-xs text-white/45 font-mono whitespace-nowrap">Due: {l.outstanding} {l.unit}</span>}
+                  {l.outstanding != null && <span className="text-xs text-s-muted font-mono whitespace-nowrap">Due: {l.outstanding} {l.unit}</span>}
                   <NumberField decimals={3} min={0} value={numOf(l.receivedQty)} onValueChange={(v) => patchLine(l.key, { receivedQty: textOf(v) })}
                     aria-label={`Received quantity${l.description ? ` of ${l.description}` : ''}`}
                     className={fieldCls + ' w-24'} placeholder="Recv" />
                   <div className="flex items-center gap-1">
-                    <span className="text-xs text-white/45 w-10">{l.unit}</span>
-                    {!poId && <button type="button" onClick={() => rmLine(l.key)} className="text-white/30 hover:text-s-red text-sm px-2 [@media(pointer:coarse)]:min-h-11" aria-label="Remove line">×</button>}
+                    <span className="text-xs text-s-muted w-10">{l.unit}</span>
+                    {!poId && <button type="button" onClick={() => rmLine(l.key)} className="text-white/30 hover:text-s-red text-sm px-2 [@media(pointer:coarse)]:min-h-11" aria-label="Remove line"><FIcon name="x" size={14} /></button>}
                   </div>
                 </div>
                 {!l.poLineId && (
                   <div className="flex items-center gap-2">
-                    <label htmlFor={`cost-${l.key}`} className="text-xs text-white/55 whitespace-nowrap">Unit cost paid (PKR per {l.unit || 'unit'})</label>
+                    <FieldLabel htmlFor={`cost-${l.key}`} className="whitespace-nowrap">Unit cost paid (PKR per {l.unit || 'unit'})</FieldLabel>
                     <MoneyInput id={`cost-${l.key}`} value={centsOf(l.unitCostPkr)} onChange={(c) => patchLine(l.key, { unitCostPkr: pkrOf(c) })}
                       className={fieldCls + ' w-32'} placeholder="0.00" />
                   </div>
                 )}
                 {variance != null && Math.abs(variance) > 0.5 && (
-                  <p className="text-[11px] font-bold" style={{ color: flag ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.55)' }}>
+                  <p className="text-xs font-bold" style={{ color: flag ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.55)' }}>
                     {variance > 0 ? '+' : ''}{variance.toFixed(1)}% {flag ? '— will flag' : ''}
                   </p>
                 )}
-                <input value={l.notes} onChange={(e) => patchLine(l.key, { notes: e.target.value })}
+                <Input value={l.notes} onChange={(e) => patchLine(l.key, { notes: e.target.value })}
                   aria-label={`Note for ${l.description || 'this line'}`}
                   placeholder="Note (damaged, wrong cut, expiry near…)" className={fieldCls + ' text-xs'} />
               </div>
@@ -404,41 +406,40 @@ export default function ReceivingPage() {
           })}
           </div>
           {!poId && supplierId && (
-            <button type="button" onClick={addBlankLine} className="text-xs text-primary-ink hover:underline mt-2">+ Add line</button>
+            <LinkButton type="button" onClick={addBlankLine} className="mt-2">+ Add line</LinkButton>
           )}
         </Section>
 
         <Section title="Step 3 — Outlet and evidence">
           {activeOutlets.length > 0 && (
             <div className="mb-3">
-              <label htmlFor="recv-outlet" className="text-xs text-white/55">Outlet it arrived at (optional)</label>
+              <FieldLabel htmlFor="recv-outlet">Outlet it arrived at (optional)</FieldLabel>
               <Select id="recv-outlet" value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls + ' mt-1'}>
                 <option value="">No particular outlet</option>
                 {activeOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </Select>
-              <p className="text-[11px] text-white/35 mt-1">Stock is still one pool per company; the outlet is recorded for when per-outlet stock arrives.</p>
+              <p className="text-xs text-s-muted mt-1">Stock is still one pool per company; the outlet is recorded for when per-outlet stock arrives.</p>
             </div>
           )}
           <div id="recv-photo">
             <PendingFilesPicker ownerType="goods_receipt" max={5} value={photos} onChange={setPhotos} label="Dock-door photos" hint="Required above your company's photo threshold. Settles supplier disputes later." />
           </div>
           <FormField className="mt-3" label="Notes">
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Driver name, time, anything off about the delivery." className={fieldCls} />
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Driver name, time, anything off about the delivery." className={fieldCls} />
           </FormField>
         </Section>
 
         {submit.error && <ErrorBanner label="Save failed:" error={submit.error} />}
         {tried && problem && <p role="alert" className="text-xs font-bold text-right" style={{ color: 'var(--erp-warning)' }}>{problem}</p>}
 
-        <p className="text-xs text-white/50 text-right">
+        <p className="text-xs text-s-muted text-right">
           Booked to Goods received not invoiced until the bill arrives.
         </p>
 
         <div className="flex justify-end gap-3 pt-2">
-          <button type="submit" disabled={submit.isPending}
-            className="rounded-xl bg-primary px-6 py-3 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
+          <Button type="submit" disabled={submit.isPending}>
             {submit.isPending ? 'Saving…' : 'Accept delivery →'}
-          </button>
+          </Button>
         </div>
         </form>)}
 
@@ -470,6 +471,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function ErrorBanner({ label, error }: { label: string; error: unknown }) {
   const msg = error instanceof Error ? stockErrorText(error, 'Something went wrong') : 'Something went wrong'
-  return <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--erp-danger)' }}><strong>{label}</strong> {msg}</div>
+  return <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 30%, transparent)', color: 'var(--erp-danger)' }}><strong>{label}</strong> {msg}</div>
 }
-const fieldCls = "w-full rounded-lg bg-white/[0.03] border border-white/[0.08] px-3 py-2 text-sm text-white/85 focus:border-primary focus:outline-none"
+const fieldCls = 's-input w-full'

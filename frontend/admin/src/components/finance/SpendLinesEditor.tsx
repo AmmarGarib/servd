@@ -22,6 +22,7 @@
 // can say "not equipment" with a reason), and a brand, item or CapEx line of
 // another company is 422.
 
+import { CheckLabel, Input, LinkButton } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { MoneyInput } from '../ui/MoneyInput'
@@ -182,17 +183,17 @@ export function SpendLinesEditor({
         return (
           <div key={i} className="rounded-lg p-3 space-y-2" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-white/40">Line {i + 1}</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-white/40">Line {i + 1}</span>
               <div className="flex items-center gap-2">
                 {offered.length > 1 && (
                   <Select value={l.kind} onChange={(e) => switchKind(i, e.target.value as SpendLineKind)}
-                    className="rounded-md px-2 py-1 text-[11px] font-bold" aria-label={`Line ${i + 1} kind`}
+                    className="rounded-md px-2 py-1 text-xs font-bold" aria-label={`Line ${i + 1} kind`}
                     style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
                     {offered.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
                   </Select>
                 )}
                 {lines.length > 1 && (
-                  <button type="button" onClick={() => onChange(lines.filter((_, j) => j !== i))} className="text-[11px] text-white/45 hover:text-white">Remove</button>
+                  <LinkButton tone="muted" type="button" onClick={() => onChange(lines.filter((_, j) => j !== i))}>Remove</LinkButton>
                 )}
               </div>
             </div>
@@ -208,18 +209,18 @@ export function SpendLinesEditor({
                   {items.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>)}
                 </Select>
                 <div className="grid grid-cols-3 gap-2">
-                  <input value={l.quantity ?? ''} onChange={(e) => set(i, { quantity: e.target.value })} inputMode="decimal"
+                  <Input value={l.quantity ?? ''} onChange={(e) => set(i, { quantity: e.target.value })} inputMode="decimal"
                     placeholder="Quantity" className={fieldClassName} aria-label={`Line ${i + 1} quantity`} />
-                  <input value={l.unit ?? ''} onChange={(e) => set(i, { unit: e.target.value })} list={`spend-units-${i}`}
+                  <Input value={l.unit ?? ''} onChange={(e) => set(i, { unit: e.target.value })} list={`spend-units-${i}`}
                     placeholder={item?.unit ?? 'Unit'} className={fieldClassName} aria-label={`Line ${i + 1} unit`} />
                   <datalist id={`spend-units-${i}`}>{[...new Set([item?.unit, ...UNITS].filter(Boolean))].map((u) => <option key={u} value={u!} />)}</datalist>
                   <MoneyInput value={l.amountCents} onChange={(v) => set(i, { amountCents: v })} className={fieldClassName} ariaLabel={`Line ${i + 1} amount in rupees`} />
                 </div>
-                {item && <p className="text-[10px] text-white/40">Comes into stock as {item.unit}; booked to its inventory account at what was paid.</p>}
+                {item && <p className="text-xs text-s-muted">Comes into stock as {item.unit}; booked to its inventory account at what was paid.</p>}
               </>
             ) : l.kind === 'capex' ? (
               <>
-                <input value={l.description} onChange={(e) => set(i, { description: e.target.value })} maxLength={200}
+                <Input value={l.description} onChange={(e) => set(i, { description: e.target.value })} maxLength={200}
                   placeholder="What was bought (e.g. Blender)" className={fieldClassName} aria-label={`Line ${i + 1} description`} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Select value={l.capexLineId ?? ''} onChange={(e) => set(i, { capexLineId: e.target.value })} className={fieldClassName} aria-label={`Line ${i + 1} CapEx line`}>
@@ -231,7 +232,7 @@ export function SpendLinesEditor({
               </>
             ) : (
               <>
-                <input value={l.description} onChange={(e) => set(i, { description: e.target.value })} maxLength={200}
+                <Input value={l.description} onChange={(e) => set(i, { description: e.target.value })} maxLength={200}
                   placeholder="What was bought (e.g. Printer paper)" className={fieldClassName} aria-label={`Line ${i + 1} description`} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Select value={l.categoryKey || (l.accountCode ? `acct:${l.accountCode}` : '')}
@@ -262,12 +263,12 @@ export function SpendLinesEditor({
             )}
             {l.kind === 'expense' && l.notEquipment !== undefined && (
               <div className="space-y-1">
-                <label className="flex items-center gap-2 text-xs text-white/60">
+                <CheckLabel className="flex items-center gap-2 text-xs text-white/60">
                   <input type="checkbox" checked={!!l.notEquipment} onChange={(e) => set(i, { notEquipment: e.target.checked })} />
                   This is not equipment (finance or the CEO only)
-                </label>
+                </CheckLabel>
                 {l.notEquipment && (
-                  <input value={l.notEquipmentReason ?? ''} onChange={(e) => set(i, { notEquipmentReason: e.target.value })}
+                  <Input value={l.notEquipmentReason ?? ''} onChange={(e) => set(i, { notEquipmentReason: e.target.value })}
                     placeholder="Why it is an expense (at least 10 characters)" className={fieldClassName} />
                 )}
               </div>
@@ -276,8 +277,8 @@ export function SpendLinesEditor({
         )
       })}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <button type="button" onClick={() => onChange([...lines, emptyLine(Math.max(0, totalCents - sum))])} disabled={lines.length >= 20}
-          className="text-xs font-bold disabled:opacity-40" style={{ color: 'var(--erp-primary)' }}>+ Add a line</button>
+        <LinkButton type="button" onClick={() => onChange([...lines, emptyLine(Math.max(0, totalCents - sum))])} disabled={lines.length >= 20}
+           style={{ color: 'var(--erp-primary)' }}>+ Add a line</LinkButton>
         <span className="text-xs font-bold" style={{ color: balanced ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
           {mode === 'equal'
             ? <>Lines {pkr(sum)} of {pkr(totalCents)}{sum !== totalCents ? ` — ${sum > totalCents ? 'over' : 'short'} by ${pkr(Math.abs(totalCents - sum))}` : ''}</>

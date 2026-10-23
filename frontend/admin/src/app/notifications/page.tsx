@@ -4,6 +4,8 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,9 +74,9 @@ const sel =
 const DEVICE_TYPES: DeviceType[] = ['tablet', 'mobile', 'kiosk']
 
 const DEVICE_ICONS: Record<DeviceType, string> = {
-  tablet: '🖥',
-  mobile: '📱',
-  kiosk: '🖨',
+  tablet: 'monitor',
+  mobile: 'phone',
+  kiosk: 'printer',
 }
 
 function useLocalHistory(): [
@@ -113,14 +115,8 @@ function useLocalHistory(): [
 function RegisteredDevices({ tokens }: { tokens: TokenEntry[] }) {
   if (tokens.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-s-border py-12 text-center">
-        <p className="text-3xl mb-3">📱</p>
-        <p className="font-semibold text-s-text">No devices registered</p>
-        <p className="text-sm text-s-muted mt-1 max-w-xs mx-auto">
-          Install the tablet app and sign in to register a device for push
-          notifications.
-        </p>
-      </div>
+      <CompactEmptyState message="No devices registered" detail="Install the tablet app and sign in to register a device for push
+          notifications." />
     )
   }
 
@@ -173,7 +169,7 @@ function RegisteredDevices({ tokens }: { tokens: TokenEntry[] }) {
                             key={dt}
                             className="flex items-center gap-1 text-xs text-s-muted"
                           >
-                            <span>{DEVICE_ICONS[dt]}</span>
+                            <NavIcon name={DEVICE_ICONS[dt]} size={14} />
                             <span className="font-semibold text-s-text">
                               {counts[dt]}
                             </span>
@@ -375,7 +371,7 @@ function SendBroadcast({
                         : 'border-s-border bg-s-surface text-s-muted hover:border-primary/50'
                     }`}
                   >
-                    <span>{DEVICE_ICONS[dt]}</span>
+                    <NavIcon name={DEVICE_ICONS[dt]} size={14} />
                     {dt}
                   </button>
                 ))}

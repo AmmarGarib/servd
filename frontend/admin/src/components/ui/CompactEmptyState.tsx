@@ -7,6 +7,10 @@ interface Props {
   icon?: ReactNode
   /** One line: what is empty and, if needed, what to do. */
   message: string
+  /** Optional second line (smaller). Can hold links. */
+  detail?: ReactNode
+  /** 'dark' = kitchen screens (`.erp-kitchen-dark`, kds-* tokens). */
+  tone?: 'light' | 'dark'
   action?: { label: string; onClick?: () => void; href?: string }
 }
 
@@ -21,12 +25,17 @@ const TrayIcon = (
  * The one empty-state style for operations pages (owner ERP-15, 2026-10-16):
  * an icon, one line, one main button. No examples, no explainers.
  */
-export function CompactEmptyState({ icon, message, action }: Props) {
-  const cls = 'rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90'
+export function CompactEmptyState({ icon, message, detail, tone = 'light', action }: Props) {
+  const dark = tone === 'dark'
+  const cls = dark
+    ? 'rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-kds-bg hover:opacity-90'
+    : 'rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90'
   return (
-    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-s-border px-6 py-10 text-center">
-      <span className="text-s-muted">{icon ?? TrayIcon}</span>
-      <p className="text-sm font-semibold text-s-text">{message}</p>
+    <div className={`flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-10 text-center ${
+      dark ? 'border-kds-border bg-kds-card' : 'border-s-border'}`}>
+      <span className={dark ? 'text-kds-subtext' : 'text-s-muted'}>{icon ?? TrayIcon}</span>
+      <p className={`text-sm font-semibold ${dark ? 'text-kds-text' : 'text-s-text'}`}>{message}</p>
+      {detail && <p className={`-mt-1 text-xs ${dark ? 'text-kds-subtext' : 'text-s-muted'}`}>{detail}</p>}
       {action && (action.href
         ? <Link href={action.href} className={cls}>{action.label}</Link>
         : <button type="button" onClick={action.onClick} className={cls}>{action.label}</button>)}

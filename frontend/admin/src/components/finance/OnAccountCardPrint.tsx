@@ -15,6 +15,7 @@
 // cannot be shown again. Colours are ERP tokens only; the card uses the
 // surface (white) and ink tokens, so it prints dark on white.
 
+import { Button } from '@/components/finance/ui'
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { Modal } from '../ui/Modal'
@@ -87,15 +88,15 @@ export function OnAccountCardPrint({ code, clientName, accountNumber, cardLabel,
           <div className="oa-card flex gap-3 rounded-xl p-3" style={{ background: 'var(--surface)', color: 'rgb(var(--ink-rgb))', border: '1px solid rgb(var(--ink-rgb) / 0.3)' }}>
             <div className="flex shrink-0 items-center" style={{ width: '30mm' }}>
               {qr ? <img src={qr} alt="" style={{ width: '30mm', height: '30mm' }} />
-                : <span className="text-[10px]" style={{ color: 'rgb(var(--ink-rgb) / 0.7)' }}>{failed ? 'QR failed' : 'Drawing QR…'}</span>}
+                : <span className="text-xs" style={{ color: 'rgb(var(--ink-rgb) / 0.7)' }}>{failed ? 'QR failed' : 'Drawing QR…'}</span>}
             </div>
             <div className="flex min-w-0 flex-1 flex-col justify-between">
               <div>
-                <p className="text-[11px] font-black leading-tight break-words">{clientName}</p>
-                <p className="text-[10px]" style={{ color: 'rgb(var(--ink-rgb) / 0.7)' }}>{accountNumber} · {cardLabel}</p>
+                <p className="text-xs font-black leading-tight break-words">{clientName}</p>
+                <p className="text-xs" style={{ color: 'rgb(var(--ink-rgb) / 0.7)' }}>{accountNumber} · {cardLabel}</p>
               </div>
-              <p className="font-mono text-[11px] font-bold tracking-wide break-all">{groupCode(code)}</p>
-              <p className="text-[7px] leading-tight" style={{ color: 'rgb(var(--ink-rgb) / 0.7)' }}>
+              <p className="font-mono text-xs font-bold tracking-wide break-all">{groupCode(code)}</p>
+              <p className="text-xs leading-tight" style={{ color: 'rgb(var(--ink-rgb) / 0.7)' }}>
                 Valid only at {companyName ?? 'our'} outlets; report a lost card to finance.
               </p>
             </div>
@@ -103,9 +104,8 @@ export function OnAccountCardPrint({ code, clientName, accountNumber, cardLabel,
         </div>
 
         <div className="mt-5 flex gap-2">
-          <button type="button" onClick={() => { setPrinted(true); window.print() }} disabled={!qr}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-black text-primary-on disabled:opacity-50">Print card</button>
-          <button type="button" onClick={() => void close()} className="rounded-lg px-4 py-2 text-sm font-bold text-white/60 hover:text-white">Close</button>
+          <Button type="button" onClick={() => { setPrinted(true); window.print() }} disabled={!qr}>Print card</Button>
+          <Button variant="ghost" type="button" onClick={() => void close()}>Close</Button>
         </div>
       </div>
     </Modal>

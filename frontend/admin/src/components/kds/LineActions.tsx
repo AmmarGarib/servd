@@ -60,7 +60,7 @@ export function LineStateBadge({ status, small = false }: { status: LineStatus; 
   const held = status === 'held'
   return (
     <span className={`inline-flex items-center rounded-md border font-black uppercase tracking-[0.15em] ${
-      small ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'
+      small ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-0.5 text-xs'
     } ${held ? 'border-kds-amber/50 bg-kds-amber/15 text-kds-amber' : 'border-kds-red/50 bg-kds-red/15 text-kds-red'}`}>
       {held ? 'Held' : 'Remake'}
     </span>
@@ -116,7 +116,7 @@ export function RecallStrip({ stationId, actions }: { stationId: string; actions
   if (items.length === 0) return null
   return (
     <section>
-      <p className="text-[10px] uppercase tracking-[0.2em] font-black text-kds-subtext mb-2">
+      <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-2">
         Recently bumped — recall for a remake ({items.length})
       </p>
       <div className="flex flex-wrap gap-2">
@@ -129,7 +129,7 @@ export function RecallStrip({ stationId, actions }: { stationId: string; actions
                   {it.qty > 1 && <span className="text-kds-amber mr-1">{it.qty}×</span>}
                   {it.itemName}
                 </p>
-                <p className="text-[10px] text-kds-subtext">
+                <p className="text-xs text-kds-subtext">
                   {it.order.tableLabel ?? it.order.customerName ?? 'Walk-in'} · #{orderRef(it.order.id)}
                   {it.completedAt && <> · {formatDistanceToNowStrict(new Date(it.completedAt))} ago</>}
                 </p>
@@ -138,7 +138,7 @@ export function RecallStrip({ stationId, actions }: { stationId: string; actions
                 type="button"
                 onClick={() => actions.recall.mutate(it.itemId)}
                 disabled={busy}
-                className="shrink-0 min-h-11 rounded-lg border border-kds-red/60 px-3 py-1 text-[11px] font-black text-kds-red hover:bg-kds-red/10 disabled:opacity-40">
+                className="shrink-0 min-h-11 rounded-lg border border-kds-red/60 px-3 py-1 text-xs font-black text-kds-red hover:bg-kds-red/10 disabled:opacity-40">
                 {busy ? 'Recalling…' : 'Recall'}
               </button>
             </div>

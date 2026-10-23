@@ -1632,6 +1632,9 @@ a { color: inherit; }
 }
 .servd-btn-dark:hover { background: var(--servd-black); }
 
+/* Ordering / checkout buttons are rounded rectangles, never pills (SF-4). */
+.servd-btn-rect { border-radius: var(--servd-btn-radius, 0.5rem); }
+
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 
 .servd-card {
@@ -2441,7 +2444,7 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
    2026-10-16, SF-5). Buttons in ordering and checkout are rounded rectangles
    (--servd-btn-radius), never pills (SF-4). Stackd's bar is plum, never navy. */
 :root {
-  --servd-btn-radius: 0.75rem;
+  --servd-btn-radius: 0.5rem; /* reads as a rectangle even on a 30px button */
   --servd-order-bg: #ffffff;
   --servd-order-nav-bg: rgba(255,255,255,0.95);
   --servd-order-card: #ffffff;

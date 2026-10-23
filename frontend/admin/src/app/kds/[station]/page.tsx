@@ -56,10 +56,11 @@ interface RecipeData {
 type FulfilmentType = 'dine_in' | 'takeout' | 'delivery'
 
 // Loud per-card badge so the line cook sees plate-vs-package at a glance.
-const FULFILMENT_META: Record<FulfilmentType, { label: string; short: string; accent: string; bg: string }> = {
-  dine_in:  { label: 'Dine-in',  short: 'PLATE',    accent: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
-  takeout:  { label: 'Takeout',  short: 'PACK',     accent: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-  delivery: { label: 'Delivery', short: 'PACK+LBL', accent: '#ec4899', bg: 'rgba(236,72,153,0.12)' },
+// Colours are kds-* tokens (green / amber / violet), never hex.
+const FULFILMENT_META: Record<FulfilmentType, { label: string; short: string; text: string; badge: string; card: string }> = {
+  dine_in:  { label: 'Dine-in',  short: 'PLATE',    text: 'text-kds-green',      badge: 'bg-kds-green/10 border-kds-green/30',           card: 'border-kds-green/35' },
+  takeout:  { label: 'Takeout',  short: 'PACK',     text: 'text-kds-amber',      badge: 'bg-kds-amber/10 border-kds-amber/30',           card: 'border-kds-amber/35' },
+  delivery: { label: 'Delivery', short: 'PACK+LBL', text: 'text-source-manual',  badge: 'bg-source-manual/10 border-source-manual/30',   card: 'border-source-manual/35' },
 }
 
 interface StepTicket {
@@ -197,8 +198,7 @@ export default function StationKdsPage() {
         </Link>
         <div className="flex items-center gap-2">
           {waitingCount > 0 && (
-            <span className="text-xs font-bold rounded-full px-2.5 py-1"
-              style={{ background: 'rgba(59,130,246,0.12)', color: '#93C5FD' }}>
+            <span className="text-xs font-bold rounded-full px-2.5 py-1 bg-kds-blue/10 text-kds-blue">
               {waitingCount} on deck
             </span>
           )}
@@ -209,15 +209,14 @@ export default function StationKdsPage() {
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         {/* Cooking right now */}
         <section>
-          <p className="text-[10px] uppercase tracking-[0.2em] font-black text-kds-subtext mb-3">
+          <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-3">
             Cooking now ({cooking.length})
           </p>
 
           {isLoading && <p className="text-sm text-kds-subtext">Loading…</p>}
 
           {!isLoading && cooking.length === 0 && (
-            <div className="rounded-2xl p-12 text-center"
-              style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="rounded-2xl p-12 text-center border border-kds-border bg-kds-card/40">
               <Check size={36} aria-hidden="true" className="mx-auto mb-2 text-kds-green" />
               <p className="text-base font-bold text-kds-text">All clear</p>
               <p className="text-xs text-kds-subtext mt-1">New tickets will appear here when expo fires.</p>
@@ -250,8 +249,7 @@ export default function StationKdsPage() {
                     : (t as StepTicket).instruction)
                 : null
               return (
-                <div key={id} className="rounded-2xl relative overflow-hidden"
-                  style={{ background: '#1f2230', border: `2px solid ${fm.accent}55` }}
+                <div key={id} className={`rounded-2xl relative overflow-hidden border-2 bg-kds-card ${fm.card}`}
                   dir={isUrdu ? 'rtl' : 'ltr'}>
                   {/* Card body — clickable, toggles the instruction panel.
                       The Bump button is outside this surface so it doesn't
@@ -260,12 +258,11 @@ export default function StationKdsPage() {
                     onClick={() => setExpandedId(expanded ? null : id)}
                     className="w-full text-left p-4 cursor-pointer hover:bg-white/[0.02] transition-colors">
                     {/* Loud fulfilment badge — first thing the cook sees */}
-                    <div className="absolute -top-2 left-3 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-[0.15em]"
-                      style={{ background: fm.bg, color: fm.accent, border: `1px solid ${fm.accent}50` }}>
+                    <div className={`absolute -top-2 left-3 px-2 py-0.5 rounded-md text-xs font-black uppercase tracking-[0.15em] border bg-kds-card ${fm.badge} ${fm.text}`}>
                       <FulfilmentIcon type={t.order.fulfilmentType} size={12} /> {fm.short}
                       {t.order.tableLabel && <span className="ml-1 opacity-80">· {t.order.tableLabel}</span>}
                     </div>
-                    <div className="flex items-center justify-between mb-2 mt-1 text-[10px] uppercase tracking-wider font-bold">
+                    <div className="flex items-center justify-between mb-2 mt-1 text-xs uppercase tracking-wider font-bold">
                       <span className="text-kds-subtext">{t.order.concept.name} · {t.order.source}</span>
                       <span className="text-kds-amber">{elapsed}</span>
                     </div>
@@ -275,24 +272,24 @@ export default function StationKdsPage() {
                       {t.itemName}
                     </p>
                     {stepInstruction && (
-                      <p className="text-sm font-semibold mt-2 leading-snug" style={{ color: '#86EFAC' }}>
+                      <p className="text-sm font-semibold mt-2 leading-snug text-kds-green">
                         <ArrowRight size={14} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" />{stepInstruction}
                       </p>
                     )}
                     {t.itemNotes && (
-                      <p className="text-xs italic mt-1.5" style={{ color: '#FCD34D' }}>
+                      <p className="text-xs italic mt-1.5 text-kds-amber">
                         <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{t.itemNotes}
                       </p>
                     )}
-                    <p className="text-[11px] text-kds-subtext mt-2">
+                    <p className="text-xs text-kds-subtext mt-2">
                       {t.order.customerName ?? (isUrdu ? 'مہمان' : 'Walk-in')} · #{orderRef(t.order.id)}
                     </p>
                     {eta > 0 && (
-                      <p className="text-[10px] text-kds-subtext mt-1">
+                      <p className="text-xs text-kds-subtext mt-1">
                         {isUrdu ? 'ہدف' : 'Target'}: {Math.round(eta)}s
                       </p>
                     )}
-                    <p className="text-[10px] text-kds-subtext/60 mt-2 italic">
+                    <p className="text-xs text-kds-subtext/60 mt-2 italic">
                       {expanded ? <ChevronUp size={12} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" /> : <ChevronDown size={12} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" />}
                       {expanded ? (isUrdu ? 'بند کریں' : 'Hide instructions') : (isUrdu ? 'ہدایات' : 'Tap for full instructions')}
                     </p>
@@ -340,17 +337,15 @@ export default function StationKdsPage() {
         {/* Waiting (step deps not yet clear) */}
         {waiting.length > 0 && (
           <section>
-            <p className="text-[10px] uppercase tracking-[0.2em] font-black text-kds-subtext mb-3">
+            <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-3">
               On deck — waiting on prior steps ({waiting.length})
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
               {waiting.map((t) => {
                 const fm = FULFILMENT_META[t.order.fulfilmentType] ?? FULFILMENT_META.dine_in
                 return (
-                  <div key={t.stepId} className="rounded-2xl p-4 opacity-50"
-                    style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
-                    <p className="text-[10px] uppercase tracking-wider font-bold mb-2"
-                      style={{ color: fm.accent }}>
+                  <div key={t.stepId} className="rounded-2xl p-4 opacity-50 border border-dashed border-kds-border bg-kds-card/40">
+                    <p className={`text-xs uppercase tracking-wider font-bold mb-2 ${fm.text}`}>
                       <FulfilmentIcon type={t.order.fulfilmentType} size={11} /> {fm.short} · {t.order.concept.name} · waiting
                     </p>
                     <p className="text-base font-bold text-kds-text/70 leading-tight">
@@ -450,7 +445,7 @@ function StationInstructionPanel({
       {/* Per-step recipe (structured) — preferred over free-text when present */}
       {data.recipeSteps && data.recipeSteps.length > 0 ? (
         <div>
-          <p className="text-[10px] font-black uppercase tracking-wider text-kds-subtext mb-2">
+          <p className="text-xs font-black uppercase tracking-wider text-kds-subtext mb-2">
             {isUrdu ? 'ترکیب' : 'Recipe steps'}
           </p>
           <ol className="space-y-1.5">
@@ -458,12 +453,12 @@ function StationInstructionPanel({
               const text = isUrdu ? (s.instructionUrdu || s.instruction) : s.instruction
               return (
                 <li key={s.id} className="flex items-start gap-2.5 text-kds-text leading-snug">
-                  <span className="shrink-0 h-5 w-5 rounded-full bg-white/10 text-[10px] font-black flex items-center justify-center mt-0.5">
+                  <span className="shrink-0 h-5 w-5 rounded-full bg-white/10 text-xs font-black flex items-center justify-center mt-0.5">
                     {idx + 1}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px]">{text}</p>
-                    <p className="text-[10px] text-kds-subtext mt-0.5">
+                    <p className="text-xs text-kds-subtext mt-0.5">
                       {s.stationName ?? '—'} · {s.estimatedSeconds}s
                     </p>
                   </div>
@@ -474,7 +469,7 @@ function StationInstructionPanel({
         </div>
       ) : freeText ? (
         <div>
-          <p className="text-[10px] font-black uppercase tracking-wider text-kds-subtext mb-2">
+          <p className="text-xs font-black uppercase tracking-wider text-kds-subtext mb-2">
             {isUrdu ? 'تیاری' : 'Method'}
           </p>
           <p className="text-[13px] text-kds-text whitespace-pre-wrap leading-snug">{freeText}</p>
@@ -488,7 +483,7 @@ function StationInstructionPanel({
       {/* Ingredients — handy for the cook to double-check mise en place */}
       {data.ingredients.length > 0 && (
         <div>
-          <p className="text-[10px] font-black uppercase tracking-wider text-kds-subtext mb-1.5">
+          <p className="text-xs font-black uppercase tracking-wider text-kds-subtext mb-1.5">
             {isUrdu ? 'اجزاء' : 'Ingredients'}
           </p>
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
@@ -505,7 +500,7 @@ function StationInstructionPanel({
       )}
 
       {data.notes && (
-        <p className="text-[11px] italic text-kds-amber/80 border-t border-white/[0.04] pt-2">
+        <p className="text-xs italic text-kds-amber/80 border-t border-white/[0.04] pt-2">
           <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{data.notes}
         </p>
       )}

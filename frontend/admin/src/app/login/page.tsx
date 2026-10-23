@@ -310,7 +310,7 @@ export default function StaffLoginPage() {
 
       {/* Centre card */}
       <div className="flex-1 flex items-center justify-center px-4 py-10">
-        <div className="w-full max-w-sm rounded-2xl bg-white p-6 sm:p-8" style={{ background: '#ffffff', border: '1px solid var(--border)', boxShadow: '0 8px 32px rgb(var(--ink-rgb) / 0.08)' }}>
+        <div className="w-full max-w-sm rounded-2xl bg-white p-6 sm:p-8" style={{ background: 'var(--surface)', border: '1px solid var(--border)', boxShadow: '0 8px 32px rgb(var(--ink-rgb) / 0.08)' }}>
 
           <div className="text-center mb-8">
             <p className="text-xs font-bold text-success uppercase tracking-[0.25em] mb-2">

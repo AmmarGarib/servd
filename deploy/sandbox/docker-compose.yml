@@ -200,7 +200,9 @@ services:
   # Its OWN tunnel ("servd-practice"), its own token. The token goes in through
   # the environment (TUNNEL_TOKEN), so it never shows in `docker ps`.
   sandbox-cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pinned (owner open item F10): 'latest' let any compose pull swap the tunnel
+    # under live. Bump deliberately after checking the release notes.
+    image: cloudflare/cloudflared:2026.10.1
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:

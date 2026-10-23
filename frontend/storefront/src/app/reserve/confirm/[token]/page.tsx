@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticLink } from '@/components/ui/MagneticButton'
+import { CheckIcon } from '../../../../components/ui/Icons'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -46,7 +47,7 @@ export default function ReserveConfirmPage() {
             </p>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button onClick={() => act('confirm')} disabled={busy} className="servd-btn-primary" style={{ padding: '0.85rem 2rem' }}>
-                {busy ? 'Working…' : 'I’m coming ✓'}
+                {busy ? 'Working…' : <>I’m coming <CheckIcon size={16} /></>}
               </button>
               <button onClick={() => act('cancel')} disabled={busy} className="servd-btn-secondary" style={{ padding: '0.85rem 2rem' }}>
                 Cancel reservation
@@ -57,7 +58,7 @@ export default function ReserveConfirmPage() {
 
         {status === 'confirmed' && (
           <>
-            <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>✓</div>
+            <div style={{ marginBottom: '0.5rem', color: 'var(--servd-success, #4f7a1c)' }}><CheckIcon size={48} strokeWidth={2.5} /></div>
             <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2rem)', fontWeight: 800, marginBottom: '0.75rem' }}>Confirmed!</h1>
             <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
               See you soon. We&rsquo;ll send a reminder 2 hours before.

@@ -8,6 +8,8 @@ import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { useBrandFilter } from '../../store/brandFilter'
 import { orderRef } from '../../lib/orderRef'
 import { Select } from '@/components/ui/Select'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 interface Review {
   id: string
@@ -42,7 +44,7 @@ function StarRating({ rating }: { rating: number }) {
   return (
     <span className="text-sm">
       {STARS.map((s) => (
-        <span key={s} className={s <= rating ? 'text-yellow-700' : 'text-s-border'}>★</span>
+        <span key={s} className={s <= rating ? 'text-s-amber' : 'text-s-border'}><NavIcon name="star" size={14} className="inline fill-current" /></span>
       ))}
     </span>
   )
@@ -166,7 +168,7 @@ export default function ReviewsPage() {
           <div className="space-y-1">
             {ratingDist.map(({ stars, count }) => (
               <div key={stars} className="flex items-center gap-2">
-                <span className="text-xs text-s-muted w-4">{stars}★</span>
+                <span className="text-xs text-s-muted w-4">{stars}<NavIcon name="star" size={11} className="ml-0.5 inline fill-current" /></span>
                 <div className="flex-1 h-2 rounded-full bg-s-border overflow-hidden">
                   <div className="h-full rounded-full bg-yellow-400 transition-all"
                     style={{ width: reviews.length ? `${(count / reviews.length) * 100}%` : '0%' }} />
@@ -194,7 +196,7 @@ export default function ReviewsPage() {
       <div className="rounded-xl border border-s-border overflow-hidden">
         {isLoading && <p className="px-4 py-6 text-center text-s-muted">Loading…</p>}
         {!isLoading && reviews.length === 0 && (
-          <p className="px-4 py-10 text-center text-s-muted">No reviews yet</p>
+          <CompactEmptyState message="No reviews yet" />
         )}
         {reviews.map((r) => (
           <div key={r.id} className="flex items-start gap-4 px-4 py-4 border-b border-s-border last:border-0">
@@ -231,7 +233,7 @@ export default function ReviewsPage() {
                 {r.rating <= 3 && r.order?.customer && (r.order.customer.email || r.order.customer.phone) && (
                   <button onClick={() => setReachingOut(r)}
                     className="ml-auto rounded-lg border border-blue-400 text-blue-700 px-2.5 py-0.5 text-[11px] hover:bg-blue-400/10 transition-colors">
-                    💬 Reach out
+                    <NavIcon name="chat" size={14} className="mr-1 inline" />Reach out
                   </button>
                 )}
               </div>
@@ -245,7 +247,7 @@ export default function ReviewsPage() {
           context={{
             source: 'review',
             sourceRefId: reachingOut.id,
-            contextTitle: `${reachingOut.rating}★ review`,
+            contextTitle: `${reachingOut.rating}-star review`,
             contextSubtitle: reachingOut.comment ? `"${reachingOut.comment.slice(0, 60)}${reachingOut.comment.length > 60 ? '…' : ''}"` : undefined,
             conceptName: reachingOut.concept.name,
             customer: reachingOut.order.customer,

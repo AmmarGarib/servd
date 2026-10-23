@@ -15,8 +15,8 @@
 //     full opacity from the server HTML, and the media box takes its phone /
 //     desktop size from CSS (no jump when the isMobile check lands).
 //   - the wheel / touchmove listeners that hold the page still are only
-//     attached while the hero is in play (collapsed, or expanded with the page
-//     at the very top, where scrolling up collapses it again). Once the visitor
+//     attached while the hero is in play (collapsed). Once it has opened it
+//     stays open for the visit (scrolling back up never collapses it). Once the visitor
 //     scrolls into the page there is nothing blocking the compositor.
 //   - PageDown / Space / ArrowDown / End expand it (the snap-back used to trap
 //     keyboard users at the top), and prefers-reduced-motion renders it

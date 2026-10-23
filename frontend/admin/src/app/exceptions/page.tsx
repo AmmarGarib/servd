@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
+import { NavIcon } from '../../components/ui/NavIcon'
 
 type Severity = 'low' | 'medium' | 'high' | 'critical'
 type Status = 'open' | 'acknowledged' | 'resolved' | 'dismissed'
@@ -31,9 +32,9 @@ interface ExceptionFlag {
 
 const SEV_STYLE: Record<Severity, { bg: string; fg: string; label: string }> = {
   low:      { bg: 'rgb(var(--ink-rgb) / 0.1)',  fg: 'var(--erp-primary-ink)', label: 'Low' },
-  medium:   { bg: 'rgba(245,158,11,0.12)', fg: '#a15c00', label: 'Medium' },
-  high:     { bg: 'rgba(239,68,68,0.12)',  fg: '#b42318', label: 'High' },
-  critical: { bg: 'rgba(220,38,38,0.18)',  fg: '#FECACA', label: 'CRITICAL' },
+  medium:   { bg: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', fg: 'var(--erp-warning)', label: 'Medium' },
+  high:     { bg: 'color-mix(in srgb, var(--erp-danger) 12%, transparent)',  fg: 'var(--erp-danger)', label: 'High' },
+  critical: { bg: 'color-mix(in srgb, var(--erp-danger) 22%, transparent)',  fg: 'var(--erp-danger)', label: 'CRITICAL' },
 }
 
 // Plain labels for every ExceptionFlag kind (backend lib/exceptions.ts
@@ -172,8 +173,8 @@ export default function ExceptionInboxPage() {
         {/* Stats strip */}
         {stats && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 max-w-3xl">
-            <Stat value={stats.open}         label="Open" accent="#b42318" />
-            <Stat value={stats.acknowledged} label="Acknowledged" accent="#a15c00" />
+            <Stat value={stats.open}         label="Open" accent="var(--erp-danger)" />
+            <Stat value={stats.acknowledged} label="Acknowledged" accent="var(--erp-warning)" />
             <Stat value={stats.last24h}      label="Last 24h" accent="var(--erp-primary-ink)" />
             <Stat value={stats.byKind.length} label="Distinct kinds" accent="var(--erp-primary-ink)" />
           </div>
@@ -197,7 +198,7 @@ export default function ExceptionInboxPage() {
         {flags.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'rgb(var(--erp-primary-rgb) / 0.05)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
-            <p className="text-3xl mb-2">✓</p>
+            <span className="mb-2 inline-block text-s-muted"><NavIcon name="check" size={32} /></span>
             <p className="font-bold text-white/85">No {statusFilter} exceptions</p>
             <p className="text-sm text-white/45 mt-1">
               {statusFilter === 'open' ? 'All controls passing. Quiet system = good system.' : `Switch tabs to see other states.`}

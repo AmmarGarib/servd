@@ -1,0 +1,49 @@
+// TEST_RLS=1 self-check: the run really is under the company lock. Skipped in
+// the normal run. If this file fails in the RLS job, every other green file of
+// that job proves nothing (the app would be bypassing RLS).
+import { describe, it, expect, beforeAll } from 'vitest'
+import { prisma, serviceClient } from '../../src/lib/prisma.js'
+import { runWithRlsContext } from '../../src/lib/rlsContext.js'
+import { isRlsMode, RLS_ROLE } from './rlsMode.js'
+
+const on = isRlsMode()
+const RUN = Math.random().toString(36).slice(2, 8)
+const ids: Record<'A' | 'B', { tenantId: string; conceptId: string; orderId: string }> = {} as never
+
+async function seed(key: 'A' | 'B') {
+  const tenant = await serviceClient.tenant.create({ data: { name: `RLS mode ${key}`, slug: `rlsmode-${key.toLowerCase()}-${RUN}` } })
+  const concept = await serviceClient.concept.create({ data: { name: `RLS ${key}`, slug: `rlsmode-c-${key.toLowerCase()}-${RUN}`, type: 'restaurant', tenantId: tenant.id } as never })
+  const order = await serviceClient.order.create({
+    data: { conceptId: concept.id, source: 'servd', totalCents: 100 },
+  })
+  ids[key] = { tenantId: tenant.id, conceptId: concept.id, orderId: order.id }
+}
+
+describe.skipIf(!on)('TEST_RLS mode is really on', () => {
+  beforeAll(async () => { await seed('A'); await seed('B') })
+
+  it('connects as the plain role, which does not bypass RLS', async () => {
+    const [me] = await prisma.$queryRawUnsafe<Array<{ u: string; bypass: boolean; superuser: boolean }>>(
+      `SELECT current_user AS u, r.rolbypassrls AS bypass, r.rolsuper AS superuser FROM pg_roles r WHERE r.rolname = current_user`)
+    expect(me).toEqual({ u: RLS_ROLE, bypass: false, superuser: false })
+    expect(process.env.RLS_ENFORCE).toBe('1')
+  })
+
+  it("company A's request sees only A's orders and cannot touch B's", async () => {
+    // Await INSIDE the context: a PrismaPromise is lazy and runs where it is awaited.
+    const seen = await runWithRlsContext({ tenantIds: [ids.A.tenantId] }, async () =>
+      await prisma.order.findMany({ where: { id: { in: [ids.A.orderId, ids.B.orderId] } }, select: { id: true } }))
+    expect(seen.map((o) => o.id)).toEqual([ids.A.orderId])
+    const hit = await runWithRlsContext({ tenantIds: [ids.A.tenantId] }, async () =>
+      await prisma.order.updateMany({ where: { id: ids.B.orderId }, data: { totalCents: 1 } }))
+    expect(hit.count).toBe(0)
+  })
+
+  it('service mode (no request) still sees both, even on a connection a request used', async () => {
+    for (let i = 0; i < 5; i++) {
+      expect(await runWithRlsContext({ tenantIds: [ids.A.tenantId] }, async () => await prisma.order.count({ where: { id: ids.B.orderId } }))).toBe(0)
+    }
+    const all = await serviceClient.order.count({ where: { id: { in: [ids.A.orderId, ids.B.orderId] } } })
+    expect(all).toBe(2)
+  })
+})

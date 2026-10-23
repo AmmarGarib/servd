@@ -122,20 +122,20 @@ function Row({ row, open, onToggle }: { row: AuditRow; open: boolean; onToggle: 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div>
                 <p className="font-semibold text-s-muted mb-1.5">Before</p>
-                <pre className="bg-s-bg-soft border border-s-border rounded p-2 overflow-x-auto text-[11px] text-s-text">
+                <pre className="bg-s-bg-soft border border-s-border rounded p-2 overflow-x-auto text-xs text-s-text">
                   {row.before ? JSON.stringify(row.before, null, 2) : '(none)'}
                 </pre>
               </div>
               <div>
                 <p className="font-semibold text-s-muted mb-1.5">After</p>
-                <pre className="bg-s-bg-soft border border-s-border rounded p-2 overflow-x-auto text-[11px] text-s-text">
+                <pre className="bg-s-bg-soft border border-s-border rounded p-2 overflow-x-auto text-xs text-s-text">
                   {row.after ? JSON.stringify(row.after, null, 2) : '(none)'}
                 </pre>
               </div>
               {row.metadata != null && (
                 <div className="md:col-span-2">
                   <p className="font-semibold text-s-muted mb-1.5">Metadata</p>
-                  <pre className="bg-s-bg-soft border border-s-border rounded p-2 overflow-x-auto text-[11px] text-s-text">
+                  <pre className="bg-s-bg-soft border border-s-border rounded p-2 overflow-x-auto text-xs text-s-text">
                     {JSON.stringify(row.metadata, null, 2)}
                   </pre>
                 </div>

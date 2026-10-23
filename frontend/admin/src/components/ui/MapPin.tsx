@@ -21,6 +21,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Map as LeafletMap, Marker as LeafletMarker } from 'leaflet'
 import { api } from '../../lib/api'
+import { NavIcon } from './NavIcon'
 
 interface Coords { lat: number | null; lng: number | null }
 
@@ -269,7 +270,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
       <div className="flex flex-wrap gap-2 items-center">
         <button type="button" onClick={useMyLocation}
           className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs font-bold text-white/80 hover:bg-white/[0.1] inline-flex items-center gap-1.5">
-          <span>📍</span> Use my location
+          <NavIcon name="pin" size={14} className="inline" /> Use my location
         </button>
         <span className="text-[11px] text-white/35">or search:</span>
         <div className="flex-1 min-w-[200px] relative">

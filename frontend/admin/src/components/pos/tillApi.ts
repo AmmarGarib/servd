@@ -27,6 +27,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
+import { isNetworkFailure, NO_INTERNET_MESSAGE, postOrderOrQueue, requireOnline, summariseLines } from '../../lib/offline-queue'
 
 export type TillTender = 'cash' | 'card' | 'raast'
 export const TILL_TENDERS: readonly TillTender[] = ['cash', 'card', 'raast']
@@ -280,8 +281,8 @@ export function useCartQuote(conceptId: string | null, lines: TillLine[], discou
   })
 }
 
-/** The SW answers a ring-up made offline with a placeholder, not an order. */
-export interface OfflinePlaceholder { id: string; status: 'queued_offline' }
+/** A ring-up made offline is kept on this device (lib/offline-queue.ts) and answered with a placeholder, not an order. */
+export interface OfflinePlaceholder { id: string; status: 'queued_offline'; localId?: string }
 export function isOfflinePlaceholder(r: unknown): r is OfflinePlaceholder {
   return !!r && typeof r === 'object' && (r as { status?: unknown }).status === 'queued_offline'
 }
@@ -298,7 +299,7 @@ export function ringUp(body: {
   paymentMethod?: TillTender
   items: TillLine[]
 }): Promise<TillOrder | OfflinePlaceholder> {
-  return api.post<TillOrder | OfflinePlaceholder>('/pos/orders', body).then(normaliseRungOrder)
+  return postOrderOrQueue<TillOrder>(body as Record<string, unknown>, summariseLines(body.items)).then(normaliseRungOrder)
 }
 
 /** The ring-up answer, made safe for step 2 (R2-UI-01): an API that answers
@@ -321,6 +322,7 @@ export function tillErrorMessage(e: unknown, fallback = 'Something went wrong â€
     if (e.status === 0 || e.code === 'PORTFOLIO_WRITE_CANCELLED') return e.message
     return e.message || fallback
   }
+  if (isNetworkFailure(e)) return NO_INTERNET_MESSAGE
   if (e instanceof TypeError) return 'No connection to the server â€” check the network and try again'
   if (e instanceof Error) return e.message
   return fallback
@@ -905,6 +907,7 @@ export function payOrder(body: {
    */
   raastVerified?: true
 }) {
+  requireOnline() // a payment is never queued offline
   const { orderId, shiftId, idempotencyKey, ...p } = body
   return api.post<TillPaymentResult>('/pos/payments', { orderId, shiftId, idempotencyKey, payments: [p] })
 }

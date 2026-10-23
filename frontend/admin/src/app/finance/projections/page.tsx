@@ -13,6 +13,7 @@
 // Staff cost + opex + capex pull live from /positions, /opex, /capex.
 // Editing any input PUTs to /projections/:id/brands/:conceptId and re-fetches.
 
+import { CheckLabel, FieldLabel, Input, LinkButton } from '@/components/finance/ui'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -214,13 +215,13 @@ export default function ProjectionsPage() {
                 fixed opex from <Link href="/finance/opex" className="text-primary-ink hover:underline">OpEx</Link>,
                 capex from <Link href="/finance/capex" className="text-primary-ink hover:underline">Capex</Link>.
               </p>
-              <label className="mt-2 flex items-center gap-2 text-xs text-s-muted">
+              <CheckLabel>
                 Month 1 is
-                <input type="month" value={projection.startPeriod}
+                <Input className="w-auto px-2 py-1 text-xs" type="month" value={projection.startPeriod}
                   onChange={(e) => { if (/^\d{4}-\d{2}$/.test(e.target.value)) setStart.mutate(e.target.value) }}
-                  className="rounded bg-s-bg border border-s-border px-2 py-1 text-xs" />
+                   />
                 <span>— each month trades on its real calendar days, minus the days a brand is closed.</span>
-              </label>
+              </CheckLabel>
             </div>
             <div className="flex items-center gap-2">
               {scenarios.length > 1 && (
@@ -229,7 +230,7 @@ export default function ProjectionsPage() {
                   {scenarios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </Select>
               )}
-              <span className="text-[10px] text-s-dim">Updated {new Date(projection.updatedAt).toLocaleString()}</span>
+              <span className="text-xs text-s-muted">Updated {new Date(projection.updatedAt).toLocaleString()}</span>
             </div>
           </div>
         </div>
@@ -268,7 +269,7 @@ export default function ProjectionsPage() {
         {/* ── Timing & capacity inputs (per the ops sheet) ─────────────── */}
         <section>
           <h2 className="text-lg font-black mb-1">Timing &amp; capacity inputs</h2>
-          <p className="text-[11px] text-s-muted mb-3">
+          <p className="text-xs text-s-muted mb-3">
             Daily covers are <strong>calculated</strong>: seats × seat utilization × (total operating hours ÷ table turn time).
             Fill this block in and every brand&apos;s covers flow into its projection automatically. Leave seats at 0 to fall
             back to a manually entered covers number below.
@@ -330,9 +331,9 @@ export default function ProjectionsPage() {
             <span className="text-sm">
               <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: c.primaryColor ?? 'var(--dim)' }}/>
               <span className="font-bold">{c.name}</span>
-              <span className="text-s-dim ml-2 text-xs">not in this projection</span>
+              <span className="text-s-muted ml-2 text-xs">not in this projection</span>
             </span>
-            <button onClick={() => patchBrand(c.id, {})} className="text-xs text-primary-ink hover:underline">+ Add to projection</button>
+            <LinkButton type="button" onClick={() => patchBrand(c.id, {})}>+ Add to projection</LinkButton>
           </div>
         ))}
 
@@ -346,7 +347,7 @@ export default function ProjectionsPage() {
                   <th className="text-left px-3 py-2 font-bold sticky left-0 bg-s-surface">Line</th>
                   {MONTHS.map((m) => (
                     <th key={m} className="text-right px-3 py-2 font-bold">
-                      M{m}<span className="block text-[9px] font-normal text-s-dim">{monthLabel(projection.periods?.[m - 1])}</span>
+                      M{m}<span className="block text-xs font-normal text-s-muted">{monthLabel(projection.periods?.[m - 1])}</span>
                     </th>
                   ))}
                   <th className="text-right px-3 py-2 font-bold">Year 1</th>
@@ -371,13 +372,13 @@ export default function ProjectionsPage() {
         {/* ── Ramp curve display ──────────────────────────────────────── */}
         <section className="rounded-xl border border-s-border bg-s-surface p-4">
           <h3 className="text-sm font-bold mb-2">Ramp curve</h3>
-          <p className="text-[11px] text-s-muted mb-3">
+          <p className="text-xs text-s-muted mb-3">
             Multiplier on steady-state daily covers, applied from each brand&apos;s launch month onward.
           </p>
           <div className="grid grid-cols-6 md:grid-cols-12 gap-2">
             {projection.rampCurve.map((r, i) => (
               <div key={i} className="rounded-lg bg-s-bg border border-s-border px-2 py-2 text-center">
-                <div className="text-[9px] text-s-dim font-bold uppercase">M{i + 1} · {monthLabel(projection.periods?.[i])}</div>
+                <div className="text-xs text-s-dim font-bold uppercase">M{i + 1} · {monthLabel(projection.periods?.[i])}</div>
                 <div className="text-sm font-black mt-0.5">{(r * 100).toFixed(0)}%</div>
               </div>
             ))}
@@ -393,9 +394,9 @@ export default function ProjectionsPage() {
 function SummaryCard({ label, value, hint, color }: { label: string; value: string; hint?: string; color: string }) {
   return (
     <div className="rounded-xl border border-s-border bg-s-surface p-4">
-      <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">{label}</p>
+      <p className="text-xs uppercase tracking-wider text-s-muted font-bold">{label}</p>
       <p className="text-xl font-black mt-1" style={{ color }}>{value}</p>
-      {hint && <p className="text-[10px] text-s-dim mt-0.5">{hint}</p>}
+      {hint && <p className="text-xs text-s-muted mt-0.5">{hint}</p>}
     </div>
   )
 }
@@ -426,7 +427,7 @@ function EditCell({ value, onCommit, step, suffix }: {
   useEffect(() => { setLocal(String(value)) }, [value])
   return (
     <td className="text-right px-2 py-1">
-      <input
+      <Input
         type="text" inputMode="decimal" value={local}
         onChange={(e) => { const raw = e.target.value; if (raw === '' || /^\d*\.?\d*$/.test(raw)) setLocal(raw) }}
         onBlur={() => {
@@ -434,10 +435,10 @@ function EditCell({ value, onCommit, step, suffix }: {
           if (Number.isFinite(n) && n !== value) onCommit(n)
           else setLocal(String(value))
         }}
-        className="w-20 rounded bg-s-bg border border-s-border px-2 py-1 text-right text-xs font-mono"
-        style={{ color: '#7DB8F0' }}   /* editable = blue, like the sheet */
+        className="w-20 text-right font-mono"
+        style={{ color: 'var(--erp-primary)' }}   /* editable = blue, like the sheet */
       />
-      {suffix && <span className="ml-1 text-s-dim text-[10px]">{suffix}</span>}
+      {suffix && <span className="ml-1 text-s-muted text-xs">{suffix}</span>}
     </td>
   )
 }
@@ -466,24 +467,24 @@ function BrandBlock({ brand: b, months, patchBrand }: {
 
       {/* Inputs (editable — blue) */}
       <div className="rounded-xl border border-s-border bg-s-surface px-4 py-3 mb-3">
-        <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold mb-2">
+        <p className="text-xs uppercase tracking-wider text-s-muted font-bold mb-2">
           {b.concept.name} inputs <span className="normal-case font-normal">(editable — blue)</span>
         </p>
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           <InputPair label="Check avg (PKR)" value={Math.round(b.checkAverageCents / 100)}
             onCommit={(v) => patchBrand(b.conceptId, { checkAverageCents: Math.round(v * 100) })} />
           <div className="flex items-center gap-2" role="group" aria-label="Closed on">
-            <span className="text-[11px] text-s-muted">Closed on</span>
+            <span className="text-xs text-s-muted">Closed on</span>
             {WEEKDAYS.map((d, i) => (
               <button key={d} type="button" aria-pressed={closed.includes(i)} onClick={() => toggleDay(i)}
-                className="rounded px-1.5 py-0.5 text-[10px] font-bold border"
+                className="rounded px-1.5 py-0.5 text-xs font-bold border"
                 style={closed.includes(i)
-                  ? { background: 'var(--erp-primary)', color: '#fff', borderColor: 'var(--erp-primary)' }
+                  ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)', borderColor: 'var(--erp-primary)' }
                   : { borderColor: 'rgb(var(--fg-rgb) / 0.15)', color: 'var(--muted)' }}>
                 {d}
               </button>
             ))}
-            <span className="text-[10px] text-s-dim">trading days = the month&rsquo;s days minus these</span>
+            <span className="text-xs text-s-muted">trading days = the month&rsquo;s days minus these</span>
           </div>
           <InputPair label="Food cost %" value={b.foodCostPct}
             onCommit={(v) => patchBrand(b.conceptId, { foodCostPct: v })} />
@@ -494,20 +495,20 @@ function BrandBlock({ brand: b, months, patchBrand }: {
           {/* Daily covers: derived from the timing block when filled; manual otherwise */}
           {b.dailyCoversCalculated != null ? (
             <div className="flex items-baseline gap-2">
-              <span className="text-[11px] text-s-muted">Daily covers at SS</span>
+              <span className="text-xs text-s-muted">Daily covers at SS</span>
               <span className="font-mono text-sm font-black" style={{ color: 'var(--erp-primary-ink)' }}>{b.dailyCoversCalculated}</span>
-              <span className="text-[10px] text-s-dim">(from timing block)</span>
+              <span className="text-xs text-s-muted">(from timing block)</span>
             </div>
           ) : (
             <InputPair label="Daily covers at SS (manual)" value={b.dailyCoversAtSS}
               onCommit={(v) => patchBrand(b.conceptId, { dailyCoversAtSS: Math.round(v) })} />
           )}
           <div className="flex items-baseline gap-2">
-            <span className="text-[11px] text-s-muted">Staff (live)</span>
+            <span className="text-xs text-s-muted">Staff (live)</span>
             <span className="font-mono text-sm text-s-muted" title={fmtPkrWhole(b.staffMonthlyCents)}>{fmtPkr(b.staffMonthlyCents)}/mo</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-[11px] text-s-muted">OpEx (live)</span>
+            <span className="text-xs text-s-muted">OpEx (live)</span>
             <span className="font-mono text-sm text-s-muted" title={fmtPkrWhole(b.opexMonthlyCents)}>{fmtPkr(b.opexMonthlyCents)}/mo</span>
           </div>
         </div>
@@ -521,8 +522,8 @@ function BrandBlock({ brand: b, months, patchBrand }: {
               <th className="text-left px-3 py-2 font-bold sticky left-0 bg-s-surface">12-month projection</th>
               {months.map((m) => (
                 <th key={m} className="text-right px-3 py-2 font-bold">
-                  M{m}{!b.months[m - 1]!.live && <span className="ml-1 text-[8px] text-s-dim">pre-launch</span>}
-                  <span className="block text-[9px] font-normal text-s-dim">{monthLabel(b.months[m - 1]?.period)}</span>
+                  M{m}{!b.months[m - 1]!.live && <span className="ml-1 text-xs text-s-muted">pre-launch</span>}
+                  <span className="block text-xs font-normal text-s-muted">{monthLabel(b.months[m - 1]?.period)}</span>
                 </th>
               ))}
               <th className="text-right px-3 py-2 font-bold">Year 1</th>
@@ -550,9 +551,9 @@ function InputPair({ label, value, onCommit }: { label: string; value: number; o
   const [local, setLocal] = useState(String(value))
   useEffect(() => { setLocal(String(value)) }, [value])
   return (
-    <label className="flex items-baseline gap-2">
-      <span className="text-[11px] text-s-muted">{label}</span>
-      <input
+    <CheckLabel className="items-baseline">
+      <span className="text-xs text-s-muted">{label}</span>
+      <Input
         type="text" inputMode="decimal" value={local}
         onChange={(e) => { const raw = e.target.value; if (raw === '' || /^\d*\.?\d*$/.test(raw)) setLocal(raw) }}
         onBlur={() => {
@@ -560,10 +561,10 @@ function InputPair({ label, value, onCommit }: { label: string; value: number; o
           if (Number.isFinite(n) && n !== value) onCommit(n)
           else setLocal(String(value))
         }}
-        className="w-20 rounded bg-s-bg border border-s-border px-2 py-1 text-right text-xs font-mono"
-        style={{ color: '#7DB8F0' }}
+        className="w-20 text-right font-mono"
+        style={{ color: 'var(--erp-primary)' }}
       />
-    </label>
+    </CheckLabel>
   )
 }
 

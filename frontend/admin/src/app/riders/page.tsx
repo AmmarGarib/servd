@@ -1,4 +1,6 @@
 'use client'
+
+import {  } from 'lucide-react'
 import { useState } from 'react'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -167,7 +169,7 @@ function EnterCode({ orderId, onDone }: { orderId: string; onDone: () => void })
   })
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="text-[11px] text-primary-ink hover:underline">Enter customer's code</button>
+      <button onClick={() => setOpen(true)} className="text-xs text-primary-ink hover:underline">Enter customer's code</button>
     )
   }
   return (
@@ -178,9 +180,9 @@ function EnterCode({ orderId, onDone }: { orderId: string; onDone: () => void })
           className="s-input w-24 text-center tracking-widest" placeholder="0000" />
         <button disabled={code.length !== 4 || verify.isPending} onClick={() => verify.mutate()}
           className="s-btn-primary text-xs disabled:opacity-50">{verify.isPending ? 'Checking…' : 'Check'}</button>
-        <button onClick={() => { setOpen(false); setMsg(null) }} className="text-[11px] text-s-muted hover:underline">Cancel</button>
+        <button onClick={() => { setOpen(false); setMsg(null) }} className="text-xs text-s-muted hover:underline">Cancel</button>
       </div>
-      {msg && <p role="alert" className={`text-[11px] ${msg.tone === 'bad' ? 'text-s-red' : 'text-s-muted'}`}>{msg.text}</p>}
+      {msg && <p role="alert" className={`text-xs ${msg.tone === 'bad' ? 'text-s-red' : 'text-s-muted'}`}>{msg.text}</p>}
     </div>
   )
 }
@@ -591,7 +593,7 @@ export default function RidersPage() {
                             onClick={() => assignMutation.mutate({ orderId: order.id, riderId: r.id })}
                             disabled={assignMutation.isPending}
                             className="w-full flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-left hover:bg-primary/20 transition-colors disabled:opacity-50">
-                            <span className="text-[11px] font-semibold text-s-muted w-14 shrink-0">{VEHICLE_LABEL[r.vehicleType] ?? r.vehicleType}</span>
+                            <span className="text-xs font-semibold text-s-muted w-14 shrink-0">{VEHICLE_LABEL[r.vehicleType] ?? r.vehicleType}</span>
                             <div className="min-w-0">
                               <p className="text-sm font-semibold text-s-text">{r.name}</p>
                               <p className="text-xs text-s-muted">
@@ -608,8 +610,8 @@ export default function RidersPage() {
                     </div>
                   ) : (
                     <button onClick={() => setAssigningOrder(order.id)}
-                      className="mt-3 w-full rounded-lg bg-primary text-primary-on font-bold py-2 text-sm hover:opacity-90">
-                      Assign Rider →
+                      className="mt-3 min-h-11 w-full rounded-lg bg-primary text-primary-on font-bold py-2 text-sm hover:opacity-90">
+                      Assign Rider
                     </button>
                   )}
                 </div>

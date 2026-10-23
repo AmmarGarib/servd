@@ -5,6 +5,7 @@
 // CEO edits; everyone else reads. Depreciation is always automatic, so there is
 // no switch here.
 
+import { CheckLabel, Input, LinkButton } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
@@ -59,7 +60,7 @@ export default function ClassesPage() {
       <section className="rounded-2xl overflow-x-auto" style={card} aria-label="Asset classes">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+            <tr className="text-left text-xs uppercase tracking-wider text-white/40">
               {[...(multi ? ['Company'] : []), 'Class', 'Ledger accounts', 'Default life', 'Tax rate', 'First-year allowance', 'Pooled', 'Assets', ''].map((h) => (
                 <th key={h || 'edit'} className="px-4 py-3 font-bold whitespace-nowrap">{h}</th>
               ))}
@@ -76,14 +77,14 @@ export default function ClassesPage() {
                 <td className="px-4 py-3 text-white/75">{c.taxInitialAllowanceBp ? pct(c.taxInitialAllowanceBp) : '—'}</td>
                 <td className="px-4 py-3">{c.pooled ? <span className="s-badge-green">Pooled</span> : <span className="text-white/40">Item by item</span>}</td>
                 <td className="px-4 py-3 text-white/60">{c.assetCount}</td>
-                <td className="px-4 py-3 text-right">{canEdit && <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => { setNotice(null); setEditing(c) }}>Edit</button>}</td>
+                <td className="px-4 py-3 text-right">{canEdit && <LinkButton type="button"  onClick={() => { setNotice(null); setEditing(c) }}>Edit</LinkButton>}</td>
               </tr>
             ))}
             {classes.data && rows.length === 0 && <tr><td colSpan={9} className="px-4 py-6 text-white/45">No classes yet.</td></tr>}
           </tbody>
         </table>
       </section>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-s-muted">
         Tax rates follow the Third Schedule of the Income Tax Ordinance; smallwares are deducted in full for tax in the year they are bought, and initial allowance applies to kitchen and power equipment only.
       </p>
 
@@ -94,14 +95,14 @@ export default function ClassesPage() {
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="font-black text-white/90">{p.companyName}</p>
-                <p className="text-xs text-white/45 mt-0.5">Depreciation: automatic, every night, for completed months.</p>
+                <p className="text-xs text-s-muted mt-0.5">Depreciation: automatic, every night, for completed months.</p>
               </div>
               {canEdit && <button className={btnGhost} onClick={() => { setNotice(null); setEditingPolicy(p) }}>Edit policy</button>}
             </div>
             <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-3 text-sm">
-              <div><dt className="text-[11px] font-bold uppercase tracking-wider text-white/40">Asset tag prefix</dt><dd className="text-white/85 font-mono">{p.assetTagPrefix}</dd></div>
-              <div><dt className="text-[11px] font-bold uppercase tracking-wider text-white/40">Flag delivered items not capitalised after</dt><dd className="text-white/85">{p.capexUncapitalisedAlertDays} days</dd></div>
-              <div><dt className="text-[11px] font-bold uppercase tracking-wider text-white/40">Flag supplier advances overdue after</dt><dd className="text-white/85">{p.capexAdvanceOverdueDays} days</dd></div>
+              <div><dt className="text-xs font-bold uppercase tracking-wider text-white/40">Asset tag prefix</dt><dd className="text-white/85 font-mono">{p.assetTagPrefix}</dd></div>
+              <div><dt className="text-xs font-bold uppercase tracking-wider text-white/40">Flag delivered items not capitalised after</dt><dd className="text-white/85">{p.capexUncapitalisedAlertDays} days</dd></div>
+              <div><dt className="text-xs font-bold uppercase tracking-wider text-white/40">Flag supplier advances overdue after</dt><dd className="text-white/85">{p.capexAdvanceOverdueDays} days</dd></div>
             </dl>
           </div>
         ))}
@@ -163,8 +164,8 @@ function EditClass({ row, onClose, onSaved }: { row: ClassRow; onClose: () => vo
   return (
     <Modal title={`Edit ${row.label}`} onClose={onClose} dirty={dirty}>
       <form onSubmit={onSubmit} noValidate className="space-y-3">
-        <p className="text-[11px] text-white/45">Ledger accounts {row.costAccountCode}{row.accumAccountCode ? ` / ${row.accumAccountCode}` : ''} are fixed for the class and cannot change.</p>
-        <L t="Name"><input id="ec-name" className={inp} value={label} onChange={(e) => setLabel(e.target.value)} /></L>
+        <p className="text-xs text-s-muted">Ledger accounts {row.costAccountCode}{row.accumAccountCode ? ` / ${row.accumAccountCode}` : ''} are fixed for the class and cannot change.</p>
+        <L t="Name"><Input id="ec-name" className={inp} value={label} onChange={(e) => setLabel(e.target.value)} /></L>
         {row.depreciable ? (
           <L t="Default life (months)" hint={Number(life) > 0 ? `That is ${fmtLife(Number(life))}. Used when an item is prepared for the register without its own life.` : undefined}>
             <NumberField id="ec-life" min={1} max={600} className={inp} value={asNum(life)} onValueChange={(n) => setLife(fromNum(n))} />
@@ -174,15 +175,15 @@ function EditClass({ row, onClose, onSaved }: { row: ClassRow; onClose: () => vo
           <L t="Tax depreciation rate (%)"><NumberField id="ec-rate" decimals={2} min={0} max={100} className={inp} value={asNum(rate)} onValueChange={(n) => setRate(fromNum(n))} /></L>
           <L t="First-year allowance (%)"><NumberField decimals={2} min={0} max={100} className={inp} value={asNum(allowance)} onValueChange={(n) => setAllowance(fromNum(n))} /></L>
         </div>
-        <label className="flex items-start gap-2 text-sm text-white/75">
+        <CheckLabel className="flex items-start gap-2 text-sm text-white/75">
           <input type="checkbox" className="mt-0.5" checked={pooled} disabled={row.assetCount > 0} onChange={(e) => setPooled(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
           <span>Pooled: tracked as units per outlet, brand and type instead of item by item
-            {row.assetCount > 0 && <span className="block text-[11px] text-white/45">Locked: this class already has {row.assetCount} asset{row.assetCount === 1 ? '' : 's'} on the register.</span>}</span>
-        </label>
-        <label className="flex items-center gap-2 text-sm text-white/75">
+            {row.assetCount > 0 && <span className="block text-xs text-s-muted">Locked: this class already has {row.assetCount} asset{row.assetCount === 1 ? '' : 's'} on the register.</span>}</span>
+        </CheckLabel>
+        <CheckLabel className="flex items-center gap-2 text-sm text-white/75">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
           In use (switched-off classes cannot be picked for new assets)
-        </label>
+        </CheckLabel>
         {problem && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
         <ErrorLine error={save.error} />
         <div className="flex gap-2 pt-2">
@@ -225,7 +226,7 @@ function EditPolicy({ row, onClose, onSaved }: { row: PolicyRow; onClose: () => 
     <Modal title={`Register policy: ${row.companyName}`} onClose={onClose} dirty={dirty}>
       <form onSubmit={onSubmit} noValidate className="space-y-3">
         <L t="Asset tag prefix" hint="Letters, digits, - and _ only, up to 12. New tags are the prefix and a running number, like FA-00001. Existing tags do not change.">
-          <input id="ep-prefix" className={inp} value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={12} />
+          <Input id="ep-prefix" className={inp} value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={12} />
         </L>
         <L t="Flag a delivered item not yet capitalised after (days)">
           <NumberField id="ep-uncap" min={1} max={365} className={inp} value={asNum(uncap)} onValueChange={(n) => setUncap(fromNum(n))} />

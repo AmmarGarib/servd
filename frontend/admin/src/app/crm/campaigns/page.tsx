@@ -20,6 +20,7 @@ import { formatDistanceToNowStrict } from 'date-fns'
 import { Select } from '@/components/ui/Select'
 import { FormField } from '@/components/ui/FormField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 type Channel = 'email' | 'whatsapp'
 
@@ -73,7 +74,7 @@ function MessagePreview({ channel, subject, body, name }: { channel: Channel; su
   return (
     <div className="rounded-xl border border-s-border bg-s-bg p-4">
       <p className="text-xs font-semibold text-s-text mb-2">{name || 'Campaign'} · WhatsApp</p>
-      <div className="bg-[#25d366]/10 border border-[#25d366]/20 rounded-xl rounded-tl-none px-3 py-2 text-sm text-s-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
+      <div className="bg-accent-dim border border-accent/30 rounded-xl rounded-tl-none px-3 py-2 text-sm text-s-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
         {body || <span className="text-s-muted italic">Message body will appear here</span>}
         {'\n\n'}<span className="text-s-muted text-xs">Stop these messages: (link)</span>
       </div>
@@ -302,10 +303,7 @@ export default function CampaignsPage() {
         {isLoading ? (
           <p className="text-s-muted text-sm">Loading…</p>
         ) : campaigns.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="font-semibold text-s-text">No campaigns yet</p>
-            <p className="text-sm text-s-muted mt-1">Create a broadcast to reach your customers</p>
-          </div>
+          <CompactEmptyState message="No campaigns yet" detail="Create a broadcast to reach your customers" />
         ) : (
           <div className="space-y-3">
             {campaigns.map((c) => (

@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 const API = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -107,7 +108,7 @@ export default function SupplierPortal() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-s-bg text-s-text p-4">
         <div className="text-center">
-          <div className="text-5xl mb-4">🔒</div>
+          <div className="mb-4 flex justify-center text-s-muted"><NavIcon name="lock" size={40} /></div>
           <h1 className="text-xl font-bold mb-2">Link Invalid</h1>
           <p className="text-s-muted">{error}</p>
           <p className="text-s-muted text-sm mt-2">Contact the restaurant to get a new invite link.</p>
@@ -202,7 +203,7 @@ export default function SupplierPortal() {
                   disabled={!reply.trim() || sending}
                   className="rounded-xl bg-primary px-4 py-2 font-bold text-primary-on disabled:opacity-50"
                 >
-                  ➤
+                  <NavIcon name="send" size={16} />
                 </button>
               </div>
             </>

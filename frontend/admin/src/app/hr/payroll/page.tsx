@@ -11,6 +11,7 @@ import { card, btn, btnGhost, rs, human, STATUS_COLOR, type HrRecord } from '../
 import { HrShell, useHrAccess } from '../../../components/hr/HrShell'
 import { MarkSettlementPaid } from '../../../components/hr/RecordMoney'
 import { Select } from '@/components/ui/Select'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Run { id: string; period: string; status: string; paymentClassification?: PaymentClassification | null; totals: { employees?: number; netCents?: number; grossCents?: number; warnings?: string[] }; createdAt: string }
 
@@ -71,7 +72,7 @@ export default function PayrollRunsPage() {
       {error && <p className="text-sm text-s-red mb-3" role="alert">{(error as Error).message}{' '}<button type="button" className="underline font-bold" onClick={() => void refetch()}>Retry</button></p>}
       <div className="rounded-2xl overflow-hidden" style={card}>
         {isLoading && <p className="p-8 text-center text-sm text-white/40" role="status">Loading payroll runs…</p>}
-        {!isLoading && !error && runs.length === 0 && <p className="p-8 text-center text-sm text-white/40">No payroll yet. Pick a month above and press Calculate.</p>}
+        {!isLoading && !error && runs.length === 0 && <CompactEmptyState message="No payroll yet. Pick a month above and press Calculate." />}
         {runs.map((r) => (
           <Link key={r.id} href={`/hr/payroll/${r.id}`} className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm hover:bg-white/[0.03]">
             <span className="font-black text-white/90 w-24">{r.period}</span>

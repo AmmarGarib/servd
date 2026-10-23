@@ -16,9 +16,8 @@
 
 import type { Supplier, SupplierConversation } from '@prisma/client'
 import { prisma } from './prisma.js'
-import { sendEmail } from './notify.js'
+import { sendEmail as sendMail } from './mailer.js'
 import { sendText as sendWhatsApp } from './whatsapp.js'
-import { sandboxBlocks } from './sandbox.js'
 import { testCompanyBlocks, externalScope } from './outboundScope.js'
 
 // ─── Outbound fan-out ─────────────────────────────────────────────────────────
@@ -103,9 +102,7 @@ async function sendChatEmail(ctx: DeliveryContext): Promise<void> {
     replyTo,
   })
 
-  // sendEmail uses the SMTP transport in lib/notify.ts; it no-ops in dev when
-  // SMTP_USER/PASS aren't set (logs to console instead).
-  await sendEmailWithReplyTo(ctx.supplier.email, subject, html, replyTo)
+  await sendEmailWithReplyTo(ctx.supplier.email, subject, html, replyTo, ctx.supplier.tenantId ?? null)
 }
 
 async function sendChatWhatsApp(ctx: DeliveryContext, toNumber: string): Promise<void> {
@@ -274,33 +271,17 @@ export async function findOrCreateInboundConversation(opts: {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Wrapper around sendEmail that adds a `Reply-To` header. We need to do this
- * by directly using nodemailer rather than the existing sendEmail() helper
- * because the helper signature doesn't accept extra headers. Imported lazily
- * to keep the dev-mode no-op path in lib/notify.ts honest (the warning fires
- * once at module load there, not here).
+ * The supplier chat email goes through THE one mail sender (lib/mailer.ts
+ * sendEmail): the SMTP settings the admin keeps in Configuration → Email
+ * (database first, SMTP_* env second), the practice-copy guard
+ * (sandboxBlocks) and the test-company guard, with a Reply-To so the
+ * supplier's answer threads back into the conversation. It used to build its
+ * own transport from SMTP_USER / SMTP_PASS alone, so a password saved in admin
+ * never reached suppliers. Not configured → throws, and the delivery result
+ * says 'failed' (never a silent "sent").
  */
-async function sendEmailWithReplyTo(to: string, subject: string, html: string, replyTo: string | null): Promise<void> {
-  if (sandboxBlocks('email', { to, summary: 'supplier chat' })) return // practice copy: its own SMTP transport, so its own guard
-  if (!process.env['SMTP_USER'] || !process.env['SMTP_PASS']) {
-    // Mirror lib/notify.ts behaviour — silently skip in dev with a console hint.
-    console.log(`[supplier-channels] EMAIL (no SMTP) to ${to}: ${subject}${replyTo ? ` (Reply-To: ${replyTo})` : ''}`)
-    return
-  }
-  const nodemailer = await import('nodemailer')
-  const transporter = nodemailer.default.createTransport({
-    host: process.env['SMTP_HOST'] ?? 'email-smtp.eu-north-1.amazonaws.com',
-    port: parseInt(process.env['SMTP_PORT'] ?? '587', 10),
-    secure: false,
-    auth: { user: process.env['SMTP_USER'] ?? '', pass: process.env['SMTP_PASS'] ?? '' },
-  })
-  await transporter.sendMail({
-    from: `servd <${process.env['SMTP_FROM'] ?? 'contact@gsfoods.pk'}>`,
-    to,
-    subject,
-    html,
-    ...(replyTo ? { replyTo } : {}),
-  })
+async function sendEmailWithReplyTo(to: string, subject: string, html: string, replyTo: string | null, tenantId: string | null): Promise<void> {
+  await sendMail({ to, subject, html, replyTo, scope: externalScope(tenantId) })
 }
 
 function renderChatEmailHtml(opts: {

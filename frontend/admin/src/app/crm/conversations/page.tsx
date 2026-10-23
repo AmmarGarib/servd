@@ -12,6 +12,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Conversation {
   id: string
@@ -44,15 +46,15 @@ interface Message {
 }
 
 const CHANNEL_META: Record<string, { icon: string; label: string; color: string }> = {
-  web_portal: { icon: '🌐', label: 'Portal',   color: 'text-s-muted' },
-  email:      { icon: '📧', label: 'Email',    color: 'text-blue-700' },
-  whatsapp:   { icon: '💬', label: 'WhatsApp', color: 'text-[#25D366]' },
+  web_portal: { icon: 'globe', label: 'Portal',   color: 'text-s-muted' },
+  email:      { icon: 'mail', label: 'Email',    color: 'text-primary-ink' },
+  whatsapp:   { icon: 'chat', label: 'WhatsApp', color: 'text-success' },
 }
 
 const SOURCE_META: Record<string, { icon: string; label: string }> = {
-  complaint: { icon: '🎫', label: 'Complaint' },
-  review:    { icon: '⭐', label: 'Review' },
-  manual:    { icon: '💬', label: 'Manual' },
+  complaint: { icon: 'ticket', label: 'Complaint' },
+  review:    { icon: 'star', label: 'Review' },
+  manual:    { icon: 'chat', label: 'Manual' },
 }
 
 export default function CrmConversationsPage() {
@@ -84,9 +86,9 @@ export default function CrmConversationsPage() {
 
   const selected = conversations.find((c) => c.id === selectedId)
   const willReach = selected ? [
-    '🌐 Portal',
-    selected.customer.email ? '📧 ' + selected.customer.email : null,
-    selected.customer.phone ? '💬 ' + selected.customer.phone : null,
+    'Portal',
+    selected.customer.email ? 'Email ' + selected.customer.email : null,
+    selected.customer.phone ? 'WhatsApp ' + selected.customer.phone : null,
   ].filter(Boolean) as string[] : []
 
   return (
@@ -101,12 +103,8 @@ export default function CrmConversationsPage() {
         <div className="flex-1 overflow-y-auto">
           {isLoading && <p className="p-4 text-sm text-s-muted">Loading…</p>}
           {!isLoading && conversations.length === 0 && (
-            <div className="p-6 text-center">
-              <p className="text-3xl mb-2">📭</p>
-              <p className="text-sm font-semibold text-s-text">No conversations yet</p>
-              <p className="text-xs text-s-muted mt-1">
-                Start one from a complaint or review by tapping <span className="font-bold text-blue-700">💬 Reach out</span>.
-              </p>
+            <div className="p-4">
+              <CompactEmptyState icon={<NavIcon name="inbox" size={28} />} message="No conversations yet. Start one with Reach out on a complaint or review." />
             </div>
           )}
 
@@ -141,7 +139,7 @@ export default function CrmConversationsPage() {
                         </span>
                       )}
                       <span className="shrink-0 text-[10px] uppercase tracking-wider text-s-muted">
-                        {meta.icon} {meta.label}
+                        <NavIcon name={meta.icon} size={12} className="mr-1 inline" />{meta.label}
                       </span>
                     </div>
                     {c.subject && <p className="text-xs text-s-muted truncate mt-0.5">{c.subject}</p>}
@@ -177,12 +175,12 @@ export default function CrmConversationsPage() {
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {selected.customer.email && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-[10px] text-blue-700">
-                      📧 {selected.customer.email}
+                      <NavIcon name="mail" size={11} />{selected.customer.email}
                     </span>
                   )}
                   {selected.customer.phone && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-[#25D366]/10 border border-[#25D366]/30 px-2 py-0.5 text-[10px] text-[#25D366]">
-                      💬 {selected.customer.phone}
+                    <span className="inline-flex items-center gap-1 rounded-full bg-accent-dim border border-accent px-2 py-0.5 text-[10px] text-success">
+                      <NavIcon name="chat" size={11} />{selected.customer.phone}
                     </span>
                   )}
                 </div>
@@ -215,7 +213,7 @@ export default function CrmConversationsPage() {
                         {channelMeta && (
                           <span className={`inline-flex items-center gap-0.5 ${channelMeta.color}`}
                             title={`Replied via ${channelMeta.label}`}>
-                            · {channelMeta.icon} {channelMeta.label}
+                            · <NavIcon name={channelMeta.icon} size={12} className="mr-0.5 inline" />{channelMeta.label}
                           </span>
                         )}
                       </p>
@@ -224,9 +222,8 @@ export default function CrmConversationsPage() {
                 )
               })}
               {messages.length === 0 && (
-                <div className="text-center mt-12">
-                  <p className="text-3xl mb-2">📬</p>
-                  <p className="text-sm text-s-muted">No messages yet</p>
+                <div className="mt-12">
+                  <CompactEmptyState icon={<NavIcon name="inbox" size={28} />} message="No messages yet" />
                 </div>
               )}
             </div>
@@ -249,17 +246,17 @@ export default function CrmConversationsPage() {
                 disabled={!newMessage.trim() || sendMessage.isPending}
                 className="rounded-xl bg-primary px-4 py-2 font-bold text-primary-on disabled:opacity-50 hover:opacity-90"
               >
-                {sendMessage.isPending ? '…' : '➤'}
+                {sendMessage.isPending ? '…' : <NavIcon name="send" size={16} />}
               </button>
             </div>
           </>
         ) : (
           <div className="flex flex-1 items-center justify-center bg-s-bg/40">
             <div className="text-center max-w-sm px-6">
-              <p className="text-5xl mb-3">💬</p>
+              <span className="mb-3 inline-block text-s-muted"><NavIcon name="chat" size={40} /></span>
               <p className="font-bold text-s-text">Pick a conversation to read</p>
               <p className="text-sm text-s-muted mt-1">
-                Threads start from <span className="font-bold text-blue-700">💬 Reach out</span> on a complaint or review.
+                Threads start from <span className="font-bold text-primary-ink">Reach out</span> on a complaint or review.
               </p>
             </div>
           </div>

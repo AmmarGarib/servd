@@ -81,7 +81,7 @@ export function Modal({ title, children, onClose, dirty }: { title: string; chil
 export function Footer({ onCancel, primary }: { onCancel: () => void; primary: React.ReactNode }) {
   return <DialogFooter onCancel={onCancel} flush>{primary}</DialogFooter>
 }
-export { Field, firstMissing, focusField, useSubmitOnce, fieldCls, primaryBtn } from '../../../components/finance/ui'
+export { LinkButton, Field, FieldLabel, CheckLabel, Input, Textarea, Button, firstMissing, focusField, useSubmitOnce, fieldCls, primaryBtn } from '../../../components/finance/ui'
 /**
  * A top-up over the box limit (or raising the limit) is approved with a
  * manager PIN: the same words as every other PIN prompt for a wrong PIN or a

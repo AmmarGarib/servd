@@ -432,7 +432,7 @@ export default function InventoryPage() {
               {alertCount > 4 ? ` +${alertCount - 4} more` : ''}
             </p>
           </div>
-          <span className="text-xs text-s-red/60 shrink-0">View alerts →</span>
+          <span className="text-xs text-s-red/60 shrink-0">View alerts</span>
         </div>
       )}
 
@@ -898,7 +898,7 @@ export default function InventoryPage() {
                 {canWaste && (
                   <button onClick={() => setTab('stock')}
                     className="text-xs rounded-lg bg-s-red/10 border border-s-red/30 text-s-red px-3 py-1.5 font-semibold hover:bg-s-red/20">
-                    Log waste →
+                    Log waste
                   </button>
                 )}
               </div>

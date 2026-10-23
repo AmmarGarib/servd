@@ -6,6 +6,7 @@
 // Transactions tab (which called an endpoint that never existed) and the
 // unused /finance/ledger, both of which listed the sales register instead of
 // the books.
+import { Button, Input } from '@/components/finance/ui'
 import { Suspense, useMemo, useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -14,6 +15,7 @@ import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 interface LedgerLine {
   id: string
@@ -51,7 +53,7 @@ function EntryCard({ e, open, onToggle }: { e: LedgerEntry; open: boolean; onTog
         <span className="font-mono text-xs text-s-muted w-24 shrink-0">{pktDate(e.entryDate)}</span>
         <span className="flex-1 min-w-0">
           <span className="block text-sm text-s-text truncate">{e.description}</span>
-          <span className="block text-[11px] text-s-dim font-mono truncate">{e.reference ?? `#${e.id.slice(0, 8)}`} · by {e.postedBy ?? 'system'}</span>
+          <span className="block text-xs text-s-muted font-mono truncate">{e.reference ?? `#${e.id.slice(0, 8)}`} · by {e.postedBy ?? 'system'}</span>
         </span>
         {e.reference?.startsWith('manual.reversal:') && <span className="s-badge-muted shrink-0">Reversal</span>}
         {e.reversedBy && <span className="s-badge-amber shrink-0">Reversed {pktDate(e.reversedBy.entryDate)}</span>}
@@ -134,7 +136,7 @@ function LedgerView() {
           <p className="text-xs text-s-muted">Every journal entry in the books, newest first.</p>
         </div>
         {entryId ? (
-          <button onClick={() => router.push('/accounting/ledger')} className="s-btn-secondary text-sm">Show all entries</button>
+          <Button variant="secondary" type="submit" onClick={() => router.push('/accounting/ledger')}>Show all entries</Button>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <Link href="/accounting/journal" className="s-btn-secondary text-sm">Journal entry</Link>
@@ -143,11 +145,11 @@ function LedgerView() {
               <option value="">All accounts</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}{a.isActive ? '' : ' (inactive)'}</option>)}
             </Select>
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-              className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+            <Input className="w-auto px-2 py-1 text-sm" type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+               />
             <span className="text-s-muted text-xs">→</span>
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-              className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+            <Input className="w-auto px-2 py-1 text-sm" type="date" value={to} onChange={(e) => setTo(e.target.value)}
+               />
             {/* An account picked: its statement (opening, running balance, closing). Otherwise the journal feed. */}
             {accountId && (
               <ExportMenu label="Account statement" path={`/accounting/ledger?dateFrom=${from}&dateTo=${to}&accountId=${accountId}&view=statement`}
@@ -163,7 +165,7 @@ function LedgerView() {
         {feed.isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {feed.error && <p className="text-s-red text-sm">{(feed.error as Error).message}</p>}
         {!feed.isLoading && entries.length === 0 && (
-          <div className="s-card p-8 text-center text-sm text-s-muted">{entryId ? 'That entry is not in the books you can see.' : 'No entries in this period.'}</div>
+          <CompactEmptyState message={entryId ? 'That entry is not in the books you can see.' : 'No entries in this period.'} />
         )}
         {entries.length > 0 && (
           <div className="s-card overflow-hidden">
@@ -171,9 +173,9 @@ function LedgerView() {
           </div>
         )}
         {feed.hasNextPage && (
-          <button onClick={() => void feed.fetchNextPage()} disabled={feed.isFetchingNextPage} className="s-btn-secondary text-sm">
+          <Button variant="secondary" type="submit" onClick={() => void feed.fetchNextPage()} disabled={feed.isFetchingNextPage}>
             {feed.isFetchingNextPage ? 'Loading…' : 'Load more'}
-          </button>
+          </Button>
         )}
       </div>
     </div>

@@ -242,7 +242,7 @@ export default function MyTimeClockCard({ variant = 'card', heading, onBranch }:
     </div>
   )
   const locatedBadge = asked && (
-    <div className="absolute top-3 right-3 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full"
+    <div className="absolute top-3 right-3 text-xs font-bold uppercase tracking-widest px-2 py-1 rounded-full"
       style={{ background: coords ? 'rgb(var(--erp-accent-rgb) / 0.22)' : 'color-mix(in srgb, var(--erp-danger) 18%, transparent)', color: coords ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
       <MapPin size={10} aria-hidden="true" className="mr-1 inline-block align-[-1px]" />{coords ? 'located' : mediaNote ? 'no location' : 'locating…'}
     </div>

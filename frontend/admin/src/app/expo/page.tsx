@@ -9,6 +9,7 @@ import { orderRef } from '../../lib/orderRef'
 import { FIRE_ALL_EXTRA_ROLES, useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 /**
  * Expo — the pass-station's screen. Three columns:
@@ -142,7 +143,7 @@ interface UpcomingOrder extends ExpoOrder {
 /** "Paid" chip for a till sale that was paid before expo handed it off: never send the customer back to the counter. */
 function PaidBadge() {
   return (
-    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-kds-green/15 text-kds-green border border-kds-green/40"
+    <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-kds-green/15 text-kds-green border border-kds-green/40"
       title="Paid at the till — hand it over, don't send the customer back to pay">
       Paid
     </span>
@@ -318,7 +319,7 @@ export default function ExpoPage() {
       {unroutedToast.length > 0 && (
         <div role="alert" className="fixed top-4 right-4 z-50 max-w-sm rounded-xl p-4 pr-8 shadow-2xl bg-kds-card border border-kds-amber">
           <p className="text-sm font-black text-kds-amber"><WarnIcon />Fired, but {unroutedToast.length} item{unroutedToast.length === 1 ? '' : 's'} have no live station</p>
-          <p className="text-[11px] text-kds-subtext mt-1">
+          <p className="text-xs text-kds-subtext mt-1">
             The line won't see these because their menu item has no station, or its station was retired. Open Menu Editor → Edit item → pick a station.
           </p>
           <ul className="mt-2 space-y-0.5">
@@ -326,7 +327,7 @@ export default function ExpoPage() {
               <li key={it.id} className="text-xs text-white/85">· {it.name}</li>
             ))}
             {unroutedToast.length > 6 && (
-              <li className="text-[11px] text-white/50">+ {unroutedToast.length - 6} more</li>
+              <li className="text-xs text-white/50">+ {unroutedToast.length - 6} more</li>
             )}
           </ul>
           <button onClick={() => setUnroutedToast([])} aria-label="Dismiss"
@@ -338,7 +339,7 @@ export default function ExpoPage() {
           <p className="text-sm font-black text-kds-text">
             First course fired. Course{heldNotice.courses.length === 1 ? '' : 's'} {heldNotice.courses.join(', ')} held
           </p>
-          <p className="text-[11px] text-kds-subtext mt-1">
+          <p className="text-xs text-kds-subtext mt-1">
             Fire the next course when the table is ready, from the order&apos;s{' '}
             <Link href={`/orders/${heldNotice.orderId}/courses`} className="underline text-kds-blue">Courses</Link> page.
           </p>
@@ -349,7 +350,7 @@ export default function ExpoPage() {
       {actionError && (
         <div role="alert" className="fixed bottom-4 left-4 z-50 max-w-sm rounded-xl p-4 pr-8 shadow-2xl bg-kds-card border border-kds-red">
           <p className="text-sm font-black text-kds-red">Not done</p>
-          <p className="text-[11px] text-kds-subtext mt-1">{actionError}</p>
+          <p className="text-xs text-kds-subtext mt-1">{actionError}</p>
           <button onClick={() => setActionError(null)} aria-label="Dismiss"
             className="absolute top-0 right-0 flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
@@ -359,7 +360,7 @@ export default function ExpoPage() {
           <p className="text-sm font-black text-kds-text">Fired — paced so the course plates together</p>
           <ul className="mt-1 space-y-0.5">
             {pacedNotice.lines.map((l) => (
-              <li key={l.id} className="text-[11px] text-kds-subtext">{l.name} fires at {fireClock(l.scheduledFireAt)}</li>
+              <li key={l.id} className="text-xs text-kds-subtext">{l.name} fires at {fireClock(l.scheduledFireAt)}</li>
             ))}
           </ul>
           {canFireAll && (
@@ -409,16 +410,16 @@ export default function ExpoPage() {
                     Pre-order for {pkWhen(order.scheduledFor)} — reaches the kitchen at {pkWhen(order.kitchenAt)}
                   </p>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${fm.chip}`}>
+                    <span className={`text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${fm.chip}`}>
                       {fm.label}
                     </span>
                     {order.paid && <PaidBadge />}
                     <span className="text-xs text-white/55">
                       {order.customer?.name ?? order.customerName ?? 'Walk-in'} · {order.concept.name}
                     </span>
-                    <span className="text-[10px] text-white/30 font-mono ml-auto">#{orderRef(order.id)}</span>
+                    <span className="text-xs text-white/30 font-mono ml-auto">#{orderRef(order.id)}</span>
                   </div>
-                  <p className="text-[11px] text-white/45 mt-1.5">
+                  <p className="text-xs text-white/45 mt-1.5">
                     {live.map((it) => `${it.quantity}× ${it.name}`).join(' · ')}
                   </p>
                 </article>
@@ -452,29 +453,29 @@ export default function ExpoPage() {
                   <span className={`text-xs font-black uppercase tracking-[0.2em] px-3 py-1 rounded-md ${fm.chip}`}>
                     {fm.label} · {fm.short}
                   </span>
-                  <span className="text-[10px] text-white/35">
+                  <span className="text-xs text-white/35">
                     {formatDistanceToNowStrict(new Date(order.placedAt), { addSuffix: true })}
                   </span>
                 </div>
 
                 {/* Source + table + customer */}
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
-                  <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${src.cls}`}>
+                  <span className={`text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${src.cls}`}>
                     {src.label}
                   </span>
                   {order.paid && <PaidBadge />}
                   <span className="text-xs text-white/45">{order.concept.name}</span>
                   {order.table && (
-                    <span className="text-[10px] font-bold rounded-md px-2 py-0.5 bg-kds-green/10 text-kds-green">
+                    <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-kds-green/10 text-kds-green">
                       Table {order.table.label}
                     </span>
                   )}
-                  <span className="text-[10px] text-white/30 font-mono ml-auto">#{orderRef(order.id)}</span>
+                  <span className="text-xs text-white/30 font-mono ml-auto">#{orderRef(order.id)}</span>
                 </div>
 
                 <div className="flex items-baseline gap-3 mb-2">
                   <p className="font-bold text-white/90">{order.customer?.name ?? order.customerName ?? 'Walk-in'}</p>
-                  {order.customer?.phone && <p className="text-[11px] text-white/40">{order.customer.phone}</p>}
+                  {order.customer?.phone && <p className="text-xs text-white/40">{order.customer.phone}</p>}
                   <p className="ml-auto text-sm font-black text-kds-green">{fmtPkrWhole(order.totalCents)}</p>
                 </div>
 
@@ -483,7 +484,7 @@ export default function ExpoPage() {
                     <div key={it.id} className="flex items-baseline gap-2 text-[13px]">
                       <span className="font-bold text-white/55 tabular-nums w-6">{it.quantity}×</span>
                       <span className="text-white/85 flex-1">{it.name}</span>
-                      {it.notes && <span className="text-[11px] text-kds-amber italic">{it.notes}</span>}
+                      {it.notes && <span className="text-xs text-kds-amber italic">{it.notes}</span>}
                     </div>
                   ))}
                 </div>
@@ -518,7 +519,7 @@ export default function ExpoPage() {
                           key={preset}
                           type="button"
                           onClick={() => setRejectReason(preset)}
-                          className={`text-[11px] font-bold rounded-full px-3 min-h-11 transition-colors border ${rejectReason === preset
+                          className={`text-xs font-bold rounded-full px-3 min-h-11 transition-colors border ${rejectReason === preset
                             ? 'bg-kds-red/20 text-kds-red border-kds-red/50'
                             : 'bg-white/[0.04] text-white/60 border-white/10'}`}>
                           {preset}
@@ -563,27 +564,27 @@ export default function ExpoPage() {
             return (
               <article key={order.id} className={`rounded-2xl p-3.5 bg-white/[0.02] ${fm.border}`}>
                 <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-                  <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${fm.chip}`}>
+                  <span className={`text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${fm.chip}`}>
                     {fm.label} · {fm.short}
                   </span>
                   {order.table && (
-                    <span className="text-[10px] font-bold text-kds-green">Table {order.table.label}</span>
+                    <span className="text-xs font-bold text-kds-green">Table {order.table.label}</span>
                   )}
                   {order.paid && <PaidBadge />}
-                  <span className="text-[10px] text-white/40 ml-auto">
+                  <span className="text-xs text-white/40 ml-auto">
                     {formatDistanceToNowStrict(new Date(order.placedAt), { addSuffix: false })}
                   </span>
                 </div>
                 <p className="font-bold text-white/90 text-sm mb-1">
                   {order.customer?.name ?? order.customerName ?? 'Walk-in'} · {order.concept.name}
                 </p>
-                <p className="text-[11px] text-white/45 mb-2">
+                <p className="text-xs text-white/45 mb-2">
                   {order.items.length} item{order.items.length === 1 ? '' : 's'} · #{orderRef(order.id)}
                 </p>
 
                 {/* Step progress */}
                 <div className="space-y-1.5">
-                  <div className="flex items-baseline justify-between text-[10px] font-bold">
+                  <div className="flex items-baseline justify-between text-xs font-bold">
                     <span className="text-white/55">Steps</span>
                     <span className={`tabular-nums ${fm.text}`}>
                       {order.doneSteps} / {order.totalSteps}
@@ -600,13 +601,13 @@ export default function ExpoPage() {
                 {paced.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {paced.map((l) => (
-                      <p key={l.id} className="text-[11px] text-white/60">
+                      <p key={l.id} className="text-xs text-white/60">
                         <span className="font-bold text-white/80">{l.name}</span> fires at {fireClock(l.scheduledFireAt)}
                       </p>
                     ))}
                     {canFireAll && (
                       <button onClick={() => fireAll.mutate(order.id)} disabled={fireAll.isPending}
-                        className="w-full min-h-11 rounded-lg py-1.5 text-[11px] font-black border border-white/15 text-white/80 disabled:opacity-40">
+                        className="w-full min-h-11 rounded-lg py-1.5 text-xs font-black border border-white/15 text-white/80 disabled:opacity-40">
                         Fire all now
                       </button>
                     )}
@@ -636,14 +637,14 @@ export default function ExpoPage() {
                   </span>
                   <span className="flex items-center gap-2">
                     {order.paid && <PaidBadge />}
-                    <span className="text-[10px] text-white/40 font-mono">#{orderRef(order.id)}</span>
+                    <span className="text-xs text-white/40 font-mono">#{orderRef(order.id)}</span>
                   </span>
                 </div>
 
                 <p className="font-bold text-white/95 text-base mb-1">
                   {order.customer?.name ?? order.customerName ?? 'Walk-in'}
                 </p>
-                <div className="text-[11px] text-white/55 mb-3 space-y-0.5">
+                <div className="text-xs text-white/55 mb-3 space-y-0.5">
                   <p>{order.concept.name} · {order.items.length} item{order.items.length === 1 ? '' : 's'}</p>
                   {order.fulfilmentType === 'dine_in' && order.table && (
                     <p className="flex items-center gap-1 text-kds-green"><ArrowRight size={12} aria-hidden="true" /> Table {order.table.label}</p>
@@ -667,12 +668,12 @@ export default function ExpoPage() {
 
         {/* ── Sidebar: station load ───────────────────────────────────── */}
         <aside>
-          <h2 className="text-[10px] uppercase tracking-[0.2em] font-black text-white/40 mb-3">
+          <h2 className="text-xs uppercase tracking-[0.2em] font-black text-white/40 mb-3">
             Station load
           </h2>
           {Object.entries(stationsByConcept).map(([slug, list]) => (
             <div key={slug} className="mb-5">
-              <p className="text-[10px] uppercase tracking-wider font-black text-white/45 mb-2 capitalize">{slug}</p>
+              <p className="text-xs uppercase tracking-wider font-black text-white/45 mb-2 capitalize">{slug}</p>
               <div className="space-y-1.5">
                 {list.map((s) => {
                   const busy = s.activeItems > 0
@@ -701,7 +702,7 @@ export default function ExpoPage() {
 function Stat({ label, count, tone }: { label: string; count: number; tone: Tone }) {
   return (
     <div className={`rounded-xl px-3 py-2 text-center min-w-[80px] ${TONE_BOX[tone]} ${TONE_TEXT[tone]}`}>
-      <p className="text-[9px] uppercase tracking-wider font-black">{label}</p>
+      <p className="text-xs uppercase tracking-wider font-black">{label}</p>
       <p className="text-xl font-black leading-none mt-0.5 tabular-nums">{count}</p>
     </div>
   )
@@ -710,19 +711,16 @@ function Stat({ label, count, tone }: { label: string; count: number; tone: Tone
 function SectionHeader({ title, count, tone }: { title: string; count: number; tone: Tone }) {
   return (
     <div className={`flex items-baseline justify-between ${TONE_TEXT[tone]}`}>
-      <h2 className="text-[10px] uppercase tracking-[0.2em] font-black">
+      <h2 className="text-xs uppercase tracking-[0.2em] font-black">
         {title}
       </h2>
-      <span className="text-[10px] font-black tabular-nums opacity-70">{count}</span>
+      <span className="text-xs font-black tabular-nums opacity-70">{count}</span>
     </div>
   )
 }
 
 function EmptyState({ text, sub }: { text: string; sub: string }) {
   return (
-    <div className="rounded-2xl p-8 text-center bg-white/[0.015] border border-dashed border-white/10">
-      <p className="text-sm font-bold text-white/65">{text}</p>
-      <p className="text-[11px] text-white/35 mt-1">{sub}</p>
-    </div>
+    <CompactEmptyState tone="dark" message={text} detail={sub} />
   )
 }

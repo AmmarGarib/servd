@@ -4,6 +4,7 @@
 // 'Retained earnings b/f' row per company holding the profit before it (shown
 // muted — no account behind it). "Since inception" shows every account's
 // whole history. Either way debits equal credits.
+import { CheckLabel, Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
@@ -43,12 +44,12 @@ export default function TrialBalancePage() {
           <h1 className="text-xl font-bold text-s-text">Trial Balance</h1>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-s-text">
+          <CheckLabel className="flex items-center gap-1.5 text-xs text-s-text">
             <input type="checkbox" className="accent-primary" checked={basis === 'inception'} onChange={(e) => setBasis(e.target.checked ? 'inception' : 'year')} />
             Since inception
-          </label>
-          <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
-            className="bg-s-card border border-s-border rounded px-3 py-1.5 text-sm text-s-text" />
+          </CheckLabel>
+          <Input className="w-auto px-3 py-1.5 text-sm" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
+             />
           <ExportMenu path={`/accounting/trial-balance?asOf=${asOf}&basis=${basis}`} filename={`trial-balance-${basis === 'year' ? 'year-' : ''}${asOf}`} />
         </div>
       </header>
@@ -125,7 +126,7 @@ export default function TrialBalancePage() {
                       <tr key={`${row.tenantId ?? ''}:${row.code}`} className="border-b border-s-border last:border-0">
                         {multi && <td className="px-4 py-2 text-xs text-s-muted whitespace-nowrap">{row.companyName ?? '—'}</td>}
                         <td className="px-4 py-2 font-mono text-xs text-s-muted">{row.code}</td>
-                        <td className={`px-4 py-2 ${ink}`}>{row.name}{row.virtual && <span className="ml-1 text-[11px] not-italic">(computed)</span>}</td>
+                        <td className={`px-4 py-2 ${ink}`}>{row.name}{row.virtual && <span className="ml-1 text-xs not-italic">(computed)</span>}</td>
                         <td className="px-4 py-2 text-xs text-s-muted">{row.type}</td>
                         <td className={`px-4 py-2 text-right font-mono text-xs ${ink}`}>{row.debitCents > 0 ? fmtPkr(row.debitCents) : ''}</td>
                         <td className={`px-4 py-2 text-right font-mono text-xs ${ink}`}>{row.creditCents > 0 ? fmtPkr(row.creditCents) : ''}</td>

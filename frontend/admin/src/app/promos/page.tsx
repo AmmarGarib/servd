@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { fmtPkrWhole, isoToPktLocal, pktLocalToIso } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { NavIcon } from '../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
 interface PromoCode {
   id: string
@@ -223,11 +225,7 @@ export default function PromosPage() {
         {isLoading ? (
           <p className="text-s-muted text-sm">Loading…</p>
         ) : promos.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-4xl mb-3">🎟</p>
-            <p className="font-semibold text-s-text">No promo codes yet</p>
-            <p className="text-sm text-s-muted mt-1">Create your first promo to drive customer orders</p>
-          </div>
+          <CompactEmptyState message="No promo codes yet" detail="Create your first promo to drive customer orders" />
         ) : (
           <div className="rounded-xl border border-s-border overflow-hidden">
             <div className="overflow-x-auto">

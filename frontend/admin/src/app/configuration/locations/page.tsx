@@ -9,6 +9,7 @@ import { Modal } from '../../../components/ui/Modal'
 import { FormField } from '../../../components/ui/FormField'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { useAuthStore } from '../../../store/auth'
+import { NavIcon } from '../../../components/ui/NavIcon'
 
 interface TenantLite { id: string; name: string; slug: string }
 interface ConceptLite { id: string; name: string; slug: string; tenantId?: string | null; tenant?: TenantLite | null }
@@ -135,7 +136,7 @@ export default function LocationsPage() {
         </div>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white/90">📍 Locations</h1>
+            <h1 className="text-2xl font-black text-white/90">Locations</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Physical places where you operate. A single location can host multiple brands (multi-concept kitchens, food-court units).
               A location's address and map pin are what customers see for every brand it runs (storefront, Maps links, JSON-LD),
@@ -175,7 +176,7 @@ export default function LocationsPage() {
         {!isLoading && !isError && locations.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-            <p className="text-4xl mb-3">📍</p>
+            <span className="mb-3 inline-block text-s-muted"><NavIcon name="pin" size={32} /></span>
             <p className="font-bold text-white/85">No locations yet</p>
             <p className="text-sm text-white/45 mt-1 max-w-sm mx-auto">
               Add your first physical location. If you have a multi-concept kitchen, add the location and link multiple brands to it.
@@ -216,7 +217,7 @@ export default function LocationsPage() {
                       <span key={cl.conceptId}
                         className="text-xs font-semibold px-2 py-0.5 rounded-full"
                         style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.18)' }}>
-                        {cl.concept.name}{cl.isPrimary ? ' ★' : ''}
+                        {cl.concept.name}{cl.isPrimary ? <NavIcon name="star" size={11} className="ml-1 inline fill-current" /> : null}
                       </span>
                     ))}
                   </div>

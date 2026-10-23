@@ -8,6 +8,7 @@
 // Tax view: smallwares are deducted in full in the year bought (accountant
 // answer H35). There is no deferred-tax figure anywhere (H24).
 
+import { Field, Input, LinkButton } from '@/components/finance/ui'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -111,12 +112,12 @@ function ScheduleReport({ onError }: { onError: (m: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">From month</span><input type="month" className={inp} value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">To month</span><input type="month" className={inp} value={to} onChange={(e) => setTo(e.target.value)} /></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Group by</span>
+        <Field label="From month"><Input type="month" className={inp} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label="To month"><Input type="month" className={inp} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+        <Field label="Group by">
           <Select className={inp} value={by} onChange={(e) => setBy(e.target.value)}>
             <option value="class">Class</option><option value="brand">Brand</option><option value="location">Outlet</option><option value="pool">Smallwares pool</option><option value="asset">Asset</option>
-          </Select></label>
+          </Select></Field>
         <div>{csvButton(`${FA_BASE}/reports/schedule?${qs}`, 'depreciation-schedule', onError)}</div>
       </div>
       <Loading q={q} />
@@ -129,7 +130,7 @@ function ScheduleReport({ onError }: { onError: (m: string) => void }) {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="text-sm min-w-full">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                   <th className="px-3 py-3 font-bold sticky left-0" style={{ background: 'var(--surface)' }}>{by === 'asset' ? 'Asset' : by === 'location' ? 'Outlet' : by === 'brand' ? 'Brand' : by === 'pool' ? 'Pool' : 'Class'}</th>
                   {d.months.map((m) => <th key={m} className="px-3 py-3 font-bold text-right whitespace-nowrap">{fmtMonth(m)}</th>)}
                 </tr>
@@ -138,7 +139,7 @@ function ScheduleReport({ onError }: { onError: (m: string) => void }) {
                 {groups.map((g, i) => (
                   <tr key={i} className="border-t border-white/[0.05]">
                     <td className="px-3 py-2 font-bold text-white/85 sticky left-0 whitespace-nowrap" style={{ background: 'var(--surface)' }}>
-                      {g.label}{multi && <span className="block text-[10px] font-normal text-white/40">{g.company}</span>}
+                      {g.label}{multi && <span className="block text-xs font-normal text-s-muted">{g.company}</span>}
                     </td>
                     {d.months.map((m) => {
                       const c = g.cells.get(m)
@@ -146,7 +147,7 @@ function ScheduleReport({ onError }: { onError: (m: string) => void }) {
                         <td key={m} className="px-3 py-2 text-right font-mono whitespace-nowrap">
                           {c && c.posted > 0 && <span className="text-white/90">{money(c.posted)}</span>}
                           {c && c.forecast > 0 && (
-                            <span className={`block text-[11px] ${m <= d.lastCompletedPeriod ? 'text-s-amber' : 'text-white/40'}`}>{m <= d.lastCompletedPeriod ? 'owed ' : ''}{money(c.forecast)}</span>
+                            <span className={`block text-xs ${m <= d.lastCompletedPeriod ? 'text-s-amber' : 'text-s-muted'}`}>{m <= d.lastCompletedPeriod ? 'owed ' : ''}{money(c.forecast)}</span>
                           )}
                         </td>
                       )
@@ -157,7 +158,7 @@ function ScheduleReport({ onError }: { onError: (m: string) => void }) {
               </tbody>
             </table>
           </div>
-          <p className="text-[11px] text-white/40">Solid figures are posted. Grey figures are forecast; amber figures are completed months not yet charged (the nightly run catches them up).</p>
+          <p className="text-xs text-s-muted">Solid figures are posted. Grey figures are forecast; amber figures are completed months not yet charged (the nightly run catches them up).</p>
         </>
       )}
     </div>
@@ -200,7 +201,7 @@ function RollForwardReport({ onError }: { onError: (m: string) => void }) {
         <p className="px-4 pt-4 text-sm font-black text-white/90">{title}</p>
         <table className="text-sm min-w-full mt-2">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+            <tr className="text-left text-xs uppercase tracking-wider text-white/40">
               <th className="px-3 py-3 font-bold sticky left-0" style={{ background: 'var(--surface)' }}>Class</th>
               {used.map(([k, l]) => <th key={k} className="px-3 py-3 font-bold text-right whitespace-nowrap">{l}</th>)}
               <th className="px-3 py-3 font-bold text-right whitespace-nowrap">In the ledger</th>
@@ -211,7 +212,7 @@ function RollForwardReport({ onError }: { onError: (m: string) => void }) {
             {(d?.rows ?? []).map((r, i) => (
               <tr key={i} className="border-t border-white/[0.05]">
                 <td className="px-3 py-2 font-bold text-white/85 sticky left-0 whitespace-nowrap" style={{ background: 'var(--surface)' }}>
-                  {r.label}{multi && <span className="block text-[10px] font-normal text-white/40">{r.companyName}</span>}
+                  {r.label}{multi && <span className="block text-xs font-normal text-s-muted">{r.companyName}</span>}
                 </td>
                 {used.map(([k]) => <td key={k} className={`px-3 py-2 text-right font-mono whitespace-nowrap ${k === closeKey ? 'font-bold text-white/95' : 'text-white/70'}`}>{money(n(r, k))}</td>)}
                 <td className="px-3 py-2 text-right font-mono text-white/70 whitespace-nowrap">{money(n(r, glKey))}</td>
@@ -227,9 +228,9 @@ function RollForwardReport({ onError }: { onError: (m: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">From</span><input type="date" className={inp} value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">To</span><input type="date" className={inp} value={to} max={todayIso()} onChange={(e) => setTo(e.target.value)} /></label>
-        <p className="text-[11px] text-white/40 col-span-2 md:col-span-1">Blank means the tax year so far.</p>
+        <Field label="From"><Input type="date" className={inp} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label="To"><Input type="date" className={inp} value={to} max={todayIso()} onChange={(e) => setTo(e.target.value)} /></Field>
+        <p className="text-xs text-s-muted col-span-2 md:col-span-1">Blank means the tax year so far.</p>
         <div>{csvButton(`${FA_BASE}/reports/roll-forward${qs ? `?${qs}` : ''}`, 'fixed-asset-roll-forward', onError)}</div>
       </div>
       <Loading q={q} />
@@ -273,12 +274,12 @@ function NbvReport({ onError }: { onError: (m: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">As of</span><input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></label>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">Group by</span>
+        <Field label="As of"><Input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></Field>
+        <Field label="Group by">
           <Select className={inp} value={by} onChange={(e) => setBy(e.target.value)}>
             <option value="class">Class</option><option value="brand">Brand</option><option value="location">Outlet</option><option value="pool">Smallwares pool</option><option value="company">Company</option><option value="asset">Asset</option>
-          </Select></label>
-        <p className="text-[11px] text-white/40">Brand and outlet are where each asset was on that day.</p>
+          </Select></Field>
+        <p className="text-xs text-s-muted">Brand and outlet are where each asset was on that day.</p>
         <div>{csvButton(`${FA_BASE}/reports/nbv?${qs}`, `fixed-asset-nbv`, onError)}</div>
       </div>
       <Loading q={q} />
@@ -286,7 +287,7 @@ function NbvReport({ onError }: { onError: (m: string) => void }) {
         <div className="rounded-2xl overflow-x-auto" style={card}>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+              <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                 <th className="px-4 py-3 font-bold">{fmtDay(d.asOf)}</th>
                 {['Items', 'Cost', 'Depreciated', 'Book value'].map((h) => <th key={h} className="px-4 py-3 font-bold text-right">{h}</th>)}
               </tr>
@@ -294,7 +295,7 @@ function NbvReport({ onError }: { onError: (m: string) => void }) {
             <tbody>
               {d.rows.map((r) => (
                 <tr key={`${r.tenantId}|${r.key}`} className="border-t border-white/[0.05]">
-                  <td className="px-4 py-2 font-bold text-white/85">{r.label}{multi && <span className="block text-[10px] font-normal text-white/40">{r.companyName}</span>}</td>
+                  <td className="px-4 py-2 font-bold text-white/85">{r.label}{multi && <span className="block text-xs font-normal text-s-muted">{r.companyName}</span>}</td>
                   <td className="px-4 py-2 text-right text-white/60">{r.assets}</td>
                   <td className="px-4 py-2 text-right font-mono text-white/80 whitespace-nowrap">{money(r.costCents)}</td>
                   <td className="px-4 py-2 text-right font-mono text-white/60 whitespace-nowrap">{money(r.accumulatedCents)}</td>
@@ -333,8 +334,8 @@ function TieOutReport({ onError }: { onError: (m: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">As of</span><input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></label>
-        <p className="text-[11px] text-white/40 col-span-2 md:col-span-2">Blank compares today&rsquo;s balances.</p>
+        <Field label="As of"><Input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></Field>
+        <p className="text-xs text-s-muted col-span-2 md:col-span-2">Blank compares today&rsquo;s balances.</p>
         <div>{csvButton(`${FA_BASE}/reports/tie-out${qs ? `?${qs}` : ''}`, 'fixed-asset-tie-out', onError)}</div>
       </div>
       <Loading q={q} />
@@ -358,7 +359,7 @@ function TieOutReport({ onError }: { onError: (m: string) => void }) {
             </div>
             <table className="w-full text-sm mt-2">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                   <th className="px-4 py-2 font-bold">Check</th><th className="px-4 py-2 font-bold">Account</th>
                   <th className="px-4 py-2 font-bold text-right">Register</th><th className="px-4 py-2 font-bold text-right">Ledger</th><th className="px-4 py-2 font-bold text-right">Difference</th>
                 </tr>
@@ -407,8 +408,8 @@ function AdvancesReport({ onError }: { onError: (m: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
-        <label className="block"><span className="text-[11px] font-bold text-white/50">As of</span><input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></label>
-        <p className="text-[11px] text-white/40 col-span-2">An advance is money paid to a supplier before the item is capitalised.</p>
+        <Field label="As of"><Input type="date" className={inp} value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} /></Field>
+        <p className="text-xs text-s-muted col-span-2">An advance is money paid to a supplier before the item is capitalised.</p>
         <div>{csvButton(`${FA_BASE}/reports/advances${qs ? `?${qs}` : ''}`, 'supplier-advances', onError)}</div>
       </div>
       <Loading q={q} />
@@ -417,7 +418,7 @@ function AdvancesReport({ onError }: { onError: (m: string) => void }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {d.byCompany.map((c) => (
               <div key={c.tenantId} className="rounded-2xl p-4" style={card}>
-                <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{c.companyName}</p>
+                <p className="text-xs uppercase tracking-wider text-white/40 font-bold">{c.companyName}</p>
                 <p className="text-lg font-black text-white/90 mt-1">{money(c.heldCents)}</p>
                 <p className="text-xs mt-1">{c.diffCents === 0 ? <span className="text-success font-bold">Ties to the ledger</span> : <span className="text-s-red font-bold">Ledger differs by {moneyExact(c.diffCents)}</span>}</p>
               </div>
@@ -426,7 +427,7 @@ function AdvancesReport({ onError }: { onError: (m: string) => void }) {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                   {['Project and item', 'First paid', 'Delivery', 'Advanced', 'Applied to assets', 'Still held', 'Flags'].map((h, i) => <th key={h} className={`px-4 py-3 font-bold whitespace-nowrap ${[3, 4, 5].includes(i) ? 'text-right' : ''}`}>{h}</th>)}
                 </tr>
               </thead>
@@ -436,7 +437,7 @@ function AdvancesReport({ onError }: { onError: (m: string) => void }) {
                   <tr key={r.lineId ?? r.paymentId ?? i} className="border-t border-white/[0.05]">
                     <td className="px-4 py-2">
                       {r.projectId ? <Link href={`/finance/capex?project=${r.projectId}`} className="font-bold text-primary-ink hover:underline">{r.projectName}</Link> : <span className="font-bold text-white/85">{r.projectName}</span>}
-                      <p className="text-[11px] text-white/45">{r.item ?? 'No item'}{d.byCompany.length > 1 ? ` · ${r.companyName}` : ''}</p>
+                      <p className="text-xs text-s-muted">{r.item ?? 'No item'}{d.byCompany.length > 1 ? ` · ${r.companyName}` : ''}</p>
                     </td>
                     <td className="px-4 py-2 text-white/60 whitespace-nowrap">{r.firstPaidAt ? `${fmtDay(r.firstPaidAt)}${r.ageDays !== null ? ` (${r.ageDays} days)` : ''}` : '—'}</td>
                     <td className="px-4 py-2 text-white/60 whitespace-nowrap">{r.actualDeliveryDate ? `Delivered ${fmtDay(r.actualDeliveryDate)}` : r.expectedDeliveryDate ? `Due ${fmtDay(r.expectedDeliveryDate)}` : '—'}</td>
@@ -499,12 +500,12 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
         <div className="flex items-center gap-2">
           <button className={btnGhost} disabled={!shownYear} onClick={() => shownYear && setYear(shownYear - 1)} aria-label="Previous tax year">&larr;</button>
           <div className="text-center min-w-[120px]">
-            <p className="text-[11px] font-bold text-white/50">Tax year</p>
+            <p className="text-xs font-bold text-white/50">Tax year</p>
             <p className="font-black text-white/90">{shownYear ?? '…'}</p>
           </div>
           <button className={btnGhost} disabled={!shownYear} onClick={() => shownYear && setYear(shownYear + 1)} aria-label="Next tax year">&rarr;</button>
         </div>
-        {d && <p className="text-xs text-white/50">{fmtDay(d.start)} to {fmtDay(d.end)} · {d.companyName}</p>}
+        {d && <p className="text-xs text-s-muted">{fmtDay(d.start)} to {fmtDay(d.end)} · {d.companyName}</p>}
         <div className="ml-auto flex flex-wrap gap-2">
           {d && (d.frozen ? <span className="s-badge-green self-center">Frozen</span> : lookups?.capabilities.canApprove && (
             <button className={btnPrimary} disabled={freeze.isPending} onClick={() => { if (window.confirm(`Freeze tax year ${d.taxYear} for ${d.companyName}? Its figures stop moving.`)) freeze.mutate() }}>
@@ -514,7 +515,7 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
           {csvButton(`${FA_BASE}/reports/tax${qs ? `?${qs}` : ''}`, `tax-depreciation-${shownYear ?? ''}`, onError)}
         </div>
       </div>
-      <p className="text-[11px] text-white/40">Tax is filed per company, so this report shows the company picked in the top bar.</p>
+      <p className="text-xs text-s-muted">Tax is filed per company, so this report shows the company picked in the top bar.</p>
       {done && <Notice tone="ok" onClose={() => setDone('')}>{done}</Notice>}
       <Loading q={q} />
 
@@ -523,7 +524,7 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                   <th className="px-4 py-3 font-bold">Class</th>
                   {cols.map(([h]) => <th key={h} className="px-4 py-3 font-bold text-right whitespace-nowrap">{h}</th>)}
                 </tr>
@@ -546,14 +547,14 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
             </table>
           </div>
 
-          <button className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setDetail((v) => !v)}>
+          <LinkButton type="button"  onClick={() => setDetail((v) => !v)}>
             {detail ? 'Hide the asset-by-asset figures' : `Show the asset-by-asset figures (${d.rows.length})`}
-          </button>
+          </LinkButton>
           {detail && (
             <div className="rounded-2xl overflow-x-auto" style={card}>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
+                  <tr className="text-left text-xs uppercase tracking-wider text-white/40">
                     <th className="px-4 py-3 font-bold">Asset</th><th className="px-4 py-3 font-bold">Rate</th>
                     {cols.map(([h]) => <th key={h} className="px-4 py-3 font-bold text-right whitespace-nowrap">{h}</th>)}
                   </tr>
@@ -561,7 +562,7 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
                 <tbody>
                   {d.rows.map((r) => (
                     <tr key={r.assetId} className="border-t border-white/[0.05]">
-                      <td className="px-4 py-2"><Link href={`${FA_BASE}/${r.assetId}`} className="font-bold text-primary-ink hover:underline">{r.assetTag ? `${r.assetTag} ` : ''}{r.name}</Link><p className="text-[11px] text-white/40">{r.classLabel}</p></td>
+                      <td className="px-4 py-2"><Link href={`${FA_BASE}/${r.assetId}`} className="font-bold text-primary-ink hover:underline">{r.assetTag ? `${r.assetTag} ` : ''}{r.name}</Link><p className="text-xs text-s-muted">{r.classLabel}</p></td>
                       <td className="px-4 py-2 text-white/60 whitespace-nowrap">{pct(r.rateBp)}{r.initialAllowanceBp ? ` + ${pct(r.initialAllowanceBp)}` : ''}</td>
                       {cols.map(([h, k]) => <td key={h} className="px-4 py-2 text-right font-mono text-white/70 whitespace-nowrap">{money(r[k])}</td>)}
                     </tr>
@@ -571,7 +572,7 @@ function TaxReport({ onError }: { onError: (m: string) => void }) {
             </div>
           )}
 
-          {d.smallwaresNote && <p className="text-xs text-white/50">{d.smallwaresNote}</p>}
+          {d.smallwaresNote && <p className="text-xs text-s-muted">{d.smallwaresNote}</p>}
 
           {d.toConfirm.length > 0 && (
             <section className="rounded-2xl p-4" style={card}>

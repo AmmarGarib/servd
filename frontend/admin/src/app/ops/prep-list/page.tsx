@@ -6,6 +6,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface PrepLine {
   ingredientId: string
@@ -104,13 +106,7 @@ function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
           <h2 className="text-sm font-black uppercase tracking-[0.24em] text-white/60 mb-3">{concept.name}</h2>
           {prepLoading && <p className="text-sm text-white/40">Computing forecast…</p>}
           {prepList && prepList.byStation.length === 0 && (
-            <div className="rounded-2xl p-8 text-center"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              <p className="font-bold text-white/85">No prep computed</p>
-              <p className="text-sm text-white/45 mt-1 max-w-md mx-auto">
-                The demand forecast needs ~2 weeks of completed orders before it can suggest prep quantities. Check back once you have history.
-              </p>
-            </div>
+            <CompactEmptyState message="No prep computed" detail="The demand forecast needs ~2 weeks of completed orders before it can suggest prep quantities. Check back once you have history." />
           )}
           {prepList && prepList.byStation.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -145,8 +141,8 @@ function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
                             <td className="px-4 py-2 text-right text-white/65 font-mono">{l.requiredQty} {l.unit}</td>
                             <td className="px-4 py-2 text-right text-white/45 font-mono">{l.currentStock} {l.unit}</td>
                             <td className="px-4 py-2 text-right font-mono font-bold"
-                              style={{ color: short ? '#a15c00' : 'var(--erp-primary-ink)' }}>
-                              {short ? `+${l.shortfall} ${l.unit}` : '✓'}
+                              style={{ color: short ? 'var(--erp-warning)' : 'var(--erp-primary-ink)' }}>
+                              {short ? `+${l.shortfall} ${l.unit}` : <NavIcon name="check" size={13} className="inline" />}
                             </td>
                           </tr>
                         )
@@ -160,7 +156,7 @@ function BrandPrep({ concept, days }: { concept: Concept; days: number }) {
           )}
           {prepList && prepList.unmappedItems.length > 0 && (
             <div className="mt-3 rounded-xl p-3 text-xs"
-              style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>
+              style={{ background: 'color-mix(in srgb, var(--erp-warning) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 20%, transparent)' }}>
               <p className="font-bold text-amber-700">{prepList.unmappedItems.length} forecast item{prepList.unmappedItems.length === 1 ? '' : 's'} skipped</p>
               <ul className="text-white/55 mt-1 space-y-0.5">
                 {prepList.unmappedItems.slice(0, 5).map((u) => (

@@ -25,6 +25,7 @@
 // keeps no role list. Every 403 / 404 / 409 / 422 message is shown as the API
 // wrote it.
 
+import { Button, CheckLabel, Field, Input, LinkButton } from '@/components/finance/ui'
 import { useEffect, useMemo, useState } from 'react'
 import { useTrashPrefill } from '../../../lib/trash'
 import { unwrapPrefill, pStr, pNum } from '../../../lib/trashPrefill'
@@ -41,6 +42,7 @@ import { Select } from '@/components/ui/Select'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { HeadOfficeTab } from './HeadOfficeTab'
 import { useActiveCompany } from '../../../lib/connectorsApi'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 // ─── API shapes ──────────────────────────────────────────────────────────────
 
@@ -182,7 +184,7 @@ const FLEET_BADGE: Record<FleetStatus, { cls: string; label: string }> = {
 
 const danger = 'var(--erp-danger)'
 const fieldCls = 's-input'
-const labelCls = 'block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1'
+const labelCls = 'block mb-1'
 
 function errMessage(err: unknown): string {
   if (err instanceof ApiError) return (err.code && PAYMENT_REFERENCE_ERROR_TEXT[err.code]) || err.message
@@ -219,7 +221,7 @@ function Notice({ msg, onClose }: { msg: Msg | null; onClose: () => void }) {
     <div role={msg.ok ? 'status' : 'alert'} className="s-card space-y-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-3">
         <span className={msg.ok ? 'text-success' : ''} style={msg.ok ? undefined : { color: danger }}>{msg.text}</span>
-        <button type="button" onClick={onClose} className="text-xs text-white/40 hover:text-white/70" aria-label="Dismiss">Close</button>
+        <LinkButton tone="muted" type="button" onClick={onClose}  aria-label="Dismiss">Close</LinkButton>
       </div>
       <ReferenceUsedBeforeNotice uses={msg.uses} />
     </div>
@@ -281,7 +283,7 @@ export default function IntercompanyPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="border-b px-4 py-6 sm:px-7" style={{ borderColor: 'var(--border)' }}>
-        <Link href="/accounting" className="text-xs text-white/40 hover:text-white/70">← Accounting</Link>
+        <Link href="/accounting" className="text-xs text-s-muted hover:text-white/70">← Accounting</Link>
         <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-success">Group companies</p>
         <h1 className="text-2xl font-black text-white/90">Inter-company</h1>
         <p className="mt-1 max-w-3xl text-sm text-white/45">
@@ -355,10 +357,9 @@ function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: 
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-end gap-3">
-        <label className="block">
-          <span className={labelCls}>As of (optional)</span>
-          <input type="date" value={asOf} max={todayPktIso()} onChange={(e) => setAsOf(e.target.value)} className={fieldCls} />
-        </label>
+        <Field label="As of (optional)">
+          <Input type="date" value={asOf} max={todayPktIso()} onChange={(e) => setAsOf(e.target.value)} className={fieldCls} />
+        </Field>
       </div>
       <div className="s-card overflow-hidden">
         {q.isError ? (
@@ -366,15 +367,12 @@ function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: 
         ) : q.isLoading ? (
           <p className="p-6 text-center text-sm text-white/40">Loading…</p>
         ) : pairs.length === 0 ? (
-          <div className="p-8 text-center">
-            <p className="font-bold text-white/85">No inter-company balances</p>
-            <p className="mt-1 text-sm text-white/45">A pair of companies appears here after its first transfer or shared-fleet charge.</p>
-          </div>
+          <CompactEmptyState message="No inter-company balances yet." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
+                <tr className="text-left text-xs uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
                   <th className="px-4 py-3 font-semibold">Companies</th>
                   <th className="px-3 py-3 text-right font-semibold">First company&apos;s books: owed to it</th>
                   <th className="px-3 py-3 text-right font-semibold">First company&apos;s books: it owes</th>
@@ -393,7 +391,7 @@ function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: 
                     <tr key={`${p.a.id}:${p.b.id}`} style={{ borderTop: '1px solid var(--border)' }}>
                       <td className="px-4 py-3">
                         <p className="font-semibold text-white/85">{p.a.name} ↔ {p.b.name}</p>
-                        {!p.memberOfBoth && <p className="text-xs text-white/40">You see only {p.a.name}&apos;s books — you are not a member of {p.b.name}.</p>}
+                        {!p.memberOfBoth && <p className="text-xs text-s-muted">You see only {p.a.name}&apos;s books — you are not a member of {p.b.name}.</p>}
                       </td>
                       <td className="px-3 py-3 text-right"><Money cents={p.aDueFromB} /></td>
                       <td className="px-3 py-3 text-right"><Money cents={p.aDueToB} /></td>
@@ -409,9 +407,9 @@ function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: 
                       </td>
                       <td className="px-4 py-3 text-right">
                         {canPrepare && p.memberOfBoth && net > 0 && (
-                          <button type="button" className="s-btn-secondary text-xs" onClick={() => onSettle({ debtor: owes.debtor.id, creditor: owes.creditor.id, cents: net })}>
+                          <Button size="sm" variant="secondary" type="button"  onClick={() => onSettle({ debtor: owes.debtor.id, creditor: owes.creditor.id, cents: net })}>
                             Record settlement
-                          </button>
+                          </Button>
                         )}
                       </td>
                     </tr>
@@ -422,7 +420,7 @@ function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: 
           </div>
         )}
       </div>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-s-muted">
         Each inter-company posting moves both companies&apos; books together, so the two always agree. A red difference means one book holds an entry the
         other does not — look for a hand entry or a one-sided reversal.
       </p>
@@ -452,8 +450,7 @@ function TransfersTab({ companies, prefill, clearPrefill, setMsg }: {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <label className="block">
-          <span className={labelCls}>Show</span>
+        <Field label="Show">
           <Select value={status} onChange={(e) => setStatus(e.target.value as '' | TransferStatus)} className="s-select">
             <option value="">All transfers</option>
             <option value="submitted">Waiting for the CEO</option>
@@ -461,9 +458,9 @@ function TransfersTab({ companies, prefill, clearPrefill, setMsg }: {
             <option value="rejected">Rejected</option>
             <option value="reversed">Reversed</option>
           </Select>
-        </label>
+        </Field>
         {companies?.can.prepare && !showForm && (
-          <button type="button" className="s-btn-primary text-sm" onClick={() => setShowForm(true)}>New transfer</button>
+          <Button type="button"  onClick={() => setShowForm(true)}>New transfer</Button>
         )}
       </div>
 
@@ -521,20 +518,20 @@ function TransferRow({ t, onChanged, onError }: { t: Transfer; onChanged: (text:
             {t.kind === 'charge' ? `${t.creditorName} charges ${t.debtorName}` : t.kind === 'settlement' ? `${t.debtorName} pays ${t.creditorName}` : `${t.debtorName} and ${t.creditorName} net off`}
           </p>
           <p className="text-sm text-white/55">{t.memo}</p>
-          <p className="mt-1 text-xs text-white/40">
+          <p className="mt-1 text-xs text-s-muted">
             Dated {dateLabel(t.entryDate)} · prepared by {t.preparedByName ?? '—'}
             {t.decidedByName && <> · {t.status === 'rejected' ? 'rejected' : 'approved'} by {t.decidedByName}</>}
             {t.decisionNote && <> — “{t.decisionNote}”</>}
             {t.reversedByName && <> · reversed by {t.reversedByName}: {t.reversalReason}</>}
           </p>
           {t.kind === 'charge' && (
-            <p className="text-xs text-white/40">
+            <p className="text-xs text-s-muted">
               {t.debtorName}: account {t.debtorAccountCode} · {t.creditorName}: account {t.creditorAccountCode}
               {t.conceptSplit && <> · {t.conceptSplit.map((s) => `${s.conceptName ?? 'brand'} ${fmtPkr(s.cents)}`).join(', ')}</>}
             </p>
           )}
           {t.kind === 'settlement' && (
-            <p className="text-xs text-white/40">
+            <p className="text-xs text-s-muted">
               By {receiptMethodLabel(t.method).toLowerCase() || '—'}{t.debtorBankName ? ` from ${t.debtorBankName}` : ''}{t.creditorBankName ? ` into ${t.creditorBankName}` : ''}{t.bankReference ? ` · ref ${t.bankReference}` : ''}
             </p>
           )}
@@ -546,22 +543,21 @@ function TransferRow({ t, onChanged, onError }: { t: Transfer; onChanged: (text:
         <div className="mt-3 flex flex-wrap items-end gap-2">
           {t.canApprove && mode === '' && (
             <>
-              <button type="button" className="s-btn-primary text-sm" disabled={act.isPending}
+              <Button type="button"  disabled={act.isPending}
                 onClick={() => { if (window.confirm('Approve and post this transfer in both companies\' books?')) act.mutate({ path: 'approve', body: {} }) }}>
                 Approve
-              </button>
-              <button type="button" className="s-btn-secondary text-sm" onClick={() => setMode('reject')}>Reject</button>
+              </Button>
+              <Button variant="secondary" type="button"  onClick={() => setMode('reject')}>Reject</Button>
             </>
           )}
           {t.canReverse && mode === '' && (
-            <button type="button" className="s-btn-danger text-sm" onClick={() => setMode('reverse')}>Reverse</button>
+            <Button variant="danger" type="button"  onClick={() => setMode('reverse')}>Reverse</Button>
           )}
           {mode !== '' && (
             <>
-              <label className="block min-w-[14rem] flex-1">
-                <span className={labelCls}>{mode === 'reject' ? 'Why is it rejected?' : 'Why is it reversed? (at least 10 characters)'}</span>
-                <input value={text} onChange={(e) => setText(e.target.value)} className={fieldCls} />
-              </label>
+              <div className="min-w-[14rem] flex-1"><Field label={mode === 'reject' ? 'Why is it rejected?' : 'Why is it reversed? (at least 10 characters)'}>
+                <Input value={text} onChange={(e) => setText(e.target.value)} className={fieldCls} />
+              </Field></div>
               <button
                 type="button"
                 className={mode === 'reject' ? 's-btn-secondary text-sm' : 's-btn-danger text-sm'}
@@ -570,7 +566,7 @@ function TransferRow({ t, onChanged, onError }: { t: Transfer; onChanged: (text:
               >
                 {mode === 'reject' ? 'Reject transfer' : 'Reverse in both books'}
               </button>
-              <button type="button" className="s-btn-ghost text-sm" onClick={() => { setMode(''); setText('') }}>Cancel</button>
+              <Button variant="ghost" type="button"  onClick={() => { setMode(''); setText('') }}>Cancel</Button>
             </>
           )}
         </div>
@@ -584,13 +580,12 @@ function PairBankSelect({ id, label, banks, value, onChange }: {
   id: string; label: string; banks: BankAccountOption[]; value: string; onChange: (v: string) => void
 }) {
   return (
-    <label className="block" htmlFor={id}>
-      <span className={labelCls}>{label}{banks.length > 1 ? ' *' : ''}</span>
+    <Field label={<>{label}{banks.length > 1 ? ' *' : ''}</>}>
       <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="s-select" required={banks.length > 1}>
         <option value="">{banks.length === 1 ? `${banks[0]!.name} (only bank)` : banks.length === 0 ? 'Operating account (1020)' : '— pick the bank —'}</option>
         {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
       </Select>
-    </label>
+    </Field>
   )
 }
 
@@ -671,16 +666,14 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
     <form className="s-card space-y-3 p-4" onSubmit={(e) => { e.preventDefault(); if (ready) save.mutate() }}>
       <h2 className="text-sm font-bold text-white/85">New inter-company transfer</h2>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label className="block">
-          <span className={labelCls}>Type</span>
+        <Field label="Type">
           <Select value={kind} onChange={(e) => setKind(e.target.value as TransferKind)} className="s-select">
             <option value="charge">Charge — one company bore a cost for the other</option>
             <option value="settlement">Settlement — money paid between them</option>
             <option value="netting">Netting — offset what each owes the other</option>
           </Select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>{words.debtor}</span>
+        </Field>
+        <Field label={words.debtor}>
           <Select value={debtor} onChange={(e) => setDebtor(e.target.value)} className="s-select">
             {own.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             {extra.length > 0 && (
@@ -689,9 +682,8 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
               </optgroup>
             )}
           </Select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>{words.creditor}</span>
+        </Field>
+        <Field label={words.creditor}>
           <Select value={creditor} onChange={(e) => setCreditor(e.target.value)} className="s-select">
             {own.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             {extra.length > 0 && (
@@ -700,45 +692,38 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
               </optgroup>
             )}
           </Select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>Amount (PKR)</span>
+        </Field>
+        <Field label="Amount (PKR)">
           <MoneyInput value={amount} onChange={setAmount} className={fieldCls} ariaLabel="Amount in rupees" />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Date</span>
-          <input type="date" value={entryDate} max={todayPktIso()} onChange={(e) => setEntryDate(e.target.value)} className={fieldCls} />
-        </label>
-        <label className="block">
-          <span className={labelCls}>What it is for</span>
-          <input value={memo} onChange={(e) => setMemo(e.target.value)} maxLength={300} placeholder="e.g. September shared office rent" className={fieldCls} />
-        </label>
+        </Field>
+        <Field label="Date">
+          <Input type="date" value={entryDate} max={todayPktIso()} onChange={(e) => setEntryDate(e.target.value)} className={fieldCls} />
+        </Field>
+        <Field label="What it is for">
+          <Input value={memo} onChange={(e) => setMemo(e.target.value)} maxLength={300} placeholder="e.g. September shared office rent" className={fieldCls} />
+        </Field>
         {kind === 'charge' && (
           <>
-            <label className="block">
-              <span className={labelCls}>{nameOf(debtor)}: expense account</span>
-              <input value={debtorCode} onChange={(e) => setDebtorCode(e.target.value)} inputMode="numeric" placeholder="e.g. 6010" className={fieldCls} />
-            </label>
-            <label className="block">
-              <span className={labelCls}>{nameOf(creditor)}: recovery account</span>
-              <input value={creditorCode} onChange={(e) => setCreditorCode(e.target.value)} inputMode="numeric" placeholder="6990" className={fieldCls} />
-            </label>
+            <Field label={<>{nameOf(debtor)}: expense account</>}>
+              <Input value={debtorCode} onChange={(e) => setDebtorCode(e.target.value)} inputMode="numeric" placeholder="e.g. 6010" className={fieldCls} />
+            </Field>
+            <Field label={<>{nameOf(creditor)}: recovery account</>}>
+              <Input value={creditorCode} onChange={(e) => setCreditorCode(e.target.value)} inputMode="numeric" placeholder="6990" className={fieldCls} />
+            </Field>
           </>
         )}
         {kind === 'settlement' && (
           <>
-            <label className="block" htmlFor="ic-method">
-              <span className={labelCls}>Paid by</span>
+            <Field label="Paid by">
               <Select id="ic-method" value={method} onChange={(e) => setMethod(e.target.value as SettlementMethod)} className="s-select">
                 {SETTLEMENT_METHODS.map((m) => <option key={m} value={m}>{receiptMethodLabel(m)}</option>)}
               </Select>
-            </label>
-            <label className="block" htmlFor="ic-ref">
-              <span className={labelCls}>Payment reference # *</span>
-              <input id="ic-ref" value={bankRef} onChange={(e) => setBankRef(e.target.value)} maxLength={100} required autoComplete="off"
+            </Field>
+            <Field label="Payment reference # *">
+              <Input id="ic-ref" value={bankRef} onChange={(e) => setBankRef(e.target.value)} maxLength={100} required autoComplete="off"
                 placeholder={method === 'bank_deposit' ? 'Deposit slip no.' : method === 'cheque' ? 'Cheque no.' : method === 'cash' ? 'Cash receipt / voucher no.' : 'Transfer / IBFT reference'}
                 className={fieldCls} />
-            </label>
+            </Field>
             {payerUsesBank(method) && (
               <PairBankSelect id="ic-debtor-bank" label={`${nameOf(debtor)}'s bank`} banks={debtorBanks} value={debtorBank} onChange={setDebtorBank} />
             )}
@@ -749,24 +734,24 @@ function TransferForm({ companies, prefill, onDone, onCancel, onError }: {
         )}
       </div>
       {kind === 'netting' && (
-        <p className="text-xs text-white/45">Netting cancels what each company owes the other, up to the smaller of the two amounts. No money moves.</p>
+        <p className="text-xs text-s-muted">Netting cancels what each company owes the other, up to the smaller of the two amounts. No money moves.</p>
       )}
       {kind === 'settlement' && method === 'bank_deposit' && (
-        <p className="text-xs text-white/45">
+        <p className="text-xs text-s-muted">
           A bank deposit is {nameOf(debtor)}&apos;s cash paid into {nameOf(creditor)}&apos;s bank: it leaves {nameOf(debtor)}&apos;s cash and lands in the bank picked.
         </p>
       )}
       {companies.can.decide && (
-        <label className="flex items-start gap-2 text-sm text-white/70">
+        <CheckLabel className="flex items-start gap-2 text-sm text-white/70">
           <input type="checkbox" className="mt-1" style={{ accentColor: 'var(--erp-accent)' }} checked={postNow} onChange={(e) => setPostNow(e.target.checked)} />
           <span>Post it now (you are approving it yourself — recorded as such)</span>
-        </label>
+        </CheckLabel>
       )}
       <div className="flex flex-wrap gap-2">
-        <button type="submit" className="s-btn-primary text-sm" disabled={!ready || save.isPending}>
+        <Button type="submit"  disabled={!ready || save.isPending}>
           {save.isPending ? 'Saving…' : postNow ? 'Post in both books' : 'Submit for approval'}
-        </button>
-        <button type="button" className="s-btn-ghost text-sm" onClick={onCancel}>Cancel</button>
+        </Button>
+        <Button variant="ghost" type="button"  onClick={onCancel}>Cancel</Button>
       </div>
     </form>
   )
@@ -803,18 +788,16 @@ function FleetTab({ canDecide, setMsg }: { canDecide: boolean; setMsg: (m: Msg |
         brands, the provider books the recovery (6990). The charge runs by itself every night for ended months once a rate is set.
       </p>
       <div className="flex flex-wrap items-end gap-3">
-        <label className="block">
-          <span className={labelCls}>From</span>
-          <input type="month" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className={fieldCls} />
-        </label>
-        <label className="block">
-          <span className={labelCls}>To</span>
-          <input type="month" value={to} min={from} onChange={(e) => setTo(e.target.value)} className={fieldCls} />
-        </label>
+        <Field label="From">
+          <Input type="month" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className={fieldCls} />
+        </Field>
+        <Field label="To">
+          <Input type="month" value={to} min={from} onChange={(e) => setTo(e.target.value)} className={fieldCls} />
+        </Field>
         {canDecide && (
-          <button type="button" className="s-btn-primary text-sm" disabled={charge.isPending} onClick={() => charge.mutate({})}>
+          <Button type="button"  disabled={charge.isPending} onClick={() => charge.mutate({})}>
             {charge.isPending ? 'Charging…' : 'Charge now'}
-          </button>
+          </Button>
         )}
       </div>
       {q.isError ? (
@@ -853,7 +836,7 @@ function FleetCard({ ag, charging, onCharge, setMsg, refresh }: {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="font-semibold text-white/85">{ag.provider.name}&apos;s riders → {ag.client.name}&apos;s orders</p>
-          <p className="text-xs text-white/40">
+          <p className="text-xs text-s-muted">
             {current ? `Rate ${fmtPkr(current.ratePerTripCents)} per trip from ${monthLabel(current.fromPeriod)}` : 'No rate set yet — nothing is charged.'}
           </p>
         </div>
@@ -863,7 +846,7 @@ function FleetCard({ ag, charging, onCharge, setMsg, refresh }: {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
+            <tr className="text-left text-xs uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
               <th className="px-2 py-2 font-semibold">Month</th>
               <th className="px-2 py-2 text-right font-semibold">Trips</th>
               <th className="px-2 py-2 text-right font-semibold">Rate</th>
@@ -877,7 +860,7 @@ function FleetCard({ ag, charging, onCharge, setMsg, refresh }: {
               <tr key={m.month} style={{ borderTop: '1px solid var(--border)' }}>
                 <td className="px-2 py-2 text-white/80">
                   {monthLabel(m.month)}
-                  {m.byBrand.length > 1 && <p className="text-xs text-white/40">{m.byBrand.map((b) => `${b.conceptName ?? 'brand'} ${b.trips}`).join(' · ')}</p>}
+                  {m.byBrand.length > 1 && <p className="text-xs text-s-muted">{m.byBrand.map((b) => `${b.conceptName ?? 'brand'} ${b.trips}`).join(' · ')}</p>}
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums">{m.trips}</td>
                 <td className="px-2 py-2 text-right">{m.ratePerTripCents === null ? <span className="text-white/35">—</span> : fmtPkr(m.ratePerTripCents)}</td>
@@ -885,7 +868,7 @@ function FleetCard({ ag, charging, onCharge, setMsg, refresh }: {
                 <td className="px-2 py-2"><span className={FLEET_BADGE[m.status].cls}>{FLEET_BADGE[m.status].label}</span></td>
                 <td className="px-2 py-2 text-right">
                   {ag.canDecide && m.status === 'due' && (
-                    <button type="button" className="s-btn-secondary text-xs" disabled={charging} onClick={() => onCharge(m.month)}>Charge</button>
+                    <Button size="sm" variant="secondary" type="button"  disabled={charging} onClick={() => onCharge(m.month)}>Charge</Button>
                   )}
                 </td>
               </tr>
@@ -895,7 +878,7 @@ function FleetCard({ ag, charging, onCharge, setMsg, refresh }: {
       </div>
 
       {ag.rates.length > 0 && (
-        <details className="text-xs text-white/55">
+        <details className="text-xs text-s-muted">
           <summary className="cursor-pointer text-white/45">Rate history</summary>
           <ul className="mt-2 space-y-1">
             {ag.rates.map((r) => (
@@ -907,22 +890,19 @@ function FleetCard({ ag, charging, onCharge, setMsg, refresh }: {
 
       {ag.canDecide ? (
         <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); setIt.mutate() }}>
-          <label className="block">
-            <span className={labelCls}>New rate per trip (PKR)</span>
+          <Field label="New rate per trip (PKR)">
             <MoneyInput value={rate} onChange={setRate} className={fieldCls} ariaLabel="Rate per trip in rupees" />
-          </label>
-          <label className="block">
-            <span className={labelCls}>From month</span>
-            <input type="month" value={fromPeriod} onChange={(e) => setFromPeriod(e.target.value)} className={fieldCls} />
-          </label>
-          <label className="block min-w-[12rem] flex-1">
-            <span className={labelCls}>Note</span>
-            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} className={fieldCls} />
-          </label>
-          <button type="submit" className="s-btn-secondary text-sm" disabled={setIt.isPending || !/^\d{4}-\d{2}$/.test(fromPeriod)}>Set rate</button>
+          </Field>
+          <Field label="From month">
+            <Input type="month" value={fromPeriod} onChange={(e) => setFromPeriod(e.target.value)} className={fieldCls} />
+          </Field>
+          <div className="min-w-[12rem] flex-1"><Field label="Note">
+            <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} className={fieldCls} />
+          </Field></div>
+          <Button variant="secondary" type="submit"  disabled={setIt.isPending || !/^\d{4}-\d{2}$/.test(fromPeriod)}>Set rate</Button>
         </form>
       ) : (
-        <p className="text-xs text-white/40">Only the CEO, as a member of both companies, sets the rate and charges a month.</p>
+        <p className="text-xs text-s-muted">Only the CEO, as a member of both companies, sets the rate and charges a month.</p>
       )}
     </div>
   )
@@ -943,10 +923,9 @@ function TieOutTab({ setMsg }: { setMsg: (m: { ok: boolean; text: string } | nul
         value issued by one company could be spent at another; that pre-launch residue can be written off once inside each company. Anything that differs
         after the split is a real difference to find.
       </p>
-      <label className="block w-fit">
-        <span className={labelCls}>As of (optional)</span>
-        <input type="date" value={asOf} max={todayPktIso()} onChange={(e) => setAsOf(e.target.value)} className={fieldCls} />
-      </label>
+      <div className="w-fit"><Field label="As of (optional)">
+        <Input type="date" value={asOf} max={todayPktIso()} onChange={(e) => setAsOf(e.target.value)} className={fieldCls} />
+      </Field></div>
       {q.isError ? (
         <p className="s-card p-6 text-center text-sm" style={{ color: danger }}>{errMessage(q.error)}</p>
       ) : q.isLoading ? (
@@ -968,7 +947,7 @@ function TieOutCard({ c, setMsg }: { c: TieOutCompany; setMsg: (m: { ok: boolean
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
+            <tr className="text-left text-xs uppercase tracking-wider text-white/40" style={{ borderBottom: '1px solid var(--border)' }}>
               <th className="px-2 py-2 font-semibold">Account</th>
               <th className="px-2 py-2 text-right font-semibold">Ledger</th>
               <th className="px-2 py-2 text-right font-semibold">Record</th>
@@ -980,7 +959,7 @@ function TieOutCard({ c, setMsg }: { c: TieOutCompany; setMsg: (m: { ok: boolean
               <tr key={r.code} style={{ borderTop: '1px solid var(--border)' }}>
                 <td className="px-2 py-2">
                   <span className="text-white/80">{r.code} {r.label}</span>
-                  {r.note && <p className="text-xs text-white/40">{r.note}</p>}
+                  {r.note && <p className="text-xs text-s-muted">{r.note}</p>}
                 </td>
                 <td className="px-2 py-2 text-right"><Money cents={r.ledgerCents} /></td>
                 <td className="px-2 py-2 text-right"><Money cents={r.subledgerCents} /></td>
@@ -1018,7 +997,7 @@ function LegacyRow({ tenantId, l, canWriteOff, setMsg }: { tenantId: string; l: 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm text-white/80">{label}</p>
-          <p className="text-xs text-white/40">
+          <p className="text-xs text-s-muted">
             On {dateLabel(l.splitAt)} ({l.splitLabel}): ledger {fmtPkr(l.ledgerCents)}, record {fmtPkr(l.subledgerCents)}
           </p>
         </div>
@@ -1027,7 +1006,7 @@ function LegacyRow({ tenantId, l, canWriteOff, setMsg }: { tenantId: string; l: 
           : <span className="s-badge-amber">Residue {fmtPkr(Math.abs(l.differenceCents))}</span>}
       </div>
       {canWriteOff && !l.writtenOff && l.differenceCents !== 0 && !preview && (
-        <button type="button" className="s-btn-secondary mt-2 text-xs" disabled={run.isPending} onClick={() => run.mutate(true)}>Preview write-off</button>
+        <Button size="sm" variant="secondary" type="button" className="mt-2" disabled={run.isPending} onClick={() => run.mutate(true)}>Preview write-off</Button>
       )}
       {preview && (
         <div className="mt-3 space-y-2 text-sm">
@@ -1036,7 +1015,7 @@ function LegacyRow({ tenantId, l, canWriteOff, setMsg }: { tenantId: string; l: 
               <li key={i}>{ln.type === 'debit' ? 'Dr' : 'Cr'} {ln.accountCode} — {fmtPkr(ln.amountCents)}</li>
             ))}
           </ul>
-          <p className="text-xs text-white/45">
+          <p className="text-xs text-s-muted">
             Evidence: {preview.evidence.crossCompanyRedemptions.count} loyalty redemption(s) spent at another company ·{' '}
             {preview.evidence.walletCreditsBeforeSplit.count} wallet top-up(s) before the split that never reached the ledger ({fmtPkr(preview.evidence.walletCreditsBeforeSplit.cents)}) ·{' '}
             {preview.evidence.walletSpendsBeforeSplit.count} wallet spend(s) before the split ({fmtPkr(preview.evidence.walletSpendsBeforeSplit.cents)}).
@@ -1046,16 +1025,15 @@ function LegacyRow({ tenantId, l, canWriteOff, setMsg }: { tenantId: string; l: 
               {fmtPkr(Math.abs(preview.driftAfterSplitCents))} of today&apos;s difference arose after the split — it is not written off and stays on the close checklist.
             </p>
           )}
-          <label className="block">
-            <span className={labelCls}>Why (at least 10 characters)</span>
-            <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} className={fieldCls} />
-          </label>
+          <Field label="Why (at least 10 characters)">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} className={fieldCls} />
+          </Field>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="s-btn-primary text-sm" disabled={run.isPending || reason.trim().length < 10}
+            <Button type="button"  disabled={run.isPending || reason.trim().length < 10}
               onClick={() => { if (window.confirm(`Write off ${fmtPkr(Math.abs(preview.differenceCents))} in ${label}? This posts once and cannot be repeated.`)) run.mutate(false) }}>
               Write off
-            </button>
-            <button type="button" className="s-btn-ghost text-sm" onClick={() => setPreview(null)}>Cancel</button>
+            </Button>
+            <Button variant="ghost" type="button"  onClick={() => setPreview(null)}>Cancel</Button>
           </div>
         </div>
       )}

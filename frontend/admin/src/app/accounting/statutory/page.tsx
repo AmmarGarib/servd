@@ -12,6 +12,7 @@
 //   • The one-time reclass — what payroll booked to 2090 / 2040 before these
 //     payables existed moves to them once (POST /accounting/statutory/reclass).
 // Who may record / post comes from the server (canPay / canPost).
+import { Button, CheckLabel, Field, Input, LinkButton } from '@/components/finance/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useState } from 'react'
@@ -90,15 +91,6 @@ const total = (a: Amounts) => a.eobiCents + a.sessiCents + a.salaryTaxCents
 function Modal({ title, children, onClose, dirty }: { title: string; children: React.ReactNode; onClose: () => void; dirty?: boolean }) {
   return <SharedModal title={title} onClose={onClose} dirty={dirty}>{children}</SharedModal>
 }
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] font-bold uppercase tracking-wider text-s-muted mb-1">{label}</span>
-      {children}
-      {hint && <span className="block text-[11px] text-s-muted mt-1">{hint}</span>}
-    </label>
-  )
-}
 
 export default function StatutoryPaymentsPage() {
   const [to, setTo] = useState(thisMonth())
@@ -123,13 +115,13 @@ export default function StatutoryPaymentsPage() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/accounting" className="text-xs text-s-muted hover:text-s-text">← Accounting</Link>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-success">Payroll taxes</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-success">Payroll taxes</p>
           <h1 className="text-xl font-bold text-s-text">Statutory payments</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="month" aria-label="From month" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+          <Input className="w-auto px-2 py-1 text-sm" type="month" aria-label="From month" value={from} onChange={(e) => setFrom(e.target.value)}  />
           <span className="text-s-muted text-xs">→</span>
-          <input type="month" aria-label="To month" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
+          <Input className="w-auto px-2 py-1 text-sm" type="month" aria-label="To month" value={to} onChange={(e) => setTo(e.target.value)}  />
           <ExportMenu path={`/accounting/statutory?from=${from}&to=${to}`} filename={`statutory-payables-${from}-to-${to}`} />
         </div>
       </header>
@@ -154,9 +146,9 @@ export default function StatutoryPaymentsPage() {
                   <span className="text-xs text-s-muted"> · {scheme.name} · <span className="font-mono">{scheme.account}</span></span>
                 </div>
                 {data.canPay && (
-                  <button type="button" className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setLinking({ key, month: data.to })}>
+                  <LinkButton type="button"  onClick={() => setLinking({ key, month: data.to })}>
                     Link existing entry
-                  </button>
+                  </LinkButton>
                 )}
               </div>
               <div className="overflow-x-auto">
@@ -179,7 +171,7 @@ export default function StatutoryPaymentsPage() {
                         <tr key={m.month} className="border-t border-s-border align-top">
                           <td className="px-4 py-2 text-s-text whitespace-nowrap">
                             {m.month}
-                            <div className="text-[11px] text-s-muted">Balance at month end {fmtPkr(c.balanceAtMonthEndCents)}</div>
+                            <div className="text-xs text-s-muted">Balance at month end {fmtPkr(c.balanceAtMonthEndCents)}</div>
                           </td>
                           <td className="px-4 py-2 text-right font-mono text-xs text-s-text">
                             {fmtPkr(accrued)}
@@ -203,9 +195,9 @@ export default function StatutoryPaymentsPage() {
                                 <span>{p.linked ? 'linked' : 'posted here'}</span>
                                 {p.journalEntryId && <Link href={`/accounting/ledger?id=${p.journalEntryId}`} className="hover:underline">entry</Link>}
                                 {data.canPay && (
-                                  <button type="button" className="font-bold text-s-muted hover:text-s-text" onClick={() => setVoiding({ label: scheme.label, payment: p })}>
+                                  <LinkButton tone="muted" size="md" type="button"  onClick={() => setVoiding({ label: scheme.label, payment: p })}>
                                     {p.linked ? 'Unlink' : 'Void'}
-                                  </button>
+                                  </LinkButton>
                                 )}
                               </div>
                             ))}
@@ -213,9 +205,9 @@ export default function StatutoryPaymentsPage() {
                           {data.canPay && (
                             <td className="px-4 py-2 text-right whitespace-nowrap">
                               {(c.payments.length === 0 || c.owedCents > 0) && (
-                                <button type="button" className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setPaying({ key, month: m.month, owedCents: Math.max(0, c.owedCents), topUp: c.payments.length > 0 })}>
+                                <LinkButton type="button"  onClick={() => setPaying({ key, month: m.month, owedCents: Math.max(0, c.owedCents), topUp: c.payments.length > 0 })}>
                                   {c.payments.length > 0 ? 'Record top-up' : 'Record payment'}
-                                </button>
+                                </LinkButton>
                               )}
                             </td>
                           )}
@@ -328,9 +320,9 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
         </p>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="For the month"><input type="month" className="s-input" min="2000-01" value={f.month} onChange={set('month')} aria-invalid={!f.month ? true : undefined} /></Field>
+        <Field label="For the month"><Input type="month" min="2000-01" value={f.month} onChange={set('month')} aria-invalid={!f.month ? true : undefined} /></Field>
         <Field label="Paid (PKR)"><RupeeField label="Paid (PKR)" value={f.paid} onChange={(v) => setF((p) => ({ ...p, paid: v }))} invalid={toPaisa(f.paid) <= 0} /></Field>
-        <Field label="Paid on"><input type="date" className="s-input" min="2000-01-01" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} aria-invalid={!f.paidAt ? true : undefined} /></Field>
+        <Field label="Paid on"><Input type="date" min="2000-01-01" value={f.paidAt} max={todayPktIso()} onChange={set('paidAt')} aria-invalid={!f.paidAt ? true : undefined} /></Field>
         <Field label="How">
           <Select className="s-input" value={f.method} onChange={set('method')}>
             <option value="bank_transfer">Bank transfer / e-payment</option>
@@ -344,16 +336,16 @@ function PayModal({ tenantId, target, label, onClose, onDone }: {
             <BankAccountSelect tenantId={tenantId} value={f.bankAccountId} onChange={(v) => setF((p) => ({ ...p, bankAccountId: v }))} className="s-input" label="Paid from" />
           </div>
         )}
-        <Field label={target.topUp ? 'CPR / challan number *' : 'CPR / challan number'}><input className="s-input" value={f.cprNumber} onChange={set('cprNumber')} aria-invalid={target.topUp && !f.cprNumber.trim() ? true : undefined} /></Field>
-        <Field label="Notes"><input className="s-input" value={f.notes} onChange={set('notes')} /></Field>
+        <Field label={target.topUp ? 'CPR / challan number *' : 'CPR / challan number'}><Input value={f.cprNumber} onChange={set('cprNumber')} aria-invalid={target.topUp && !f.cprNumber.trim() ? true : undefined} /></Field>
+        <Field label="Notes"><Input value={f.notes} onChange={set('notes')} /></Field>
       </div>
       <div className="mt-3"><PaymentClassificationFields value={cls} onChange={setCls} compact /></div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="submit" className="s-btn-primary text-sm" disabled={go.isPending}>
+        <Button type="submit"  disabled={go.isPending}>
           {go.isPending ? 'Saving…' : 'Record payment'}
-        </button>
-        <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
+        </Button>
+        <Button variant="secondary" type="button"  onClick={onClose}>Cancel</Button>
       </div>
       </DialogForm>
     </Modal>
@@ -392,30 +384,30 @@ function LinkModal({ initial, schemes, onClose, onDone }: {
             {schemes.map((s) => <option key={s.key} value={s.key}>{s.label} ({s.account})</option>)}
           </Select>
         </Field>
-        <Field label="For the month"><input type="month" className="s-input" min="2000-01" value={month} onChange={(e) => setMonth(e.target.value)} aria-invalid={!month ? true : undefined} /></Field>
-        <Field label="CPR / challan number"><input className="s-input" value={cprNumber} onChange={(e) => setCpr(e.target.value)} /></Field>
+        <Field label="For the month"><Input type="month" min="2000-01" value={month} onChange={(e) => setMonth(e.target.value)} aria-invalid={!month ? true : undefined} /></Field>
+        <Field label="CPR / challan number"><Input value={cprNumber} onChange={(e) => setCpr(e.target.value)} /></Field>
       </div>
-      <p className="text-[11px] font-bold uppercase tracking-wider text-s-muted mt-4 mb-1">Entry</p>
+      <p className="text-xs font-bold uppercase tracking-wider text-s-muted mt-4 mb-1">Entry</p>
       <div className="max-h-56 overflow-y-auto rounded border border-s-border">
         {isLoading && <p className="px-3 py-2 text-xs text-s-muted">Loading…</p>}
         {error && <p className="px-3 py-2 text-xs text-s-red">{(error as Error).message}</p>}
         {cands && cands.entries.length === 0 && <p className="px-3 py-2 text-xs text-s-muted">No unlinked manual or reconciliation entry pays this scheme in the last 400 days.</p>}
         {cands?.entries.map((c) => (
-          <label key={c.id} className="flex items-start gap-2 px-3 py-2 border-t border-s-border first:border-t-0 cursor-pointer">
+          <CheckLabel key={c.id} className="flex items-start gap-2 px-3 py-2 border-t border-s-border first:border-t-0 cursor-pointer">
             <input type="radio" name="entry" className="mt-1" checked={entryId === c.id} onChange={() => setEntryId(c.id)} />
             <span className="flex-1 min-w-0">
               <span className="block text-sm text-s-text truncate">{c.description}</span>
-              <span className="block text-[11px] text-s-muted">{c.entryDate} · {fmtPkr(c.debitCents)}</span>
+              <span className="block text-xs text-s-muted">{c.entryDate} · {fmtPkr(c.debitCents)}</span>
             </span>
-          </label>
+          </CheckLabel>
         ))}
       </div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="submit" className="s-btn-primary text-sm" disabled={go.isPending}>
+        <Button type="submit"  disabled={go.isPending}>
           {go.isPending ? 'Linking…' : 'Link as payment'}
-        </button>
-        <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
+        </Button>
+        <Button variant="secondary" type="button"  onClick={onClose}>Cancel</Button>
       </div>
       </DialogForm>
     </Modal>
@@ -438,13 +430,13 @@ function VoidModal({ label, payment, onClose, onDone }: { label: string; payment
           ? 'The entry stays in the ledger as it was posted; it is no longer recorded as this month\'s challan.'
           : `The payment of ${fmtPkr(payment.paidCents)} is reversed in the ledger today. You can then record it again.`}
       </p>
-      <div className="mt-4"><Field label="Reason"><input className="s-input" value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 5 ? true : undefined} placeholder="Wrong month picked" /></Field></div>
+      <div className="mt-4"><Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} aria-invalid={reason.trim().length < 5 ? true : undefined} placeholder="Wrong month picked" /></Field></div>
       {err && <p role="alert" className="text-xs text-s-red mt-3">{err}</p>}
       <div className="flex flex-wrap gap-2 mt-5">
-        <button type="submit" className="s-btn-danger text-sm" disabled={go.isPending}>
+        <Button variant="danger" type="submit"  disabled={go.isPending}>
           {go.isPending ? 'Saving…' : payment.linked ? 'Unlink' : 'Void payment'}
-        </button>
-        <button type="button" className="s-btn-secondary text-sm" onClick={onClose}>Cancel</button>
+        </Button>
+        <Button variant="secondary" type="button"  onClick={onClose}>Cancel</Button>
       </div>
       </DialogForm>
     </Modal>
@@ -521,9 +513,9 @@ function ReclassPanel({ onDone }: { onDone: () => void }) {
                 </ul>
               </div>
             )}
-            <button type="button" className="text-xs font-bold text-primary-ink hover:underline" onClick={() => setShowEntries((v) => !v)}>
+            <LinkButton type="button"  onClick={() => setShowEntries((v) => !v)}>
               {showEntries ? 'Hide' : 'Show'} the {p.entries.length} payroll entries
-            </button>
+            </LinkButton>
             {showEntries && (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -562,16 +554,15 @@ function ReclassPanel({ onDone }: { onDone: () => void }) {
                   <Field label="Salary tax → 2042 (PKR)"><RupeeField label="Salary tax to 2042 (PKR)" value={amounts.tax} onChange={(v) => setEdit({ ...amounts, tax: v })} /></Field>
                 </div>
                 <Field label="Note" hint="Posted once, dated today. It cannot be reversed from here.">
-                  <input className="s-input" value={note} onChange={(e) => setNote(e.target.value)} aria-invalid={note.trim().length < 5 ? true : undefined} placeholder="Move payroll statutory amounts to their own payables" />
+                  <Input value={note} onChange={(e) => setNote(e.target.value)} aria-invalid={note.trim().length < 5 ? true : undefined} placeholder="Move payroll statutory amounts to their own payables" />
                 </Field>
                 {err && <p role="alert" className="text-xs text-s-red">{err}</p>}
-                <button
+                <Button
                   type="submit"
-                  className="s-btn-primary text-sm mt-3"
-                  disabled={go.isPending}
-                >
+                  className="mt-3"
+                  disabled={go.isPending}>
                   {go.isPending ? 'Posting…' : `Post the reclass (${fmtPkr(toPaisa(amounts.eobi) + toPaisa(amounts.sessi) + toPaisa(amounts.tax))})`}
-                </button>
+                </Button>
               </DialogForm>
             ) : (
               <p className="text-xs text-s-muted">Finance or the CEO posts the reclass. Suggested: EOBI {fmtPkr(p.suggested.eobiCents)}, SESSI {fmtPkr(p.suggested.sessiCents)}, salary tax {fmtPkr(p.suggested.salaryTaxCents)}.</p>
