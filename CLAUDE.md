@@ -1266,7 +1266,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   account and company; the line is never changed). `lib/subAccounts.ts` is the
   ONE writer; a reversal mirrors its original's tags (`reverseJournalEntry`).
   CHART_EDITORS manage them on `/setup/chart-of-accounts/:accountId/sub-accounts`;
-  a manual line may name `subAccountId`; re-tagging is text-level (at once,
+  a manual line may name `subAccountId` — picked straight from the line's account
+  drop-down ("6030 Wages › Ali Raza"; `GET /setup/chart-of-accounts?withSubAccounts=1`,
+  the Select's `data-picked` label); re-tagging is text-level (at once,
   audited `journal.sub_account_tag`, `PUT /accounting/journal/lines/:lineId/sub-accounts`).
   Payroll and F&F tag each employee (`hr/ledger.ts tagPayrollRunTx` /
   `tagSettlementTx`: wages 6030–6035, gratuity 6036, 2020 accrual and payment,

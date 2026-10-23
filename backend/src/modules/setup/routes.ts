@@ -1165,8 +1165,11 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // while it was MANAGERS-only.
   // ?q= (code or name, case-insensitive) and ?active=1 narrow it — the Journals tab's account picker
   // (owner, 2026-10-23). Each row also carries `companyName` (the picker shows it under "All companies").
-  fastify.get<{ Querystring: { q?: string; active?: string } }>('/chart-of-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
+  // ?withSubAccounts=1 adds each account's ACTIVE sub-accounts ({ id, name, code }) so a journal line can pick
+  // "6030 Wages › Ali Raza" straight from the account drop-down (owner, 2026-10-23).
+  fastify.get<{ Querystring: { q?: string; active?: string; withSubAccounts?: string } }>('/chart-of-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const q = (req.query.q ?? '').trim().slice(0, 100)
+    const withSubs = req.query.withSubAccounts === '1' || req.query.withSubAccounts === 'true'
     const rows = await prisma.account.findMany({
       where: {
         ...(await scopeTenantWhere(req, 'read')),
@@ -1174,7 +1177,10 @@ export async function setupRoutes(fastify: FastifyInstance) {
         ...(req.query.active === '1' || req.query.active === 'true' ? { isActive: true } : {}),
       },
       orderBy: { code: 'asc' },
-      include: { tenant: { select: { name: true } } },
+      include: {
+        tenant: { select: { name: true } },
+        ...(withSubs ? { subAccounts: { where: { isActive: true }, orderBy: { name: 'asc' as const }, select: { id: true, name: true, code: true } } } : {}),
+      },
     })
     return rows.map(({ tenant, ...a }) => ({ ...a, companyName: tenant?.name ?? null }))
   })

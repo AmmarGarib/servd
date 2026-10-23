@@ -33,7 +33,6 @@ import { dateBounds } from '../../finance/cash-vouchers/ui'
 import { JournalsTab } from './JournalsTab'
 import { AccountsTab } from './AccountsTab'
 import { EntryPanel } from './EntryPanel'
-import { SubAccountSelect } from './JournalBits'
 import { PENDING_MSG, isPending, type RegRow } from './journalTypes'
 import { JournalRequests, type JournalRequest } from './JournalRequests'
 import { RecordFiles } from '@/components/files/RecordFiles'
@@ -44,7 +43,7 @@ import {
 } from '@/components/finance/PaymentClassificationFields'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 
-interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
+interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean; subAccounts?: Array<{ id: string; name: string; code: string | null }> }
 interface Brand { id: string; name: string; tenantId: string | null }
 interface CurrentLock { tenantId?: string | null; lockedThrough: string | null; reopenedThrough?: string | null }
 interface DraftLine { key: number; accountId: string; debit: string; credit: string; memo: string; conceptId: string; subAccountId: string }
@@ -68,6 +67,8 @@ function entryInstant(date: string): string | undefined {
 }
 
 let lineSeq = 0
+/** Joins an account id and a sub-account id in one drop-down value (ids are uuids, never contain it). */
+const SUB_SEP = '|'
 const blankLine = (): DraftLine => ({ key: ++lineSeq, accountId: '', debit: '', credit: '', memo: '', conceptId: '', subAccountId: '' })
 
 const inputCls = 's-input py-1.5'
@@ -107,8 +108,9 @@ function JournalsPage() {
   const { data: myTenants = [] } = useMyTenants()
 
   const { data: accounts = [] } = useQuery<Account[]>({
-    queryKey: ['chart-of-accounts'],
-    queryFn: () => api.get('/setup/chart-of-accounts'),
+    // With each account's sub-accounts, so a line picks "6030 Wages › Ali Raza" in one go.
+    queryKey: ['chart-of-accounts', 'with-sub-accounts'],
+    queryFn: () => api.get('/setup/chart-of-accounts?withSubAccounts=1'),
   })
   const { data: brands = [] } = useQuery<Brand[]>({
     queryKey: ['concepts', isAdmin ? 'all' : 'picker'],
@@ -425,28 +427,44 @@ function JournalsPage() {
 
             {/* Only this wrapper scrolls sideways. It is `relative` so the table header's sr-only text cannot escape it and widen the page. */}
             <div className="relative overflow-x-auto -mx-4 px-4 min-w-0" tabIndex={0} aria-label="Journal lines (scrolls sideways on a narrow screen)">
-              <table className="w-full text-sm min-w-[44rem]">
+              <table className="w-full text-sm min-w-[52rem] table-fixed">
                 <thead className="text-xs text-s-muted">
                   <tr>
-                    <th className="text-left font-medium py-1 pr-2">Account</th>
-                    <th className="text-left font-medium py-1 pr-2">Brand</th>
+                    <th className="text-left font-medium py-1 pr-2 w-[30%]">Account</th>
+                    <th className="text-left font-medium py-1 pr-2 w-36">Brand</th>
                     <th className="text-left font-medium py-1 pr-2">Memo</th>
                     <th className="text-right font-medium py-1 pr-2 w-32">Debit (PKR)</th>
                     <th className="text-right font-medium py-1 pr-2 w-32">Credit (PKR)</th>
-                    <th className="w-8 relative"><span className="sr-only">Remove</span></th>
+                    <th className="w-20 relative"><span className="sr-only">Remove</span></th>
                   </tr>
                 </thead>
                 <tbody>
                   {parsed.map(({ line, error }, i) => (
                     <tr key={line.key} className="align-top border-t border-s-border">
                       <td className="py-1.5 pr-2">
-                        <Select aria-label={`Line ${i + 1} account`} value={line.accountId} disabled={!company}
-                          onChange={(e) => patchLine(line.key, { accountId: e.target.value, subAccountId: '' })} className="s-select py-1.5">
+                        {/* One pick sets the account AND, when chosen, its sub-account ("6030 — Wages › Ali Raza"). */}
+                        <Select aria-label={`Line ${i + 1} account`} value={line.subAccountId ? `${line.accountId}${SUB_SEP}${line.subAccountId}` : line.accountId} disabled={!company}
+                          onChange={(e) => { const [accountId = '', subAccountId = ''] = e.target.value.split(SUB_SEP); patchLine(line.key, { accountId, subAccountId }) }} className="s-select py-1.5">
                           <option value="">— account —</option>
-                          {companyAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+                          {companyAccounts.map((a) => {
+                            const subs = a.subAccounts ?? []
+                            // A sub-account on an amended line that has since been switched off still shows.
+                            const extra = line.accountId === a.id && line.subAccountId && !subs.some((x) => x.id === line.subAccountId)
+                              ? [{ id: line.subAccountId, name: 'sub-account (switched off)', code: null }] : []
+                            const all = [...subs, ...extra]
+                            if (all.length === 0) return <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+                            return (
+                              <optgroup key={a.id} label={`${a.code} — ${a.name}`}>
+                                <option value={a.id} data-picked={`${a.code} — ${a.name}`}>Whole account (no sub-account)</option>
+                                {all.map((x) => <option key={x.id} value={`${a.id}${SUB_SEP}${x.id}`} data-picked={`${a.code} — ${a.name} › ${x.name}`}>{x.name}{x.code ? ` (${x.code})` : ''}</option>)}
+                              </optgroup>
+                            )
+                          })}
                         </Select>
-                        <SubAccountSelect accountId={line.accountId} label={`Line ${i + 1} sub-account`} value={line.subAccountId}
-                          onChange={(v) => patchLine(line.key, { subAccountId: v })} />
+                        {line.subAccountId && (() => {
+                          const sub = companyAccounts.find((a) => a.id === line.accountId)?.subAccounts?.find((x) => x.id === line.subAccountId)
+                          return <p className="text-xs text-s-muted mt-1 truncate">Sub-account: <span className="font-semibold text-s-text">{sub?.name ?? 'switched off'}</span></p>
+                        })()}
                         {error && <p className="text-xs text-s-red mt-1">{error}</p>}
                       </td>
                       <td className="py-1.5 pr-2">

@@ -97,6 +97,13 @@ describe('sub-accounts and tags', () => {
     const off = await call('fin', 'PATCH', `/setup/chart-of-accounts/sub-accounts/${S2}`, { isActive: false })
     expect(off.json().isActive).toBe(false)
     expect((await call('fin', 'PATCH', `/setup/chart-of-accounts/sub-accounts/${S2}`, { isActive: true })).json().isActive).toBe(true)
+    // The account drop-down lists sub-accounts straight under their account — only the caller's company's.
+    type ChartRow = { id: string; subAccounts?: Array<{ id: string; name: string }> }
+    const chart = (await call('fin', 'GET', '/setup/chart-of-accounts?active=1&withSubAccounts=1')).json() as ChartRow[]
+    expect(chart.find((a) => a.id === rent)?.subAccounts?.map((x) => x.name)).toEqual(['Shop 1 rent', 'Shop 2 rent'])
+    const chartB = (await call('finB', 'GET', '/setup/chart-of-accounts?withSubAccounts=1')).json() as ChartRow[]
+    expect(chartB.some((a) => a.id === rent || a.subAccounts?.some((x) => x.id === S1))).toBe(false)
+    expect(((await call('fin', 'GET', '/setup/chart-of-accounts')).json() as ChartRow[])[0].subAccounts).toBeUndefined()
   })
 
   it('a manual line names a sub-account; tags never exceed the line or cross accounts / companies', async () => {

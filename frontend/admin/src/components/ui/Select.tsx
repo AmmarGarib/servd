@@ -40,7 +40,9 @@ function useCoarsePointer() {
 
 const THEME_CLASSES = ['erp-kitchen-dark', 'erp-on-secondary', 'erp-on-surface']
 
-interface Opt { value: string; label: string; disabled: boolean; hidden: boolean; group: string | null }
+/** `pickedLabel` (an option's `data-picked`) is what the closed control shows once chosen — e.g. a short
+ *  "Ali Raza" in the list under its "6030 — Wages" heading, "6030 — Wages › Ali Raza" once picked. */
+interface Opt { value: string; label: string; pickedLabel?: string; disabled: boolean; hidden: boolean; group: string | null }
 
 function textOf(node: ReactNode): string {
   if (node == null || typeof node === 'boolean') return ''
@@ -59,6 +61,7 @@ function collect(children: ReactNode, group: string | null, out: Opt[]) {
       out.push({
         value: p.value === undefined ? label : String(p.value),
         label,
+        ...(typeof p['data-picked'] === 'string' && { pickedLabel: p['data-picked'] as string }),
         disabled: !!p.disabled,
         hidden: !!p.hidden,
         group,
@@ -340,7 +343,7 @@ function SearchSelect({
         className={`${className ?? ''} ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
         style={triggerStyle}>
         <span className={`flex-1 min-w-0 truncate ${placeholderLook && darkTrigger ? 'text-kds-subtext' : ''}`}
-          style={placeholderLook && !darkTrigger ? { color: 'var(--muted)' } : undefined}>{picked?.label || ' '}</span>
+          style={placeholderLook && !darkTrigger ? { color: 'var(--muted)' } : undefined}>{picked?.pickedLabel || picked?.label || ' '}</span>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden className="shrink-0 opacity-60">
           <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
