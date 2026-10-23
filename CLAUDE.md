@@ -1293,7 +1293,7 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   accounts for all wages heads, make it limited to Wages Expense (HO) account only, and add an option to
   switch on sub accounts for other head accounts also only in those for which i open subaccount").**
   `Account.subAccountsEnabled` (migration `20261023130000`: on for an account with a hand-made sub-account,
-  and the company's HO wages account — a wages / salary account named "(HO)" / "HO" / "head office", else
+  and the company's "Wages Expense" account (owner: "It's just wages expense"), else
   6032 where payroll books office staff; new charts: 6032). Off = payroll never tags it (not a mismatch),
   no new tag (422 `SUB_ACCOUNTS_OFF`), the picker (`withSubAccounts`, `?active=1`) and the statement's
   `subAccounts` show none; old tags stay. Opening a sub-account switches its account on;
