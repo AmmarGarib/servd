@@ -28,7 +28,7 @@ import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import {
   MANUAL_PREFIX, MANUAL_REVERSAL_PREFIX, journalEntrySchema, reverseSchema,
-  assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, amountsUnchanged, assertNoControlledLines, MANUAL_JOURNAL_POSTERS,
+  assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, amountsUnchanged, assertNoControlledLines, MANUAL_JOURNAL_POSTERS, splitDescription,
 } from './manualJournal.js'
 import { journalRequestRoutes } from './journalRequestRoutes.js'
 import { raiseChangeRequest, type JournalRequestDto } from './journalRequests.js'
@@ -108,19 +108,25 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           companies: st.account.companyName ? [st.account.companyName] : undefined,
           period: `${st.dateFrom} to ${st.dateTo} · ${st.account.normal === 'debit' ? 'Debit' : 'Credit'}-balance account`,
           rows: [
-            ...st.rows.map((r) => ({
-              date: r.date, entry: r.description, reference: r.reference ?? '', memo: r.memo ?? '',
+            // The cheque / bank reference typed on a manual entry (owner, 2026-10-23) — never the system key
+            // ("manual:<uuid>"); the narration is printed in full (wrapKeys).
+            ...st.rows.map((r) => {
+              const split = (r.reference ?? '').startsWith(MANUAL_PREFIX) ? splitDescription(r.description) : { description: r.description, reference: null }
+              return {
+              date: r.date, entry: split.description, chequeReference: split.reference ?? '', memo: r.memo ?? '',
               debit: r.debitCents ? fmtPkr(r.debitCents) : '', credit: r.creditCents ? fmtPkr(r.creditCents) : '',
               balance: fmtPkr(r.balanceCents),
-            })),
+            } }),
             // The sub-ledger (2026-10-23): each sub-account's opening, movement and closing; Unassigned ties it out.
-            ...(st.subAccounts.length ? [{ date: '', entry: 'SUB-ACCOUNTS', reference: '', memo: 'Opening', debit: 'Debits', credit: 'Credits', balance: 'Closing' }] : []),
+            ...(st.subAccounts.length ? [{ date: '', entry: 'SUB-ACCOUNTS', chequeReference: '', memo: 'Opening', debit: 'Debits', credit: 'Credits', balance: 'Closing' }] : []),
             ...st.subAccounts.map((x) => ({
-              date: '', entry: x.name, reference: x.code ?? '', memo: fmtPkr(x.openingCents),
+              date: '', entry: x.name, chequeReference: x.code ?? '', memo: fmtPkr(x.openingCents),
               debit: fmtPkr(x.debitCents), credit: fmtPkr(x.creditCents), balance: fmtPkr(x.closingCents),
             })),
           ],
           types: { debit: 'pkr', credit: 'pkr', balance: 'pkr' },
+          labels: { chequeReference: 'Cheque reference' },
+          wrapKeys: ['entry', 'memo'],
           isTotal: (r) => r.entry === 'OPENING BALANCE' || r.entry === 'CLOSING BALANCE' || r.entry === 'TOTAL MOVEMENT',
           ...(st.truncated && { notes: ['This statement stops at the line limit — narrow the dates for the rest.'] }),
         })

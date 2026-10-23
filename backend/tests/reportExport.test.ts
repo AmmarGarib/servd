@@ -52,9 +52,9 @@ const monthStart = `${today.slice(0, 7)}-01`
 /** A day well before this month, for the opening balance. */
 const earlier = (() => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 2); return fmtPktDate(d) })()
 
-async function manual(tenantId: string, tag: string, cents: number, debit: string, credit: string, entryDate?: Date) {
+async function manual(tenantId: string, tag: string, cents: number, debit: string, credit: string, entryDate?: Date, description = `Manual ${tag}`) {
   return (await postJournalEntry({
-    tenantId, sourceType: 'manual', sourceId: `${tag}-${RUN}`, description: `Manual ${tag}`, postedBy: 'test',
+    tenantId, sourceType: 'manual', sourceId: `${tag}-${RUN}`, description, postedBy: 'test',
     ...(entryDate ? { entryDate } : {}),
     lines: [{ accountCode: debit, type: 'debit', amountCents: cents }, { accountCode: credit, type: 'credit', amountCents: cents }],
   })).entryId
@@ -77,7 +77,7 @@ beforeAll(async () => {
   // A: capital in two months ago (opening), then a sale, rent and a cash payment this month.
   await manual(A, 'capital', 1_000_000, '1010', '3010', new Date(`${earlier}T07:00:00Z`))
   await manual(A, 'sale', 250_050, '1010', '4001')
-  await manual(A, 'rent', 80_000, '6040', '1010')
+  await manual(A, 'rent', 80_000, '6040', '1010', undefined, 'Manual rent · ref CH# 77')
   // B: its own books, never in A's exports.
   await manual(B, 'capitalB', 777_700, '1010', '3010')
 
@@ -329,7 +329,10 @@ describe('general ledger and the account statement', () => {
     expect(s.closingCents).toBe(1_170_050)
     const csv = await get('finA', `/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}&format=csv`)
     expect(csv.statusCode).toBe(200)
-    expect(csv.body.split('\r\n')[0]).toBe('﻿date,entry,reference,memo,debit,credit,balance')
+    expect(csv.body.split('\r\n')[0]).toBe('﻿date,entry,chequeReference,memo,debit,credit,balance')
+    // The cheque reference typed on the entry, never the system key "manual:<id>" (owner, 2026-10-23).
+    expect(csv.body).toContain('Manual rent,CH# 77,')
+    expect(csv.body).not.toContain('manual:')
     expect(csv.body).toContain('OPENING BALANCE')
     expect(csv.body).toContain('"11,700.50"')
     const { xlsx } = await expectFiles(`/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}`)

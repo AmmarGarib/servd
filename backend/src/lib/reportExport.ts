@@ -76,6 +76,8 @@ export interface ReportTable {
   rows: ReportRow[]
   /** Excel / PDF: a new section (heading row) whenever this key's value changes; the column is not repeated. */
   sectionKey?: string
+  /** PDF: text columns shown in full over as many lines as they need, never cut to "…" (e.g. a statement's narration). */
+  wrapKeys?: string[]
   /** Excel / PDF: which rows are totals (bold). Default: a text cell in CAPITALS such as "TOTAL ASSETS". */
   isTotal?: (row: ReportRow) => boolean
   notes?: string[]
@@ -294,6 +296,29 @@ function fit(font: PDFFont, size: number, text: string, width: number): string {
   return text.slice(0, lo) + ell
 }
 
+/** `text` broken into lines no wider than `width` — at spaces, or inside a word longer than the line. */
+function wrapLines(font: PDFFont, size: number, text: string, width: number): string[] {
+  if (width <= 0 || !text) return [text]
+  const lines: string[] = []
+  let cur = ''
+  const fits = (s: string) => font.widthOfTextAtSize(s, size) <= width
+  for (const word of text.split(/ +/)) {
+    const next = cur ? `${cur} ${word}` : word
+    if (fits(next)) { cur = next; continue }
+    if (cur) lines.push(cur)
+    let w = word
+    while (!fits(w)) {
+      let n = w.length - 1
+      while (n > 1 && !fits(w.slice(0, n))) n--
+      lines.push(w.slice(0, n))
+      w = w.slice(n)
+    }
+    cur = w
+  }
+  if (cur || !lines.length) lines.push(cur)
+  return lines
+}
+
 export async function reportPdf(t: ReportTable): Promise<Buffer> {
   const cols = shownColumns(t)
   const isTotal = t.isTotal ?? ((r: ReportRow) => defaultIsTotal(r, cols))
@@ -338,6 +363,7 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
     widths = natural.map((w, i) => w + (textIdx.length ? (textIdx.includes(i) ? spare / textIdx.length : 0) : spare / cols.length))
   }
   const alignRight = cols.map((c) => isNumeric(c.type))
+  const wraps = cols.map((c) => !isNumeric(c.type) && (t.wrapKeys ?? []).includes(c.key))
 
   const pages: PDFPage[] = []
   let page!: PDFPage
@@ -385,23 +411,29 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
       y -= rowH
     }
     for (const r of sec.rows) {
-      ensure(rowH)
       const isT = isTotal(r)
       const f = isT ? bold : font
+      // A wrapped column may take several lines; the row is as tall as its tallest cell.
+      const cells = cols.map((c, i) => {
+        const raw = safe(displayOf(r[c.key], c.type))
+        return wraps[i] ? wrapLines(f, size, raw, widths[i]! - 6) : [fit(f, size, raw, widths[i]! - 6)]
+      })
+      const lineH = size + 2
+      const extra = (Math.max(1, ...cells.map((l) => l.length)) - 1) * lineH
+      ensure(rowH + extra)
       if (isT) page.drawLine({ start: { x: MARGIN, y: y + size + 1.5 }, end: { x: MARGIN + usable, y: y + size + 1.5 }, thickness: 0.6, color: MUTED })
       let x = MARGIN
       cols.forEach((c, i) => {
         const w = widths[i]!
-        const raw = displayOf(r[c.key], c.type)
         const right = alignRight[i] || (typeof r[c.key] === 'string' && NUMERIC_TEXT.test(String(r[c.key]).trim()))
-        const txt = fit(f, size, safe(raw), w - 6)
-        if (txt) {
+        cells[i]!.forEach((txt, k) => {
+          if (!txt) return
           const tw = f.widthOfTextAtSize(txt, size)
-          page.drawText(txt, { x: right ? x + w - 3 - tw : x + 3, y, size, font: f, color: INK })
-        }
+          page.drawText(txt, { x: right ? x + w - 3 - tw : x + 3, y: y - k * lineH, size, font: f, color: INK })
+        })
         x += w
       })
-      y -= rowH
+      y -= rowH + extra
       if (!isT) page.drawLine({ start: { x: MARGIN, y: y + size + 1 }, end: { x: MARGIN + usable, y: y + size + 1 }, thickness: 0.2, color: RULE })
     }
   }
