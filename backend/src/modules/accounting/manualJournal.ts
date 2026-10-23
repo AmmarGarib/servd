@@ -25,7 +25,7 @@
 // for a direct post, the request's own company for a journal request, the
 // entry's own company for a reversal); nothing here reads the request.
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
@@ -33,9 +33,13 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import { postJournalEntry, reverseJournalEntry } from './journal.js'
+import { assertManualSubAccounts, tagLineTx, tagPostedManualLinesTx } from '../../lib/subAccounts.js'
 import { fmtPktDate } from './dates.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
+
+/** Who posts, edits and cancels manual entries: the CEO and finance with the accounting module (routes.ts JOURNAL_POSTERS). */
+export const MANUAL_JOURNAL_POSTERS = ['admin', 'finance'] as const
 
 // Manual journal entries carry `manual:<uuid>`; their reversal (posted by
 // reverseJournalEntry) carries `manual.reversal:<uuid>`.
@@ -52,6 +56,9 @@ export const manualLineSchema = z.object({
   // Optional brand attribution, so a manual adjustment can land on one
   // brand's P&L instead of the shared bucket.
   conceptId: z.string().uuid().nullable().optional(),
+  // Optional sub-account of the line's account (lib/subAccounts.ts, owner 2026-10-23): the whole line is tagged to it.
+  // A reporting tag only — the line still posts to its account.
+  subAccountId: z.string().uuid().nullable().optional(),
 })
 export type ManualJournalLine = z.infer<typeof manualLineSchema>
 
@@ -136,6 +143,8 @@ export async function assertManualLines(
       throw new AppError('BRAND_NOT_IN_COMPANY', 'A line names a brand that is not one of this company\'s brands', 422)
     }
   }
+  // A sub-account named on a line is of that line's account, this company, and switched on.
+  await assertManualSubAccounts(db, tenantId, lines)
   return { debits, credits, codeOf }
 }
 
@@ -180,6 +189,12 @@ export interface PostManualJournalResult {
  * REGISTER_CONTROLLED_ACCOUNT, INTERCOMPANY_ACCOUNT_CONTROLLED, AMOUNT_TOO_LARGE.
  */
 export async function postManualJournal(db: Db, input: PostManualJournalInput): Promise<PostManualJournalResult> {
+  // Lines tagged to a sub-account: the posting and its tags commit together.
+  if (!isTx(db) && input.lines.some((l) => l.subAccountId)) {
+    const r = await (db as PrismaClient).$transaction((tx) => postManualJournal(tx, input))
+    await r.sideEffects()
+    return r
+  }
   const { tenantId } = input
   if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
   const { debits, credits, codeOf } = await assertManualLines(db, tenantId, input.lines)
@@ -211,6 +226,7 @@ export async function postManualJournal(db: Db, input: PostManualJournalInput): 
     throw new AppError('ALREADY_POSTED', 'This journal is already in the books.', 409)
   }
 
+  await tagPostedManualLinesTx(db, { tenantId, entryId: posted.entryId, actorId: input.postedBy, lines: input.lines })
   const entry = await db.journalEntry.findUniqueOrThrow({
     where: { id: posted.entryId },
     include: { lines: { include: { account: true } } },
@@ -390,7 +406,12 @@ export async function reverseManualJournal(db: Db, input: ReverseManualJournalIn
   const registerLines = original.lines.filter((l) => l.account.controlledBy === 'fixed_asset')
 
   const run = async (tx: Prisma.TransactionClient) => {
-    // One reversal per entry, even under a double click.
+    // The entry's change lock (text edits, change requests, approvals take it too), then one reversal per
+    // entry, even under a double click.
+    await lockEntryChangeTx(tx, tenantId, original.id)
+    // An edit / cancellation waiting for the CEO is decided first (a decision of it has already left 'submitted').
+    const open = await openChangeRequestOf(tx, tenantId, original.id)
+    if (open) throw changePending(open)
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`journal.reverse:${tenantId}:${original.reference}`}))`
     const already = await tx.journalEntry.findFirst({ where: { tenantId, reference: reversalRef }, select: { id: true, entryDate: true } })
     if (already) {
@@ -469,4 +490,244 @@ export async function reverseManualJournal(db: Db, input: ReverseManualJournalIn
   const once = async () => { if (ran) return; ran = true; await sideEffects() }
   if (!isTx(db)) await once()
   return { reversal, original, amountCents, sideEffects: once }
+}
+
+// ─── Journals tab (owner, 2026-10-23) ────────────────────────────────────────
+//
+// "option to edit/cancel/void any back dated or current Journal manual entry
+// with final approval of CEO … CEO approve edits only when amount is edited,
+// not for editing details/particulars/Memo."
+//
+//   • TEXT edits (description, the operator's reference, line memos) change the
+//     entry IN PLACE at once — textEditManualJournal. Nothing posts.
+//   • MONEY edits (an amount, account, brand, the date, lines added / removed)
+//     and cancels go through amendManualJournal / reverseManualJournal — at once
+//     for the CEO, after the CEO's approval for anyone else (journalRequests.ts
+//     kinds 'amend' / 'reverse').
+
+/** The entry's change lock: text edits, change requests, approvals and reversals serialise on it. */
+export async function lockEntryChangeTx(tx: Prisma.TransactionClient, tenantId: string, entryId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`journal.change:${tenantId}:${entryId}`}))`
+}
+
+const REF_SEP = ' · ref '
+
+/** A manual entry stores the operator's reference inside its description ("<text> · ref <ref>"). */
+export function splitDescription(stored: string): { description: string; reference: string | null } {
+  const at = stored.lastIndexOf(REF_SEP)
+  if (at < 0) return { description: stored, reference: null }
+  return { description: stored.slice(0, at), reference: stored.slice(at + REF_SEP.length) || null }
+}
+export function composeDescription(description: string, reference: string | null | undefined): string {
+  const ref = reference?.trim() || null
+  return ref ? `${description}${REF_SEP}${ref}` : description
+}
+
+type FingerprintEntry = {
+  id: string; description: string; entryDate: Date
+  lines: Array<{ id: string; accountId: string; type: string; amountCents: bigint | number; conceptId: string | null; memo: string | null }>
+}
+/** A hash of everything a change request was raised against (text and money); a mismatch at approval = ENTRY_CHANGED. */
+export function entryFingerprint(e: FingerprintEntry): string {
+  const lines = [...e.lines].sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((l) => [l.id, l.accountId, l.type, toCents(l.amountCents), l.conceptId ?? null, l.memo ?? null])
+  return createHash('sha256').update(JSON.stringify([e.id, e.description, e.entryDate.toISOString(), lines])).digest('hex')
+}
+
+/** The money shape of a line: what a money edit changes. */
+const shapeKey = (l: { accountId: string; type: string; amountCents: number; conceptId?: string | null }) =>
+  `${l.accountId}|${l.type}|${l.amountCents}|${l.conceptId ?? ''}`
+
+/**
+ * Does `proposed` change only text? Same date (the same Karachi day; a missing
+ * date = unchanged) and the same lines by money shape (account, side, amount,
+ * brand), in any order. Returns the memo of each original line id when so, else null.
+ */
+export function textOnlyMapping(
+  original: { entryDate: Date; lines: Array<{ id: string; accountId: string; type: string; amountCents: bigint | number; conceptId: string | null }> },
+  proposed: { entryDate?: string | Date | null; lines: ManualJournalLine[] },
+): Map<string, { memo: string | null; subAccountId?: string | null }> | null {
+  if (proposed.entryDate && fmtPktDate(new Date(proposed.entryDate)) !== fmtPktDate(original.entryDate)) return null
+  if (proposed.lines.length !== original.lines.length) return null
+  const free = original.lines.map((l) => ({ id: l.id, key: shapeKey({ ...l, amountCents: toCents(l.amountCents) }) }))
+  const memos = new Map<string, { memo: string | null; subAccountId?: string | null }>()
+  for (const p of proposed.lines) {
+    const i = free.findIndex((f) => f.key === shapeKey(p))
+    if (i < 0) return null
+    memos.set(free[i]!.id, { memo: p.memo?.trim() || null, ...(p.subAccountId !== undefined ? { subAccountId: p.subAccountId } : {}) })
+    free.splice(i, 1)
+  }
+  return memos
+}
+
+/** Lines on an account only its own module posts to: refused up front for a request (the CEO alone overrides the register). */
+export async function assertNoControlledLines(db: Db, tenantId: string, lines: readonly ManualJournalLine[]): Promise<void> {
+  const ctl = await db.account.findMany({
+    where: { tenantId, id: { in: [...new Set(lines.map((l) => l.accountId))] }, controlledBy: { not: null } },
+    select: { code: true, name: true, controlledBy: true },
+  })
+  const c = ctl[0]
+  if (!c) return
+  if (c.controlledBy === 'fixed_asset') {
+    throw new AppError('REGISTER_CONTROLLED_ACCOUNT', `Account ${c.code} '${c.name}' is kept by the fixed-asset register — record this through Fixed assets or CapEx; only the CEO may post there by hand.`, 422)
+  }
+  throw new AppError('INTERCOMPANY_ACCOUNT_CONTROLLED', `Account ${c.code} '${c.name}' is controlled by its own module — only that module posts to it.`, 422)
+}
+
+/** The reversal half of an edit is dated on the ORIGINAL's day — today only when that day is in a closed month. */
+export async function editReversalDate(db: Db, tenantId: string, originalDate: Date): Promise<Date> {
+  const lock = await db.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+  return lock && originalDate <= lock.lockedThrough ? new Date() : originalDate
+}
+
+export interface AmendManualJournalInput {
+  tenantId: string
+  entryId: string
+  reason: string
+  description: string
+  reference?: string | null
+  entryDate?: Date | string | null
+  lines: ManualJournalLine[]
+  actorId: string
+  actor?: Omit<ManualActor, 'id'>
+  registerOverride?: { reason: string } | null
+  /** `manual:<sourceId>` of the corrected entry (a change request passes its own id). */
+  sourceId?: string
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * EDIT = reverse the original (dated on its own day, editReversalDate) + post
+ * the corrected entry in the ORIGINAL's company, in the caller's transaction —
+ * exactly what POST /accounting/journal/:id/amend has always done. Used by the
+ * CEO's direct edit and by the CEO's approval of a finance edit request.
+ */
+export async function amendManualJournal(tx: Prisma.TransactionClient, input: AmendManualJournalInput) {
+  const found = await tx.journalEntry.findFirst({ where: { id: input.entryId, tenantId: input.tenantId }, select: { entryDate: true } })
+  if (!found) throw new NotFoundError('JournalEntry', input.entryId)
+  const reversalDate = await editReversalDate(tx, input.tenantId, found.entryDate)
+  const rev = await reverseManualJournal(tx, {
+    tenantId: input.tenantId, entryId: input.entryId, reason: `Edited: ${input.reason}`, actorId: input.actorId,
+    entryDate: reversalDate, actor: input.actor, metadata: input.metadata,
+  })
+  const posted = await postManualJournal(tx, {
+    tenantId: input.tenantId,
+    description: input.description,
+    reference: input.reference,
+    entryDate: input.entryDate,
+    lines: input.lines,
+    postedBy: input.actorId,
+    registerOverride: input.registerOverride ?? null,
+    actor: { id: input.actorId, email: input.actor?.email ?? null, ip: input.actor?.ip ?? null },
+    ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+    metadata: { ...(input.metadata ?? {}), replacesEntryId: input.entryId },
+  })
+  return { reversal: rev.reversal, original: rev.original, entry: posted.entry, reversedFx: rev.sideEffects, postedFx: posted.sideEffects }
+}
+
+/** Is this live manual entry reversed? (`manual.reversal:<sourceId>` exists.) */
+export async function manualReversalOf(db: Db, tenantId: string, reference: string): Promise<{ id: string; entryDate: Date } | null> {
+  if (!reference.startsWith(MANUAL_PREFIX)) return null
+  return db.journalEntry.findFirst({
+    where: { tenantId, reference: `${MANUAL_REVERSAL_PREFIX}${reference.slice(MANUAL_PREFIX.length)}` },
+    select: { id: true, entryDate: true },
+  })
+}
+
+export const OPEN_CHANGE_STATUSES = ['draft', 'submitted', 'returned'] as const
+
+/** The open change request (edit / cancel) on an entry, if any. */
+export async function openChangeRequestOf(db: Db, tenantId: string, entryId: string): Promise<{ id: string; kind: string; status: string } | null> {
+  return db.journalRequest.findFirst({
+    where: { tenantId, reverseEntryId: entryId, kind: { in: ['reverse', 'amend'] }, status: { in: [...OPEN_CHANGE_STATUSES] } },
+    select: { id: true, kind: true, status: true },
+  })
+}
+
+export function changePending(r: { id: string; kind: string; status: string }): AppError {
+  return new AppError('CHANGE_PENDING', `A${r.kind === 'amend' ? 'n edit' : ' cancellation'} of this entry is already waiting (${r.status}) — decide or withdraw it first.`, 409, { requestId: r.id })
+}
+
+export const textEditSchema = z.object({
+  description: z.string().trim().min(1).max(500).optional(),
+  reference: z.string().trim().max(200).nullable().optional(),
+  memos: z.array(z.object({ lineId: z.string().uuid(), memo: z.string().trim().max(500).nullable() })).max(200).optional(),
+  // A line's sub-account (the whole line), or null to clear it — a reporting tag, so a text-level edit (2026-10-23).
+  subAccounts: z.array(z.object({ lineId: z.string().uuid(), subAccountId: z.string().uuid().nullable() })).max(200).optional(),
+})
+export type TextEdit = z.infer<typeof textEditSchema>
+
+/**
+ * A TEXT edit of a live manual entry, in place, at once (owner, 2026-10-23):
+ * description, the operator's reference, line memos. Nothing posts and no
+ * amount, account, brand or date moves. Refused: not a manual entry (422
+ * NOT_A_MANUAL_ENTRY, a reversal included), reversed (409 ENTRY_REVERSED), a
+ * change request open (409 CHANGE_PENDING), dated in closed / reopened books
+ * by anyone but the CEO (403 CEO_ONLY_CLOSED_BOOKS), a memo of another entry's
+ * line (422 LINE_NOT_IN_ENTRY), nothing changed (409 NOTHING_CHANGED unless
+ * `allowNoop`). Audit `journal.text_edit` with old → new, in the entry's company.
+ */
+export async function textEditManualJournal(tx: Prisma.TransactionClient, args: {
+  tenantId: string; entryId: string; edit: TextEdit; actor: { id: string; role: string; email?: string | null; ip?: string | null }; allowNoop?: boolean
+}): Promise<{ entry: ManualEntry; changed: boolean; sideEffects: () => Promise<void> }> {
+  const { tenantId, entryId, edit, actor } = args
+  await lockEntryChangeTx(tx, tenantId, entryId)
+  const e = await tx.journalEntry.findFirst({ where: { id: entryId, tenantId }, include: { lines: true } })
+  if (!e) throw new NotFoundError('JournalEntry', entryId)
+  if (!e.reference?.startsWith(MANUAL_PREFIX)) {
+    throw new AppError('NOT_A_MANUAL_ENTRY', 'Only manual journal entries are edited here — a reversal or a posting of a source document is corrected at its source.', 422)
+  }
+  if (await manualReversalOf(tx, tenantId, e.reference)) throw new AppError('ENTRY_REVERSED', 'This entry has been reversed — it can no longer be edited.', 409)
+  const open = await openChangeRequestOf(tx, tenantId, entryId)
+  if (open) throw changePending(open)
+  if (actor.role !== 'admin') {
+    const { closedBooksThrough } = await import('./closedBooks.js')
+    const through = await closedBooksThrough(tx, tenantId)
+    if (through && e.entryDate <= through) {
+      throw new AppError('CEO_ONLY_CLOSED_BOOKS', `This entry is dated ${fmtPktDate(e.entryDate)}, in closed books — only the CEO can change it.`, 403)
+    }
+  }
+  const cur = splitDescription(e.description)
+  const nextDesc = composeDescription(edit.description ?? cur.description, edit.reference !== undefined ? edit.reference : cur.reference)
+  const lineIds = new Set(e.lines.map((l) => l.id))
+  const memoChanges: Array<{ lineId: string; before: string | null; after: string | null }> = []
+  for (const m of edit.memos ?? []) {
+    if (!lineIds.has(m.lineId)) throw new AppError('LINE_NOT_IN_ENTRY', 'A memo names a line of another entry', 422)
+    const before = e.lines.find((l) => l.id === m.lineId)!.memo ?? null
+    const after = m.memo?.trim() || null
+    if (before !== after) memoChanges.push({ lineId: m.lineId, before, after })
+  }
+  // Sub-account tags: the whole line to one sub-account, or cleared.
+  const tagChanges: Array<{ lineId: string; before: string[]; after: string | null }> = []
+  for (const t of edit.subAccounts ?? []) {
+    if (!lineIds.has(t.lineId)) throw new AppError('LINE_NOT_IN_ENTRY', 'A sub-account names a line of another entry', 422)
+    const cur = await tx.journalLineSubAccount.findMany({ where: { journalLineId: t.lineId }, select: { subAccountId: true } })
+    const same = t.subAccountId ? cur.length === 1 && cur[0]!.subAccountId === t.subAccountId : cur.length === 0
+    if (!same) tagChanges.push({ lineId: t.lineId, before: cur.map((c) => c.subAccountId), after: t.subAccountId })
+  }
+  const descChanged = nextDesc !== e.description
+  if (!descChanged && memoChanges.length === 0 && tagChanges.length === 0) {
+    if (!args.allowNoop) throw new AppError('NOTHING_CHANGED', 'Nothing changed', 409)
+  } else {
+    if (descChanged) await tx.journalEntry.update({ where: { id: e.id }, data: { description: nextDesc } })
+    for (const m of memoChanges) await tx.journalLine.update({ where: { id: m.lineId }, data: { memo: m.after } })
+    for (const t of tagChanges) {
+      const line = e.lines.find((l) => l.id === t.lineId)!
+      await tagLineTx(tx, { tenantIds: [tenantId], journalLineId: t.lineId, replace: true, actorId: actor.id,
+        allocations: t.after ? [{ subAccountId: t.after, amountCents: toCents(line.amountCents) }] : [] })
+    }
+  }
+  const entry = await tx.journalEntry.findUniqueOrThrow({ where: { id: e.id }, include: { lines: { include: { account: true } } } })
+  const changed = descChanged || memoChanges.length > 0 || tagChanges.length > 0
+  const sideEffects = async () => {
+    if (!changed) return
+    await audit({
+      category: 'accounting', action: 'journal.text_edit', entity: 'JournalEntry', entityId: e.id,
+      userId: actor.id, userEmail: actor.email ?? null, tenantId,
+      before: { description: e.description, memos: memoChanges.map((m) => ({ lineId: m.lineId, memo: m.before })), subAccounts: tagChanges.map((t) => ({ lineId: t.lineId, subAccountIds: t.before })) },
+      after: { description: nextDesc, memos: memoChanges.map((m) => ({ lineId: m.lineId, memo: m.after })), subAccounts: tagChanges.map((t) => ({ lineId: t.lineId, subAccountId: t.after })) },
+      metadata: { ip: actor.ip ?? null, actorRole: actor.role, voucherNo: e.voucherNo },
+    })
+  }
+  return { entry, changed, sideEffects }
 }

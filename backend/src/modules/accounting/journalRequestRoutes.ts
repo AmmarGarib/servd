@@ -4,6 +4,7 @@
 //
 //   GET    /                ?status&kind&mine&limit → { requests }
 //   GET    /:id             → { request }
+//   GET    /:id/diff        reverse / amend: the entry now vs the proposed change (Journals tab, 2026-10-23)
 //   POST   /                preparers (admin, owner, management, finance) → 201 { request }
 //   PATCH  /:id             the preparer; draft or returned
 //   POST   /:id/submit      the preparer
@@ -21,7 +22,7 @@ import type { UserRole } from '@prisma/client'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import {
   JR_PREPARERS, createRequestSchema, listQuerySchema, rejectSchema,
-  approveRequest, createRequest, getRequest, listRequests, rejectRequest, submitRequest, updateRequest, withdrawRequest,
+  approveRequest, createRequest, getRequest, listRequests, rejectRequest, requestDiff, submitRequest, updateRequest, withdrawRequest,
 } from './journalRequests.js'
 
 const PREPARERS = [...JR_PREPARERS] as UserRole[]
@@ -35,6 +36,10 @@ export async function journalRequestRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     return { request: await getRequest(req, req.params.id) }
+  })
+
+  fastify.get<{ Params: { id: string } }>('/:id/diff', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    return requestDiff(req, req.params.id)
   })
 
   fastify.post('/', { preHandler: requireAuth(...PREPARERS) }, async (req, reply) => {

@@ -272,32 +272,45 @@ describe('Books and the month close — October 2026, companies A and B', () => 
     expect(je.reference).toMatch(/^manual:/)
     expect(await sim.ledger.balanceOf(A, '6081')).toBe(500_000)
 
-    // The edit, four days later: one transaction — the reversal dated on the
-    // ORIGINAL's day (8 Oct) and the corrected entry (also 8 Oct).
+    // The edit, four days later (owner, 2026-10-23: a change of amount needs the CEO).
+    // Finance's edit is a request: nothing moves until the CEO approves; then ONE
+    // transaction posts the reversal dated on the ORIGINAL's day (8 Oct) and the
+    // corrected entry (also 8 Oct).
     sim.clock.at('2026-10-12', '11:00')
-    const amended = ok(await fin.post(`/accounting/journal/${je.id}/amend`, { ...manual(A, 'HBL charges September statement (corrected)', '2026-10-08', [
+    const ceo = sim.as(sim.ceo, A)
+    const pending = ok(await fin.post(`/accounting/journal/${je.id}/amend`, { ...manual(A, 'HBL charges September statement (corrected)', '2026-10-08', [
       { code: '6081', type: 'debit', cents: 650_000 }, { code: A.banks.main.code, type: 'credit', cents: 650_000 },
-    ]), reason: 'Statement shows PKR 6,500 not 5,000' }), 201)
+    ]), reason: 'Statement shows PKR 6,500 not 5,000' }), 202)
+    expect(pending.pendingApproval).toBe(true)
+    expect(pending.request.kind).toBe('amend')
+    expect(await sim.ledger.balanceOf(A, '6081'), 'nothing moves before the CEO approves').toBe(500_000)
+    expect((await fin.post(`/accounting/journal-requests/${pending.request.id}/approve`, {})).statusCode, 'finance never approves its own change').toBe(403)
+    const approved = ok(await ceo.post(`/accounting/journal-requests/${pending.request.id}/approve`, {}), 200)
+    const amended = await sim.prisma.journalEntry.findUniqueOrThrow({ where: { id: approved.entryId } })
     st.amendedJe = amended.id
-    const rev = await sim.prisma.journalEntry.findUniqueOrThrow({ where: { id: amended.replaces.reversalId } })
+    const rev = await sim.prisma.journalEntry.findUniqueOrThrow({ where: { id: approved.reversalId } })
     expect(rev.reference).toBe(`manual.reversal:${je.reference.slice('manual:'.length)}`)
     expect(rev.entryDate.toISOString(), 'the reversal half is dated on the original\'s day').toBe(new Date(je.entryDate).toISOString())
-    expect(new Date(amended.entryDate).toISOString()).toBe(iso('2026-10-08'))
+    expect(amended.entryDate.toISOString()).toBe(iso('2026-10-08'))
     expect(await sim.ledger.balanceOf(A, '6081', '2026-10-08')).toBe(650_000)
     // The original cannot be edited or cancelled again.
-    expect(errCode(await fin.post(`/accounting/journal/${je.id}/reverse`, { reason: 'twice over' }))).toBe('ALREADY_REVERSED')
-    expect(errCode(await fin.post(`/accounting/journal/${je.id}/amend`, { ...manual(A, 'again', '2026-10-08', [
+    expect(['ALREADY_REVERSED', 'ENTRY_REVERSED']).toContain(errCode(await fin.post(`/accounting/journal/${je.id}/reverse`, { reason: 'twice over' })))
+    expect(['ALREADY_REVERSED', 'ENTRY_REVERSED']).toContain(errCode(await fin.post(`/accounting/journal/${je.id}/amend`, { ...manual(A, 'again', '2026-10-08', [
       { code: '6081', type: 'debit', cents: 1 }, { code: A.banks.main.code, type: 'credit', cents: 1 },
-    ]), reason: 'second edit' }))).toBe('ALREADY_REVERSED')
+    ]), reason: 'second edit' })))
     // A reversal itself is not reversible; a system entry (a till close) is not either.
     expect(errCode(await fin.post(`/accounting/journal/${rev.id}/reverse`, { reason: 'undo undo' }))).toBe('NOT_A_MANUAL_ENTRY')
     const till = (await sim.ledger.entriesBySource(A, 'shift.close:'))[0]!
     expect(errCode(await fin.post(`/accounting/journal/${till.id}/reverse`, { reason: 'not mine to undo' }))).toBe('NOT_A_MANUAL_ENTRY')
 
-    // Cancelled on 14 Oct (bank refunded the charge).
+    // Cancelled on 14 Oct (bank refunded the charge): finance asks, the CEO approves.
     sim.clock.at('2026-10-14', '11:00')
-    const cancel = ok(await fin.post(`/accounting/journal/${amended.id}/reverse`, { reason: 'HBL reversed the charges' }), 201)
-    expect(cancel.reverses.id).toBe(amended.id)
+    const cancelReq = ok(await fin.post(`/accounting/journal/${amended.id}/reverse`, { reason: 'HBL reversed the charges' }), 202)
+    expect(cancelReq.request.kind).toBe('reverse')
+    expect(await sim.ledger.balanceOf(A, '6081'), 'the cancel waits for the CEO').toBe(650_000)
+    const cancelled = ok(await ceo.post(`/accounting/journal-requests/${cancelReq.request.id}/approve`, {}), 200)
+    const cancelEntry = await sim.prisma.journalEntry.findUniqueOrThrow({ where: { id: cancelled.reversalId ?? cancelled.entryId } })
+    expect(cancelEntry.reference.startsWith('manual.reversal:') || cancelEntry.reference.startsWith('manual.void:')).toBe(true)
     expect(await sim.ledger.balanceOf(A, '6081')).toBe(0)
     // Every manual entry is on the Exceptions list for review.
     expect((await sim.ledger.openFlags(A, 'manual_journal')).length).toBeGreaterThanOrEqual(4)

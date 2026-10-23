@@ -263,8 +263,11 @@ describe('journal edit — the reversal is dated on the original\'s day', () => 
     const res = await call('fin', 'POST', `/accounting/journal/${id}/amend`, {
       reason: 'Wrong amount', description: 'Accrual', reference: 'INV-77', entryDate: new Date(`${tenDaysAgo}T12:00:00+05:00`).toISOString(), lines: await lines(A, 60_000),
     })
-    expect(res.statusCode, res.body).toBe(201)
-    const reversal = await prisma.journalEntry.findUniqueOrThrow({ where: { id: res.json().replaces.reversalId } })
+    // Since 2026-10-23 finance's money edit waits for the CEO; the approval runs the same edit.
+    expect(res.statusCode, res.body).toBe(202)
+    const ok = await call('ceo', 'POST', `/accounting/journal-requests/${res.json().request.id}/approve`, {}, { 'x-servd-active-tenant': A })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const reversal = await prisma.journalEntry.findUniqueOrThrow({ where: { id: ok.json().reversalId } })
     expect(reversal.tenantId).toBe(A)
     expect(fmtPktDate(reversal.entryDate)).toBe(tenDaysAgo)
   })
@@ -276,10 +279,15 @@ describe('journal edit — the reversal is dated on the original\'s day', () => 
     const orig = await call('fin', 'POST', '/accounting/journal', { description: 'Paid', entryDate: at, lines: await lines(A, 5_000), classification: 'unofficial', taxStatus: 'not_applicable' })
     expect(orig.statusCode, orig.body).toBe(201)
     expect(await prisma.paymentClassification.findUnique({ where: { journalEntryId: orig.json().id } })).toMatchObject({ tenantId: A, classification: 'unofficial' })
-    const kept = await call('fin', 'POST', `/accounting/journal/${orig.json().id}/amend`, { reason: 'Wrong amount', description: 'Paid', entryDate: at, lines: await lines(A, 6_000) })
-    expect(kept.statusCode, kept.body).toBe(201)
-    expect(await prisma.paymentClassification.findUnique({ where: { journalEntryId: kept.json().id } })).toMatchObject({ classification: 'unofficial', taxStatus: 'not_applicable' })
-    const changed = await call('fin', 'POST', `/accounting/journal/${kept.json().id}/amend`, { reason: 'Was official', description: 'Paid', entryDate: at, lines: await lines(A, 6_000), classification: 'official' })
+    const raised = await call('fin', 'POST', `/accounting/journal/${orig.json().id}/amend`, { reason: 'Wrong amount', description: 'Paid', entryDate: at, lines: await lines(A, 6_000) })
+    expect(raised.statusCode, raised.body).toBe(202)
+    const kept = await call('ceo', 'POST', `/accounting/journal-requests/${raised.json().request.id}/approve`, {}, { 'x-servd-active-tenant': A })
+    expect(kept.statusCode, kept.body).toBe(200)
+    expect(await prisma.paymentClassification.findUnique({ where: { journalEntryId: kept.json().entryId } })).toMatchObject({ classification: 'unofficial', taxStatus: 'not_applicable' })
+    // Same lines, only the label: a text edit in place (no CEO approval), same entry.
+    const changed = await call('fin', 'POST', `/accounting/journal/${kept.json().entryId}/amend`, { reason: 'Was official', description: 'Paid', entryDate: at, lines: await lines(A, 6_000), classification: 'official' })
+    expect(changed.statusCode, changed.body).toBe(200)
+    expect(changed.json().id).toBe(kept.json().entryId)
     expect(await prisma.paymentClassification.findUnique({ where: { journalEntryId: changed.json().id } })).toMatchObject({ classification: 'official' })
     // An accrual (nothing leaves a money account) posts and carries no label.
     const acc = await prisma.account.findMany({ where: { tenantId: A, code: { in: ['6010', '2010'] } }, select: { id: true, code: true } })

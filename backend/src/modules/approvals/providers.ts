@@ -1071,6 +1071,7 @@ const journalRequests: ApprovalProvider = {
     return rowsOf<Row>(res, 'requests').filter((r) => r.status === 'submitted').map((r): ApprovalItem => {
       const base = `/accounting/journal-requests/${r.id}`
       const reverse = r.kind === 'reverse'
+      const amend = r.kind === 'amend' // an edit of an existing manual entry (Journals tab, 2026-10-23)
       return {
         type: 'journal_request',
         id: r.id,
@@ -1078,10 +1079,10 @@ const journalRequests: ApprovalProvider = {
         section: sectionOf('journal_request', { tenantId: r.tenantId, kind: r.kind }),
         submittedByIds: idList(r.preparedById, r.submittedById, r.preparedByIds ?? []),
         viaHeadOfficeId: r.viaHeadOfficeId ?? null,
-        title: `${reverse ? 'Reverse' : 'Journal'}: ${r.description} — ${pkr(r.totalCents)}`,
+        title: `${reverse ? 'Reverse' : amend ? 'Edit journal' : 'Journal'}: ${r.description} — ${pkr(r.totalCents)}`,
         subtitle: r.reference,
         facts: facts([
-          ['Kind', reverse ? 'Reversal' : 'Manual journal'],
+          ['Kind', reverse ? 'Reversal' : amend ? 'Edit of a posted entry (old reversed, corrected posted)' : 'Manual journal'],
           ['Amount', pkr(r.totalCents)],
           ['Date', r.entryDate ? ymd(r.entryDate) : null],
           ['Lines', r.lines ? String(r.lines.length) : null],
@@ -1092,10 +1093,10 @@ const journalRequests: ApprovalProvider = {
         waitingSince: iso(r.submittedAt ?? r.preparedAt),
         link: `/accounting/journal?tab=requests&id=${encodeURIComponent(r.id)}`,
         actions: [
-          { kind: 'approve', label: reverse ? 'Approve reversal' : 'Approve and post', method: 'POST', path: `${base}/approve`, body: {},
-            confirm: reverse ? 'Reverse this journal entry now?' : 'Post this journal to the books now?' },
+          { kind: 'approve', label: reverse ? 'Approve reversal' : amend ? 'Approve edit' : 'Approve and post', method: 'POST', path: `${base}/approve`, body: {},
+            confirm: reverse ? 'Reverse this journal entry now?' : amend ? 'Reverse the entry and post the corrected one now?' : 'Post this journal to the books now?' },
           { kind: 'reject', label: 'Send back', method: 'POST', path: `${base}/reject`, body: {},
-            input: { field: 'note', label: 'What needs to change', required: true } },
+            input: { field: 'note', label: reverse || amend ? 'What needs to change (at least 10 characters)' : 'What needs to change', required: true } },
         ],
       }
     })

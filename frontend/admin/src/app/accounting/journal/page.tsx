@@ -1,5 +1,7 @@
 'use client'
-// Journal entry — the screen for the ONE manual-entry writer
+// Journals (owner, 2026-10-23: one Journals tab replaces the old 90-day manual list).
+// Sub-tabs (?tab=): New entry · Journals · Accounts · Requests.
+// New entry — the screen for the ONE manual-entry writer
 // (POST /accounting/journal) and its reversal
 // (POST /accounting/journal/:id/reverse). Opening balances (bank, cash,
 // inventory, capital), month-end accruals and corrections are booked here.
@@ -18,7 +20,8 @@
 //   • A wrong entry is undone by a reversing entry (every line flipped), never
 //     deleted. Each manual entry can be reversed once.
 import { Button, Field, Input, LinkButton } from '@/components/finance/ui'
-import { useMemo, useState } from 'react'
+import { Suspense, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -27,6 +30,11 @@ import { useAuthStore } from '../../../store/auth'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { Select } from '@/components/ui/Select'
 import { dateBounds } from '../../finance/cash-vouchers/ui'
+import { JournalsTab } from './JournalsTab'
+import { AccountsTab } from './AccountsTab'
+import { EntryPanel } from './EntryPanel'
+import { SubAccountSelect } from './JournalBits'
+import { PENDING_MSG, isPending, type RegRow } from './journalTypes'
 import { JournalRequests, type JournalRequest } from './JournalRequests'
 import { RecordFiles } from '@/components/files/RecordFiles'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
@@ -39,25 +47,10 @@ import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFil
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean }
 interface Brand { id: string; name: string; tenantId: string | null }
 interface CurrentLock { tenantId?: string | null; lockedThrough: string | null; reopenedThrough?: string | null }
-interface LedgerLine { id: string; accountId?: string; conceptId?: string | null; type: 'debit' | 'credit'; amountCents: number; memo: string | null; account: { code: string; name: string } }
-interface LedgerEntry {
-  id: string
-  tenantId: string | null
-  reference: string | null
-  description: string
-  entryDate: string
-  /** Automatic voucher number (JV-00001…), stamped when posted. */
-  voucherNo?: string | null
-  lines: LedgerLine[]
-  reversedBy: { id: string; entryDate: string } | null
-}
-interface LedgerPage { data: LedgerEntry[]; hasMore: boolean }
-
-interface DraftLine { key: number; accountId: string; debit: string; credit: string; memo: string; conceptId: string }
+interface DraftLine { key: number; accountId: string; debit: string; credit: string; memo: string; conceptId: string; subAccountId: string }
 
 const PKT_OFFSET_MS = 5 * 3600_000
 const pktDate = (iso: string) => new Date(new Date(iso).getTime() + PKT_OFFSET_MS).toISOString().slice(0, 10)
-const daysAgoPkt = (n: number) => new Date(Date.now() + PKT_OFFSET_MS - n * 86400_000).toISOString().slice(0, 10)
 
 /** "1,234.5" → 123450 paisa; null when not a positive amount with at most 2 decimals. Empty → 0. */
 function toPaisa(input: string): number | null {
@@ -75,14 +68,17 @@ function entryInstant(date: string): string | undefined {
 }
 
 let lineSeq = 0
-const blankLine = (): DraftLine => ({ key: ++lineSeq, accountId: '', debit: '', credit: '', memo: '', conceptId: '' })
+const blankLine = (): DraftLine => ({ key: ++lineSeq, accountId: '', debit: '', credit: '', memo: '', conceptId: '', subAccountId: '' })
 
 const inputCls = 's-input py-1.5'
 
-type PageTab = 'entry' | 'requests'
+type PageTab = 'entry' | 'journals' | 'accounts' | 'requests'
+const TABS: PageTab[] = ['entry', 'journals', 'accounts', 'requests']
 const PREPARER_ROLES = ['admin', 'owner', 'management', 'finance']
 
-export default function JournalEntryPage() {
+function JournalsPage() {
+  const router = useRouter()
+  const params = useSearchParams()
   const qc = useQueryClient()
   const isAdmin = useAuthStore((s) => s.isRole('admin'))
   const canPrepare = useAuthStore((s) => s.isRole(...PREPARER_ROLES))
@@ -90,13 +86,21 @@ export default function JournalEntryPage() {
   // (owner, 2026-10-16: no CEO approval to book a journal).
   const canPost = useAuthStore((s) => s.isRole('admin', 'finance'))
   /** A posted manual entry being edited: posting reverses it and books the corrected one. */
-  const [amending, setAmending] = useState<LedgerEntry | null>(null)
+  const [amending, setAmending] = useState<RegRow | null>(null)
+  /** The entry open in the side panel. */
+  const [panel, setPanel] = useState<{ id: string; tenantId: string | null } | null>(null)
   const [amendReason, setAmendReason] = useState('')
   // Supporting documents (owner, 2026-10-20): uploaded to the posted entry once it exists.
   const [files, setFiles] = useState<PickedFile[]>([])
   // Official / Unofficial (owner, 2026-10-20): asked when the entry pays money out (a credit to cash or a bank).
   const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
-  const [tab, setTab] = useState<PageTab>('entry')
+  const rawTab = params.get('tab')
+  const tab: PageTab = TABS.includes(rawTab as PageTab) && (canPrepare || rawTab === 'journals' || rawTab === 'accounts') ? (rawTab as PageTab) : canPrepare ? 'entry' : 'journals'
+  const accountId = params.get('accountId') ?? ''
+  const setTab = (t: PageTab, extra: Record<string, string> = {}) => {
+    const sp = new URLSearchParams({ tab: t, ...extra })
+    router.replace(`/accounting/journal?${sp.toString()}`, { scroll: false })
+  }
   /** The request being edited in the form (a draft or returned one of mine). */
   const [editing, setEditing] = useState<JournalRequest | null>(null)
   const [reqRefresh, setReqRefresh] = useState(0)
@@ -162,9 +166,6 @@ export default function JournalEntryPage() {
   // A month the CEO reopened: only the CEO posts there (closedBooks.ts).
   const reopenedThrough = lock?.reopenedThrough ? pktDate(lock.reopenedThrough) : null
   const dateReopened = !dateLocked && !!reopenedThrough && companyIds.length === 1 && date <= reopenedThrough
-  // The latest closed-or-reopened day of the active company: an entry dated
-  // on or before it is the CEO's to edit or cancel.
-  const closedBooksThrough = [lockedThrough, reopenedThrough].filter((d): d is string => !!d).sort().pop() ?? null
 
   // A credit to a money account (cash 1010 / 1011, banks 10xx) = a payment: the register asks how it is classified.
   // The server decides for good (paymentsRegister.ts) — a transfer between money accounts is not a payment there.
@@ -190,7 +191,7 @@ export default function JournalEntryPage() {
   const post = useMutation({
     mutationFn: async () => {
       const pin = amending?.tenantId ?? company
-      const entry = await api.post<{ id: string; voucherNo?: string | null }>(amending ? `/accounting/journal/${amending.id}/amend` : '/accounting/journal', {
+      const entry = await api.post<{ id: string; voucherNo?: string | null; pendingApproval?: boolean; edited?: string }>(amending ? `/accounting/journal/${amending.id}/amend` : '/accounting/journal', {
       ...(amending && { reason: amendReason.trim() }),
       description: description.trim(),
       ...(reference.trim() && { reference: reference.trim() }),
@@ -202,24 +203,31 @@ export default function JournalEntryPage() {
         amountCents: p.debit > 0 ? p.debit : p.credit,
         ...(p.line.memo.trim() && { memo: p.line.memo.trim() }),
         ...(p.line.conceptId && { conceptId: p.line.conceptId }),
+        ...(p.line.subAccountId && { subAccountId: p.line.subAccountId }),
       })),
     }, { tenantId: pin })
       // The entry is in the books; a file that fails to upload is attached from its row below.
       let fileError: string | null = null
-      if (files.length) {
+      if (files.length && !isPending(entry) && entry.id) {
         try { await uploadRecordFiles('journal_entry', entry.id, files, { tenantId: pin ?? undefined }) }
         catch (x) { fileError = (x as Error).message }
       }
       return { entry, fileError }
     },
     onSuccess: ({ entry, fileError }) => {
-      const done = amending
-        ? `Edited — the old entry is reversed and the corrected one is posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} (${fmtPkr(debitTotal)} on ${date}).`
+      const done = isPending(entry)
+        ? PENDING_MSG
+        : amending && entry.edited === 'text'
+          ? 'Saved — only text changed, so it applies at once.'
+        : amending
+        ? `Corrected — the old entry is reversed and the corrected one is posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} (${fmtPkr(debitTotal)} on ${date}).`
         : `Posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
-      setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's Files below.` : done, entryId: entry.id })
+      setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's panel on the Journals tab.` : done, entryId: isPending(entry) ? undefined : entry.id })
       setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION)
       void qc.invalidateQueries({ queryKey: ['record-files'] })
-      void qc.invalidateQueries({ queryKey: ['manual-journal'] })
+      void qc.invalidateQueries({ queryKey: ['journals'] })
+      void qc.invalidateQueries({ queryKey: ['journal-entry'] })
+      void qc.invalidateQueries({ queryKey: ['account-statement'] })
       void qc.invalidateQueries({ queryKey: ['ledger'] })
     },
     onError: (err: Error) => setResult({ ok: false, msg: err.message }),
@@ -232,6 +240,7 @@ export default function JournalEntryPage() {
     amountCents: p.debit > 0 ? p.debit : p.credit,
     ...(p.line.memo.trim() && { memo: p.line.memo.trim() }),
     ...(p.line.conceptId && { conceptId: p.line.conceptId }),
+    ...(p.line.subAccountId && { subAccountId: p.line.subAccountId }),
   }))
   function resetForm() {
     setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setEditing(null); setDate(todayPktIso())
@@ -264,23 +273,22 @@ export default function JournalEntryPage() {
   })
 
   /** Load a posted manual entry into the form to correct it. */
-  function editEntry(e: LedgerEntry) {
+  function editEntry(e: RegRow) {
     setEditing(null)
     setAmending(e)
     setAmendReason('')
     if (e.tenantId) setPickedCompany(e.tenantId)
-    // The operator's own reference travels in the description (" · ref X",
-    // manualJournal.ts) — bring it back into its own field, not lost.
-    const refMatch = e.description.match(/ · ref (.*)$/)
-    setDescription(e.description.replace(/ · ref .*$/, ''))
-    setReference(refMatch?.[1] ?? '')
+    setDescription(e.description)
+    setReference(e.operatorReference ?? '')
     setDate(pktDate(e.entryDate))
     setLines(e.lines.map((l) => ({
-      key: ++lineSeq, accountId: l.accountId ?? '', memo: l.memo ?? '', conceptId: l.conceptId ?? '',
+      key: ++lineSeq, accountId: l.accountId, memo: l.memo ?? '', conceptId: l.conceptId ?? '',
+      subAccountId: l.subAccounts.length === 1 ? l.subAccounts[0]!.subAccountId : '',
       debit: l.type === 'debit' ? (l.amountCents / 100).toFixed(2) : '',
       credit: l.type === 'credit' ? (l.amountCents / 100).toFixed(2) : '',
     })))
     setResult(null)
+    setPanel(null)
     setTab('entry')
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -295,7 +303,7 @@ export default function JournalEntryPage() {
     setDate(r.entryDate ? pktDate(r.entryDate) : todayPktIso())
     setLines(ls.length >= 2
       ? ls.map((l) => ({
-        key: ++lineSeq, accountId: l.accountId, memo: l.memo ?? '', conceptId: l.conceptId ?? '',
+        key: ++lineSeq, accountId: l.accountId, memo: l.memo ?? '', conceptId: l.conceptId ?? '', subAccountId: '',
         debit: l.type === 'debit' ? (l.amountCents / 100).toFixed(2) : '',
         credit: l.type === 'credit' ? (l.amountCents / 100).toFixed(2) : '',
       }))
@@ -309,33 +317,35 @@ export default function JournalEntryPage() {
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/accounting" className="text-xs text-s-muted hover:text-s-text">← Accounting</Link>
-          <h1 className="text-xl font-bold text-s-text">Journal entry</h1>
-          <p className="text-xs text-s-muted">Opening balances, accruals and corrections — balanced lines, posted to one company&apos;s books.</p>
+          <h1 className="text-xl font-bold text-s-text">Journals</h1>
+          <p className="text-xs text-s-muted">Post, find, edit and cancel journal entries — by journal kind or by account.</p>
         </div>
         <Link href="/accounting/ledger" className="s-btn-secondary text-sm">Ledger</Link>
       </header>
 
       <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4 min-w-0">
-        {canPrepare && (
-          <div role="tablist" aria-label="Journal sections" className="flex gap-1 border-b border-s-border">
-            {([['entry', amending ? 'Editing an entry' : editing ? 'Editing a request' : 'New entry'], ['requests', isAdmin ? 'Requests' : 'My requests']] as Array<[PageTab, string]>).map(([k, label]) => (
-              <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}
-                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold ${tab === k ? 'text-s-text' : 'border-transparent text-s-muted hover:text-s-text'}`}
-                style={tab === k ? { borderColor: 'var(--erp-accent)' } : undefined}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+        <div role="tablist" aria-label="Journal sections" className="flex gap-1 border-b border-s-border overflow-x-auto">
+          {([
+            ...(canPrepare ? [['entry', amending ? 'Editing an entry' : editing ? 'Editing a request' : 'New entry']] : []),
+            ['journals', 'Journals'], ['accounts', 'Accounts'],
+            ...(canPrepare ? [['requests', isAdmin ? 'Requests' : 'My requests']] : []),
+          ] as Array<[PageTab, string]>).map(([k, label]) => (
+            <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}
+              className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold ${tab === k ? 'text-s-text' : 'border-transparent text-s-muted hover:text-s-text'}`}
+              style={tab === k ? { borderColor: 'var(--erp-accent)' } : undefined}>
+              {label}
+            </button>
+          ))}
+        </div>
 
         {!canPrepare && (
           <div className="s-card p-4 text-sm text-s-muted">
-            Manual journal entries are posted by finance and the CEO — every one is reviewed in the Exceptions inbox. The entries below are read-only.
+            Manual journal entries are posted by finance and the CEO — every one is reviewed in the Exceptions inbox. The entries here are read-only.
           </div>
         )}
         {canPrepare && !canPost && tab === 'entry' && (
           <div className="s-card p-4 text-sm text-s-muted">
-            Only the CEO posts directly. Prepare the entry here and send it for approval — it reaches the books when the CEO approves it.
+            Prepare the entry here and send it for approval — it reaches the books when the CEO approves it.
           </div>
         )}
 
@@ -350,12 +360,18 @@ export default function JournalEntryPage() {
           </div>
         )}
 
+        {tab === 'journals' && <JournalsTab onOpen={(r) => setPanel({ id: r.id, tenantId: r.tenantId })} />}
+        {tab === 'accounts' && (
+          <AccountsTab accountId={accountId} onAccountChange={(id) => setTab('accounts', id ? { accountId: id } : {})}
+            onOpen={(id) => setPanel({ id, tenantId: null })} />
+        )}
+
         {canPrepare && tab === 'entry' && (
           <section className="s-card p-4 space-y-4 min-w-0" aria-label="New journal entry">
             {amending && (
               <div className="rounded-lg border border-s-border p-3 space-y-2">
                 <p className="text-xs text-s-muted">
-                  Editing the entry of {pktDate(amending.entryDate)} ({amending.description}). Saving reverses the old entry and posts this one in its place — both stay in the ledger.
+                  Editing the entry of {pktDate(amending.entryDate)} ({amending.description}). Saving reverses the old entry and posts this one in its place — both stay in the ledger.{amending.changeNeedsApproval ? ' Your change of amounts, accounts, brand or date goes to the CEO and the books stay as they are until it is approved.' : ''}
                 </p>
                 <Field label="Why are you editing it? (required)">
                   <Input type="text" value={amendReason} onChange={(x) => setAmendReason(x.target.value)} maxLength={500}
@@ -425,10 +441,12 @@ export default function JournalEntryPage() {
                     <tr key={line.key} className="align-top border-t border-s-border">
                       <td className="py-1.5 pr-2">
                         <Select aria-label={`Line ${i + 1} account`} value={line.accountId} disabled={!company}
-                          onChange={(e) => patchLine(line.key, { accountId: e.target.value })} className="s-select py-1.5">
+                          onChange={(e) => patchLine(line.key, { accountId: e.target.value, subAccountId: '' })} className="s-select py-1.5">
                           <option value="">— account —</option>
                           {companyAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
                         </Select>
+                        <SubAccountSelect accountId={line.accountId} label={`Line ${i + 1} sub-account`} value={line.subAccountId}
+                          onChange={(v) => patchLine(line.key, { subAccountId: v })} />
                         {error && <p className="text-xs text-s-red mt-1">{error}</p>}
                       </td>
                       <td className="py-1.5 pr-2">
@@ -487,7 +505,7 @@ export default function JournalEntryPage() {
                 )}
                 {paysOut ? (
                   <div>
-                    <PaymentClassificationFields value={cls} onChange={setCls} />
+                    <PaymentClassificationFields value={cls} onChange={setCls} optional={!!amending} />
                     <p className="mt-1 text-xs text-s-muted">
                       This entry pays money out of cash or a bank, so it is listed in the Payments register.
                       {amending ? ' Leave it blank to keep the original entry\'s classification.' : ''}
@@ -519,7 +537,7 @@ export default function JournalEntryPage() {
                 {canPost && !editing && (
                   <Button type="button" onClick={() => { setResult(null); post.mutate() }}
                     disabled={blockers.length > 0 || post.isPending || saveRequest.isPending}>
-                    {post.isPending ? 'Posting…' : amending ? 'Save changes' : 'Post entry'}
+                    {post.isPending ? 'Posting…' : amending ? (amending.changeNeedsApproval ? 'Send to the CEO' : 'Save changes') : 'Post entry'}
                   </Button>
                 )}
                 {!amending && !canPost && (<>
@@ -538,134 +556,18 @@ export default function JournalEntryPage() {
           </section>
         )}
 
-        <RecentManualEntries isAdmin={canPost} isCeo={isAdmin} canRequest={canPrepare} companyName={companyName} multiCompany={companyIds.length > 1} onEdit={canPost ? editEntry : undefined}
-          closedBooks={lock?.tenantId && closedBooksThrough ? { tenantId: lock.tenantId, through: closedBooksThrough } : null} />
+        {panel && (
+          <EntryPanel entryId={panel.id} tenantId={panel.tenantId} onClose={() => setPanel(null)} onEditAmounts={editEntry} />
+        )}
       </div>
     </div>
   )
 }
 
-type ClosedBooks = { tenantId: string; through: string } | null
-
-function RecentManualEntries({ isAdmin, isCeo, canRequest, companyName, multiCompany, onEdit, closedBooks }: { isAdmin: boolean; isCeo: boolean; canRequest: boolean; companyName: (id: string | null) => string; multiCompany: boolean; onEdit?: (e: LedgerEntry) => void; closedBooks: ClosedBooks }) {
-  const from = daysAgoPkt(90)
-  const to = todayPktIso()
-  const { data, isLoading, error } = useQuery<LedgerPage>({
-    queryKey: ['manual-journal', from, to],
-    queryFn: () => api.get(`/accounting/ledger?source=manual&dateFrom=${from}&dateTo=${to}&limit=100`),
-  })
-  const entries = data?.data ?? []
-
+export default function JournalEntryPage() {
   return (
-    <section className="s-card overflow-hidden" aria-label="Recent manual entries">
-      <div className="px-4 py-3 border-b border-s-border bg-s-bg-soft">
-        <h2 className="text-sm font-semibold text-s-text">Manual entries — last 90 days</h2>
-        <p className="text-xs text-s-muted">A wrong entry is undone by a reversing entry dated in the open period. Each entry can be reversed once.</p>
-      </div>
-      {isLoading && <p className="px-4 py-6 text-sm text-s-muted">Loading…</p>}
-      {error && <p className="px-4 py-6 text-sm text-s-red">{(error as Error).message}</p>}
-      {!isLoading && !error && entries.length === 0 && (
-        <p className="px-4 py-6 text-sm text-s-muted text-center">No manual entries in the last 90 days.</p>
-      )}
-      {entries.map((e) => {
-        // Dated in closed or reopened books: cancelling or editing it is the CEO's (403 CEO_ONLY_CLOSED_BOOKS).
-        const ceoOnly = !isCeo && !!closedBooks && e.tenantId === closedBooks.tenantId && pktDate(e.entryDate) <= closedBooks.through
-        // There a non-CEO may still ASK for the reversal (a journal request the CEO approves).
-        return <ManualEntryRow key={e.id} e={e} isAdmin={isAdmin && !ceoOnly} canAttach={isAdmin} canRequest={canRequest} company={multiCompany ? companyName(e.tenantId) : null} onEdit={ceoOnly ? undefined : onEdit} ceoOnly={ceoOnly} />
-      })}
-      {data?.hasMore && <p className="px-4 py-3 text-xs text-s-muted">Showing the latest 100 — older entries are in the ledger.</p>}
-    </section>
-  )
-}
-
-function ManualEntryRow({ e, isAdmin, canAttach, canRequest, company, onEdit, ceoOnly }: { e: LedgerEntry; isAdmin: boolean; canAttach: boolean; canRequest: boolean; company: string | null; onEdit?: (e: LedgerEntry) => void; ceoOnly: boolean }) {
-  const qc = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [reason, setReason] = useState('')
-  const [date, setDate] = useState(todayPktIso())
-  const [err, setErr] = useState<string | null>(null)
-  const [asked, setAsked] = useState(false)
-  const isReversal = !!e.reference?.startsWith('manual.reversal:')
-  const total = e.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
-
-  // A non-CEO preparer asks for the reversal: a 'reverse' request the CEO approves.
-  const requestReversal = useMutation({
-    mutationFn: () => api.post('/accounting/journal-requests', {
-      kind: 'reverse', reverseEntryId: e.id, reason: reason.trim(), submit: true,
-      ...(entryInstant(date) && { entryDate: entryInstant(date) }),
-    }, e.tenantId ? { tenantId: e.tenantId } : undefined),
-    onSuccess: () => {
-      setOpen(false); setReason(''); setErr(null); setAsked(true)
-      void qc.invalidateQueries({ queryKey: ['journal-requests'] })
-    },
-    onError: (x: Error) => setErr(x.message),
-  })
-  const reverse = useMutation({
-    mutationFn: () => api.post(`/accounting/journal/${e.id}/reverse`, {
-      reason: reason.trim(),
-      ...(entryInstant(date) && { entryDate: entryInstant(date) }),
-    }, e.tenantId ? { tenantId: e.tenantId } : undefined),
-    onSuccess: () => {
-      setOpen(false); setReason(''); setErr(null)
-      void qc.invalidateQueries({ queryKey: ['manual-journal'] })
-      void qc.invalidateQueries({ queryKey: ['ledger'] })
-    },
-    onError: (x: Error) => setErr(x.message),
-  })
-
-  return (
-    <div className="border-b border-s-border last:border-0 px-4 py-3 space-y-2">
-      <div className="flex flex-wrap items-start gap-3">
-        <span className="font-mono text-xs font-semibold text-s-text w-20 shrink-0">{e.voucherNo ?? '—'}</span>
-        <span className="font-mono text-xs text-s-muted w-24 shrink-0">{pktDate(e.entryDate)}</span>
-        <span className="flex-1 min-w-0">
-          <Link href={`/accounting/ledger?id=${e.id}`} className="block text-sm text-s-text truncate hover:underline">{e.description}</Link>
-          <span className="block text-xs text-s-muted truncate">
-            {company && <>{company} · </>}
-            {e.lines.map((l) => `${l.account.code} ${l.type === 'debit' ? 'Dr' : 'Cr'}`).join(' · ')}
-          </span>
-        </span>
-        <span className="font-mono text-xs text-s-text shrink-0">{fmtPkr(total)}</span>
-        {isReversal && <span className="s-badge-muted shrink-0">Reversal</span>}
-        {e.reversedBy && <span className="s-badge-amber shrink-0">Reversed {pktDate(e.reversedBy.entryDate)}</span>}
-        {asked && <span className="s-badge-amber shrink-0">Reversal requested</span>}
-        {ceoOnly && !isReversal && !e.reversedBy && (
-          <span className="s-badge-muted shrink-0" title="Dated in closed books — only the CEO can edit or cancel it; you can ask for the reversal">Closed books — CEO only</span>
-        )}
-        {(isAdmin || canRequest) && !isReversal && !e.reversedBy && !open && !asked && (
-          <Button size="sm" variant="secondary" type="button" onClick={() => setOpen(true)} className="shrink-0">{isAdmin ? 'Cancel (reverse)' : 'Request reversal'}</Button>
-        )}
-        {onEdit && !isReversal && !e.reversedBy && !open && (
-          <Button size="sm" variant="secondary" type="button" onClick={() => onEdit(e)} className="shrink-0">Edit</Button>
-        )}
-      </div>
-      {!isReversal && (
-        // Supporting documents (owner, 2026-10-20): loaded on "Files" — one request per opened row, never per row.
-        <RecordFiles ownerType="journal_entry" ownerId={e.id} tenantId={e.tenantId ?? undefined} canUpload={canAttach} compact lazy
-          emptyText="No supporting documents yet." />
-      )}
-      {open && (
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 items-end">
-          <Field label="Reason (required)">
-            <Input type="text" value={reason} onChange={(x) => setReason(x.target.value)} maxLength={500}
-              placeholder="e.g. Posted to the wrong bank account" className={inputCls} />
-          </Field>
-          <Field label="Reversal date">
-            <Input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(x) => setDate(x.target.value)} className={inputCls} />
-          </Field>
-          {isAdmin ? (
-            <Button variant="danger" type="button" onClick={() => reverse.mutate()} disabled={reason.trim().length < 5 || reverse.isPending}>
-              {reverse.isPending ? 'Reversing…' : 'Post reversal'}
-            </Button>
-          ) : (
-            <Button type="button" onClick={() => requestReversal.mutate()} disabled={reason.trim().length < 5 || requestReversal.isPending}>
-              {requestReversal.isPending ? 'Sending…' : 'Send for approval'}
-            </Button>
-          )}
-          <Button variant="ghost" type="button" onClick={() => { setOpen(false); setErr(null) }}>Cancel</Button>
-          {err && <p role="alert" className="sm:col-span-4 text-xs text-s-red">{err}</p>}
-        </div>
-      )}
-    </div>
+    <Suspense fallback={<div className="p-12 text-center text-sm text-s-muted">Loading…</div>}>
+      <JournalsPage />
+    </Suspense>
   )
 }

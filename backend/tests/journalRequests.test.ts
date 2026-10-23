@@ -279,7 +279,7 @@ describe('approvers', () => {
       const rq = asked.json().request
       expect(rq).toMatchObject({ kind: 'reverse', status: 'submitted', reverseEntryId: entry.id, totalCents: 250_000 })
       const dup = await call('fin2', 'POST', '/accounting/journal-requests', { kind: 'reverse', reverseEntryId: entry.id, reason: 'Duplicate again' })
-      expect([dup.statusCode, code(dup)]).toEqual([409, 'REVERSAL_ALREADY_REQUESTED'])
+      expect([dup.statusCode, code(dup)]).toEqual([409, 'CHANGE_PENDING']) // one open change per entry (2026-10-23)
       const delegate = await call('hodFin2', 'POST', `/accounting/journal-requests/${rq.id}/approve`, {}, HO)
       expect(delegate.statusCode).toBe(403)
       const ceo = await call('ceo', 'POST', `/accounting/journal-requests/${rq.id}/approve`, {}, A)

@@ -48,7 +48,10 @@ export function ApprovalActionDialog({ action, tenantId, warnings, onClose, onDo
     onError: (e: Error) => setErr(e.message),
   })
 
-  const blocked = run.isPending || ackMissing || !!clsError || (!!action.input?.required && !text.trim())
+  // A note that says "at least N characters" in its label (journal edit / cancel: 10) is held to it here too.
+  const minChars = Number(/at least (\d+)/i.exec(action.input?.label ?? '')?.[1] ?? 0)
+  const noteShort = !!action.input?.required && text.trim().length < Math.max(1, minChars)
+  const blocked = run.isPending || ackMissing || !!clsError || noteShort
   const danger = action.kind === 'reject'
   const taRef = useRef<HTMLTextAreaElement>(null)
   const noteId = useId()

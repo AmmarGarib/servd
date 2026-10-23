@@ -15,6 +15,19 @@
 //                   post makes, so the CEO's reverse route can undo it.
 //   kind 'reverse'  names a `manual:` entry of the same company + a reason;
 //                   approval calls reverseManualJournal. CEO only, never handed over.
+//   kind 'amend'    (owner, 2026-10-23: "edit/cancel/void any back dated or current
+//                   Journal manual entry with final approval of CEO … only when amount
+//                   is edited") names a `manual:` entry + a reason + the corrected
+//                   description / reference / date / lines; approval runs
+//                   manualJournal.ts amendManualJournal (reverse the original on its
+//                   own day + post the corrected entry `manual:<requestId>`, one
+//                   transaction) — the CEO's own direct edit. CEO only, never handed over.
+//   Change requests (reverse / amend) of the Journals tab: one open per entry (409
+//   CHANGE_PENDING, under the entry's change lock); `changeMeta.fingerprint` is the
+//   entry as it was when raised — approval refuses 409 ENTRY_CHANGED if it moved or
+//   was reversed since; a return / reject needs a note ≥10 (422 NOTE_TOO_SHORT).
+//   Finance raises them through POST /accounting/journal/:id/amend | /reverse
+//   (raiseChangeRequest; a text-only edit applies at once instead).
 //
 //   draft ──submit──▶ submitted ──approve──▶ posted
 //     ▲  │              │  └──reject {note}──▶ returned ──PATCH / submit──▶ submitted
@@ -52,15 +65,21 @@ import {
   type ApprovalGrant,
 } from '../../lib/approvalRights.js'
 import {
-  assertManualLines, assertReversible, manualLineSchema, postManualJournal, reverseManualJournal,
+  assertManualLines, assertNoControlledLines, assertReversible, manualLineSchema, postManualJournal, reverseManualJournal,
+  amendManualJournal, changePending, entryFingerprint, lockEntryChangeTx, manualReversalOf, splitDescription,
   type ManualJournalLine,
 } from './manualJournal.js'
+import { classifyPaymentTx, type ClassificationInput } from './paymentsRegister.js'
 
 /** Who prepares (creates, edits, submits, withdraws) a journal request. */
 export const JR_PREPARERS = ['admin', 'owner', 'management', 'finance'] as const
 export const JR_STATUSES = ['draft', 'submitted', 'returned', 'posted', 'withdrawn'] as const
 export type JournalRequestStatus = (typeof JR_STATUSES)[number]
-export const JR_KINDS = ['post', 'reverse'] as const
+export const JR_KINDS = ['post', 'reverse', 'amend'] as const
+/** Kinds that change an EXISTING manual entry — the CEO's alone (approvalRights.ts). */
+export const JR_CHANGE_KINDS: readonly string[] = ['reverse', 'amend']
+/** A return / rejection of a change request says why (owner, 2026-10-23). */
+const CHANGE_NOTE_MIN = 10
 
 const EDITABLE: readonly string[] = ['draft', 'returned']
 const WITHDRAWABLE: readonly string[] = ['draft', 'submitted', 'returned']
@@ -82,9 +101,16 @@ const reverseFields = {
   entryDate: z.string().datetime().nullable().optional(),
 }
 
+const amendFields = {
+  ...postFields,
+  reverseEntryId: z.string().uuid(),
+  reason: z.string().trim().min(5).max(500),
+}
+
 export const createRequestSchema = z.union([
   z.object({ kind: z.literal('post').optional(), ...postFields, submit: z.boolean().optional() }),
   z.object({ kind: z.literal('reverse'), ...reverseFields, submit: z.boolean().optional() }),
+  z.object({ kind: z.literal('amend'), ...amendFields, submit: z.boolean().optional() }),
 ])
 export type CreateRequestBody = z.infer<typeof createRequestSchema>
 
@@ -94,6 +120,7 @@ export const patchPostSchema = z.object({
   entryDate: postFields.entryDate,
   lines: postFields.lines.optional(),
 })
+export const patchAmendSchema = patchPostSchema.extend({ reason: amendFields.reason.optional() })
 export const patchReverseSchema = z.object({
   reason: reverseFields.reason.optional(),
   entryDate: reverseFields.entryDate,
@@ -131,7 +158,7 @@ export function linesOf(row: Pick<Row, 'lines'>): ManualJournalLine[] {
 /** A refused posting is a 422 to the approver (the request stays submitted); a lost claim stays 409. */
 function asRefusal(e: unknown): unknown {
   if (e instanceof AppError) {
-    if (e.statusCode === 409 && ['REQUEST_NOT_PENDING', 'ALREADY_POSTED', 'ALREADY_REVERSED', 'TAX_PAYMENT_LINKED'].includes(e.code)) return e
+    if (e.statusCode === 409 && ['REQUEST_NOT_PENDING', 'ALREADY_POSTED', 'ALREADY_REVERSED', 'TAX_PAYMENT_LINKED', 'ENTRY_CHANGED', 'CHANGE_PENDING', 'ENTRY_RESOLVES_VOUCHER'].includes(e.code)) return e
     if (e.statusCode === 422) return e
     return new AppError(e.code, e.message, 422, e.details)
   }
@@ -171,6 +198,10 @@ export interface JournalRequestDto {
   decisionNote: string | null
   decidedVia: string | null
   postedEntryId: string | null
+  /** reverse / amend: the manual entry being cancelled or edited (= reverseEntryId). */
+  targetEntryId: string | null
+  /** amend: the payment classification the corrected entry takes (else the original's carries over). */
+  classification: ClassificationInput | null
   createdAt: string
   updatedAt: string
 }
@@ -210,6 +241,8 @@ async function toDtos(rows: Row[]): Promise<JournalRequestDto[]> {
     decisionNote: r.decisionNote,
     decidedVia: r.decidedVia,
     postedEntryId: r.postedEntryId,
+    targetEntryId: r.kind === 'post' ? null : r.reverseEntryId,
+    classification: metaOf(r).classification ?? null,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }))
@@ -246,18 +279,103 @@ async function checkPostLines(tenantId: string, lines: ManualJournalLine[]): Pro
   return debits
 }
 
-/** A reverse request's entry: a manual entry of this company, not reversed, not already asked for. */
-async function checkReverseTarget(tenantId: string, entryId: string, exceptRequestId?: string) {
-  const r = await assertReversible(prisma, tenantId, entryId, { checkAlready: true })
-  const open = await prisma.journalRequest.findFirst({
+interface ChangeMeta { fingerprint?: string; classification?: ClassificationInput | null }
+export function metaOf(r: Pick<Row, 'changeMeta'>): ChangeMeta {
+  return r.changeMeta && typeof r.changeMeta === 'object' ? (r.changeMeta as ChangeMeta) : {}
+}
+
+/**
+ * A change request's entry (reverse / amend): a manual entry of this company that
+ * can still be reversed (assertReversible), not already under an open change
+ * (409 CHANGE_PENDING). Returns the original and its fingerprint.
+ */
+async function checkChangeTarget(db: Prisma.TransactionClient | typeof prisma, tenantId: string, entryId: string, exceptRequestId?: string) {
+  const r = await assertReversible(db, tenantId, entryId, { checkAlready: true })
+  const open = await db.journalRequest.findFirst({
     where: {
-      tenantId, kind: 'reverse', reverseEntryId: entryId, status: { in: ['draft', 'submitted', 'returned'] },
+      tenantId, kind: { in: [...JR_CHANGE_KINDS] }, reverseEntryId: entryId, status: { in: ['draft', 'submitted', 'returned'] },
       ...(exceptRequestId ? { NOT: { id: exceptRequestId } } : {}),
     },
-    select: { id: true },
+    select: { id: true, kind: true, status: true },
   })
-  if (open) throw new AppError('REVERSAL_ALREADY_REQUESTED', 'A reversal of this entry is already being prepared or waiting for approval.', 409, { requestId: open.id })
-  return r
+  if (open) throw changePending(open)
+  return { ...r, fingerprint: entryFingerprint(r.original) }
+}
+
+/** The corrected lines of an amend: the direct route's line checks + no module-controlled account (that is the CEO's override). */
+async function checkAmendLines(tenantId: string, lines: ManualJournalLine[]): Promise<number> {
+  const total = await checkPostLines(tenantId, lines)
+  await assertNoControlledLines(prisma, tenantId, lines)
+  return total
+}
+
+export interface ChangeBody {
+  kind: 'reverse' | 'amend'
+  reason: string
+  entryDate?: string | null
+  description?: string
+  reference?: string | null
+  lines?: ManualJournalLine[]
+  classification?: ClassificationInput | null
+}
+
+/**
+ * Insert a change request (reverse / amend) for `entryId` in `tenantId` (the
+ * ENTRY's company), under the entry's change lock so two cannot open at once.
+ */
+async function insertChangeRequest(req: FastifyRequest, tenantId: string, entryId: string, body: ChangeBody, submit: boolean): Promise<Row> {
+  const su = me(req)
+  const via = await viaHeadOfficeForSubmit(req, tenantId)
+  const total = body.kind === 'amend' ? await checkAmendLines(tenantId, body.lines ?? []) : 0
+  return prisma.$transaction(async (tx) => {
+    await lockEntryChangeTx(tx, tenantId, entryId)
+    const { original, amountCents, fingerprint } = await checkChangeTarget(tx, tenantId, entryId)
+    const now = new Date()
+    const common = {
+      tenantId, kind: body.kind, reverseEntryId: original.id, reason: body.reason,
+      preparedById: su.id, preparedByIds: [su.id], viaHeadOfficeId: via,
+      changeMeta: { fingerprint, ...(body.classification ? { classification: body.classification } : {}) } as unknown as Prisma.InputJsonValue,
+      ...(submit ? { status: 'submitted', submittedById: su.id, submittedAt: now } : { status: 'draft' }),
+    }
+    if (body.kind === 'reverse') {
+      assertMoneyFits(amountCents, 'journal request total')
+      return tx.journalRequest.create({ data: {
+        ...common, description: `Reverse: ${original.description}`.slice(0, 500), reference: original.reference,
+        entryDate: body.entryDate ? new Date(body.entryDate) : null, lines: [], totalCents: amountCents,
+      } })
+    }
+    return tx.journalRequest.create({ data: {
+      ...common, description: body.description!, reference: body.reference?.trim() || null,
+      // An edit keeps the entry's date unless a new one is given.
+      entryDate: body.entryDate ? new Date(body.entryDate) : original.entryDate,
+      lines: (body.lines ?? []) as Prisma.InputJsonValue, totalCents: total,
+    } })
+  }, TX_OPTS)
+}
+
+/**
+ * Finance's edit (money) or cancel of an existing manual entry, raised from the
+ * Journals tab (POST /accounting/journal/:id/amend | /reverse): a SUBMITTED
+ * request in the entry's company that the CEO approves. The caller resolved the
+ * entry in its write scope (foreign → 404).
+ */
+export async function raiseChangeRequest(req: FastifyRequest, tenantId: string, entryId: string, body: ChangeBody): Promise<JournalRequestDto> {
+  await assertHoMayPropose(req, tenantId, true, 'a journal change request')
+  // Closed / reopened books stay the CEO's (owner, 2026-10-16): anyone else may
+  // not even raise a change there — the entry's own date or the edit's new date.
+  if (req.staffUser?.role !== 'admin') {
+    const { closedBooksThrough } = await import('./closedBooks.js')
+    const through = await closedBooksThrough(prisma, tenantId)
+    if (through) {
+      const entry = await prisma.journalEntry.findFirst({ where: { id: entryId, tenantId }, select: { entryDate: true } })
+      const newDate = body.entryDate ? new Date(body.entryDate) : null
+      const hit = (entry && entry.entryDate <= through) ? entry.entryDate : (newDate && !Number.isNaN(newDate.getTime()) && newDate <= through ? newDate : null)
+      if (hit) throw new AppError('CEO_ONLY_CLOSED_BOOKS', 'This change touches closed books — only the CEO can change it.', 403)
+    }
+  }
+  const row = await insertChangeRequest(req, tenantId, entryId, body, true)
+  await auditRequest(req, row, 'submit', { after: { kind: row.kind, status: row.status, totalCents: toCents(row.totalCents), entryId }, metadata: { viaHeadOfficeId: row.viaHeadOfficeId, raisedFrom: 'journals' } })
+  return dtoOf(row)
 }
 
 // ─── Reads ───────────────────────────────────────────────────────────────────
@@ -315,22 +433,16 @@ export async function createRequest(req: FastifyRequest, body: CreateRequestBody
   await assertHoMayPropose(req, tenantId, true, 'a journal request')
   const via = await viaHeadOfficeForSubmit(req, tenantId)
 
+  if (body.kind === 'reverse' || body.kind === 'amend') {
+    const row = await insertChangeRequest(req, tenantId, body.reverseEntryId, {
+      kind: body.kind, reason: body.reason, entryDate: body.entryDate,
+      ...(body.kind === 'amend' ? { description: body.description, reference: body.reference, lines: body.lines } : {}),
+    }, !!body.submit)
+    await auditRequest(req, row, body.submit ? 'submit' : 'create', { after: { kind: row.kind, status: row.status, totalCents: toCents(row.totalCents) }, metadata: { viaHeadOfficeId: via } })
+    return dtoOf(row)
+  }
   let data: Prisma.JournalRequestUncheckedCreateInput
-  if (body.kind === 'reverse') {
-    const { original, amountCents } = await checkReverseTarget(tenantId, body.reverseEntryId)
-    assertMoneyFits(amountCents, 'journal request total')
-    data = {
-      tenantId, kind: 'reverse', status: 'draft',
-      description: `Reverse: ${original.description}`.slice(0, 500),
-      reference: original.reference,
-      entryDate: body.entryDate ? new Date(body.entryDate) : null,
-      lines: [],
-      totalCents: amountCents,
-      reverseEntryId: original.id,
-      reason: body.reason,
-      preparedById: su.id, preparedByIds: [su.id], viaHeadOfficeId: via,
-    }
-  } else {
+  {
     const total = await checkPostLines(tenantId, body.lines)
     data = {
       tenantId, kind: 'post', status: 'draft',
@@ -380,6 +492,16 @@ export async function updateRequest(req: FastifyRequest, id: string, raw: unknow
     const b = patchReverseSchema.parse(raw ?? {})
     if (b.reason !== undefined) data.reason = b.reason
     if (b.entryDate !== undefined) data.entryDate = b.entryDate ? new Date(b.entryDate) : null
+  } else if (row.kind === 'amend') {
+    const b = patchAmendSchema.parse(raw ?? {})
+    if (b.reason !== undefined) data.reason = b.reason
+    if (b.description !== undefined) data.description = b.description
+    if (b.reference !== undefined) data.reference = b.reference?.trim() || null
+    if (b.entryDate !== undefined && b.entryDate) data.entryDate = new Date(b.entryDate)
+    if (b.lines !== undefined) {
+      data.totalCents = await checkAmendLines(row.tenantId, b.lines)
+      data.lines = b.lines as Prisma.InputJsonValue
+    }
   } else {
     const b = patchPostSchema.parse(raw ?? {})
     if (b.description !== undefined) data.description = b.description
@@ -401,8 +523,9 @@ export async function updateRequest(req: FastifyRequest, id: string, raw: unknow
 export async function submitRequest(req: FastifyRequest, id: string): Promise<JournalRequestDto> {
   const su = me(req)
   const row = await ownRequest(req, id, EDITABLE, 'sending it for approval')
-  if (row.kind === 'reverse') await checkReverseTarget(row.tenantId, row.reverseEntryId!, row.id)
-  else await checkPostLines(row.tenantId, linesOf(row))
+  if (JR_CHANGE_KINDS.includes(row.kind)) await checkChangeTarget(prisma, row.tenantId, row.reverseEntryId!, row.id)
+  if (row.kind === 'amend') await checkAmendLines(row.tenantId, linesOf(row))
+  else if (row.kind === 'post') await checkPostLines(row.tenantId, linesOf(row))
   const via = await viaHeadOfficeForSubmit(req, row.tenantId)
   const n = await prisma.journalRequest.updateMany({
     where: { id, status: { in: [...EDITABLE] }, preparedById: su.id },
@@ -454,7 +577,7 @@ function claimWhere(id: string, actor: { id: string; role: string }): Prisma.Jou
  * reverseManualJournal (CEO only). One transaction with the claim: a refused
  * posting answers 422 and the request stays submitted.
  */
-export async function approveRequest(req: FastifyRequest, id: string): Promise<{ request: JournalRequestDto; entryId: string }> {
+export async function approveRequest(req: FastifyRequest, id: string): Promise<{ request: JournalRequestDto; entryId: string; reversalId: string | null }> {
   const su = me(req)
   const grant = await rightTo(req, id, 'approve a journal request')
   const row = await prisma.journalRequest.findUnique({ where: { id } })
@@ -465,21 +588,45 @@ export async function approveRequest(req: FastifyRequest, id: string): Promise<{
   const preparers = uniq([row.preparedById, row.submittedById, ...row.preparedByIds])
   const auditMeta = { journalRequestId: row.id, preparedById: row.preparedById, preparedByIds: preparers, viaHeadOfficeId: row.viaHeadOfficeId }
 
-  const { entryId, sideEffects } = await prisma.$transaction(async (tx) => {
+  const { entryId, reversalId, sideEffects } = await prisma.$transaction(async (tx) => {
     const claim = await tx.journalRequest.updateMany({
       where: claimWhere(id, su),
       data: { status: 'posted', decidedById: su.id, decidedAt: now, decidedVia: grant.via, delegationId: grant.delegationId ?? null },
     })
     if (claim.count === 0) throw new AppError('REQUEST_NOT_PENDING', 'This request is no longer waiting for approval', 409)
     try {
-      if (row.kind === 'reverse') {
+      if (JR_CHANGE_KINDS.includes(row.kind)) {
         if (su.role !== 'admin') throw new AppError('APPROVAL_NOT_YOURS', 'This needs the CEO', 403)
+        // The entry as it was when the change was raised: nothing moved, nothing reversed since (409 ENTRY_CHANGED).
+        await lockEntryChangeTx(tx, tenantId, row.reverseEntryId!)
+        const target = await tx.journalEntry.findFirst({ where: { id: row.reverseEntryId!, tenantId }, include: { lines: true } })
+        if (!target) throw new AppError('ENTRY_CHANGED', 'The entry this request changes is gone', 409)
+        const fp = metaOf(row).fingerprint
+        if ((target.reference && await manualReversalOf(tx, tenantId, target.reference)) || (fp && fp !== entryFingerprint(target))) {
+          throw new AppError('ENTRY_CHANGED', 'The entry changed (or was reversed) after this request was raised — send it back so it can be raised again on the entry as it is now.', 409)
+        }
+      }
+      if (row.kind === 'amend') {
+        const a = await amendManualJournal(tx, {
+          tenantId, entryId: row.reverseEntryId!, reason: row.reason ?? 'Edit approved',
+          description: row.description, reference: row.reference, entryDate: row.entryDate, lines: linesOf(row),
+          actorId: su.id, actor: { email: su.email, ip: req.ip }, sourceId: row.id, metadata: auditMeta,
+        })
+        // The corrected entry's payment label: the one asked for, else the original's (an edit never drops it).
+        const prior = await tx.paymentClassification.findUnique({ where: { journalEntryId: row.reverseEntryId! } })
+        const carried = metaOf(row).classification
+          ?? (prior ? { classification: prior.classification, taxStatus: prior.taxStatus, nonDeductionReason: prior.nonDeductionReason } as ClassificationInput : null)
+        await classifyPaymentTx(tx, { journalEntryId: a.entry.id, input: carried, setById: su.id, tenantId })
+        await tx.journalRequest.update({ where: { id }, data: { postedEntryId: a.entry.id } })
+        return { entryId: a.entry.id, reversalId: a.reversal.id as string | null, sideEffects: async () => { await a.reversedFx(); await a.postedFx() } }
+      }
+      if (row.kind === 'reverse') {
         const r = await reverseManualJournal(tx, {
           tenantId, entryId: row.reverseEntryId!, reason: row.reason ?? 'Reversal approved',
           actorId: su.id, entryDate: row.entryDate, actor: { email: su.email, ip: req.ip }, metadata: auditMeta,
         })
         await tx.journalRequest.update({ where: { id }, data: { postedEntryId: r.reversal.id } })
-        return { entryId: r.reversal.id, sideEffects: r.sideEffects }
+        return { entryId: r.reversal.id, reversalId: r.reversal.id as string | null, sideEffects: r.sideEffects }
       }
       const p = await postManualJournal(tx, {
         tenantId,
@@ -494,7 +641,7 @@ export async function approveRequest(req: FastifyRequest, id: string): Promise<{
         flagNote: `Prepared as journal request ${row.id.slice(0, 8)}.`,
       })
       await tx.journalRequest.update({ where: { id }, data: { postedEntryId: p.entry.id } })
-      return { entryId: p.entry.id, sideEffects: p.sideEffects }
+      return { entryId: p.entry.id, reversalId: null as string | null, sideEffects: p.sideEffects }
     } catch (e) {
       throw e instanceof AppError && e.statusCode === 403 ? e : asRefusal(e)
     }
@@ -503,7 +650,7 @@ export async function approveRequest(req: FastifyRequest, id: string): Promise<{
   await sideEffects()
   await auditApproval(req, { type: TYPE, id, tenantId, decision: 'approve', grant, entity: 'JournalRequest', metadata: { entryId, kind: row.kind } })
   const after = await prisma.journalRequest.findUniqueOrThrow({ where: { id } })
-  return { request: await dtoOf(after), entryId }
+  return { request: await dtoOf(after), entryId, reversalId }
 }
 
 /** Reject {note}: submitted → returned (the preparer may edit and send it again). */
@@ -512,6 +659,9 @@ export async function rejectRequest(req: FastifyRequest, id: string, note: strin
   const grant = await rightTo(req, id, 'return a journal request')
   const row = await prisma.journalRequest.findUnique({ where: { id } })
   if (!row) throw new NotFoundError('JournalRequest', id)
+  if (JR_CHANGE_KINDS.includes(row.kind) && note.trim().length < CHANGE_NOTE_MIN) {
+    throw new AppError('NOTE_TOO_SHORT', `Say why (at least ${CHANGE_NOTE_MIN} characters)`, 422)
+  }
   const n = await prisma.journalRequest.updateMany({
     where: claimWhere(id, su),
     data: { status: 'returned', decidedById: su.id, decidedAt: new Date(), decisionNote: note, decidedVia: grant.via, delegationId: grant.delegationId ?? null },
@@ -520,4 +670,96 @@ export async function rejectRequest(req: FastifyRequest, id: string, note: strin
   await auditApproval(req, { type: TYPE, id, tenantId: row.tenantId, decision: 'reject', grant, entity: 'JournalRequest', metadata: { note, kind: row.kind } })
   const after = await prisma.journalRequest.findUniqueOrThrow({ where: { id } })
   return dtoOf(after)
+}
+
+// ─── The change a request makes (Journals tab, 2026-10-23) ───────────────────
+
+export interface DiffLine {
+  id?: string
+  accountId: string
+  accountCode: string | null
+  accountName: string | null
+  type: 'debit' | 'credit'
+  amountCents: number
+  conceptId: string | null
+  conceptName: string | null
+  memo: string | null
+  subAccountId?: string | null
+}
+
+/**
+ * GET /accounting/journal-requests/:id/diff — the entry as it is now vs what the
+ * request proposes (amend), or the entry the request cancels (reverse). Same
+ * visibility as GET /:id (foreign → 404). `stale` = the entry moved or was
+ * reversed since the request was raised (approval would answer ENTRY_CHANGED).
+ */
+export async function requestDiff(req: FastifyRequest, id: string) {
+  const request = await getRequest(req, id)
+  if (!request.targetEntryId) throw new AppError('NOT_A_CHANGE_REQUEST', 'This request posts a new entry — it changes no existing one', 422)
+  const row = await serviceClient.journalRequest.findUniqueOrThrow({ where: { id } })
+  const e = await serviceClient.journalEntry.findFirst({
+    where: { id: request.targetEntryId, tenantId: row.tenantId },
+    include: { lines: { include: { account: { select: { code: true, name: true } } } } },
+  })
+  if (!e) throw new NotFoundError('JournalEntry', request.targetEntryId)
+  const proposedLines = row.kind === 'amend' ? linesOf(row) : []
+  const accountIds = [...new Set(proposedLines.map((l) => l.accountId))]
+  const conceptIds = [...new Set([...e.lines.map((l) => l.conceptId), ...proposedLines.map((l) => l.conceptId)].filter((c): c is string => !!c))]
+  const [accounts, concepts] = await Promise.all([
+    accountIds.length ? serviceClient.account.findMany({ where: { id: { in: accountIds }, tenantId: row.tenantId }, select: { id: true, code: true, name: true } }) : [],
+    conceptIds.length ? serviceClient.concept.findMany({ where: { id: { in: conceptIds }, tenantId: row.tenantId }, select: { id: true, name: true } }) : [],
+  ])
+  const acc = new Map(accounts.map((a) => [a.id, a]))
+  const brand = new Map(concepts.map((c) => [c.id, c.name]))
+  const current: DiffLine[] = e.lines.map((l) => ({
+    id: l.id, accountId: l.accountId, accountCode: l.account.code, accountName: l.account.name, type: l.type, amountCents: toCents(l.amountCents),
+    conceptId: l.conceptId, conceptName: l.conceptId ? (brand.get(l.conceptId) ?? null) : null, memo: l.memo,
+  }))
+  const proposed: DiffLine[] = proposedLines.map((l) => ({
+    accountId: l.accountId, accountCode: acc.get(l.accountId)?.code ?? null, accountName: acc.get(l.accountId)?.name ?? null,
+    type: l.type, amountCents: l.amountCents, conceptId: l.conceptId ?? null, conceptName: l.conceptId ? (brand.get(l.conceptId) ?? null) : null, memo: l.memo?.trim() || null,
+    subAccountId: l.subAccountId ?? null,
+  }))
+  const key = (l: DiffLine) => `${l.accountId}|${l.type}|${l.amountCents}|${l.conceptId ?? ''}`
+  const left = [...current]
+  const added: DiffLine[] = []
+  for (const p of proposed) {
+    const i = left.findIndex((c) => key(c) === key(p))
+    if (i >= 0) left.splice(i, 1); else added.push(p)
+  }
+  const removed = row.kind === 'amend' ? left : current
+  const sum = (ls: DiffLine[]) => ls.filter((l) => l.type === 'debit').reduce((t, l) => t + l.amountCents, 0)
+  const cur = splitDescription(e.description)
+  const reversed = !!(e.reference && await manualReversalOf(serviceClient, row.tenantId, e.reference))
+  const fp = metaOf(row).fingerprint
+  return {
+    request,
+    entry: {
+      id: e.id, voucherNo: e.voucherNo, reference: e.reference, entryDate: e.entryDate.toISOString(),
+      description: cur.description, operatorReference: cur.reference, totalCents: sum(current), lines: current, reversed,
+    },
+    proposed: row.kind === 'amend'
+      ? { entryDate: row.entryDate?.toISOString() ?? e.entryDate.toISOString(), description: row.description, operatorReference: row.reference, totalCents: sum(proposed), lines: proposed }
+      : null,
+    changes: {
+      kind: row.kind as 'amend' | 'reverse',
+      date: row.kind === 'amend' && !!row.entryDate && row.entryDate.getTime() !== e.entryDate.getTime(),
+      description: row.kind === 'amend' && row.description !== cur.description,
+      reference: row.kind === 'amend' && (row.reference ?? null) !== (cur.reference ?? null),
+      totalBeforeCents: sum(current),
+      totalAfterCents: row.kind === 'amend' ? sum(proposed) : 0,
+      linesAdded: added,
+      linesRemoved: removed,
+    },
+    stale: reversed || (!!fp && fp !== entryFingerprint(e)),
+  }
+}
+
+/** Every change request (reverse / amend) raised against an entry, newest first — the entry's history in the Journals tab. */
+export async function requestsForEntry(tenantId: string, entryId: string): Promise<JournalRequestDto[]> {
+  const rows = await prisma.journalRequest.findMany({
+    where: { tenantId, reverseEntryId: entryId, kind: { in: [...JR_CHANGE_KINDS] } },
+    orderBy: { createdAt: 'desc' },
+  })
+  return toDtos(rows)
 }

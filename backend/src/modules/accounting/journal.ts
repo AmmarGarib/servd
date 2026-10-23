@@ -509,7 +509,7 @@ export async function reverseJournalEntry(
   await assertMayUndoEntry(tx, tenantId, original.entryDate, options.postedBy)
 
   const suffix = options.suffix ?? 'reversal'
-  return postJournalEntry(
+  const result = await postJournalEntry(
     {
       tenantId,
       sourceType: `${originalSourceType}.${suffix}`,
@@ -529,6 +529,13 @@ export async function reverseJournalEntry(
     },
     { tx: options.tx },
   )
+  // The reversal carries its original's sub-account tags (lib/subAccounts.ts, 2026-10-23), so a sub-ledger nets
+  // to zero with its account.
+  if (result.posted) {
+    const { mirrorAllocationsTx } = await import('../../lib/subAccounts.js')
+    await mirrorAllocationsTx(tx, original.id, result.entryId)
+  }
+  return result
 }
 
 // ─── A posting the ledger refused is never silent (BOOKS-07 / BOOKS-R2-01) ──

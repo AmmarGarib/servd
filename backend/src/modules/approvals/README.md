@@ -56,7 +56,7 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 | `raast_void` | `GET /reconciliation/raast/receipts?voidRequested=1` | `POST /reconciliation/raast/receipts/:id/void` (reason ≥ 10), `/void-request/reject` (note) | admin; a receipt that can no longer be voided shows the route's own reason on a disabled button |
 | `grni_writeoff` | `GET /procurement/grni?writeOffRequested=1` | `POST /procurement/grni/:receiptLineId/write-off/approve`, `/write-off/reject` (note) | admin |
 | `stock_difference` | `GET /accounting/stock-differences?status=pending` (one row per 1290 suspense line) | `POST /accounting/stock-differences/approve` `{lineIds:[id]}`, `POST /accounting/stock-differences/:id/query` (note) | admin — waste and count differences wait in 1290 until the CEO approves them into cost of sales (H20). Until that route exists it answers 404 and the type is not listed |
-| `journal_request` | `GET /accounting/journal-requests?status=submitted` | `POST /accounting/journal-requests/:id/approve`, `/reject` (note) | admin; kind post is Finance's (hand-over locked, A22), kind reverse the CEO's alone. Not listed while the route 404s |
+| `journal_request` | `GET /accounting/journal-requests?status=submitted` | `POST /accounting/journal-requests/:id/approve`, `/reject` (note) | admin; kind post is Finance's (hand-over locked, A22), kinds reverse / amend (a cancel / money edit of an existing manual entry, Journals tab 2026-10-23) the CEO's alone. Not listed while the route 404s |
 | `ho_recharge` | `GET /accounting/intercompany/recharge-runs?status=submitted` | `POST /accounting/intercompany/recharge-runs/:id/approve` (tick-boxes `postInOpenPeriod`, `acknowledgeWarnings`), `/reject` (note) | admin, or the head office's Finance delegate (head-office-wide hand-over only). Not listed while the route 404s |
 | `connector_change` | `GET /connectors/change-requests?status=submitted` | `POST /connectors/change-requests/:id/approve`, `/reject` (note) | admin, or a Dev delegate. Not listed while the route 404s |
 | `on_account_client` | `GET /accounting/customer-accounts?pending=1` (`onAccountProvider.ts`) | `POST /accounting/customer-accounts/:id/approve`, `/reject` (note required) | admin only: new corporate clients and every credit-limit increase (decreases and suspensions apply at once). Provider `delegable: false`; `assertNotSelfApproval` on the requester, the CEO exempt; 409 `NOTHING_PENDING`. Facts: client, OA number, new vs current limit, terms, brands, requested by |
@@ -94,7 +94,7 @@ needed; the resume adds the provider.
 
 | type | provider `delegable` | why |
 |---|---|---|
-| `journal_request` | kind post: **false** (locked, `DELEGATION_ENABLED.journal_request = false`, A22); kind reverse is `ceo` section | a manual journal is the CEO's to release |
+| `journal_request` | kind post: **false** (locked, `DELEGATION_ENABLED.journal_request = false`, A22); kinds reverse / amend are `ceo` section | a manual journal is the CEO's to release |
 | `ho_recharge` | **true**, but only by a head-office-wide Finance hand-over (never one company) | the monthly recharge run; the CEO keeps the role path |
 | `connector_change` | **true** (Dev section, module `api_pos`) | a Dev delegate may approve a POS connector change |
 | `on_account_client` | **false** | CEO section, never handed over |
@@ -129,7 +129,7 @@ queue routes and the hand-over catalogue all read it.
 | `cash_request_finance` | finance | accounting | finance | **never** | — |
 | `cash_request_hod` (retired) | finance | accounting | — | **never** | — |
 | `intercompany_transfer` | finance | accounting | admin | head-office pairs only (owned by the head office, A4); company ↔ company is CEO-only | accounting |
-| `journal_request` | finance; **ceo** for kind reverse | accounting | admin | kind post — **locked** (`DELEGATION_ENABLED.journal_request = false`, A22) | accounting |
+| `journal_request` | finance; **ceo** for kinds reverse / amend | accounting | admin | kind post — **locked** (`DELEGATION_ENABLED.journal_request = false`, A22) | accounting |
 | `ho_recharge` | finance | accounting | admin | head-office-wide hand-overs only | accounting |
 | `connector_change` | dev | api_pos | admin | yes | api_pos |
 | `cash_voucher`, `fixed_asset_request`, `bad_debt`, `raast_void`, `grni_writeoff`, `stock_difference`, `on_account_client` | **ceo** | — | admin | **never** | — |

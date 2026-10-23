@@ -11,13 +11,17 @@
 // statutory report exactly as before.
 //
 // This file is the ONE definition of:
-//   • what a payment is (isPaymentEntry / paymentEntriesSql): a live journal
+//   • what a payment is (isPaymentEntry / moneyAggregatesSql + moneyFlowWhereSql): a live journal
 //     entry (not reversed, not a reversal) of a company whose lines net-CREDIT
 //     the company's money accounts — cash 1010, petty cash 1011, 1020 and
 //     every bank account code of that company (bank_accounts.accountCode,
 //     never one of NOT_BANK_CODES). Moves between money accounts net to zero
 //     and drop out (deposit drops, petty-cash top-ups, bank-to-bank); sales
 //     and till sources (order*, pos.*, shift.close) are out of scope;
+//   • what a RECEIPT is (owner, 2026-10-23, the Journals tab): the mirror —
+//     a live entry whose lines net-DEBIT the same money accounts; transfers
+//     between money accounts net out; sales / till sources are out unless the
+//     caller asks for them (includeSales) (isReceiptAgg / moneyFlowWhereSql 'in');
 //   • its category, payee, voucher number, method, gross / WHT / net and tax
 //     status (paymentRegister);
 //   • the one writer of a classification (classifyPaymentTx — at creation, in
@@ -26,7 +30,7 @@
 //     independent aggregate over journal lines).
 
 import { z } from 'zod'
-import type { Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { NOT_BANK_CODES } from '../../lib/bankAccounts.js'
@@ -95,19 +99,16 @@ const SALES_PREFIX_SQL = ['order%', 'pos.%', 'shift.close%']
 const BANK_CODE_EXCLUDED = NOT_BANK_CODES.filter((c) => !FIXED_MONEY_CODES.includes(c as never))
 
 /**
- * Per-entry money credits / debits of every live, non-sales entry of the
- * companies in the period that touches a money account. One SQL so the
- * register and the tie-out agree on the same rule.
+ * The ONE SQL of "money moved by an entry": per entry of the companies, the
+ * credits (cr) and debits (dr) on its money-account lines, whether it is a
+ * sales / till source (sales) and whether it is reversed or itself a reversal
+ * (dead). Only entries that touch a money account are returned. `window` null =
+ * all history (the Journals tab, accounting/journalsRegister.ts); an `entryId`
+ * narrows to one entry. Payments (net credit) and receipts (net debit) are both
+ * read from it, so the register, the tie-out and the Journals tab agree.
  */
-async function moneyEntryAggregates(
-  db: Db,
-  tenantIds: string[],
-  from: Date,
-  to: Date,
-  opts: { entryId?: string } = {},
-): Promise<Array<{ id: string; tenantId: string; reference: string | null; description: string; entryDate: Date; cr: number; dr: number; sales: boolean; dead: boolean }>> {
-  if (tenantIds.length === 0) return []
-  const rows = await db.$queryRaw<Array<{ id: string; tenantId: string; reference: string | null; description: string; entryDate: Date; cr: bigint | number; dr: bigint | number; sales: boolean; dead: boolean }>>`
+export function moneyAggregatesSql(tenantIds: string[], window: { from: Date; to: Date } | null, entryId: string | null = null): Prisma.Sql {
+  return Prisma.sql`
     SELECT e.id, e."tenantId", e.reference, e.description, e."entryDate",
            COALESCE(SUM(CASE WHEN l.type = 'credit' THEN l."amountCents" ELSE 0 END), 0)::bigint AS cr,
            COALESCE(SUM(CASE WHEN l.type = 'debit'  THEN l."amountCents" ELSE 0 END), 0)::bigint AS dr,
@@ -127,18 +128,69 @@ async function moneyEntryAggregates(
       JOIN journal_lines l ON l."journalEntryId" = e.id
       JOIN accounts a ON a.id = l."accountId"
      WHERE e."tenantId" = ANY(${tenantIds}::text[])
-       AND (${opts.entryId ?? null}::text IS NULL OR e.id = ${opts.entryId ?? null}::text)
-       AND (${opts.entryId ?? null}::text IS NOT NULL OR (e."entryDate" >= ${from} AND e."entryDate" <= ${to}))
+       AND (${entryId}::text IS NULL OR e.id = ${entryId}::text)
+       ${window && !entryId ? Prisma.sql`AND e."entryDate" >= ${window.from} AND e."entryDate" <= ${window.to}` : Prisma.empty}
        AND (
              a.code = ANY(${[...FIXED_MONEY_CODES]}::text[])
           OR (NOT (a.code = ANY(${BANK_CODE_EXCLUDED}::text[]))
               AND EXISTS (SELECT 1 FROM bank_accounts b WHERE b."tenantId" = e."tenantId" AND b."accountCode" = a.code))
        )
      GROUP BY e.id`
+}
+
+/** The money accounts of each company: 1010, 1011, 1020 + its bank accounts' codes (the same rule as the SQL above). */
+export async function moneyCodesOf(db: Db, tenantIds: string[]): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>(tenantIds.map((t) => [t, new Set<string>(FIXED_MONEY_CODES)]))
+  if (tenantIds.length === 0) return out
+  const banks = await db.bankAccount.findMany({ where: { tenantId: { in: tenantIds }, accountCode: { not: null } }, select: { tenantId: true, accountCode: true } })
+  for (const b of banks) {
+    if (!b.tenantId || !b.accountCode || BANK_CODE_EXCLUDED.includes(b.accountCode)) continue
+    out.get(b.tenantId)?.add(b.accountCode)
+  }
+  return out
+}
+
+/**
+ * The money-flow condition on a row of moneyAggregatesSql (alias `m`), in SQL —
+ * the twin of isPaymentAgg / isReceiptAgg below:
+ *   out (a PAYMENT): live, not sales, net credit to money accounts;
+ *   in  (a RECEIPT): live, not sales (unless includeSales), net debit to money accounts.
+ * Moves between money accounts net to zero and are neither.
+ */
+export function moneyFlowWhereSql(direction: 'out' | 'in', opts: { includeSales?: boolean } = {}): Prisma.Sql {
+  const net = direction === 'out' ? Prisma.sql`m.cr - m.dr > 0` : Prisma.sql`m.dr - m.cr > 0`
+  const sales = direction === 'in' && opts.includeSales ? Prisma.empty : Prisma.sql`AND NOT m.sales`
+  return Prisma.sql`(NOT m.dead ${sales} AND ${net})`
+}
+
+/**
+ * Per-entry money credits / debits of every live, non-sales entry of the
+ * companies in the period that touches a money account. One SQL so the
+ * register and the tie-out agree on the same rule.
+ */
+async function moneyEntryAggregates(
+  db: Db,
+  tenantIds: string[],
+  from: Date,
+  to: Date,
+  opts: { entryId?: string } = {},
+): Promise<Array<{ id: string; tenantId: string; reference: string | null; description: string; entryDate: Date; cr: number; dr: number; sales: boolean; dead: boolean }>> {
+  if (tenantIds.length === 0) return []
+  const rows = await db.$queryRaw<Array<{ id: string; tenantId: string; reference: string | null; description: string; entryDate: Date; cr: bigint | number; dr: bigint | number; sales: boolean; dead: boolean }>>(
+    moneyAggregatesSql(tenantIds, { from, to }, opts.entryId ?? null))
   return rows.map((r) => ({ ...r, cr: toCents(r.cr), dr: toCents(r.dr) }))
 }
 
 const isPaymentAgg = (a: { cr: number; dr: number; sales: boolean; dead: boolean }) => !a.sales && !a.dead && a.cr - a.dr > 0
+/** A RECEIPT (owner, 2026-10-23 — the Journals tab's Receipt view): the mirror of a payment — net money IN. */
+export const isReceiptAgg = (a: { cr: number; dr: number; sales: boolean; dead: boolean }, opts: { includeSales?: boolean } = {}) =>
+  (opts.includeSales || !a.sales) && !a.dead && a.dr - a.cr > 0
+
+/** True when the entry (of that company) is a receipt under the one rule above (sales / till sources excluded). */
+export async function isReceiptEntry(db: Db, tenantId: string, journalEntryId: string): Promise<boolean> {
+  const [agg] = await moneyEntryAggregates(db, [tenantId], new Date(0), new Date(0), { entryId: journalEntryId })
+  return !!agg && isReceiptAgg(agg)
+}
 
 /** True when the entry (of that company) is a payment under the one rule above. */
 export async function isPaymentEntry(db: Db, tenantId: string, journalEntryId: string): Promise<boolean> {

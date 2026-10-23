@@ -1163,11 +1163,20 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // no caller, is gone). Readable by every manager tier AND finance — the
   // finance officer works the books and could not open the only chart page
   // while it was MANAGERS-only.
-  fastify.get('/chart-of-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
-    return prisma.account.findMany({
-      where: await scopeTenantWhere(req, 'read'),
+  // ?q= (code or name, case-insensitive) and ?active=1 narrow it — the Journals tab's account picker
+  // (owner, 2026-10-23). Each row also carries `companyName` (the picker shows it under "All companies").
+  fastify.get<{ Querystring: { q?: string; active?: string } }>('/chart-of-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
+    const q = (req.query.q ?? '').trim().slice(0, 100)
+    const rows = await prisma.account.findMany({
+      where: {
+        ...(await scopeTenantWhere(req, 'read')),
+        ...(q ? { OR: [{ code: { contains: q, mode: 'insensitive' as const } }, { name: { contains: q, mode: 'insensitive' as const } }] } : {}),
+        ...(req.query.active === '1' || req.query.active === 'true' ? { isActive: true } : {}),
+      },
       orderBy: { code: 'asc' },
+      include: { tenant: { select: { name: true } } },
     })
+    return rows.map(({ tenant, ...a }) => ({ ...a, companyName: tenant?.name ?? null }))
   })
   // Adding, renaming or switching off an account changes what can post, so
   // both writes go on the accounting trail (category 'accounting').
@@ -1235,6 +1244,43 @@ export async function setupRoutes(fastify: FastifyInstance) {
   //                           link, the register's 15xx / 2012)
   // The type is never edited here, and POST never sets controlledBy (the
   // modules create their controlled accounts themselves).
+  // ─── Sub-accounts (owner, 2026-10-23; lib/subAccounts.ts) ───────────────
+  // A sub-ledger under one account: entries keep posting to the account; a
+  // sub-account only tags amounts of its lines. Read like the chart; created,
+  // renamed and switched off by CHART_EDITORS (the CEO and finance with
+  // `accounting`). Never deleted (switch off) — its tags are history.
+  //   GET   /chart-of-accounts/:accountId/sub-accounts   ?active=1
+  //   POST  /chart-of-accounts/:accountId/sub-accounts   { name, code? } → 201
+  //   PATCH /chart-of-accounts/sub-accounts/:id          { name?, code?, isActive? }
+  fastify.get<{ Params: { accountId: string }; Querystring: { active?: string } }>('/chart-of-accounts/:accountId/sub-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
+    const acc = await prisma.account.findFirst({ where: { id: req.params.accountId, ...(await scopeTenantWhere(req, 'read')) }, select: { id: true } })
+    if (!acc) throw new NotFoundError('Account', req.params.accountId)
+    return prisma.subAccount.findMany({
+      where: { accountId: acc.id, ...(req.query.active === '1' || req.query.active === 'true' ? { isActive: true } : {}) },
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+      select: { id: true, tenantId: true, accountId: true, name: true, code: true, kind: true, employeeId: true, isActive: true, createdAt: true, updatedAt: true },
+    })
+  })
+  const subAccountBody = z.object({ name: z.string().trim().min(1).max(120), code: z.string().trim().max(40).nullable().optional() })
+  fastify.post<{ Params: { accountId: string } }>('/chart-of-accounts/:accountId/sub-accounts', { preHandler: chartEditorGate }, async (req, reply) => {
+    const body = subAccountBody.parse(req.body ?? {})
+    const acc = await prisma.account.findFirst({ where: { id: req.params.accountId, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true, tenantId: true } })
+    if (!acc?.tenantId) throw new NotFoundError('Account', req.params.accountId)
+    const { createSubAccount } = await import('../../lib/subAccounts.js')
+    const row = await createSubAccount(prisma, { tenantIds: [acc.tenantId], accountId: acc.id, name: body.name, code: body.code ?? null, actorId: req.staffUser!.id })
+    await audit({ category: 'accounting', action: 'sub_account.create', entity: 'SubAccount', entityId: row.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: row.tenantId, after: row, metadata: { ip: req.ip } })
+    return reply.status(201).send(row)
+  })
+  fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/sub-accounts/:id', { preHandler: chartEditorGate }, async (req) => {
+    const body = z.object({ name: subAccountBody.shape.name.optional(), code: subAccountBody.shape.code, isActive: z.boolean().optional() }).parse(req.body ?? {})
+    const where = await scopeTenantWhere(req, 'write')
+    const tenantIds = typeof where.tenantId === 'string' ? [where.tenantId] : ((where.tenantId as { in?: string[] } | undefined)?.in ?? [])
+    const { updateSubAccount } = await import('../../lib/subAccounts.js')
+    const r = await updateSubAccount(prisma, { tenantIds, id: req.params.id, ...body })
+    await audit({ category: 'accounting', action: 'sub_account.update', entity: 'SubAccount', entityId: r.after.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: r.after.tenantId, before: r.before, after: r.after, metadata: { ip: req.ip } })
+    return r.after
+  })
+
   fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/:id', { preHandler: chartEditorGate }, async (req) => {
     const body = z.object({
       name:        z.string().min(1).max(120).optional(),

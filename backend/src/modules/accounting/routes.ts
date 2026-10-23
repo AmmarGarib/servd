@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { forgetReopened, rememberReopened, reopenedThrough } from './closedBooks.js'
 import { classificationOf, classifyingTx, classifyPaymentTx, type ClassificationInput } from './paymentsRegister.js'
 import { z } from 'zod'
@@ -28,9 +28,15 @@ import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import {
   MANUAL_PREFIX, MANUAL_REVERSAL_PREFIX, journalEntrySchema, reverseSchema,
-  assertBalanced, postManualJournal, reverseManualJournal,
+  assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, MANUAL_JOURNAL_POSTERS,
 } from './manualJournal.js'
 import { journalRequestRoutes } from './journalRequestRoutes.js'
+import { raiseChangeRequest, type JournalRequestDto } from './journalRequests.js'
+import { journalsRoutes } from './journalsRoutes.js'
+import { annotateEntries, viewerOf } from './journalsRegister.js'
+import { tagLineTx } from '../../lib/subAccounts.js'
+import { closedBooksThrough } from './closedBooks.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { requireModule } from '../notifications/requireModule.js'
 
 // Who records tax paid to the authorities, links entries and posts the
@@ -39,8 +45,8 @@ import { requireModule } from '../notifications/requireModule.js'
 const TAX_PAYERS = [...TAX_PAYER_ROLES] as UserRole[]
 
 /** Who posts, edits and cancels manual journal entries (and attaches their supporting documents):
- *  the CEO and finance with the accounting module (owner, 2026-10-16). */
-export const JOURNAL_POSTERS = ['admin', 'finance'] as UserRole[]
+ *  the CEO and finance with the accounting module (owner, 2026-10-16) — defined in manualJournal.ts. */
+export const JOURNAL_POSTERS = [...MANUAL_JOURNAL_POSTERS] as UserRole[]
 
 export async function accountingRoutes(fastify: FastifyInstance) {
   // ─── Ledger / journal entry feed ─────────────────────────────────────────
@@ -49,7 +55,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // activity links (?id=) and the CSV export. (/finance/ledger listed the
   // sales register to every manager tier and had no caller; the /finance
   // Transactions tab called a GET /accounting/entries that never existed.)
-  fastify.get<{ Querystring: { id?: string; accountId?: string; source?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string; view?: string } }>(
+  fastify.get<{ Querystring: { id?: string; accountId?: string; source?: string; dateFrom?: string; dateTo?: string; from?: string; to?: string; brandId?: string; subAccountId?: string; limit?: string; cursor?: string; format?: string; view?: string } }>(
     '/ledger',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
@@ -64,19 +70,56 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       // opening balance, a running balance and the closing balance. Same
       // route, same viewers, same company scope (another company's account
       // is 404). JSON for the screen, or ?format=csv|xlsx|pdf.
+      //
+      // The Journals tab's Accounts view (owner, 2026-10-23) reads this same
+      // statement: ?from&to (aliases of dateFrom / dateTo), ?brandId (lines of
+      // that brand only; another company's brand 404), ?limit (≤1,000) +
+      // ?cursor to page a large account (nextCursor / hasMore / pageOpeningCents),
+      // and each line carries its entry's status and the caller's Edit / Cancel
+      // rights (journalsRegister.ts annotateEntries). Exports ignore paging.
       if (req.query.view === 'statement') {
         if (!accountId) throw new AppError('ACCOUNT_REQUIRED', 'Pick an account for its statement', 422)
-        const st = await accountStatement((await resolveTenantScope(req)).tenantIds, accountId, from, to)
-        if (!format) return st
+        const range = req.query.from || req.query.to ? resolveDateRange(req.query.from ?? dateFrom, req.query.to ?? dateTo) : { from, to }
+        const brandId = req.query.brandId ? z.string().uuid().parse(req.query.brandId) : null
+        const subAccountId = req.query.subAccountId ? z.string().uuid().parse(req.query.subAccountId) : null
+        const st = await accountStatement((await resolveTenantScope(req)).tenantIds, accountId, range.from, range.to, {
+          conceptId: brandId, subAccountId,
+          ...(!format && limitStr ? { limit: parseInt(limitStr, 10) || 100, cursor: cursor ?? null } : {}),
+        })
+        if (!format) {
+          const ids = [...new Set(st.lines.map((l) => l.entryId))]
+          const entries = ids.length ? await prisma.journalEntry.findMany({ where: { id: { in: ids } }, select: { id: true, tenantId: true, reference: true, description: true, entryDate: true, voucherNo: true } }) : []
+          const ann = await annotateEntries(await viewerOf(req), entries)
+          const byId = new Map(entries.map((e) => [e.id, e]))
+          return {
+            ...st,
+            lines: st.lines.map((l) => {
+              const a = ann.get(l.entryId)!
+              return {
+                ...l, voucherNo: byId.get(l.entryId)?.voucherNo ?? null,
+                sourceType: a.sourceType, status: a.status, reversedBy: a.reversedBy, reverses: a.reverses, pendingChange: a.pendingChange,
+                canTextEdit: a.canTextEdit, canRequestChange: a.canRequestChange, changeNeedsApproval: a.changeNeedsApproval, blockedReason: a.blockedReason,
+              }
+            }),
+          }
+        }
         return sendReportFor(req, reply, format, { base: 'account-statement', suffix: `${st.account.code}-${st.dateFrom}-${st.dateTo}` }, {
-          title: `Account statement — ${st.account.code} ${st.account.name}`,
+          title: `Account statement — ${st.account.code} ${st.account.name}${st.subAccount ? ` · ${st.subAccount.name}` : ''}`,
           companies: st.account.companyName ? [st.account.companyName] : undefined,
           period: `${st.dateFrom} to ${st.dateTo} · ${st.account.normal === 'debit' ? 'Debit' : 'Credit'}-balance account`,
-          rows: st.rows.map((r) => ({
-            date: r.date, entry: r.description, reference: r.reference ?? '', memo: r.memo ?? '',
-            debit: r.debitCents ? fmtPkr(r.debitCents) : '', credit: r.creditCents ? fmtPkr(r.creditCents) : '',
-            balance: fmtPkr(r.balanceCents),
-          })),
+          rows: [
+            ...st.rows.map((r) => ({
+              date: r.date, entry: r.description, reference: r.reference ?? '', memo: r.memo ?? '',
+              debit: r.debitCents ? fmtPkr(r.debitCents) : '', credit: r.creditCents ? fmtPkr(r.creditCents) : '',
+              balance: fmtPkr(r.balanceCents),
+            })),
+            // The sub-ledger (2026-10-23): each sub-account's opening, movement and closing; Unassigned ties it out.
+            ...(st.subAccounts.length ? [{ date: '', entry: 'SUB-ACCOUNTS', reference: '', memo: 'Opening', debit: 'Debits', credit: 'Credits', balance: 'Closing' }] : []),
+            ...st.subAccounts.map((x) => ({
+              date: '', entry: x.name, reference: x.code ?? '', memo: fmtPkr(x.openingCents),
+              debit: fmtPkr(x.debitCents), credit: fmtPkr(x.creditCents), balance: fmtPkr(x.closingCents),
+            })),
+          ],
           types: { debit: 'pkr', credit: 'pkr', balance: 'pkr' },
           isTotal: (r) => r.entry === 'OPENING BALANCE' || r.entry === 'CLOSING BALANCE' || r.entry === 'TOTAL MOVEMENT',
           ...(st.truncated && { notes: ['This statement stops at the line limit — narrow the dates for the rest.'] }),
@@ -170,10 +213,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // copy of the lock check, and could not carry a brand, so every manual
   // adjustment landed in the shared bucket of the brand P&L.
 
-  // Who posts, edits and cancels manual entries directly (owner, 2026-10-16:
+  // Who posts, edits and cancels manual entries (owner, 2026-10-16:
   // "journal entries should not require CEO's approval to be booked …
   // Finance should have access to pass new entry / edit / cancel"): the CEO
-  // and finance with the accounting module. The ledger never deletes — cancel
+  // and finance with the accounting module. Since 2026-10-23 finance's money
+  // edits and cancels of an existing entry wait for the CEO (below). The ledger never deletes — cancel
   // is a reversing entry, edit is a reversal plus the corrected entry. What
   // stays the CEO's: a register-account override, and anything dated in closed
   // or reopened books (closedBooks.ts, checked by the posting engine).
@@ -230,15 +274,31 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   //     serialised on the entry so two clicks cannot post two reversals.
   //   • Reason required; on the accounting trail and in the Exceptions inbox,
   //     like the manual entry itself.
+  // Owner, 2026-10-23 ("edit/cancel/void any back dated or current Journal manual entry with final approval of
+  // CEO … CEO approve edits only when amount is edited, not for editing details/particulars/Memo"): the CEO's
+  // cancel / edit applies at once (the CEO's own action is the approval); finance's RAISES a journal request
+  // (kind reverse / amend) for the CEO — 202 { pendingApproval: true, request } — and nothing posts until the CEO
+  // approves it (journalRequests.ts, the same engine below). A TEXT-only edit applies at once for both.
+  const entryInWriteScope = async (req: FastifyRequest, id: string) => {
+    const found = await prisma.journalEntry.findFirst({
+      where: { id, ...(await scopeTenantWhere(req, 'write')) },
+      select: { id: true, tenantId: true, entryDate: true },
+    })
+    if (!found || !found.tenantId) throw new NotFoundError('JournalEntry', id)
+    return { ...found, tenantId: found.tenantId }
+  }
+  const raised = (req: FastifyRequest, reply: FastifyReply, request: JournalRequestDto) => {
+    approvalWaiting('journal_request', request.id, { round: `submit:${request.submittedAt ?? request.createdAt}`, actorId: req.staffUser!.id })
+    return reply.status(202).send({ pendingApproval: true, request })
+  }
+
   fastify.post<{ Params: { id: string } }>('/journal/:id/reverse', { preHandler: journalGate }, async (req, reply) => {
     const body = reverseSchema.parse(req.body ?? {})
+    const found = await entryInWriteScope(req, req.params.id)
 
-    const found = await prisma.journalEntry.findFirst({
-      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true, tenantId: true },
-    })
-    if (!found || !found.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
-
+    if (req.staffUser!.role !== 'admin') {
+      return raised(req, reply, await raiseChangeRequest(req, found.tenantId, found.id, { kind: 'reverse', reason: body.reason, entryDate: body.entryDate ?? null }))
+    }
     // manualJournal.ts — the one path (a journal request of kind reverse uses it too).
     const { reversal, original } = await reverseManualJournal(prisma, {
       tenantId: found.tenantId,
@@ -251,59 +311,127 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     return reply.status(201).send({ ...reversal, reverses: { id: original.id, reference: original.reference } })
   })
 
-  // ─── Edit a manual entry (CEO + finance) ────────────────────────────────
+  // ─── Edit a manual entry ────────────────────────────────────────────────
   //
-  // A posted entry is never changed in place. Edit = ONE transaction that
-  // reverses the original (reason required, same rules as /reverse: manual
-  // entries only, once) and posts the corrected entry in the ORIGINAL entry's
-  // company. If either half is refused (closed books, unbalanced, …) neither
-  // is booked.
+  // A MONEY edit is never made in place: ONE transaction reverses the original
+  // (dated on its own day — today only when that month is closed) and posts the
+  // corrected entry in the ORIGINAL entry's company (manualJournal.ts
+  // amendManualJournal). If either half is refused (closed books, unbalanced, …)
+  // neither is booked. A TEXT-only edit (same lines by account / side / amount /
+  // brand, same day; only description, reference, memos or the payment label
+  // differ) changes the entry in place at once → 200 { …entry, edited: 'text' }.
   fastify.post<{ Params: { id: string } }>('/journal/:id/amend', { preHandler: journalGate }, async (req, reply) => {
     const body = journalEntrySchema.extend({ reason: z.string().trim().min(5).max(500) }).parse(req.body)
     assertBalanced(body.lines)
     assertNoRegisterOverride(req, body.registerOverride)
-    const found = await prisma.journalEntry.findFirst({
-      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true, tenantId: true, entryDate: true },
-    })
-    if (!found || !found.tenantId) throw new NotFoundError('JournalEntry', req.params.id)
+    const found = await entryInWriteScope(req, req.params.id)
     const tenantId = found.tenantId
-    // The reversal half is dated on the ORIGINAL's day, so the month that
-    // carried the wrong entry is the month that loses it (an edit on 2 Oct of
-    // a 10 Sept entry nets September, not October). Only when that day is in
-    // a closed month (nothing posts there) does it fall back to today. A
-    // reopened month stays the CEO's (closedBooks.ts, checked by the posting).
-    const lock = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
-    const reversalDate = lock && found.entryDate <= lock.lockedThrough ? new Date() : found.entryDate
-    const result = await serviceClient.$transaction(async (tx) => {
-      const { reversal, original, sideEffects: reversedFx } = await reverseManualJournal(tx, {
-        tenantId, entryId: found.id, reason: `Edited: ${body.reason}`, actorId: req.staffUser!.id,
-        entryDate: reversalDate,
-        actor: { email: req.staffUser!.email, ip: req.ip },
+    const su = req.staffUser!
+    const picked = classificationOf(req.body)
+
+    const original = await prisma.journalEntry.findFirstOrThrow({ where: { id: found.id, tenantId }, include: { lines: true } })
+    const memos = body.registerOverride ? null : textOnlyMapping(original, body)
+    if (memos) {
+      const r = await serviceClient.$transaction(async (tx) => {
+        const t = await textEditManualJournal(tx, {
+          tenantId, entryId: found.id, allowNoop: true,
+          edit: {
+            description: body.description, reference: body.reference ?? null,
+            memos: [...memos].map(([lineId, m]) => ({ lineId, memo: m.memo })),
+            subAccounts: [...memos].filter(([, m]) => m.subAccountId !== undefined).map(([lineId, m]) => ({ lineId, subAccountId: m.subAccountId ?? null })),
+          },
+          actor: { id: su.id, role: su.role, email: su.email, ip: req.ip },
+        })
+        // A new payment label picked on the form goes through the one writer (a label only).
+        if (picked) await classifyPaymentTx(tx, { journalEntryId: found.id, input: picked, setById: su.id, tenantId })
+        return t
       })
-      const { entry, sideEffects: postedFx } = await postManualJournal(tx, {
-        tenantId,
-        description: body.description,
-        reference: body.reference,
-        entryDate: body.entryDate,
-        lines: body.lines,
-        postedBy: req.staffUser!.id,
+      await r.sideEffects()
+      return reply.status(200).send({ ...r.entry, edited: 'text' })
+    }
+
+    if (su.role !== 'admin') {
+      return raised(req, reply, await raiseChangeRequest(req, tenantId, found.id, {
+        kind: 'amend', reason: body.reason, description: body.description, reference: body.reference ?? null,
+        entryDate: body.entryDate ?? null, lines: body.lines, classification: picked,
+      }))
+    }
+
+    const result = await serviceClient.$transaction(async (tx) => {
+      const a = await amendManualJournal(tx, {
+        tenantId, entryId: found.id, reason: body.reason,
+        description: body.description, reference: body.reference, entryDate: body.entryDate, lines: body.lines,
         registerOverride: body.registerOverride ?? null,
-        actor: { id: req.staffUser!.id, email: req.staffUser!.email, ip: req.ip },
+        actorId: su.id, actor: { email: su.email, ip: req.ip },
       })
       // The corrected entry's payment classification: the one picked on the
       // form, else the original's (an edit never silently drops the label).
-      const prior = await tx.paymentClassification.findUnique({ where: { journalEntryId: original.id } })
-      const picked = classificationOf(req.body)
+      const prior = await tx.paymentClassification.findUnique({ where: { journalEntryId: a.original.id } })
       const carried = picked ?? (prior ? { classification: prior.classification, taxStatus: prior.taxStatus, nonDeductionReason: prior.nonDeductionReason } as ClassificationInput : null)
-      await classifyPaymentTx(tx, { journalEntryId: entry.id, input: carried, setById: req.staffUser!.id, tenantId })
-      return { reversal, original, entry, reversedFx, postedFx }
+      await classifyPaymentTx(tx, { journalEntryId: a.entry.id, input: carried, setById: su.id, tenantId })
+      return a
     })
     // Audit rows and Exceptions flags only after the commit (manualJournal.ts).
     await result.reversedFx()
     await result.postedFx()
     return reply.status(201).send({ ...result.entry, replaces: { id: result.original.id, reversalId: result.reversal.id } })
   })
+
+  // ─── Text edit of a manual entry (owner, 2026-10-23) ─────────────────────
+  // PATCH { description?, reference?, memos?: [{ lineId, memo }] } — in place, at once, the CEO and finance with
+  // `accounting`; an entry dated in closed / reopened books stays the CEO's. Audit `journal.text_edit`.
+  fastify.patch<{ Params: { id: string } }>('/journal/:id/text', { preHandler: journalGate }, async (req) => {
+    const edit = textEditSchema.parse(req.body ?? {})
+    const found = await entryInWriteScope(req, req.params.id)
+    const su = req.staffUser!
+    const r = await serviceClient.$transaction((tx) => textEditManualJournal(tx, {
+      tenantId: found.tenantId, entryId: found.id, edit, actor: { id: su.id, role: su.role, email: su.email, ip: req.ip },
+    }))
+    await r.sideEffects()
+    return { ...r.entry, edited: 'text' }
+  })
+
+  // ─── Sub-account tags on a line (owner, 2026-10-23; lib/subAccounts.ts) ──
+  // PUT { allocations: [{ subAccountId, amountCents }] } — REPLACES the line's tags (an empty list clears them).
+  // A reporting tag, never a posting: the CEO and finance with `accounting`, at once, audited
+  // `journal.sub_account_tag`; a line of an entry dated in closed / reopened books stays the CEO's.
+  fastify.put<{ Params: { lineId: string } }>('/journal/lines/:lineId/sub-accounts', { preHandler: journalGate }, async (req) => {
+    const body = z.object({
+      allocations: z.array(z.object({ subAccountId: z.string().uuid(), amountCents: zMoneyCents('A sub-account amount', { sign: 'positive' }) })).max(500),
+    }).parse(req.body ?? {})
+    const scope = await scopeTenantWhere(req, 'write')
+    const line = await prisma.journalLine.findFirst({
+      where: { id: req.params.lineId, journalEntry: scope },
+      select: { id: true, journalEntry: { select: { id: true, tenantId: true, entryDate: true } } },
+    })
+    if (!line?.journalEntry.tenantId) throw new NotFoundError('JournalLine', req.params.lineId)
+    const tenantId = line.journalEntry.tenantId
+    const su = req.staffUser!
+    if (su.role !== 'admin') {
+      const through = await closedBooksThrough(prisma, tenantId)
+      if (through && line.journalEntry.entryDate <= through) {
+        throw new AppError('CEO_ONLY_CLOSED_BOOKS', `This entry is dated ${fmtPktDate(line.journalEntry.entryDate)}, in closed books — only the CEO can change it.`, 403)
+      }
+    }
+    const r = await serviceClient.$transaction((tx) => tagLineTx(tx, { tenantIds: [tenantId], journalLineId: line.id, allocations: body.allocations, replace: true, actorId: su.id }))
+    await audit({
+      category: 'accounting', action: 'journal.sub_account_tag', entity: 'JournalEntry', entityId: line.journalEntry.id,
+      userId: su.id, userEmail: su.email, tenantId, before: { lineId: line.id, allocations: r.before }, after: { lineId: line.id, allocations: r.after },
+      metadata: { ip: req.ip, actorRole: su.role },
+    })
+    return { lineId: line.id, allocations: r.after }
+  })
+
+  // GET /accounting/accounts/:id/sub-accounts?from&to&brandId — the sub-ledger summary alone (the statement carries it too).
+  fastify.get<{ Params: { id: string }; Querystring: { from?: string; to?: string; brandId?: string } }>('/accounts/:id/sub-accounts', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    const range = resolveDateRange(req.query.from, req.query.to)
+    const brandId = req.query.brandId ? z.string().uuid().parse(req.query.brandId) : null
+    const st = await accountStatement((await resolveTenantScope(req)).tenantIds, req.params.id, range.from, range.to, { conceptId: brandId, limit: 1 })
+    return { account: st.account, dateFrom: st.dateFrom, dateTo: st.dateTo, openingCents: st.openingCents, closingCents: st.closingCents, totals: st.totals, subAccounts: st.subAccounts }
+  })
+
+  // The Journals tab: every entry, Manual / Payment / Receipt / All (journalsRegister.ts).
+  await fastify.register(journalsRoutes, { prefix: '/journals' })
 
   // Journal requests: Finance prepares, the CEO approves (journalRequestRoutes.ts).
   await fastify.register(journalRequestRoutes, { prefix: '/journal-requests' })

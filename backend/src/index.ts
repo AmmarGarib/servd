@@ -1251,6 +1251,18 @@ async function build() {
     fastify.log.warn(`[cashVoucher] hold conversion skipped: ${(err as Error).message}`)
   }
 
+  // Per-employee wages sub-ledger (owner, 2026-10-23): once per company, tag the
+  // payroll and full & final entries already on the books from their payslips
+  // (tags only — no journal line changes). Marker Setting per company.
+  try {
+    const { backfillPayrollSubLedger } = await import('./modules/hr/payrollSubLedgerBackfill.js')
+    for (const r of await backfillPayrollSubLedger()) {
+      fastify.log.info(`[subAccounts] payroll sub-ledger of ${r.tenantId}: ${r.employees} employees, ${r.runs} runs, ${r.settlements} settlements tagged${r.mismatched.length ? `, ${r.mismatched.length} lines left untagged (flagged)` : ''}`)
+    }
+  } catch (err) {
+    fastify.log.warn(`[subAccounts] payroll sub-ledger backfill skipped: ${(err as Error).message}`)
+  }
+
   // Shift corrections whose apply died mid-way (left 'approved' with no
   // progress for 5 minutes) → 'failed', so the CEO's Retry finishes them.
   try {

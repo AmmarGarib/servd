@@ -139,10 +139,12 @@ function LedgerView() {
           <Button variant="secondary" type="submit" onClick={() => router.push('/accounting/ledger')}>Show all entries</Button>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/accounting/journal" className="s-btn-secondary text-sm">Journal entry</Link>
-            <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+            <Link href="/accounting/journal?tab=journals" className="s-btn-secondary text-sm">Journals</Link>
+            {/* One account = the Journals → Accounts view (statement + open / edit / cancel any entry). */}
+            <Select value={accountId} aria-label="Open an account"
+              onChange={(e) => { if (e.target.value) router.push(`/accounting/journal?tab=accounts&accountId=${encodeURIComponent(e.target.value)}`); else setAccountId('') }}
               className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text max-w-[16rem]">
-              <option value="">All accounts</option>
+              <option value="">All accounts (pick one to open it)</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}{a.isActive ? '' : ' (inactive)'}</option>)}
             </Select>
             <Input className="w-auto px-2 py-1 text-sm" type="date" value={from} onChange={(e) => setFrom(e.target.value)}

@@ -732,6 +732,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.supplierCreditApplication,
     // Internal payment classification (2026-10-20): a label on the entry, follows the entry's company.
     tx.paymentClassification,
+    // Sub-accounts and their line tags (2026-10-23): follow the account / entry's company.
+    tx.subAccount, tx.journalLineSubAccount,
     // Shift corrections (2026-10-21): a set and its items follow their shift's company.
     tx.shiftCorrection, tx.shiftCorrectionItem,
     // Sales sessions (2026-10-22): per brand, follow the brand's company.
@@ -1078,6 +1080,17 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         for (const a of srcAccounts) {
           const twin = dstByCode.get(a.code)
           if (twin) {
+            // Sub-accounts (2026-10-23) follow their account onto the twin: one of the same name / employee there
+            // absorbs the source's tags, otherwise it moves.
+            for (const sa of await tx.subAccount.findMany({ where: { accountId: a.id } })) {
+              const same = await tx.subAccount.findFirst({ where: { accountId: twin, OR: [{ name: sa.name }, ...(sa.employeeId ? [{ employeeId: sa.employeeId }] : [])] }, select: { id: true } })
+              if (same) {
+                await tx.journalLineSubAccount.updateMany({ where: { subAccountId: sa.id }, data: { subAccountId: same.id } })
+                await tx.subAccount.delete({ where: { id: sa.id } })
+              } else {
+                await tx.subAccount.update({ where: { id: sa.id }, data: { accountId: twin } })
+              }
+            }
             await tx.journalLine.updateMany({ where: { accountId: a.id }, data: { accountId: twin } })
             await tx.account.delete({ where: { id: a.id } })
             accountRemap.set(a.id, twin)

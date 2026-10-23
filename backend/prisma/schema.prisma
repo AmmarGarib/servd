@@ -2924,6 +2924,7 @@ model Account {
   tenant       Tenant?       @relation("TenantAccounts", fields: [tenantId], references: [id])
   counterparty Tenant?       @relation("AccountCounterparty", fields: [counterpartyTenantId], references: [id], onDelete: Restrict)
   journalLines JournalLine[]
+  subAccounts  SubAccount[]
 
   // Head office (D1): the company-chart "Head office charges" account of a link, and the HO-chart recharge account.
   headOfficeLinkCharges HeadOfficeLink[]  @relation("HoLinkCharges")
@@ -3004,9 +3005,59 @@ model JournalLine {
 
   journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
   account      Account      @relation(fields: [accountId], references: [id])
+  subAccountAllocations JournalLineSubAccount[]
 
   @@index([conceptId])
   @@map("journal_lines")
+}
+
+// Sub-accounts (owner, 2026-10-23: "option to create sub account in chart of accounts, e.g in Wages … in name of
+// employees … report/account statement with balance of subgroups"). A SUB-LEDGER, never a child account: entries
+// keep posting to the main account, so the trial balance, P&L, tax returns and every reader of a code are
+// unchanged. A sub-account is a named bucket under ONE account of ONE company (tenantId = the account's company);
+// kind 'employee' is payroll's per-employee wages bucket (one per account and employee). Never deleted once
+// used — switched off (isActive). lib/subAccounts.ts is the one writer. Migration 20261023110000.
+model SubAccount {
+  id          String    @id @default(uuid())
+  tenantId    String
+  accountId   String
+  name        String
+  code        String?
+  kind        String    @default("manual") // manual | employee (CHECK sub_accounts_kind_chk)
+  employeeId  String?
+  isActive    Boolean   @default(true)
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  account     Account                 @relation(fields: [accountId], references: [id])
+  allocations JournalLineSubAccount[]
+
+  @@unique([tenantId, accountId, name])
+  @@unique([accountId, employeeId])
+  @@index([tenantId])
+  @@map("sub_accounts")
+}
+
+// A sub-account tag on a journal line — the line itself is never changed. The tags of one line sum to ≤ the line's
+// amount (the rest is "Unassigned"); the sub-account's account is the line's account, same company. A reversal
+// mirrors its original's tags (journal.ts reverseJournalEntry). BIGINT paisa.
+model JournalLineSubAccount {
+  id            String   @id @default(uuid())
+  tenantId      String
+  journalLineId String
+  subAccountId  String
+  amountCents   BigInt
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  line       JournalLine @relation(fields: [journalLineId], references: [id])
+  subAccount SubAccount  @relation(fields: [subAccountId], references: [id])
+
+  @@unique([journalLineId, subAccountId])
+  @@index([tenantId])
+  @@index([subAccountId])
+  @@map("journal_line_sub_accounts")
 }
 
 // ─── Reconciliation ──────────────────────────────────────────────────────────
@@ -8379,14 +8430,14 @@ model ApprovalDelegation {
 model JournalRequest {
   id              String    @id @default(uuid())
   tenantId        String // the books it posts to
-  kind            String    @default("post") // post | reverse (reverse = CEO only)
+  kind            String    @default("post") // post | reverse | amend (reverse / amend of an existing manual entry = CEO only; 2026-10-23)
   status          String    @default("draft") // draft | submitted | returned | posted | withdrawn
   description     String
   reference       String?
   entryDate       DateTime?
   lines           Json      @default("[]") // post: [{ accountId, type, amountCents, memo?, conceptId? }] (re-validated on approval)
   totalCents      BigInt    @default(0)
-  reverseEntryId  String? // reverse: the manual entry to reverse
+  reverseEntryId  String? // reverse / amend: the manual entry to cancel or edit (one open change per entry, checked under its lock)
   reason          String? // reverse: required
   preparedById    String
   preparedByIds   String[]  @default([])
@@ -8400,6 +8451,9 @@ model JournalRequest {
   decidedVia      String?
   delegationId    String?
   postedEntryId   String?   @unique // journal-entry uuid — globally unique by construction
+  // reverse / amend raised from the Journals tab (2026-10-23): { fingerprint (accounting/manualJournal.ts
+  // entryFingerprint of the entry as it was when raised), classification? (the corrected payment's label) }.
+  changeMeta      Json?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

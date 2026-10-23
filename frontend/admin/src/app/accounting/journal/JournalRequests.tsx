@@ -20,6 +20,7 @@ import { fmtPkr } from '../../../lib/money'
 import { useAuthStore } from '../../../store/auth'
 import { Select } from '@/components/ui/Select'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { JournalRequestDiff } from './JournalRequestDiff'
 
 export type JournalRequestStatus = 'draft' | 'submitted' | 'returned' | 'posted' | 'withdrawn'
 
@@ -35,7 +36,7 @@ export interface JournalRequest {
   id: string
   tenantId: string
   tenantName: string | null
-  kind: 'post' | 'reverse' | string
+  kind: 'post' | 'reverse' | 'amend' | string
   status: JournalRequestStatus
   description: string
   reference: string | null
@@ -98,7 +99,9 @@ export function JournalRequests({ mode, accounts, canDecide, onEdit, refreshKey 
   const done = (text: string) => {
     setMsg({ ok: true, text })
     void qc.invalidateQueries({ queryKey: ['journal-requests'] })
-    void qc.invalidateQueries({ queryKey: ['manual-journal'] })
+    void qc.invalidateQueries({ queryKey: ['journals'] })
+    void qc.invalidateQueries({ queryKey: ['journal-entry'] })
+    void qc.invalidateQueries({ queryKey: ['account-statement'] })
     void qc.invalidateQueries({ queryKey: ['ledger'] })
   }
   const fail = (e: unknown) => setMsg({ ok: false, text: errText(e) })
@@ -173,6 +176,7 @@ function RequestCard({ r, mine, canDecide, accountOf, onEdit, onDone, onError }:
   const preparerOpen = mine && (r.status === 'draft' || r.status === 'returned')
   const canWithdraw = mine && (r.status === 'draft' || r.status === 'submitted' || r.status === 'returned')
   const canDecideNow = canDecide && r.status === 'submitted'
+  const minNote = r.kind === 'amend' || r.kind === 'reverse' ? 10 : 3
   const lines = Array.isArray(r.lines) ? r.lines : []
 
   return (
@@ -181,24 +185,27 @@ function RequestCard({ r, mine, canDecide, accountOf, onEdit, onDone, onError }:
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={badge.cls}>{badge.label}</span>
-            {r.kind === 'reverse' && <span className="s-badge-purple">Reversal</span>}
+            {r.kind === 'reverse' && <span className="s-badge-purple">Cancel entry</span>}
+            {r.kind === 'amend' && <span className="s-badge-purple">Edit entry</span>}
             {r.viaHeadOfficeId && <span className="s-badge-muted">Via head office</span>}
           </div>
-          <p className="text-sm font-semibold text-s-text">{r.description || (r.kind === 'reverse' ? 'Reverse a manual entry' : 'Journal request')}</p>
+          <p className="text-sm font-semibold text-s-text">{r.description || (r.kind === 'reverse' ? 'Cancel a manual entry' : r.kind === 'amend' ? 'Edit a manual entry' : 'Journal request')}</p>
           <p className="text-xs text-s-muted">
             {r.tenantName ?? 'Company'} · prepared by {r.preparedByName ?? '—'} on {dateLabel(r.preparedAt)}
             {r.entryDate && <> · dated {dateLabel(r.entryDate)}</>}
             {r.reference && <> · ref {r.reference}</>}
             {r.decidedByName && <> · decided by {r.decidedByName}</>}
           </p>
-          {r.kind === 'reverse' && r.reason && <p className="text-xs text-s-muted">Reason: {r.reason}</p>}
+          {(r.kind === 'reverse' || r.kind === 'amend') && r.reason && <p className="text-xs text-s-muted">Reason: {r.reason}</p>}
           {r.status === 'returned' && r.decisionNote && (
             <p className="text-xs" style={{ color: 'var(--erp-danger)' }}>Returned: “{r.decisionNote}”</p>
           )}
           {r.postedEntryId && <p className="text-xs text-s-muted">Posted entry {r.postedEntryId.slice(-8).toUpperCase()}</p>}
         </div>
-        {r.kind === 'post' && <p className="font-mono text-sm text-s-text">{fmtPkr(r.totalCents)}</p>}
+        {r.kind !== 'reverse' && <p className="font-mono text-sm text-s-text">{fmtPkr(r.totalCents)}</p>}
       </div>
+
+      {(r.kind === 'amend' || r.kind === 'reverse') && <JournalRequestDiff requestId={r.id} tenantId={r.tenantId} />}
 
       {lines.length > 0 && (
         <div>
@@ -229,7 +236,7 @@ function RequestCard({ r, mine, canDecide, accountOf, onEdit, onDone, onError }:
         <div className="flex flex-wrap items-end gap-2 pt-1">
           {!returning && (
             <Fragment>
-              {preparerOpen && r.kind === 'post' && (
+              {preparerOpen && r.kind !== 'reverse' && r.kind !== 'amend' && (
                 <Button variant="secondary" type="button"  onClick={() => onEdit(r)}>Edit</Button>
               )}
               {preparerOpen && (
@@ -246,8 +253,8 @@ function RequestCard({ r, mine, canDecide, accountOf, onEdit, onDone, onError }:
               {canDecideNow && (
                 <>
                   <Button type="button"  disabled={act.isPending}
-                    onClick={() => { if (window.confirm('Approve and post this entry to the books?')) act.mutate({ path: 'approve' }) }}>
-                    {act.isPending ? 'Working…' : 'Approve and post'}
+                    onClick={() => { if (window.confirm(r.kind === 'reverse' ? 'Reverse this journal entry now?' : r.kind === 'amend' ? 'Reverse the entry and post the corrected one now?' : 'Approve and post this entry to the books?')) act.mutate({ path: 'approve' }) }}>
+                    {act.isPending ? 'Working…' : r.kind === 'reverse' ? 'Approve cancel' : r.kind === 'amend' ? 'Approve edit' : 'Approve and post'}
                   </Button>
                   <Button variant="secondary" type="button"  onClick={() => setReturning(true)}>Return</Button>
                 </>
@@ -256,10 +263,10 @@ function RequestCard({ r, mine, canDecide, accountOf, onEdit, onDone, onError }:
           )}
           {returning && (
             <>
-              <Field label="Why is it returned? (at least 3 characters)">
+              <Field label={`Why is it returned? (at least ${minNote} characters)`}>
                 <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} className="py-1.5" />
               </Field>
-              <Button variant="secondary" type="button"  disabled={act.isPending || note.trim().length < 3}
+              <Button variant="secondary" type="button"  disabled={act.isPending || note.trim().length < minNote}
                 onClick={() => act.mutate({ path: 'reject', body: { note: note.trim() } })}>
                 Return to preparer
               </Button>

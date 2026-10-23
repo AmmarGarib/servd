@@ -45,6 +45,7 @@ export type ExceptionKind =
   | 'price_override'        // POS line items priced away from the menu
   | 'ghost_employee'        // payroll line for user with zero clock logs
   | 'manual_journal'        // manual JE entry posted (every one is reviewable)
+  | 'sub_account_backfill_mismatch' // a payroll / F&F entry whose payslip figures do not match its lines — left untagged (2026-10-23)
   | 'period_reopened'       // period lock removed
   | 'wage_change'           // wage rate edited
   | 'food_safety_temperature' // a temperature check outside its limit

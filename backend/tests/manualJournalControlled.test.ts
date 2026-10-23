@@ -164,7 +164,8 @@ describe('inter-company accounts and other companies', () => {
 })
 
 // Owner, 2026-10-16: "journal entries should not require CEO's approval to be
-// booked … Finance should have access to pass new entry / edit / cancel".
+// booked … Finance should have access to pass new entry / edit / cancel" — and
+// 2026-10-23: a money edit or cancel of an EXISTING entry needs the CEO's approval.
 describe('finance posts, edits and cancels manual journals directly', () => {
   const as = (who: string, method: 'POST', url: string, payload: unknown) =>
     app.inject({ method, url, payload: payload as never, headers: { authorization: `Bearer ${users[who]!.token}`, 'x-servd-active-tenant': A } })
@@ -180,30 +181,36 @@ describe('finance posts, edits and cancels manual journals directly', () => {
     { accountId: await acct(A, '1020'), type: 'credit' as const, amountCents: cents },
   ]
 
-  it('finance cancels (reverses) its entry once; company B finance gets 404', async () => {
+  // Owner, 2026-10-23: finance's cancel / money edit of an existing entry waits for the CEO (202, a journal request).
+  it('finance cancels: 202 for the CEO; once (CHANGE_PENDING); company B finance gets 404; the CEO approves', async () => {
     const e = (await journal('fin', await two(20_000))).json()
     expect((await as('finB', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Not ours' })).statusCode).toBe(404)
     const r = await as('fin', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Posted twice by mistake' })
-    expect(r.statusCode, r.body).toBe(201)
+    expect(r.statusCode, r.body).toBe(202)
     expect((await as('fin', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Again please' })).statusCode).toBe(409)
+    const ok = await as('ceo', 'POST', `/accounting/journal-requests/${r.json().request.id}/approve`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect((await as('ceo', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Again please' })).statusCode).toBe(409)
   })
 
-  it('finance edits an entry: the old one is reversed and the corrected one posted, in its company', async () => {
+  it('finance edits an entry: on the CEO\'s approval the old one is reversed and the corrected one posted, in its company', async () => {
     const e = (await journal('fin', await two(30_000))).json()
-    const r = await as('fin', 'POST', `/accounting/journal/${e.id}/amend`, {
+    const raised = await as('fin', 'POST', `/accounting/journal/${e.id}/amend`, {
       reason: 'Wrong amount', description: 'Correction (fixed)', entryDate: '2026-09-15T07:00:00.000Z', lines: await two(35_000),
     })
-    expect(r.statusCode, r.body).toBe(201)
-    expect(r.json().tenantId).toBe(A)
-    expect(r.json().replaces.id).toBe(e.id)
-    const reversal = await prisma.journalEntry.findUniqueOrThrow({ where: { id: r.json().replaces.reversalId }, include: { lines: true } })
+    expect(raised.statusCode, raised.body).toBe(202)
+    const ok = await as('ceo', 'POST', `/accounting/journal-requests/${raised.json().request.id}/approve`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    const corrected = await prisma.journalEntry.findUniqueOrThrow({ where: { id: ok.json().entryId } })
+    expect(corrected.tenantId).toBe(A)
+    const reversal = await prisma.journalEntry.findUniqueOrThrow({ where: { id: ok.json().reversalId }, include: { lines: true } })
     expect(reversal.lines.reduce((t, l) => t + Number(l.amountCents), 0)).toBe(60_000)
-    expect(await prisma.auditLog.count({ where: { entityId: r.json().replaces.reversalId, action: 'journal.reverse' } })).toBe(1)
-    expect(await prisma.auditLog.count({ where: { entityId: r.json().id, action: 'journal.manual' } })).toBe(1)
-    expect((await as('finB', 'POST', `/accounting/journal/${r.json().id}/amend`, { reason: 'Not ours', description: 'x', lines: await two(1) })).statusCode).toBe(404)
+    expect(await prisma.auditLog.count({ where: { entityId: reversal.id, action: 'journal.reverse' } })).toBe(1)
+    expect(await prisma.auditLog.count({ where: { entityId: corrected.id, action: 'journal.manual' } })).toBe(1)
+    expect((await as('finB', 'POST', `/accounting/journal/${corrected.id}/amend`, { reason: 'Not ours', description: 'x', lines: await two(1) })).statusCode).toBe(404)
   })
 
-  it('an edit whose corrected lines are refused books nothing (the reversal rolls back too)', async () => {
+  it('an edit whose corrected lines are refused is refused up front; nothing is booked or asked for', async () => {
     const e = (await journal('fin', await two(40_000))).json()
     const bad = await as('fin', 'POST', `/accounting/journal/${e.id}/amend`, {
       reason: 'Move to the register', description: 'x', lines: [
@@ -212,8 +219,15 @@ describe('finance posts, edits and cancels manual journals directly', () => {
       ],
     })
     expect(bad.statusCode).toBe(422)
-    // The original can still be reversed: the failed edit left no reversal behind.
-    expect((await as('fin', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Cancel it now' })).statusCode).toBe(201)
+    // The CEO's direct edit with the same lines is refused by the engine and rolls back the reversal too.
+    const ceoBad = await as('ceo', 'POST', `/accounting/journal/${e.id}/amend`, {
+      reason: 'Move to the register', description: 'x', lines: [
+        { accountId: await acct(A, '1510'), type: 'debit', amountCents: 40_000 },
+        { accountId: await acct(A, '1020'), type: 'credit', amountCents: 40_000 },
+      ],
+    })
+    expect(ceoBad.statusCode).toBe(422)
+    expect((await as('ceo', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Cancel it now' })).statusCode).toBe(201)
   })
 
   it('management, cashier and finance without the accounting module are refused', async () => {

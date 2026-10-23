@@ -56,24 +56,26 @@ export function ClassificationChip({ value }: { value: PaymentClassification | n
   return <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold" style={tone}>{CLASSIFICATION_LABEL[value]}</span>
 }
 
-export function PaymentClassificationFields({ value, onChange, compact = false }: {
+export function PaymentClassificationFields({ value, onChange, compact = false, optional = false }: {
   value: PaymentClassificationValue
   onChange: (v: PaymentClassificationValue) => void
   compact?: boolean
+  /** Editing a posted entry: blank keeps the original's classification, so no required star. */
+  optional?: boolean
 }) {
   const set = (patch: Partial<PaymentClassificationValue>) => onChange({ ...value, ...patch })
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label=""><span>Classification <span style={{ color: 'var(--erp-danger)' }}>*</span></span>
+        <Field label=""><span>Classification{!optional && <> <span style={{ color: 'var(--erp-danger)' }}>*</span></>}</span>
           <Select
-            required
+            required={!optional}
             value={value.classification}
             onChange={(e) => set({ classification: e.target.value as PaymentClassification | '' })}
             className="s-input"
             aria-label="Payment classification"
           >
-            <option value="" disabled>Choose…</option>
+            <option value="" disabled={!optional}>{optional ? 'Keep as it is' : 'Choose…'}</option>
             <option value="official">Official</option>
             <option value="unofficial">Unofficial</option>
             <option value="unclassified">Unclassified</option>

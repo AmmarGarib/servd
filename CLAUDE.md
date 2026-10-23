@@ -1212,6 +1212,65 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `REGISTER_OVERRIDE_CEO_ONLY`) and anything dated in closed or reopened books
   (`closedBooks.ts`). Journal requests (`/journal-requests`) stay for the
   other preparers (owner, management).
+  **Since 2026-10-23 a change of an EXISTING manual entry is split (owner:
+  "option to edit/cancel/void any back dated or current Journal manual entry
+  with final approval of CEO … CEO approve edits only when amount is edited,
+  not for editing details/particulars/Memo").** A TEXT edit (description, the
+  operator's reference, line memos, a line's sub-account tag) applies AT ONCE
+  in place — `PATCH /accounting/journal/:id/text`, or an `/amend` whose lines
+  keep the same account / side / amount / brand and the same day — audited
+  `journal.text_edit` (old → new); an entry dated in closed / reopened books
+  stays the CEO's (403 `CEO_ONLY_CLOSED_BOOKS`). A MONEY edit (amount,
+  account, brand, date, lines added / removed) or a cancel by finance answers
+  202 `{ pendingApproval, request }`: a journal request of kind `amend` /
+  `reverse` (the ONE store, `journalRequests.ts`; approval type
+  `journal_request`, those kinds section `ceo`, never delegable) that the CEO
+  approves through the same engine (`manualJournal.ts amendManualJournal` /
+  `reverseManualJournal`). One open change per entry (409 `CHANGE_PENDING`,
+  under the entry's change lock, which every reversal takes too); the entry's
+  fingerprint is stored at raise — approval refuses 409 `ENTRY_CHANGED` if it
+  moved or was reversed; reject needs a note ≥10 (422 `NOTE_TOO_SHORT`);
+  finance never approves. The CEO's own edit / cancel applies at once.
+  Nobody but the CEO may even RAISE a change on an entry dated in closed /
+  reopened books, or one that moves it into them (403 `CEO_ONLY_CLOSED_BOOKS`,
+  `raiseChangeRequest`). Sub-accounts are finance's domain (owner, 2026-10-23):
+  finance with `accounting` creates / renames / switches them off with no CEO
+  approval.
+- **The Journals tab (owner, 2026-10-23: "store all the Journal entries
+  (Payment journals and receiving journal separately) to find the entries in
+  no time").** `GET /accounting/journals?view=manual|payment|receipt|all`
+  (`journalsRegister.ts`; ledger readers, `resolveTenantScope`, no date cap,
+  cursor paged, search over voucher no. / reference / description / memos /
+  supplier, payee and customer names / amount, `?format=csv|xlsx|pdf`). Payment
+  = `paymentsRegister.ts`'s definition; RECEIPT is its mirror in the same file
+  (`moneyFlowWhereSql('in')`: a live entry netting money IN to 1010 / 1011 /
+  1020 / the company's bank codes; transfers between money accounts net out;
+  sales / till sources only with `includeSales=1`). Each row carries its
+  status (live / reversed / reversal / change_pending) and the caller's
+  `canTextEdit` / `canRequestChange`. The Accounts view is THE account
+  statement (`GET /accounting/ledger?view=statement`, now with `from` / `to`,
+  `brandId`, `limit` + `cursor`, the same per-line rights) — never a second
+  statement. Diff of a change: `GET /accounting/journal-requests/:id/diff`.
+- **Sub-accounts (owner, 2026-10-23: "option to create sub account in chart of
+  accounts, e.g in Wages … in name of employees … account statement with
+  balance of subgroups").** A SUB-LEDGER, never child accounts: entries keep
+  posting to the main account (trial balance, P&L, returns, close checks
+  unchanged — tested byte-identical). `SubAccount` (per account, per company;
+  kind `manual` | `employee`; switched off, never deleted) and
+  `JournalLineSubAccount` (a tag on a journal line, Σ per line ≤ the line, same
+  account and company; the line is never changed). `lib/subAccounts.ts` is the
+  ONE writer; a reversal mirrors its original's tags (`reverseJournalEntry`).
+  CHART_EDITORS manage them on `/setup/chart-of-accounts/:accountId/sub-accounts`;
+  a manual line may name `subAccountId`; re-tagging is text-level (at once,
+  audited `journal.sub_account_tag`, `PUT /accounting/journal/lines/:lineId/sub-accounts`).
+  Payroll and F&F tag each employee (`hr/ledger.ts tagPayrollRunTx` /
+  `tagSettlementTx`: wages 6030–6035, gratuity 6036, 2020 accrual and payment,
+  1350 recovery — statutory 2042–2044 untagged) in the posting's transaction;
+  history once per company at boot (`hr/payrollSubLedgerBackfill.ts`, marker
+  `subAccounts.payrollBackfilledAt:<tenantId>`, a mismatch is left untagged and
+  flagged `sub_account_backfill_mismatch`). The account statement returns
+  `subAccounts` (each opening / debits / credits / closing + Unassigned, tying
+  to the account) and takes `subAccountId` for one sub-account's statement.
 - **Trial balance presentation (owner, 2026-10-16):** ONE net balance per
   account — debits − credits in the Debit column when positive, the Credit
   column when negative, never both — and accounts at zero are not listed (a

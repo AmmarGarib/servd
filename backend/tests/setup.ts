@@ -152,6 +152,14 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // migration's SQL-only section (RLS stays out, as above).
   for (const statement of migrationSection('20261015120000_head_office',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Journals tab (2026-10-23): journal requests learn kind 'amend' — drop the head-office CHECKs, then the migration's.
+  await prisma.$executeRawUnsafe('ALTER TABLE "journal_requests" DROP CONSTRAINT IF EXISTS "journal_requests_kind_chk"')
+  await prisma.$executeRawUnsafe('ALTER TABLE "journal_requests" DROP CONSTRAINT IF EXISTS "journal_requests_reverse_chk"')
+  for (const statement of migrationSection('20261023100000_journal_change_requests',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // Sub-accounts (2026-10-23): the kind / employee and positive-amount CHECKs (RLS out).
+  for (const statement of migrationSection('20261023110000_sub_accounts',
+    '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
   // On-account resume: one live statement per client and period
   // (receivable_invoices_one_statement_per_period).
   for (const statement of migrationSection('20261015120100_on_account_resume',

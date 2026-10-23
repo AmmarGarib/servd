@@ -36,6 +36,7 @@ import { toCents } from '../../lib/money.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { loansFor, ALL_RUN_STATUSES } from './service.js'
 import { allocateLoanCents, settlementParts, settlementNet, pktToday } from './logic.js'
+import { tagEntryByEmployeeTx } from '../../lib/subAccounts.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -116,7 +117,7 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
   const lines = toLines(signed, `Payroll ${run.period}`)
   if (lines.length < 2) return null // nothing to post (an empty month)
   await assertLineAccounts(tx, run.tenantId, lines)
-  return postJournalEntry({
+  const res = await postJournalEntry({
     tenantId: run.tenantId,
     sourceType: 'hr.payroll.accrual',
     sourceId: run.id,
@@ -125,6 +126,92 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
     postedBy,
     lines,
   }, { tx })
+  // Per-employee wages sub-ledger (2026-10-23), in the posting's transaction.
+  await tagPayrollRunTx(tx, run.id)
+  return res
+}
+
+// ─── Per-employee sub-ledger (owner, 2026-10-23) ─────────────────────────────
+//
+// "in Wages there should be option to add subaccount in name of employees to
+// keep wages records in the name of employees". Every payroll and full & final
+// posting tags, per employee (lib/subAccounts.ts — never changing a line):
+//   accrual  the wages expense line(s) 6030 / 6031 / 6032 / 6035 (earned pay +
+//            employer EOBI / SESSI, as posted), 6036 gratuity (F&F), the
+//            2020 wages-payable credit (net pay) and the 1350 staff-loan
+//            recovery;
+//   payment  the 2020 wages-payable debit (net pay).
+// The withheld statutory lines (2042 / 2043 / 2044) stay untagged (paid over as
+// a whole). A line is tagged only when the employees' figures add up EXACTLY
+// to it; otherwise it is left alone and reported (`mismatched`).
+
+type Shares = Map<string, { type: 'debit' | 'credit'; byEmployee: Map<string, number> }>
+function share(m: Shares, code: string, type: 'debit' | 'credit', emp: string, cents: number) {
+  const cur = m.get(code) ?? { type, byEmployee: new Map<string, number>() }
+  cur.byEmployee.set(emp, (cur.byEmployee.get(emp) ?? 0) + cents)
+  m.set(code, cur)
+}
+
+/** What each employee is in a payroll run's accrual and payment, per account code. */
+export async function payrollRunShares(tx: Tx, runId: string): Promise<{ accrual: Shares; payment: Shares }> {
+  const slips = await tx.hrPayslip.findMany({ where: { runId }, include: { employee: { select: { departmentId: true } } } })
+  const deptIds = Array.from(new Set(slips.map((s) => s.employee.departmentId).filter(Boolean) as string[]))
+  const depts = deptIds.length ? await tx.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } }) : []
+  const deptName = new Map(depts.map((d) => [d.id, d.name]))
+  const accrual: Shares = new Map()
+  const payment: Shares = new Map()
+  for (const s of slips) {
+    const lines = s.lines as unknown as Line[]
+    const sum = (f: (l: Line) => boolean) => lines.filter(f).reduce((a, l) => a + l.amountCents, 0)
+    const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null)
+    const earned = sum((l) => l.kind === 'earning') - sum((l) => l.kind === 'deduction' && PAY_REDUCING.has(l.code))
+    share(accrual, wages, 'debit', s.employeeId, earned + sum((l) => l.kind === 'employer'))
+    share(accrual, ACCT.WAGES_PAYABLE, 'credit', s.employeeId, s.netCents)
+    share(accrual, STAFF_LOANS, 'credit', s.employeeId, sum((l) => l.code === 'loan'))
+    share(payment, ACCT.WAGES_PAYABLE, 'debit', s.employeeId, s.netCents)
+  }
+  return { accrual, payment }
+}
+
+/** Tag a payroll run's accrual and payment entries (and mirror onto their reversals). Idempotent. */
+export async function tagPayrollRunTx(tx: Tx, runId: string): Promise<{ mismatched: string[] }> {
+  const run = await tx.hrPayrollRun.findUnique({ where: { id: runId }, select: { tenantId: true } })
+  if (!run) return { mismatched: [] }
+  const { accrual, payment } = await payrollRunShares(tx, runId)
+  return tagSourceEntriesTx(tx, run.tenantId, [[`hr.payroll.accrual:${runId}`, accrual], [`hr.payroll.payment:${runId}`, payment]])
+}
+
+const SETTLEMENT_TAG_CODES: readonly string[] = [ACCT.WAGES_KITCHEN, ACCT.WAGES_FOH, ACCT.WAGES_MANAGEMENT, ACCT.WAGES_RIDERS, ACCT.GRATUITY, ACCT.WAGES_PAYABLE, STAFF_LOANS]
+
+/** A full & final names one employee: each of its wage / gratuity / 2020 / 1350 lines is that employee's. Idempotent. */
+export async function tagSettlementTx(tx: Tx, recId: string): Promise<{ mismatched: string[] }> {
+  const rec = await tx.hrRecord.findUnique({ where: { id: recId }, select: { tenantId: true, employeeId: true } })
+  if (!rec?.employeeId) return { mismatched: [] }
+  const entries: Array<[string, Shares]> = []
+  for (const ref of [`${FNF_ACCRUAL}:${recId}`, `${FNF_PAYMENT}:${recId}`]) {
+    const e = await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: ref }, select: { lines: { select: { type: true, amountCents: true, account: { select: { code: true } } } } } })
+    if (!e) continue
+    const m: Shares = new Map()
+    for (const l of e.lines) if (SETTLEMENT_TAG_CODES.includes(l.account.code)) share(m, l.account.code, l.type, rec.employeeId, toCents(l.amountCents))
+    entries.push([ref, m])
+  }
+  return tagSourceEntriesTx(tx, rec.tenantId, entries)
+}
+
+async function tagSourceEntriesTx(tx: Tx, tenantId: string, entries: Array<[string, Shares]>): Promise<{ mismatched: string[] }> {
+  const { mirrorAllocationsTx } = await import('../../lib/subAccounts.js')
+  const mismatched: string[] = []
+  for (const [reference, shares] of entries) {
+    const e = await tx.journalEntry.findFirst({ where: { tenantId, reference }, select: { id: true } })
+    if (!e) continue
+    const r = await tagEntryByEmployeeTx(tx, tenantId, e.id, shares)
+    mismatched.push(...r.mismatched.map((c) => `${reference}#${c}`))
+    // A reversal already on the books (a reopened run, a cancelled settlement) carries the same tags.
+    const at = reference.indexOf(':')
+    const rev = await tx.journalEntry.findFirst({ where: { tenantId, reference: `${reference.slice(0, at)}.reversal:${reference.slice(at + 1)}` }, select: { id: true } })
+    if (rev) await mirrorAllocationsTx(tx, e.id, rev.id)
+  }
+  return { mismatched }
 }
 
 /** What an accrual entry credited to Wages Payable (2020), net of any debit
@@ -224,6 +311,8 @@ export async function postPayrollPayment(runId: string, paidBy: string, from: Pa
       entryId = res.entryId
       // Internal payment classification (2026-10-20): a label on the entry, same transaction.
       await classifyPaymentTx(tx, { journalEntryId: entryId, input: classification, setById: paidBy })
+      // Per-employee wages sub-ledger (2026-10-23).
+      await tagPayrollRunTx(tx, run.id)
     }
     // What was paid from where, for the payroll screen.
     const payment = {
@@ -412,6 +501,7 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
     postedBy,
     lines,
   }, { tx })
+  if (res) await tagSettlementTx(tx, rec.id)
   const cur = await tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id }, select: { data: true } })
   await tx.hrRecord.update({
     where: { id: rec.id },
@@ -462,6 +552,7 @@ export async function postFinalSettlementPayment(
       }, { tx })
       entryId = res.entryId
       await classifyPaymentTx(tx, { journalEntryId: entryId, input: opts.classification ?? null, setById: paidBy })
+      await tagSettlementTx(tx, rec.id)
     }
     const d = (rec.data ?? {}) as Record<string, unknown>
     return tx.hrRecord.update({

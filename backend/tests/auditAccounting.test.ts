@@ -211,7 +211,8 @@ describe('BOOKS-03 — manual journal entries can be reversed', () => {
       { code: '3010', type: 'credit', amountCents: 2_000 },
     ])).statusCode).toBe(201)
     expect((await call('owner', 'POST', `/accounting/journal/${id}/reverse`, { reason: 'Owner tries' })).statusCode).toBe(403)
-    expect((await call('fin', 'POST', `/accounting/journal/${id}/reverse`, { reason: 'Finance reverses' })).statusCode).toBe(201)
+    // Since 2026-10-23 finance's cancel waits for the CEO (202, a journal request of kind reverse).
+    expect((await call('fin', 'POST', `/accounting/journal/${id}/reverse`, { reason: 'Finance reverses' })).statusCode).toBe(202)
   })
 
   it('needs a reason, and only reverses manual entries (not a source document\'s posting, not a reversal)', async () => {

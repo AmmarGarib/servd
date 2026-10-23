@@ -26,6 +26,7 @@ import { Modal, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { RecordDetail } from '../../../components/hr/RecordDetail'
 import { PENDING_LAYOUTS_KEY } from '../../../components/storefront/ApprovalsPanel'
 import { ApprovalActionDialog } from '../../../components/approvals/ApprovalActionDialog'
+import { JournalRequestDiff } from '../../accounting/journal/JournalRequestDiff'
 import {
   APPROVALS_INBOX_KEY, APPROVALS_ROOT, useHeadOffices,
   type ApprovalAction as Action, type ApprovalHandedOverTo, type ApprovalSectionId, type ApprovalSectionSummary, type ApprovalTypeSummary,
@@ -451,6 +452,11 @@ function ItemCard({ item, typeLabel, viaName, showCompany, onDone, onDecided, on
             </div>
           ))}
         </dl>
+      )}
+
+      {/* An edit / cancel of a posted journal: show what changes (loads on open). */}
+      {item.type === 'journal_request' && item.facts.some((f) => f.label === 'Kind' && (f.value === 'Reversal' || f.value.startsWith('Edit'))) && (
+        <div className="mt-2"><JournalRequestDiff requestId={item.id} tenantId={item.tenantId} /></div>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">

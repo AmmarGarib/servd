@@ -243,7 +243,7 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       return { ref: 'Stock difference' }
     case 'journal_request': {
       const j = await db.journalRequest.findUnique({ where: { id }, select: { kind: true, description: true, totalCents: true } })
-      return j && { ref: `${j.kind === 'reverse' ? 'Journal reversal' : 'Journal request'}: ${j.description}`, amountCents: j.kind === 'reverse' ? null : Number(j.totalCents) }
+      return j && { ref: `${j.kind === 'reverse' ? 'Journal reversal' : j.kind === 'amend' ? 'Journal edit' : 'Journal request'}: ${j.description}`, amountCents: j.kind === 'reverse' ? null : Number(j.totalCents) }
     }
     case 'ho_recharge': {
       const r = await db.rechargeRun.findUnique({ where: { id }, select: { period: true, kind: true } })

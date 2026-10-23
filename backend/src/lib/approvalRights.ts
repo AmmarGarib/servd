@@ -78,7 +78,7 @@ export const APPROVAL_TYPES = [
   'cash_request_finance',  // a cash voucher waiting for finance's approval (2026-10-15 flow)
   'stock_difference',      // a waste / count difference waiting in 1290 for the CEO (H20)
   // Head office (D1/D3, 2026-10-15).
-  'journal_request',       // a manual journal finance prepared (kind post / reverse)
+  'journal_request',       // a manual journal finance prepared (kind post), or a cancel / edit of an existing one (reverse / amend — CEO only)
   'ho_recharge',           // a head office's monthly recharge run (or true-up)
   'connector_change',      // an IT change to a company's POS connector settings
   // Shift corrections (owner, 2026-10-21).
@@ -227,7 +227,7 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
   journal_request: {
     label: 'Journal requests', section: 'finance', queueModule: 'accounting', roles: ADMIN_ONLY,
     delegable: true, mustHoldModule: 'accounting', ownership: 'company', itemCeoOnly: true,
-    delegableNote: 'Kind post only; reversals stay with the CEO',
+    delegableNote: 'Kind post only; cancels (reverse) and edits (amend) of existing entries stay with the CEO',
   },
   ho_recharge: {
     label: 'Head-office recharges', section: 'finance', queueModule: 'accounting', roles: ADMIN_ONLY,
@@ -294,7 +294,8 @@ export function sectionOf(type: string, item?: { role?: string | null; tenantId?
   const r = rightOf(type)
   if (type === 'staff_login' && item?.role && !usesOtpLogin(item.role)) return 'ceo'
   if (type === 'storefront_publish' && item && item.tenantId === null) return 'ceo'
-  if (type === 'journal_request' && item?.kind === 'reverse') return 'ceo'
+  // A cancel (reverse) or edit (amend) of an existing manual entry is the CEO's alone (owner, 2026-10-23).
+  if (type === 'journal_request' && (item?.kind === 'reverse' || item?.kind === 'amend')) return 'ceo'
   if (type === 'recipe' && item && item.tenantId === null) return 'ceo'
   return r.section
 }
@@ -1051,7 +1052,7 @@ export async function approvalSubject(type: string, id: string, db: Db = service
 export function approvalInputOf(type: ApprovalType, id: string, s: ApprovalSubject, extra: Partial<CanApproveInput> = {}): CanApproveInput {
   const ceoOnlyByItem =
     (type === 'staff_login' && !usesOtpLogin(s.role ?? null))
-    || (type === 'journal_request' && s.kind === 'reverse')
+    || (type === 'journal_request' && (s.kind === 'reverse' || s.kind === 'amend'))
     || (type === 'intercompany_transfer' && !s.headOfficePair)
     || ((type === 'recipe' || type === 'storefront_publish') && s.companyIds.length === 0)
   return {

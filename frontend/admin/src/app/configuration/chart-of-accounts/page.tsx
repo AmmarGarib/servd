@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 import { NavIcon } from '../../../components/ui/NavIcon'
+import { SubAccounts } from './SubAccounts'
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
 interface Account {
@@ -28,6 +29,7 @@ export default function ChartOfAccountsPage() {
   const qc = useQueryClient()
   const [editing, setEditing] = useState<Account | null>(null)
   const [adding, setAdding] = useState(false)
+  const [openSubs, setOpenSubs] = useState<string | null>(null)
   const { data = [] } = useQuery<Account[]>({ queryKey: ['chart-of-accounts'], queryFn: () => api.get('/setup/chart-of-accounts') })
 
   const grouped = data.reduce<Record<AccountType, Account[]>>((acc, a) => {
@@ -58,7 +60,8 @@ export default function ChartOfAccountsPage() {
             <div className="rounded-2xl overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               {grouped[t].length === 0 && <p className="p-5 text-xs text-white/35">No {t} accounts.</p>}
               {grouped[t].map((a) => (
-                <div key={a.id} className="px-4 py-3 flex items-center justify-between gap-3 border-b border-white/[0.04] last:border-b-0 hover:bg-white/[0.02]">
+                <div key={a.id} className="border-b border-white/[0.04] last:border-b-0">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-white/[0.02]">
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="font-mono text-xs text-white/45 shrink-0 w-12">{a.code}</span>
                     <div className="min-w-0">
@@ -67,7 +70,14 @@ export default function ChartOfAccountsPage() {
                     </div>
                     {!a.isActive && <span className="text-[10px] text-white/30">PAUSED</span>}
                   </div>
-                  <button onClick={() => setEditing(a)} className="text-xs text-white/55 hover:text-white shrink-0">Edit</button>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button onClick={() => setOpenSubs(openSubs === a.id ? null : a.id)} aria-expanded={openSubs === a.id}
+                      className="text-xs text-white/55 hover:text-white">Sub-accounts {openSubs === a.id ? '▴' : '▾'}</button>
+                    <Link href={`/accounting/journal?tab=accounts&accountId=${a.id}`} className="text-xs text-white/55 hover:text-white">Entries</Link>
+                    <button onClick={() => setEditing(a)} className="text-xs text-white/55 hover:text-white">Edit</button>
+                  </div>
+                </div>
+                {openSubs === a.id && <SubAccounts accountId={a.id} />}
                 </div>
               ))}
             </div>
