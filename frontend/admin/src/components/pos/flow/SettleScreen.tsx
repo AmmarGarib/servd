@@ -168,7 +168,7 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
     : null
 
   // The keypad starts at what is due; a new tender or a changed bill resets it.
-  useEffect(() => { setAmount(due > 0 ? pkr(due) : ''); setFresh(true) }, [due, tile, way])
+  useEffect(() => { setAmount(due > 0 ? pkr(due) : ''); setFresh(true) }, [due, tile, way, keenuMethod])
 
   // ── Keenu: follow a pending push until Keenu answers ──────────────────────
   useEffect(() => {
@@ -227,11 +227,13 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
   function addQuick(n: number) { setAmount((cur) => pkr(toCents(fresh ? '0' : cur) + n * 100)); setFresh(false) }
 
   const tendered = toCents(amount)
-  const excess = tile === 'cash' ? Math.max(0, tendered - due) : 0
+  // Cash in servd, or cash pushed to Keenu: what is handed over above the bill is change (or kept as a tip).
+  const cashLike = way === 'keenu' ? keenuMethod === 'cash' : tile === 'cash'
+  const excess = cashLike ? Math.max(0, tendered - due) : 0
 
   // Tip tile on cash: hand over due + tip and keep the excess as a tip (TILL_FLOW §6a excessAsTip).
   useEffect(() => {
-    if (tile === 'cash' && tipCents > 0 && due > 0) { setAmount(pkr(due + tipCents)); setFresh(true); setKeepAsTip(true) }
+    if ((tile === 'cash' || tile === 'card' || tile === 'raast') && tipCents > 0 && due > 0) { setAmount(pkr(due + tipCents)); setFresh(true); if (tile === 'cash') setKeepAsTip(true) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipCents, tile])
 
@@ -275,14 +277,15 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
     if (busy || !shiftId || !shown || due <= 0) return
     setBusy(true); setError(null)
     try {
-      const sig = `${order.id}|card|${due}|${tipCents}|${gatewayRef}`
+      const tip = Math.max(0, toCents(amount) - due)
+      const sig = `${order.id}|card|${due}|${tip}|${gatewayRef}`
       if (paySub.current?.sig !== sig) paySub.current = { sig, key: newIdempotencyKey() }
       const r = await payServd({
-        orderId: order.id, shiftId, idempotencyKey: paySub.current.key, method: 'card', amountCents: due + tipCents, gatewayRef: gatewayRef.trim(),
-        ...(tipCents > 0 && { tipCents }),
+        orderId: order.id, shiftId, idempotencyKey: paySub.current.key, method: 'card', amountCents: due + tip, gatewayRef: gatewayRef.trim(),
+        ...(tip > 0 && { tipCents: tip }),
         ...(terminalOn && manualOpen && { manualReason: 'terminal_offline' as const }),
       })
-      finish({ way: 'servd', changeCents: 0, keptTipCents: tipCents, fiscal: r.fiscal, completed: r.orderCompleted })
+      finish({ way: 'servd', changeCents: 0, keptTipCents: tip, fiscal: r.fiscal, completed: r.orderCompleted })
       if (printReceipt && r.orderCompleted) void printFinal()
     } catch (e) { await onPayError(e) } finally { setBusy(false) }
   }
@@ -298,17 +301,17 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
   // ── Push to Keenu ─────────────────────────────────────────────────────────
   function keenuAnswer(a: KeenuAnswer) {
     if (a.state === 'settled') {
-      setPush({ pushId: a.pushId, state: 'settled', method: keenuMethod, amountCents: due, tipCents, at: new Date().toISOString(), approvalRef: a.approvalRef ?? null, reason: null })
-      finish({ way: 'keenu', changeCents: 0, keptTipCents: tipCents, fiscal: a.fiscal, completed: a.orderCompleted, keenuRef: a.approvalRef ?? a.providerRef ?? null })
+      setPush({ pushId: a.pushId, state: 'settled', method: keenuMethod, amountCents: due, tipCents: keenuTip, at: new Date().toISOString(), approvalRef: a.approvalRef ?? null, reason: null })
+      finish({ way: 'keenu', changeCents: keenuMethod === 'cash' && !keepAsTip ? excess : 0, keptTipCents: keenuTip, fiscal: a.fiscal, completed: a.orderCompleted, keenuRef: a.approvalRef ?? a.providerRef ?? null })
     } else {
-      setPush((p) => ({ pushId: a.pushId, state: 'pending', method: p?.method ?? keenuMethod, amountCents: p?.amountCents ?? due, tipCents: p?.tipCents ?? tipCents, at: p?.at ?? new Date().toISOString(), approvalRef: null, reason: null }))
+      setPush((p) => ({ pushId: a.pushId, state: 'pending', method: p?.method ?? keenuMethod, amountCents: p?.amountCents ?? due, tipCents: p?.tipCents ?? keenuTip, at: p?.at ?? new Date().toISOString(), approvalRef: null, reason: null }))
     }
   }
   async function doPush() {
     if (busy || !shiftId) return
     setBusy(true); setError(null)
     try {
-      keenuAnswer(await pushToKeenu(order.id, { shiftId, method: keenuMethod, ...(tipCents > 0 && { tipCents }) }))
+      keenuAnswer(await pushToKeenu(order.id, { shiftId, method: keenuMethod, ...(keenuTip > 0 && { tipCents: keenuTip }) }))
     } catch (e) {
       if (e instanceof ApiError && e.code === 'KEENU_PUSH_STALE') void reloadBill()
       setError(flowErrorMessage(e, 'Could not send the bill to Keenu'))
@@ -322,6 +325,60 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
       if (g.push) setPush(g.push)
     } catch (e) { if (!quiet) setError(flowErrorMessage(e, 'Could not ask Keenu')) } finally { if (!quiet) setBusy(false) }
   }
+
+  // ── The amount pad: the same screen for Cash, Bank (Raast) and Card (owner, 2026-10-23: "make it across
+  // other methods also"). Card and Raast cannot give change: what is keyed above the bill is the tip on the
+  // charge; less than the bill → Split. Locked while a charge or Raast request is running.
+  const digital = way === 'keenu' ? keenuMethod === 'card' : tile === 'card' || tile === 'raast'
+  const chargeTip = digital ? Math.max(0, tendered - due) : tipCents
+  const shortOfBill = digital && shown != null && due > 0 && tendered < due
+  const padLocked = holding || busy || keenuPending
+  // Push to Keenu: card → the amount above the bill is the tip; cash → the extra is change unless kept as a tip.
+  const keenuTip = keenuMethod === 'card' ? Math.max(0, tendered - due) : excess > 0 && keepAsTip ? excess : 0
+  const keenuShort = shown != null && due > 0 && tendered < due
+  const extraCash = (
+    <>
+                      {excess > 0 && (
+                        <div className="mt-3 rounded-xl border border-kds-amber p-3" role="group" aria-label="What to do with the extra cash">
+                          <p className="mb-2 text-sm font-semibold text-kds-amber">{fmtPkr(excess)} more than the bill</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button type="button" aria-pressed={!keepAsTip} onClick={() => setKeepAsTip(false)} className={`min-h-11 rounded-lg border font-semibold ${!keepAsTip ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'}`}>Give change</button>
+                            <button type="button" aria-pressed={keepAsTip} onClick={() => setKeepAsTip(true)} className={`min-h-11 rounded-lg border font-semibold ${keepAsTip ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'}`}>Keep as tip</button>
+                          </div>
+                        </div>
+                      )}
+    </>
+  )
+  const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '00', '0', '.']
+  const pad = (
+    <>
+                      <div className="mb-2 grid grid-cols-2 text-center">
+                        <div><p className="text-xs uppercase tracking-wider text-kds-subtext">Due</p><p className="text-2xl font-black text-kds-text">{shown ? fmtPkr(due) : '…'}</p></div>
+                        {digital
+                          ? <div><p className="text-xs uppercase tracking-wider text-kds-subtext">Tip</p><p className="text-2xl font-black text-kds-amber">{fmtPkr(chargeTip)}</p></div>
+                          : <div><p className="text-xs uppercase tracking-wider text-kds-subtext">Change</p><p className="text-2xl font-black text-kds-amber">{fmtPkr(excess > 0 && !keepAsTip ? excess : 0)}</p></div>}
+                      </div>
+                      {unavailable && <p className="mb-2 text-sm text-kds-amber">{unavailable}</p>}
+                      {bill.isError && <p className="mb-2 text-sm text-kds-red">{flowErrorMessage(bill.error, 'Could not get the bill from the server')}</p>}
+                      <div className="mb-2 flex items-stretch gap-2">
+                        <div aria-live="polite" className="flex min-h-12 flex-1 items-center rounded-lg border border-kds-border bg-kds-bg px-3 text-2xl font-bold text-kds-green"><span className="mr-2 text-sm text-kds-subtext">Rs</span>{amount || '0'}</div>
+                        <button type="button" onClick={() => key('C')} disabled={padLocked} className="min-h-12 w-14 rounded-lg border border-kds-border font-bold text-kds-text active:scale-95">C</button>
+                        <button type="button" onClick={() => key('back')} disabled={padLocked} aria-label="Backspace" className="flex min-h-12 w-14 items-center justify-center rounded-lg border border-kds-border text-kds-text active:scale-95"><Delete size={20} aria-hidden="true" /></button>
+                      </div>
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
+                        <div className="grid grid-cols-3 gap-2">
+                          {keys.map((k) => <button key={k} type="button" onClick={() => key(k)} disabled={padLocked} className="min-h-14 rounded-lg border border-kds-border text-xl font-bold text-kds-text active:scale-95 active:bg-kds-border">{k}</button>)}
+                        </div>
+                        <div className="grid w-20 grid-rows-3 gap-2">
+                          {[20, 10, 5].map((n) => <button key={n} type="button" onClick={() => addQuick(n)} disabled={padLocked} className="rounded-lg border border-kds-border text-base font-bold text-kds-green active:scale-95">+{n}</button>)}
+                        </div>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <button type="button" disabled={due <= 0 || padLocked} onClick={() => { setAmount(pkr(due)); setFresh(true) }} className={ghostBtn}>{shown ? pkr(due) : '—'} <span className="text-xs text-kds-subtext">exact</span></button>
+                        <button type="button" disabled={due <= 0 || padLocked} onClick={() => { setAmount(pkr(Math.ceil(due / 10000) * 10000)); setFresh(true) }} className={ghostBtn}>{shown ? pkr(Math.ceil(due / 10000) * 10000) : '—'} <span className="text-xs text-kds-subtext">round up</span></button>
+                      </div>
+    </>
+  )
 
   // ── Printing ──────────────────────────────────────────────────────────────
   function printFinal() {
@@ -351,7 +408,6 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
     { id: 'split', label: 'Split', hint: 'Mix tenders' },
   ]
   const tipsHere = (tile === 'card' || tile === 'raast') && way === 'servd'
-  const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '00', '0', '.']
 
   return (
     <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-end justify-center bg-black/80 sm:items-center" role="presentation">
@@ -442,11 +498,11 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                         className={`min-h-12 rounded-lg border font-semibold disabled:opacity-40 ${keenuMethod === m ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'}`}>{m === 'cash' ? 'Cash' : 'Card'}</button>
                     ))}
                   </div>
+                  {/* The same amount pad as Close in servd (owner, 2026-10-23); the bill under it on every tab. */}
+                  {pad}
                   <BillRows q={shown} unavailable={unavailable} loading={bill.isLoading} error={bill.isError ? flowErrorMessage(bill.error, 'Could not get the bill from the server') : null} due />
-                  <div>
-                    <label htmlFor="kp-tip" className={labelCls}>Tip (optional, PKR)</label>
-                    <NumberField id="kp-tip" decimals={2} min={0} value={tipPkr === '' ? null : Number(tipPkr)} onValueChange={(v) => setTipPkr(v == null ? '' : String(v))} disabled={keenuPending} className={inputCls} placeholder="0" />
-                  </div>
+                  {extraCash}
+                  {keenuShort && !keenuPending && <p className="text-sm font-semibold text-kds-amber">Less than the {fmtPkr(due)} due — key the full amount.</p>}
                   {push && (
                     <div role="status" className={`rounded-xl border px-4 py-3 text-sm ${push.state === 'pending' ? 'border-kds-amber text-kds-amber' : push.state === 'settled' ? 'border-kds-green text-kds-green' : 'border-kds-red text-kds-red'}`}>
                       <p className="font-bold">{push.state === 'pending' ? 'Sent to Keenu — waiting for it to settle…' : push.state === 'settled' ? 'Keenu settled this bill.' : push.state === 'declined' ? 'Keenu declined this bill.' : push.state === 'failed' ? 'Keenu could not take this bill.' : 'Needs attention — Keenu did not give a clear answer.'}</p>
@@ -458,8 +514,8 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                   {keenuPending ? (
                     <button type="button" onClick={() => void checkNow()} disabled={busy} className={`${ghostBtn} w-full`}>{busy ? 'Asking Keenu…' : 'Check now'}</button>
                   ) : (
-                    <button type="button" onClick={() => void doPush()} disabled={busy || !shown || due <= 0 || !shiftId} className={`${primaryBtn} w-full py-4 text-lg`}>
-                      {busy ? 'Sending…' : push && (push.state === 'declined' || push.state === 'failed') ? `Push to Keenu again — ${fmtPkrWhole(due)}` : `Push to Keenu${shown ? ` — ${fmtPkrWhole(due)}` : ''}`}
+                    <button type="button" onClick={() => void doPush()} disabled={busy || !shown || due <= 0 || keenuShort || !shiftId} className={`${primaryBtn} w-full py-4 text-lg`}>
+                      {busy ? 'Sending…' : push && (push.state === 'declined' || push.state === 'failed') ? `Push to Keenu again — ${fmtPkrWhole(due + keenuTip)}` : `Push to Keenu${shown ? ` — ${fmtPkrWhole(due + keenuTip)}` : ''}`}
                     </button>
                   )}
                   {!shiftId && <p className="text-xs font-semibold text-kds-amber">Open a shift before taking payment.</p>}
@@ -498,20 +554,24 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                     !onAccountWhy && shiftId ? <OnAccountPanel orderId={order.id} shiftId={shiftId} onBillChanged={() => void reloadBill()} onCharged={(r) => finish({ way: 'servd', changeCents: 0, keptTipCents: 0, fiscal: r.fiscal, completed: true, onAccount: r.client })} /> : null
                   ) : tile === 'raast' ? (
                     <>
+                      {pad}
                       <BillRows q={shown} unavailable={unavailable} loading={bill.isLoading} error={bill.isError ? flowErrorMessage(bill.error) : null} due />
-                      {resumeSettled && shiftId && shown && (due > 0 || resumeRaast) && (
-                        <RaastPanel orderId={order.id} conceptId={order.conceptId} brandName={brand?.name} shiftId={shiftId} dueCents={due} tipCents={tipCents}
+                      {shortOfBill && !resumeRaast && <p className="mb-2 text-sm font-semibold text-kds-amber">Less than the {fmtPkr(due)} due. For part bank, part cash use Split.</p>}
+                      {resumeSettled && shiftId && shown && (due > 0 || resumeRaast) && (!shortOfBill || resumeRaast) && (
+                        <RaastPanel orderId={order.id} conceptId={order.conceptId} brandName={brand?.name} shiftId={shiftId} dueCents={due} tipCents={chargeTip}
                           initialIntent={resumeRaast} onIntentChange={setRaastIntent}
-                          onPaid={(r) => finish({ way: 'servd', changeCents: 0, keptTipCents: tipCents, fiscal: r.fiscal, completed: true, raast: r.raast })}
+                          onPaid={(r) => finish({ way: 'servd', changeCents: 0, keptTipCents: chargeTip, fiscal: r.fiscal, completed: true, raast: r.raast })}
                           onBillChanged={() => void reloadBill()} />
                       )}
                     </>
                   ) : tile === 'card' ? (
                     <>
+                      {pad}
                       <BillRows q={shown} unavailable={unavailable} loading={bill.isLoading} error={bill.isError ? flowErrorMessage(bill.error) : null} due />
                       {!configSettled && <p className="text-sm text-kds-subtext">Checking the card machine…</p>}
-                      {resumeSettled && useTerminal && shiftId && shown && due > 0 && (
-                        <TerminalCharge orderId={order.id} shiftId={shiftId} config={terminal} dueCents={due} tipCents={tipCents} initialCharge={resumeCharge}
+                      {shortOfBill && !resumeCharge && <p className="mb-2 text-sm font-semibold text-kds-amber">Less than the {fmtPkr(due)} due. For part card, part cash use Split.</p>}
+                      {resumeSettled && useTerminal && shiftId && shown && due > 0 && (!shortOfBill || resumeCharge) && (
+                        <TerminalCharge orderId={order.id} shiftId={shiftId} config={terminal} dueCents={due} tipCents={chargeTip} initialCharge={resumeCharge}
                           onBlockingChange={setChargeBlocking} onChargeChange={setRunningCharge}
                           onRecorded={(c) => { setChargeBlocking(false); finish({ way: 'servd', changeCents: 0, keptTipCents: c.tipCents, fiscal: c.fiscal, completed: true, card: { brand: c.cardBrand, last4: c.cardLast4, approvalRef: c.approvalRef } }) }}
                           onBillChanged={() => void reloadBill()} onMachineDown={() => setMachineDown(true)} />
@@ -521,7 +581,7 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                           {terminalOn && <p className={`text-xs font-semibold ${machineLooksDown ? 'text-kds-amber' : 'text-kds-subtext'}`}>{machineLooksDown ? 'Card machine offline. Key the card on the machine, then enter its reference.' : 'Enter the reference from the machine slip.'}</p>}
                           <div><label htmlFor="st-ref" className={labelCls}>Terminal reference</label><input id="st-ref" value={gatewayRef} onChange={(e) => setGatewayRef(e.target.value)} className={inputCls} placeholder="Reference printed by the card machine" autoFocus /></div>
                           <ErrorLine text={error} />
-                          <button type="submit" disabled={busy || !shown || due <= 0 || !gatewayRef.trim()} className={`${primaryBtn} w-full py-4 text-lg`}>{busy ? 'Processing…' : `Pay ${fmtPkrWhole(due + tipCents)}`}</button>
+                          <button type="submit" disabled={busy || !shown || due <= 0 || shortOfBill || !gatewayRef.trim()} className={`${primaryBtn} w-full py-4 text-lg`}>{busy ? 'Processing…' : `Pay ${fmtPkrWhole(due + chargeTip)}`}</button>
                         </form>
                       )}
                       {resumeSettled && useTerminal && (terminal?.allowManualRef) && !chargeBlocking && (
@@ -532,38 +592,9 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                   ) : (
                     /* Cash: due / change, the amount box, the keypad */
                     <div>
-                      <div className="mb-2 grid grid-cols-2 text-center">
-                        <div><p className="text-xs uppercase tracking-wider text-kds-subtext">Due</p><p className="text-2xl font-black text-kds-text">{shown ? fmtPkr(due) : '…'}</p></div>
-                        <div><p className="text-xs uppercase tracking-wider text-kds-subtext">Change</p><p className="text-2xl font-black text-kds-amber">{fmtPkr(excess > 0 && !keepAsTip ? excess : 0)}</p></div>
-                      </div>
-                      {unavailable && <p className="mb-2 text-sm text-kds-amber">{unavailable}</p>}
-                      {bill.isError && <p className="mb-2 text-sm text-kds-red">{flowErrorMessage(bill.error, 'Could not get the bill from the server')}</p>}
-                      <div className="mb-2 flex items-stretch gap-2">
-                        <div aria-live="polite" className="flex min-h-12 flex-1 items-center rounded-lg border border-kds-border bg-kds-bg px-3 text-2xl font-bold text-kds-green"><span className="mr-2 text-sm text-kds-subtext">Rs</span>{amount || '0'}</div>
-                        <button type="button" onClick={() => key('C')} className="min-h-12 w-14 rounded-lg border border-kds-border font-bold text-kds-text active:scale-95">C</button>
-                        <button type="button" onClick={() => key('back')} aria-label="Backspace" className="flex min-h-12 w-14 items-center justify-center rounded-lg border border-kds-border text-kds-text active:scale-95"><Delete size={20} aria-hidden="true" /></button>
-                      </div>
-                      <div className="grid grid-cols-[1fr_auto] gap-2">
-                        <div className="grid grid-cols-3 gap-2">
-                          {keys.map((k) => <button key={k} type="button" onClick={() => key(k)} className="min-h-14 rounded-lg border border-kds-border text-xl font-bold text-kds-text active:scale-95 active:bg-kds-border">{k}</button>)}
-                        </div>
-                        <div className="grid w-20 grid-rows-3 gap-2">
-                          {[20, 10, 5].map((n) => <button key={n} type="button" onClick={() => addQuick(n)} className="rounded-lg border border-kds-border text-base font-bold text-kds-green active:scale-95">+{n}</button>)}
-                        </div>
-                      </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        <button type="button" disabled={due <= 0} onClick={() => { setAmount(pkr(due)); setFresh(true) }} className={ghostBtn}>{shown ? pkr(due) : '—'} <span className="text-xs text-kds-subtext">exact</span></button>
-                        <button type="button" disabled={due <= 0} onClick={() => { setAmount(pkr(Math.ceil(due / 10000) * 10000)); setFresh(true) }} className={ghostBtn}>{shown ? pkr(Math.ceil(due / 10000) * 10000) : '—'} <span className="text-xs text-kds-subtext">round up</span></button>
-                      </div>
-                      {excess > 0 && (
-                        <div className="mt-3 rounded-xl border border-kds-amber p-3" role="group" aria-label="What to do with the extra cash">
-                          <p className="mb-2 text-sm font-semibold text-kds-amber">{fmtPkr(excess)} more than the bill</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <button type="button" aria-pressed={!keepAsTip} onClick={() => setKeepAsTip(false)} className={`min-h-11 rounded-lg border font-semibold ${!keepAsTip ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'}`}>Give change</button>
-                            <button type="button" aria-pressed={keepAsTip} onClick={() => setKeepAsTip(true)} className={`min-h-11 rounded-lg border font-semibold ${keepAsTip ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text'}`}>Keep as tip</button>
-                          </div>
-                        </div>
-                      )}
+                      {pad}
+                      <BillRows q={shown} unavailable={unavailable} loading={bill.isLoading} error={null} due />
+                      {extraCash}
                       <label className="mt-3 flex min-h-11 items-center gap-2 text-sm text-kds-text"><input type="checkbox" checked={printReceipt} onChange={(e) => setPrintReceipt(e.target.checked)} className="h-5 w-5" /> Print Receipt</label>
                       <div className="mt-2"><ErrorLine text={error} /></div>
                       <button type="button" onClick={() => void payCash()} disabled={busy || !shown || due <= 0 || tendered < due || !shiftId || !resumeSettled}

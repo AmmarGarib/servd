@@ -45,13 +45,13 @@ export function SubAccounts({ accountId, enabled }: { accountId: string; enabled
 
   return (
     <div className="px-4 pb-3 pt-1 space-y-2 border-t border-white/[0.04]">
-      <label className="flex items-center gap-2 text-xs text-white/75">
-        <input type="checkbox" checked={enabled} disabled={toggle.isPending} onChange={(e) => toggle.mutate(e.target.checked)} />
+      <label className="flex items-start gap-2 text-xs text-white/75">
+        <input type="checkbox" checked={enabled} disabled={toggle.isPending} onChange={(e) => toggle.mutate(e.target.checked)} className="mt-0.5" />
         <span className="font-semibold">Sub-accounts on for this account</span>
-        <span className="text-white/45">{enabled
-          ? '— shown in journals and statements; payroll fills employee sub-accounts here if staff wages post to it.'
-          : '— off: not shown in journals or statements, and payroll does not fill it. Adding a sub-account switches it on.'}</span>
       </label>
+      <p className="text-xs text-white/45 pl-5">{enabled
+          ? 'Shown in journals and statements; payroll fills employee sub-accounts here if staff wages post to it.'
+          : 'Off: not shown in journals or statements, and payroll does not fill it. Adding a sub-account switches it on.'}</p>
       {isLoading && <p className="text-xs text-white/45">Loading…</p>}
       {error && <p role="alert" className="text-xs" style={{ color: 'var(--erp-danger)' }}>{(error as Error).message}</p>}
       {!isLoading && !error && data.length === 0 && <p className="text-xs text-white/45">No sub-accounts yet.</p>}
