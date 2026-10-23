@@ -32,12 +32,14 @@ function editLines(before: unknown, after: unknown): string[] {
   return keys.map((k) => `${k}: ${brief(b[k])} → ${brief(a[k])}`)
 }
 
-export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts }: {
+export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplicate }: {
   entryId: string
   tenantId?: string | null
   onClose: () => void
   /** Opens the posting form pre-filled in amend mode. */
   onEditAmounts: (e: RegRow) => void
+  /** Opens New entry pre-filled with this entry's type, lines and text (owner, 2026-10-23); absent = no button. */
+  onDuplicate?: (e: RegRow) => void
 }) {
   const qc = useQueryClient()
   const pin = tenantId ? { tenantId } : undefined
@@ -225,6 +227,10 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts }: {
                     title={!canChange ? (e.blockedReason ?? undefined) : undefined}>Edit amounts</Button>
                   <Button variant="danger" type="button" disabled={!canChange} onClick={() => { setMsg(null); setMode('cancel') }}
                     title={!canChange ? (e.blockedReason ?? undefined) : undefined}>Cancel entry</Button>
+                  {onDuplicate && e.sourceType === 'manual' && (
+                    <Button variant="secondary" type="button" onClick={() => onDuplicate(e)}
+                      title="Open a new entry with the same type, lines and description — nothing posts until you post it">Duplicate</Button>
+                  )}
                 </div>
               )}
               {e.blockedReason && (!e.canTextEdit || !canChange) && <p className="text-xs text-s-muted">{e.blockedReason}</p>}

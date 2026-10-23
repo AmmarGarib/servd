@@ -371,3 +371,68 @@ describe('accounts: the statement is the account view', () => {
     expect(rows[0]!.companyName).toBe(`${P} Foods`)
   })
 })
+
+// Owner, 2026-10-23: "at Voucher it should give option to opt Payment voucher (PV), journal voucher (JV),
+// Receiving voucher (RV) and adjustment voucher (AV)".
+describe('voucher types on manual entries', () => {
+  const post = async (who: string, voucherKind: string | undefined, lines: unknown[]) =>
+    call(who, 'POST', '/accounting/journal', { description: `VT ${voucherKind ?? 'none'}`, entryDate: at, lines, ...(voucherKind ? { voucherKind } : {}) })
+  const receipt = async (cents: number) => [
+    { accountId: await acct(A, '1020'), type: 'debit' as const, amountCents: cents },
+    { accountId: await acct(A, '4210'), type: 'credit' as const, amountCents: cents },
+  ]
+  const nonCash = async (cents: number) => [
+    { accountId: await acct(A, '6010'), type: 'debit' as const, amountCents: cents },
+    { accountId: await acct(A, '2010'), type: 'credit' as const, amountCents: cents },
+  ]
+
+  it('PV / RV / JV / AV number in their own series; none picked stays JV', async () => {
+    const pv = await post('fin', 'PV', await two(700))
+    expect(pv.statusCode, pv.body).toBe(201)
+    expect((pv.json() as { voucherNo: string }).voucherNo).toMatch(/^PV-\d{5}$/)
+    const rv = await post('fin', 'RV', await receipt(800))
+    expect((rv.json() as { voucherNo: string }).voucherNo).toMatch(/^RV-\d{5}$/)
+    const av = await post('fin', 'AV', await nonCash(900))
+    expect((av.json() as { voucherNo: string }).voucherNo).toBe('AV-00001')
+    const av2 = await post('fin', 'AV', await two(901))
+    expect((av2.json() as { voucherNo: string }).voucherNo).toBe('AV-00002')
+    expect(((await post('fin', undefined, await two(902))).json() as { voucherNo: string }).voucherNo).toMatch(/^JV-/)
+    expect(((await post('fin', 'JV', await receipt(903))).json() as { voucherNo: string }).voucherNo).toMatch(/^JV-/)
+  })
+
+  it('PV must pay money out, RV must bring it in (422 VOUCHER_TYPE_MISMATCH); bad type 400', async () => {
+    const r1 = await post('fin', 'PV', await nonCash(500))
+    expect(r1.statusCode).toBe(422); expect(code(r1)).toBe('VOUCHER_TYPE_MISMATCH')
+    const r2 = await post('fin', 'RV', await two(500))
+    expect(r2.statusCode).toBe(422); expect(code(r2)).toBe('VOUCHER_TYPE_MISMATCH')
+    expect((await post('fin', 'XV', await two(500))).statusCode).toBe(400)
+  })
+
+  it('changing only the type re-posts at once under the new series; a request keeps the type for the CEO', async () => {
+    const e = (await post('fin', undefined, await two(1200))).json() as { id: string; lines: Array<{ accountId: string; type: string; amountCents: number; memo: string | null }> }
+    const lines = e.lines.map((l) => ({ accountId: l.accountId, type: l.type, amountCents: Number(l.amountCents), ...(l.memo ? { memo: l.memo } : {}) }))
+    const r = await call('fin', 'POST', `/accounting/journal/${e.id}/amend`, { reason: 'Should be a payment voucher', description: 'VT none', entryDate: at, lines, voucherKind: 'PV' })
+    expect(r.statusCode, r.body).toBe(201)
+    expect((r.json() as { voucherNo: string }).voucherNo).toMatch(/^PV-/)
+    // An amount edit waits for the CEO and carries the type through the approval.
+    const pvId = (r.json() as { id: string }).id
+    const bigger = await two(1300)
+    const q = await call('fin', 'POST', `/accounting/journal/${pvId}/amend`, { reason: 'Amount was wrong here', description: 'VT none', entryDate: at, lines: bigger, voucherKind: 'AV' })
+    expect(q.statusCode, q.body).toBe(202)
+    const req = (q.json() as { request: { id: string; voucherKind: string } }).request
+    expect(req.voucherKind).toBe('AV')
+    const ok = await call('ceo', 'POST', `/accounting/journal-requests/${req.id}/approve`, {}, A)
+    expect(ok.statusCode, ok.body).toBe(200)
+    const posted = await prisma.journalEntry.findUniqueOrThrow({ where: { id: (ok.json() as { entryId: string }).entryId } })
+    expect(posted.voucherKind).toBe('AV')
+  })
+
+  it("company B never sees A's voucher series", async () => {
+    const b = await call('finB', 'POST', '/accounting/journal', {
+      description: 'B adjustment', entryDate: at, voucherKind: 'AV',
+      lines: [{ accountId: await acct(B, '6010'), type: 'debit', amountCents: 50 }, { accountId: await acct(B, '2010'), type: 'credit', amountCents: 50 }],
+    })
+    expect(b.statusCode, b.body).toBe(201)
+    expect((b.json() as { voucherNo: string }).voucherNo).toBe('AV-00001')
+  })
+})

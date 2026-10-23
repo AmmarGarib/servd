@@ -66,10 +66,11 @@ import {
 } from '../../lib/approvalRights.js'
 import {
   assertManualLines, assertNoControlledLines, assertReversible, manualLineSchema, postManualJournal, reverseManualJournal,
-  amendManualJournal, changePending, entryFingerprint, lockEntryChangeTx, manualReversalOf, splitDescription,
+  amendManualJournal, changePending, entryFingerprint, lockEntryChangeTx, manualReversalOf, splitDescription, assertManualVoucherKindForLines,
   type ManualJournalLine,
 } from './manualJournal.js'
 import { classifyPaymentTx, type ClassificationInput } from './paymentsRegister.js'
+import { MANUAL_VOUCHER_KINDS, type ManualVoucherKind } from './voucherNumbers.js'
 
 /** Who prepares (creates, edits, submits, withdraws) a journal request. */
 export const JR_PREPARERS = ['admin', 'owner', 'management', 'finance'] as const
@@ -94,6 +95,8 @@ const postFields = {
   entryDate: z.string().datetime().nullable().optional(),
   // Exactly the direct route's line rules (manualJournal.ts manualLineSchema).
   lines: z.array(manualLineSchema).min(2).max(200),
+  // PV / JV / RV / AV (owner, 2026-10-23); kept in changeMeta.voucherKind, used when the CEO posts it.
+  voucherKind: z.enum(MANUAL_VOUCHER_KINDS).nullable().optional(),
 }
 const reverseFields = {
   reverseEntryId: z.string().uuid(),
@@ -119,6 +122,7 @@ export const patchPostSchema = z.object({
   reference: postFields.reference,
   entryDate: postFields.entryDate,
   lines: postFields.lines.optional(),
+  voucherKind: postFields.voucherKind,
 })
 export const patchAmendSchema = patchPostSchema.extend({ reason: amendFields.reason.optional() })
 export const patchReverseSchema = z.object({
@@ -202,6 +206,8 @@ export interface JournalRequestDto {
   targetEntryId: string | null
   /** amend: the payment classification the corrected entry takes (else the original's carries over). */
   classification: ClassificationInput | null
+  /** post / amend: the voucher type asked for (null = JV for a post, the original's for an amend). */
+  voucherKind: ManualVoucherKind | null
   createdAt: string
   updatedAt: string
 }
@@ -243,6 +249,7 @@ async function toDtos(rows: Row[]): Promise<JournalRequestDto[]> {
     postedEntryId: r.postedEntryId,
     targetEntryId: r.kind === 'post' ? null : r.reverseEntryId,
     classification: metaOf(r).classification ?? null,
+    voucherKind: metaOf(r).voucherKind ?? null,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }))
@@ -279,7 +286,7 @@ async function checkPostLines(tenantId: string, lines: ManualJournalLine[]): Pro
   return debits
 }
 
-interface ChangeMeta { fingerprint?: string; classification?: ClassificationInput | null }
+interface ChangeMeta { fingerprint?: string; classification?: ClassificationInput | null; voucherKind?: ManualVoucherKind | null }
 export function metaOf(r: Pick<Row, 'changeMeta'>): ChangeMeta {
   return r.changeMeta && typeof r.changeMeta === 'object' ? (r.changeMeta as ChangeMeta) : {}
 }
@@ -317,6 +324,7 @@ export interface ChangeBody {
   reference?: string | null
   lines?: ManualJournalLine[]
   classification?: ClassificationInput | null
+  voucherKind?: ManualVoucherKind | null
 }
 
 /**
@@ -327,6 +335,7 @@ async function insertChangeRequest(req: FastifyRequest, tenantId: string, entryI
   const su = me(req)
   const via = await viaHeadOfficeForSubmit(req, tenantId)
   const total = body.kind === 'amend' ? await checkAmendLines(tenantId, body.lines ?? []) : 0
+  if (body.kind === 'amend') await assertManualVoucherKindForLines(prisma, tenantId, body.voucherKind, body.lines ?? [])
   return prisma.$transaction(async (tx) => {
     await lockEntryChangeTx(tx, tenantId, entryId)
     const { original, amountCents, fingerprint } = await checkChangeTarget(tx, tenantId, entryId)
@@ -334,7 +343,7 @@ async function insertChangeRequest(req: FastifyRequest, tenantId: string, entryI
     const common = {
       tenantId, kind: body.kind, reverseEntryId: original.id, reason: body.reason,
       preparedById: su.id, preparedByIds: [su.id], viaHeadOfficeId: via,
-      changeMeta: { fingerprint, ...(body.classification ? { classification: body.classification } : {}) } as unknown as Prisma.InputJsonValue,
+      changeMeta: { fingerprint, ...(body.classification ? { classification: body.classification } : {}), ...(body.voucherKind ? { voucherKind: body.voucherKind } : {}) } as unknown as Prisma.InputJsonValue,
       ...(submit ? { status: 'submitted', submittedById: su.id, submittedAt: now } : { status: 'draft' }),
     }
     if (body.kind === 'reverse') {
@@ -436,7 +445,7 @@ export async function createRequest(req: FastifyRequest, body: CreateRequestBody
   if (body.kind === 'reverse' || body.kind === 'amend') {
     const row = await insertChangeRequest(req, tenantId, body.reverseEntryId, {
       kind: body.kind, reason: body.reason, entryDate: body.entryDate,
-      ...(body.kind === 'amend' ? { description: body.description, reference: body.reference, lines: body.lines } : {}),
+      ...(body.kind === 'amend' ? { description: body.description, reference: body.reference, lines: body.lines, voucherKind: body.voucherKind ?? null } : {}),
     }, !!body.submit)
     await auditRequest(req, row, body.submit ? 'submit' : 'create', { after: { kind: row.kind, status: row.status, totalCents: toCents(row.totalCents) }, metadata: { viaHeadOfficeId: via } })
     return dtoOf(row)
@@ -444,7 +453,9 @@ export async function createRequest(req: FastifyRequest, body: CreateRequestBody
   let data: Prisma.JournalRequestUncheckedCreateInput
   {
     const total = await checkPostLines(tenantId, body.lines)
+    await assertManualVoucherKindForLines(prisma, tenantId, body.voucherKind, body.lines)
     data = {
+      ...(body.voucherKind ? { changeMeta: { voucherKind: body.voucherKind } as Prisma.InputJsonValue } : {}),
       tenantId, kind: 'post', status: 'draft',
       description: body.description,
       reference: body.reference?.trim() || null,
@@ -511,6 +522,13 @@ export async function updateRequest(req: FastifyRequest, id: string, raw: unknow
       data.totalCents = await checkPostLines(row.tenantId, b.lines)
       data.lines = b.lines as Prisma.InputJsonValue
     }
+  }
+  if (row.kind !== 'reverse') {
+    // The voucher type (PV / JV / RV / AV) lives in changeMeta; it must still fit the (possibly new) lines.
+    const vk = patchPostSchema.shape.voucherKind.parse((raw as { voucherKind?: unknown } | null)?.voucherKind)
+    const kind = vk !== undefined ? vk : metaOf(row).voucherKind ?? null
+    if (vk !== undefined) data.changeMeta = { ...metaOf(row), voucherKind: vk ?? null } as unknown as Prisma.InputJsonValue
+    await assertManualVoucherKindForLines(prisma, row.tenantId, kind, (data.lines as ManualJournalLine[] | undefined) ?? linesOf(row))
   }
   const n = await prisma.journalRequest.updateMany({ where: { id, status: { in: [...EDITABLE] }, preparedById: su.id }, data })
   if (n.count === 0) throw new AppError('REQUEST_NOT_EDITABLE', 'This request changed meanwhile — reload it', 409)
@@ -610,6 +628,7 @@ export async function approveRequest(req: FastifyRequest, id: string): Promise<{
         const a = await amendManualJournal(tx, {
           tenantId, entryId: row.reverseEntryId!, reason: row.reason ?? 'Edit approved',
           description: row.description, reference: row.reference, entryDate: row.entryDate, lines: linesOf(row),
+          voucherKind: metaOf(row).voucherKind ?? null,
           actorId: su.id, actor: { email: su.email, ip: req.ip }, sourceId: row.id, metadata: auditMeta,
         })
         // The corrected entry's payment label: the one asked for, else the original's (an edit never drops it).
@@ -635,6 +654,7 @@ export async function approveRequest(req: FastifyRequest, id: string): Promise<{
         entryDate: row.entryDate,
         lines: linesOf(row),
         postedBy: su.id,
+        voucherKind: metaOf(row).voucherKind ?? null,
         sourceId: row.id, // → `manual:<requestId>`
         actor: { id: su.id, email: su.email, ip: req.ip },
         metadata: auditMeta,

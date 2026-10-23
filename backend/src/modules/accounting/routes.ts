@@ -28,7 +28,7 @@ import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import {
   MANUAL_PREFIX, MANUAL_REVERSAL_PREFIX, journalEntrySchema, reverseSchema,
-  assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, amountsUnchanged, assertNoControlledLines, MANUAL_JOURNAL_POSTERS, splitDescription,
+  assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, amountsUnchanged, assertNoControlledLines, MANUAL_JOURNAL_POSTERS, splitDescription, manualVoucherKindOf,
 } from './manualJournal.js'
 import { journalRequestRoutes } from './journalRequestRoutes.js'
 import { raiseChangeRequest, type JournalRequestDto } from './journalRequests.js'
@@ -259,6 +259,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       entryDate: body.entryDate,
       lines: body.lines,
       postedBy: req.staffUser!.id,
+      voucherKind: body.voucherKind ?? null,
       registerOverride: body.registerOverride ?? null,
       actor: { id: req.staffUser!.id, email: req.staffUser!.email, ip: req.ip },
     })))
@@ -339,7 +340,9 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     const picked = classificationOf(req.body)
 
     const original = await prisma.journalEntry.findFirstOrThrow({ where: { id: found.id, tenantId }, include: { lines: true } })
-    const memos = body.registerOverride ? null : textOnlyMapping(original, body)
+    // A new voucher type (PV / JV / RV / AV) renumbers the entry, so it is never a text-only edit.
+    const typeChanged = !!body.voucherKind && body.voucherKind !== manualVoucherKindOf(original.voucherKind)
+    const memos = body.registerOverride || typeChanged ? null : textOnlyMapping(original, body)
     if (memos) {
       const r = await serviceClient.$transaction(async (tx) => {
         const t = await textEditManualJournal(tx, {
@@ -364,7 +367,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     if (su.role !== 'admin' && !amountsUnchanged(original, body)) {
       return raised(req, reply, await raiseChangeRequest(req, tenantId, found.id, {
         kind: 'amend', reason: body.reason, description: body.description, reference: body.reference ?? null,
-        entryDate: body.entryDate ?? null, lines: body.lines, classification: picked,
+        entryDate: body.entryDate ?? null, lines: body.lines, classification: picked, voucherKind: body.voucherKind ?? null,
       }))
     }
 
@@ -382,7 +385,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const a = await amendManualJournal(tx, {
         tenantId, entryId: found.id, reason: body.reason,
         description: body.description, reference: body.reference, entryDate: body.entryDate, lines: body.lines,
-        registerOverride: body.registerOverride ?? null,
+        registerOverride: body.registerOverride ?? null, voucherKind: body.voucherKind ?? null,
         actorId: su.id, actor: { email: su.email, ip: req.ip },
       })
       // The corrected entry's payment classification: the one picked on the

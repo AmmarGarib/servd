@@ -69,6 +69,15 @@ function entryInstant(date: string): string | undefined {
 let lineSeq = 0
 /** Joins an account id and a sub-account id in one drop-down value (ids are uuids, never contain it). */
 const SUB_SEP = '|'
+/** Voucher types a manual entry may take (owner, 2026-10-23). PV must pay money out, RV bring it in. */
+type VoucherType = 'PV' | 'JV' | 'RV' | 'AV'
+const VOUCHER_TYPES: Array<[VoucherType, string]> = [
+  ['PV', 'Payment voucher (PV)'], ['JV', 'Journal voucher (JV)'], ['RV', 'Receiving voucher (RV)'], ['AV', 'Adjustment voucher (AV)'],
+]
+const voucherTypeOf = (voucherNo: string | null | undefined): VoucherType | '' => {
+  const k = (voucherNo ?? '').slice(0, 2)
+  return k === 'PV' || k === 'JV' || k === 'RV' || k === 'AV' ? k : ''
+}
 const blankLine = (): DraftLine => ({ key: ++lineSeq, accountId: '', debit: '', credit: '', memo: '', conceptId: '', subAccountId: '' })
 
 const inputCls = 's-input py-1.5'
@@ -141,6 +150,8 @@ function JournalsPage() {
   const [date, setDate] = useState(todayPktIso())
   const [description, setDescription] = useState('')
   const [reference, setReference] = useState('')
+  // '' = follow the lines (PV when money goes out, RV when it comes in, else JV) until a type is picked.
+  const [voucherPick, setVoucherPick] = useState<VoucherType | ''>('')
   const [lines, setLines] = useState<DraftLine[]>(() => [blankLine(), blankLine()])
   const [result, setResult] = useState<{ ok: boolean; msg: string; entryId?: string } | null>(null)
 
@@ -176,6 +187,15 @@ function JournalsPage() {
   const paysOut = !editing && used.some((p) => p.credit > 0 && isMoneyCode(codeOfAccount(p.line.accountId)))
     && !used.every((p) => isMoneyCode(codeOfAccount(p.line.accountId)))
   const clsError = paysOut && !(amending && !cls.classification) ? paymentClassificationError(cls) : null
+  // Money net OUT of cash / petty cash / banks — the server's rule (voucherNumbers.ts moneyNetOutCents).
+  const moneyNetOut = used.reduce((s, p) => s + (isMoneyCode(codeOfAccount(p.line.accountId)) ? p.credit - p.debit : 0), 0)
+  const suggestedVoucher: VoucherType = moneyNetOut > 0 ? 'PV' : moneyNetOut < 0 ? 'RV' : 'JV'
+  const voucherType: VoucherType = voucherPick || suggestedVoucher
+  const voucherError = voucherType === 'PV' && moneyNetOut <= 0 && debitTotal > 0
+    ? 'A payment voucher (PV) must pay money out — credit cash, petty cash or a bank, or pick JV / AV'
+    : voucherType === 'RV' && moneyNetOut >= 0 && debitTotal > 0
+      ? 'A receiving voucher (RV) must bring money in — debit cash, petty cash or a bank, or pick JV / AV'
+      : null
 
   const blockers: string[] = []
   if (!company) blockers.push('Pick the company whose books this is')
@@ -184,6 +204,7 @@ function JournalsPage() {
   if (used.length < 2) blockers.push('At least two lines')
   if (used.some((p) => p.error)) blockers.push('Fix the lines marked below')
   if (clsError) blockers.push(clsError)
+  if (voucherError) blockers.push(voucherError)
   if (debitTotal === 0) blockers.push('Enter the amounts')
   else if (difference !== 0) blockers.push(`Debits and credits differ by ${fmtPkr(Math.abs(difference))}`)
   if (dateLocked) blockers.push(`Books are closed through ${lockedThrough} — pick a later date`)
@@ -199,6 +220,7 @@ function JournalsPage() {
       ...(reference.trim() && { reference: reference.trim() }),
       ...(entryInstant(date) && { entryDate: entryInstant(date) }),
       ...(paysOut ? paymentClassificationBody(cls) : {}),
+      voucherKind: voucherType,
       lines: used.map((p) => ({
         accountId: p.line.accountId,
         type: p.debit > 0 ? 'debit' : 'credit',
@@ -225,7 +247,7 @@ function JournalsPage() {
         ? `Corrected — the old entry is reversed and the corrected one is posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} (${fmtPkr(debitTotal)} on ${date}).`
         : `Posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
       setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's panel on the Journals tab.` : done, entryId: isPending(entry) ? undefined : entry.id })
-      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION)
+      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION); setVoucherPick('')
       void qc.invalidateQueries({ queryKey: ['record-files'] })
       void qc.invalidateQueries({ queryKey: ['journals'] })
       void qc.invalidateQueries({ queryKey: ['journal-entry'] })
@@ -245,7 +267,7 @@ function JournalsPage() {
     ...(p.line.subAccountId && { subAccountId: p.line.subAccountId }),
   }))
   function resetForm() {
-    setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setEditing(null); setDate(todayPktIso())
+    setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setEditing(null); setDate(todayPktIso()); setVoucherPick('')
   }
 
   /** Save the request (create or edit) and, when `send`, submit it. Never touches the books. */
@@ -256,6 +278,7 @@ function JournalsPage() {
         reference: reference.trim() || null,
         entryDate: entryInstant(date) ?? null,
         lines: requestLines(),
+        voucherKind: voucherType,
       }
       let id = editing?.id
       const pin = { tenantId: editing?.tenantId ?? company }
@@ -275,21 +298,27 @@ function JournalsPage() {
   })
 
   /** Load a posted manual entry into the form to correct it. */
-  function editEntry(e: RegRow) {
+  function editEntry(e: RegRow) { loadEntry(e, 'amend') }
+  /** Duplicate (owner, 2026-10-23): a NEW entry with this one's type, text and lines, dated today; nothing posts until Post. */
+  function duplicateEntry(e: RegRow) { loadEntry(e, 'copy') }
+  function loadEntry(e: RegRow, as: 'amend' | 'copy') {
     setEditing(null)
-    setAmending(e)
+    setAmending(as === 'amend' ? e : null)
     setAmendReason('')
     if (e.tenantId) setPickedCompany(e.tenantId)
     setDescription(e.description)
-    setReference(e.operatorReference ?? '')
-    setDate(pktDate(e.entryDate))
+    // A cheque / bank reference belongs to one payment — a copy starts without it.
+    setReference(as === 'amend' ? (e.operatorReference ?? '') : '')
+    setDate(as === 'amend' ? pktDate(e.entryDate) : todayPktIso())
+    setVoucherPick(voucherTypeOf(e.voucherNo))
+    setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION)
     setLines(e.lines.map((l) => ({
       key: ++lineSeq, accountId: l.accountId, memo: l.memo ?? '', conceptId: l.conceptId ?? '',
       subAccountId: l.subAccounts.length === 1 ? l.subAccounts[0]!.subAccountId : '',
       debit: l.type === 'debit' ? (l.amountCents / 100).toFixed(2) : '',
       credit: l.type === 'credit' ? (l.amountCents / 100).toFixed(2) : '',
     })))
-    setResult(null)
+    setResult(as === 'copy' ? { ok: true, msg: `Copied from ${e.voucherNo ?? 'the entry'} — check the date, amounts and reference, then post it as a new entry.` } : null)
     setPanel(null)
     setTab('entry')
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -302,6 +331,7 @@ function JournalsPage() {
     setPickedCompany(r.tenantId)
     setDescription(r.description)
     setReference(r.reference ?? '')
+    setVoucherPick(r.voucherKind ?? '')
     setDate(r.entryDate ? pktDate(r.entryDate) : todayPktIso())
     setLines(ls.length >= 2
       ? ls.map((l) => ({
@@ -388,7 +418,7 @@ function JournalsPage() {
                 {' '}<LinkButton size="md" type="button"  onClick={resetForm}>Start a new entry instead</LinkButton>
               </p>
             )}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {companyIds.length > 1 && (
                 <Field label="Company (whose books)">
                   <Select value={pickedCompany} disabled={!!editing || !!amending} onChange={(e) => { setPickedCompany(e.target.value); setLines([blankLine(), blankLine()]) }} className="s-select py-1.5">
@@ -397,6 +427,13 @@ function JournalsPage() {
                   </Select>
                 </Field>
               )}
+              <Field label="Voucher" hint={voucherPick ? undefined : 'Suggested from the lines — pick another if needed'}>
+                <Select value={voucherType} onChange={(e) => setVoucherPick(e.target.value as VoucherType)} className="s-select py-1.5"
+                  aria-invalid={voucherError ? true : undefined}>
+                  {VOUCHER_TYPES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </Select>
+                {voucherError && <span role="alert" className="block text-xs text-s-red mt-1">{voucherError}</span>}
+              </Field>
               <Field label="Date">
                 <Input type="date" min={dateBounds().min} max={dateBounds().max} value={date} onChange={(e) => setDate(e.target.value)} className={inputCls}
                   aria-invalid={dateLocked || !date || date < dateBounds().min || date > dateBounds().max ? true : undefined}
@@ -575,7 +612,7 @@ function JournalsPage() {
         )}
 
         {panel && (
-          <EntryPanel entryId={panel.id} tenantId={panel.tenantId} onClose={() => setPanel(null)} onEditAmounts={editEntry} />
+          <EntryPanel entryId={panel.id} tenantId={panel.tenantId} onClose={() => setPanel(null)} onEditAmounts={editEntry} onDuplicate={canPrepare ? duplicateEntry : undefined} />
         )}
       </div>
     </div>

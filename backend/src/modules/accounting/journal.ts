@@ -23,7 +23,7 @@ import { fmtPktDate } from './dates.js'
 import { amountTooLarge, assertMoneyFits, toCents } from '../../lib/money.js'
 import { assertSalesDayOpenTx, dayLockOf, isSalesSource, salesDayLateNote } from '../nightAudit/lock.js'
 import { assertMayPostIntoReopened, assertMayUndoEntry } from './closedBooks.js'
-import { stampVoucherNoTx, voucherKindOf } from './voucherNumbers.js'
+import { stampVoucherNoTx, voucherKindOf, type ManualVoucherKind } from './voucherNumbers.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -57,6 +57,9 @@ export interface PostJournalEntryInput {
   // fixed_asset_gl_mismatch. Never opens an 'intercompany' / 'head_office'
   // account.
   controlledOverride?: { reason: string }
+  // A manual entry's voucher type picked on the form (PV / JV / RV / AV; voucherNumbers.ts) — the caller has
+  // checked it fits the lines. Ignored for every other source.
+  voucherKind?: ManualVoucherKind | null
 }
 
 export interface PostJournalEntryResult {
@@ -468,7 +471,7 @@ export async function postJournalEntry(
       select: { id: true },
     })
     // Automatic voucher number (JV / PV / RV), same transaction (voucherNumbers.ts).
-    const kind = await voucherKindOf(tx, input.tenantId, input.sourceType, lines)
+    const kind = await voucherKindOf(tx, input.tenantId, input.sourceType, lines, input.voucherKind ?? null)
     if (kind) await stampVoucherNoTx(tx, input.tenantId, created.id, kind)
 
     return { entryId: created.id, posted: true }

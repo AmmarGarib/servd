@@ -34,6 +34,8 @@ export interface JournalRequestLine {
 
 export interface JournalRequest {
   id: string
+  /** PV / JV / RV / AV asked for (null = JV for a new entry, the original's for an edit). */
+  voucherKind?: 'PV' | 'JV' | 'RV' | 'AV' | null
   tenantId: string
   tenantName: string | null
   kind: 'post' | 'reverse' | 'amend' | string

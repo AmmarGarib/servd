@@ -35,6 +35,7 @@ import { toCents, zMoneyCents } from '../../lib/money.js'
 import { postJournalEntry, reverseJournalEntry } from './journal.js'
 import { assertManualSubAccounts, tagLineTx, tagPostedManualLinesTx } from '../../lib/subAccounts.js'
 import { fmtPktDate } from './dates.js'
+import { MANUAL_VOUCHER_KINDS, assertManualVoucherKind, type ManualVoucherKind } from './voucherNumbers.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -67,6 +68,8 @@ export const journalEntrySchema = z.object({
   description: z.string().min(1),
   entryDate: z.string().datetime().optional(),
   lines: z.array(manualLineSchema).min(2),
+  // Voucher type (owner, 2026-10-23): PV / JV / RV / AV; none = JV. PV must pay money out, RV bring it in.
+  voucherKind: z.enum(MANUAL_VOUCHER_KINDS).optional(),
   // A line on a fixed-asset register account (1500–1599, 2012) needs the
   // CEO's reason; the entry is then audited and flagged
   // fixed_asset_gl_mismatch so the register tie-out explains it. The reason's
@@ -170,6 +173,8 @@ export interface PostManualJournalInput {
   metadata?: Record<string, unknown>
   /** Appended to the manual_journal exception's description. */
   flagNote?: string
+  /** PV / JV / RV / AV (none = JV); PV must pay money out, RV bring it in (422 VOUCHER_TYPE_MISMATCH). */
+  voucherKind?: ManualVoucherKind | null
 }
 
 export type ManualEntry = Prisma.JournalEntryGetPayload<{ include: { lines: { include: { account: true } } } }>
@@ -202,7 +207,10 @@ export async function postManualJournal(db: Db, input: PostManualJournalInput): 
   const reference = input.reference?.trim() || null
   const registerReason = input.registerOverride?.reason?.trim() || null
   const actor: ManualActor = input.actor ?? { id: input.postedBy }
+  const voucherKind = input.voucherKind ?? 'JV'
+  await assertManualVoucherKind(db, tenantId, voucherKind, input.lines.map((l) => ({ accountCode: codeOf.get(l.accountId)!, type: l.type, amountCents: l.amountCents })))
   const posted = await postJournalEntry({
+    voucherKind,
     ...(registerReason ? { controlledOverride: { reason: registerReason } } : {}),
     tenantId,
     sourceType: 'manual',
@@ -616,6 +624,8 @@ export interface AmendManualJournalInput {
   /** `manual:<sourceId>` of the corrected entry (a change request passes its own id). */
   sourceId?: string
   metadata?: Record<string, unknown>
+  /** The corrected entry's voucher type; none = the original's (a manual entry's JV / PV / RV / AV), else JV. */
+  voucherKind?: ManualVoucherKind | null
 }
 
 /**
@@ -625,7 +635,7 @@ export interface AmendManualJournalInput {
  * CEO's direct edit and by the CEO's approval of a finance edit request.
  */
 export async function amendManualJournal(tx: Prisma.TransactionClient, input: AmendManualJournalInput) {
-  const found = await tx.journalEntry.findFirst({ where: { id: input.entryId, tenantId: input.tenantId }, select: { entryDate: true } })
+  const found = await tx.journalEntry.findFirst({ where: { id: input.entryId, tenantId: input.tenantId }, select: { entryDate: true, voucherKind: true } })
   if (!found) throw new NotFoundError('JournalEntry', input.entryId)
   const reversalDate = await editReversalDate(tx, input.tenantId, found.entryDate)
   const rev = await reverseManualJournal(tx, {
@@ -639,12 +649,26 @@ export async function amendManualJournal(tx: Prisma.TransactionClient, input: Am
     entryDate: input.entryDate,
     lines: input.lines,
     postedBy: input.actorId,
+    voucherKind: input.voucherKind ?? manualVoucherKindOf(found.voucherKind),
     registerOverride: input.registerOverride ?? null,
     actor: { id: input.actorId, email: input.actor?.email ?? null, ip: input.actor?.ip ?? null },
     ...(input.sourceId ? { sourceId: input.sourceId } : {}),
     metadata: { ...(input.metadata ?? {}), replacesEntryId: input.entryId },
   })
   return { reversal: rev.reversal, original: rev.original, entry: posted.entry, reversedFx: rev.sideEffects, postedFx: posted.sideEffects }
+}
+
+/** A stored voucher kind as a manual type (PV / JV / RV / AV), else JV. */
+export function manualVoucherKindOf(k: string | null | undefined): ManualVoucherKind {
+  return (MANUAL_VOUCHER_KINDS as readonly string[]).includes(k ?? '') ? (k as ManualVoucherKind) : 'JV'
+}
+
+/** The account codes of manual lines (accountId → code), for the voucher-type check before a request is saved. */
+export async function assertManualVoucherKindForLines(db: Db, tenantId: string, kind: ManualVoucherKind | null | undefined, lines: readonly ManualJournalLine[]): Promise<void> {
+  if (kind !== 'PV' && kind !== 'RV') return
+  const accts = await db.account.findMany({ where: { tenantId, id: { in: [...new Set(lines.map((l) => l.accountId))] } }, select: { id: true, code: true } })
+  const code = new Map(accts.map((a) => [a.id, a.code]))
+  await assertManualVoucherKind(db, tenantId, kind, lines.map((l) => ({ accountCode: code.get(l.accountId) ?? '', type: l.type, amountCents: l.amountCents })))
 }
 
 /** Is this live manual entry reversed? (`manual.reversal:<sourceId>` exists.) */

@@ -1256,6 +1256,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   statement (`GET /accounting/ledger?view=statement`, now with `from` / `to`,
   `brandId`, `limit` + `cursor`, the same per-line rights) — never a second
   statement. Diff of a change: `GET /accounting/journal-requests/:id/diff`.
+- **Voucher types and Duplicate (owner, 2026-10-23: "at Voucher it should give option to opt Payment
+  voucher (PV), journal voucher (JV), Receiving voucher (RV) and adjustment voucher (AV)"; "give option to
+  generate duplicate voucher of existing entry").** A manual entry takes `voucherKind` PV | JV | RV | AV
+  (`voucherNumbers.ts MANUAL_VOUCHER_KINDS`; each its own per-company series, AV-00001…; none = JV as
+  before). PV must pay money out and RV bring it in (`assertManualVoucherKind` → 422
+  `VOUCHER_TYPE_MISMATCH`); JV / AV fit any entry. Checked in `postManualJournal`, at request raise / edit
+  (`assertManualVoucherKindForLines`); a journal request keeps it in `changeMeta.voucherKind`; an amend
+  keeps the original's type unless a new one is sent, and a type change is never a text-only edit (it
+  re-posts, same-amount rules). The form suggests PV / RV / JV from the lines. "Duplicate" on a manual
+  entry's panel opens New entry pre-filled (type, description, lines, brands, sub-accounts), dated today,
+  no cheque reference — nothing posts until it is posted.
 - **Sub-accounts (owner, 2026-10-23: "option to create sub account in chart of
   accounts, e.g in Wages … in name of employees … account statement with
   balance of subgroups").** A SUB-LEDGER, never child accounts: entries keep
