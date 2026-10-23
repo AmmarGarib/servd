@@ -1182,7 +1182,8 @@ export async function setupRoutes(fastify: FastifyInstance) {
         ...(withSubs ? { subAccounts: { where: { isActive: true }, orderBy: { name: 'asc' as const }, select: { id: true, name: true, code: true } } } : {}),
       },
     })
-    return rows.map(({ tenant, ...a }) => ({ ...a, companyName: tenant?.name ?? null }))
+    // Sub-accounts only for accounts whose sub-accounts are switched on (owner, 2026-10-23).
+    return rows.map(({ tenant, ...a }) => ({ ...a, companyName: tenant?.name ?? null, ...(withSubs && !a.subAccountsEnabled ? { subAccounts: [] } : {}) }))
   })
   // Adding, renaming or switching off an account changes what can post, so
   // both writes go on the accounting trail (category 'accounting').
@@ -1258,14 +1259,30 @@ export async function setupRoutes(fastify: FastifyInstance) {
   //   GET   /chart-of-accounts/:accountId/sub-accounts   ?active=1
   //   POST  /chart-of-accounts/:accountId/sub-accounts   { name, code? } → 201
   //   PATCH /chart-of-accounts/sub-accounts/:id          { name?, code?, isActive? }
+  //   PUT   /chart-of-accounts/:accountId/sub-accounts-switch  { enabled } — the account's "Sub-accounts on"
+  //         switch (owner, 2026-10-23: only the HO wages account by default; others when finance opens one).
+  //   ?active=1 (the journal pickers) answers [] while the account's sub-accounts are off.
   fastify.get<{ Params: { accountId: string }; Querystring: { active?: string } }>('/chart-of-accounts/:accountId/sub-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
-    const acc = await prisma.account.findFirst({ where: { id: req.params.accountId, ...(await scopeTenantWhere(req, 'read')) }, select: { id: true } })
+    const acc = await prisma.account.findFirst({ where: { id: req.params.accountId, ...(await scopeTenantWhere(req, 'read')) }, select: { id: true, subAccountsEnabled: true } })
     if (!acc) throw new NotFoundError('Account', req.params.accountId)
+    if ((req.query.active === '1' || req.query.active === 'true') && !acc.subAccountsEnabled) return []
     return prisma.subAccount.findMany({
       where: { accountId: acc.id, ...(req.query.active === '1' || req.query.active === 'true' ? { isActive: true } : {}) },
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       select: { id: true, tenantId: true, accountId: true, name: true, code: true, kind: true, employeeId: true, isActive: true, createdAt: true, updatedAt: true },
     })
+  })
+  fastify.put<{ Params: { accountId: string } }>('/chart-of-accounts/:accountId/sub-accounts-switch', { preHandler: chartEditorGate }, async (req) => {
+    const body = z.object({ enabled: z.boolean() }).parse(req.body ?? {})
+    const { setSubAccountsEnabled } = await import('../../lib/subAccounts.js')
+    const acc = await prisma.account.findFirst({ where: { id: req.params.accountId, ...(await scopeTenantWhere(req, 'write')) }, select: { id: true, tenantId: true } })
+    if (!acc?.tenantId) throw new NotFoundError('Account', req.params.accountId)
+    const r = await setSubAccountsEnabled(prisma, { tenantIds: [acc.tenantId], accountId: acc.id, enabled: body.enabled })
+    if (r.before !== r.after) {
+      await audit({ category: 'accounting', action: 'account.sub_accounts_switch', entity: 'Account', entityId: r.account.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email,
+        tenantId: r.account.tenantId, before: { subAccountsEnabled: r.before }, after: { subAccountsEnabled: r.after }, metadata: { ip: req.ip, code: r.account.code } })
+    }
+    return { accountId: r.account.id, subAccountsEnabled: r.after }
   })
   const subAccountBody = z.object({ name: z.string().trim().min(1).max(120), code: z.string().trim().max(40).nullable().optional() })
   fastify.post<{ Params: { accountId: string } }>('/chart-of-accounts/:accountId/sub-accounts', { preHandler: chartEditorGate }, async (req, reply) => {

@@ -137,7 +137,7 @@ function decodeStatementCursor(c: string): { d: Date; c: Date; id: string } {
 export async function accountStatement(tenantIds: string[], accountId: string, from: Date, to: Date, opts: StatementOptions = {}): Promise<AccountStatement> {
   const account = await prisma.account.findFirst({
     where: { id: accountId, tenantId: { in: tenantIds } },
-    select: { id: true, code: true, name: true, type: true, tenantId: true, tenant: { select: { name: true } } },
+    select: { id: true, code: true, name: true, type: true, tenantId: true, subAccountsEnabled: true, tenant: { select: { name: true } } },
   })
   if (!account) throw new NotFoundError('Account', accountId)
   const normal: 'debit' | 'credit' = account.type === 'asset' || account.type === 'expense' ? 'debit' : 'credit'
@@ -228,7 +228,10 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
     account: { id: account.id, code: account.code, name: account.name, type: account.type, normal, companyName: account.tenant?.name ?? null },
     dateFrom, dateTo, openingCents, closingCents: bal, totals: { debitCents: dr, creditCents: cr }, lines, truncated, rows,
     pageOpeningCents, nextCursor: hasMore && lastRaw ? encodeStatementCursor(lastRaw) : null, hasMore,
-    subAccounts: await subAccountSummary({ id: account.id, normal }, from, to, opts.conceptId ?? null, { openingCents, debitCents: win.dr, creditCents: win.cr }),
+    // Only while the account's sub-accounts are switched on (owner, 2026-10-23); tags stay as history.
+    subAccounts: account.subAccountsEnabled
+      ? await subAccountSummary({ id: account.id, normal }, from, to, opts.conceptId ?? null, { openingCents, debitCents: win.dr, creditCents: win.cr })
+      : [],
     subAccount: null,
   }
 }

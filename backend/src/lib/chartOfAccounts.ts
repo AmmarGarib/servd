@@ -289,6 +289,9 @@ export async function ensureChartOfAccounts(tenantId: string): Promise<number> {
       // Only on rows created here — an existing row keeps what it has
       // (migration backfill 9 set it on the register codes that existed).
       controlledBy: a.controlledBy ?? null,
+      // Sub-accounts start ON only for the head-office wages account (6032 — where payroll books office /
+      // management staff); every other account is switched on by hand (owner, 2026-10-23).
+      subAccountsEnabled: a.code === '6032',
       isActive: true,
     })),
     skipDuplicates: true,

@@ -16,6 +16,13 @@
 //   tagEntryByEmployeeTx                  payroll / F&F: per-employee amounts per account code
 //   mirrorAllocationsTx                   a reversal mirrors its original's tags (journal.ts)
 //   tagPostedManualLinesTx                a manual journal's `subAccountId` per line
+//   setSubAccountsEnabled                 the account's "Sub-accounts on" switch
+//
+// The switch (owner, 2026-10-23: "limited to Wages Expense (HO) account only … switch on sub accounts for
+// other head accounts also only in those for which I open subaccount"): `Account.subAccountsEnabled`. Off =
+// payroll never tags the account, no new tag is accepted (422 SUB_ACCOUNTS_OFF), the journal picker and the
+// statement show none; tags already there stay as history and show again when it is switched back on.
+// Opening a sub-account by hand switches its account on.
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { AppError, NotFoundError } from './errors.js'
@@ -29,7 +36,7 @@ export const SUB_ACCOUNT_KINDS = ['manual', 'employee'] as const
 
 /** The account of THIS company (404 otherwise — never trust a client id). */
 async function accountOf(db: Db, tenantIds: string[], accountId: string) {
-  const a = await db.account.findFirst({ where: { id: accountId, tenantId: { in: tenantIds } }, select: { id: true, tenantId: true, code: true, name: true } })
+  const a = await db.account.findFirst({ where: { id: accountId, tenantId: { in: tenantIds } }, select: { id: true, tenantId: true, code: true, name: true, subAccountsEnabled: true } })
   if (!a?.tenantId) throw new NotFoundError('Account', accountId)
   return { ...a, tenantId: a.tenantId }
 }
@@ -37,9 +44,12 @@ async function accountOf(db: Db, tenantIds: string[], accountId: string) {
 export async function createSubAccount(db: Db, args: { tenantIds: string[]; accountId: string; name: string; code?: string | null; actorId: string }) {
   const acc = await accountOf(db, args.tenantIds, args.accountId)
   try {
-    return await db.subAccount.create({ data: {
+    const row = await db.subAccount.create({ data: {
       tenantId: acc.tenantId, accountId: acc.id, name: args.name.trim(), code: args.code?.trim() || null, kind: 'manual', createdById: args.actorId,
     } })
+    // Opening a sub-account switches the account's sub-accounts on.
+    if (!acc.subAccountsEnabled) await db.account.update({ where: { id: acc.id }, data: { subAccountsEnabled: true } })
+    return row
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') throw new AppError('SUB_ACCOUNT_NAME_TAKEN', `"${args.name.trim()}" already exists under ${acc.code}`, 409)
     throw e
@@ -64,6 +74,16 @@ export async function updateSubAccount(db: Db, args: { tenantIds: string[]; id: 
     throw e
   }
 }
+
+/** The account's "Sub-accounts on" switch. Returns the value before and after. */
+export async function setSubAccountsEnabled(db: Db, args: { tenantIds: string[]; accountId: string; enabled: boolean }) {
+  const acc = await accountOf(db, args.tenantIds, args.accountId)
+  if (acc.subAccountsEnabled !== args.enabled) await db.account.update({ where: { id: acc.id }, data: { subAccountsEnabled: args.enabled } })
+  return { account: { id: acc.id, tenantId: acc.tenantId, code: acc.code, name: acc.name }, before: acc.subAccountsEnabled, after: args.enabled }
+}
+
+const subAccountsOff = (code: string) =>
+  new AppError('SUB_ACCOUNTS_OFF', `Sub-accounts are switched off for account ${code} — switch them on in the chart of accounts first`, 422)
 
 /** The employee's wages bucket under `accountId` (created on first use). */
 export async function ensureEmployeeSubAccountTx(
@@ -99,10 +119,12 @@ export async function tagLineTx(tx: Db, args: {
 }): Promise<{ tenantId: string; before: Allocation[]; after: Allocation[] }> {
   const line = await tx.journalLine.findFirst({
     where: { id: args.journalLineId, journalEntry: { tenantId: { in: args.tenantIds } } },
-    select: { id: true, accountId: true, amountCents: true, journalEntry: { select: { tenantId: true } }, subAccountAllocations: { select: { id: true, subAccountId: true, amountCents: true } } },
+    select: { id: true, accountId: true, amountCents: true, account: { select: { code: true, subAccountsEnabled: true } }, journalEntry: { select: { tenantId: true } }, subAccountAllocations: { select: { id: true, subAccountId: true, amountCents: true } } },
   })
   if (!line?.journalEntry.tenantId) throw new NotFoundError('JournalLine', args.journalLineId)
   const tenantId = line.journalEntry.tenantId
+  // Clearing is always allowed; a new tag needs the account's sub-accounts on.
+  if (args.allocations.length > 0 && !line.account.subAccountsEnabled) throw subAccountsOff(line.account.code)
   const ids = [...new Set(args.allocations.map((a) => a.subAccountId))]
   if (ids.length !== args.allocations.length) throw new AppError('SUB_ACCOUNT_LISTED_TWICE', 'A sub-account is listed twice for one line', 422)
   const subs = ids.length ? await tx.subAccount.findMany({ where: { id: { in: ids } }, select: { id: true, tenantId: true, accountId: true, isActive: true } }) : []
@@ -146,7 +168,7 @@ export async function tagEntryByEmployeeTx(
 ): Promise<{ tagged: string[]; mismatched: string[] }> {
   const lines = await tx.journalLine.findMany({
     where: { journalEntryId: entryId, journalEntry: { tenantId } },
-    select: { id: true, accountId: true, type: true, amountCents: true, account: { select: { code: true } }, _count: { select: { subAccountAllocations: true } } },
+    select: { id: true, accountId: true, type: true, amountCents: true, account: { select: { code: true, subAccountsEnabled: true } }, _count: { select: { subAccountAllocations: true } } },
   })
   const tagged: string[] = []
   const mismatched: string[] = []
@@ -157,6 +179,8 @@ export async function tagEntryByEmployeeTx(
     const parts = [...spec.byEmployee.entries()].filter(([, c]) => c !== 0)
     if (parts.length === 0) continue
     const on = lines.filter((l) => l.account.code === code && l.type === spec.type)
+    // An account whose sub-accounts are off is never tagged (and is not a mismatch).
+    if (on.length > 0 && on.every((l) => !l.account.subAccountsEnabled)) continue
     if (on.length !== 1) { mismatched.push(code); continue }
     const line = on[0]!
     if (line._count.subAccountAllocations > 0) continue
@@ -227,12 +251,13 @@ export async function tagPostedManualLinesTx(tx: Db, args: {
 export async function assertManualSubAccounts(db: Db, tenantId: string, lines: ReadonlyArray<{ accountId: string; subAccountId?: string | null }>): Promise<void> {
   const ids = [...new Set(lines.map((l) => l.subAccountId).filter((x): x is string => !!x))]
   if (ids.length === 0) return
-  const subs = await db.subAccount.findMany({ where: { id: { in: ids } }, select: { id: true, tenantId: true, accountId: true, isActive: true } })
+  const subs = await db.subAccount.findMany({ where: { id: { in: ids } }, select: { id: true, tenantId: true, accountId: true, isActive: true, account: { select: { code: true, subAccountsEnabled: true } } } })
   const byId = new Map(subs.map((s) => [s.id, s]))
   for (const l of lines) {
     if (!l.subAccountId) continue
     const s = byId.get(l.subAccountId)
     if (!s || s.tenantId !== tenantId || s.accountId !== l.accountId) throw new AppError('SUB_ACCOUNT_NOT_ON_ACCOUNT', 'A line names a sub-account of another account or company', 422)
+    if (!s.account.subAccountsEnabled) throw subAccountsOff(s.account.code)
     if (!s.isActive) throw new AppError('SUB_ACCOUNT_INACTIVE', 'A line names a switched-off sub-account', 422)
   }
 }

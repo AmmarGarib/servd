@@ -6,6 +6,9 @@
 // are created by payroll and keep the employee's name (no rename).
 // GET/POST /setup/chart-of-accounts/:id/sub-accounts, PATCH …/sub-accounts/:id
 // (CEO and finance with accounting write; the server decides).
+// "Sub-accounts on" (owner, 2026-10-23): only the HO wages account starts on; opening a sub-account switches
+// its account on; off = payroll does not tag it and journals / statements show no sub-accounts (old tags stay).
+// PUT /setup/chart-of-accounts/:id/sub-accounts-switch { enabled }.
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
@@ -13,7 +16,7 @@ import { Button, Input, LinkButton } from '@/components/finance/ui'
 
 interface Sub { id: string; name: string; code: string | null; kind: string; employeeId: string | null; isActive: boolean }
 
-export function SubAccounts({ accountId }: { accountId: string }) {
+export function SubAccounts({ accountId, enabled }: { accountId: string; enabled: boolean }) {
   const qc = useQueryClient()
   const key = ['coa-sub-accounts', accountId]
   const { data = [], isLoading, error } = useQuery<Sub[]>({ queryKey: key, queryFn: () => api.get(`/setup/chart-of-accounts/${accountId}/sub-accounts`) })
@@ -29,6 +32,11 @@ export function SubAccounts({ accountId }: { accountId: string }) {
     onSuccess: () => { setName(''); setCode(''); done() },
     onError: (e: Error) => setErr(e.message),
   })
+  const toggle = useMutation({
+    mutationFn: (on: boolean) => api.put(`/setup/chart-of-accounts/${accountId}/sub-accounts-switch`, { enabled: on }),
+    onSuccess: () => { done(); void qc.invalidateQueries({ queryKey: ['chart-of-accounts'] }) },
+    onError: (e: Error) => setErr(e.message),
+  })
   const patch = useMutation({
     mutationFn: (v: { id: string; body: Record<string, unknown> }) => api.patch(`/setup/chart-of-accounts/sub-accounts/${v.id}`, v.body),
     onSuccess: () => { setEditId(null); done() },
@@ -37,6 +45,13 @@ export function SubAccounts({ accountId }: { accountId: string }) {
 
   return (
     <div className="px-4 pb-3 pt-1 space-y-2 border-t border-white/[0.04]">
+      <label className="flex items-center gap-2 text-xs text-white/75">
+        <input type="checkbox" checked={enabled} disabled={toggle.isPending} onChange={(e) => toggle.mutate(e.target.checked)} />
+        <span className="font-semibold">Sub-accounts on for this account</span>
+        <span className="text-white/45">{enabled
+          ? '— shown in journals and statements; payroll fills employee sub-accounts here if staff wages post to it.'
+          : '— off: not shown in journals or statements, and payroll does not fill it. Adding a sub-account switches it on.'}</span>
+      </label>
       {isLoading && <p className="text-xs text-white/45">Loading…</p>}
       {error && <p role="alert" className="text-xs" style={{ color: 'var(--erp-danger)' }}>{(error as Error).message}</p>}
       {!isLoading && !error && data.length === 0 && <p className="text-xs text-white/45">No sub-accounts yet.</p>}

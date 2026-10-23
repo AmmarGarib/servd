@@ -1289,6 +1289,16 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   flagged `sub_account_backfill_mismatch`). The account statement returns
   `subAccounts` (each opening / debits / credits / closing + Unassigned, tying
   to the account) and takes `subAccountId` for one sub-account's statement.
+  **Sub-accounts are switched on per account (owner, 2026-10-23: "It should not automatically pick sub
+  accounts for all wages heads, make it limited to Wages Expense (HO) account only, and add an option to
+  switch on sub accounts for other head accounts also only in those for which i open subaccount").**
+  `Account.subAccountsEnabled` (migration `20261023130000`: on for an account with a hand-made sub-account,
+  and the company's HO wages account — a wages / salary account named "(HO)" / "HO" / "head office", else
+  6032 where payroll books office staff; new charts: 6032). Off = payroll never tags it (not a mismatch),
+  no new tag (422 `SUB_ACCOUNTS_OFF`), the picker (`withSubAccounts`, `?active=1`) and the statement's
+  `subAccounts` show none; old tags stay. Opening a sub-account switches its account on;
+  `PUT /setup/chart-of-accounts/:id/sub-accounts-switch {enabled}` (CHART_EDITORS, audit
+  `account.sub_accounts_switch`); chart page "Sub-accounts on".
 - **Trial balance presentation (owner, 2026-10-16):** ONE net balance per
   account — debits − credits in the Debit column when positive, the Credit
   column when negative, never both — and accounts at zero are not listed (a

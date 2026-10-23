@@ -104,6 +104,24 @@ describe('sub-accounts and tags', () => {
     const chartB = (await call('finB', 'GET', '/setup/chart-of-accounts?withSubAccounts=1')).json() as ChartRow[]
     expect(chartB.some((a) => a.id === rent || a.subAccounts?.some((x) => x.id === S1))).toBe(false)
     expect(((await call('fin', 'GET', '/setup/chart-of-accounts')).json() as ChartRow[])[0].subAccounts).toBeUndefined()
+    // Opening a sub-account switched its account's sub-accounts on (owner, 2026-10-23).
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: rent } })).subAccountsEnabled).toBe(true)
+  })
+
+  it('by default only the HO wages account (6032) has sub-accounts on; the switch is finance\'s, per company, audited', async () => {
+    const on = async (code: string) => (await prisma.account.findFirstOrThrow({ where: { tenantId: A, code } })).subAccountsEnabled
+    expect(await on('6032')).toBe(true)
+    for (const c of ['6030', '6031', '6035', '6036', '2020', '1350']) expect(await on(c)).toBe(false)
+    const kitchen = await acct(A, '6030')
+    expect((await call('finB', 'PUT', `/setup/chart-of-accounts/${kitchen}/sub-accounts-switch`, { enabled: true })).statusCode).toBe(404)
+    const r = await call('fin', 'PUT', `/setup/chart-of-accounts/${kitchen}/sub-accounts-switch`, { enabled: true })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(await on('6030')).toBe(true)
+    expect(await prisma.auditLog.count({ where: { entityId: kitchen, action: 'account.sub_accounts_switch' } })).toBe(1)
+    expect((await call('fin', 'PUT', `/setup/chart-of-accounts/${kitchen}/sub-accounts-switch`, { enabled: false })).statusCode).toBe(200)
+    expect(await on('6030')).toBe(false)
+    // The journal pickers see no sub-accounts on an account that is off.
+    expect((await call('fin', 'GET', `/setup/chart-of-accounts/${kitchen}/sub-accounts?active=1`)).json()).toEqual([])
   })
 
   it('a manual line names a sub-account; tags never exceed the line or cross accounts / companies', async () => {
@@ -125,7 +143,8 @@ describe('sub-accounts and tags', () => {
     const over = await call('fin', 'PUT', `/accounting/journal/lines/${line.id}/sub-accounts`, { allocations: [{ subAccountId: S1, amountCents: 6_000 }, { subAccountId: S2, amountCents: 5_000 }] })
     expect([over.statusCode, code(over)]).toEqual([422, 'ALLOCATION_EXCEEDS_LINE'])
     const bankLine = (res.json().lines as Array<{ id: string; accountId: string }>).find((l) => l.accountId === bank)!
-    expect(code(await call('fin', 'PUT', `/accounting/journal/lines/${bankLine.id}/sub-accounts`, { allocations: [{ subAccountId: S1, amountCents: 100 }] }))).toBe('SUB_ACCOUNT_NOT_ON_ACCOUNT')
+    // The bank's sub-accounts are off — no tag is taken there at all.
+    expect(code(await call('fin', 'PUT', `/accounting/journal/lines/${bankLine.id}/sub-accounts`, { allocations: [{ subAccountId: S1, amountCents: 100 }] }))).toBe('SUB_ACCOUNTS_OFF')
     const sB = (await call('finB', 'POST', `/setup/chart-of-accounts/${await acct(B, '6010')}/sub-accounts`, { name: 'B rent' })).json().id
     expect(code(await call('ceo', 'PUT', `/accounting/journal/lines/${line.id}/sub-accounts`, { allocations: [{ subAccountId: sB, amountCents: 100 }] }, A))).toBe('SUB_ACCOUNT_NOT_ON_ACCOUNT')
     expect((await call('finB', 'PUT', `/accounting/journal/lines/${line.id}/sub-accounts`, { allocations: [] })).statusCode).toBe(404)
@@ -190,7 +209,11 @@ describe('payroll: one wages sub-account per employee', () => {
     await slip(emp.e2!, [{ kind: 'earning', code: 'basic', amountCents: 30_000 }, { kind: 'deduction', code: 'loan', amountCents: 5_000 }], 30_000, 5_000)
   })
 
-  it('the accrual and the payment tag each employee; tags sum to the line', async () => {
+  it('the accrual and the payment tag each employee on accounts switched on; tags sum to the line', async () => {
+    // These employees are front of house (6031); switch on 6031, 2020 and 1350 for this test.
+    for (const c of ['6031', '2020', '1350']) {
+      expect((await call('fin', 'PUT', `/setup/chart-of-accounts/${await acct(A, c)}/sub-accounts-switch`, { enabled: true })).statusCode).toBe(200)
+    }
     await prisma.$transaction((tx) => postPayrollAccrual(tx, runId, U.ceo!.id))
     const entry = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: A, reference: `hr.payroll.accrual:${runId}` }, include: { lines: { include: { account: true, subAccountAllocations: { include: { subAccount: true } } } } } })
     const byCode = (c: string) => entry.lines.find((l) => l.account.code === c)!
@@ -235,5 +258,23 @@ describe('payroll: one wages sub-account per employee', () => {
     const m = await backfillPayrollSubLedger({ tenantIds: [A], force: true })
     expect(m[0]!.mismatched.some((x) => x.endsWith('#2020'))).toBe(true)
     expect(await prisma.exceptionFlag.count({ where: { tenantId: A, kind: 'sub_account_backfill_mismatch' } })).toBeGreaterThan(0)
+  })
+
+  it('an account switched off is never tagged by payroll and shows no sub-accounts; its old tags stay', async () => {
+    const lineIds = (await prisma.journalLine.findMany({ where: { journalEntry: { tenantId: A, reference: { in: [`hr.payroll.accrual:${runId}`, `hr.payroll.payment:${runId}`] } } }, select: { id: true } })).map((l) => l.id)
+    await prisma.hrPayslip.updateMany({ where: { runId, employeeId: emp.e1 }, data: { netCents: 48_000 } })
+    await prisma.journalLineSubAccount.deleteMany({ where: { journalLineId: { in: lineIds } } })
+    const wages = await acct(A, '6031')
+    await call('fin', 'PUT', `/setup/chart-of-accounts/${wages}/sub-accounts-switch`, { enabled: false })
+    const r = await backfillPayrollSubLedger({ tenantIds: [A], force: true })
+    expect(r[0]!.mismatched.some((x) => x.endsWith('#6031'))).toBe(false)
+    const onWages = await prisma.journalLineSubAccount.count({ where: { journalLineId: { in: lineIds }, line: { accountId: wages } } })
+    expect(onWages).toBe(0)
+    expect(await prisma.journalLineSubAccount.count({ where: { journalLineId: { in: lineIds } } })).toBe(5) // 2020 ×4, 1350 ×1
+    const st = await call('fin', 'GET', `/accounting/ledger?view=statement&accountId=${wages}&from=2026-09-01&to=${fmtPktDate(new Date())}`)
+    expect(st.json().subAccounts).toEqual([])
+    // Old employee sub-accounts are kept: switch it back on and they are there.
+    await call('fin', 'PUT', `/setup/chart-of-accounts/${wages}/sub-accounts-switch`, { enabled: true })
+    expect(((await call('fin', 'GET', `/setup/chart-of-accounts/${wages}/sub-accounts?active=1`)).json() as unknown[]).length).toBe(2)
   })
 })

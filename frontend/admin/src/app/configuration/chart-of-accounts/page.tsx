@@ -10,6 +10,8 @@ import { SubAccounts } from './SubAccounts'
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
 interface Account {
   id: string
+  /** Sub-accounts switched on for this account (owner, 2026-10-23). */
+  subAccountsEnabled?: boolean
   code: string
   name: string
   type: AccountType
@@ -69,6 +71,7 @@ export default function ChartOfAccountsPage() {
                       {a.description && <p className="text-xs text-white/40">{a.description}</p>}
                     </div>
                     {!a.isActive && <span className="text-[10px] text-white/30">PAUSED</span>}
+                    {a.subAccountsEnabled && <span className="s-badge-green text-[10px]">Sub-accounts on</span>}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <button onClick={() => setOpenSubs(openSubs === a.id ? null : a.id)} aria-expanded={openSubs === a.id}
@@ -77,7 +80,7 @@ export default function ChartOfAccountsPage() {
                     <button onClick={() => setEditing(a)} className="text-xs text-white/55 hover:text-white">Edit</button>
                   </div>
                 </div>
-                {openSubs === a.id && <SubAccounts accountId={a.id} />}
+                {openSubs === a.id && <SubAccounts accountId={a.id} enabled={!!a.subAccountsEnabled} />}
                 </div>
               ))}
             </div>

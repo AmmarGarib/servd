@@ -2908,6 +2908,11 @@ model Account {
   isActive    Boolean     @default(true)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+  /// Sub-accounts switched on for this account (owner, 2026-10-23: "limited to Wages Expense (HO) account only,
+  /// and add an option to switch on sub accounts for other head accounts … only in those for which I open
+  /// subaccount"). Off = payroll never tags it, the journal picker and statements show no sub-accounts and no new
+  /// tag is accepted; existing tags stay as history. Opening a sub-account switches it on. lib/subAccounts.ts.
+  subAccountsEnabled Boolean @default(false)
 
   /// Who controls postings to this account (journal.ts postJournalEntry) — ONE controlled-account mechanism (wave B):
   ///   'intercompany' — "Due from/to <company>" of ONE company pair: only sourceType 'ic.*'
