@@ -28,7 +28,7 @@ import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import {
   MANUAL_PREFIX, MANUAL_REVERSAL_PREFIX, journalEntrySchema, reverseSchema,
-  assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, MANUAL_JOURNAL_POSTERS,
+  assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, amountsUnchanged, assertNoControlledLines, MANUAL_JOURNAL_POSTERS,
 } from './manualJournal.js'
 import { journalRequestRoutes } from './journalRequestRoutes.js'
 import { raiseChangeRequest, type JournalRequestDto } from './journalRequests.js'
@@ -350,13 +350,25 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       return reply.status(200).send({ ...r.entry, edited: 'text' })
     }
 
-    if (su.role !== 'admin') {
+    // Only a change of AMOUNT waits for the CEO (owner, 2026-10-23: "Yes only
+    // amount"); account / brand / date with the same amounts applies at once.
+    if (su.role !== 'admin' && !amountsUnchanged(original, body)) {
       return raised(req, reply, await raiseChangeRequest(req, tenantId, found.id, {
         kind: 'amend', reason: body.reason, description: body.description, reference: body.reference ?? null,
         entryDate: body.entryDate ?? null, lines: body.lines, classification: picked,
       }))
     }
 
+    if (su.role !== 'admin') {
+      // Finance's own same-amount edit: the register accounts stay their modules',
+      // and closed / reopened books stay the CEO's (the entry's day or the new day).
+      await assertNoControlledLines(prisma, tenantId, body.lines)
+      const through = await closedBooksThrough(prisma, tenantId)
+      const newDate = body.entryDate ? new Date(body.entryDate) : null
+      if (through && (original.entryDate <= through || (newDate && !Number.isNaN(newDate.getTime()) && newDate <= through))) {
+        throw new AppError('CEO_ONLY_CLOSED_BOOKS', 'This change touches closed books — only the CEO can change it.', 403)
+      }
+    }
     const result = await serviceClient.$transaction(async (tx) => {
       const a = await amendManualJournal(tx, {
         tenantId, entryId: found.id, reason: body.reason,

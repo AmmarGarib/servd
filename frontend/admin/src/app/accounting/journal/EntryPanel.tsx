@@ -229,7 +229,7 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts }: {
               )}
               {e.blockedReason && (!e.canTextEdit || !canChange) && <p className="text-xs text-s-muted">{e.blockedReason}</p>}
               {canChange && e.changeNeedsApproval && (
-                <p className="text-xs text-s-muted">Edits to amounts, accounts, brand or date, and cancelling, wait for the CEO&apos;s approval. Text edits apply at once.</p>
+                <p className="text-xs text-s-muted">A change of amount, and cancelling, waits for the CEO&apos;s approval. Text edits, and moving the account, brand or date with the same amounts, apply at once.</p>
               )}
             </>
           )}

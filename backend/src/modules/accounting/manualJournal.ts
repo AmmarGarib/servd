@@ -560,6 +560,28 @@ export function textOnlyMapping(
   return memos
 }
 
+/**
+ * Owner, 2026-10-23: "CEO approve edits only when amount is edited". True when the
+ * proposed lines keep the original's amounts — the same number of lines and the
+ * same debit / credit amounts, in any order — whatever their account, brand or
+ * date. Such an edit applies at once (still reverse + re-post, so the books move
+ * with it); a changed, added or removed amount goes to the CEO.
+ */
+export function amountsUnchanged(
+  original: { lines: Array<{ type: string; amountCents: bigint | number }> },
+  proposed: { lines: ManualJournalLine[] },
+): boolean {
+  if (proposed.lines.length !== original.lines.length) return false
+  const key = (type: string, cents: number) => `${type}:${cents}`
+  const free = original.lines.map((l) => key(l.type, toCents(l.amountCents)))
+  for (const p of proposed.lines) {
+    const i = free.indexOf(key(p.type, p.amountCents))
+    if (i < 0) return false
+    free.splice(i, 1)
+  }
+  return true
+}
+
 /** Lines on an account only its own module posts to: refused up front for a request (the CEO alone overrides the register). */
 export async function assertNoControlledLines(db: Db, tenantId: string, lines: readonly ManualJournalLine[]): Promise<void> {
   const ctl = await db.account.findMany({

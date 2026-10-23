@@ -244,6 +244,30 @@ describe('money edits and cancels wait for the CEO', () => {
     expect((await call('ceo', 'GET', `/accounting/journal-requests/${r.id}/diff`, undefined, A)).json().stale).toBe(true)
   })
 
+  it('owner 2026-10-23 "only amount": finance moving the account, brand or date with the SAME amounts applies at once', async () => {
+    const e = await manual('fin', 22_000)
+    // Account 6010 → 6040, same amounts: applies at once (201), original reversed, nothing pending.
+    const moved = await call('fin', 'POST', `/accounting/journal/${e.id}/amend`, { reason: 'Wrong expense account', description: 'Office rent', entryDate: at, lines: [
+      { accountId: await acct(A, '6040'), type: 'debit', amountCents: 22_000, conceptId: brandA }, { accountId: await acct(A, '1020'), type: 'credit', amountCents: 22_000 },
+    ] })
+    expect(moved.statusCode, moved.body).toBe(201)
+    expect(moved.json().replaces.id).toBe(e.id)
+    expect(await reversalOf(e.reference)).not.toBeNull()
+    expect(await prisma.journalRequest.count({ where: { reverseEntryId: e.id } })).toBe(0)
+    // A different day, same amounts: also at once.
+    const day2 = new Date(new Date(at).getTime() - 86_400_000).toISOString()
+    const redated = await call('fin', 'POST', `/accounting/journal/${moved.json().id}/amend`, { reason: 'Wrong day on it', description: 'Office rent', entryDate: day2, lines: [
+      { accountId: await acct(A, '6040'), type: 'debit', amountCents: 22_000 }, { accountId: await acct(A, '1020'), type: 'credit', amountCents: 22_000 },
+    ] })
+    expect(redated.statusCode, redated.body).toBe(201)
+    // Splitting a line (amounts change line by line) still waits for the CEO.
+    const split = await call('fin', 'POST', `/accounting/journal/${redated.json().id}/amend`, { reason: 'Split across two', description: 'Office rent', entryDate: day2, lines: [
+      { accountId: await acct(A, '6040'), type: 'debit', amountCents: 12_000 }, { accountId: await acct(A, '6010'), type: 'debit', amountCents: 10_000 },
+      { accountId: await acct(A, '1020'), type: 'credit', amountCents: 22_000 },
+    ] })
+    expect(split.statusCode, split.body).toBe(202)
+  })
+
   it('the CEO\'s own edit applies at once (201)', async () => {
     const e = await manual('fin', 15_000)
     const res = await call('ceo', 'POST', `/accounting/journal/${e.id}/amend`, { reason: 'Wrong amount', description: 'Office rent', entryDate: at, lines: await two(16_000) }, A)

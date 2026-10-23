@@ -1220,8 +1220,13 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   in place — `PATCH /accounting/journal/:id/text`, or an `/amend` whose lines
   keep the same account / side / amount / brand and the same day — audited
   `journal.text_edit` (old → new); an entry dated in closed / reopened books
-  stays the CEO's (403 `CEO_ONLY_CLOSED_BOOKS`). A MONEY edit (amount,
-  account, brand, date, lines added / removed) or a cancel by finance answers
+  stays the CEO's (403 `CEO_ONLY_CLOSED_BOOKS`). **Only a change of AMOUNT
+  needs the CEO (owner, 2026-10-23: "Yes only amount"):** finance moving the
+  account, brand or date with the same amounts (same number of lines, same
+  debit / credit amounts — `manualJournal.ts amountsUnchanged`) applies at once
+  through the same reverse + re-post engine (register accounts and closed books
+  still refused). An AMOUNT edit (a changed amount, lines added / removed /
+  split) or a cancel by finance answers
   202 `{ pendingApproval, request }`: a journal request of kind `amend` /
   `reverse` (the ONE store, `journalRequests.ts`; approval type
   `journal_request`, those kinds section `ceo`, never delegable) that the CEO

@@ -371,7 +371,7 @@ function JournalsPage() {
             {amending && (
               <div className="rounded-lg border border-s-border p-3 space-y-2">
                 <p className="text-xs text-s-muted">
-                  Editing the entry of {pktDate(amending.entryDate)} ({amending.description}). Saving reverses the old entry and posts this one in its place — both stay in the ledger.{amending.changeNeedsApproval ? ' Your change of amounts, accounts, brand or date goes to the CEO and the books stay as they are until it is approved.' : ''}
+                  Editing the entry of {pktDate(amending.entryDate)} ({amending.description}). Saving reverses the old entry and posts this one in its place — both stay in the ledger.{amending.changeNeedsApproval ? ' If you change an amount (or add or remove a line), it goes to the CEO and the books stay as they are until it is approved; a new account, brand or date with the same amounts applies at once.' : ''}
                 </p>
                 <Field label="Why are you editing it? (required)">
                   <Input type="text" value={amendReason} onChange={(x) => setAmendReason(x.target.value)} maxLength={500}
