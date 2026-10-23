@@ -1403,7 +1403,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `sendReportFor` with `exportFormatOf(?format)`. Convention: the report's own
   route takes `?format=csv|xlsx|pdf` (a path already ending `.csv` keeps
   working and takes the same `?format=`); same auth, module gate and company
-  scope — export never widens access. CSV stays byte-identical to what the
+  scope — export never widens access. A table's `wrapKeys` print those text
+  columns in full over several lines in the PDF (never cut to "…"); the account statement
+  wraps its entry and memo and shows the CHEQUE REFERENCE typed on a manual entry
+  (`chequeReference`), never the system key `manual:<id>` (owner, 2026-10-23). CSV stays byte-identical to what the
   route sent before; Excel has money as numbers; PDF is A4 (landscape over 6
   columns), header repeated, "Page x of y". The GL account statement is
   `GET /accounting/ledger?accountId&view=statement` (`accountStatement.ts`).
