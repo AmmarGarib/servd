@@ -333,6 +333,15 @@ describe('general ledger and the account statement', () => {
     // The cheque reference typed on the entry, never the system key "manual:<id>" (owner, 2026-10-23).
     expect(csv.body).toContain('Manual rent,CH# 77,')
     expect(csv.body).not.toContain('manual:')
+    // A reversal names "the original entry", never its system key.
+    const rentId = await manual(A, 'oops', 1, '6040', '1010')
+    await postJournalEntry({
+      tenantId: A, sourceType: 'manual.reversal', sourceId: `oops-${RUN}`, description: `Reversal of manual:${rentId}`, postedBy: 'test',
+      lines: [{ accountCode: '1010', type: 'debit', amountCents: 1 }, { accountCode: '6040', type: 'credit', amountCents: 1 }],
+    })
+    const csv2 = await get('finA', `/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}&format=csv`)
+    expect(csv2.body).toContain('Reversal of the original entry')
+    expect(csv2.body).not.toContain(rentId)
     expect(csv.body).toContain('OPENING BALANCE')
     expect(csv.body).toContain('"11,700.50"')
     const { xlsx } = await expectFiles(`/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}`)
