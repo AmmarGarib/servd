@@ -1,5 +1,5 @@
 'use client'
-// On-account clients (corporate clients who are billed monthly) — the list.
+// City Ledger accounts (on-account clients billed on credit) — the list.
 //
 // API: /accounting/customer-accounts (receivables/customerAccounts.ts) and
 // /accounting/till-clearing (accounting/tillClearing*.ts). UI only: every
@@ -30,8 +30,14 @@ import { Select } from '@/components/ui/Select'
 import { Modal as SharedModal } from '../../../../components/ui/Modal'
 import { NumberField } from '../../../../components/ui/NumberField'
 import { DialogForm, RupeeField } from '../../../../components/finance/PaymentReceivedFields'
+import { CompactEmptyState } from '../../../../components/ui/CompactEmptyState'
 import { FIcon } from '../../../../components/finance/ui/icons'
 
+type AccountType = 'company' | 'corporate' | 'travel_agent' | 'guest' | 'other'
+const ACCOUNT_TYPES: Array<{ value: AccountType; label: string }> = [
+  { value: 'company', label: 'Company' }, { value: 'corporate', label: 'Corporate' },
+  { value: 'travel_agent', label: 'Travel agent' }, { value: 'guest', label: 'Guest' }, { value: 'other', label: 'Other' },
+]
 type ClientStatus = 'pending' | 'active' | 'suspended' | 'closed'
 interface Overdue { invoiceId: string; number: string; dueDate: string; balanceCents: number }
 interface ClientRow {
@@ -42,6 +48,7 @@ interface ClientRow {
   creditCents?: number
   overdue: Overdue | null; cardsActive: number; pending: 'new_client' | 'limit_increase' | null
   brands: Array<{ id: string; name: string | null }>
+  accountType?: AccountType; accountTypeLabel?: string; receivableAccountCode?: string; termsDays?: number
 }
 interface TieOut {
   gl1110: number; openInvoicesCents: number; openStatementsCents: number; unbilledBookedCents: number
@@ -167,8 +174,10 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
   const company = useActiveCompany()
   const [f, setF] = useState({
     legalName: '', tradeName: '', ntn: '', strn: '', address: '', contactName: '', contactPhone: '', contactEmail: '',
-    limit: '', termsDays: '30', graceDays: '7', requiresReference: false, notes: '',
+    limit: '', termsDays: '30', graceDays: '7', requiresReference: false, notes: '', number: '', accountType: 'company' as AccountType,
   })
+  const [termsPreset, setTermsPreset] = useState<'0' | '7' | '15' | '30' | 'custom'>('30')
+  const [codeTaken, setCodeTaken] = useState(false)
   const [brandIds, setBrandIds] = useState<string[]>([])
   const [err, setErr] = useState<string | null>(null)
   const { data: concepts } = useQuery<PickerConcept[]>({
@@ -188,35 +197,61 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
       tradeName: f.tradeName, ntn: f.ntn, strn: f.strn, address: f.address,
       contactName: f.contactName, contactPhone: f.contactPhone, contactEmail: f.contactEmail,
       creditLimitCents: toPaisa(f.limit),
-      termsDays: Number(f.termsDays) || 30,
+      termsDays: termsPreset === 'custom' ? Math.min(180, Math.max(0, Number(f.termsDays) || 0)) : Number(termsPreset),
+      accountType: f.accountType,
+      ...(f.number.trim() ? { number: f.number.trim() } : {}),
       overdueGraceDays: Number(f.graceDays) || 0,
       requiresReference: f.requiresReference,
       conceptIds: brandIds,
       notes: f.notes,
     }),
     onSuccess: onCreated,
-    onError: (e) => setErr(errText(e)),
+    onError: (e) => {
+      if (e instanceof ApiError && e.code === 'ACCOUNT_CODE_TAKEN') { setCodeTaken(true); setErr(null) } else setErr(errText(e))
+    },
   })
-  const missing = f.legalName.trim().length < 2 ? 'Enter the client\'s legal name.' : toPaisa(f.limit) <= 0 ? 'Enter a credit limit above zero.' : null
+  const codeBad = f.number.trim() !== '' && !/^[A-Za-z0-9-]{2,20}$/.test(f.number.trim())
+  const missing = codeBad ? 'The account code is 2 to 20 letters, numbers or dashes.' : f.legalName.trim().length < 2 ? 'Enter the client\'s legal name.' : toPaisa(f.limit) <= 0 ? 'Enter a credit limit above zero.' : null
   return (
-    <Modal title="New client" onClose={onClose} dirty={!create.isPending && (!!f.legalName.trim() || !!f.tradeName.trim() || !!f.limit || !!f.notes.trim())}>
+    <Modal title="New City Ledger account" onClose={onClose} dirty={!create.isPending && (!!f.legalName.trim() || !!f.tradeName.trim() || !!f.limit || !!f.notes.trim())}>
       <DialogForm busy={create.isPending} onSubmit={() => { setErr(null); create.mutate() }} missing={missing}>
       <div className="space-y-3">
-        <L t="Legal name"><Input className={inp} aria-invalid={f.legalName.trim().length < 2 ? true : undefined} value={f.legalName} onChange={(e) => set('legalName', e.target.value)} /></L>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="sm:col-span-2">
+            <L t="Account name"><Input className={inp} aria-invalid={f.legalName.trim().length < 2 ? true : undefined} value={f.legalName} onChange={(e) => set('legalName', e.target.value)} /></L>
+          </div>
+          <L t="Account type">
+            <Select className={inp} value={f.accountType} onChange={(e) => set('accountType', e.target.value as AccountType)}>
+              {ACCOUNT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </Select>
+          </L>
+        </div>
+        <Field label="Account code (optional)" hint="Leave empty to number it automatically"
+          error={codeTaken ? 'This account code is already used — choose another.' : codeBad ? '2 to 20 letters, numbers or dashes.' : undefined}>
+          <Input className={inp} value={f.number} maxLength={20} onChange={(e) => { setCodeTaken(false); set('number', e.target.value.toUpperCase()) }} aria-invalid={codeTaken || codeBad ? true : undefined} />
+        </Field>
         <L t="Trade name"><Input className={inp} value={f.tradeName} onChange={(e) => set('tradeName', e.target.value)} /></L>
         <div className="grid grid-cols-2 gap-3">
-          <L t="NTN"><Input className={inp} value={f.ntn} onChange={(e) => set('ntn', e.target.value)} /></L>
-          <L t="STRN"><Input className={inp} value={f.strn} onChange={(e) => set('strn', e.target.value)} /></L>
+          <L t="NTN (tax / registration)"><Input className={inp} value={f.ntn} onChange={(e) => set('ntn', e.target.value)} /></L>
+          <L t="STRN (tax / registration)"><Input className={inp} value={f.strn} onChange={(e) => set('strn', e.target.value)} /></L>
         </div>
-        <L t="Address"><Input className={inp} value={f.address} onChange={(e) => set('address', e.target.value)} /></L>
+        <L t="Billing address"><Input className={inp} value={f.address} onChange={(e) => set('address', e.target.value)} /></L>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <L t="Contact name"><Input className={inp} value={f.contactName} onChange={(e) => set('contactName', e.target.value)} /></L>
+          <L t="Contact person"><Input className={inp} value={f.contactName} onChange={(e) => set('contactName', e.target.value)} /></L>
           <L t="Contact phone"><Input className={inp} value={f.contactPhone} onChange={(e) => set('contactPhone', e.target.value)} /></L>
           <L t="Contact email (statements go here)"><Input type="email" className={inp} value={f.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} /></L>
         </div>
         <div className="grid grid-cols-3 gap-3">
           <L t="Credit limit (PKR)"><RupeeField className={inp} label="Credit limit (PKR)" value={f.limit} onChange={(v) => set('limit', v)} invalid={toPaisa(f.limit) <= 0 && f.legalName.trim().length >= 2} /></L>
-          <L t="Terms (days)"><NumberField className={inp} min={0} max={365} value={f.termsDays === '' ? null : Number(f.termsDays)} onValueChange={(n) => set('termsDays', n == null ? '' : String(n))} /></L>
+          <L t="Payment terms">
+            <Select className={inp} value={termsPreset} onChange={(e) => { const v = e.target.value as typeof termsPreset; setTermsPreset(v); if (v !== 'custom') set('termsDays', v) }}>
+              <option value="0">Immediate</option><option value="7">7 days</option><option value="15">15 days</option>
+              <option value="30">30 days</option><option value="custom">Custom</option>
+            </Select>
+            {termsPreset === 'custom' && (
+              <NumberField className={`${inp} mt-2`} min={0} max={180} value={f.termsDays === '' ? null : Number(f.termsDays)} onValueChange={(n) => set('termsDays', n == null ? '' : String(n))} />
+            )}
+          </L>
           <L t="Overdue grace (days)"><NumberField className={inp} min={0} max={365} value={f.graceDays === '' ? null : Number(f.graceDays)} onValueChange={(n) => set('graceDays', n == null ? '' : String(n))} /></L>
         </div>
         <L t="Brands this client may be billed at">
@@ -240,6 +275,7 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
           <input type="checkbox" checked={f.requiresReference} onChange={(e) => set('requiresReference', e.target.checked)} />
           Every bill needs a reference (PO number or who signed)
         </CheckLabel>
+        <L t="Linked receivable account"><Input className={inp} value="1110 Customer receivable" readOnly disabled /></L>
         <L t="Notes"><Textarea className={inp} rows={2} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></L>
         <p className="text-xs text-s-muted">
           The CEO approves every new client, unless the CEO is the one creating it. A client cannot be billed until it is approved.
@@ -248,7 +284,7 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
       <Err msg={err} />
       <div className="flex gap-2 mt-5">
         <Button type="submit" disabled={create.isPending}>
-          {create.isPending ? 'Saving…' : 'Create client'}
+          {create.isPending ? 'Saving…' : 'Create account'}
         </Button>
         <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
       </div>
@@ -316,6 +352,7 @@ export default function OnAccountClientsPage() {
   const [pendingOnly, setPendingOnly] = useState(false)
   const [overdueOnly, setOverdueOnly] = useState(false)
   const [q, setQ] = useState('')
+  const [typeFilter, setTypeFilter] = useState<'' | AccountType>('')
   const [creating, setCreating] = useState(false)
   const [bulk, setBulk] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -338,7 +375,7 @@ export default function OnAccountClientsPage() {
   const needsCutover = !!status && !status.cutoverAt
   const refresh = () => { void qc.invalidateQueries({ queryKey: ['oa-clients'] }); void qc.invalidateQueries({ queryKey: ['till-clearing-status'] }) }
 
-  const items = list.data?.items ?? []
+  const items = (list.data?.items ?? []).filter((r) => !typeFilter || (r.accountType ?? 'company') === typeFilter)
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 md:px-7 py-6 border-b border-white/[0.05]">
@@ -346,12 +383,12 @@ export default function OnAccountClientsPage() {
         <div className="flex flex-wrap items-start justify-between gap-4 mt-2">
           <div>
             <p className="text-xs uppercase tracking-wider font-bold text-success">Receivables</p>
-            <h1 className="text-2xl font-black text-white/90">On-account clients</h1>
-            <p className="text-sm text-white/40 mt-1 max-w-2xl">Corporate clients billed monthly on a statement. Their QR cards are taken at the till.</p>
+            <h1 className="text-2xl font-black text-white/90">City Ledger accounts</h1>
+            <p className="text-sm text-white/40 mt-1 max-w-2xl">Accounts billed on credit: record settlements, follow outstanding bills and review each account's history. QR cards are taken at the till.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setBulk(true)} className="rounded-xl px-4 py-2.5 text-sm font-black text-white/90 border border-white/15 hover:bg-white/5">Issue {month} statements</button>
-            <Button type="submit" onClick={() => setCreating(true)}>+ New client</Button>
+            <Button type="submit" onClick={() => setCreating(true)}>+ New account</Button>
           </div>
         </div>
       </header>
@@ -367,7 +404,11 @@ export default function OnAccountClientsPage() {
         {needsCutover && status && <CutoverPanel status={status} onDone={refresh} />}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Input className={`${inp} max-w-xs`} placeholder="Search name, OA number or NTN" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Input className={`${inp} max-w-xs`} placeholder="Search name, account code or NTN" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Select className="s-input w-auto" aria-label="Account type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as '' | AccountType)}>
+            <option value="">All account types</option>
+            {ACCOUNT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </Select>
           {([['Pending', pendingOnly, setPendingOnly], ['Overdue', overdueOnly, setOverdueOnly]] as const).map(([label, on, setOn]) => (
             <button key={label} onClick={() => setOn(!on)} aria-pressed={on}
               className="rounded-full px-3 py-1.5 text-xs font-bold"
@@ -382,7 +423,7 @@ export default function OnAccountClientsPage() {
         {list.isLoading && <p className="text-sm text-white/40">Loading…</p>}
         {list.isError && <p role="alert" className="text-sm font-bold" style={{ color: 'var(--erp-danger)' }}>{errText(list.error)}</p>}
         {!list.isLoading && !list.isError && items.length === 0 && (
-          <p className="text-sm text-white/50">No clients{pendingOnly || overdueOnly || q ? ' match these filters' : ' yet'}.</p>
+          <CompactEmptyState message={pendingOnly || overdueOnly || q || typeFilter ? 'No accounts match these filters.' : 'No City Ledger accounts yet.'} />
         )}
 
         <div className="space-y-3">
@@ -394,6 +435,10 @@ export default function OnAccountClientsPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold text-white/50">{r.number}</span>
                   <span className="text-base font-black text-white/90">{r.legalName}</span>
+                  <span className="rounded-full px-2 py-0.5 text-xs font-black"
+                    style={{ background: 'color-mix(in srgb, var(--erp-primary) 10%, transparent)', color: 'var(--erp-primary)' }}>
+                    {r.accountTypeLabel ?? 'Company'}
+                  </span>
                   <span className="rounded-full px-2 py-0.5 text-xs font-black uppercase"
                     style={{ background: `color-mix(in srgb, ${s.color} 16%, transparent)`, color: s.color }}>{s.label}</span>
                   {r.pending === 'limit_increase' && (
@@ -416,10 +461,11 @@ export default function OnAccountClientsPage() {
                   )}
                   {r.companyName && <span className="ml-auto text-xs text-s-muted">{r.companyName}</span>}
                 </div>
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div><p className="text-xs uppercase tracking-wider text-white/40 font-bold">Limit</p><p className="font-black text-white/90">{fmtPkrWhole(r.creditLimitCents)}</p></div>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                  <div><p className="text-xs uppercase tracking-wider text-white/40 font-bold">Account type</p><p className="font-black text-white/90">{r.accountTypeLabel ?? 'Company'}</p></div>
+                  <div><p className="text-xs uppercase tracking-wider text-white/40 font-bold">Credit limit</p><p className="font-black text-white/90">{fmtPkrWhole(r.creditLimitCents)}</p></div>
                   <div>
-                    <p className="text-xs uppercase tracking-wider text-white/40 font-bold">Exposure</p>
+                    <p className="text-xs uppercase tracking-wider text-white/40 font-bold">Outstanding</p>
                     <p className="font-black text-white/90">{fmtPkrWhole(r.exposureCents)}</p>
                     <div className="mt-1 h-1.5 rounded-full" style={{ background: 'rgb(var(--fg-rgb) / 0.08)' }}>
                       <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: pct >= 90 ? 'var(--erp-danger)' : 'var(--erp-success)' }} />

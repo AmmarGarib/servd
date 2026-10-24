@@ -1,5 +1,5 @@
 'use client'
-// On account at the till (corporate clients; backend pos/onAccountRoutes.ts).
+// City Ledger (on account) at the till (corporate clients; backend pos/onAccountRoutes.ts).
 // A named client's whole bill is charged to its account with the client's
 // card: the cashier scans the card's QR (a keyboard-wedge scanner types the
 // code and Enter into the box below, or the tablet camera reads it), the
@@ -15,12 +15,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ApiError } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
+import { orderRef } from '../../lib/orderRef'
+import { useIsManager } from './managerRole'
 import { PasswordInput } from '../ui/PasswordInput'
 import { fmtPkr, fmtPkrWhole } from '../../lib/money'
 import {
   chargeOnAccount, lookupOnAccount, newOnAccountKey, onAccountErrorText, onAccountQuote, tillErrorMessage,
-  type FiscalView, type OnAccountLookup, type OnAccountQuote,
+  type FiscalView, type OnAccountChargeResult, type OnAccountLookup, type OnAccountQuote,
 } from './tillApi'
 
 /** What the done screen shows of an on-account charge. */
@@ -82,7 +84,49 @@ function errorText(e: unknown, fallback: string): string {
   return tillErrorMessage(e, fallback)
 }
 
-export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: OnAccountPanelProps) {
+export function OnAccountPanel(props: OnAccountPanelProps) {
+  const [mode, setMode] = useState<'scan' | 'pick'>('scan')
+  return (
+    <div className="space-y-3">
+      <div role="tablist" aria-label="How to find the City Ledger account" className="grid grid-cols-2 gap-2">
+        {([['scan', 'Scan card'], ['pick', 'Pick account']] as const).map(([m, label]) => (
+          <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
+            className={`min-h-11 rounded-xl border py-2.5 text-sm font-semibold ${mode === m ? 'border-kds-green text-kds-green' : 'border-kds-border text-kds-subtext hover:text-kds-text'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {mode === 'scan' ? <ScanCardPanel {...props} /> : <PickAccountPanel {...props} />}
+    </div>
+  )
+}
+
+function ConfirmStep({ orderId, amountCents, accountLabel, busy, onConfirm, onBack }: {
+  orderId: string; amountCents: number; accountLabel: string; busy: boolean; onConfirm: () => void; onBack: () => void
+}) {
+  return (
+    <div className="space-y-3 rounded-xl border border-kds-amber px-4 py-3" role="group" aria-label="Confirm City Ledger charge">
+      <p className="font-bold text-kds-text">Close this bill on City Ledger?</p>
+      <div className="space-y-1 text-sm">
+        <Line label="Bill" value={orderRef(orderId)} />
+        <Line label="Amount" value={fmtPkr(amountCents)} />
+        <Line label="Account" value={accountLabel} />
+      </div>
+      <p className="text-sm text-kds-amber">It is not cash received — the amount stays owed by the account.</p>
+      <div className="flex gap-2">
+        <button type="button" onClick={onBack} disabled={busy}
+          className="min-h-11 flex-1 rounded-xl border border-kds-border py-2.5 text-sm font-semibold text-kds-text disabled:opacity-30">Back</button>
+        <button type="button" onClick={onConfirm} disabled={busy}
+          className="min-h-11 flex-1 rounded-xl bg-kds-green py-2.5 text-sm font-bold text-primary-on disabled:opacity-30 active:scale-95">
+          {busy ? 'Charging…' : 'Confirm'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ScanCardPanel({ orderId, shiftId, onBillChanged, onCharged }: OnAccountPanelProps) {
+  const [confirming, setConfirming] = useState(false)
   // The typed / scanned code lives only in the input until it is looked up,
   // then only in this ref until the charge is sent. Never rendered back.
   const [typed, setTyped] = useState('')
@@ -164,6 +208,7 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
     setFound(null)
     setNeedsRescan(false)
     setLookupError(null)
+    setConfirming(false)
     charge.reset()
     // A charge whose answer was lost keeps its key (and reference) for the replay.
     if (!submission.current?.unresolved) {
@@ -245,9 +290,11 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
       }
       submission.current = null
       setReplayNote(false)
+      setConfirming(false)
       onCharged({ fiscal: r.fiscal, client })
     },
     onError: (e) => {
+      setConfirming(false)
       if (outcomeUnknown(e)) {
         // The server may have billed the client: keep the key for the replay after the rescan.
         if (submission.current) submission.current.unresolved = true
@@ -284,7 +331,7 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
 
   return (
     <div className="space-y-3">
-      {/* The bill at the cash rate (an on-account bill's rate) */}
+      {/* The bill at the cash rate (a City Ledger bill's rate) */}
       <div className="space-y-1 rounded-xl border border-kds-border px-4 py-3 text-sm">
         {bill ? (
           <>
@@ -412,10 +459,215 @@ export function OnAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: O
             </button>
           )}
 
-          {!found.blocked && !needsRescan && (
-            <button type="button" onClick={() => charge.mutate({ lookup: found })} disabled={!canCharge}
+          {!found.blocked && !needsRescan && (confirming || charge.isPending) ? (
+            <ConfirmStep orderId={orderId} amountCents={due} accountLabel={`${found.account.number} · ${found.account.legalName}`}
+              busy={charge.isPending} onConfirm={() => charge.mutate({ lookup: found })} onBack={() => setConfirming(false)} />
+          ) : null}
+          {!found.blocked && !needsRescan && !confirming && !charge.isPending && (
+            <button type="button" onClick={() => setConfirming(true)} disabled={!canCharge}
               className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95">
-              {charge.isPending ? 'Charging…' : `Charge ${fmtPkrWhole(due)} to ${found.account.legalName}`}
+              {`Charge ${fmtPkrWhole(due)} to ${found.account.legalName}`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface CityLedgerAccount {
+  id: string
+  number: string
+  legalName: string
+  tradeName: string | null
+  accountType: string
+  accountTypeLabel: string
+  conceptIds: string[]
+  requiresReference: boolean
+  creditLimitCents: number
+  owedCents: number
+  availableCents: number
+  overdue: { number: string; dueDate: string; balanceCents: number } | null
+  creditCents: number
+}
+
+function PickAccountPanel({ orderId, shiftId, onBillChanged, onCharged }: OnAccountPanelProps) {
+  const isManager = useIsManager()
+  const [search, setSearch] = useState('')
+  const [debounced, setDebounced] = useState('')
+  const [picked, setPicked] = useState<CityLedgerAccount | null>(null)
+  const [reference, setReference] = useState('')
+  const [pin, setPin] = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const [replayNote, setReplayNote] = useState(false)
+  // One key per submission (account + bill + reference), reused only by its retry.
+  const submission = useRef<{ signature: string; key: string } | null>(null)
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search.trim()), 250)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const quote = useQuery({
+    queryKey: ['pos', 'on-account-quote', orderId],
+    queryFn: () => onAccountQuote(orderId),
+    retry: false,
+    refetchOnWindowFocus: false,
+    meta: { inlineErrors: true },
+  })
+  const list = useQuery({
+    queryKey: ['pos', 'city-ledger-accounts', debounced],
+    queryFn: () => api.get<{ items: CityLedgerAccount[] }>(`/pos/city-ledger/accounts?q=${encodeURIComponent(debounced)}`),
+    retry: false,
+    refetchOnWindowFocus: false,
+    meta: { inlineErrors: true },
+  })
+  const bill: OnAccountQuote | null = quote.data ?? null
+  const due = bill?.dueCents ?? 0
+  const items = list.data?.items ?? []
+
+  const charge = useMutation({
+    meta: { inlineErrors: true },
+    mutationFn: async (acc: CityLedgerAccount): Promise<OnAccountChargeResult> => {
+      const ref = reference.trim()
+      const signature = `${orderId}|${acc.id}|${due}|${ref}`
+      if (submission.current?.signature !== signature) submission.current = { signature, key: newOnAccountKey() }
+      return api.post<OnAccountChargeResult>(`/pos/orders/${encodeURIComponent(orderId)}/on-account`, {
+        shiftId,
+        accountId: acc.id,
+        ...(!isManager && pin.trim() && { managerOverridePin: pin.trim() }),
+        ...(ref && { reference: ref.slice(0, 80) }),
+        idempotencyKey: submission.current.key,
+      })
+    },
+    onSuccess: (r, acc) => {
+      const ref = reference.trim()
+      submission.current = null
+      setReplayNote(false)
+      setConfirming(false)
+      onCharged({ fiscal: r.fiscal, client: { number: acc.number, name: acc.legalName, cardLabel: 'City Ledger', reference: ref || null } })
+    },
+    onError: (e) => {
+      setConfirming(false)
+      if (outcomeUnknown(e)) {
+        // Keep the key: pressing Charge again re-sends it and the server answers with the charge it made.
+        setReplayNote(true)
+      } else {
+        submission.current = null
+        setReplayNote(false)
+        if (e instanceof ApiError && (e.code === 'ALREADY_PAID' || e.code === 'AMOUNT_MISMATCH' || e.code === 'ON_ACCOUNT_RATE')) {
+          onBillChanged()
+          void quote.refetch()
+        }
+      }
+    },
+  })
+
+  const overLimit = !!picked && due > picked.availableCents
+  const needRef = !!picked?.requiresReference
+  const needPin = !isManager
+  const canCharge = !!picked && due > 0 && !charge.isPending
+    && (!needRef || reference.trim().length > 0) && (!needPin || pin.trim().length > 0)
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1 rounded-xl border border-kds-border px-4 py-3 text-sm">
+        {bill ? (
+          <Line label="Charge to the account" value={fmtPkr(due)} strong />
+        ) : quote.isError ? (
+          <p className="text-sm text-kds-red">{errorText(quote.error, 'Could not get the bill from the server')}</p>
+        ) : (
+          <p className="text-sm text-kds-subtext">Getting the bill from the server…</p>
+        )}
+      </div>
+
+      {!picked ? (
+        <div className="space-y-2">
+          <label htmlFor="cl-search" className="block text-sm text-kds-subtext">Find the City Ledger account</label>
+          <input id="cl-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)} autoFocus autoComplete="off"
+            placeholder="Account number or name"
+            onKeyDown={(e) => { if (e.key === 'Enter' && items.length === 1) { e.preventDefault(); setPicked(items[0] ?? null) } }}
+            className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-base text-kds-text placeholder:text-kds-subtext" />
+          {list.isError && <p className="text-sm text-kds-red" role="alert">{errorText(list.error, 'Could not load the accounts')}</p>}
+          {list.isLoading && <p className="text-sm text-kds-subtext">Loading…</p>}
+          {!list.isLoading && !list.isError && items.length === 0 && <p className="text-sm text-kds-subtext">No active account found.</p>}
+          <ul role="listbox" aria-label="City Ledger accounts" className="max-h-64 divide-y divide-kds-border overflow-y-auto rounded-xl border border-kds-border">
+            {items.map((a) => (
+              <li key={a.id} role="option" aria-selected={false}>
+                <button type="button" onClick={() => setPicked(a)} className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-2 text-left hover:bg-kds-border/40">
+                  <span className="min-w-0">
+                    <span className="block truncate font-semibold text-kds-text">{a.legalName}</span>
+                    <span className="block truncate text-xs text-kds-subtext">{a.number} · {a.accountTypeLabel}{a.tradeName ? ` · ${a.tradeName}` : ''}</span>
+                  </span>
+                  <span className="shrink-0 text-xs text-kds-subtext">{fmtPkrWhole(a.availableCents)} left</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-kds-border px-4 py-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate font-bold text-kds-text">{picked.legalName}</p>
+                <p className="text-xs text-kds-subtext">Account {picked.number} · {picked.accountTypeLabel}</p>
+              </div>
+              <button type="button" disabled={charge.isPending}
+                onClick={() => { setPicked(null); setConfirming(false); charge.reset(); if (!replayNote) submission.current = null }}
+                className="shrink-0 text-xs font-semibold text-kds-green disabled:opacity-30">Other account</button>
+            </div>
+            <div className="mt-3 space-y-1 text-sm">
+              <Line label="Outstanding" value={fmtPkrWhole(picked.owedCents)} />
+              <div className={`flex justify-between ${overLimit ? 'text-kds-red' : 'text-kds-subtext'}`}>
+                <span>Available credit</span>
+                <span className={`font-bold ${overLimit ? 'text-kds-red' : 'text-kds-green'}`}>{fmtPkrWhole(picked.availableCents)} of {fmtPkrWhole(picked.creditLimitCents)}</span>
+              </div>
+            </div>
+          </div>
+          {overLimit && (
+            <p className="rounded-lg border border-kds-red px-3 py-2 text-sm text-kds-red" role="alert">
+              This bill of {fmtPkr(due)} is more than the {fmtPkr(picked.availableCents)} available. The server will refuse it.
+            </p>
+          )}
+          {picked.overdue && (
+            <p className="rounded-lg border border-kds-amber px-3 py-2 text-sm text-kds-amber" role="alert">
+              This account has an overdue statement {picked.overdue.number} ({fmtPkr(picked.overdue.balanceCents)} owed, due {new Date(picked.overdue.dueDate).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' })}). The server will refuse the charge.
+            </p>
+          )}
+
+          <div>
+            <label htmlFor="cl-ref" className="mb-1 block text-sm text-kds-subtext">
+              Reference {needRef ? '(required — PO number or who signed)' : '(optional — PO number or who signed)'}
+            </label>
+            <input id="cl-ref" type="text" value={reference} maxLength={80} onChange={(e) => setReference(e.target.value)} autoComplete="off"
+              className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text" />
+          </div>
+          {needPin ? (
+            <div>
+              <label htmlFor="cl-pin" className="mb-1 block text-sm text-kds-subtext">Manager PIN (a manager approves every City Ledger charge)</label>
+              <PasswordInput id="cl-pin" numeric maxLength={8} autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)}
+                className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text" />
+            </div>
+          ) : null}
+
+          {charge.isError && (
+            replayNote ? (
+              <p className="text-sm text-kds-amber" role="alert">
+                The till lost the server’s answer — the charge may have gone through. Charge again to check: the same request is re-sent, so the account is never billed twice.
+              </p>
+            ) : (
+              <p className="text-sm text-kds-red" role="alert">{errorText(charge.error, 'The charge did not go through')}</p>
+            )
+          )}
+
+          {confirming || charge.isPending ? (
+            <ConfirmStep orderId={orderId} amountCents={due} accountLabel={`${picked.number} · ${picked.legalName}`}
+              busy={charge.isPending} onConfirm={() => charge.mutate(picked)} onBack={() => setConfirming(false)} />
+          ) : (
+            <button type="button" onClick={() => setConfirming(true)} disabled={!canCharge}
+              className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-primary-on disabled:opacity-30 active:scale-95">
+              {`Charge ${fmtPkrWhole(due)} to ${picked.legalName}`}
             </button>
           )}
         </div>

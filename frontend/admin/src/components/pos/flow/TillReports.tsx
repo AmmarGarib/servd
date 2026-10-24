@@ -14,9 +14,9 @@ import { ErrorLine, ghostBtn, inputCls, labelCls, primaryBtn } from './ui'
 // /lookups and /run/:reportId (?format=pdf|xlsx|csv for downloads). Read only.
 
 type FilterKey = 'users' | 'waiters' | 'orderTypes' | 'categories' | 'subCategories' | 'menuItems' | 'sources' | 'terminals'
-  | 'paymentMethods' | 'paymentType' | 'orderBy' | 'settleBy' | 'q' | 'items' | 'sessions'
+  | 'paymentMethods' | 'paymentType' | 'orderBy' | 'settleBy' | 'q' | 'items' | 'sessions' | 'clAccountTypes' | 'clAccounts'
 type OptionKey = 'orderType' | 'session' | 'category' | 'subCategory' | 'menuItem' | 'tax' | 'extraCharge' | 'discount' | 'payment'
-  | 'businessSource' | 'waiterWise' | 'userWise' | 'taxableValue' | 'includeNoCharge' | 'vouchers' | 'showCurrency' | 'detail'
+  | 'businessSource' | 'waiterWise' | 'userWise' | 'taxableValue' | 'includeNoCharge' | 'vouchers' | 'showCurrency' | 'detail' | 'ignoreZero'
 type GroupByKey = 'payment_method' | 'payment_type' | 'order_by' | 'settle_by' | 'terminal' | 'order_type'
 
 interface CatalogReport { id: string; title: string; filters: FilterKey[]; options: OptionKey[]; groupBy: GroupByKey[] | null; printable: boolean }
@@ -29,6 +29,7 @@ interface Lookups {
   sessions?: Array<Named & { conceptId: string; startTime: string; endTime: string }>
   menuItems: Array<Named & { categoryId?: string }>; terminals: Labelled[]; sources: Labelled[]
   paymentMethods: Labelled[]; orderTypes: Labelled[]; items: Named[]
+  clAccounts?: Array<Labelled & { accountType: string }>; clAccountTypes?: Labelled[]
 }
 interface Col { key: string; label: string; type: 'text' | 'number' | 'cents' }
 type Cell = string | number | null
@@ -38,19 +39,20 @@ interface RunResult { id: string; title: string; period: string; outlets: string
 const FILTER_LABEL: Record<FilterKey, string> = {
   users: 'User', waiters: 'Waiter', orderTypes: 'Order type', categories: 'Category', subCategories: 'Sub Category', menuItems: 'Menu item', sessions: 'Session',
   sources: 'Business Source', terminals: 'Terminal', paymentMethods: 'Payment Method', paymentType: 'Payment Type',
-  orderBy: 'Order By', settleBy: 'Settle By', q: 'Search text', items: 'Item',
+  orderBy: 'Order By', settleBy: 'Settle By', q: 'Search text', items: 'Item', clAccountTypes: 'Account Type', clAccounts: 'Account',
 }
 const OPTION_LABEL: Record<OptionKey, string> = {
   orderType: 'Order type', session: 'Session', category: 'Category', subCategory: 'Sub Category', menuItem: 'Menu item', tax: 'Tax', extraCharge: 'Extra charge',
   discount: 'Discount', payment: 'Payment', businessSource: 'Business Source', waiterWise: 'Waiter Wise Sales',
   userWise: 'User Wise Sales', taxableValue: 'Show Taxable value of Sales', includeNoCharge: 'Include No Charge',
-  vouchers: 'Expense/Income Voucher', showCurrency: 'Show Currency', detail: 'Show detail',
+  vouchers: 'Expense/Income Voucher', showCurrency: 'Show Currency', detail: 'Show detail', ignoreZero: 'Ignore Zero Balance',
 }
 const GROUP_LABEL: Record<GroupByKey, string> = {
   payment_method: 'Payment Method', payment_type: 'Payment Type', order_by: 'Order By',
   settle_by: 'Settle By', terminal: 'Terminal', order_type: 'Order Type',
 }
 
+const ALL_ACCOUNTS = 'all'
 const FAV_KEY = 'servd.till.reports.favourites'
 function loadFavs(): string[] {
   try { const v = JSON.parse(localStorage.getItem(FAV_KEY) ?? '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [] } catch { return [] }
@@ -58,7 +60,7 @@ function loadFavs(): string[] {
 function saveFavs(f: string[]) { try { localStorage.setItem(FAV_KEY, JSON.stringify(f)) } catch { /* private window */ } }
 
 /** The options a multi-select filter offers, from the lookups. */
-function optionsFor(k: FilterKey, l: Lookups | undefined): Array<{ id: string; label: string }> {
+function optionsFor(k: FilterKey, l: Lookups | undefined, chosenTypes: string[] = []): Array<{ id: string; label: string }> {
   if (!l) return []
   const named = (a: Named[]) => a.map((x) => ({ id: x.id, label: x.name }))
   switch (k) {
@@ -81,6 +83,10 @@ function optionsFor(k: FilterKey, l: Lookups | undefined): Array<{ id: string; l
     case 'sources': return l.sources
     case 'paymentMethods': return l.paymentMethods
     case 'orderTypes': return l.orderTypes
+    case 'clAccountTypes': return l.clAccountTypes ?? []
+    case 'clAccounts': return (l.clAccounts ?? [])
+      .filter((a) => chosenTypes.length === 0 || chosenTypes.includes(a.accountType))
+      .map((a) => ({ id: a.id, label: a.label }))
     default: return []
   }
 }
@@ -181,6 +187,7 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
   const [outlets, setOutlets] = useState<string[] | null>(null)
   const [filters, setFilters] = useState<Partial<Record<FilterKey, string[]>>>({})
   const [text, setText] = useState('')
+  const [allAccounts, setAllAccounts] = useState(true)
   const [opts, setOpts] = useState<OptionKey[]>([])
   const [groupBy, setGroupBy] = useState<GroupByKey | ''>('')
   const [result, setResult] = useState<RunResult | null>(null)
@@ -210,7 +217,7 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
   }, [dlOpen])
 
   function resetForm(r: CatalogReport | null) {
-    setFrom(todayPktIso()); setTo(todayPktIso()); setOutlets(null); setFilters({}); setText(''); setOpts([])
+    setFrom(todayPktIso()); setTo(todayPktIso()); setOutlets(null); setFilters({}); setText(''); setOpts([]); setAllAccounts(true)
     setGroupBy((r?.groupBy?.[0] ?? '')); setResult(null); setErr('')
   }
   function pick(id: string) {
@@ -222,7 +229,11 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
     const p = new URLSearchParams({ conceptIds: selectedOutlets.join(','), dateFrom: from, dateTo: to })
     if (!report) return p
     for (const k of report.filters) {
-      if (k === 'q') { if (text.trim()) p.set('q', text.trim()) } else {
+      if (k === 'q') { if (text.trim()) p.set('q', text.trim()) }
+      else if (k === 'clAccounts') {
+        const v = filters.clAccounts ?? []
+        if (allAccounts) p.set('clAccounts', 'all'); else if (v.length) p.set('clAccounts', v.join(','))
+      } else {
         const v = filters[k] ?? []
         if (v.length) p.set(k, v.join(','))
       }
@@ -230,9 +241,11 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
     if (report.groupBy && groupBy) p.set('groupBy', groupBy)
     if (opts.length) p.set('opts', opts.join(','))
     return p
-  }, [report, selectedOutlets, from, to, filters, text, groupBy, opts])
+  }, [report, selectedOutlets, from, to, filters, text, groupBy, opts, allAccounts])
 
-  const valid = !!report && selectedOutlets.length > 0 && !!from && !!to && from <= to && (!report.groupBy || !!groupBy)
+  const needsAccount = !!report?.filters.includes('clAccounts')
+  const accountMissing = needsAccount && !allAccounts && (filters.clAccounts ?? []).length === 0
+  const valid = !!report && selectedOutlets.length > 0 && !!from && !!to && from <= to && (!report.groupBy || !!groupBy) && !accountMissing
 
   async function run() {
     if (!report || !valid) return
@@ -384,6 +397,28 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
                       </div>
                       <MultiPick label="Outlet" required allLabel="Pick an outlet" options={outletList.map((o) => ({ id: o.id, label: o.name }))}
                         value={selectedOutlets} onChange={(v) => setOutlets(v)} />
+                      {needsAccount && (
+                        <>
+                          <MultiPick label={FILTER_LABEL.clAccountTypes} options={optionsFor('clAccountTypes', lookups)} value={filters.clAccountTypes ?? []}
+                            onChange={(v) => {
+                              setFilter('clAccountTypes', v)
+                              // Drop picked accounts that the new type choice hides.
+                              const ok = new Set(optionsFor('clAccounts', lookups, v).map((o) => o.id))
+                              setFilter('clAccounts', (filters.clAccounts ?? []).filter((id) => ok.has(id)))
+                            }} />
+                          <div>
+                            <MultiPick label={FILTER_LABEL.clAccounts} required allLabel={allAccounts ? 'All accounts' : 'Pick an account'}
+                              options={[{ id: ALL_ACCOUNTS, label: 'All accounts' }, ...optionsFor('clAccounts', lookups, filters.clAccountTypes ?? [])]}
+                              value={allAccounts ? [ALL_ACCOUNTS] : (filters.clAccounts ?? [])}
+                              onChange={(v) => {
+                                const had = allAccounts
+                                if (v.includes(ALL_ACCOUNTS) && !had) { setAllAccounts(true); setFilter('clAccounts', []) }
+                                else { setAllAccounts(false); setFilter('clAccounts', v.filter((x) => x !== ALL_ACCOUNTS)) }
+                              }} />
+                            {accountMissing && <div className="mt-1"><ErrorLine text="Pick an account" /></div>}
+                          </div>
+                        </>
+                      )}
                       {report.groupBy && (
                         <div>
                           <label className={labelCls} htmlFor="tr-groupby">Select Payment *</label>
@@ -395,11 +430,11 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
                     </div>
                     {selectedOutlets.length === 0 && <div className="mt-2"><ErrorLine text="Pick at least one outlet." /></div>}
 
-                    {report.filters.length > 0 && (
+                    {report.filters.some((k) => k !== 'clAccounts' && k !== 'clAccountTypes') && (
                       <>
                         <h3 className="mt-6 text-xs font-bold uppercase tracking-wider text-kds-subtext">Filter Options</h3>
                         <div className="mt-2 grid gap-3 sm:grid-cols-2 min-[1100px]:grid-cols-3">
-                          {report.filters.map((k) => {
+                          {report.filters.filter((k) => k !== 'clAccounts' && k !== 'clAccountTypes').map((k) => {
                             if (k === 'q') return (
                               <div key={k}>
                                 <label className={labelCls} htmlFor="tr-q">{FILTER_LABEL[k]}</label>

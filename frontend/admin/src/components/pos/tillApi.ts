@@ -46,7 +46,7 @@ export const TENDER_LABEL: Readonly<Record<string, string>> = {
   wallet: 'Wallet',
   gift_card: 'Gift card',
   // A named corporate client's bill, charged to its account (OnAccountPanel) — not money in the drawer.
-  on_account: 'On account',
+  on_account: 'City Ledger',
 }
 export function tenderLabel(m: string): string {
   return TENDER_LABEL[m] ?? m.replace(/_/g, ' ')
@@ -1085,7 +1085,7 @@ export function zReportLines(r: ZReportFigures, fmt: (c: number) => string): ZLi
   }
   if ((r.onAccountSales ?? 0) > 0 || (r.onAccountCount ?? 0) > 0) {
     // Billed to clients' accounts: in the takings, never in the drawer (the close debits each client).
-    lines.push({ label: `On account${r.onAccountCount ? ` (${r.onAccountCount})` : ''}`, value: fmt(r.onAccountSales ?? 0), tone: 'text' })
+    lines.push({ label: `City Ledger${r.onAccountCount ? ` (${r.onAccountCount})` : ''}`, value: fmt(r.onAccountSales ?? 0), tone: 'text' })
     for (const c of r.onAccountByClient ?? []) {
       lines.push({ label: `${c.number} ${c.name}${c.count > 1 ? ` (${c.count})` : ''}`, value: fmt(c.cents), tone: 'subtext' })
     }
@@ -1569,9 +1569,9 @@ export function onAccountErrorText(e: { code?: string | null; message?: string; 
     case 'ON_ACCOUNT_CARD_REVOKED':
       return 'That client card has been cancelled. Ask the client for their current card, or take payment another way.'
     case 'ON_ACCOUNT_NOT_HERE':
-      return 'On account is for bills settled at the till (counter sales and dine-in). Delivery and pickup orders are paid another way.'
+      return 'City Ledger is for bills settled at the till (counter sales and dine-in). Delivery and pickup orders are paid another way.'
     case 'ON_ACCOUNT_WHOLE_BILL':
-      return 'On account takes the whole bill in one go. It cannot take a part-paid, split or tipped bill, or one with a promo, wallet, gift card or loyalty credit on it.'
+      return 'City Ledger takes the whole bill in one go. It cannot take a part-paid, split or tipped bill, or one with a promo, wallet, gift card or loyalty credit on it.'
     case 'ON_ACCOUNT_RATE': {
       const rate = centsOf(d['taxRatePct']); const cash = centsOf(d['cashRatePct'])
       return rate != null && cash != null
@@ -1579,11 +1579,11 @@ export function onAccountErrorText(e: { code?: string | null; message?: string; 
         : 'This bill could not be priced at the cash rate for an on-account charge. Take payment another way.'
     }
     case 'TILL_CLEARING_NOT_SPLIT':
-      return 'On account is not switched on for this company yet (finance has to finish its set-up). Take payment another way.'
+      return 'City Ledger is not switched on for this company yet (finance has to finish its set-up). Take payment another way.'
     case 'ON_ACCOUNT_NOT_ACTIVE':
       return 'This client account is not active. Take payment another way.'
     case 'ON_ACCOUNT_BRAND_NOT_ALLOWED':
-      return 'This client may not be billed on account at this brand. Take payment another way.'
+      return 'This client may not be billed on City Ledger at this brand. Take payment another way.'
     case 'ON_ACCOUNT_OVERDUE': {
       const bal = centsOf(d['balanceCents'])
       const num = typeof d['statementNumber'] === 'string' ? d['statementNumber'] : null

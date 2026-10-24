@@ -27,6 +27,8 @@ import { orderRef } from '../../../../../lib/orderRef'
 import { useAuthStore } from '../../../../../store/auth'
 import { OnAccountCardPrint } from '../../../../../components/finance/OnAccountCardPrint'
 import { ExportMenu } from '@/components/ui/ExportMenu'
+import { CityLedgerTabs } from '../CityLedgerTabs'
+import { Select } from '@/components/ui/Select'
 import { FIcon } from '../../../../../components/finance/ui/icons'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -49,6 +51,7 @@ interface Client {
   ntn: string | null; strn: string | null; address: string | null; contactName: string | null; contactPhone: string | null
   contactEmail: string | null; status: ClientStatus; statusReason: string | null
   creditLimitCents: number; requestedCreditLimitCents: number | null; limitRequestedByName: string | null
+  accountType?: string; accountTypeLabel?: string; receivableAccountCode?: string
   termsDays: number; overdueGraceDays: number; requiresReference: boolean; notes: string | null
   brands: Array<{ id: string; name: string | null }>
   unbilledCents: number; invoicesDueCents: number; exposureCents: number; availableCents: number
@@ -192,7 +195,7 @@ export default function OnAccountClientPage() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-4 md:px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/accounting/receivables/clients" className="text-xs text-s-muted hover:text-white/70">← On-account clients</Link>
+        <Link href="/accounting/receivables/clients" className="text-xs text-s-muted hover:text-white/70">← City Ledger accounts</Link>
         <div className="flex flex-wrap items-start justify-between gap-4 mt-2">
           <div>
             <p className="text-xs uppercase tracking-wider font-bold text-success">{c.number}{c.companyName ? ` · ${c.companyName}` : ''}</p>
@@ -256,8 +259,16 @@ export default function OnAccountClientPage() {
           </section>
         )}
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {([['Limit', c.creditLimitCents], ['Exposure', c.exposureCents], ['Available', c.availableCents], ['Unbilled', c.unbilledCents], ['On statements', c.invoicesDueCents]] as const).map(([l, v]) => (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {([['Outstanding', c.exposureCents], ['Available', c.availableCents], ['Credit limit', c.creditLimitCents]] as const).map(([l, v]) => (
+            <div key={l} className="rounded-2xl p-5" style={card}>
+              <p className="text-xs uppercase tracking-wider text-white/40 font-bold">{l}</p>
+              <p className="text-2xl font-black text-white/90 mt-1">{fmtPkrWhole(v)}</p>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
+          {([['Unbilled', c.unbilledCents], ['On statements', c.invoicesDueCents]] as const).map(([l, v]) => (
             <div key={l} className="rounded-2xl p-4" style={card}>
               <p className="text-xs uppercase tracking-wider text-white/40 font-bold">{l}</p>
               <p className="text-lg font-black text-white/90 mt-1">{fmtPkrWhole(v)}</p>
@@ -267,15 +278,21 @@ export default function OnAccountClientPage() {
 
         <section className="rounded-2xl p-5 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1 text-sm" style={card}>
           {([
+            ['Account type', c.accountTypeLabel ?? 'Company'],
+            ['Linked receivable account', `${c.receivableAccountCode ?? '1110'} Customer receivable`],
             ['Trade name', c.tradeName], ['NTN', c.ntn], ['STRN', c.strn], ['Address', c.address],
             ['Contact', [c.contactName, c.contactPhone].filter(Boolean).join(' · ') || null], ['Email', c.contactEmail],
-            ['Terms', `${c.termsDays} days, ${c.overdueGraceDays} days grace`],
+            ['Payment terms', `${c.termsDays === 0 ? 'Immediate' : `${c.termsDays} days`}, ${c.overdueGraceDays} days grace`],
             ['Brands', c.brands.length ? c.brands.map((b) => b.name ?? b.id).join(', ') : 'Any brand of the company'],
             ['Reference on every bill', c.requiresReference ? 'Required' : 'Optional'], ['Notes', c.notes],
           ] as const).map(([l, v]) => (
             <div key={l} className="flex justify-between gap-4"><span className="text-white/45">{l}</span><span className="text-white/85 text-right">{v || '—'}</span></div>
           ))}
         </section>
+
+        {c.status !== 'pending' && (
+          <CityLedgerTabs accountId={c.id} tenantId={c.tenantId} canRecord={!closed} onChanged={refresh} />
+        )}
 
         <section>
           <div className="flex items-center justify-between mb-2">
@@ -468,7 +485,7 @@ function EditDialog({ c, error, busy, onClose, onSave }: { c: Client; error: str
   const [f, setF] = useState({
     legalName: c.legalName, tradeName: c.tradeName ?? '', ntn: c.ntn ?? '', strn: c.strn ?? '', address: c.address ?? '',
     contactName: c.contactName ?? '', contactPhone: c.contactPhone ?? '', contactEmail: c.contactEmail ?? '',
-    termsDays: String(c.termsDays), overdueGraceDays: String(c.overdueGraceDays), requiresReference: c.requiresReference, notes: c.notes ?? '',
+    accountType: c.accountType ?? 'company', termsDays: String(c.termsDays), overdueGraceDays: String(c.overdueGraceDays), requiresReference: c.requiresReference, notes: c.notes ?? '',
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((p) => ({ ...p, [k]: v }))
   const text = (k: 'legalName' | 'tradeName' | 'ntn' | 'strn' | 'address' | 'contactName' | 'contactPhone' | 'contactEmail', t: string) => (
@@ -477,14 +494,19 @@ function EditDialog({ c, error, busy, onClose, onSave }: { c: Client; error: str
   return (
     <Dlg title="Edit client" label="Save" busy={busy} error={error} disabled={f.legalName.trim().length < 2}
       onClose={onClose}
-      onGo={() => onSave({ ...f, legalName: f.legalName.trim(), termsDays: Number(f.termsDays) || 30, overdueGraceDays: Number(f.overdueGraceDays) || 0 })}>
+      onGo={() => onSave({ ...f, legalName: f.legalName.trim(), termsDays: Math.min(180, Math.max(0, Number(f.termsDays) || 0)), overdueGraceDays: Number(f.overdueGraceDays) || 0 })}>
       <div className="space-y-3">
         {text('legalName', 'Legal name')}{text('tradeName', 'Trade name')}
         <div className="grid grid-cols-2 gap-3">{text('ntn', 'NTN')}{text('strn', 'STRN')}</div>
         {text('address', 'Address')}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{text('contactName', 'Contact name')}{text('contactPhone', 'Contact phone')}{text('contactEmail', 'Contact email')}</div>
+        <L t="Account type">
+          <Select className={inp} value={f.accountType} onChange={(e) => set('accountType', e.target.value)}>
+            {[['company', 'Company'], ['corporate', 'Corporate'], ['travel_agent', 'Travel agent'], ['guest', 'Guest'], ['other', 'Other']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </Select>
+        </L>
         <div className="grid grid-cols-2 gap-3">
-          <L t="Terms (days)"><Input inputMode="numeric" className={inp} value={f.termsDays} onChange={(e) => set('termsDays', e.target.value)} /></L>
+          <L t="Payment terms (days, 0 = immediate, max 180)"><Input inputMode="numeric" className={inp} value={f.termsDays} onChange={(e) => set('termsDays', e.target.value)} /></L>
           <L t="Overdue grace (days)"><Input inputMode="numeric" className={inp} value={f.overdueGraceDays} onChange={(e) => set('overdueGraceDays', e.target.value)} /></L>
         </div>
         <CheckLabel className="flex items-center gap-2 text-sm text-white/80">
