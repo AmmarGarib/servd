@@ -1,13 +1,13 @@
 'use client'
 import { useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, BarChart3, CalendarCheck, ChevronDown, ChevronUp, FileText, LayoutDashboard, Receipt, Search, ShoppingBag, Tag, Timer, Truck, UtensilsCrossed, X } from 'lucide-react'
+import { ArrowLeft, BarChart3, CalendarCheck, ChevronDown, ChevronUp, FileText, Landmark, LayoutDashboard, Receipt, Search, ShoppingBag, Tag, Timer, Truck, UtensilsCrossed, X } from 'lucide-react'
 import { useAuthStore } from '../../../store/auth'
 import { useIsManager } from '../managerRole'
 import { usePermissions } from '../../../hooks/useCan'
 import { canOpenPath } from '../../../lib/moduleCatalog'
 
-export type StartAction = 'dine_in' | 'delivery' | 'no_charge' | 'summary' | 'tickets' | 'takeaway' | 'sales_report'
+export type StartAction = 'dine_in' | 'delivery' | 'no_charge' | 'summary' | 'tickets' | 'takeaway' | 'sales_report' | 'city_ledger'
 
 interface Entry { id: StartAction | 'shift' | 'back' | 'waiter' | 'day_close' | 'dashboard'; label: string; icon: ReactNode; href?: string; badge?: number }
 
@@ -32,6 +32,7 @@ export function StartMenu({ onPick, ticketCount, active, onClose }: {
     { id: 'delivery', label: 'Delivery', icon: <Truck size={18} aria-hidden="true" /> },
     { id: 'no_charge', label: 'No Charge', icon: <Tag size={18} aria-hidden="true" /> },
     { id: 'summary', label: 'Order Summary', icon: <FileText size={18} aria-hidden="true" /> },
+    { id: 'city_ledger', label: 'City Ledger', icon: <Landmark size={18} aria-hidden="true" /> },
   ]
   // MANAGER (owner, 2026-10-22): Day Close, Dashboard, Reports, Shift Manager — each the existing page,
   // shown only when the login may open it (the page guard and the API decide; this only hides dead links).

@@ -19,6 +19,7 @@ import { FlowDialog } from '../../components/pos/flow/ui'
 import { orderRef } from '../../lib/orderRef'
 import { OrderSummary } from '../../components/pos/flow/OrderSummary'
 import { TillReports } from '../../components/pos/flow/TillReports'
+import { CityLedgerSettle } from '../../components/pos/flow/CityLedgerSettle'
 import { getOrderInfo, flowErrorMessage, type BoardTable, type OrderInfoView } from '../../components/pos/flow/flowApi'
 import { OfflineQueueBar } from '../../components/pos/OfflineQueue'
 import Link from 'next/link'
@@ -39,7 +40,7 @@ function tabListKeys(e: KeyboardEvent<HTMLElement>) {
   tabs[n]!.focus()
 }
 
-type View = 'home' | 'board' | 'delivery' | 'order' | 'summary' | 'sales_report'
+type View = 'home' | 'board' | 'delivery' | 'order' | 'summary' | 'sales_report' | 'city_ledger'
 type InfoModal =
   | { kind: 'new'; title: string; initial: OrderInfoValues }
   | { kind: 'ticket'; orderId: string; title: string; initial: OrderInfoValues }
@@ -192,6 +193,7 @@ export default function PosPage() {
     const st = usePosStore.getState()
     if (a === 'summary') { st.clearCart(); setView('summary'); return }
     if (a === 'sales_report') { st.clearCart(); setView('sales_report'); return }
+    if (a === 'city_ledger') { st.clearCart(); setView('city_ledger'); return }
     st.clearCart()
     if (a === 'dine_in') { st.setFulfilment('dine_in'); setView('board') }
     else if (a === 'delivery') { st.setFulfilment('delivery'); setView('delivery') }
@@ -386,6 +388,7 @@ export default function PosPage() {
             onRecall={(t, o) => { setSettleOnSplit(!!o?.split); setSettle(t) }}
             onChangeOwner={(t) => void onTicketInfo(t)} />
         )}
+        {view === 'city_ledger' && <CityLedgerSettle onMenu={() => setMenuOpen(true)} />}
         {view === 'sales_report' && <TillReports conceptId={conceptId || null} brands={concepts.map((c) => ({ id: c.id, name: c.name }))} onMenu={() => setMenuOpen(true)} />}
       </div>
 
