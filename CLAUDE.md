@@ -1001,6 +1001,7 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   (only role `finance` with `accounting`: 403 `PAY_FINANCE_ONLY`) → the holder
   uploads supporting documents → **finance checks the documents**
   (`/:id/verify-docs`, books nothing) → `posted`.
+  **A request raised by a finance login skips the finance step** (owner, 2026-10-24: "request raised by Hasnain should go to CEO directly, no need for finance approval"): raise / resubmit → `finance_approved` signed by the raiser; a boot step (`forwardFinanceRaisedRequests`) moves ones still waiting.
   Finance or the CEO may **return for correction** (`/:id/return`, note;
   `returnCount`) — the raiser edits and `/:id/resubmit`s — or reject. The HOD
   step is retired (`/sign-hod` → 410); legacy `draft` = waiting for finance,
@@ -2049,7 +2050,7 @@ ledger. Contract: header of `backend/src/modules/receivables/cityLedger.ts`.
 - **Reports:** City Ledger Summary / Detail in the till Reports read ONLY `receivables/cityLedgerReport.ts`
   (account figures from `clientHistory`, the one running balance; bills as at the period end; a statement's
   money shown against its bills oldest first). The account field is required (`clAccounts=all` or ids; 400
-  `ACCOUNT_REQUIRED`), plus `clAccountTypes` and option `ignoreZero`. Account-wide (all brands of the client's
+  `ACCOUNT_REQUIRED`), plus `clAccountTypes` and option `ignoreZero`. Review fixes (2026-10-24): a bill refunded after payment owes BACK — finance pays it back (`direction: 'out'`, Dr 1110 / Cr money); a till cash settlement reversed after its drawer closed goes back out from cash on hand / a bank (`refundFrom`); a till bank transfer needs `transferVerified` and a reference unused by another live settlement; back-office receipts need an idempotency key and a date not in the future nor before the bill; typed codes never `OA-<n>`; 'booked' = the drawer's LIVE close; history / reports read STATEMENTS only (a back-office invoice naming the client is not City Ledger). Account-wide (all brands of the client's
   company). Back-office reads: `/:id/bills`, `/:id/history`, `/:id/settlements`, receipt HTML.
 - Tests: `tests/cityLedger.test.ts`, `tests/onAccountTill.test.ts`.
 

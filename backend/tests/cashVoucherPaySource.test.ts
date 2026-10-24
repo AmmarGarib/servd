@@ -37,6 +37,7 @@ import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { pettyCashTieOut, postCashVoucherSourceTx } from '../src/modules/accounting/pettyCashPosting.js'
 import { postJournalEntry } from '../src/modules/accounting/journal.js'
 import { accountingRoutes } from '../src/modules/accounting/routes.js'
+import { forwardFinanceRaisedRequests } from '../src/modules/trustops/cashVouchers.js'
 import { moneyAccountCode } from '../src/lib/bankAccounts.js'
 
 const P = `cvps${Date.now()}`
@@ -180,6 +181,24 @@ beforeAll(async () => {
 afterAll(async () => {
   invalidateSetupCache()
   await app?.close()
+})
+
+describe('a cash request raised by finance (owner, 2026-10-24)', () => {
+  it('goes straight to the CEO — no finance step — and the CEO approves it; a stuck one is forwarded at boot', async () => {
+    const r = await call('finA', 'POST', V, { purpose: `Extension board ${Math.random().toString(36).slice(2, 7)}`, categoryKey: 'transport', amountCents: 1_500 })
+    expect(r.statusCode, r.body).toBe(201)
+    const v = r.json() as Row & { financeApprovedById?: string }
+    expect(v.status).toBe('finance_approved')
+    expect((await ok('ceoA', 'POST', `${V}/${v.id}/approve`)).status).toBe('approved')
+    // One left waiting for finance (raised before this rule): the boot step sends it to the CEO.
+    const old = await call('finA', 'POST', V, { purpose: `Old request ${Math.random().toString(36).slice(2, 7)}`, categoryKey: 'transport', amountCents: 900, sendTo: 'finance' })
+    expect(old.json().status).toBe('submitted')
+    expect(await forwardFinanceRaisedRequests()).toBeGreaterThanOrEqual(1)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: old.json().id } })).status).toBe('finance_approved')
+    // Someone else's request still waits for finance.
+    const cook = await call('cookA', 'POST', V, { purpose: `Cook ${Math.random().toString(36).slice(2, 7)}`, categoryKey: 'transport', amountCents: 700 })
+    expect(cook.json().status).toBe('submitted')
+  })
 })
 
 describe('pay sources', () => {

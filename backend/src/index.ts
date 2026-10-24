@@ -1253,6 +1253,15 @@ async function build() {
     fastify.log.warn(`[cashVoucher] hold conversion skipped: ${(err as Error).message}`)
   }
 
+  // Cash requests a finance login raised that still wait for finance go to the CEO (owner, 2026-10-24).
+  try {
+    const { forwardFinanceRaisedRequests } = await import('./modules/trustops/cashVouchers.js')
+    const n = await forwardFinanceRaisedRequests()
+    if (n) fastify.log.info(`[cashVoucher] ${n} finance-raised request(s) sent to the CEO`)
+  } catch (err) {
+    fastify.log.warn(`[cashVoucher] finance-raised forward skipped: ${(err as Error).message}`)
+  }
+
   // Per-employee wages sub-ledger (owner, 2026-10-23): once per company, tag the
   // payroll and full & final entries already on the books from their payslips
   // (tags only — no journal line changes). Marker Setting per company.

@@ -126,7 +126,7 @@ export async function cityLedgerBackOfficeRoutes(app: FastifyInstance): Promise<
     const a = await findClient(req, req.params.id, 'read')
     const q = z.object({ open: z.enum(['0', '1']).optional(), from: dateStr.optional(), to: dateStr.optional() }).parse(req.query)
     const bills = await clientBills(prisma, a, {
-      onlyOpen: q.open === '1',
+      onlyOpen: q.open === '1', includeOwedBack: true,
       ...(q.from && { from: parsePktStartOfDay(q.from) }), ...(q.to && { to: parsePktEndOfDay(q.to) }),
     })
     return { items: bills, owedCents: bills.reduce((t, b) => t + Math.max(0, b.owedCents), 0) }
@@ -153,29 +153,35 @@ export async function cityLedgerBackOfficeRoutes(app: FastifyInstance): Promise<
       bankAccountId: z.string().min(1).nullable().optional(),
       receivedAt: dateStr,
       note: z.string().trim().max(500).optional(),
-      idempotencyKey: z.string().min(8).max(100).optional(),
+      idempotencyKey: z.string().min(8).max(100),
+      /** 'out' = pay back money a bill owes back (refunded after it was paid). */
+      direction: z.enum(['in', 'out']).default('in'),
     }).parse(req.body)
     const r = await settleBills({
       account: a, allocations: body.allocations, method: body.method, reference: body.reference ?? null,
       bankAccountId: body.bankAccountId ?? null, receivedAt: new Date(`${body.receivedAt}T12:00:00+05:00`), channel: 'back_office',
-      note: body.note ?? null, idempotencyKey: body.idempotencyKey ?? null, actorId: req.staffUser!.id,
+      note: body.note ?? null, idempotencyKey: body.idempotencyKey, actorId: req.staffUser!.id, direction: body.direction,
     })
     if (!r.replayed) {
       await audit({
         category: 'accounting', action: 'city_ledger.settlement', entity: 'CityLedgerSettlement', entityId: r.settlement.id,
         tenantId: a.tenantId, ...actorOf(req),
-        after: { number: r.settlement.number, accountId: a.id, amountCents: toCents(r.settlement.amountCents), method: body.method, channel: 'back_office', allocations: body.allocations },
+        after: { number: r.settlement.number, accountId: a.id, amountCents: toCents(r.settlement.amountCents), method: body.method, channel: 'back_office', direction: body.direction, allocations: body.allocations },
       })
     }
     return reply.status(r.replayed ? 200 : 201).send({ settlement: settlementView(r.settlement), replayed: r.replayed })
   })
 
   app.post<{ Params: { sid: string } }>('/settlements/:sid/reverse', editors, async (req) => {
-    const body = z.object({ reason: z.string().trim().min(10, 'Say why in at least 10 characters').max(500) }).parse(req.body)
+    const body = z.object({
+      reason: z.string().trim().min(10, 'Say why in at least 10 characters').max(500),
+      // Till cash whose drawer has closed: where the money goes back out from (default cash on hand).
+      refundFrom: z.object({ method: z.enum(OFFICE_SETTLE_METHODS), bankAccountId: z.string().min(1).nullable().optional() }).optional(),
+    }).parse(req.body)
     const sid = uuid.safeParse(req.params.sid)
     if (!sid.success) throw new NotFoundError('CityLedgerSettlement', req.params.sid)
     const tenantIds = (await resolveTenantScope(req)).tenantIds
-    const s = await reverseSettlement({ settlementId: sid.data, tenantIds, reason: body.reason, actorId: req.staffUser!.id })
+    const s = await reverseSettlement({ settlementId: sid.data, tenantIds, reason: body.reason, actorId: req.staffUser!.id, refundFrom: body.refundFrom ?? null })
     await audit({
       category: 'accounting', action: 'city_ledger.settlement_reverse', entity: 'CityLedgerSettlement', entityId: s.id,
       tenantId: s.tenantId, ...actorOf(req), after: { number: s.number, reason: body.reason },
@@ -236,6 +242,8 @@ export default async function posCityLedgerRoutes(app: FastifyInstance): Promise
       reference: zPaymentRef.nullable().optional(),
       bankAccountId: z.string().min(1).nullable().optional(),
       idempotencyKey: z.string().min(8).max(100),
+      /** Bank transfer: the cashier saw the credit on the counter device. */
+      transferVerified: z.boolean().optional(),
     }).parse(req.body)
     const a = await findClient(req, body.accountId, 'write')
     // The drawer: an OPEN shift of the CLIENT's company, the caller's own unless a manager.
@@ -244,13 +252,13 @@ export default async function posCityLedgerRoutes(app: FastifyInstance): Promise
     const r = await settleBills({
       account: a, allocations: body.allocations, method: body.method, reference: body.reference ?? null,
       bankAccountId: body.bankAccountId ?? null, receivedAt: new Date(), channel: 'till', shiftId: body.shiftId,
-      idempotencyKey: body.idempotencyKey, actorId: req.staffUser!.id,
+      idempotencyKey: body.idempotencyKey, actorId: req.staffUser!.id, transferVerified: body.transferVerified,
     })
     if (!r.replayed) {
       await audit({
         category: 'accounting', action: 'city_ledger.settlement', entity: 'CityLedgerSettlement', entityId: r.settlement.id,
         tenantId: a.tenantId, ...actorOf(req),
-        after: { number: r.settlement.number, accountId: a.id, amountCents: toCents(r.settlement.amountCents), method: body.method, channel: 'till', shiftId: body.shiftId, allocations: body.allocations },
+        after: { number: r.settlement.number, accountId: a.id, amountCents: toCents(r.settlement.amountCents), method: body.method, channel: 'till', transferVerified: body.transferVerified ?? false, shiftId: body.shiftId, allocations: body.allocations },
       })
     }
     const e = await exposureOfTx(prisma, a.id)

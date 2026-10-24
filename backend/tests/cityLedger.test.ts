@@ -132,6 +132,8 @@ describe('City Ledger accounts', () => {
     const dup = await call('finA', 'POST', CA, { ...body, legalName: `Another ${RUN}` })
     expect(dup.statusCode).toBe(409)
     expect(dup.json().error.code).toBe('ACCOUNT_CODE_TAKEN')
+    // The automatic OA-<n> series cannot be typed.
+    expect((await call('finA', 'POST', CA, { ...body, legalName: `OA typed ${RUN}`, number: 'OA-99999999999' })).statusCode).toBe(400)
     // Company B may use the same code.
     expect((await call('finB', 'POST', CA, { ...body, legalName: `B Co ${RUN}` })).statusCode).toBe(201)
   })
@@ -182,6 +184,9 @@ describe('settling bills at the till', () => {
     expect((await call('cashA', 'POST', '/pos/city-ledger/settlements', { ...payload, idempotencyKey: `k-${RUN}-3-xxxx`, method: 'card' })).statusCode).toBe(400)
     const noRef = await call('cashA', 'POST', '/pos/city-ledger/settlements', { ...payload, idempotencyKey: `k-${RUN}-4-xxxx`, method: 'bank_transfer' })
     expect(noRef.json().error.code).toBe('PAYMENT_REFERENCE_REQUIRED')
+    // A transfer must be seen on the counter device.
+    const unseen = await call('cashA', 'POST', '/pos/city-ledger/settlements', { ...payload, idempotencyKey: `k-${RUN}-4b-xxxx`, method: 'bank_transfer', reference: `T-${RUN}` })
+    expect(unseen.json().error.code).toBe('TRANSFER_NOT_VERIFIED')
 
     // Full: the rest of both bills; bill 1 is then settled and refused.
     const full = await call('cashA', 'POST', '/pos/city-ledger/settlements', { ...payload, idempotencyKey: `k-${RUN}-5-xxxx`, allocations: [{ chargeId: b1.id, amountCents: 40_000 }, { chargeId: b2.id, amountCents: 30_000 }] })
@@ -202,9 +207,18 @@ describe('settling bills at the till', () => {
     const late = await call('cashA', 'POST', '/pos/city-ledger/settlements', { ...payload, idempotencyKey: `k-${RUN}-7-xxxx` })
     expect(late.statusCode).toBe(422)
 
+    // Reversing the full settlement after the drawer closed: the cash goes back out from cash on hand (1010).
+    const fullId = full.json().settlement.id as string
+    const rev = await call('finA', 'POST', `${CA}/settlements/${fullId}/reverse`, { reason: 'Keyed on the wrong client' })
+    expect(rev.statusCode, rev.body).toBe(200)
+    const back = (await entry(tA, `cityledger.settlement.reversal:${fullId}`))!
+    expect(back.find((l) => l.type === 'credit')).toMatchObject({ code: '1010', amount: 70_000 })
+    expect(back.filter((l) => l.type === 'debit' && l.code === '1110').reduce((t, l) => t + l.amount, 0)).toBe(70_000)
+    expect(await owedNow(client.id)).toBe(70_000)
+
     // History ends at what the client owes; the 1110 tie-out has no difference.
     const h = await clientHistory(prisma, client)
-    expect(h[h.length - 1]!.balanceCents).toBe(0)
+    expect(h[h.length - 1]!.balanceCents).toBe(70_000)
     expect((await tieOutOf(tA, prisma)).differenceCents).toBe(0)
   })
 
@@ -218,12 +232,12 @@ describe('settling bills at the till', () => {
     const b1 = await bill(client.id, tA, brandA, 80_000)
     const b2 = await bill(client.id, tA, brandA, 20_000)
     // Back office: 30,000 of bill 1, all of bill 2 (bank transfer with its reference).
-    const s = await call('finA', 'POST', `${CA}/${client.id}/settlements`, { method: 'bank_transfer', reference: `TRF-${RUN}`, receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 30_000 }, { chargeId: b2.id, amountCents: 20_000 }] })
+    const s = await call('finA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `bo-${Math.random().toString(36).slice(2)}-key`, method: 'bank_transfer', reference: `TRF-${RUN}`, receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 30_000 }, { chargeId: b2.id, amountCents: 20_000 }] })
     expect(s.statusCode, s.body).toBe(201)
     expect(s.json().settlement.moneyAccountCode).toBe('1020')
     // A cashier cannot use the back-office route; company B is 404.
-    expect((await call('cashA', 'POST', `${CA}/${client.id}/settlements`, { method: 'cash', reference: 'x', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 1 }] })).statusCode).toBe(403)
-    expect((await call('finB', 'POST', `${CA}/${client.id}/settlements`, { method: 'cash', reference: 'x', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 1 }] })).statusCode).toBe(404)
+    expect((await call('cashA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `bo-${Math.random().toString(36).slice(2)}-key`, method: 'cash', reference: 'x', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 1 }] })).statusCode).toBe(403)
+    expect((await call('finB', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `bo-${Math.random().toString(36).slice(2)}-key`, method: 'cash', reference: 'x', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 1 }] })).statusCode).toBe(404)
 
     // The statement: bill 1's remaining 50,000 only (bill 2 is paid, the unbooked one waits).
     const st = await call('finA', 'POST', `${CA}/${client.id}/statements`, { periodTo: today() })
@@ -231,7 +245,7 @@ describe('settling bills at the till', () => {
     const inv = await prisma.receivableInvoice.findFirstOrThrow({ where: { customerAccountId: client.id, kind: 'statement' } })
     expect(Number(inv.amountCents) + Number(inv.taxCents)).toBe(50_000)
     expect((await prisma.customerAccountCharge.findUniqueOrThrow({ where: { id: b2.id } })).statementInvoiceId).toBeNull()
-    const onSt = await call('finA', 'POST', `${CA}/${client.id}/settlements`, { method: 'cash', reference: 'R1', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 1_000 }] })
+    const onSt = await call('finA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `bo-${Math.random().toString(36).slice(2)}-key`, method: 'cash', reference: 'R1', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 1_000 }] })
     expect(onSt.json().error.code).toBe('BILL_ON_STATEMENT')
     expect(await owedNow(client.id)).toBe(80_000) // 50,000 on the statement + the unbooked 30,000
 
@@ -265,7 +279,7 @@ describe('City Ledger Summary report', () => {
     const zero = await mkClient(tA)
     const b1 = await bill(client.id, tA, brandA, 40_000)
     await bill(client.id, tA, brandA, 10_000)
-    await call('finA', 'POST', `${CA}/${client.id}/settlements`, { method: 'cash', reference: 'RCPT-1', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 15_000 }] })
+    await call('finA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `bo-${Math.random().toString(36).slice(2)}-key`, method: 'cash', reference: 'RCPT-1', receivedAt: today(), allocations: [{ chargeId: b1.id, amountCents: 15_000 }] })
     // An unrelated back-office invoice to a customer of the same name: never in the City Ledger.
     await prisma.receivableInvoice.create({ data: { tenantId: tA, number: `AR-X-${RUN}`, customerName: client.legalName, issueDate: new Date(), dueDate: new Date(), description: 'consulting', amountCents: 999_999 } })
 
@@ -298,3 +312,31 @@ describe('City Ledger Summary report', () => {
     expect((await call('finB', 'GET', `${base}&clAccounts=all`)).statusCode).toBe(404)
   })
 })
+
+describe('money owed back (a bill refunded after it was paid)', () => {
+  it('finance pays it back: Dr 1110 / Cr the money, the bill owes nothing; never more than owed back', async () => {
+    const client = await mkClient(tA)
+    const b = await bill(client.id, tA, brandA, 20_000)
+    const paid = await call('finA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `pb-${RUN}-1-key`, method: 'cash', reference: 'R-PB', receivedAt: today(), allocations: [{ chargeId: b.id, amountCents: 20_000 }] })
+    expect(paid.statusCode, paid.body).toBe(201)
+    // The till refunds the whole bill afterwards: the client is now owed 20,000 back.
+    await prisma.customerAccountCharge.update({ where: { id: b.id }, data: { refundedCents: 20_000 } })
+    expect((await exposureOfTx(prisma, client.id)).creditCents).toBe(20_000)
+    const over = await call('finA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `pb-${RUN}-2-key`, direction: 'out', method: 'cash', reference: 'PB-1', receivedAt: today(), allocations: [{ chargeId: b.id, amountCents: 20_001 }] })
+    expect(over.json().error.code).toBe('OVER_ALLOCATED')
+    const out = await call('finA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `pb-${RUN}-3-key`, direction: 'out', method: 'cash', reference: 'PB-1', receivedAt: today(), allocations: [{ chargeId: b.id, amountCents: 20_000 }] })
+    expect(out.statusCode, out.body).toBe(201)
+    const lines = (await entry(tA, `cityledger.settlement:${out.json().settlement.id}`))!
+    expect(lines.find((l) => l.type === 'credit')).toMatchObject({ code: '1010', amount: 20_000 })
+    expect(lines.find((l) => l.type === 'debit')).toMatchObject({ code: '1110', amount: 20_000 })
+    const e = await exposureOfTx(prisma, client.id)
+    expect(e.creditCents + e.exposureCents).toBe(0)
+    // A future date is refused.
+    const fut = new Date(Date.now() + 3 * 86_400_000 + 5 * 3_600_000).toISOString().slice(0, 10)
+    const b2 = await bill(client.id, tA, brandA, 5_000)
+    expect((await call('finA', 'POST', `${CA}/${client.id}/settlements`, { idempotencyKey: `pb-${RUN}-4-key`, method: 'cash', reference: 'R', receivedAt: fut, allocations: [{ chargeId: b2.id, amountCents: 5_000 }] })).json().error.code).toBe('DATE_IN_FUTURE')
+    const h = await clientHistory(prisma, client)
+    expect(h[h.length - 1]!.balanceCents).toBe(5_000)
+  })
+})
+

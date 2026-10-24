@@ -76,6 +76,7 @@ import {
 } from './onAccount.js'
 import { statementRoutes } from './statements.js'
 import { cityLedgerBackOfficeRoutes } from './cityLedgerRoutes.js'
+import { chargeOwedCents } from './cityLedger.js'
 import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABEL, type AccountType } from './cityLedger.js'
 
 type Tx = Prisma.TransactionClient
@@ -118,7 +119,9 @@ const CreateBody = z.object({
   ...ClientFields,
   accountType: ClientFields.accountType.default('company'),
   /** The account code — typed by the person (unique per company), or OA-0001… when left empty. */
-  number: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9-]{1,19}$/, 'Use 2–20 letters, numbers or dashes').optional(),
+  number: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9-]{1,19}$/, 'Use 2–20 letters, numbers or dashes')
+    // OA-<digits> is the automatic series — a typed one could break its numbering.
+    .refine((v) => !/^OA-[0-9]+$/.test(v), 'OA-<number> codes are given automatically — leave the code empty or choose another').optional(),
   termsDays: ClientFields.termsDays.default(30),
   overdueGraceDays: ClientFields.overdueGraceDays.default(7),
   requiresReference: ClientFields.requiresReference.default(false),
@@ -406,7 +409,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
     const charges = await Promise.all(unbilled.map(async (c) => ({
       id: c.id, orderId: c.orderId, orderRef: orderRefOf(c.orderId), conceptId: c.conceptId, brand: brandOf.get(c.conceptId) ?? null,
       cardId: c.cardId, cardHint: c.cardId ? hintOf.get(c.cardId) ?? null : null, chargedAt: c.chargedAt, chargedDay: karachiDay(c.chargedAt),
-      amountCents: c.amountCents, taxCents: c.taxCents, refundedCents: c.refundedCents, netCents: chargeNetCents(c),
+      amountCents: c.amountCents, taxCents: c.taxCents, refundedCents: c.refundedCents, settledCents: c.settledCents, netCents: chargeOwedCents(c),
       reference: c.reference, booked: await isChargeBookedTx(prisma, c),
     })))
     return {
@@ -466,7 +469,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
       cardId: c.cardId, cardHint: c.cardId ? cardOf.get(c.cardId)?.tokenHint ?? null : null,
       cardLabel: c.cardId ? cardOf.get(c.cardId)?.label ?? null : null,
       chargedAt: c.chargedAt, chargedDay: karachiDay(c.chargedAt),
-      amountCents: c.amountCents, taxCents: c.taxCents, refundedCents: c.refundedCents, netCents: chargeNetCents(c),
+      amountCents: c.amountCents, taxCents: c.taxCents, refundedCents: c.refundedCents, settledCents: c.settledCents, netCents: chargeOwedCents(c),
       reference: c.reference, statementInvoiceId: c.statementInvoiceId,
       statementNumber: c.statementInvoiceId ? stOf.get(c.statementInvoiceId) ?? null : null,
       booked: c.statementInvoiceId ? true : await isChargeBookedTx(prisma, c),

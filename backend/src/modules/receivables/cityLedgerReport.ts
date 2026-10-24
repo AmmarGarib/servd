@@ -80,7 +80,7 @@ export interface AccountReport {
   bills: BillReportRow[]
 }
 
-const PAYMENT_TYPES = new Set(['settlement', 'settlement_reversed', 'statement_payment', 'statement_payment_reversed'])
+const PAYMENT_TYPES = new Set(['settlement', 'settlement_reversed', 'pay_back', 'pay_back_reversed', 'statement_payment', 'statement_payment_reversed'])
 const ADJUSTMENT_TYPES = new Set(['refund', 'write_off'])
 
 export async function cityLedgerReport(q: CityLedgerQuery): Promise<AccountReport[]> {
@@ -141,7 +141,7 @@ async function billsAsAt(a: CustomerAccount, from: Date, to: Date): Promise<Bill
       select: { id: true, totalCents: true, discountCents: true, promoDiscountCents: true, taxCents: true, customerName: true, conceptId: true },
     }),
     prisma.payment.findMany({ where: { orderId: { in: orderIds }, status: 'refunded' }, select: { orderId: true, createdAt: true, gatewayMeta: true } }),
-    prisma.cityLedgerAllocation.findMany({ where: { tenantId: t, chargeId: { in: charges.map((c) => c.id) } }, include: { settlement: { select: { receivedAt: true, reversedAt: true } } } }),
+    prisma.cityLedgerAllocation.findMany({ where: { tenantId: t, chargeId: { in: charges.map((c) => c.id) } }, include: { settlement: { select: { receivedAt: true, reversedAt: true, direction: true } } } }),
     statementIds.length ? prisma.receivableInvoice.findMany({ where: { id: { in: statementIds }, tenantId: t }, select: { id: true, number: true, dueDate: true } }) : [],
     statementIds.length ? prisma.receivablePayment.findMany({ where: { tenantId: t, invoiceId: { in: statementIds } }, select: { invoiceId: true, amountCents: true, receivedAt: true, reversedAt: true } }) : [],
     statementIds.length ? prisma.receivableWriteOff.findMany({ where: { tenantId: t, invoiceId: { in: statementIds }, status: 'approved' }, select: { invoiceId: true, amountCents: true, recoveredCents: true, decidedAt: true } }) : [],
@@ -169,7 +169,7 @@ async function billsAsAt(a: CustomerAccount, from: Date, to: Date): Promise<Bill
   for (const al of allocations) {
     if (!liveAt(al.settlement.receivedAt, al.settlement.reversedAt)) continue
     const cur = settledAt.get(al.chargeId) ?? { cents: 0, last: null }
-    cur.cents += al.amountCents
+    cur.cents += al.settlement.direction === 'out' ? -al.amountCents : al.amountCents
     if (!cur.last || al.settlement.receivedAt > cur.last) cur.last = al.settlement.receivedAt
     settledAt.set(al.chargeId, cur)
   }

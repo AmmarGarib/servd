@@ -65,6 +65,8 @@ export function CityLedgerSettle({ onMenu }: { onMenu: () => void }) {
   const [amounts, setAmounts] = useState<Record<string, string>>({})
   const [method, setMethod] = useState<Method>('cash')
   const [reference, setReference] = useState('')
+  // Bank transfer: the cashier saw the credit on the counter device (bank app / SMS) — the server requires it.
+  const [transferSeen, setTransferSeen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [posting, setPosting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -104,7 +106,7 @@ export function CityLedgerSettle({ onMenu }: { onMenu: () => void }) {
   }), [billsQ.data, ticked, amounts])
   const total = rows.reduce((s, r) => s + (r.cents && !r.err ? r.cents : 0), 0)
   const anyInvalid = rows.some((r) => r.err)
-  const needRef = method === 'bank_transfer' && reference.trim() === ''
+  const needRef = method === 'bank_transfer' && (reference.trim() === '' || !transferSeen)
   const canConfirm = !!shiftId && !!account && rows.length > 0 && !anyInvalid && total > 0 && !needRef && !posting
 
   const visibleSettleable = bills.filter((b) => b.booked)
@@ -122,7 +124,7 @@ export function CityLedgerSettle({ onMenu }: { onMenu: () => void }) {
     try {
       const res = await api.post<SettlementResult>('/pos/city-ledger/settlements', {
         accountId: account.id, shiftId, method,
-        ...(method === 'bank_transfer' && { reference: reference.trim() }),
+        ...(method === 'bank_transfer' && { reference: reference.trim(), transferVerified: transferSeen }),
         allocations, idempotencyKey: attempt.current.key,
       })
       attempt.current = null
@@ -272,7 +274,11 @@ export function CityLedgerSettle({ onMenu }: { onMenu: () => void }) {
                   </div>
                   {method === 'bank_transfer' && (
                     <div className="min-w-[200px] flex-1"><label htmlFor="cl-ref" className={labelCls}>Reference (required)</label>
-                      <input id="cl-ref" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={100} className={inputCls} /></div>
+                      <input id="cl-ref" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={100} className={inputCls} />
+                      <label className="mt-2 flex items-center gap-2 text-sm text-kds-text">
+                        <input type="checkbox" checked={transferSeen} onChange={(e) => setTransferSeen(e.target.checked)} />
+                        I saw this transfer arrive on the counter device (bank app / SMS)
+                      </label></div>
                   )}
                   <div className="ml-auto text-right">
                     <span className={labelCls}>Total to receive</span>

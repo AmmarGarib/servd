@@ -25,7 +25,8 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { karachiDay } from '../connectors/util.js'
 import { LIVE_KINDS, balanceOf } from '../modules/receivables/ledger.js'
-import { chargeNetCents, isChargeBookedTx } from '../modules/receivables/onAccount.js'
+import { isChargeBookedTx } from '../modules/receivables/onAccount.js'
+import { chargeOwedCents } from '../modules/receivables/cityLedger.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -138,12 +139,12 @@ export async function runOnAccountDailyForTenant(tenantId: string, now: Date = n
   const cutoff = new Date(now.getTime() - UNBILLED_AFTER_DAYS * DAY)
   const old = await db.customerAccountCharge.findMany({
     where: { tenantId, statementInvoiceId: null, chargedAt: { lt: cutoff } },
-    select: { tenantId: true, accountId: true, orderId: true, paymentId: true, amountCents: true, refundedCents: true, chargedAt: true },
+    select: { tenantId: true, accountId: true, orderId: true, paymentId: true, amountCents: true, refundedCents: true, settledCents: true, chargedAt: true },
     orderBy: { chargedAt: 'asc' },
   })
   const late = new Map<string, { cents: number; count: number; oldest: Date }>()
   for (const c of old) {
-    const net = chargeNetCents(c)
+    const net = chargeOwedCents(c) // net of City Ledger settlements
     if (net <= 0 || !(await isChargeBookedTx(db, c))) continue
     const cur = late.get(c.accountId) ?? { cents: 0, count: 0, oldest: c.chargedAt }
     cur.cents += net

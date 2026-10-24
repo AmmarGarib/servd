@@ -731,7 +731,7 @@ const CL_NOTE = 'POS bills closed on a City Ledger account only. Opening / closi
 async function cityLedgerDetail(input: TillReportInput, notes: string[]): Promise<TillSection[]> {
   const accounts = await ledgerAccounts(input)
   const columns = [col('date', 'Date'), col('type', 'Type'), col('reference', 'Reference'), col('voucher', 'Voucher'), col('debitCents', 'Debit', 'cents'), col('creditCents', 'Credit', 'cents'), col('balanceCents', 'Balance', 'cents'), col('createdBy', 'By'), col('status', 'Status')]
-  const TYPE: Record<string, string> = { bill: 'Credit bill', refund: 'Refund', settlement: 'Settlement', settlement_reversed: 'Settlement reversed', statement_payment: 'Statement payment', statement_payment_reversed: 'Payment reversed', write_off: 'Write-off' }
+  const TYPE: Record<string, string> = { bill: 'Credit bill', refund: 'Refund', settlement: 'Settlement', settlement_reversed: 'Settlement reversed', pay_back: 'Paid back', pay_back_reversed: 'Pay-back reversed', statement_payment: 'Statement payment', statement_payment_reversed: 'Payment reversed', write_off: 'Write-off' }
   const sections: TillSection[] = []
   for (const a of accounts) {
     const rows: Array<Record<string, Cell>> = [{ date: '', type: 'Opening balance', reference: '', voucher: '', debitCents: null, creditCents: null, balanceCents: a.openingCents, createdBy: '', status: '' }]

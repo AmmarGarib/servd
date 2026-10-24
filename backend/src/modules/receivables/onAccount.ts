@@ -80,7 +80,9 @@ export async function isChargeBookedTx(
   let reference: string
   if (order.source === 'pos') {
     if (!payment?.shiftId) return false
-    reference = `shift.close:${payment.shiftId}`
+    // The drawer's LIVE close (a shift correction may have reversed the first one and re-posted it as '@n').
+    const { liveShiftCloses } = await import('../accounting/shiftPosting.js')
+    return (await liveShiftCloses(db, charge.tenantId, [payment.shiftId])).has(payment.shiftId)
   } else {
     reference = `order.complete:${charge.orderId}`
   }

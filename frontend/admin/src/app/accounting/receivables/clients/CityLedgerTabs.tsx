@@ -122,6 +122,8 @@ function BillsTab({ accountId, tenantId, canRecord, onChanged }: { accountId: st
   const [to, setTo] = useState('')
   const [picked, setPicked] = useState<Record<string, string>>({}) // chargeId → rupees typed
   const [panel, setPanel] = useState(false)
+  // A bill refunded after it was paid owes BACK (owedCents < 0): finance pays it back (direction 'out').
+  const [payBack, setPayBack] = useState<OpenBill | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const base = `/accounting/customer-accounts/${accountId}`
   const qs = new URLSearchParams({ open: '1' })
@@ -131,7 +133,9 @@ function BillsTab({ accountId, tenantId, canRecord, onChanged }: { accountId: st
     queryKey: ['oa-bills', accountId, qs.toString()],
     queryFn: () => api.get(`${base}/bills?${qs.toString()}`),
   })
-  const items = q.data?.items ?? []
+  const all = q.data?.items ?? []
+  const items = all.filter((b) => b.owedCents > 0)
+  const owedBack = all.filter((b) => b.owedCents < 0)
   const payable = (b: OpenBill) => b.booked && b.owedCents > 0 && b.status !== 'on_statement' && b.status !== 'settled' && b.status !== 'refunded'
   const amountOf = (b: OpenBill) => rupeesToPaisa(picked[b.chargeId] ?? '')
   const amountBad = (b: OpenBill) => { const a = amountOf(b); return a <= 0 || a > b.owedCents }
@@ -213,6 +217,31 @@ function BillsTab({ accountId, tenantId, canRecord, onChanged }: { accountId: st
         </div>
       )}
 
+      {owedBack.length > 0 && (
+        <div className="rounded-2xl p-4 space-y-2" style={card}>
+          <p className="text-sm font-bold">Owed back to the client</p>
+          <p className="text-xs text-s-muted">These bills were refunded after they were paid — the client is owed the money back.</p>
+          {owedBack.map((b) => (
+            <div key={b.chargeId} className="flex items-center justify-between gap-3 text-sm">
+              <span><span className="font-mono">{b.orderRef}</span> · {day(b.chargedAt)} · owed back <b>{fmtPkrWhole(-b.owedCents)}</b></span>
+              {canRecord && <Button type="button" variant="ghost" onClick={() => setPayBack(b)}>Pay back</Button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {payBack && (
+        <SettlePanel
+          accountId={accountId} tenantId={tenantId} direction="out" bills={[{ bill: payBack, cents: -payBack.owedCents }]} totalCents={-payBack.owedCents}
+          onClose={() => setPayBack(null)}
+          onDone={(n) => {
+            setPayBack(null); setNotice(`Pay-back ${n} recorded.`)
+            void qc.invalidateQueries({ queryKey: ['oa-bills', accountId] })
+            void qc.invalidateQueries({ queryKey: ['oa-settlements', accountId] })
+            void qc.invalidateQueries({ queryKey: ['oa-history', accountId] })
+            onChanged()
+          }}
+        />
+      )}
       {panel && (
         <SettlePanel
           accountId={accountId} tenantId={tenantId} bills={chosen.map((b) => ({ bill: b, cents: amountOf(b) }))} totalCents={totalCents}
@@ -230,8 +259,8 @@ function BillsTab({ accountId, tenantId, canRecord, onChanged }: { accountId: st
   )
 }
 
-function SettlePanel({ accountId, tenantId, bills, totalCents, onClose, onDone }: {
-  accountId: string; tenantId: string; bills: Array<{ bill: OpenBill; cents: number }>; totalCents: number
+function SettlePanel({ accountId, tenantId, bills, totalCents, onClose, onDone, direction = 'in' }: {
+  accountId: string; tenantId: string; bills: Array<{ bill: OpenBill; cents: number }>; totalCents: number; direction?: 'in' | 'out'
   onClose: () => void; onDone: (number: string) => void
 }) {
   const [method, setMethod] = useState('bank_transfer')
@@ -248,7 +277,7 @@ function SettlePanel({ accountId, tenantId, bills, totalCents, onClose, onDone }
     mutationFn: () => api.post<{ settlement: { number: string }; replayed: boolean }>(`/accounting/customer-accounts/${accountId}/settlements`, {
       allocations: bills.map((x) => ({ chargeId: x.bill.chargeId, amountCents: x.cents })),
       method, reference: reference.trim(), ...(bankId ? { bankAccountId: bankId } : {}),
-      receivedAt, ...(note.trim() ? { note: note.trim() } : {}), idempotencyKey: keyRef.current,
+      receivedAt, ...(note.trim() ? { note: note.trim() } : {}), idempotencyKey: keyRef.current, direction,
     }),
     onSuccess: (r) => onDone(r.settlement.number),
     onError: (e) => {
@@ -258,7 +287,7 @@ function SettlePanel({ accountId, tenantId, bills, totalCents, onClose, onDone }
     },
   })
   return (
-    <SidePanel title="Record settlement" subtitle={`${bills.length} bill${bills.length === 1 ? '' : 's'} · ${fmtPkrWhole(totalCents)}`} onClose={onClose} wide>
+    <SidePanel title={direction === 'out' ? 'Pay back to the client' : 'Record settlement'} subtitle={`${bills.length} bill${bills.length === 1 ? '' : 's'} · ${fmtPkrWhole(totalCents)}`} onClose={onClose} wide>
       <div className="p-5 space-y-4">
         {!confirm ? (
           <>
@@ -285,7 +314,7 @@ function SettlePanel({ accountId, tenantId, bills, totalCents, onClose, onDone }
         ) : (
           <>
             <p className="text-sm text-white/80">
-              Record <b>{fmtPkrWhole(totalCents)}</b> received by {receiptMethodLabel(method).toLowerCase()} (ref. {reference.trim()}) on {receivedAt}
+              {direction === 'out' ? 'Pay back' : 'Record'} <b>{fmtPkrWhole(totalCents)}</b> {direction === 'out' ? 'paid' : 'received'} by {receiptMethodLabel(method).toLowerCase()} (ref. {reference.trim()}) on {receivedAt}
               {' '}against {bills.length} bill{bills.length === 1 ? '' : 's'}? This posts to the books.
             </p>
             <Err msg={err} />

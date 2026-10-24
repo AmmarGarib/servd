@@ -91,7 +91,8 @@ import { fmtPktDate } from '../accounting/dates.js'
 import { assertWithheldNotSetOff } from '../accounting/taxPayments.js'
 import { CHART_OF_ACCOUNTS, assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { writeOffRoutes, WRITE_OFF_REQUESTERS } from './writeOffs.js'
-import { chargeNetCents, lockAccountTx } from './onAccount.js'
+import { lockAccountTx } from './onAccount.js'
+import { chargeOwedCents } from './cityLedger.js'
 import {
   INVOICE, CREDIT_NOTE, STATEMENT, LIVE_KINDS, WHT_METHOD, ST_WITHHELD_METHOD,
   totalOf, balanceOf, statusFor, paymentKind, sourceOfPayment, lockInvoice, restatus, nextNumber, withNumberRetry,
@@ -592,10 +593,10 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         if (inv.kind === STATEMENT) {
           const charges = await tx.customerAccountCharge.findMany({
             where: { tenantId: inv.tenantId, statementInvoiceId: inv.id },
-            select: { amountCents: true, taxCents: true, refundedCents: true },
+            select: { amountCents: true, taxCents: true, refundedCents: true, settledCents: true },
           })
           taxNowCents = charges.reduce(
-            (t, c) => t + (c.amountCents > 0 ? Math.round((c.taxCents * chargeNetCents(c)) / c.amountCents) : 0),
+            (t, c) => t + (c.amountCents > 0 ? Math.round((c.taxCents * chargeOwedCents(c)) / c.amountCents) : 0),
             0,
           )
         }

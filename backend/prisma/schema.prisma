@@ -8724,6 +8724,8 @@ model CityLedgerSettlement {
   /// Till cash reversed while its drawer was still open: the drawer pay-out that handed it back.
   reversalCashMovementId String?   @unique
   moneyAccountCode       String // the account the entry debited
+  /// 'in' = received from the client; 'out' = paid back on bills that owe back (back office only).
+  direction              String    @default("in")
   idempotencyKey         String?
   note                   String?
   createdById            String

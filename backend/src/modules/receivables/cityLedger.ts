@@ -55,7 +55,7 @@ import { orderRefOf } from '../../lib/orderRef.js'
 import { karachiDay } from '../../connectors/util.js'
 import { ACCT, ON_ACCOUNT_MEMO, postJournalEntry, reverseJournalEntry, type JournalLineInput } from '../accounting/journal.js'
 import { isChargeBookedTx, lockAccountTx } from './onAccount.js'
-import { balanceOf, LIVE_KINDS } from './ledger.js'
+import { balanceOf, STATEMENT } from './ledger.js'
 
 type Tx = Prisma.TransactionClient
 type Db = Tx | typeof prisma
@@ -119,6 +119,13 @@ export interface SettleInput {
   note?: string | null
   idempotencyKey?: string | null
   actorId: string
+  /**
+   * 'in' (default): money received against bills. 'out' (back office only): money PAID BACK on bills that owe
+   * back (a bill refunded after it was paid — owed < 0): Dr 1110 / Cr the money, the bill's settled goes down.
+   */
+  direction?: 'in' | 'out'
+  /** Till bank transfer: the cashier saw the credit on the counter device (bank app / SMS) — required. */
+  transferVerified?: boolean
 }
 
 export interface SettleResult {
@@ -128,12 +135,14 @@ export interface SettleResult {
 
 function sameRequest(s: CityLedgerSettlement & { allocations: CityLedgerAllocation[] }, input: SettleInput): boolean {
   const want = new Map(input.allocations.map((a) => [a.chargeId, a.amountCents]))
-  return s.accountId === input.account.id && s.method === input.method && s.channel === input.channel
+  return s.accountId === input.account.id && s.method === input.method && s.channel === input.channel && s.direction === (input.direction ?? 'in')
     && s.allocations.length === want.size && s.allocations.every((a) => want.get(a.chargeId) === a.amountCents)
 }
 
 export async function settleBills(input: SettleInput): Promise<SettleResult> {
   const { account } = input
+  const out = input.direction === 'out'
+  if (out && input.channel !== 'back_office') throw refuse('PAYBACK_BACK_OFFICE_ONLY', 'Money owed back to a client is paid by finance', 422)
   if (input.allocations.length === 0) throw refuse('NO_BILLS', 'Pick at least one bill to settle', 422)
   const ids = new Set<string>()
   for (const a of input.allocations) {
@@ -152,7 +161,11 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
       throw refuse('METHOD_NOT_AT_TILL', 'At the till a City Ledger bill is settled in cash or by bank transfer', 422)
     }
     if (!input.shiftId) throw refuse('SHIFT_REQUIRED', 'Open your drawer first', 422)
-    if (input.method === 'bank_transfer') reference = assertPaymentReference(input.method, reference)
+    if (input.method === 'bank_transfer') {
+      reference = assertPaymentReference(input.method, reference)
+      // The money is checked on the counter device, never the customer's screen (the Raast rule).
+      if (input.transferVerified !== true) throw refuse('TRANSFER_NOT_VERIFIED', 'Check the transfer has arrived on the counter device (bank app / SMS) and tick that you saw it', 422)
+    }
     if (input.method === 'cash' && input.bankAccountId) throw refuse('BANK_ACCOUNT_ON_CASH', 'A cash payment does not use a bank account', 422)
   } else {
     if (!(OFFICE_SETTLE_METHODS as readonly string[]).includes(input.method)) {
@@ -160,6 +173,8 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
     }
     reference = assertPaymentReference(input.method, reference)
   }
+  // A receipt is dated today or earlier (never in the future).
+  if (karachiDay(input.receivedAt) > karachiDay(new Date())) throw refuse('DATE_IN_FUTURE', 'The date received cannot be in the future', 422)
 
   const tenantId = account.tenantId
   try {
@@ -175,6 +190,11 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
       const client = await lockAccountTx(tx, account.id)
       if (client.tenantId !== tenantId) throw new NotFoundError('CustomerAccount', account.id)
       if (client.status === 'pending') throw refuse('CLIENT_NOT_APPROVED', 'This client is not approved yet — it has no bills', 409)
+      // A till bank transfer reference pays ONE settlement only (the same transfer never settles twice).
+      if (input.channel === 'till' && input.method === 'bank_transfer' && reference) {
+        const used = await tx.cityLedgerSettlement.findFirst({ where: { tenantId, reference, method: 'bank_transfer', reversedAt: null }, select: { number: true } })
+        if (used) throw refuse('REFERENCE_USED', `That transfer reference is already on settlement ${used.number}`, 409)
+      }
 
       const charges = await tx.customerAccountCharge.findMany({ where: { id: { in: [...ids] }, tenantId, accountId: client.id } })
       if (charges.length !== ids.size) throw new NotFoundError('CustomerAccountCharge')
@@ -190,10 +210,17 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
           throw refuse('BILL_NOT_BOOKED', `Bill #${orderRefOf(c.orderId)} is not in the books yet — settle it once the drawer that billed it has closed`, 409, { chargeId: c.id })
         }
         const owed = chargeOwedCents(c)
-        if (owed <= 0) throw refuse('BILL_ALREADY_SETTLED', `Bill #${orderRefOf(c.orderId)} is already settled`, 409, { chargeId: c.id })
-        if (a.amountCents > owed) {
-          throw refuse('OVER_ALLOCATED', `That is more than bill #${orderRefOf(c.orderId)} still owes (PKR ${(owed / 100).toLocaleString('en-PK')})`, 409, { chargeId: c.id, owedCents: owed })
+        if (out) {
+          if (owed >= 0) throw refuse('NOTHING_OWED_BACK', `Bill #${orderRefOf(c.orderId)} owes nothing back`, 409, { chargeId: c.id })
+          if (a.amountCents > -owed) throw refuse('OVER_ALLOCATED', `That is more than bill #${orderRefOf(c.orderId)} is owed back (PKR ${(-owed / 100).toLocaleString('en-PK')})`, 409, { chargeId: c.id, owedBackCents: -owed })
+        } else {
+          if (owed <= 0) throw refuse('BILL_ALREADY_SETTLED', `Bill #${orderRefOf(c.orderId)} is already settled`, 409, { chargeId: c.id })
+          if (a.amountCents > owed) {
+            throw refuse('OVER_ALLOCATED', `That is more than bill #${orderRefOf(c.orderId)} still owes (PKR ${(owed / 100).toLocaleString('en-PK')})`, 409, { chargeId: c.id, owedCents: owed })
+          }
         }
+        // Never dated before the bill itself.
+        if (karachiDay(input.receivedAt) < karachiDay(c.chargedAt)) throw refuse('DATE_BEFORE_BILL', `The date is before bill #${orderRefOf(c.orderId)}`, 422)
       }
 
       // The money account.
@@ -203,7 +230,8 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
       const number = await nextSettlementNumber(tx, tenantId)
       if (input.channel === 'till') {
         // The drawer: locked and re-read, so a close running now cannot miss the pay-in.
-        await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${input.shiftId!} FOR UPDATE`
+        // NO KEY UPDATE: serialises with the close's status claim, never with a payment row's foreign-key lock.
+        await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${input.shiftId!} FOR NO KEY UPDATE`
         const shift = await tx.shift.findUnique({ where: { id: input.shiftId! }, select: { status: true, tenantId: true } })
         if (!shift || shift.status !== 'open') throw refuse('SHIFT_CLOSED', 'This drawer is closed — open a new shift', 422)
         if (shift.tenantId && shift.tenantId !== tenantId) throw refuse('SHIFT_NOT_IN_COMPANY', 'That drawer is not of the client’s company', 422)
@@ -228,7 +256,7 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
         data: {
           tenantId, accountId: client.id, number, amountCents: total, method: input.method, reference, bankAccountId,
           receivedAt: input.receivedAt, channel: input.channel, shiftId: input.channel === 'till' ? input.shiftId! : null,
-          cashMovementId, moneyAccountCode: moneyCode, idempotencyKey: input.idempotencyKey ?? null,
+          cashMovementId, moneyAccountCode: moneyCode, idempotencyKey: input.idempotencyKey ?? null, direction: out ? 'out' : 'in',
           note: input.note?.trim() || null, createdById: input.actorId,
         },
       })
@@ -238,7 +266,7 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
         const c = byId.get(a.chargeId)!
         const moved = await tx.customerAccountCharge.updateMany({
           where: { id: c.id, statementInvoiceId: null, settledCents: c.settledCents, refundedCents: c.refundedCents },
-          data: { settledCents: { increment: a.amountCents } },
+          data: { settledCents: out ? { decrement: a.amountCents } : { increment: a.amountCents } },
         })
         if (moved.count !== 1) throw refuse('BILL_CHANGED', 'A bill changed while settling — try again', 409)
       }
@@ -254,10 +282,13 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
       }
       const how = receiptText(input.method, reference ?? number)
       const memoBase = `${ON_ACCOUNT_MEMO} — ${client.number} ${client.legalName} — City Ledger ${number}`
+      // In: Dr the money / Cr 1110. Out (paid back): Dr 1110 / Cr the money.
+      const moneySide = out ? 'credit' : 'debit'
+      const arSide = out ? 'debit' : 'credit'
       const lines: JournalLineInput[] = [
-        { accountCode: moneyCode, type: 'debit', amountCents: total, memo: `${memoBase} (${how})`.slice(0, 250), conceptId: byBrand.size === 1 ? [...byBrand.keys()][0] : undefined },
+        { accountCode: moneyCode, type: moneySide, amountCents: total, memo: `${memoBase}${out ? ' — paid back' : ''} (${how})`.slice(0, 250), conceptId: byBrand.size === 1 ? [...byBrand.keys()][0] : undefined },
         ...[...byBrand.entries()].map(([conceptId, b]): JournalLineInput => ({
-          accountCode: ACCT.CUSTOMER_AR, type: 'credit', amountCents: b.cents, conceptId,
+          accountCode: ACCT.CUSTOMER_AR, type: arSide, amountCents: b.cents, conceptId,
           memo: `${memoBase} — bills ${b.refs.join(', ')}`.slice(0, 250),
         })),
       ]
@@ -265,7 +296,7 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
         tenantId,
         sourceType: SETTLEMENT_SOURCE,
         sourceId: settlement.id,
-        description: `City Ledger settlement ${number} — ${client.legalName} (${how})`.slice(0, 500),
+        description: `City Ledger ${out ? 'pay-back' : 'settlement'} ${number} — ${client.legalName} (${how})`.slice(0, 500),
         entryDate: input.receivedAt,
         postedBy: input.actorId,
         lines,
@@ -294,7 +325,11 @@ async function nextSettlementNumber(tx: Tx, tenantId: string): Promise<string> {
 
 // ─── Reverse ─────────────────────────────────────────────────────────────────
 
-export async function reverseSettlement(input: { settlementId: string; tenantIds: string[]; reason: string; actorId: string }): Promise<CityLedgerSettlement> {
+export async function reverseSettlement(input: {
+  settlementId: string; tenantIds: string[]; reason: string; actorId: string
+  /** Till cash whose drawer has CLOSED: where the money goes back out from (default 1010 cash on hand). */
+  refundFrom?: { method: string; bankAccountId?: string | null } | null
+}): Promise<CityLedgerSettlement> {
   const reason = input.reason.trim()
   if (reason.length < 10) throw refuse('REASON_TOO_SHORT', 'Say why in at least 10 characters', 422)
   const found = await prisma.cityLedgerSettlement.findFirst({ where: { id: input.settlementId, tenantId: { in: input.tenantIds } }, select: { id: true, accountId: true, tenantId: true } })
@@ -311,26 +346,47 @@ export async function reverseSettlement(input: { settlementId: string; tenantIds
       throw refuse('SETTLED_BILL_ON_STATEMENT', `A bill of settlement ${s.number} is now on statement ${st.map((x) => x.number).join(', ')} — void that statement first`, 409)
     }
     let reversalCashMovementId: string | null = null
+    // Till cash: back out of the SAME drawer while it is open (a pay-out its close skips); once it has closed,
+    // the cash went on to cash on hand / the bank with the close, so it goes back out from there.
+    let closedDrawerFrom: string | null = null
     if (s.cashMovementId) {
-      // Till cash goes back out of the SAME drawer, only while it is open.
-      await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${s.shiftId!} FOR UPDATE`
+      await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${s.shiftId!} FOR NO KEY UPDATE`
       const shift = await tx.shift.findUnique({ where: { id: s.shiftId! }, select: { status: true } })
-      if (!shift || shift.status !== 'open') {
-        throw refuse('DRAWER_CLOSED_USE_JOURNAL', `The drawer that took settlement ${s.number} has closed — correct it with a manual journal`, 409)
+      if (shift?.status === 'open') {
+        const mv = await tx.cashMovement.create({
+          data: { shiftId: s.shiftId!, type: 'payout', amountCents: toCents(s.amountCents), reason: `City Ledger ${s.number} reversed — ${reason}`.slice(0, 250), recordedById: input.actorId },
+        })
+        reversalCashMovementId = mv.id
+      } else {
+        const from = input.refundFrom ?? { method: 'cash', bankAccountId: null }
+        if (!(OFFICE_SETTLE_METHODS as readonly string[]).includes(from.method)) throw refuse('BAD_PAYMENT_METHOD', 'Say where the money goes back out from (cash on hand or a bank)', 422)
+        closedDrawerFrom = (await moneyAccountCode(tx, s.tenantId, { method: from.method, bankAccountId: from.bankAccountId ?? null })).code
       }
-      const mv = await tx.cashMovement.create({
-        data: { shiftId: s.shiftId!, type: 'payout', amountCents: toCents(s.amountCents), reason: `City Ledger ${s.number} reversed — ${reason}`.slice(0, 250), recordedById: input.actorId },
-      })
-      reversalCashMovementId = mv.id
     }
+    const back = s.direction === 'out'
     for (const a of s.allocations) {
       const moved = await tx.customerAccountCharge.updateMany({
-        where: { id: a.chargeId, settledCents: { gte: a.amountCents } },
-        data: { settledCents: { decrement: a.amountCents } },
+        where: back ? { id: a.chargeId } : { id: a.chargeId, settledCents: { gte: a.amountCents } },
+        data: { settledCents: back ? { increment: a.amountCents } : { decrement: a.amountCents } },
       })
       if (moved.count !== 1) throw refuse('BILL_CHANGED', 'A bill changed while reversing — try again', 409)
     }
-    await reverseJournalEntry(s.tenantId, SETTLEMENT_SOURCE, s.id, `Reversal of City Ledger settlement ${s.number}: ${reason}`.slice(0, 250), { tx, postedBy: input.actorId })
+    const why = `Reversal of City Ledger ${back ? 'pay-back' : 'settlement'} ${s.number}: ${reason}`.slice(0, 250)
+    if (closedDrawerFrom) {
+      // The original's 1110 lines mirrored per brand; the money side from where the cash now is.
+      const orig = await tx.journalEntry.findFirstOrThrow({ where: { tenantId: s.tenantId, reference: `${SETTLEMENT_SOURCE}:${s.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+      const arLines = orig.lines.filter((l) => l.account.code === ACCT.CUSTOMER_AR)
+      const posted = await postJournalEntry({
+        tenantId: s.tenantId, sourceType: `${SETTLEMENT_SOURCE}.reversal`, sourceId: s.id, description: why, postedBy: input.actorId,
+        lines: [
+          ...arLines.map((l): JournalLineInput => ({ accountCode: ACCT.CUSTOMER_AR, type: 'debit', amountCents: toCents(l.amountCents), conceptId: l.conceptId ?? undefined, memo: l.memo ?? undefined })),
+          { accountCode: closedDrawerFrom, type: 'credit', amountCents: toCents(s.amountCents), memo: `${ON_ACCOUNT_MEMO} — City Ledger ${s.number} reversed after its drawer closed — ${reason}`.slice(0, 250) },
+        ],
+      }, { tx })
+      if (!posted.posted) throw refuse('ALREADY_REVERSED', `Settlement ${s.number} is already reversed`, 409)
+    } else {
+      await reverseJournalEntry(s.tenantId, SETTLEMENT_SOURCE, s.id, why, { tx, postedBy: input.actorId })
+    }
     const claimed = await tx.cityLedgerSettlement.updateMany({
       where: { id: s.id, reversedAt: null },
       data: { reversedAt: new Date(), reversedById: input.actorId, reversedReason: reason.slice(0, 500), reversalCashMovementId },
@@ -367,7 +423,7 @@ export interface OutstandingBill {
  * settled one by one now (not on a statement, owing > 0). Read in the CLIENT's
  * company only.
  */
-export async function clientBills(db: Db, account: Pick<CustomerAccount, 'id' | 'tenantId' | 'termsDays' | 'overdueGraceDays'>, opts: { onlyOpen?: boolean; from?: Date; to?: Date } = {}): Promise<OutstandingBill[]> {
+export async function clientBills(db: Db, account: Pick<CustomerAccount, 'id' | 'tenantId' | 'termsDays' | 'overdueGraceDays'>, opts: { onlyOpen?: boolean; includeOwedBack?: boolean; from?: Date; to?: Date } = {}): Promise<OutstandingBill[]> {
   const rows = await db.customerAccountCharge.findMany({
     where: {
       tenantId: account.tenantId, accountId: account.id,
@@ -388,7 +444,8 @@ export async function clientBills(db: Db, account: Pick<CustomerAccount, 'id' | 
   const out: OutstandingBill[] = []
   for (const c of rows) {
     const owed = c.statementInvoiceId ? 0 : chargeOwedCents(c)
-    if (opts.onlyOpen && owed <= 0) continue
+    // Open = owes something; with includeOwedBack also a bill that owes BACK (finance pays it back).
+    if (opts.onlyOpen && (opts.includeOwedBack ? owed === 0 : owed <= 0)) continue
     out.push({
       chargeId: c.id, orderId: c.orderId, orderRef: orderRefOf(c.orderId), conceptId: c.conceptId, brand: brandOf.get(c.conceptId) ?? null,
       chargedAt: c.chargedAt, dueDate: billDueDay(c.chargedAt, account.termsDays), reference: c.reference,
@@ -403,7 +460,7 @@ export async function clientBills(db: Db, account: Pick<CustomerAccount, 'id' | 
 
 export interface HistoryRow {
   at: Date
-  type: 'bill' | 'refund' | 'settlement' | 'settlement_reversed' | 'statement_payment' | 'statement_payment_reversed' | 'write_off'
+  type: 'bill' | 'refund' | 'settlement' | 'settlement_reversed' | 'pay_back' | 'pay_back_reversed' | 'statement_payment' | 'statement_payment_reversed' | 'write_off'
   reference: string
   orderRef: string | null
   /** + raises what the client owes, − lowers it. */
@@ -423,12 +480,13 @@ export interface HistoryRow {
  */
 export async function clientHistory(db: Db, account: Pick<CustomerAccount, 'id' | 'tenantId'>): Promise<HistoryRow[]> {
   const t = account.tenantId
-  const invoices = await db.receivableInvoice.findMany({ where: { tenantId: t, customerAccountId: account.id }, select: { id: true, number: true } })
+  const invoices = await db.receivableInvoice.findMany({ where: { tenantId: t, customerAccountId: account.id, kind: STATEMENT }, select: { id: true, number: true } })
   const invoiceNo = new Map(invoices.map((i) => [i.id, i.number]))
   const [charges, settlements, payments, writeOffs] = await Promise.all([
     db.customerAccountCharge.findMany({ where: { tenantId: t, accountId: account.id }, orderBy: { chargedAt: 'asc' } }),
     db.cityLedgerSettlement.findMany({ where: { tenantId: t, accountId: account.id }, include: { allocations: true } }),
-    db.receivablePayment.findMany({ where: { tenantId: t, invoice: { tenantId: t, customerAccountId: account.id, kind: { in: [...LIVE_KINDS] } } }, include: { invoice: { select: { number: true } } } }),
+    // POS bills only: payments on the client's STATEMENTS (a back-office invoice naming the client is not City Ledger).
+    db.receivablePayment.findMany({ where: { tenantId: t, invoice: { tenantId: t, customerAccountId: account.id, kind: STATEMENT } }, include: { invoice: { select: { number: true } } } }),
     invoices.length ? db.receivableWriteOff.findMany({ where: { tenantId: t, status: 'approved', invoiceId: { in: invoices.map((i) => i.id) } } }) : [],
   ])
   const userIds = [...new Set([...charges.map((c) => c.chargedById), ...settlements.map((s) => s.createdById), ...payments.map((p) => p.createdById ?? '')].filter(Boolean))]
@@ -459,8 +517,9 @@ export async function clientHistory(db: Db, account: Pick<CustomerAccount, 'id' 
   }
   for (const s of settlements) {
     const amt = toCents(s.amountCents)
-    rows.push({ at: s.receivedAt, type: 'settlement', reference: `${s.number} · ${s.method}${s.reference ? ` · ${s.reference}` : ''} · ${s.allocations.length} bill(s)`, orderRef: null, debitCents: 0, creditCents: amt, voucher: `${SETTLEMENT_SOURCE}:${s.id}`, status: s.reversedAt ? 'reversed' : 'posted', createdBy: nameOf.get(s.createdById) ?? null })
-    if (s.reversedAt) rows.push({ at: s.reversedAt, type: 'settlement_reversed', reference: `${s.number} reversed — ${s.reversedReason ?? ''}`, orderRef: null, debitCents: amt, creditCents: 0, voucher: `${SETTLEMENT_SOURCE}.reversal:${s.id}`, status: 'posted', createdBy: null })
+    const back = s.direction === 'out'
+    rows.push({ at: s.receivedAt, type: back ? 'pay_back' : 'settlement', reference: `${s.number}${back ? ' paid back' : ''} · ${s.method}${s.reference ? ` · ${s.reference}` : ''} · ${s.allocations.length} bill(s)`, orderRef: null, debitCents: back ? amt : 0, creditCents: back ? 0 : amt, voucher: `${SETTLEMENT_SOURCE}:${s.id}`, status: s.reversedAt ? 'reversed' : 'posted', createdBy: nameOf.get(s.createdById) ?? null })
+    if (s.reversedAt) rows.push({ at: s.reversedAt, type: back ? 'pay_back_reversed' : 'settlement_reversed', reference: `${s.number} reversed — ${s.reversedReason ?? ''}`, orderRef: null, debitCents: back ? 0 : amt, creditCents: back ? amt : 0, voucher: `${SETTLEMENT_SOURCE}.reversal:${s.id}`, status: 'posted', createdBy: null })
   }
   for (const p of payments) {
     const amt = toCents(p.amountCents)

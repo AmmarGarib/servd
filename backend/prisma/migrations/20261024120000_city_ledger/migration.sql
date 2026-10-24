@@ -21,6 +21,7 @@ CREATE TABLE "city_ledger_settlements" (
     "cashMovementId" TEXT,
     "reversalCashMovementId" TEXT,
     "moneyAccountCode" TEXT NOT NULL,
+    "direction" TEXT NOT NULL DEFAULT 'in',
     "idempotencyKey" TEXT,
     "note" TEXT,
     "createdById" TEXT NOT NULL,
@@ -63,6 +64,7 @@ ALTER TABLE "city_ledger_settlements" ADD CONSTRAINT "city_ledger_settlements_am
 ALTER TABLE "city_ledger_settlements" ADD CONSTRAINT "city_ledger_settlements_channel_chk" CHECK ("channel" IN ('till', 'back_office'));
 ALTER TABLE "city_ledger_settlements" ADD CONSTRAINT "city_ledger_settlements_till_chk" CHECK (("channel" = 'till') = ("shiftId" IS NOT NULL));
 ALTER TABLE "city_ledger_allocations" ADD CONSTRAINT "city_ledger_allocations_amount_chk" CHECK ("amountCents" > 0);
+ALTER TABLE "city_ledger_settlements" ADD CONSTRAINT "city_ledger_settlements_direction_chk" CHECK ("direction" IN ('in', 'out') AND ("direction" = 'in' OR "channel" = 'back_office'));
 
 -- ─── Row-level security (the guarded wave-A/B pattern, as 20261022170000_menu_subcategories_sessions)
 DO $do$

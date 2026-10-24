@@ -1219,7 +1219,9 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       kind: body.kind, payFrom: body.payFrom ?? null, bankAccountId: body.payFromBankAccountId ?? null, supplierId: body.supplierId ?? null,
     })
     const now = new Date()
-    const toCeo = body.kind === 'expense' && body.sendTo !== 'finance' && !viewer.isAdmin
+    // A voucher finance raises — a payee voucher, or its OWN cash request (owner, 2026-10-24: "request raised by
+    // Hasnain should go to CEO directly, no need for finance approval") — skips the finance step: the raiser signs it.
+    const toCeo = (body.kind === 'expense' || viewer.financeApprover) && body.sendTo !== 'finance' && !viewer.isAdmin
     const created = await prisma.$transaction(async (tx) => {
       // Numbers are per company and gap-free under concurrency: one writer
       // per company takes the next number.
@@ -1533,7 +1535,7 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (v.preparedById !== viewer.id && !financeOwnsIt) {
       throw new ForbiddenError('Only whoever raised this voucher (or finance, for a payee voucher) can resubmit it')
     }
-    const toCeo = v.kind === 'expense' && viewer.financeApprover && !viewer.isAdmin
+    const toCeo = (v.kind === 'expense' || v.preparedById === viewer.id) && viewer.financeApprover && !viewer.isAdmin
     const now = new Date()
     const res = await prisma.cashVoucher.updateMany({
       where: { id: v.id, tenantId: v.tenantId, status: 'returned' },
@@ -2051,3 +2053,37 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
   await fastify.register(cashVoucherExportRoutes)
 }
 
+
+/**
+ * Boot, once per voucher (owner, 2026-10-24): a cash request raised by a FINANCE login and still waiting for
+ * finance goes to the CEO — the raiser's own finance step is signed in their name (the same state a finance
+ * raise now gets). Never a voucher raised by anyone else.
+ */
+export async function forwardFinanceRaisedRequests(): Promise<number> {
+  const waiting = await prisma.cashVoucher.findMany({
+    where: { status: { in: WAIT_FINANCE }, kind: 'request', financeApprovedById: null },
+    select: { id: true, tenantId: true, number: true, preparedById: true, status: true },
+  })
+  if (waiting.length === 0) return 0
+  const finance = new Set((await prisma.user.findMany({
+    where: { id: { in: [...new Set(waiting.map((v) => v.preparedById).filter((x): x is string => !!x))] }, role: 'finance', isActive: true, deletedAt: null },
+    select: { id: true },
+  })).map((u) => u.id))
+  let moved = 0
+  for (const v of waiting) {
+    if (!v.preparedById || !finance.has(v.preparedById)) continue
+    const now = new Date()
+    const r = await prisma.cashVoucher.updateMany({
+      where: { id: v.id, status: v.status, financeApprovedById: null },
+      data: { status: 'finance_approved', financeApprovedById: v.preparedById, financeApprovedAt: now },
+    })
+    if (r.count !== 1) continue
+    moved++
+    await audit({
+      category: 'accounting', action: 'cash_voucher.finance_raised_to_ceo', entity: 'CashVoucher', entityId: v.id, tenantId: v.tenantId,
+      userId: v.preparedById, before: { status: v.status }, after: { status: 'finance_approved', reason: 'raised by finance — goes to the CEO directly' },
+    })
+    approvalWaiting('cash_voucher', v.id, { round: 'finance-raised', actorId: v.preparedById })
+  }
+  return moved
+}

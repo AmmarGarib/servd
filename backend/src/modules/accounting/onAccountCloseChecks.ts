@@ -20,7 +20,8 @@
 import type { CloseCheck, CloseCheckContext, CloseProblem } from './closeCheckTypes.js'
 import { tillClearingCutoverAt } from './tillClearingCode.js'
 import { tieOutOf } from './tillClearing.js'
-import { chargeNetCents, isChargeBookedTx } from '../receivables/onAccount.js'
+import { isChargeBookedTx } from '../receivables/onAccount.js'
+import { chargeOwedCents } from '../receivables/cityLedger.js'
 
 const DAY = 86_400_000
 /** Booked charges unbilled longer than this many days are warned about. */
@@ -49,12 +50,13 @@ export const onAccountTieoutCheck: CloseCheck = {
         statementInvoiceId: null,
         chargedAt: { ...(prevLock ? { gt: prevLock } : {}), lte: upTo },
       },
-      select: { tenantId: true, orderId: true, paymentId: true, amountCents: true, refundedCents: true },
+      select: { tenantId: true, orderId: true, paymentId: true, amountCents: true, refundedCents: true, settledCents: true },
     })
     let unbilledCount = 0
     let unbilledCents = 0
     for (const c of charges) {
-      const net = chargeNetCents(c)
+      // Net of what was paid on the bill itself (City Ledger) — a settled bill is not "unbilled".
+      const net = chargeOwedCents(c)
       if (net <= 0 || !(await isChargeBookedTx(db, c))) continue
       unbilledCount++
       unbilledCents += net
