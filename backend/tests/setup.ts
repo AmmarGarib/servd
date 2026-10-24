@@ -12,6 +12,10 @@ import { PrismaClient } from '@prisma/client'
 import { CHART_OF_ACCOUNTS } from '../src/lib/chartOfAccounts.js'
 import { isRlsMode, ownerUrl, applyRlsMode } from './rls/rlsMode.js'
 
+// The period-close checklist's go-live (1 Nov 2026, closeChecks.ts) would turn every block of a close dated
+// before it into a warning; the suite runs every check (tests/periodCloseGoLive.test.ts covers the go-live).
+process.env.CLOSE_CHECKS_FROM_OVERRIDE ??= '2000-01-01T00:00:00Z'
+
 // TEST_RLS=1: the schema is built as the owner, the migrations' row-level
 // security is replayed onto it, and the app connects as a plain role with
 // RLS_ENFORCE=1 — the live company lock (tests/rls/rlsMode.ts; the swap

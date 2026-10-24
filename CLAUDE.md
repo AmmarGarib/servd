@@ -1507,7 +1507,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
 - **Period close:** `accounting/closeChecks.ts` `CLOSE_CHECKS` is the ONE
   checklist; a module adds a CloseCheck, never its own 409 on
   `POST /accounting/period-close`. The CEO closes over overridable blocks with
-  `acknowledge {keys, reason ≥10}`; `trial_balance` never. The fiscal year is
+  `acknowledge {keys, reason ≥10}`; `trial_balance` never. **Go-live 1 Nov 2026** (owner, 2026-10-24: "it should
+  implement from November 1st onwards"; `closeChecks.ts CLOSE_CHECKS_FROM`): a close through an earlier date
+  shows every block as a warning (trial balance excepted); a later close checks only from 1 Nov (prevLock
+  clamped, months ≥ 2026-11, a till opened before it never blocks). The suite runs every check
+  (`CLOSE_CHECKS_FROM_OVERRIDE` in tests/setup.ts; `tests/periodCloseGoLive.test.ts`). The fiscal year is
   per company (`Tenant.fiscalYearEndMonth`, 30 June — H29) with a virtual
   roll-forward: nothing posts at year end.
 - **Fixed assets v2:** classes per company; 1500–1599 and 2012 are

@@ -160,10 +160,10 @@ const inWindow = (iso: string | null, from: Date | null, to: Date): boolean => {
  * Tills of the company opened on or before `through` and still open (oldest
  * first). The month's open_tills and the night audit's share it.
  */
-export async function openTillsThrough(db: CloseCheckDb, tenantId: string, through: Date): Promise<Array<{ id: string; openedAt: Date }>> {
+export async function openTillsThrough(db: CloseCheckDb, tenantId: string, through: Date, since?: Date | null): Promise<Array<{ id: string; openedAt: Date; user?: { name: string } }>> {
   return db.shift.findMany({
-    where: { status: 'open', openedAt: { lte: through }, ...shiftOfCompany({ tenantId: { in: [tenantId] } }) },
-    select: { id: true, openedAt: true },
+    where: { status: 'open', openedAt: { lte: through, ...(since ? { gt: since } : {}) }, ...shiftOfCompany({ tenantId: { in: [tenantId] } }) },
+    select: { id: true, openedAt: true, user: { select: { name: true } } },
     orderBy: { openedAt: 'asc' },
   })
 }
@@ -303,14 +303,16 @@ const openTillsCheck: CloseCheck = {
   severity: 'block',
   overridable: true,
   async run(ctx) {
-    const open = await openTillsThrough(ctx.db, ctx.tenantId, ctx.newLock)
+    // From go-live (CLOSE_CHECKS_FROM) only: a drawer left open before it never blocks a later close.
+    const open = await openTillsThrough(ctx.db, ctx.tenantId, ctx.newLock, ctx.checksFrom ?? null)
     if (open.length === 0) return null
+    const named = open.slice(0, 6).map((t) => `${t.user?.name ?? 'a cashier'} (opened ${fmtPktDate(t.openedAt)})`).join(', ')
     return {
       key: 'open_tills',
       severity: 'block',
       title: 'Tills still open',
-      detail: `${plural(open.length, 'till')} opened on or before ${fmtPktDate(ctx.newLock)} (the oldest on ${fmtPktDate(open[0]!.openedAt)}) ${open.length === 1 ? 'is' : 'are'} still open. `
-        + 'Their sales reach the books only when the till is closed — close them first.',
+      detail: `${plural(open.length, 'till')} opened on or before ${fmtPktDate(ctx.newLock)} ${open.length === 1 ? 'is' : 'are'} still open: ${named}${open.length > 6 ? ' …' : ''}. `
+        + 'Their sales reach the books only when the till is closed — the cashier (or a manager) closes it in the till\'s Shift Manager.',
       count: open.length,
       link: '/reconciliation',
       overridable: true,
@@ -641,6 +643,22 @@ export interface CloseChecklist {
  * of day). Reads the company's current lock and first entry from `db` — pass
  * the close's transaction so the answer is the one the close acts on.
  */
+/**
+ * Go-live of the period-close checklist (owner, 2026-10-24: "Period close is getting blocked due to back dated
+ * requirements, it should implement from November 1st onwards"). A close through a date BEFORE it is never
+ * blocked by a check — every block shows as a warning — except the trial balance, which always balances. A
+ * close through a later date checks only from it on: the window starts at it (prevLock clamped, months from
+ * 2026-11) and a till opened before it never blocks.
+ */
+export const CLOSE_CHECKS_FROM = new Date('2026-11-01T00:00:00+05:00')
+/** The go-live in force: CLOSE_CHECKS_FROM, or CLOSE_CHECKS_FROM_OVERRIDE (ISO; the test suite runs every check). */
+export function closeChecksFrom(): Date {
+  const o = process.env.CLOSE_CHECKS_FROM_OVERRIDE
+  const d = o ? new Date(o) : null
+  return d && !Number.isNaN(d.getTime()) ? d : CLOSE_CHECKS_FROM
+}
+const ALWAYS_BLOCKS = new Set(['trial_balance'])
+
 export async function closeChecklist(db: CloseCheckDb, tenantId: string, newLock: Date): Promise<CloseChecklist> {
   const lock = await db.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
   const first = await db.journalEntry.findFirst({ where: { tenantId }, orderBy: { entryDate: 'asc' }, select: { entryDate: true } })
@@ -651,8 +669,24 @@ export async function closeChecklist(db: CloseCheckDb, tenantId: string, newLock
   const start = rangeStart(prevLock, newLock, firstEntryDate)
   const isYearEnd = newLock.getTime() > (prevLock?.getTime() ?? -Infinity)
     && isFiscalYearEndInRange(endMonth, prevLock ?? new Date(start.getTime() - 1), newLock)
-  const ctx: CloseCheckContext = { db, tenantId, prevLock, newLock, months, isYearEnd, cache: new Map() }
-  const problems = await runChecks(db, CLOSE_CHECKS, ctx, { tag: 'period-close', savepoint: 'close_check', failLink: '/accounting/period-close' })
+  const from = closeChecksFrom()
+  const beforeGoLive = newLock.getTime() < from.getTime()
+  const goLiveEdge = new Date(from.getTime() - 1)
+  const goLiveMonth = new Date(from.getTime() + 5 * 3_600_000).toISOString().slice(0, 7)
+  const ctx: CloseCheckContext = beforeGoLive
+    ? { db, tenantId, prevLock, newLock, months, isYearEnd, cache: new Map(), checksFrom: null }
+    : {
+        db, tenantId, newLock, isYearEnd, cache: new Map(), checksFrom: goLiveEdge,
+        prevLock: prevLock && prevLock.getTime() > goLiveEdge.getTime() ? prevLock : goLiveEdge,
+        months: months.filter((m) => m >= goLiveMonth),
+      }
+  const raw = await runChecks(db, CLOSE_CHECKS, ctx, { tag: 'period-close', savepoint: 'close_check', failLink: '/accounting/period-close' })
+  // Before go-live a block is shown, never enforced (the trial balance excepted).
+  const problems = beforeGoLive
+    ? raw.map((p) => (p.severity === 'block' && !ALWAYS_BLOCKS.has(p.key)
+        ? { ...p, severity: 'warn' as const, detail: `${p.detail} (Before the checklist's go-live on 1 Nov 2026 — shown, not blocking.)` }
+        : p))
+    : raw
   return {
     problems,
     blocks: problems.filter((p) => p.severity === 'block'),

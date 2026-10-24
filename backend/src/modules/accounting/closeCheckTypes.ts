@@ -37,6 +37,8 @@ export interface CloseCheckContext {
    * always sets it; a check must still work without it.
    */
   cache?: Map<string, Promise<unknown>>
+  /** The checklist's go-live edge (closeChecks.ts CLOSE_CHECKS_FROM − 1 ms) when the close is after it; null / absent before. */
+  checksFrom?: Date | null
 }
 
 export interface CloseProblem {
